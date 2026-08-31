@@ -65,7 +65,7 @@ var expectedServerParityEntrypoints = map[string]string{
 	"go/endpoint-client/webtransport/tunnel/connect":                   "flowersec.Connect",
 	"go/direct-server/webtransport/direct/accept":                      "flowersec.NewAcceptor/NewWebTransportDirectListener",
 	"go/tunnel-runtime/webtransport/tunnel/pair-forward":               "flowersec.NewTunnelRuntime/NewWebTransportTunnelListener",
-	"go/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "flowersec-go/v3/controlplane",
+	"go/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "flowersec-go/v4/controlplane",
 	"go/proxy-server/carrier-neutral/direct/proxy":                     "flowersec.NewProxyServer",
 	"node-typescript/endpoint-client/websocket/direct/connect":         "@floegence/flowersec-core/node connect",
 	"node-typescript/endpoint-client/websocket/tunnel/connect":         "@floegence/flowersec-core/node connect",
@@ -226,6 +226,72 @@ type proxyDefaults struct {
 	MaxTimeoutMS      int `json:"max_timeout_ms"`
 }
 
+func updateCapabilities(repoRoot string) error {
+	path := filepath.Join(repoRoot, capabilityManifestPath)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var manifest capabilityManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return fmt.Errorf("parse %s: %w", capabilityManifestPath, err)
+	}
+	for _, capability := range manifest.PortableCapabilities {
+		if strings.HasPrefix(capability.ID, "compat/v2/") {
+			return fmt.Errorf("%s contains a retired compatibility capability: %s", capabilityManifestPath, capability.ID)
+		}
+	}
+	for index := range manifest.PortableCapabilities {
+		capability := &manifest.PortableCapabilities[index]
+		if capability.ID != "browser_proxy_runtime" {
+			continue
+		}
+		capability.Implementations["go"] = capabilityImplementation{
+			Status: "supported", Entrypoint: "flowersec.NewProxyServer", TestIDs: []string{"server/go-proxy"},
+		}
+		capability.Implementations["typescript"] = capabilityImplementation{
+			Status: "supported", Entrypoint: "@floegence/flowersec-core/node ProxyServer", TestIDs: []string{"server/typescript-proxy"},
+		}
+		capability.Implementations["rust"] = capabilityImplementation{
+			Status: "supported", Entrypoint: "flowersec::ProxyServer", TestIDs: []string{"server/rust-proxy"},
+		}
+	}
+	for index := range manifest.ServerParityContract.Units {
+		unit := &manifest.ServerParityContract.Units[index]
+		if unit.Role != "proxy-server" {
+			continue
+		}
+		key := strings.Join([]string{unit.Runtime, unit.Role, unit.Carrier, unit.Path, unit.Feature}, "/")
+		entrypoint, ok := expectedServerParityEntrypoints[key]
+		if !ok {
+			return fmt.Errorf("missing current ProxyServer entrypoint for %s", key)
+		}
+		unit.Status = "supported"
+		unit.Entrypoint = entrypoint
+		unit.Reason = ""
+		switch unit.Runtime {
+		case "go":
+			unit.TestIDs = []string{"server/go-proxy"}
+		case "node-typescript":
+			unit.TestIDs = []string{"server/typescript-proxy"}
+		case "rust":
+			unit.TestIDs = []string{"server/rust-proxy"}
+		}
+	}
+	var encoded strings.Builder
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(&manifest); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(encoded.String()), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("updated capabilities: %d portable capabilities, %d server parity units\n", len(manifest.PortableCapabilities), len(manifest.ServerParityContract.Units))
+	return nil
+}
+
 type interopMatrix struct {
 	Version            int                        `json:"version"`
 	Languages          []string                   `json:"languages"`
@@ -372,11 +438,7 @@ func verifyParity(repoRoot string) error {
 	if err := validateServerParityContract(m.ServerParityContract); err != nil {
 		return err
 	}
-	transport, err := loadTransportV2Contract(repoRoot)
-	if err != nil {
-		return err
-	}
-	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, transport, m.ServerParityContract); err != nil {
+	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, m.ServerParityContract); err != nil {
 		return err
 	}
 	registryIDs, err := loadRegistryIDs(repoRoot)
@@ -419,7 +481,7 @@ func verifyParity(repoRoot string) error {
 	if err := verifyConnectionControllerRecovery(repoRoot); err != nil {
 		return err
 	}
-	fmt.Printf("language parity OK: %d capabilities across %d languages; transport v%d has %d runtime registries\n", len(m.PortableCapabilities), len(m.Languages), transport.Version, len(transport.Runtimes))
+	fmt.Printf("language parity OK: %d capabilities across %d languages on Transport v3\n", len(m.PortableCapabilities), len(m.Languages))
 	return nil
 }
 
@@ -428,11 +490,7 @@ func verifyRequiredServerParityComplete(repoRoot string) error {
 	if err != nil {
 		return err
 	}
-	transport, err := loadTransportV2Contract(repoRoot)
-	if err != nil {
-		return err
-	}
-	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, transport, m.ServerParityContract); err != nil {
+	if err := validateDeploymentProfileTransportBindings(m.DeploymentProfiles, m.ServerParityContract); err != nil {
 		return err
 	}
 	runtimes, carriers, err := nativeServerProfileDimensions(m)
@@ -1371,48 +1429,44 @@ func validateDeploymentProfileCapabilityBindings(contract deploymentProfilesCont
 	return nil
 }
 
-func validateDeploymentProfileTransportBindings(contract deploymentProfilesContract, transport *transportV2Contract, parity *serverParityContract) error {
-	if transport == nil {
-		return errors.New("deployment profiles require the transport contract")
+func validateDeploymentProfileTransportBindings(contract deploymentProfilesContract, parity *serverParityContract) error {
+	if contract.Version != 3 || contract.ApplicationWire != "flowersec/3" {
+		return errors.New("deployment profiles must use the current flowersec/3 application wire")
 	}
-	if contract.ApplicationWire != "flowersec/3" || transport.Version != 2 {
-		return errors.New("deployment profile must use flowersec/3 over the frozen transport v2 tuple baseline")
+	runtimeOwners := map[string]string{
+		"go/native":          "go",
+		"rust/native":        "rust",
+		"typescript/node":    "node-typescript",
+		"typescript/browser": "typescript-browser",
+		"swift/ios":          "swift",
+		"swift/macos":        "swift",
 	}
-	runtimes := make(map[string]transportV2Runtime, len(transport.Runtimes))
-	for _, runtime := range transport.Runtimes {
-		runtimes[runtime.ID] = runtime
-	}
-	baselineRuntimeID := map[string]string{
-		"go/native":          "go_native",
-		"rust/native":        "rust_native",
-		"typescript/node":    "typescript_node",
-		"typescript/browser": "typescript_browser",
-		"swift/ios":          "swift_ios",
-		"swift/macos":        "swift_macos",
+	serverRuntimes := map[string]struct{}{"go": {}, "rust": {}, "node-typescript": {}}
+	features := map[string]string{
+		"endpoint-client": "connect",
+		"direct-server":   "accept",
+		"tunnel-runtime":  "pair-forward",
 	}
 	for _, profile := range contract.Profiles {
 		for _, runtimeID := range profile.TransportRuntimeIDs {
-			runtime, ok := runtimes[baselineRuntimeID[runtimeID]]
-			if !ok {
+			owner, ok := runtimeOwners[runtimeID]
+			if !ok || !slices.Contains(profile.ClaimedRuntimes, owner) {
 				return fmt.Errorf("deployment profile %q references unknown transport runtime %q", profile.ID, runtimeID)
 			}
+		}
+		for _, runtime := range profile.ClaimedRuntimes {
+			if _, ok := serverRuntimes[runtime]; !ok {
+				continue
+			}
 			for _, carrier := range profile.RequiredCarriers {
-				transportCarrier := strings.ReplaceAll(carrier, "-", "_")
 				for _, role := range profile.RequiredRoles {
+					feature, ok := features[role]
+					if !ok {
+						return fmt.Errorf("deployment profile %q has unknown role %q", profile.ID, role)
+					}
 					for _, path := range profile.RequiredPaths[role] {
-						if role == "tunnel-runtime" {
-							runtimeIndex := slices.Index(profile.TransportRuntimeIDs, runtimeID)
-							if runtimeIndex < 0 || runtimeIndex >= len(profile.ClaimedRuntimes) || !hasSupportedParityUnit(parity, profile.ClaimedRuntimes[runtimeIndex], role, carrier, path, "pair-forward") {
-								return fmt.Errorf("deployment profile %q transport runtime %q lacks exact %s/%s/%s production unit", profile.ID, runtimeID, carrier, role, path)
-							}
-							continue
-						}
-						for _, binding := range transportBindings(role, path) {
-							if !slices.ContainsFunc(runtime.Tuples, func(tuple transportV2RuntimeTuple) bool {
-								return tuple.Carrier == transportCarrier && tuple.NetworkMode == binding.networkMode && tuple.SessionRole == binding.sessionRole && tuple.Path == path
-							}) {
-								return fmt.Errorf("deployment profile %q transport runtime %q lacks exact %s/%s/%s/%s tuple", profile.ID, runtimeID, transportCarrier, binding.networkMode, binding.sessionRole, path)
-							}
+						if !hasSupportedParityUnit(parity, runtime, role, carrier, path, feature) {
+							return fmt.Errorf("deployment profile %q runtime %q lacks exact %s/%s/%s production unit", profile.ID, runtime, carrier, role, path)
 						}
 					}
 				}
@@ -1429,24 +1483,6 @@ func hasSupportedParityUnit(contract *serverParityContract, runtime, role, carri
 	return slices.ContainsFunc(contract.Units, func(unit serverParityUnit) bool {
 		return unit.Runtime == runtime && unit.Role == role && unit.Carrier == carrier && unit.Path == path && unit.Feature == feature && unit.Status == "supported" && strings.TrimSpace(unit.Entrypoint) != "" && len(unit.TestIDs) == 1
 	})
-}
-
-type transportBinding struct {
-	networkMode string
-	sessionRole string
-}
-
-func transportBindings(role, path string) []transportBinding {
-	if path == "direct" {
-		if role == "direct-server" {
-			return []transportBinding{{networkMode: "listen", sessionRole: "server"}}
-		}
-		return []transportBinding{{networkMode: "dial", sessionRole: "client"}}
-	}
-	return []transportBinding{
-		{networkMode: "dial", sessionRole: "client"},
-		{networkMode: "dial", sessionRole: "server"},
-	}
 }
 
 func equalStringSlicesMap(left, right map[string][]string) bool {

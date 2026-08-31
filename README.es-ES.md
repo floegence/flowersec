@@ -76,25 +76,26 @@ Empieza por el [índice de ejemplos](examples/README.md). Usa la misma API públ
 
 Los cuatro SDK comparten el mismo modelo de sesión. El soporte varía cuando una plataforma no puede ofrecer un tipo de conexión.
 
+<!-- capability-table:start -->
 | Capacidad de la aplicación | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
+| Invitaciones de conexión opacas de un solo uso | Sí | Sí | Sí | Sí |
+| Conexión segura de un solo intento | Sí | Sí | Sí | Sí |
 | Sesiones cifradas de extremo a extremo | Sí | Sí | Sí | Sí |
-| Enviar llamadas RPC y notificaciones | Sí | Sí | Sí | Sí |
-| Recibir notificaciones RPC | Sí | Sí | Sí | Sí |
-| Flujos de bytes fiables | Sí | Sí | Sí | Sí |
-| Atender flujos de aplicación en cualquier sesión | Sí | Sí | Sí | Sí |
-| Recuperación de conexiones duraderas | Sí | Sí | Sí | Sí |
-| Mensajes no fiables cuando estén disponibles | Sí | Sí | No | Sí |
-| Conexiones desde navegador | No | Sí | No | No |
-| Conexiones de clientes Apple | No | No | Sí | No |
-| Conexiones QUIC nativas | Sí | Node.js | No | Sí |
-| Conexiones WebSocket | Sí | Sí | Sí | Sí |
-| Conexiones WebTransport | Go H4 | Cliente Browser H3 (cuando la API WebTransport del navegador está disponible) | No | No |
-| Aceptación de sesiones en servidor | Sí | Node.js | No | Sí |
-| Runtime de relay opaco | Sí | Node.js | No | Sí |
-| Emisión de invitaciones desde el plano de control | Sí | No | No | No |
-| ProxyServer HTTP y WebSocket | Sí | Node.js | No | Sí |
-
+| Llamadas RPC y notificaciones | Sí | Sí | Sí | Sí |
+| Metadatos de flujo validados | Sí | Sí | Sí | Sí |
+| Manejadores de flujos de aplicación | Sí | Sí | Sí | Sí |
+| Recuperación de conexiones persistentes | Sí | Sí | Sí | Sí |
+| Mensajes no fiables negociados | Sí | Sí | No | Sí |
+| Manejadores RPC del cliente | Sí | Sí | No | Sí |
+| Aceptación de sesiones en el servidor | Sí | Sí | No | Sí |
+| Manejadores de sesiones del servidor | Sí | Sí | No | Sí |
+| Emisión y autorización del plano de control | Sí | No | No | No |
+| Admisión directa y por túnel | Sí | Sí | No | Sí |
+| ProxyServer HTTP y WebSocket | Sí | Sí | No | Sí |
+| Contrato de flujo independiente del transporte | Sí | Sí | Sí | Sí |
+| Seguridad wire de Transport v3 | Sí | Sí | Sí | Sí |
+<!-- capability-table:end -->
 Los perfiles de despliegue separan la disponibilidad de plataforma del protocolo de aplicacion Flowersec compartido:
 
 | Perfil | Runtimes | Superficie obligatoria de carrier y rol | Superficie opcional |

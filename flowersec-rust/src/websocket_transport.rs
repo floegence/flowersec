@@ -3,7 +3,7 @@
 use std::{
     collections::HashSet,
     fmt, io,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::{
         Arc, Mutex as StdMutex,
@@ -35,7 +35,6 @@ use tokio_tungstenite::{
 };
 use tokio_util::{compat::TokioAsyncReadCompatExt, sync::CancellationToken};
 
-use crate::transport_v2::{CarrierKind, CarrierSessionV2, CarrierStreamV2};
 use crate::transport_v3::{CarrierKind as CarrierKindV3, CarrierSessionV3, CarrierStreamV3};
 
 const MAX_BINARY_MESSAGE_BYTES: usize = 256 * 1024 + 12;
@@ -210,6 +209,7 @@ fn server_tls_config(
     Ok(Some(config))
 }
 
+#[allow(clippy::result_large_err)]
 async fn accept_server_websocket<S>(
     stream: S,
     path: &'static str,
@@ -245,67 +245,6 @@ where
         .await
         .map_err(|_| WebSocketError::Connect)?;
     Ok(spawn_websocket_pump(websocket))
-}
-
-pub(crate) async fn dial_with_trust_roots(
-    url: &str,
-    subprotocol: &'static str,
-    origin: &str,
-    trust_roots_der: Vec<Vec<u8>>,
-    capacity: u32,
-) -> Result<Arc<WebSocketCarrier>, WebSocketError> {
-    if !valid_origin(origin) || !(3..=130).contains(&capacity) {
-        return Err(WebSocketError::InvalidConfiguration);
-    }
-    let parsed = url::Url::parse(url).map_err(|_| WebSocketError::InvalidConfiguration)?;
-    if !matches!(parsed.scheme(), "ws" | "wss") {
-        return Err(WebSocketError::InvalidConfiguration);
-    }
-    let host = parsed
-        .host_str()
-        .ok_or(WebSocketError::InvalidConfiguration)?;
-    let port = parsed
-        .port_or_known_default()
-        .ok_or(WebSocketError::InvalidConfiguration)?;
-    let stream = TcpStream::connect((host, port))
-        .await
-        .map_err(|_| WebSocketError::Connect)?;
-    if parsed.scheme() == "ws"
-        && (!loopback_host(host)
-            || !stream
-                .peer_addr()
-                .map(|address| address.ip().is_loopback())
-                .unwrap_or(false)
-            || !stream
-                .local_addr()
-                .map(|address| address.ip().is_loopback())
-                .unwrap_or(false))
-    {
-        return Err(WebSocketError::InvalidConfiguration);
-    }
-    let mut request = url
-        .into_client_request()
-        .map_err(|_| WebSocketError::InvalidConfiguration)?;
-    request.headers_mut().insert(
-        "sec-websocket-protocol",
-        HeaderValue::from_static(subprotocol),
-    );
-    request.headers_mut().insert(
-        "origin",
-        HeaderValue::from_str(origin).map_err(|_| WebSocketError::InvalidConfiguration)?,
-    );
-    let carrier = if parsed.scheme() == "wss" {
-        let server_name = ServerName::try_from(host.to_owned())
-            .map_err(|_| WebSocketError::InvalidConfiguration)?;
-        let tls = TlsConnector::from(client_tls(trust_roots_der)?)
-            .connect(server_name, stream)
-            .await
-            .map_err(|_| WebSocketError::Connect)?;
-        establish_client_websocket(request, tls, subprotocol, capacity).await
-    } else {
-        establish_client_websocket(request, stream, subprotocol, capacity).await
-    }?;
-    Ok(carrier)
 }
 
 pub(crate) async fn dial_strict_tls(
@@ -424,15 +363,6 @@ fn valid_origin(origin: &str) -> bool {
             && url.query().is_none()
             && url.fragment().is_none()
     })
-}
-
-fn loopback_host(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .trim_start_matches('[')
-            .trim_end_matches(']')
-            .parse::<IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
 }
 
 enum OutgoingMessage {
@@ -602,9 +532,9 @@ impl WebSocketCarrier {
 }
 
 #[async_trait]
-impl CarrierSessionV2 for WebSocketCarrier {
-    fn kind(&self) -> CarrierKind {
-        CarrierKind::Wss
+impl CarrierSessionV3 for WebSocketCarrier {
+    fn kind(&self) -> CarrierKindV3 {
+        CarrierKindV3::Wss
     }
 
     fn set_multiplexer_client(&self, client: bool) -> io::Result<()> {
@@ -621,75 +551,6 @@ impl CarrierSessionV2 for WebSocketCarrier {
             .multiplexer_client
             .store(client, Ordering::Release);
         Ok(())
-    }
-
-    fn inbound_bidirectional_stream_capacity(&self) -> u32 {
-        self.state.capacity
-    }
-
-    async fn open_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
-        if self.state.admission_client && !self.state.admission_taken.load(Ordering::Acquire) {
-            self.admission_stream()
-                .map(|stream| stream as Arc<dyn CarrierStreamV2>)
-        } else {
-            self.mux()
-                .await?
-                .open_stream()
-                .await
-                .map(|stream| stream as Arc<dyn CarrierStreamV2>)
-        }
-    }
-
-    async fn accept_stream(&self) -> io::Result<Arc<dyn CarrierStreamV2>> {
-        if !self.state.admission_client && !self.state.admission_taken.load(Ordering::Acquire) {
-            self.admission_stream()
-                .map(|stream| stream as Arc<dyn CarrierStreamV2>)
-        } else {
-            self.mux()
-                .await?
-                .accept_stream()
-                .await
-                .map(|stream| stream as Arc<dyn CarrierStreamV2>)
-        }
-    }
-
-    async fn close(&self) -> io::Result<()> {
-        if self.state.closed.swap(true, Ordering::AcqRel) {
-            return Ok(());
-        }
-        let _cancel_on_exit = CancelCarrierOnDrop(self.state.cancellation.clone());
-        if let Some(mux) = self.state.mux.lock().await.as_ref() {
-            mux.close().await?;
-        }
-        if let Some(io) = self.state.io.lock().await.as_ref() {
-            send_websocket_close(&io.outgoing).await?;
-            io.cancellation.cancel();
-        }
-        Ok(())
-    }
-
-    fn abort(&self) {
-        self.state.closed.store(true, Ordering::Release);
-        self.state.cancellation.cancel();
-    }
-}
-
-struct CancelCarrierOnDrop(CancellationToken);
-
-impl Drop for CancelCarrierOnDrop {
-    fn drop(&mut self) {
-        self.0.cancel();
-    }
-}
-
-#[async_trait]
-impl CarrierSessionV3 for WebSocketCarrier {
-    fn kind(&self) -> CarrierKindV3 {
-        CarrierKindV3::Wss
-    }
-
-    fn set_multiplexer_client(&self, client: bool) -> io::Result<()> {
-        CarrierSessionV2::set_multiplexer_client(self, client)
     }
 
     fn inbound_bidirectional_stream_capacity(&self) -> u32 {
@@ -723,11 +584,31 @@ impl CarrierSessionV3 for WebSocketCarrier {
     }
 
     async fn close(&self) -> io::Result<()> {
-        CarrierSessionV2::close(self).await
+        if self.state.closed.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let _cancel_on_exit = CancelCarrierOnDrop(self.state.cancellation.clone());
+        if let Some(mux) = self.state.mux.lock().await.as_ref() {
+            mux.close().await?;
+        }
+        if let Some(io) = self.state.io.lock().await.as_ref() {
+            send_websocket_close(&io.outgoing).await?;
+            io.cancellation.cancel();
+        }
+        Ok(())
     }
 
     fn abort(&self) {
-        CarrierSessionV2::abort(self);
+        self.state.closed.store(true, Ordering::Release);
+        self.state.cancellation.cancel();
+    }
+}
+
+struct CancelCarrierOnDrop(CancellationToken);
+
+impl Drop for CancelCarrierOnDrop {
+    fn drop(&mut self) {
+        self.0.cancel();
     }
 }
 
@@ -750,7 +631,7 @@ impl fmt::Debug for WebSocketAdmissionStream {
 }
 
 #[async_trait]
-impl CarrierStreamV2 for WebSocketAdmissionStream {
+impl CarrierStreamV3 for WebSocketAdmissionStream {
     async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
         if payload.is_empty() {
             return Ok(0);
@@ -825,7 +706,7 @@ impl CarrierStreamV2 for WebSocketAdmissionStream {
     }
 
     async fn stop_sending(&self) -> io::Result<()> {
-        CarrierStreamV2::reset(self).await
+        CarrierStreamV3::reset(self).await
     }
 
     async fn reset(&self) -> io::Result<()> {
@@ -836,34 +717,7 @@ impl CarrierStreamV2 for WebSocketAdmissionStream {
     }
 
     async fn close(&self) -> io::Result<()> {
-        CarrierStreamV2::close_write(self).await
-    }
-}
-
-#[async_trait]
-impl CarrierStreamV3 for WebSocketAdmissionStream {
-    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
-        CarrierStreamV2::read(self, payload).await
-    }
-
-    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
-        CarrierStreamV2::write(self, payload).await
-    }
-
-    async fn close_write(&self) -> io::Result<()> {
-        CarrierStreamV2::close_write(self).await
-    }
-
-    async fn stop_sending(&self) -> io::Result<()> {
-        CarrierStreamV2::stop_sending(self).await
-    }
-
-    async fn reset(&self) -> io::Result<()> {
-        CarrierStreamV2::reset(self).await
-    }
-
-    async fn close(&self) -> io::Result<()> {
-        CarrierStreamV2::close(self).await
+        CarrierStreamV3::close_write(self).await
     }
 }
 
@@ -972,11 +826,11 @@ impl WebSocketMuxSession {
             self.cancellation.cancel();
             return Ok(());
         }
-        if let Some(outbound_done) = self.outbound_done.lock().await.take() {
-            if outbound_done.await.ok().and_then(Result::ok).is_none() {
-                self.cancellation.cancel();
-                return Ok(());
-            }
+        if let Some(outbound_done) = self.outbound_done.lock().await.take()
+            && outbound_done.await.ok().and_then(Result::ok).is_none()
+        {
+            self.cancellation.cancel();
+            return Ok(());
         }
         let _ = send_websocket_close(&self.outgoing).await;
         self.cancellation.cancel();
@@ -1204,7 +1058,7 @@ impl fmt::Debug for YamuxCarrierStream {
 }
 
 #[async_trait]
-impl CarrierStreamV2 for YamuxCarrierStream {
+impl CarrierStreamV3 for YamuxCarrierStream {
     async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
         tokio::select! {
             biased;
@@ -1258,7 +1112,7 @@ impl CarrierStreamV2 for YamuxCarrierStream {
     }
 
     async fn close_write_delivered(&self) -> io::Result<()> {
-        CarrierStreamV2::close_write(self).await?;
+        CarrierStreamV3::close_write(self).await?;
         let (mux_flushed, mux_delivery) = oneshot::channel();
         self.mux_commands
             .send(MuxCommand::Flush(mux_flushed))
@@ -1299,38 +1153,7 @@ impl CarrierStreamV2 for YamuxCarrierStream {
     }
 
     async fn close(&self) -> io::Result<()> {
-        CarrierStreamV2::reset(self).await
-    }
-}
-
-#[async_trait]
-impl CarrierStreamV3 for YamuxCarrierStream {
-    async fn read(&self, payload: &mut [u8]) -> io::Result<usize> {
-        CarrierStreamV2::read(self, payload).await
-    }
-
-    async fn write(&self, payload: &[u8]) -> io::Result<usize> {
-        CarrierStreamV2::write(self, payload).await
-    }
-
-    async fn close_write(&self) -> io::Result<()> {
-        CarrierStreamV2::close_write(self).await
-    }
-
-    async fn close_write_delivered(&self) -> io::Result<()> {
-        CarrierStreamV2::close_write_delivered(self).await
-    }
-
-    async fn stop_sending(&self) -> io::Result<()> {
-        CarrierStreamV2::stop_sending(self).await
-    }
-
-    async fn reset(&self) -> io::Result<()> {
-        CarrierStreamV2::reset(self).await
-    }
-
-    async fn close(&self) -> io::Result<()> {
-        CarrierStreamV2::close(self).await
+        CarrierStreamV3::reset(self).await
     }
 }
 
@@ -1355,8 +1178,8 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::{
-        CarrierSessionV2, OutgoingMessage, WebSocketCarrier, WebSocketIo, WebSocketListener,
-        dial_with_trust_roots, run_yamux, server_tls_config, spawn_binary_bridge,
+        CarrierSessionV3, OutgoingMessage, WebSocketCarrier, WebSocketIo, WebSocketListener,
+        client_tls, dial_strict_tls, run_yamux, server_tls_config, spawn_binary_bridge,
         spawn_websocket_pump,
     };
 
@@ -1441,7 +1264,7 @@ mod tests {
         let (mut client, _) = connected.expect("connect valid WebSocket");
         drop(stalled);
         let _ = client.close(None).await;
-        let _ = CarrierSessionV2::close(carrier.as_ref()).await;
+        let _ = CarrierSessionV3::close(carrier.as_ref()).await;
     }
 
     #[tokio::test]
@@ -1471,11 +1294,12 @@ mod tests {
             tokio::time::timeout(std::time::Duration::from_secs(1), async {
                 tokio::join!(
                     listener.accept_with_peer(),
-                    dial_with_trust_roots(
+                    dial_strict_tls(
                         &url,
+                        "/flowersec/v3/direct",
                         "flowersec.direct.v3",
                         "https://app.example",
-                        vec![certificate_der],
+                        client_tls(vec![certificate_der]).unwrap(),
                         3,
                     ),
                 )
@@ -1485,8 +1309,8 @@ mod tests {
         let (server, _) = accepted.expect("accept valid WSS connection");
         let client = connected.expect("connect valid WSS connection");
         drop(stalled);
-        let _ = CarrierSessionV2::close(client.as_ref()).await;
-        let _ = CarrierSessionV2::close(server.as_ref()).await;
+        let _ = CarrierSessionV3::close(client.as_ref()).await;
+        let _ = CarrierSessionV3::close(server.as_ref()).await;
     }
 
     #[tokio::test]
@@ -1573,7 +1397,7 @@ mod tests {
     #[tokio::test]
     async fn canceled_carrier_close_aborts_the_transport() {
         let (carrier, cancellation, mut outgoing) = pending_test_carrier();
-        let mut closing = Box::pin(CarrierSessionV2::close(carrier.as_ref()));
+        let mut closing = Box::pin(CarrierSessionV3::close(carrier.as_ref()));
         let message = tokio::time::timeout(std::time::Duration::from_secs(1), async {
             tokio::select! {
                 result = &mut closing => panic!("carrier close unexpectedly finished: {result:?}"),
@@ -1595,7 +1419,7 @@ mod tests {
         let (carrier, cancellation, _outgoing) = pending_test_carrier();
         carrier.state.closed.store(true, Ordering::Release);
 
-        CarrierSessionV2::abort(carrier.as_ref());
+        CarrierSessionV3::abort(carrier.as_ref());
 
         assert!(cancellation.is_cancelled());
     }

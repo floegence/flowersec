@@ -1,9 +1,8 @@
 # Flowersec for TypeScript
 
 `@floegence/flowersec-core` is the ESM-only Flowersec SDK for browsers and
-Node.js. It gives both runtimes the same encrypted session, RPC, notification,
-and byte-stream API through the root, `/browser`, `/node`, and `/proxy`
-entrypoints.
+Node.js. It provides encrypted sessions, RPC, notifications, reliable byte
+streams, connection recovery, server runtimes, and browser proxy integration.
 
 ## Install
 
@@ -11,221 +10,75 @@ entrypoints.
 npm install @floegence/flowersec-core
 ```
 
-## Public API
+Node.js 24.20.0 or newer is required.
 
-- `@floegence/flowersec-core` exports the portable artifact, lease, session, stream, RPC, stream-metadata, and connection-controller API, plus profile-owned unreliable messages when negotiated.
-- `@floegence/flowersec-core/browser` adds `connect(...)`, `createConnectionController(...)`, and their options.
-- `@floegence/flowersec-core/node` adds the V3 `connect(...)`, `createConnectionController(...)`, direct-only `createAcceptor(...)`, opaque `createTunnelRuntime(...)`, `AcceptedSession`, `SessionHandlers`, and `RPCHandlers` APIs. Legacy V2 server, control-plane, and `ProxyServer` APIs are available only under the explicit `node.v2` namespace; the Go control-plane remains the only v3 invitation issuer.
-- `@floegence/flowersec-core/proxy` adds the `Session`-based HTTP/WebSocket runtime, Service Worker and controller/app-window bridges, strict `proxy.runtime@2` validation, and `connectProxyBrowser(...)` composition.
+## Entrypoints
 
-The browser entrypoint also exposes the isolated
-`flowersec-private-loopback/1` parser, lease, one-shot connector, and
-connection controller. Only these dedicated APIs accept the profile, and they
-require the exact numeric-loopback HTTP origin. Ordinary `connect(...)`
-continues to accept only standard `flowersec/3` artifacts and WSS/WebTransport
-security capabilities.
+- `@floegence/flowersec-core` exports the portable artifact, lease, Session,
+  RPC, stream, metadata, error, and connection-controller contracts.
+- `@floegence/flowersec-core/browser` adds browser `connect(...)`,
+  `createConnectionController(...)`, WSS, optional WebTransport, and the
+  isolated private-loopback profile.
+- `@floegence/flowersec-core/node` adds Node `connect(...)`,
+  `createConnectionController(...)`, `createAcceptor(...)`,
+  `createTunnelRuntime(...)`, `ProxyServer`, `SessionHandlers`, and
+  `RPCHandlers`.
+- `@floegence/flowersec-core/proxy` provides the browser HTTP/WebSocket proxy
+  runtime, Service Worker integration, and exact-origin window bridges.
 
-The complete boundary is documented in the
-[private loopback profile](../docs/PRIVATE_LOOPBACK_V1.md).
+## Client Sessions
 
-The root type exports are:
-
-- Artifact lifecycle: `Artifact`, closed `ArtifactError` parse failures, and `ArtifactLease`.
-- Sessions: `Session`, `SessionTermination`, `RpcPeer`, `RpcResult<Response>`, `ByteStream`, `IncomingStream`, `StreamMetadata`, `OperationOptions`, and `StreamOpenOptions`. Create metadata with `createStreamMetadata(...)`; invalid values throw `StreamMetadataError` before opening a stream.
-- Unreliable messages: `UnreliableMessageChannel`, `UnreliableMessageSendOptions`, `UnreliableMessageSendResult`, and the closed `UnreliableMessageErrorCode` set.
-- JSON values: `JsonPrimitive`, `JsonValue`, and `JsonObject`.
-- Errors: `ConnectErrorCode`, `SessionErrorCode`, and structured `RetryDisposition`.
-- Connection lifecycle: `ArtifactSource`, `ArtifactSourceResult`, `ConnectionController`, `ConnectionState`, `ConnectionSnapshot`, `ConnectionDiagnostic`, `ConnectionControllerFailure`, `ConnectionControllerError`, and `RetryDisposition`.
-
-Unversioned names are the recommended strict-v3 API. Explicit `V3` exports are
-deprecated aliases. `ConnectError.retryDisposition` and
-`retry_after.notBeforeUnixMilliseconds` are canonical; deprecated
-`disposition` and `absoluteUnixMilliseconds` properties remain readable through
-their aliases. Retry ownership belongs to `ConnectionController`;
-applications do not classify error text or run a parallel retry scheduler.
-Public failures remain redacted and reveal no carrier, candidate, URL,
-credential, stage, key, or implementation details.
-
-`RpcResult<Response>` is a discriminated union. `RpcPeer.call(...)` requires a decoder for successful payloads, so the typed success value has passed application validation before it is returned. Check `result.ok` before reading either the typed success `payload` or bounded application `error`; a result cannot contain both. RPC call and notify accept only `JsonValue` payloads and reject values that cannot be represented on the wire before sending. TypeScript `RpcPeer.onNotify(typeId, decoder, handler)` receives peer outbound notifications through the local Session's inbound reserved RPC stream. A notification reaches the handler only after its decoder succeeds; decoder and handler failures are isolated from RPC serving.
-
-Browser and Node.js connector options accept `connectTimeoutMs`; omitting it uses the shared ten-second default.
-
-### One-shot Node client
+Parse an opaque artifact, bind its durable spend callback, and connect:
 
 ```ts
-import { RPCHandlers, connect } from "@floegence/flowersec-core/node";
+import { createArtifactLease, parseArtifact } from "@floegence/flowersec-core";
+import { connect } from "@floegence/flowersec-core/node";
 
-const rpcHandlers = new RPCHandlers();
-rpcHandlers.handleRPC(7, async (payload) => ({ payload }));
-rpcHandlers.handleNotification(8, (payload) => onNotice(payload));
-const session = await connect(lease, {
-  origin: "https://app.example",
-  rpcHandlers,
-});
+const artifact = parseArtifact(serializedArtifact);
+const lease = createArtifactLease(artifact, persistSpendExactlyOnce);
+const session = await connect(lease, { origin: "https://app.example" });
 ```
 
-### Long-lived Node client
+`Artifact` hides credentials and candidate selection. `ArtifactLease` exposes no
+public spend method. `Session` exposes RPC, streams, unreliable messages when
+negotiated, liveness, rekeying, termination, and close without revealing its
+carrier.
 
-```ts
-import {
-  RPCHandlers,
-  connectionDiagnostic,
-  createConnectionController,
-} from "@floegence/flowersec-core/node";
+`StreamHandlers` serves bounded application handlers on any Session.
+`ConnectionController` is the only reconnect scheduler and obtains a fresh
+lease for each attempt. Work from a terminated Session is never migrated or
+replayed.
 
-const rpcHandlers = new RPCHandlers();
-rpcHandlers.handleRPC(7, async (payload) => ({ payload }));
-const controller = createConnectionController(source, {
-  origin: "https://app.example",
-  rpcHandlers,
-});
-controller.start();
-const session = await controller.waitForSession();
-const unsubscribe = controller.subscribe((snapshot) => {
-  monitor(connectionDiagnostic(snapshot));
-});
-```
+## Node Servers and ProxyServer
 
-The immutable callback definition applies to every generation, while each
-Session gets a fresh router. `waitForSession()` never starts the controller.
-Diagnostics contain only state, attempt, failure phase/code, and retry
-disposition. Terminated Session work is never replayed.
+`createAcceptor(...)` accepts direct application Sessions. `SessionHandlers`
+binds accepted RPC, notification, and stream handlers before establishment.
+`createTunnelRuntime(...)` pairs and forwards opaque relay legs without
+terminating the end-to-end Session.
 
-### Application streams on any Session
-
-```ts
-import { StreamHandlers } from "@floegence/flowersec-core";
-
-const streamHandlers = new StreamHandlers({ maxConcurrentStreams: 32 });
-streamHandlers.handleStream("files/read", async (incoming) => serveFile(incoming));
-await streamHandlers.serve(session);
-```
-
-The portable root, browser, and Node entrypoints share this dispatcher. The
-sealed registrar used by Node `ProxyServer.register(...)` is exported only from
-the Node entrypoint.
-
-For the complete durable `ArtifactLease` spend workflow, see the
-[TypeScript cookbook](../examples/ts/README.md). Node raw-QUIC-only artifacts
-may omit `origin`; providing an absolute HTTP(S) origin enables WebSocket
-candidates. CA candidates use platform or deployment-provided trust roots;
-pin candidates use only the complete active leaf-certificate SHA-256 pin set
-embedded in the opaque artifact. The connector never fetches pins or falls
-back between CA and pin modes.
-
-### Accepted Node server Session
-
-```ts
-import { SessionHandlers, createAcceptor } from "@floegence/flowersec-core/node";
-
-const handlers = new SessionHandlers({ maxConcurrentStreams: 32 });
-handlers.handleRPC(7, async (payload) => ({ payload }));
-handlers.handleNotification(8, (payload) => onNotice(payload));
-handlers.handleStream("files/read", async (incoming) => serveFile(incoming));
-const acceptor = await createAcceptor({
-  listeners,
-  maxInboundStreams: 32,
-  admissionTimeoutMs: 10_000,
-  authorize: async (request, options) => ({
-    accepted: true,
-    artifact: await loadAuthorizedArtifact(request, options),
-  }),
-  resolveHandlers: () => handlers,
-});
-const accepted = await acceptor.accept();
-await accepted.serve();
-```
-
-`loadAuthorizedArtifact(...)` returns the opaque `Artifact` produced by
-`parseArtifact(...)`; authorization code never reconstructs or receives
-package-private PSK, candidate, or pin fields. Tunnel authorization verifies
-that artifact with `verifyTunnelAuthorizationGrant(...)` and returns only the
-request-bound, secret-free grant consumed by the relay.
-The admission deadline covers FSB3 receive, authorization, handler resolution,
-FSA3 completion, and Session establishment. Tunnel allow decisions return the
-secret-free grant; the trusted verifier performs the full FSB3 projection while
-the relay remains unable to inspect the artifact or its E2EE session fields.
-
-`RPCHandlers` is available only from the Node entrypoint and cannot register
-application streams. The default `SessionHandlers` is strict v3 and
-accepted-server-only; the v2 registry remains under `node.v2.SessionHandlers`.
-
-## Connection Lifecycle
-
-The Browser and Node `connect(...)` operations are one-shot and never reconnect. Long-lived applications can create the runtime-specific `ConnectionController` with a refreshable `ArtifactSource`. Every attempt must return a fresh `ArtifactLease`; a one-time artifact or lease is not a controller source.
-
-The controller has one scheduler and one in-flight attempt. Its states are `idle`, `connecting`, `connected`, `waiting`, `failed`, and `closed`; immutable snapshots expose `ConnectionSnapshot.retryDisposition` while the corresponding retry decision applies and clear it before a new attempt, after connection, and on close. Call `start()` once, observe snapshots with `subscribe(...)`, await an established session with `waitForSession(...)`, and use `retryNow()` only to wake a `waiting` controller. `close()` cancels acquisition, connection, and waiting before closing the current session.
-
-`StreamHandlers` and Node `SessionHandlers` accept application stream kinds containing 1 through 128 canonical UTF-8 bytes, reject leading or trailing Unicode whitespace, controls, and unassigned scalars, and reserve the package-owned `flowersec.rpc.v2` and `flowersec.rpc.v3` names for Flowersec RPC. Successful handlers half-close their stream. A rejected handler Promise resets only that stream; the accept loop and unrelated streams continue.
-
-Reliable streams apply bounded per-stream receive backpressure instead of buffering application data without limit. A slow consumer pauses carrier progress until reads release capacity; records retain carrier order, so a rekey behind backpressured DATA completes after the consumer resumes. `closeWrite()` sends the graceful FIN and keeps reads available. `reset()` and `close()` abort both directions. If a write is canceled or fails after its wire commit may have started, only that stream becomes terminal and cannot be reused.
-
-Source failures return a structured `terminal`, `retryable`, or `retry_after` disposition. Thrown or malformed source failures are terminal. Retry delay is deterministic exponential backoff from 250 ms, doubling to a 30-second maximum with no jitter; `retry_after` is never attempted before its specified Unix-millisecond boundary. Attempts are unlimited unless `maximumAttempts` is explicitly set.
-
-A newly established session replaces `currentSession` atomically. The controller never migrates or replays streams, RPC calls, or writes from a terminated session; callers start new application operations on the new session.
-
-A negotiated `Session.unreliableMessages` channel sends defensively copied `Uint8Array` values and returns `accepted`, `dropped_expired`, `dropped_budget`, or `dropped_carrier`. `receive(...)` also returns a fresh `Uint8Array`. Invalid payloads, unavailable channels, cancellation, closure, and internal failures remain redacted public operation errors.
+`ProxyServer` registers the bounded HTTP and WebSocket application protocol on
+`StreamHandlers` or `SessionHandlers`. It enforces fixed upstream hosts,
+origins, header and cookie policy, body/frame limits, timeouts, cancellation,
+and a close barrier. The `/proxy` browser runtime uses the same application
+wire through a Service Worker or exact-origin window bridge.
 
 ## Supported Connections
 
-Browsers support WebSocket. Browser WebTransport is capability-dependent on
-the browser's WebTransport API and is an optional browser adapter, not a
-required native-server carrier. Through
-`/node`, Node.js supports WebSocket and raw QUIC client connections, direct
-server sessions, and opaque `TunnelRuntime` relay legs. Raw QUIC uses the
-Flowersec-owned optional native addon wrapper and one of its supported
-prebuilt platform packages; it never loads from the browser entrypoint. The
-wrapper selects the matching optional package for macOS arm64/x64 or Linux
-arm64/x64 glibc. Windows and musl packages are not published. The V3 Node
-entrypoint keeps the legacy control plane and `ProxyServer` behind `node.v2`; it
-does not issue v3 invitations, which are produced by the Go control-plane. The
-relay never terminates an E2EE Session. WebTransport is an optional adapter
-profile and the Node.js runtime
-does not currently expose a production adapter.
-The `/proxy` entrypoint adds browser bridges for applications that need to keep
-the session behind a Service Worker or another window.
+Browsers support WSS and optional browser-owned WebTransport. Node.js supports
+WSS and raw QUIC client, direct-server, and tunnel-runtime roles. Raw QUIC uses
+the optional Flowersec native package for macOS or glibc Linux on arm64/x64.
+Node.js does not expose WebTransport or an artifact issuer; use an application
+control plane such as the Go control-plane package.
 
-## Opaque Boundaries
+CA candidates use platform or configured private roots. Pin candidates verify
+only the complete artifact-bound active pin set and never fall back to CA.
+Public errors remain closed and redacted.
 
-`Artifact` is an opaque handle. Applications cannot inspect its connection data or serialize it back to protocol JSON. `ArtifactLease` exposes no spend operation; only the connector may invoke the durable callback. `Session` exposes RPC, stream operations, liveness, rekeying, `waitTermination()`, and closure without revealing the selected transport or peer endpoint identity. Public streams expose their kind and terminal state, but no protocol stream identifier.
+## CLI
 
-A Node tunnel authorizer returns an allow decision only after calling
-`verifyTunnelAuthorizationGrant(request, artifact, { leaseId, allowReplacement })`.
-The verifier compares the complete observed FSB3 with the opaque authorization
-artifact and mints a request-bound, secret-free `TunnelAuthorizationGrant`.
-The relay runtime retains only that grant; a structurally similar ordinary
-object is not an authorization and the relay never unwraps or retains the
-artifact's E2EE key material.
-
-`ConnectError` and `SessionError` expose only a closed `code`. They do not retain raw causes, credentials, URLs, candidate diagnostics, transport objects, peer details, or internal routing and handshake state.
-
-Connection negotiation and cryptographic state are not package exports.
-
-Admission rejection reasons are server-authorized bounded protocol tokens. Clients validate their wire form without carrying a deployment-specific reason registry; the public error boundary remains closed and redacted.
-
-The proxy entrypoint accepts an opaque `ArtifactLease` or an already connected `Session`. Cross-window bridges require an exact allowed origin and may require a bounded capability nonce; runtime failures are mapped to closed status/code values before reaching Service Worker or Window messages.
-
-## Connection Notes
-
-Browser applications receive a ready `Session` from `connect(...)`. The browser
-connector supports CA-authenticated WSS and pinned WebTransport when the
-browser exposes that API. WebTransport uses browser-owned HTTP/3 streams and
-is not available in the Node entrypoint. Production v3 accepts no plaintext
-carrier.
-
-Chromium does not support a WebTransport pooling option; each carrier creates an independent native WebTransport connection.
-
-Cold-connection diagnostics require every independent carrier to meet the declared deadline. A `dial_failed` result remains a test failure and is not hidden by pooling, retry, or timeout relaxation.
-
-Node.js applications receive the same `Session` contract from `connect(...)`.
-The Node connector supports WSS and raw QUIC through the optional native
-package. WebSocket candidates require an absolute HTTP(S) `origin`;
-raw-QUIC-only artifacts may omit it. CA candidates use platform or configured
-private roots. Pin candidates use their artifact-bound pin set and never
-downgrade to CA after a verification failure.
-
-The connectors choose an eligible connection path from the invitation. They do
-not expose transport selectors, candidate lists, or native carrier objects to application code.
+The package installs `flowersec-ts-cli`. Its client and server commands accept
+only Transport v3 artifacts. The server requires a TLS certificate and private
+key for its WebSocket listener.
 
 ## Verify
 
@@ -235,4 +88,8 @@ npm test
 npm run verify:package
 ```
 
-See the [API contract](../docs/API_CONTRACT.md), [Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md), [v3 wire contract](../docs/TRANSPORT_V3_WIRE.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).
+See the [TypeScript cookbook](../examples/ts/README.md),
+[API contract](../docs/API_CONTRACT.md),
+[Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md),
+[wire contract](../docs/TRANSPORT_V3_WIRE.md), and
+[error model](../docs/ERROR_MODEL.md).

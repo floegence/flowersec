@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/idna15"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/idna15"
 )
 
 var (

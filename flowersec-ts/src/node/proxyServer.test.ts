@@ -4,9 +4,9 @@ import {
   ProxyServer,
   type ProxyServerOptions,
   SessionHandlers,
-  type StreamHandlerRegistrar,
   StreamHandlers,
-} from "./v2.js";
+} from "./index.js";
+import type { StreamHandlerRegistrar } from "./proxyServer.js";
 
 test("exposes a native Node ProxyServer with bounded loopback upstream policy", async () => {
   const options = {

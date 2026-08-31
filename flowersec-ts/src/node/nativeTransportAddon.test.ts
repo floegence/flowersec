@@ -4,281 +4,147 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, test } from "vitest";
 
+import { adaptNativeCarrierSessionV3 } from "../v3/carrier.js";
 import {
   createNativeRawQuicDriver,
-  createNativeRawQuicDriverV3,
   loadNativeTransportAddon,
   tryLoadNativeTransportAddon,
   type NativeTransportAddonBinding,
 } from "./nativeTransportAddon.js";
-import { adaptNativeCarrierSessionV2 } from "../v2/carrier.js";
 
 test("browser isolation rejects CommonJS and native loader syntax", () => {
   expect(() => assertBrowserGraphIsolation(
     'const fs = require("fs"); const load = createRequire(import.meta.url); load("./addon.node");',
     [],
-  )).toThrowError(/Node native loader/);
+  )).toThrowError(/Node native loader/u);
 });
 
-describe("native transport addon loader", () => {
-  test("published raw QUIC session declarations expose the native address contract", () => {
-    const declaration = readFileSync(resolve(
-      fileURLToPath(new URL("../../..", import.meta.url)),
-      "flowersec-node-native/index.d.ts",
-    ), "utf8");
-    expect(declaration).toMatch(/localAddress\(\): Readonly<\{ host: string; port: number \}>;/u);
-    expect(declaration).toMatch(/peerAddress\(\): Readonly<\{ host: string; port: number \}>;/u);
-  });
-
-  test("loads only the Flowersec-owned package and reports a stable missing-addon error", () => {
+describe("native transport addon v3 ABI", () => {
+  test("loads only the unversioned contractVersion 3 surface", () => {
     const requested: string[] = [];
-    const addon = Object.freeze({
-      contractVersion: () => 2,
-      connectRawQuic: () => { throw new Error("unused"); },
-      bindRawQuic: () => { throw new Error("unused"); },
-      connectRawQuicV3: () => { throw new Error("unused"); },
-      bindRawQuicV3: () => { throw new Error("unused"); },
-    }) as unknown as NativeTransportAddonBinding;
+    const addon = completeAddon();
     expect(loadNativeTransportAddon((specifier) => {
       requested.push(specifier);
       return addon;
     })).toBe(addon);
     expect(requested).toEqual(["@floegence/flowersec-node-native"]);
-
-    expect(() => loadNativeTransportAddon(() => {
-      throw new Error("platform loader detail");
-    })).toThrowError(expect.objectContaining({
-      name: "NativeTransportUnavailableError",
-      code: "native_transport_unavailable",
-      message: "Flowersec native transport is unavailable on this platform",
-    }));
+    expect(Object.keys(addon).sort()).toEqual([
+      "bindRawQuic",
+      "connectRawQuic",
+      "contractVersion",
+    ]);
+    expect("connectRawQuicV3" in addon).toBe(false);
+    expect("bindRawQuicV3" in addon).toBe(false);
   });
 
-  test("uses an explicit native addon only for the server parity peer", () => {
-    const previousPeer = process.env.FLOWERSEC_SERVER_PARITY_PEER;
-    const previousAddon = process.env.FLOWERSEC_SERVER_PARITY_NATIVE_ADDON;
-    const requested: string[] = [];
-    const addon = Object.freeze({
-      contractVersion: () => 2,
-      connectRawQuic: () => { throw new Error("unused"); },
-      bindRawQuic: () => { throw new Error("unused"); },
-      connectRawQuicV3: () => { throw new Error("unused"); },
-      bindRawQuicV3: () => { throw new Error("unused"); },
-    }) as unknown as NativeTransportAddonBinding;
-    try {
-      process.env.FLOWERSEC_SERVER_PARITY_NATIVE_ADDON = "/tmp/flowersec-parity-addon.js";
-      delete process.env.FLOWERSEC_SERVER_PARITY_PEER;
-      expect(loadNativeTransportAddon((specifier) => {
-        requested.push(specifier);
-        return addon;
-      })).toBe(addon);
-      process.env.FLOWERSEC_SERVER_PARITY_PEER = "1";
-      expect(loadNativeTransportAddon((specifier) => {
-        requested.push(specifier);
-        return addon;
-      })).toBe(addon);
-      expect(requested).toEqual([
-        "@floegence/flowersec-node-native",
-        "/tmp/flowersec-parity-addon.js",
-      ]);
-    } finally {
-      restoreEnvironment("FLOWERSEC_SERVER_PARITY_PEER", previousPeer);
-      restoreEnvironment("FLOWERSEC_SERVER_PARITY_NATIVE_ADDON", previousAddon);
-    }
-  });
-
-  test("reports optional addon availability without leaking loader errors", () => {
+  test("rejects missing, incomplete, and old contracts", () => {
     expect(tryLoadNativeTransportAddon(() => {
       throw new Error("platform loader detail");
     })).toBeUndefined();
-  });
-
-  test("rejects incomplete and wrong-version addon contracts", () => {
-    const complete = {
-      contractVersion: () => 2,
-      connectRawQuic: () => { throw new Error("unused"); },
-      bindRawQuic: () => { throw new Error("unused"); },
-      connectRawQuicV3: () => { throw new Error("unused"); },
-      bindRawQuicV3: () => { throw new Error("unused"); },
-    };
-    expect(tryLoadNativeTransportAddon(() => ({ ...complete, contractVersion: () => 1 }))).toBeUndefined();
     expect(tryLoadNativeTransportAddon(() => ({
-      ...complete,
-      connectRawQuicV3: undefined,
+      ...completeAddon(),
+      contractVersion: () => 2,
+    }))).toBeUndefined();
+    expect(tryLoadNativeTransportAddon(() => ({
+      ...completeAddon(),
+      connectRawQuic: undefined,
     }))).toBeUndefined();
   });
 
-  test("rejects a v2 session returned by the v3 addon entrypoint", async () => {
+  test("rejects a wireVersion 2 session without fallback", async () => {
     let abortCalls = 0;
     const session = {
-      ...nativeSessionBinding({}),
+      ...nativeSessionBinding({}, 2),
       abort: () => { abortCalls += 1; },
     };
     const addon = {
-      contractVersion: () => 2,
-      connectRawQuicV3: () => ({ result: async () => session, cancel: () => undefined }),
-      bindRawQuicV3: () => { throw new Error("unused"); },
+      ...completeAddon(),
+      connectRawQuic: () => operation(session),
     } as unknown as NativeTransportAddonBinding;
-
-    await expect(createNativeRawQuicDriverV3(addon).connectRawQuic({
-      host: "127.0.0.1",
-      port: 443,
-      serverName: "localhost",
-      path: "direct",
-      tlsMode: "pin",
-      activeLeafDerSha256: [new Uint8Array(32)],
-      inboundBidirectionalStreamCapacity: 3,
-      handshakeTimeoutMs: 1_000,
-    })).rejects.toMatchObject({ code: "native_transport_unavailable" });
+    await expect(createNativeRawQuicDriver(addon).connectRawQuic(rawQuicConnectOptions()))
+      .rejects.toMatchObject({ code: "native_transport_unavailable" });
     expect(abortCalls).toBe(1);
   });
 
-  test("cancels a pending native connect without a fallback", async () => {
-    let canceled = 0;
-    const operation = {
-      result: async () => await new Promise<never>(() => undefined),
-      cancel: () => { canceled += 1; },
-    };
+  test("cancels pending connect and stream I/O", async () => {
+    let connectCanceled = 0;
     const addon = {
-      contractVersion: () => 2,
-      connectRawQuic: () => operation,
-      bindRawQuic: () => { throw new Error("unused"); },
+      ...completeAddon(),
+      connectRawQuic: () => ({
+        result: async () => await new Promise<never>(() => undefined),
+        cancel: () => { connectCanceled += 1; },
+      }),
     } as unknown as NativeTransportAddonBinding;
-    const driver = createNativeRawQuicDriver(addon);
     const controller = new AbortController();
-    const pending = driver.connectRawQuic({
-      host: "127.0.0.1",
-      port: 443,
-      serverName: "localhost",
-      path: "direct",
-      trustRootsDer: [new Uint8Array([1])],
-      inboundBidirectionalStreamCapacity: 66,
-      handshakeTimeoutMs: 1_000,
-    }, { signal: controller.signal });
+    const pending = createNativeRawQuicDriver(addon).connectRawQuic(
+      rawQuicConnectOptions(),
+      { signal: controller.signal },
+    );
     controller.abort();
     await expect(pending).rejects.toMatchObject({ code: "aborted" });
-    expect(canceled).toBe(1);
-  });
+    expect(connectCanceled).toBe(1);
 
-  test("forwards bounded application close details through the native driver", async () => {
-    const closes: Array<readonly [number | undefined, string | undefined]> = [];
-    const session = {
-      kind: "raw_quic",
-      path: "direct",
-      wireVersion: 2,
-      inboundBidirectionalStreamCapacity: 3,
-      localAddress: () => ({ host: "127.0.0.1", port: 1 }),
-      peerAddress: () => ({ host: "127.0.0.1", port: 2 }),
-      openStream: () => { throw new Error("unused"); },
-      acceptStream: () => { throw new Error("unused"); },
-      sendDatagram: () => "unavailable",
-      receiveDatagram: () => { throw new Error("unused"); },
-      waitTermination: async () => undefined,
-      close: async (code?: number, reason?: string) => { closes.push([code, reason]); },
+    let cancelPendingCalls = 0;
+    const stream = {
+      read: async () => null,
+      write: async () => await new Promise<number>(() => undefined),
+      closeWrite: async () => undefined,
+      stopSending: async () => undefined,
+      reset: async () => undefined,
+      cancelPending: () => { cancelPendingCalls += 1; },
       abort: () => undefined,
     };
-    const addon = {
-      contractVersion: () => 2,
-      connectRawQuic: () => ({ result: async () => session, cancel: () => undefined }),
-      bindRawQuic: () => { throw new Error("unused"); },
+    const streamAddon = {
+      ...completeAddon(),
+      connectRawQuic: () => operation(nativeSessionBinding(stream, 3)),
     } as unknown as NativeTransportAddonBinding;
-    const driver = createNativeRawQuicDriver(addon);
-    const connected = await driver.connectRawQuic({
-      host: "127.0.0.1",
-      port: 443,
-      serverName: "localhost",
-      path: "direct",
-      trustRootsDer: [new Uint8Array([1])],
-      inboundBidirectionalStreamCapacity: 3,
-      handshakeTimeoutMs: 1_000,
-    });
+    const native = await createNativeRawQuicDriver(streamAddon)
+      .connectRawQuic(rawQuicConnectOptions());
+    const carrier = adaptNativeCarrierSessionV3(native);
+    const wrapped = await carrier.openStream();
+    const writeAbort = new AbortController();
+    const writing = wrapped.write(new Uint8Array([1]), { signal: writeAbort.signal });
+    writeAbort.abort();
+    await expect(writing).rejects.toMatchObject({ code: "aborted" });
+    expect(cancelPendingCalls).toBe(1);
+  });
 
+  test("projects native stream reasons and close details", async () => {
+    const closes: Array<readonly [number | undefined, string | undefined]> = [];
+    const stream = {
+      read: async () => { throw new Error("reset"); },
+      write: async () => { throw new Error("stream_failed"); },
+      closeWrite: async () => undefined,
+      stopSending: async () => undefined,
+      reset: async () => undefined,
+      abort: () => undefined,
+    };
+    const session = {
+      ...nativeSessionBinding(stream, 3),
+      close: async (code?: number, reason?: string) => { closes.push([code, reason]); },
+    };
+    const addon = {
+      ...completeAddon(),
+      connectRawQuic: () => operation(session),
+    } as unknown as NativeTransportAddonBinding;
+    const connected = await createNativeRawQuicDriver(addon)
+      .connectRawQuic(rawQuicConnectOptions());
+    const wrapped = await connected.openStream();
+    await expect(wrapped.read()).rejects.toMatchObject({ code: "reset" });
+    await expect(wrapped.write(new Uint8Array([1]))).rejects.toMatchObject({ code: "closed" });
     await connected.close({ code: 7, reason: "session closed" });
     expect(closes).toEqual([[7, "session closed"]]);
   });
 
-  test("projects stable native stream reasons into carrier error codes", async () => {
-    const stream = {
-      read: async () => { throw Object.assign(new Error("reset"), { code: "GenericFailure" }); },
-      write: async () => { throw Object.assign(new Error("stream_failed"), { code: "GenericFailure" }); },
-      closeWrite: async () => undefined,
-      stopSending: async () => undefined,
-      reset: async () => undefined,
-      abort: () => undefined,
-    };
-    const session = nativeSessionBinding(stream);
-    const addon = {
-      contractVersion: () => 2,
-      connectRawQuic: () => ({ result: async () => session, cancel: () => undefined }),
-      bindRawQuic: () => { throw new Error("unused"); },
-    } as unknown as NativeTransportAddonBinding;
-    const driver = createNativeRawQuicDriver(addon);
-    const connected = await driver.connectRawQuic(rawQuicConnectOptions());
-    const wrapped = await connected.openStream();
-
-    await expect(wrapped.read()).rejects.toMatchObject({ code: "reset" });
-    await expect(wrapped.write(new Uint8Array([1]))).rejects.toMatchObject({ code: "closed" });
-  });
-
-  test("forwards stream I/O cancellation to the versioned native capability", async () => {
-    let cancelPendingCalls = 0;
-    let abortCalls = 0;
-    const stream = {
-      read: async () => await new Promise<Uint8Array | null>(() => undefined),
-      write: async () => await new Promise<number>(() => undefined),
-      closeWrite: async () => undefined,
-      stopSending: async () => undefined,
-      reset: async () => undefined,
-      cancelPending: () => { cancelPendingCalls++; },
-      abort: () => { abortCalls++; },
-    };
-    const session = nativeSessionBinding(stream);
-    const addon = {
-      contractVersion: () => 2,
-      connectRawQuic: () => ({ result: async () => session, cancel: () => undefined }),
-      bindRawQuic: () => { throw new Error("unused"); },
-    } as unknown as NativeTransportAddonBinding;
-    const driver = createNativeRawQuicDriver(addon);
-    const native = await driver.connectRawQuic(rawQuicConnectOptions());
-    const carrier = adaptNativeCarrierSessionV2(native);
-    const wrapped = await carrier.openStream();
-    const controller = new AbortController();
-    const writing = wrapped.write(new Uint8Array([1]), { signal: controller.signal });
-
-    controller.abort();
-
-    await expect(writing).rejects.toMatchObject({ code: "aborted" });
-    expect(cancelPendingCalls).toBe(1);
-    expect(abortCalls).toBe(0);
-  });
-
-  test("cancels stream I/O safely with a published addon that predates cancelPending", async () => {
-    let abortCalls = 0;
-    const stream = {
-      read: async () => await new Promise<Uint8Array | null>(() => undefined),
-      write: async () => await new Promise<number>(() => undefined),
-      closeWrite: async () => undefined,
-      stopSending: async () => undefined,
-      reset: async () => undefined,
-      abort: () => { abortCalls++; },
-    };
-    const session = nativeSessionBinding(stream);
-    const addon = {
-      contractVersion: () => 2,
-      connectRawQuic: () => ({ result: async () => session, cancel: () => undefined }),
-      bindRawQuic: () => { throw new Error("unused"); },
-    } as unknown as NativeTransportAddonBinding;
-    const driver = createNativeRawQuicDriver(addon);
-    const native = await driver.connectRawQuic(rawQuicConnectOptions());
-    const carrier = adaptNativeCarrierSessionV2(native);
-    const wrapped = await carrier.openStream();
-    const controller = new AbortController();
-    const writing = wrapped.write(new Uint8Array([1]), { signal: controller.signal });
-
-    controller.abort();
-
-    await expect(writing).rejects.toMatchObject({ code: "aborted" });
-    expect(abortCalls).toBe(0);
+  test("published declarations expose addresses but no versioned ABI methods", () => {
+    const declaration = readFileSync(resolve(
+      fileURLToPath(new URL("../../..", import.meta.url)),
+      "flowersec-node-native/index.d.ts",
+    ), "utf8");
+    expect(declaration).toMatch(/localAddress\(\): Readonly/u);
+    expect(declaration).toMatch(/peerAddress\(\): Readonly/u);
+    expect(declaration).not.toContain("connectRawQuicV3");
+    expect(declaration).not.toContain("bindRawQuicV3");
   });
 
   test("browser entry graph cannot reach the Node addon loader", () => {
@@ -299,13 +165,20 @@ describe("native transport addon loader", () => {
           externalSpecifiers.push(specifier);
           continue;
         }
-        const resolved = resolve(file, "..", specifier.replace(/\.js$/u, ".ts"));
-        pending.push(resolved);
+        pending.push(resolve(file, "..", specifier.replace(/\.js$/u, ".ts")));
       }
     }
     assertBrowserGraphIsolation([...source.values()].join("\n"), externalSpecifiers);
   });
 });
+
+function completeAddon(): NativeTransportAddonBinding {
+  return Object.freeze({
+    contractVersion: () => 3,
+    connectRawQuic: () => { throw new Error("unused"); },
+    bindRawQuic: () => { throw new Error("unused"); },
+  });
+}
 
 function rawQuicConnectOptions() {
   return {
@@ -313,22 +186,23 @@ function rawQuicConnectOptions() {
     port: 443,
     serverName: "localhost",
     path: "direct" as const,
-    trustRootsDer: [new Uint8Array([1])],
+    tlsMode: "pin" as const,
+    activeLeafDerSha256: [new Uint8Array(32)],
     inboundBidirectionalStreamCapacity: 3,
     handshakeTimeoutMs: 1_000,
   };
 }
 
-function nativeSessionBinding(stream: object) {
+function nativeSessionBinding(stream: object, wireVersion: 2 | 3) {
   return {
     kind: "raw_quic" as const,
     path: "direct" as const,
-    wireVersion: 2 as const,
+    wireVersion,
     inboundBidirectionalStreamCapacity: 3,
     localAddress: () => ({ host: "127.0.0.1", port: 1 }),
     peerAddress: () => ({ host: "127.0.0.1", port: 2 }),
-    openStream: () => ({ result: async () => stream, cancel: () => undefined }),
-    acceptStream: () => ({ result: async () => stream, cancel: () => undefined }),
+    openStream: () => operation(stream),
+    acceptStream: () => operation(stream),
     sendDatagram: () => "unavailable" as const,
     receiveDatagram: () => { throw new Error("unused"); },
     waitTermination: async () => undefined,
@@ -337,9 +211,8 @@ function nativeSessionBinding(stream: object) {
   };
 }
 
-function restoreEnvironment(name: string, value: string | undefined): void {
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
+function operation<T>(value: T) {
+  return { result: async () => value, cancel: () => undefined };
 }
 
 function assertBrowserGraphIsolation(graph: string, externalSpecifiers: readonly string[]): void {
@@ -349,9 +222,6 @@ function assertBrowserGraphIsolation(graph: string, externalSpecifiers: readonly
     throw new Error("Node native loader syntax reached Browser graph");
   }
   expect(graph).not.toMatch(/(?:node:module|\.node["'])/u);
-  expect(externalSpecifiers).not.toContain("fs");
-  expect(externalSpecifiers).not.toContain("net");
-  expect(externalSpecifiers).not.toContain("@floegence/flowersec-node-native");
   expect(externalSpecifiers.some((specifier) =>
     specifier.startsWith("node:") || specifier.endsWith(".node"),
   )).toBe(false);

@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
+	"github.com/floegence/flowersec/flowersec-go/v4/controlplane"
 )
 
 type request struct {

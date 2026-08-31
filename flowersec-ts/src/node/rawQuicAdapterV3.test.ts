@@ -3,7 +3,7 @@ import { rootCertificates } from "node:tls";
 
 import type { ArtifactV3, CanonicalArtifactCandidateV3 } from "../v3/artifact.js";
 import type { NativeCarrierSessionV3 } from "../v3/carrier.js";
-import type { NativeRawQuicConnectOptionsV3, NativeRawQuicDriverV3 } from "./nativeTransportAddon.js";
+import type { NativeRawQuicConnectOptions, NativeRawQuicDriver } from "./nativeTransportAddon.js";
 import { createNodeRawQuicClientV3 } from "./rawQuicAdapterV3.js";
 
 const pin = new Uint8Array(32).fill(7);
@@ -14,7 +14,7 @@ const artifact = {
 
 describe("Node raw QUIC v3 adapter", () => {
   test("passes CA roots without any pin field", async () => {
-    const calls: NativeRawQuicConnectOptionsV3[] = [];
+    const calls: NativeRawQuicConnectOptions[] = [];
     const roots = rootCertificates[0]!;
     await createNodeRawQuicClientV3(driver(calls), candidate({ mode: "ca" }), artifact, now(), { roots });
 
@@ -25,7 +25,7 @@ describe("Node raw QUIC v3 adapter", () => {
   });
 
   test("snapshots active pins without passing trust roots", async () => {
-    const calls: NativeRawQuicConnectOptionsV3[] = [];
+    const calls: NativeRawQuicConnectOptions[] = [];
     await createNodeRawQuicClientV3(driver(calls), candidate({
       mode: "pin",
       pins: [{
@@ -42,11 +42,11 @@ describe("Node raw QUIC v3 adapter", () => {
   });
 
   test("maps native pin mismatch without attempting a CA fallback", async () => {
-    const connectRawQuic = vi.fn(async (_options: NativeRawQuicConnectOptionsV3) => { throw new Error("pin_mismatch"); });
+    const connectRawQuic = vi.fn(async (_options: NativeRawQuicConnectOptions) => { throw new Error("pin_mismatch"); });
     const nativeDriver = {
       connectRawQuic,
       bindRawQuic: async () => { throw new Error("unused"); },
-    } as NativeRawQuicDriverV3;
+    } as NativeRawQuicDriver;
 
     await expect(createNodeRawQuicClientV3(nativeDriver, candidate({
       mode: "pin",
@@ -64,7 +64,7 @@ describe("Node raw QUIC v3 adapter", () => {
   });
 });
 
-function driver(calls: NativeRawQuicConnectOptionsV3[]): NativeRawQuicDriverV3 {
+function driver(calls: NativeRawQuicConnectOptions[]): NativeRawQuicDriver {
   return {
     connectRawQuic: async (options) => {
       calls.push(options);

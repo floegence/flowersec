@@ -2,7 +2,7 @@
 
 /// Unicode version used by the Flowersec v3 IDNA contract.
 #[cfg(test)]
-pub const UNICODE_VERSION: &str = "15.1.0";
+pub const UNICODE_VERSION: &str = crate::unicode151_generated::UNICODE_VERSION;
 
 /// Stable failure returned when a host is not valid under the v3 IDNA contract.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -15,13 +15,20 @@ pub enum IdnaHostErrorV3 {
 
 /// Returns a lowercase A-label host using the frozen Flowersec v3 IDNA profile.
 ///
-/// The direct dependency pins `idna_mapping` 1.0.0, whose committed table is
-/// Unicode 15.1 UTS #46. This rejects code points introduced after Unicode 15.1
-/// even when the host runtime carries newer Unicode data. Strict processing
-/// enables STD3, Bidi, ContextJ, hyphen, A-label round-trip, and DNS length checks.
+/// The repository-owned scalar table limits both U-label input and decoded
+/// A-labels before the current IDNA implementation performs normalization,
+/// Punycode, Bidi, ContextJ, hyphen, and DNS length checks.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn lookup_ascii(host: &str) -> Result<String, IdnaHostErrorV3> {
     if host.is_empty() || host.ends_with('.') {
+        return Err(IdnaHostErrorV3::InvalidHost);
+    }
+
+    if !assigned(host) {
+        return Err(IdnaHostErrorV3::InvalidHost);
+    }
+    let (decoded, decoded_result) = idna::domain_to_unicode(host);
+    if decoded_result.is_err() || !assigned(&decoded) {
         return Err(IdnaHostErrorV3::InvalidHost);
     }
 
@@ -37,4 +44,10 @@ pub fn lookup_ascii(host: &str) -> Result<String, IdnaHostErrorV3> {
         return Err(IdnaHostErrorV3::InvalidHost);
     }
     Ok(ascii.to_ascii_lowercase())
+}
+
+fn assigned(value: &str) -> bool {
+    value
+        .chars()
+        .all(|scalar| crate::unicode151_generated::assigned(scalar as u32))
 }

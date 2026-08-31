@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { u32be } from "../utils/bin.js";
-import type { ByteStreamV2, SessionV2, StreamOpenOptionsV2 } from "../v2/contract.js";
+import type { ByteStream, Session, StreamOpenOptions } from "../public/contract.js";
 import { createProxyRuntime } from "./runtime.js";
 
 function concat(chunks: readonly Uint8Array[]): Uint8Array {
@@ -16,7 +16,7 @@ function jsonFrame(value: unknown): Uint8Array {
   return concat([u32be(payload.length), payload]);
 }
 
-class FakeStream implements ByteStreamV2 {
+class FakeStream implements ByteStream {
   readonly kind = "fake";
   terminalError = undefined;
   readonly writes: Uint8Array[] = [];
@@ -42,12 +42,12 @@ class FakeStream implements ByteStreamV2 {
   async close(): Promise<void> { this.closed = true; }
 }
 
-class FakeSession implements SessionV2 {
-  readonly rpc = {} as SessionV2["rpc"];
+class FakeSession implements Session {
+  readonly rpc = {} as Session["rpc"];
   readonly termination = new Promise<never>(() => undefined);
-  readonly opens: Array<Readonly<{ kind: string; options: StreamOpenOptionsV2 | undefined }>> = [];
+  readonly opens: Array<Readonly<{ kind: string; options: StreamOpenOptions | undefined }>> = [];
   constructor(private readonly streams: FakeStream[]) {}
-  async openStream(kind: string, options?: StreamOpenOptionsV2): Promise<ByteStreamV2> {
+  async openStream(kind: string, options?: StreamOpenOptions): Promise<ByteStream> {
     this.opens.push({ kind, options });
     const stream = this.streams.shift();
     if (stream === undefined) throw new Error("missing fake stream");
@@ -76,7 +76,7 @@ async function collectPort(port: MessagePort, terminal: string): Promise<Record<
   });
 }
 
-describe("SessionV2 proxy runtime", () => {
+describe("Session proxy runtime", () => {
   it("canonicalizes HTTP and WebSocket paths before applying policy and sending upstream", async () => {
     for (const path of [
       "/safe/../admin",
@@ -209,7 +209,7 @@ describe("SessionV2 proxy runtime", () => {
     runtime.dispose();
   });
 
-  it("opens WebSockets through a carrier-neutral ByteStreamV2", async () => {
+  it("opens WebSockets through a carrier-neutral ByteStream", async () => {
     const stream = new FakeStream([jsonFrame({ v: 1, ok: true, protocol: "chat" })]);
     const session = new FakeSession([stream]);
     const runtime = createProxyRuntime({ session });

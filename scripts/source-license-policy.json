@@ -61,7 +61,7 @@
       ],
       "sha256": "483acb265f182907d1caf6cff9c16c96f31325ed23792832cc5d8b12d5f88c8a"
     },
-    "pkg:npm/tr46@5.0.0": {
+    "pkg:npm/tr46@6.0.0": {
       "copyright": "Copyright (c) Sebastian Mayr",
       "license": "MIT",
       "licenseTextLines": [
@@ -216,6 +216,10 @@
     "Python-2.0": {
       "decision": "approved",
       "concludedExpression": "Python-2.0"
+    },
+    "Unicode-3.0": {
+      "decision": "approved",
+      "concludedExpression": "Unicode-3.0"
     },
     "Unlicense OR MIT": {
       "decision": "approved",

@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
 )
 
 type encryptedStream struct {

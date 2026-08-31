@@ -40,7 +40,7 @@ fn notification_subscription_public_shape_is_stable() {
 #[test]
 fn shared_notification_vectors_match_rust_decoding_and_lifecycle_contract() {
     let fixture: NotificationFixture = serde_json::from_str(include_str!(
-        "../../testdata/transport_v2/rpc_notification_vectors.json"
+        "../../testdata/transport_v3/rpc_notification_vectors.json"
     ))
     .expect("shared notification fixture");
     assert_eq!(fixture.version, 1);

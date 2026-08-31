@@ -11,7 +11,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use cert_test_builder::{
     CertificateParams, ExtendedKeyUsagePurpose, KeyPair, KeyUsagePurpose, PKCS_ECDSA_P384_SHA384,
 };
-use flowersec::v3::{
+use flowersec::{
     Artifact, ArtifactLease, ConnectErrorCode, ConnectorOptions, RetryDisposition, connect,
 };
 use rustls::{

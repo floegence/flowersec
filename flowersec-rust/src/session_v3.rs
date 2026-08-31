@@ -3458,10 +3458,10 @@ impl EncryptedStreamV3 {
                     }
                     result => result,
                 };
-            if let Err(error) = result {
-                if !session.is_closed() {
-                    fail_session_v3(&session, io::Error::new(error.kind(), error.to_string()));
-                }
+            if let Err(error) = result
+                && !session.is_closed()
+            {
+                fail_session_v3(&session, io::Error::new(error.kind(), error.to_string()));
             }
         }
         self.buffered_reads.terminate();
@@ -3973,8 +3973,10 @@ async fn accept_carrier_loop_v3(session: Arc<SelfSession>) {
                 Ok(carrier) => {
                     let session = session.clone();
                     tokio::spawn(async move {
-                        if let Err(error) = accept_one_stream_v3(session.clone(), carrier).await {
-                            if !session.is_closed() { fail_session_v3(&session, error); }
+                        if let Err(error) = accept_one_stream_v3(session.clone(), carrier).await
+                            && !session.is_closed()
+                        {
+                            fail_session_v3(&session, error);
                         }
                     });
                 }
@@ -5853,7 +5855,9 @@ mod tests {
             let message = vector
                 .message_hex
                 .as_bytes()
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
                 .collect::<Vec<_>>();
             let mut malformed = format!(
@@ -6434,7 +6438,7 @@ mod tests {
             "../../testdata/transport_v3/open_unicode_vectors.json"
         ))
         .unwrap();
-        let open_id = fixture["inherited_codecs"]["open"]["vector_id"]
+        let open_id = fixture["application_codecs"]["open"]["vector_id"]
             .as_str()
             .unwrap();
         let open = open_fixture["positive"]
@@ -6455,7 +6459,7 @@ mod tests {
         assert_eq!(decoded.metadata(), payload.metadata());
 
         let envelope: RpcEnvelopeWireV3 = serde_json::from_str(
-            fixture["inherited_codecs"]["rpc"]["envelope_json"]
+            fixture["application_codecs"]["rpc"]["envelope_json"]
                 .as_str()
                 .unwrap(),
         )
@@ -6471,7 +6475,9 @@ mod tests {
         assert_eq!(value.len() % 2, 0, "{field}: even hex length");
         value
             .as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 let digits = std::str::from_utf8(pair).expect("ASCII hex");
                 u8::from_str_radix(digits, 16).expect("valid hex")

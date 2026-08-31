@@ -41,7 +41,7 @@ impl RawQuicListenerV3 {
         };
         limits.validate()?;
         let config =
-            NativeServerConfig::new_v3(profile, certificate_chain_der, private_key_der, limits)?;
+            NativeServerConfig::new(profile, certificate_chain_der, private_key_der, limits)?;
         Ok(Self {
             inner: NativeListener::bind(address, config)?,
         })
@@ -369,7 +369,7 @@ mod tests {
 
     async fn run_loopback_quic(identity: TestIdentityV3, policy: NativeTlsPolicyV3) -> bool {
         let limits = NativeLimits::for_session(3, Duration::from_secs(3)).unwrap();
-        let server_config = NativeServerConfig::new_v3(
+        let server_config = NativeServerConfig::new(
             NativePathProfile::Direct,
             identity.chain,
             identity.key,

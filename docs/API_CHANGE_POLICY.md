@@ -39,9 +39,9 @@ The Go control-plane package receives structured endpoints containing URL and
 typed TLS policy. It does not fetch pins, issue certificates, install trust
 roots, or manage certificate rollout. The deployment system owns those tasks.
 
-v3 APIs accept only v3 artifacts and use only v3 routes, profiles, frame
-magics, and cryptographic domains. Any retained v2 compatibility API is
-explicitly versioned and cannot be selected as fallback from a v3 failure.
+Current APIs accept only Transport v3 artifacts and use only current routes,
+profiles, frame magics, and cryptographic domains. There is no compatibility
+API or fallback path.
 CA and pin are mutually exclusive, and a failed pin candidate never retries
 the same endpoint as CA.
 

@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/runtimev3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/runtimev3"
 )
 
 func TestAllEligibleCandidatesUnsupportedCreatesNoTransport(t *testing.T) {

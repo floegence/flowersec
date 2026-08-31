@@ -87,24 +87,26 @@ The portable core keeps the shared session model consistent across SDKs. Each
 SDK profile documents platform support, while a language convenience may adapt
 syntax without changing shared behavior.
 
+<!-- capability-table:start -->
 | App capability | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
+| Opaque, single-use connection artifacts | Yes | Yes | Yes | Yes |
+| One-shot secure connection | Yes | Yes | Yes | Yes |
 | End-to-end encrypted sessions | Yes | Yes | Yes | Yes |
-| Send RPC calls and notifications | Yes | Yes | Yes | Yes |
-| Receive RPC notifications | Yes | Yes | Yes | Yes |
-| Reliable byte streams | Yes | Yes | Yes | Yes |
-| Serve application streams on any Session | Yes | Yes | Yes | Yes |
+| RPC calls and notifications | Yes | Yes | Yes | Yes |
+| Validated stream metadata | Yes | Yes | Yes | Yes |
+| Application stream handlers | Yes | Yes | Yes | Yes |
 | Long-lived connection recovery | Yes | Yes | Yes | Yes |
-| Unreliable messages when available | Yes | Yes | No | Yes |
-| Browser connections | No | Yes | No | No |
-| Apple client connections | No | No | Yes | No |
-| Native QUIC connections | Yes | Node.js | No | Yes |
-| WebSocket connections | Yes | Yes | Yes | Yes |
-| WebTransport connections | Go H4 | Browser H3 client (when available) | No | No |
-| Server-side session acceptance | Yes | Node.js | No | Yes |
-| Opaque tunnel runtime | Yes | Node.js | No | Yes |
-| Control-plane invitation issuance | Yes | No | No | No |
-| HTTP and WebSocket ProxyServer | Yes | Node.js | No | Yes |
+| Negotiated unreliable messages | Yes | Yes | No | Yes |
+| Client RPC handlers | Yes | Yes | No | Yes |
+| Server-side session acceptance | Yes | Yes | No | Yes |
+| Server session handlers | Yes | Yes | No | Yes |
+| Control-plane issuance and authorization | Yes | No | No | No |
+| Direct and tunneled admission | Yes | Yes | No | Yes |
+| HTTP and WebSocket ProxyServer | Yes | Yes | No | Yes |
+| Carrier-neutral stream contract | Yes | Yes | Yes | Yes |
+| Transport v3 wire security | Yes | Yes | Yes | Yes |
+<!-- capability-table:end -->
 
 Deployment profiles keep platform availability separate from the shared
 Flowersec application protocol:

@@ -2,7 +2,7 @@ package rpcwire
 
 import "encoding/json"
 
-// Envelope is the private JSON framing contract used by the v2 session RPC slot.
+// RpcEnvelope is the private JSON framing contract used by the session RPC slot.
 type RpcEnvelope struct {
 	TypeId     uint32          `json:"type_id"`
 	RequestId  uint64          `json:"request_id"`

@@ -24,10 +24,10 @@ var transportV3TopLevelKeys = []string{
 }
 
 type transportV3Registry struct {
-	Version           int               `json:"version"`
-	Status            string            `json:"status"`
-	Design            transportV3Design `json:"design"`
-	Docs              map[string]string `json:"docs"`
+	Version           int                            `json:"version"`
+	Status            string                         `json:"status"`
+	Design            transportV3Design              `json:"design"`
+	Docs              map[string]string              `json:"docs"`
 	FixtureGeneration []transportV3FixtureGeneration `json:"fixture_generation"`
 	ArtifactSchema    struct {
 		CollectionRules struct {
@@ -111,7 +111,6 @@ type transportV3FixtureGeneration struct {
 type transportV3Design struct {
 	Version      string                    `json:"version"`
 	SHA256       string                    `json:"sha256"`
-	Baseline     string                    `json:"baseline_commit"`
 	SourcePath   string                    `json:"source_path"`
 	Traceability []transportV3Traceability `json:"traceability"`
 }
@@ -324,28 +323,31 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 	if hex.EncodeToString(designDigest[:]) != registry.Design.SHA256 {
 		return fmt.Errorf("%s design hash drifted", transportV3ContractPath)
 	}
-	if registry.Design.Baseline != "026cb52d116d2a04de50d0f0621fff57c7657120" {
-		return fmt.Errorf("%s design baseline drifted", transportV3ContractPath)
-	}
 	wantFixtureGeneration := []transportV3FixtureGeneration{
 		{
-			Producer: "testdata/transport_v3/generate_contract_vectors.mjs",
+			Producer:     "testdata/transport_v3/generate_contract_vectors.mjs",
 			CheckCommand: []string{"node", "testdata/transport_v3/generate_contract_vectors.mjs", "--check"},
 			Outputs: []string{
 				"testdata/transport_v3/artifact_vectors.json",
 				"testdata/transport_v3/capability_vectors.json",
 				"testdata/transport_v3/controller_vectors.json",
+				"testdata/transport_v3/version_isolation_vectors.json",
+			},
+		},
+		{
+			Producer:     "testdata/transport_v3/validate_application_vectors.mjs",
+			CheckCommand: []string{"node", "testdata/transport_v3/validate_application_vectors.mjs", "--check"},
+			Outputs: []string{
 				"testdata/transport_v3/idna_vectors.json",
 				"testdata/transport_v3/open_unicode_vectors.json",
 				"testdata/transport_v3/rpc_error_vectors.json",
 				"testdata/transport_v3/rpc_malformed_envelopes.json",
 				"testdata/transport_v3/rpc_notification_vectors.json",
 				"testdata/transport_v3/session_handler_vectors.json",
-				"testdata/transport_v3/version_isolation_vectors.json",
 			},
 		},
 		{
-			Producer: "testdata/transport_v3/generate_crypto_vectors.mjs",
+			Producer:     "testdata/transport_v3/generate_crypto_vectors.mjs",
 			CheckCommand: []string{"node", "testdata/transport_v3/generate_crypto_vectors.mjs", "--check"},
 			Outputs: []string{
 				"testdata/transport_v3/crypto_vectors.json",
@@ -354,12 +356,12 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 			},
 		},
 		{
-			Producer: "testdata/transport_v3/generate_handshake_vectors.mjs",
+			Producer:     "testdata/transport_v3/generate_handshake_vectors.mjs",
 			CheckCommand: []string{"node", "testdata/transport_v3/generate_handshake_vectors.mjs", "--check"},
-			Outputs: []string{"testdata/transport_v3/handshake_vectors.json"},
+			Outputs:      []string{"testdata/transport_v3/handshake_vectors.json"},
 		},
 		{
-			Producer:    "flowersec-go/internal/cmd/issuer-admission-vectors/main.go",
+			Producer:     "flowersec-go/internal/cmd/issuer-admission-vectors/main.go",
 			CheckCommand: []string{"go", "-C", "flowersec-go", "run", "./internal/cmd/issuer-admission-vectors", "--check"},
 			Outputs:      []string{"testdata/transport_v3/go_issuer_admission_vectors.json"},
 		},
@@ -436,13 +438,8 @@ func validateTransportV3Registry(repoRoot string, registry *transportV3Registry)
 		return fmt.Errorf("%s traceability clauses = %v, want %v", transportV3ContractPath, gotClauses, wantClauses)
 	}
 	clause4 := traceabilityByClause["4"]
-	wantClause4Shared := []string{
-		"flowersec-ts/src/v2/protocol.ts",
-		"flowersec-swift/Sources/Flowersec/TransportV2.swift",
-		"flowersec-swift/Sources/Flowersec/TransportV2Open.swift",
-	}
-	if !slices.Equal(clause4.SharedSource, wantClause4Shared) {
-		return fmt.Errorf("%s traceability clause %q shared_source = %v, want %v", transportV3ContractPath, clause4.Clause, clause4.SharedSource, wantClause4Shared)
+	if len(clause4.SharedSource) != 0 {
+		return fmt.Errorf("%s traceability clause %q must be self-contained", transportV3ContractPath, clause4.Clause)
 	}
 	if err := validateTransportV3ProviderTraceability(traceabilityByClause); err != nil {
 		return err
@@ -580,7 +577,7 @@ func validateTransportV3ProviderTraceability(
 	requiredTests := []string{
 		"flowersec-ts/src/v3/nodeRuntime.test.ts",
 		"flowersec-ts/src/node/rawQuicAdapterV3.test.ts",
-		"flowersec-swift/Tests/FlowersecTests/ConnectorV2Tests.swift",
+		"flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift",
 	}
 	for _, clause := range []string{"9", "13.2"} {
 		entry, ok := traceability[clause]
@@ -656,7 +653,7 @@ func validateTransportV3ConsumerEvidence(fixtureID, language, body string) error
 	case "session_handlers/swift":
 		required = []string{
 			"duplicate_kind", "rpc_type_ids", "duplicate_type_id",
-			"inherited_codec_from", "transport_contract_version",
+			"transport_contract_version",
 			"alreadyRegistered", "RPCEnvelope(data:", "router.register",
 		}
 	case "issuer_admission/go":
@@ -930,14 +927,13 @@ func validateTransportV3FixtureShapes(repoRoot string) error {
 			Valid bool   `json:"valid"`
 		} `json:"rpc_type_ids"`
 		DuplicateTypeID          uint64 `json:"duplicate_type_id"`
-		InheritedCodecFrom       string `json:"inherited_codec_from"`
 		TransportContractVersion int    `json:"transport_contract_version"`
 	}
 	if err := read("session_handler_vectors.json", &sessionHandlers); err != nil {
 		return err
 	}
 	if len(sessionHandlers.StreamKinds) == 0 || sessionHandlers.DuplicateKind == "" ||
-		sessionHandlers.DuplicateTypeID == 0 || sessionHandlers.InheritedCodecFrom != "transport_v2" ||
+		sessionHandlers.DuplicateTypeID == 0 ||
 		sessionHandlers.TransportContractVersion != 3 || len(sessionHandlers.RPCTypeIDs) != 3 ||
 		sessionHandlers.RPCTypeIDs[0].Value != 0 || sessionHandlers.RPCTypeIDs[0].Valid ||
 		sessionHandlers.RPCTypeIDs[1].Value != 1 || !sessionHandlers.RPCTypeIDs[1].Valid ||
@@ -1051,8 +1047,7 @@ func isTransportV3SourcePath(name string, registryOwned bool) bool {
 	if strings.Contains(lower, "/v3/") || strings.Contains(lower, "v3/") || strings.Contains(lower, "/v3.") || strings.Contains(lower, "v3_") || strings.Contains(lower, "v3-") || strings.HasSuffix(lower, "v3.go") || strings.HasSuffix(lower, "v3.rs") || strings.HasSuffix(lower, "v3.swift") {
 		return true
 	}
-	// These are the Rust v3 implementation files whose public names are shared
-	// with the v2 facade; v2 remains in the explicit *_v2 modules.
+	// These version-neutral Rust modules implement current controller behavior.
 	if strings.HasPrefix(lower, "flowersec-rust/src/") {
 		for _, base := range []string{"connection_controller.rs", "connection_controller_vectors.rs"} {
 			if strings.HasSuffix(lower, "/"+base) {

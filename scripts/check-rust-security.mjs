@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const cargoAuditVersion = "0.22.2";
-const cargoDenyVersion = "0.19.9";
+const cargoDenyVersion = "0.20.2";
 
 function defaultRun(command, args, options = {}) {
   const result = spawnSync(command, args, {

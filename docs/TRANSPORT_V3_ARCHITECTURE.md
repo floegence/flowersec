@@ -581,18 +581,13 @@ readback.
 
 ### 12.4 SDK Major and Deployment Isolation
 
-The SDK and deployment boundary is explicit and versioned:
+Flowersec 4.x has one SDK and wire boundary:
 
-- the Go module uses the `/v3` module path;
-- the TypeScript package, Rust crate, and Swift package/tag are released as
-  v3 majors;
-- v3 uses an independent server path, WebSocket subprotocol, and QUIC ALPN;
-- v2 artifacts cannot be passed to v3 APIs, and v3 artifacts cannot be passed
-  to v2 APIs;
-- a parallel migration runs independent v2 and v3 listeners, with the
-  application explicitly selecting the SDK major;
-- Flowersec provides no runtime automatic upgrade or downgrade between v2 and
-  v3.
+- the Go module uses the `/v4` module path;
+- the TypeScript package, Rust crate, and Swift package/tag use major version 4;
+- server paths, WebSocket subprotocols, and QUIC ALPN are fixed by Transport v3;
+- inputs from another wire generation fail closed; and
+- runtime protocol negotiation, automatic upgrade, and downgrade are absent.
 
 ## 13. Explicit Exclusions
 
@@ -606,5 +601,5 @@ expose pins.
 Flowersec does not issue certificates, manage certificate authorities, or
 orchestrate deployment. Transport v3 does not redesign E2EE, RPC, stream,
 DATAGRAM, or application interfaces. Production artifacts permit no plaintext
-loopback. The wire protocol does not negotiate v2/v3 versions, and failure
-never falls back to another version.
+loopback. The wire protocol does not negotiate versions, and failure never
+falls back to another version.

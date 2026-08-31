@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
-	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
+	"github.com/floegence/flowersec/flowersec-go/v4/controlplane"
 )
 
 func TestAcceptorResolvesHandlersBeforeDirectSessionEstablishment(t *testing.T) {

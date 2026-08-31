@@ -45,7 +45,7 @@ public final class StreamHandlers: @unchecked Sendable {
     kind: String,
     handler: @escaping StreamHandler
   ) throws {
-    guard OpenPayloadV2.validKind(kind),
+    guard OpenPayloadV3.validKind(kind),
           kind != "flowersec.rpc.v2",
           kind != "flowersec.rpc.v3" else {
       throw HandlerRegistrationError.invalidHandler

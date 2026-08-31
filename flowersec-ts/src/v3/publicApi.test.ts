@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test, vi } from "vitest";
 
 import {
-  ArtifactHandleV3,
-  ArtifactLeaseV3,
-  ArtifactParseErrorV3,
-  createArtifactLeaseV3,
-  parseArtifactV3,
+  Artifact,
+  ArtifactError,
+  ArtifactLease,
+  createArtifactLease,
+  parseArtifact,
 } from "../facade.js";
 import * as browser from "../browser/index.js";
 import * as node from "../node/index.js";
@@ -18,100 +18,56 @@ const fixture = JSON.parse(readFileSync(
   positive: readonly Readonly<{ artifact_json: string }>[];
   negative: readonly Readonly<{ value: string }>[];
 }>;
-const v2Fixture = JSON.parse(readFileSync(
-  new URL("../../../testdata/transport_v2/artifact_vectors.json", import.meta.url),
-  "utf8",
-)) as Readonly<{ positive: readonly Readonly<{ artifact_json: string }>[] }>;
 
-describe("transport v3 public entry surface", () => {
-  test("parses and leases an opaque v3 artifact without exposing credentials or pins", () => {
-    const handle = parseArtifactV3(fixture.positive[0]!.artifact_json);
-    const lease = createArtifactLeaseV3(handle, vi.fn(async () => undefined));
-    expect(handle).toBeInstanceOf(ArtifactHandleV3);
-    expect(lease).toBeInstanceOf(ArtifactLeaseV3);
+describe("current public entry surface", () => {
+  test("parses and leases an opaque Transport v3 artifact", () => {
+    const handle = parseArtifact(fixture.positive[0]!.artifact_json);
+    const lease = createArtifactLease(handle, vi.fn(async () => undefined));
+    expect(handle).toBeInstanceOf(Artifact);
+    expect(lease).toBeInstanceOf(ArtifactLease);
     expect(JSON.stringify(handle)).toBe("{}");
     expect(JSON.stringify(lease)).toBe("{}");
     expect("path" in handle).toBe(false);
     expect("tls" in handle).toBe(false);
-    expect("pins" in handle).toBe(false);
   });
 
-  test("projects all parse failures into the stable redacted public error", () => {
+  test("projects parse failures and v2 artifacts to invalid_artifact", () => {
     for (const vector of fixture.negative) {
-      expect(() => parseArtifactV3(vector.value)).toThrowError(ArtifactParseErrorV3);
-      try { parseArtifactV3(vector.value); } catch (error) {
-        expect((error as Error).message).not.toContain("https://");
-        expect((error as Error).message).not.toContain("value_b64u");
-      }
+      expect(() => parseArtifact(vector.value)).toThrowError(ArtifactError);
     }
+    expect(() => parseArtifact('{"profile":"flowersec/2","v":2}')).toThrowError(
+      expect.objectContaining({ code: "invalid_artifact" }),
+    );
   });
 
-  test("exports v3 connect and controller factories from both runtime entries", () => {
-    expect(browser.connect).toBe(browser.connectV3);
-    expect(browser.connectV3).toBeTypeOf("function");
-    expect(browser.createConnectionControllerV3).toBeTypeOf("function");
-    expect(node.connect).toBe(node.connectV3);
-    expect(node.connectV3).toBeTypeOf("function");
-    expect(node.createConnectionControllerV3).toBeTypeOf("function");
-    expect(browser.v2.connect).not.toBe(browser.connect);
-    expect(node.v2.connect).not.toBe(node.connect);
-  });
-
-  test("keeps Node v2 server and issuer APIs behind the explicit namespace", () => {
-    expect(node.createAcceptor).toBe(node.createAcceptorV3);
-    expect(node.createTunnelRuntime).toBe(node.createTunnelRuntimeV3);
-    expect(node.RPCHandlers).toBeTypeOf("function");
+  test("exports only unversioned runtime and server names", () => {
+    for (const runtime of [browser, node]) {
+      expect(runtime.connect).toBeTypeOf("function");
+      expect(runtime.createConnectionController).toBeTypeOf("function");
+      expect("connectV3" in runtime).toBe(false);
+      expect("createConnectionControllerV3" in runtime).toBe(false);
+      expect("v2" in runtime).toBe(false);
+    }
+    expect(node.createAcceptor).toBeTypeOf("function");
+    expect(node.createTunnelRuntime).toBeTypeOf("function");
+    expect(node.ProxyServer).toBeTypeOf("function");
     expect(node.SessionHandlers).toBeTypeOf("function");
-    expect(node.SessionHandlers).not.toBe(node.v2.SessionHandlers);
-    for (const legacyExport of [
-      "AuthorizationRecord",
-      "ControlPlaneError",
-      "EndpointSet",
-      "IssuedArtifact",
-      "Issuer",
-      "ProxyServer",
-      "authorizeRuntime",
-      "authorizeTunnelRuntime",
-    ]) {
-      expect(legacyExport in node).toBe(false);
-    }
-    expect(node.RuntimeAuthorizationRequest).toBe(node.RuntimeAuthorizationRequestV3);
-    expect(node.RuntimeAuthorizationRequest).toBeTypeOf("function");
-    expect(node.TunnelAuthorizationGrant).toBe(node.TunnelAuthorizationGrantV3);
-    expect(node.verifyTunnelAuthorizationGrant).toBe(node.verifyTunnelAuthorizationGrantV3);
-    expect(node.v2.Issuer).toBeTypeOf("function");
-    expect(node.v2.authorizeRuntime).toBeTypeOf("function");
-    expect(node.v2.createAcceptor).toBeTypeOf("function");
-    expect(node.v2.createTunnelRuntime).toBeTypeOf("function");
-    expect(node.v2.ProxyServer).toBeTypeOf("function");
+    expect("createAcceptorV3" in node).toBe(false);
+    expect("createTunnelRuntimeV3" in node).toBe(false);
   });
 
-  test("composes the Node v3 authorizer with only an opaque public artifact", () => {
-    const artifact = parseArtifactV3(fixture.positive[0]!.artifact_json);
+  test("composes the authorizer with only an opaque public artifact", () => {
+    const artifact = parseArtifact(fixture.positive[0]!.artifact_json);
     const authorize: node.AcceptorOptions["authorize"] = async () => ({
       accepted: true,
       artifact,
     });
-    const reject: node.AcceptorOptions["authorize"] = async () => ({
-      accepted: false,
-      retryable: false,
-      reason: "not_authorized",
-    });
     expect(authorize).toBeTypeOf("function");
-    expect(reject).toBeTypeOf("function");
-
     const declaration = readFileSync(
       new URL("../../dist/node/acceptorV3.d.ts", import.meta.url),
       "utf8",
     );
     expect(declaration).toContain("ArtifactHandleV3");
     expect(declaration).not.toMatch(/\bArtifactV3\b/u);
-  });
-
-  test("keeps v2 parsing only behind the explicit namespace", () => {
-    const raw = v2Fixture.positive[0]!.artifact_json;
-    expect(() => parseArtifactV3(raw)).toThrowError(expect.objectContaining({ code: "invalid_artifact" }));
-    expect(JSON.stringify(browser.v2.parseArtifact(raw))).toBe("{}");
-    expect(JSON.stringify(node.v2.parseArtifact(raw))).toBe("{}");
   });
 });

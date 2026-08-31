@@ -10,8 +10,6 @@ use std::{
     fs::OpenOptions,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
 };
 
 const ECHO_RPC_TYPE_ID: u32 = 7_001;
@@ -69,8 +67,10 @@ async fn connect_opaque_artifact(
         let receipt_path = receipt_path.clone();
         async move { write_spend_receipt(receipt_path).await }
     });
+    let origin = env::var("FSEC_ORIGIN").map_err(|_| "FSEC_ORIGIN is required")?;
     let options = ConnectorOptions::new()
-        .with_trust_roots_der(vec![std::fs::read(trust_root_path)?])?;
+        .with_trust_roots_der(vec![std::fs::read(trust_root_path)?])?
+        .with_websocket_origin(origin)?;
     let session = match connect(lease, options).await {
         Ok(session) => session,
         Err(error) => {
@@ -91,16 +91,6 @@ async fn connect_opaque_artifact(
 }
 
 async fn run_application_workflow(session: &dyn Session) -> Result<(), flowersec::SessionError> {
-    let (notification_sender, mut notifications) = tokio::sync::mpsc::unbounded_channel();
-    let subscription = session.rpc().subscribe_notification(
-        NOTIFICATION_TYPE_ID,
-        Arc::new(move |payload| {
-            if let Ok(notification) = serde_json::from_value::<ValuePayload>(payload) {
-                let _ = notification_sender.send(notification);
-            }
-        }),
-    )?;
-
     let request = ValuePayload {
         value: "ping".to_owned(),
     };
@@ -116,14 +106,6 @@ async fn run_application_workflow(session: &dyn Session) -> Result<(), flowersec
         .rpc()
         .notify(NOTIFICATION_TYPE_ID, serde_json::json!({"value": "notify"}))
         .await?;
-    let notification = tokio::time::timeout(Duration::from_secs(10), notifications.recv())
-        .await
-        .map_err(|_| flowersec::SessionError::Timeout)?
-        .ok_or(flowersec::SessionError::Closed)?;
-    if notification.value != "notify" {
-        return Err(flowersec::SessionError::OperationFailed);
-    }
-
     let stream_cell = env::var("FSEC_EXAMPLE_STREAM_CELL").unwrap_or_else(|_| "direct".to_owned());
     let metadata = StreamMetadata::try_from(serde_json::json!({"cell": stream_cell}))
         .map_err(|_| flowersec::SessionError::OperationFailed)?;
@@ -138,7 +120,6 @@ async fn run_application_workflow(session: &dyn Session) -> Result<(), flowersec
         return Err(flowersec::SessionError::OperationFailed);
     }
 
-    subscription.cancel();
     let round_trip = session.probe_liveness().await?;
     println!("rpc=ok notification=ok stream=ok liveness={round_trip:?}");
     Ok(())

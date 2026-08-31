@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
 )
 
 func TestSessionHandlersDispatchAcceptedStreamMetadata(t *testing.T) {
@@ -290,7 +290,7 @@ func TestSessionHandlersServeRegisteredRPC(t *testing.T) {
 }
 
 func TestPublicRPCPeerAndSessionHandlersExposeNotifications(t *testing.T) {
-	var peer RPCPeer = &opaqueRPCPeer{}
+	var peer RPCPeer = &opaqueRPCPeerV3{}
 	unsubscribe := peer.OnNotify(41, func(context.Context, json.RawMessage) {})
 	if unsubscribe == nil {
 		t.Fatal("OnNotify() returned nil unsubscribe function")

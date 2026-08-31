@@ -102,7 +102,7 @@ function createFixture(t) {
   write(root, "flowersec-go/go.sum", "github.com/quic-go/quic-go v0.61.0 h1:fixture\ngithub.com/quic-go/webtransport-go v0.12.0 h1:fixture\n");
   write(root, "flowersec-rust/Cargo.toml", `[package]\nname = "fixture"\nversion = "0.1.0"\n\n[dependencies]\nquinn = "=0.11.11"\nrustls = { version = "0.23", default-features = false, features = ["ring", "std"] }\n`);
   write(root, "flowersec-rust/Cargo.lock", `version = 4\n\n[[package]]\nname = "quinn"\nversion = "0.11.11"\n\n[[package]]\nname = "rustls"\nversion = "0.23.0"\n`);
-  write(root, "flowersec-ts/package.json", `${JSON.stringify({ engines: { node: ">=20.19.0" }, dependencies: { ws: "8.21.2" } }, null, 2)}\n`);
+  write(root, "flowersec-ts/package.json", `${JSON.stringify({ engines: { node: ">=24.20.0" }, dependencies: { ws: "8.21.2" } }, null, 2)}\n`);
   write(root, "flowersec-ts/package-lock.json", `${JSON.stringify({ lockfileVersion: 3, packages: { "": { dependencies: { ws: "8.21.2" } }, "node_modules/ws": { version: "8.21.2", integrity: "sha512-fixture", engines: { node: ">=10.0.0" } } } }, null, 2)}\n`);
   const swiftLock = { version: 3, pins: [{ identity: "async-http-client", state: { revision: "abc", version: "1.36.0" } }] };
   write(root, "Package.resolved", `${JSON.stringify(swiftLock, null, 2)}\n`);
@@ -153,9 +153,9 @@ test("Node engines cover every direct production dependency minimum", (t) => {
     const lockPath = path.join(root, "flowersec-ts/package-lock.json");
     const lock = JSON.parse(fs.readFileSync(lockPath, "utf8"));
     lock.packages[""].dependencies["@noble/hashes"] = "2.3.0";
-    lock.packages["node_modules/@noble/hashes"] = { version: "2.3.0", engines: { node: ">=20.19.0" } };
+    lock.packages["node_modules/@noble/hashes"] = { version: "2.3.0", engines: { node: ">=24.20.0" } };
     fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
-  }, /Node engine .* below .*20\.19\.0/);
+  }, /Node engine .* below .*24\.20\.0/);
 });
 
 test("Swift root and example shared pins cannot drift", (t) => {

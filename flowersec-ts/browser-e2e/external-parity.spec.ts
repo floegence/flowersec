@@ -12,18 +12,14 @@ test("Chromium runs the WebSocket client profile", async ({ page, browserName })
   const ready = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as {
     artifact_json: string; trust_pem: string; origin: string; path: "direct" | "tunnel";
   };
-  const protocol = process.env.FLOWERSEC_PARITY_PROTOCOL;
-  if (protocol !== "v2" && protocol !== "v3") {
-    throw new Error("FLOWERSEC_PARITY_PROTOCOL must be v2 or v3");
-  }
   const site = await startBrowserModuleSite(Number(process.env.FLOWERSEC_BROWSER_SITE_PORT));
   try {
     await page.goto(site.origin, { waitUntil: "networkidle" });
-    const result = await page.evaluate(async ({ artifactJSON, path, protocol }) => {
+    const result = await page.evaluate(async ({ artifactJSON, path }) => {
       const sdk = await import("/dist/browser/index.js");
-      const session = protocol === "v2"
-        ? await sdk.v2.connect(sdk.v2.createArtifactLease(sdk.v2.parseArtifact(artifactJSON), async () => undefined))
-        : await sdk.connect(sdk.createArtifactLease(sdk.parseArtifact(artifactJSON), async () => undefined));
+      const session = await sdk.connect(
+        sdk.createArtifactLease(sdk.parseArtifact(artifactJSON), async () => undefined),
+      );
       const echo = await session.rpc.call(7001, { value: "ping" }, (payload) => payload);
       if (!echo.ok || echo.payload.value !== "ping") throw new Error("RPC echo failed");
       await session.rpc.notify(7002, { value: "notify" });
@@ -49,7 +45,7 @@ test("Chromium runs the WebSocket client profile", async ({ page, browserName })
       if (!completion.ok || completion.payload.value !== "complete") throw new Error("completion barrier failed");
       await session.close();
       return true;
-    }, { artifactJSON: ready.artifact_json, path: ready.path, protocol });
+    }, { artifactJSON: ready.artifact_json, path: ready.path });
     expect(result).toBe(true);
   } finally {
     await site.close();

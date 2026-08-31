@@ -122,7 +122,7 @@ impl NativeTlsPolicyV3 {
         let limits = NativeRawQuicLimits::for_session(inbound_capacity, handshake_timeout)
             .map_err(|_| NativeTlsConfigErrorV3::Configuration)?;
         match self {
-            Self::Ca { certificates } => NativeRawQuicClientConfig::new_v3_ca(
+            Self::Ca { certificates } => NativeRawQuicClientConfig::new_ca(
                 profile,
                 certificates
                     .iter()
@@ -131,7 +131,7 @@ impl NativeTlsPolicyV3 {
                 limits,
             ),
             Self::Pin { active_leaf_hashes } => {
-                NativeRawQuicClientConfig::new_v3_pin(profile, active_leaf_hashes.clone(), limits)
+                NativeRawQuicClientConfig::new_pin(profile, active_leaf_hashes.clone(), limits)
             }
         }
         .map_err(|_| NativeTlsConfigErrorV3::Configuration)

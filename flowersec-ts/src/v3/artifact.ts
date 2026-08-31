@@ -2,7 +2,8 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { concatBytes, readU32be, u32be } from "../utils/bin.js";
-import { toASCII } from "../vendor/tr46.js";
+import { unicode151Assigned } from "../generated/unicode151.js";
+import { toASCII, toUnicode } from "../vendor/tr46.js";
 import { canonicalizeJCSV3, type JCSValue } from "./jcs.js";
 import { preflightJSONV3 } from "./jsonPreflight.js";
 import {
@@ -836,14 +837,18 @@ function normalizeDNSOrIPv4(host: string): string {
     }
     return parts.map((part) => String(Number(part))).join(".");
   }
-  const ascii = toASCII(host, {
+  const options = {
     checkHyphens: true,
     checkBidi: true,
     checkJoiners: true,
     useSTD3ASCIIRules: true,
     verifyDNSLength: true,
     transitionalProcessing: false,
-  });
+  } as const;
+  if (!hasOnlyUnicode151Scalars(host)) throw invalidCandidate("DNS label");
+  const decoded = toUnicode(host, options);
+  if (decoded.error || !hasOnlyUnicode151Scalars(decoded.domain)) throw invalidCandidate("DNS label");
+  const ascii = toASCII(host, options);
   if (ascii === null || ascii.endsWith(".")) throw invalidCandidate("DNS label");
   const normalized = ascii.toLowerCase();
   const finalLabel = normalized.slice(normalized.lastIndexOf(".") + 1);
@@ -851,6 +856,13 @@ function normalizeDNSOrIPv4(host: string): string {
     throw invalidCandidate("WHATWG numeric host ambiguity");
   }
   return normalized;
+}
+
+function hasOnlyUnicode151Scalars(value: string): boolean {
+  for (const scalar of value) {
+    if (!unicode151Assigned(scalar.codePointAt(0)!)) return false;
+  }
+  return true;
 }
 
 function requestFromValidatedArtifact(

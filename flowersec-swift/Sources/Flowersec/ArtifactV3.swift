@@ -56,17 +56,6 @@ public func parseArtifact(_ data: Data) throws -> Artifact {
   try ArtifactCodecV3.decode(data)
 }
 
-@available(*, deprecated, renamed: "Artifact")
-public typealias ArtifactV3 = Artifact
-
-@available(*, deprecated, renamed: "ArtifactError")
-public typealias ArtifactErrorV3 = ArtifactError
-
-@available(*, deprecated, renamed: "parseArtifact")
-public func parseArtifactV3(_ data: Data) throws -> Artifact {
-  try parseArtifact(data)
-}
-
 public enum ArtifactLeaseError: Error, Equatable, Sendable {
   case unavailable
 }
@@ -112,12 +101,6 @@ public struct ArtifactLease: Sendable, CustomStringConvertible, CustomDebugStrin
       artifact: artifact, state: state, controllerCapability: capability)
   }
 }
-
-@available(*, deprecated, renamed: "ArtifactLease")
-public typealias ArtifactLeaseV3 = ArtifactLease
-
-@available(*, deprecated, renamed: "ArtifactLeaseError")
-public typealias ArtifactLeaseErrorV3 = ArtifactLeaseError
 
 struct ClaimedArtifactLeaseV3: Sendable {
   let artifact: Artifact

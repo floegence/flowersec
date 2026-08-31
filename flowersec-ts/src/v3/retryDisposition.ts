@@ -1,22 +1,17 @@
 import type { SessionErrorCode } from "./contract.js";
-import type { ConnectErrorCode } from "../public/connectError.js";
+import type { PublicConnectErrorCodeV3 } from "./security.js";
 
 export type RetryDisposition =
   | Readonly<{ kind: "terminal" }>
   | Readonly<{ kind: "retryable" }>
   | Readonly<{ kind: "retry_after"; notBeforeUnixMilliseconds: number }>;
 
-export function retryDispositionForConnectError(error: Readonly<{ code: ConnectErrorCode }>): RetryDisposition {
+export function retryDispositionForConnectError(
+  error: Readonly<{ code: PublicConnectErrorCodeV3 }>,
+): RetryDisposition {
   switch (error.code) {
     case "expired_artifact":
-    case "resolve_failed":
-    case "credential_spend_failed":
     case "connection_failed":
-    case "timeout":
-    case "handshake_failed":
-    case "rpc_failed":
-    case "resource_exhausted":
-    case "not_connected":
       return Object.freeze({ kind: "retryable" });
     default:
       return Object.freeze({ kind: "terminal" });

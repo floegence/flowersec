@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { u16be, u32be } from "../utils/bin.js";
-import type { ByteStreamV2, OperationOptionsV2 } from "../v2/contract.js";
+import type { ByteStream, OperationOptions } from "../public/contract.js";
 import type { ProxyRuntimeLimits } from "./types.js";
 import { installWebSocketPatch } from "./wsPatch.js";
 
@@ -33,7 +33,7 @@ class TestCloseEvent extends Event {
   }
 }
 
-class ControlledStream implements ByteStreamV2 {
+class ControlledStream implements ByteStream {
   readonly kind = "test";
   terminalError = undefined;
   readonly writes: Uint8Array[] = [];
@@ -59,7 +59,7 @@ class ControlledStream implements ByteStreamV2 {
     }
   }
 
-  async read(options: OperationOptionsV2 = {}): Promise<Uint8Array | null> {
+  async read(options: OperationOptions = {}): Promise<Uint8Array | null> {
     const value = this.reads.shift();
     if (value !== undefined) return value;
     return await new Promise<Uint8Array>((resolve, reject) => {

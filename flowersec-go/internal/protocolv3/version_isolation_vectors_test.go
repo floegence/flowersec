@@ -16,13 +16,13 @@ import (
 	"strings"
 	"testing"
 
-	artifactv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
-	rawquicv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquicv3"
-	websocketv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
-	webtransportv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/webtransportv3"
-	internalhkdf "github.com/floegence/flowersec/flowersec-go/v3/internal/hkdf"
-	runtimev3 "github.com/floegence/flowersec/flowersec-go/v3/internal/runtimev3"
+	artifactv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/quicbase"
+	rawquicv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/rawquicv3"
+	websocketv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/websocketv3"
+	webtransportv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/webtransportv3"
+	internalhkdf "github.com/floegence/flowersec/flowersec-go/v4/internal/hkdf"
+	runtimev3 "github.com/floegence/flowersec/flowersec-go/v4/internal/runtimev3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -41,7 +41,7 @@ type versionIsolationFixture struct {
 		V2Magic   string `json:"v2_magic_hex"`
 		V2Version string `json:"v2_version_hex"`
 	} `json:"frames"`
-	Inherited struct {
+	Application struct {
 		FSH3 struct {
 			FrameID string `json:"frame_id"`
 		} `json:"fsh3"`
@@ -51,7 +51,7 @@ type versionIsolationFixture struct {
 		RPC struct {
 			Envelope string `json:"envelope_json"`
 		} `json:"rpc"`
-	} `json:"inherited_codecs"`
+	} `json:"application_codecs"`
 	ProfileMutations     []versionIsolationMutation `json:"profile_mutations"`
 	PathMutations        []versionIsolationMutation `json:"path_mutations"`
 	SubprotocolMutations []versionIsolationMutation `json:"subprotocol_mutations"`
@@ -131,7 +131,7 @@ func TestVersionIsolationFramesFailClosedAcrossProductionDecoders(t *testing.T) 
 	}
 }
 
-func TestVersionIsolationInheritedCodecsUseV3ProductionBoundaries(t *testing.T) {
+func TestVersionIsolationApplicationCodecsUseV3ProductionBoundaries(t *testing.T) {
 	raw, err := os.ReadFile("../../../testdata/transport_v3/version_isolation_vectors.json")
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestVersionIsolationInheritedCodecsUseV3ProductionBoundaries(t *testing.T) 
 	}
 	var openVector struct{ Kind, MetadataJSON string }
 	for _, vector := range openFixture.Positive {
-		if vector.ID == fixture.Inherited.Open.VectorID {
+		if vector.ID == fixture.Application.Open.VectorID {
 			openVector.Kind, openVector.MetadataJSON = vector.Kind, vector.MetadataJSON
 		}
 	}
@@ -188,13 +188,13 @@ func TestVersionIsolationInheritedCodecsUseV3ProductionBoundaries(t *testing.T) 
 	}
 	// The dedicated OPEN vector suite supplies the inherited non-JCS session codec;
 	// this assertion keeps the isolation fixture tied to that reviewed vector ID.
-	if fixture.Inherited.Open.VectorID != "minimal-string-escaping" {
+	if fixture.Application.Open.VectorID != "minimal-string-escaping" {
 		t.Fatal("unexpected OPEN vector")
 	}
-	if fixture.Inherited.RPC.Envelope == "" {
+	if fixture.Application.RPC.Envelope == "" {
 		t.Fatal("missing RPC envelope")
 	}
-	if !bytes.Contains([]byte(fixture.Inherited.RPC.Envelope), []byte(`"ratio":1.5`)) {
+	if !bytes.Contains([]byte(fixture.Application.RPC.Envelope), []byte(`"ratio":1.5`)) {
 		t.Fatal("RPC float domain missing")
 	}
 }

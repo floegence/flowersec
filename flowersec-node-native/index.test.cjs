@@ -17,7 +17,7 @@ const supportedPlatforms = [
 
 for (const [platform, arch, glibcVersion, expectedPackage] of supportedPlatforms) {
   test(`loads ${expectedPackage} for ${platform}-${arch}`, () => {
-    const addon = Object.freeze({ contractVersion: () => 2 });
+    const addon = Object.freeze({ contractVersion: () => 3 });
     const loaded = executeLoader({ platform, arch, glibcVersion, resolve: (specifier) => {
       assert.equal(specifier, expectedPackage);
       return addon;

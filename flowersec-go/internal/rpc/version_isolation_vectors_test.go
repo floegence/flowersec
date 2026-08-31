@@ -6,22 +6,22 @@ import (
 	"testing"
 )
 
-func TestVersionIsolationRPCUsesInheritedProductionEnvelopeCodec(t *testing.T) {
+func TestVersionIsolationRPCUsesProductionEnvelopeCodec(t *testing.T) {
 	raw, err := os.ReadFile("../../../testdata/transport_v3/version_isolation_vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var fixture struct {
-		Inherited struct {
+		Application struct {
 			RPC struct {
 				Envelope string `json:"envelope_json"`
 			} `json:"rpc"`
-		} `json:"inherited_codecs"`
+		} `json:"application_codecs"`
 	}
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
 	}
-	envelope, err := decodeEnvelope([]byte(fixture.Inherited.RPC.Envelope))
+	envelope, err := decodeEnvelope([]byte(fixture.Application.RPC.Envelope))
 	if err != nil {
 		t.Fatal(err)
 	}

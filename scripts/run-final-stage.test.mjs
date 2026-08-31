@@ -79,11 +79,11 @@ test("offline stages use the exact prefetched Go toolchain and reject drift", ()
     const binary = path.join(bin, "go");
     fs.mkdirSync(path.join(root, ".flowersec"), { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(binary, "#!/bin/sh\nprintf 'go version go1.26.6 test/arch\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(binary, "#!/bin/sh\nprintf 'go version go1.27.0 test/arch\\n'\n", { mode: 0o755 });
     const state = {
       schema: "flowersec-final-go-toolchain-v1",
       sourceHead: head,
-      version: "go1.26.6",
+      version: "go1.27.0",
       binary,
       sha256: createHash("sha256").update(fs.readFileSync(binary)).digest("hex"),
     };
@@ -96,7 +96,7 @@ test("offline stages use the exact prefetched Go toolchain and reject drift", ()
       "const { spawnSync } = require('node:child_process');",
       "if (process.env.GOTOOLCHAIN !== 'local') process.exit(21);",
       "const result = spawnSync('go', ['version'], { encoding: 'utf8' });",
-      "if (result.status !== 0 || !result.stdout.includes('go1.26.6 test/arch')) process.exit(22);",
+      "if (result.status !== 0 || !result.stdout.includes('go1.27.0 test/arch')) process.exit(22);",
     ].join("");
     assert.equal(run(["5", "packages", process.execPath, "-e", check], { cwd: root, env: environment }).status, 0);
     fs.appendFileSync(binary, "# drift\n");

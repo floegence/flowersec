@@ -1,5 +1,4 @@
 import { describe, expect, test } from "vitest";
-import ts from "typescript";
 import * as core from "./facade.js";
 import * as browser from "./browser/index.js";
 import * as node from "./node/index.js";
@@ -24,16 +23,14 @@ describe("final public SDK names", () => {
     expect("createNodeConnectionController" in node).toBe(false);
   });
 
-  test("deprecated v3 names remain source-compatible aliases", () => {
-    expect(core.parseArtifactV3).toBe(core.parseArtifact);
-    expect(core.createArtifactLeaseV3).toBe(core.createArtifactLease);
-    expect(browser.connectV3).toBe(browser.connect);
-    expect(browser.createConnectionControllerV3).toBe(browser.createConnectionController);
-    expect(node.connectV3).toBe(node.connect);
-    expect(node.createConnectionControllerV3).toBe(node.createConnectionController);
+  test("v2 namespaces and deprecated versioned aliases are absent", () => {
+    for (const entry of [core, browser, node]) {
+      expect("v2" in entry).toBe(false);
+      for (const name of Object.keys(entry)) expect(name).not.toMatch(/V[23]$/u);
+    }
   });
 
-  test("built public declarations expose v2 only through the explicit compatibility namespaces", async () => {
+  test("built public declaration closure contains no v2 API or runtime", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const root = path.resolve(process.cwd(), "dist");
@@ -70,11 +67,12 @@ describe("final public SDK names", () => {
       expect(file.startsWith(`${root}${path.sep}`)).toBe(true);
       const source = await readDeclaration(file);
       retained.add(file);
-      const parsed = ts.preProcessFile(source, true, true);
-      for (const imported of parsed.importedFiles) {
-        if (!imported.fileName.startsWith(".")) continue;
-        const dependency = resolveDeclaration(file, imported.fileName);
-        expect(dependency, `unresolvable public declaration import ${imported.fileName} from ${file}`).toBeDefined();
+      const imports = source.matchAll(/(?:\bfrom\s+|\bimport\s*\(\s*)["']([^"']+)["']/gu);
+      for (const imported of imports) {
+        const specifier = imported[1];
+        if (specifier === undefined || !specifier.startsWith(".")) continue;
+        const dependency = resolveDeclaration(file, specifier);
+        expect(dependency, `unresolvable public declaration import ${specifier} from ${file}`).toBeDefined();
         pending.push(dependency!);
       }
     }
@@ -83,21 +81,7 @@ describe("final public SDK names", () => {
       file,
       source: await fs.readFile(file, "utf8"),
     })));
-    const allowedV2References = new Map<string, readonly string[]>([
-      [path.join(root, "facade.d.ts"), ['export * as v2 from "./v2/index.js";']],
-      [path.join(root, "browser/index.d.ts"), ['export * as v2 from "./v2.js";']],
-      [path.join(root, "browser/v2.d.ts"), ['export * from "../v2/index.js";']],
-      [path.join(root, "node/index.d.ts"), ['export * as v2 from "./v2.js";']],
-      [path.join(root, "node/v2.d.ts"), ['export * from "../v2/index.js";']],
-    ]);
-    const publicSource = declarations.map(({ file, source }) => {
-      let guardedSource = source;
-      for (const reference of allowedV2References.get(file) ?? []) {
-        expect(guardedSource.split(reference)).toHaveLength(2);
-        guardedSource = guardedSource.replace(reference, "");
-      }
-      return guardedSource;
-    }).join("\n");
+    const publicSource = declarations.map(({ source }) => source).join("\n");
     expect(publicSource).not.toMatch(/\b[A-Za-z_$][A-Za-z0-9_$]*V2\b/u);
     expect(publicSource).not.toMatch(/(?:^|["'\/])(?:v2|connector)(?:["'\/]|\.)/u);
     expect(publicSource).not.toMatch(/(?:^|["'\/])utils\/errors(?:["'\/]|\.)/u);

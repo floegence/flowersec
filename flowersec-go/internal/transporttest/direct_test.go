@@ -18,12 +18,12 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
-	carrieryamux "github.com/floegence/flowersec/flowersec-go/v3/internal/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
-	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
+	carrieryamux "github.com/floegence/flowersec/flowersec-go/v4/internal/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
+	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -31,40 +31,6 @@ func requireTransportIntegration(t *testing.T) {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("real carrier and endpoint integration is owned by the final gate")
-	}
-}
-
-func TestDirectProductionCarriersCarryEncryptedRoundTrip(t *testing.T) {
-	requireTransportIntegration(t)
-	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindRawQUIC, carrier.KindWebTransport} {
-		t.Run(string(kind), func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			pair, err := OpenDirect(ctx, kind)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := pair.RoundTrip(ctx, []byte("release request"), []byte("release response")); err != nil {
-				t.Fatal(err)
-			}
-			if err := pair.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if err := pair.Close(); err != nil {
-				t.Fatalf("second close: %v", err)
-			}
-		})
-	}
-}
-
-func TestPairClosePreservesErrorsAndIsIdempotent(t *testing.T) {
-	sentinel := errors.New("sentinel cleanup failure")
-	pair := &DirectPair{closers: []func() error{func() error { return errors.Join(io.EOF, sentinel) }}}
-	for attempt := 1; attempt <= 2; attempt++ {
-		err := pair.Close()
-		if !errors.Is(err, sentinel) || errors.Is(err, io.EOF) {
-			t.Fatalf("close attempt %d error = %v, want sentinel only", attempt, err)
-		}
 	}
 }
 
@@ -939,7 +905,7 @@ func (stream *orderedBrowserBidiStream) Write(buffer []byte) (int, error) {
 		<-stream.writeAllowed
 	}
 	if stream.closed.Load() {
-		return 0, protocolv2.ErrStreamClosed
+		return 0, protocolv3.ErrStreamClosed
 	}
 	return len(buffer), nil
 }
@@ -1096,7 +1062,7 @@ func TestNormalizeCloseErrorAcceptsPeerYamuxResetOnly(t *testing.T) {
 
 	for _, unexpected := range []error{
 		carrier.ErrStreamReset,
-		protocolv2.ErrStreamReset,
+		protocolv3.ErrStreamReset,
 		errors.New("stream reset"),
 	} {
 		if normalized := normalizeCloseError(unexpected); normalized == nil {

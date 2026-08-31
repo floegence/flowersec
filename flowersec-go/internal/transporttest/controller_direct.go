@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
 )
 
 // ControllerArtifactPlan is an explicit release-harness artifact state. The

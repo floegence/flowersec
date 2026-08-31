@@ -40,7 +40,7 @@ function offlineEnvironment() {
   const statePath = path.join(process.cwd(), ".flowersec", "final-go-toolchain.json");
   const state = JSON.parse(readRegularFileNoFollow(statePath, "offline Go toolchain state").toString("utf8"));
   if (state.schema !== "flowersec-final-go-toolchain-v1"
-    || state.version !== "go1.26.6"
+    || state.version !== "go1.27.0"
     || typeof state.binary !== "string"
     || !path.isAbsolute(state.binary)
     || !/^[0-9a-f]{64}$/.test(state.sha256)

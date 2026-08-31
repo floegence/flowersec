@@ -8,14 +8,14 @@ public protocol ArtifactSource: Sendable {
 
 public struct ArtifactSourceFailure: Error, Equatable, Sendable {
   public let code: ConnectErrorCode
-  public let disposition: RetryDispositionV3
+  public let disposition: RetryDisposition
 
-  public init(disposition: RetryDispositionV3) {
+  public init(disposition: RetryDisposition) {
     self.code = .connectionFailed
     self.disposition = disposition
   }
 
-  init(code: ConnectErrorCode, disposition: RetryDispositionV3) {
+  init(code: ConnectErrorCode, disposition: RetryDisposition) {
     self.code = code
     self.disposition = disposition
   }
@@ -35,11 +35,11 @@ public enum ConnectionAttemptFailure: Error, Equatable, Sendable {
   case connection(ConnectError)
   case session(SessionError)
 
-  public var retryDisposition: RetryDispositionV3 {
+  public var retryDisposition: RetryDisposition {
     switch self {
     case .artifactSource(let failure): failure.disposition
-    case .connection(let error): error.retryDispositionV3
-    case .session(let error): error.retryDispositionV3
+    case .connection(let error): error.retryDisposition
+    case .session(let error): error.retryDisposition
     }
   }
 }
@@ -49,7 +49,7 @@ public struct ConnectionSnapshot: Sendable {
   public let attempt: UInt64
   public let currentSession: (any Session)?
   public let failure: ConnectionAttemptFailure?
-  public let retryDisposition: RetryDispositionV3?
+  public let retryDisposition: RetryDisposition?
 }
 
 public enum ConnectionFailurePhase: String, Equatable, Sendable {
@@ -67,7 +67,7 @@ public struct ConnectionDiagnostic: Equatable, Sendable {
   public let state: ConnectionState
   public let attempt: UInt64
   public let failure: ConnectionDiagnosticFailure?
-  public let retryDisposition: RetryDispositionV3?
+  public let retryDisposition: RetryDisposition?
 }
 
 extension ConnectionSnapshot {
@@ -113,7 +113,7 @@ public actor ConnectionController {
   public private(set) var attempt: UInt64 = 0
   public private(set) var currentSession: (any Session)?
   public private(set) var failure: ConnectionAttemptFailure?
-  public private(set) var retryDisposition: RetryDispositionV3?
+  public private(set) var retryDisposition: RetryDisposition?
 
   private let source: any ArtifactSource
   private let options: ConnectorOptions
@@ -714,7 +714,7 @@ public actor ConnectionController {
     failures: inout UInt64,
     attempts: UInt64,
     alreadyCounted: Bool = false,
-    dispositionOverride: RetryDispositionV3? = nil
+    dispositionOverride: RetryDisposition? = nil
   ) async -> Bool {
     guard active else { return false }
     let disposition = dispositionOverride ?? attemptFailure.retryDisposition
@@ -846,7 +846,7 @@ public actor ConnectionController {
     deadline <= 253_402_300_799_999
   }
 
-  nonisolated private func validRetryDisposition(_ disposition: RetryDispositionV3) -> Bool {
+  nonisolated private func validRetryDisposition(_ disposition: RetryDisposition) -> Bool {
     guard case .retryAfter(let deadline) = disposition else { return true }
     return validRetryAfter(deadline)
   }
@@ -1027,13 +1027,13 @@ private final class SourceAcquisitionRaceV3: @unchecked Sendable {
 private enum AttemptOutcomeV3: Sendable {
   case connected(any Session)
   case failed(
-    ConnectionAttemptFailure, ClaimedArtifactLeaseV3?, RetryDispositionV3?,
+    ConnectionAttemptFailure, ClaimedArtifactLeaseV3?, RetryDisposition?,
     CandidateFailureProvenanceV3?)
 }
 
 private enum ReplacementOutcomeV3: Sendable {
   case connected(any Session)
-  case retryPrimary(ConnectionAttemptFailure, RetryDispositionV3?)
+  case retryPrimary(ConnectionAttemptFailure, RetryDisposition?)
   case terminal(ConnectionAttemptFailure)
 }
 

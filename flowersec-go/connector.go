@@ -10,17 +10,15 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/candidatev3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/session"
-	sessionv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/candidatev3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
+	sessionv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
 )
 
 var (
@@ -423,93 +421,6 @@ func (connector *connector) connectInternal(ctx context.Context) (Session, error
 	return &opaqueSessionV3{inner: result.Session}, nil
 }
 
-type opaqueSession struct {
-	inner session.SessionV2
-}
-
-func (*opaqueSession) String() string   { return "Flowersec.Session" }
-func (*opaqueSession) GoString() string { return "flowersec.Session" }
-
-func (current *opaqueSession) RPC() RPCPeer { return &opaqueRPCPeer{inner: current.inner.RPC()} }
-
-func (current *opaqueSession) UnreliableMessages() (UnreliableMessageChannel, error) {
-	channel, err := current.inner.UnreliableMessages()
-	if err != nil {
-		return nil, redactUnreliableMessageError(err)
-	}
-	return &opaqueUnreliableMessageChannel{inner: channel}, nil
-}
-
-func (current *opaqueSession) OpenStream(ctx context.Context, kind string, metadata StreamMetadata) (ByteStream, error) {
-	stream, err := current.inner.OpenStream(ctx, kind, session.Metadata(metadata.sessionValues()))
-	if err != nil {
-		return nil, redactSessionError(err)
-	}
-	return &opaqueByteStream{inner: stream}, nil
-}
-
-func (current *opaqueSession) AcceptStream(ctx context.Context) (IncomingStream, error) {
-	incoming, err := current.inner.AcceptStream(ctx)
-	if err != nil {
-		return IncomingStream{}, redactSessionError(err)
-	}
-	return IncomingStream{
-		Kind: incoming.Kind, Metadata: StreamMetadata{values: map[string]any(incoming.Metadata)}, Stream: &opaqueByteStream{inner: incoming.Stream},
-	}, nil
-}
-
-func (current *opaqueSession) Rekey(ctx context.Context) error {
-	return redactNilSessionError(current.inner.Rekey(ctx))
-}
-
-func (current *opaqueSession) ProbeLiveness(ctx context.Context) (time.Duration, error) {
-	duration, err := current.inner.ProbeLiveness(ctx)
-	return duration, redactNilSessionError(err)
-}
-
-func (current *opaqueSession) WaitTermination(ctx context.Context) (SessionTermination, error) {
-	err := current.inner.WaitClosed(ctx)
-	if err == nil {
-		return SessionTermination{Error: SessionError{code: SessionClosed}}, nil
-	}
-	projected := redactSessionError(err)
-	select {
-	case <-current.inner.Termination():
-		return SessionTermination{Error: *projected}, nil
-	default:
-	}
-	if projected.Code() == SessionCanceled || projected.Code() == SessionTimeout {
-		return SessionTermination{}, projected
-	}
-	return SessionTermination{Error: *projected}, nil
-}
-
-func (current *opaqueSession) Close() error { return redactNilSessionError(current.inner.Close()) }
-
-type opaqueRPCPeer struct {
-	inner session.RPCPeer
-}
-
-type opaqueUnreliableMessageChannel struct {
-	inner session.UnreliableMessageChannel
-}
-
-func (*opaqueUnreliableMessageChannel) String() string { return "Flowersec.UnreliableMessageChannel" }
-func (*opaqueUnreliableMessageChannel) GoString() string {
-	return "flowersec.UnreliableMessageChannel"
-}
-func (channel *opaqueUnreliableMessageChannel) MaxMessageBytes() int {
-	return channel.inner.MaxMessageBytes()
-}
-func (channel *opaqueUnreliableMessageChannel) Send(ctx context.Context, payload []byte, options UnreliableSendOptions) (UnreliableSendStatus, error) {
-	status, err := channel.inner.Send(ctx, payload, session.UnreliableSendOptions{ExpiresAt: options.ExpiresAt})
-	return UnreliableSendStatus(status), redactNilUnreliableMessageError(err)
-}
-func (channel *opaqueUnreliableMessageChannel) Receive(ctx context.Context) ([]byte, error) {
-	payload, err := channel.inner.Receive(ctx)
-	return payload, redactNilUnreliableMessageError(err)
-}
-
 // RPCError is a sanitized application error returned by a remote RPC handler.
 // Code and Message are application-level values; transport and session causes
 // are projected through SessionError instead.
@@ -524,73 +435,6 @@ func (err *RPCError) Error() string {
 	}
 	return "Flowersec RPC failed (code=" + strconv.FormatUint(uint64(err.Code), 10) + ")"
 }
-
-func (*opaqueRPCPeer) String() string   { return "Flowersec.RPCPeer" }
-func (*opaqueRPCPeer) GoString() string { return "flowersec.RPCPeer" }
-
-func (peer *opaqueRPCPeer) Call(ctx context.Context, typeID uint32, request, response any) error {
-	if peer == nil || peer.inner == nil {
-		return &SessionError{code: SessionClosed}
-	}
-	return redactRPCError(peer.inner.Call(ctx, typeID, request, response))
-}
-
-func (peer *opaqueRPCPeer) Notify(ctx context.Context, typeID uint32, request any) error {
-	if peer == nil || peer.inner == nil {
-		return &SessionError{code: SessionClosed}
-	}
-	return redactRPCError(peer.inner.Notify(ctx, typeID, request))
-}
-
-// OnNotify registers a handler for peer notifications. The returned function
-// removes only this subscription and is safe to call repeatedly.
-func (peer *opaqueRPCPeer) OnNotify(typeID uint32, handler func(context.Context, json.RawMessage)) func() {
-	if peer == nil || peer.inner == nil || handler == nil {
-		return func() {}
-	}
-	return peer.inner.OnNotify(typeID, func(ctx context.Context, payload []byte) {
-		defer func() { _ = recover() }()
-		handler(ctx, append(json.RawMessage(nil), payload...))
-	})
-}
-
-type opaqueByteStream struct {
-	inner session.ByteStream
-}
-
-func (*opaqueByteStream) String() string   { return "Flowersec.ByteStream" }
-func (*opaqueByteStream) GoString() string { return "flowersec.ByteStream" }
-
-func (stream *opaqueByteStream) Read(buffer []byte) (int, error) {
-	count, err := stream.inner.Read(buffer)
-	if errors.Is(err, io.EOF) {
-		return count, io.EOF
-	}
-	return count, redactNilSessionError(err)
-}
-
-func (stream *opaqueByteStream) Write(buffer []byte) (int, error) {
-	count, err := stream.inner.Write(buffer)
-	return count, redactNilSessionError(err)
-}
-
-func (stream *opaqueByteStream) Close() error { return redactNilSessionError(stream.inner.Close()) }
-
-func (stream *opaqueByteStream) Kind() string { return stream.inner.Kind() }
-
-func (stream *opaqueByteStream) TerminalError() *SessionError {
-	err := stream.inner.TerminalError()
-	if err == nil {
-		return nil
-	}
-	return redactSessionError(err)
-}
-
-func (stream *opaqueByteStream) CloseWrite() error {
-	return redactNilSessionError(stream.inner.CloseWrite())
-}
-
-func (stream *opaqueByteStream) Reset() error { return redactNilSessionError(stream.inner.Reset()) }
 
 type opaqueSessionV3 struct {
 	inner sessionv3.Session
@@ -753,13 +597,13 @@ func redactUnreliableMessageError(err error) *UnreliableMessageError {
 	switch {
 	case errors.Is(err, context.Canceled):
 		code = UnreliableMessageCanceled
-	case errors.Is(err, session.ErrSessionClosed), errors.Is(err, sessionv3.ErrSessionClosed):
+	case errors.Is(err, sessionv3.ErrSessionClosed):
 		code = UnreliableMessageClosed
-	case errors.Is(err, session.ErrUnreliableUnavailable), errors.Is(err, sessionv3.ErrUnreliableUnavailable):
+	case errors.Is(err, sessionv3.ErrUnreliableUnavailable):
 		code = UnreliableMessageUnavailable
-	case errors.Is(err, session.ErrUnreliableInvalidExpiry), errors.Is(err, sessionv3.ErrUnreliableInvalidExpiry):
+	case errors.Is(err, sessionv3.ErrUnreliableInvalidExpiry):
 		code = UnreliableMessageInvalid
-	case errors.Is(err, session.ErrUnreliableMessageTooLarge), errors.Is(err, sessionv3.ErrUnreliableMessageTooLarge):
+	case errors.Is(err, sessionv3.ErrUnreliableMessageTooLarge):
 		code = UnreliableMessageTooLarge
 	}
 	return &UnreliableMessageError{code: code, legacy: legacy}
@@ -783,28 +627,27 @@ func redactSessionError(err error) *SessionError {
 		code = SessionCanceled
 	case errors.Is(err, context.DeadlineExceeded):
 		code = SessionTimeout
-	case errors.Is(err, session.ErrSessionClosed), errors.Is(err, sessionv3.ErrSessionClosed):
+	case errors.Is(err, sessionv3.ErrSessionClosed):
 		code = SessionClosed
-	case errors.Is(err, session.ErrGoingAway), errors.Is(err, sessionv3.ErrGoingAway):
+	case errors.Is(err, sessionv3.ErrGoingAway):
 		code = SessionGoingAway
-	case errors.Is(err, session.ErrResourceExhausted), errors.Is(err, sessionv3.ErrResourceExhausted):
+	case errors.Is(err, sessionv3.ErrResourceExhausted):
 		code = SessionResourceExhausted
 	case errors.Is(err, protocolv3.ErrCounterExhausted):
 		code = SessionResourceExhausted
-	case errors.Is(err, session.ErrOpenRejected), errors.Is(err, sessionv3.ErrOpenRejected):
+	case errors.Is(err, sessionv3.ErrOpenRejected):
 		code = SessionStreamRejected
-	case errors.Is(err, protocolv2.ErrStreamReset), errors.Is(err, protocolv3.ErrStreamReset):
+	case errors.Is(err, protocolv3.ErrStreamReset):
 		code = SessionStreamReset
-	case errors.Is(err, session.ErrRekey), errors.Is(err, session.ErrRekeyInProgress),
-		errors.Is(err, sessionv3.ErrRekey), errors.Is(err, sessionv3.ErrRekeyInProgress):
+	case errors.Is(err, sessionv3.ErrRekey), errors.Is(err, sessionv3.ErrRekeyInProgress):
 		code = SessionRekeyFailed
-	case errors.Is(err, session.ErrLivenessProbe), errors.Is(err, sessionv3.ErrLivenessProbe):
+	case errors.Is(err, sessionv3.ErrLivenessProbe):
 		code = SessionLivenessFailed
-	case errors.Is(err, session.ErrUnreliableUnavailable), errors.Is(err, sessionv3.ErrUnreliableUnavailable):
+	case errors.Is(err, sessionv3.ErrUnreliableUnavailable):
 		code = SessionUnreliableUnavailable
-	case errors.Is(err, session.ErrUnreliableMessageTooLarge), errors.Is(err, sessionv3.ErrUnreliableMessageTooLarge):
+	case errors.Is(err, sessionv3.ErrUnreliableMessageTooLarge):
 		code = SessionUnreliableTooLarge
-	case errors.Is(err, session.ErrUnreliableDropped), errors.Is(err, sessionv3.ErrUnreliableDropped):
+	case errors.Is(err, sessionv3.ErrUnreliableDropped):
 		code = SessionUnreliableDropped
 	}
 	return &SessionError{code: code}

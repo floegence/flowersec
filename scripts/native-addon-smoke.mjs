@@ -9,11 +9,11 @@ const addonPath = process.env.FLOWERSEC_NATIVE_ADDON_PATH;
 assert.ok(addonPath, "FLOWERSEC_NATIVE_ADDON_PATH is required");
 const addon = createRequire(import.meta.url)(addonPath);
 assert.equal(typeof addon.contractVersion, "function");
-assert.equal(addon.contractVersion(), 2);
+assert.equal(addon.contractVersion(), 3);
 assert.equal(typeof addon.bindRawQuic, "function");
 assert.equal(typeof addon.connectRawQuic, "function");
-assert.equal(typeof addon.bindRawQuicV3, "function");
-assert.equal(typeof addon.connectRawQuicV3, "function");
+assert.equal("bindRawQuicV3" in addon, false);
+assert.equal("connectRawQuicV3" in addon, false);
 
 const certificateChainDer = [Buffer.from(TEST_CERTIFICATE_DER, "base64")];
 const privateKeyDer = Buffer.from(TEST_PRIVATE_KEY_DER, "base64");

@@ -15,12 +15,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/perfreport"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/perfreport"
 )
 
 const testSourceSHA = "0123456789abcdef0123456789abcdef01234567"
 
-var testPerformanceEnvironment = perfreport.Environment{HostName: "orange", OS: "Ubuntu 22.04", Kernel: "5.10", Architecture: "arm64", CPUModel: "Cortex-A55", LogicalCPUs: 8, MemoryBytes: 16 << 30, GoVersion: "go1.26", NodeVersion: "v22", ChromiumVersion: "Chromium 140"}
+var testPerformanceEnvironment = perfreport.Environment{HostName: "orange", OS: "Ubuntu 22.04", Kernel: "5.10", Architecture: "arm64", CPUModel: "Cortex-A55", LogicalCPUs: 8, MemoryBytes: 16 << 30, GoVersion: "go1.27", NodeVersion: "v24.20.0", ChromiumVersion: "Chromium 140"}
 
 func TestExactTitleMatchesTheCompleteTitleWithAnOptionalSuitePrefix(t *testing.T) {
 	title := "runs direct admission and Session semantics over WSS"
@@ -41,7 +41,7 @@ func TestExactTitleMatchesTheCompleteTitleWithAnOptionalSuitePrefix(t *testing.T
 func TestPlaywrightTitleMatchesAUniqueTitleInsideTheFullTestName(t *testing.T) {
 	title := "Firefox reports unsupported native WebTransport connection"
 	pattern := regexp.MustCompile(playwrightTitle(title))
-	if !pattern.MatchString("transport-v2.spec.ts › " + title) {
+	if !pattern.MatchString("browser-transport.spec.ts › " + title) {
 		t.Fatal("Playwright selector did not match the full test name")
 	}
 	if pattern.MatchString("Firefox reports another capability") {

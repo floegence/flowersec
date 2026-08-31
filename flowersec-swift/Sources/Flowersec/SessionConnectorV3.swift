@@ -20,7 +20,7 @@ enum ConnectorBoundaryErrorV3: Error, Equatable, Sendable {
 
 enum ControllerConnectFailureV3: Error, Equatable, Sendable {
   case connection(
-    ConnectError, RetryDispositionV3, policyTriggerIDs: Set<String>,
+    ConnectError, RetryDisposition, policyTriggerIDs: Set<String>,
     opaquePolicyTriggerIDs: Set<String>, failedIDs: Set<String>)
 }
 
@@ -126,11 +126,11 @@ struct SessionConnectorV3: Sendable {
       let publicError, let policyTriggerIDs, let opaquePolicyTriggerIDs, let failedIDs
     ) {
       throw ControllerConnectFailureV3.connection(
-        publicError, publicError.retryDispositionV3, policyTriggerIDs: policyTriggerIDs,
+        publicError, publicError.retryDisposition, policyTriggerIDs: policyTriggerIDs,
         opaquePolicyTriggerIDs: opaquePolicyTriggerIDs, failedIDs: failedIDs)
     } catch let error as ConnectError {
       throw ControllerConnectFailureV3.connection(
-        error, error.retryDispositionV3, policyTriggerIDs: [], opaquePolicyTriggerIDs: [],
+        error, error.retryDisposition, policyTriggerIDs: [], opaquePolicyTriggerIDs: [],
         failedIDs: [])
     } catch is CancellationError {
       throw ControllerConnectFailureV3.connection(

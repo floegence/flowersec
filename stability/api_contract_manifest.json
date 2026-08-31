@@ -17,12 +17,12 @@
     ]
   },
   "go": {
-    "module_path": "github.com/floegence/flowersec/flowersec-go/v3",
+    "module_path": "github.com/floegence/flowersec/flowersec-go/v4",
     "compile_targets": [
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/v3",
+        "package": "github.com/floegence/flowersec/flowersec-go/v4",
         "alias": "flowersec",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v3`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v4`",
         "stability_group": "transport_v3",
         "entries": [
           {
@@ -1187,9 +1187,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/v3/controlplane",
+        "package": "github.com/floegence/flowersec/flowersec-go/v4/controlplane",
         "alias": "controlplane",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v3/controlplane`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v4/controlplane`",
         "stability_group": "transport_v3",
         "entries": [
           {
@@ -1606,16 +1606,16 @@
       }
     ],
     "forbidden_packages": [
-      "github.com/floegence/flowersec/flowersec-go/v3/client",
-      "github.com/floegence/flowersec/flowersec-go/v3/endpoint",
-      "github.com/floegence/flowersec/flowersec-go/v3/endpoint/serve",
-      "github.com/floegence/flowersec/flowersec-go/v3/rpc",
-      "github.com/floegence/flowersec/flowersec-go/v3/stream",
-      "github.com/floegence/flowersec/flowersec-go/v3/protocolio",
-      "github.com/floegence/flowersec/flowersec-go/v3/framing/jsonframe",
-      "github.com/floegence/flowersec/flowersec-go/v3/proxy",
-      "github.com/floegence/flowersec/flowersec-go/v3/origin",
-      "github.com/floegence/flowersec/flowersec-go/v3/gen/flowersec/v1"
+      "github.com/floegence/flowersec/flowersec-go/v4/client",
+      "github.com/floegence/flowersec/flowersec-go/v4/endpoint",
+      "github.com/floegence/flowersec/flowersec-go/v4/endpoint/serve",
+      "github.com/floegence/flowersec/flowersec-go/v4/rpc",
+      "github.com/floegence/flowersec/flowersec-go/v4/stream",
+      "github.com/floegence/flowersec/flowersec-go/v4/protocolio",
+      "github.com/floegence/flowersec/flowersec-go/v4/framing/jsonframe",
+      "github.com/floegence/flowersec/flowersec-go/v4/proxy",
+      "github.com/floegence/flowersec/flowersec-go/v4/origin",
+      "github.com/floegence/flowersec/flowersec-go/v4/gen/flowersec/v1"
     ]
   },
   "ts": {
@@ -1639,60 +1639,36 @@
         "runtime_exports": [
           "Artifact",
           "ArtifactError",
-          "ArtifactHandleV3",
           "ArtifactLease",
           "ArtifactLeaseError",
-          "ArtifactLeaseV3",
-          "ArtifactLeaseV3Error",
-          "ArtifactParseErrorV3",
           "ConnectError",
-          "ConnectErrorV3",
           "ConnectionControllerError",
-          "ConnectionControllerV3Error",
           "HandlerRegistrationError",
           "SessionError",
           "StreamHandlers",
           "StreamMetadataError",
           "UnreliableMessageError",
           "connectionDiagnostic",
-          "connectionDiagnosticV3",
           "createArtifactLease",
-          "createArtifactLeaseV3",
           "createStreamMetadata",
-          "parseArtifact",
-          "parseArtifactV3",
-          "v2"
+          "parseArtifact"
         ],
         "type_exports": [
           "Artifact",
           "ArtifactError",
           "ArtifactErrorCode",
-          "ArtifactHandleV3",
           "ArtifactLease",
           "ArtifactLeaseError",
-          "ArtifactLeaseV3",
-          "ArtifactLeaseV3Error",
-          "ArtifactParseErrorCodeV3",
-          "ArtifactParseErrorV3",
           "ArtifactSource",
           "ArtifactSourceResult",
-          "ArtifactSourceResultV3",
-          "ArtifactSourceV3",
           "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
-          "ConnectErrorV3",
           "ConnectionController",
           "ConnectionControllerError",
           "ConnectionControllerFailure",
-          "ConnectionControllerFailureV3",
           "ConnectionControllerOptions",
-          "ConnectionControllerSnapshotV3",
-          "ConnectionControllerStateV3",
-          "ConnectionControllerV3",
-          "ConnectionControllerV3Error",
           "ConnectionDiagnostic",
-          "ConnectionDiagnosticV3",
           "ConnectionSnapshot",
           "ConnectionState",
           "HandlerRegistrationError",
@@ -1701,9 +1677,7 @@
           "JsonPrimitive",
           "JsonValue",
           "OperationOptions",
-          "PublicConnectErrorCodeV3",
           "RetryDisposition",
-          "RetryDispositionV3",
           "RpcPeer",
           "RpcResult",
           "Session",
@@ -1736,100 +1710,62 @@
           "`StreamHandlers`",
           "`RuntimeAuthorizationRequest`",
           "`HandlerRegistrationError`",
-          "`AcceptedSession`"
+          "`AcceptedSession`",
+          "`ProxyServer`"
         ],
         "runtime_exports": [
           "AcceptedSession",
-          "AcceptedSessionV3",
           "Acceptor",
-          "AcceptorV3",
           "Artifact",
           "ArtifactError",
-          "ArtifactHandleV3",
           "ArtifactLease",
           "ArtifactLeaseError",
-          "ArtifactLeaseV3",
-          "ArtifactLeaseV3Error",
-          "ArtifactParseErrorV3",
           "ConnectError",
-          "ConnectErrorV3",
           "ConnectionControllerError",
-          "ConnectionControllerV3Error",
           "HandlerRegistrationError",
+          "ProxyServer",
+          "ProxyServerError",
           "RPCHandlers",
           "RuntimeAuthorizationRequest",
-          "RuntimeAuthorizationRequestV3",
-          "SessionHandlers",
           "SessionError",
+          "SessionHandlers",
           "StreamHandlers",
           "StreamMetadataError",
           "TunnelAuthorizationGrant",
-          "TunnelAuthorizationGrantV3",
           "TunnelRuntime",
-          "TunnelRuntimeV3",
           "UnreliableMessageError",
-          "connectionDiagnostic",
-          "connectionDiagnosticV3",
           "connect",
-          "connectV3",
+          "connectionDiagnostic",
           "createAcceptor",
-          "createAcceptorV3",
           "createArtifactLease",
-          "createArtifactLeaseV3",
           "createConnectionController",
-          "createConnectionControllerV3",
           "createStreamMetadata",
           "createTunnelRuntime",
-          "createTunnelRuntimeV3",
           "parseArtifact",
-          "parseArtifactV3",
-          "v2",
-          "verifyTunnelAuthorizationGrant",
-          "verifyTunnelAuthorizationGrantV3"
+          "verifyTunnelAuthorizationGrant"
         ],
         "type_exports": [
           "AcceptedSession",
-          "AcceptedSessionV3",
           "Acceptor",
           "AcceptorAuthorizationDecision",
-          "AcceptorAuthorizationDecisionV3",
           "AcceptorAuthorizer",
-          "AcceptorAuthorizerV3",
           "AcceptorListener",
-          "AcceptorListenerV3",
           "AcceptorOptions",
-          "AcceptorOptionsV3",
-          "AcceptorV3",
           "Artifact",
           "ArtifactError",
           "ArtifactErrorCode",
-          "ArtifactHandleV3",
           "ArtifactLease",
           "ArtifactLeaseError",
-          "ArtifactLeaseV3",
-          "ArtifactLeaseV3Error",
-          "ArtifactParseErrorCodeV3",
-          "ArtifactParseErrorV3",
           "ArtifactSource",
           "ArtifactSourceResult",
-          "ArtifactSourceResultV3",
-          "ArtifactSourceV3",
           "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
-          "ConnectErrorV3",
           "ConnectionController",
           "ConnectionControllerError",
           "ConnectionControllerFailure",
-          "ConnectionControllerFailureV3",
           "ConnectionControllerOptions",
-          "ConnectionControllerOptionsV3",
-          "ConnectionControllerSnapshotV3",
-          "ConnectionControllerStateV3",
-          "ConnectionControllerV3",
-          "ConnectionControllerV3Error",
           "ConnectionDiagnostic",
-          "ConnectionDiagnosticV3",
           "ConnectionSnapshot",
           "ConnectionState",
           "HandlerRegistrationError",
@@ -1838,25 +1774,23 @@
           "JsonPrimitive",
           "JsonValue",
           "NodeTLSRoots",
-          "NodeTLSRootsV3",
           "NotificationHandler",
           "OperationOptions",
-          "PublicConnectErrorCodeV3",
-          "RetryDisposition",
-          "RetryDispositionV3",
+          "ProxyServer",
+          "ProxyServerError",
+          "ProxyServerOptions",
           "RPCHandler",
           "RPCHandlerResult",
           "RPCHandlers",
+          "RetryDisposition",
           "RpcPeer",
           "RpcResult",
           "RuntimeAuthorizationRequest",
-          "RuntimeAuthorizationRequestV3",
           "Session",
           "SessionError",
           "SessionErrorCode",
           "SessionHandlerOptions",
           "SessionOptions",
-          "SessionOptionsV3",
           "SessionTLSOptions",
           "SessionTermination",
           "StreamHandler",
@@ -1865,18 +1799,12 @@
           "StreamMetadata",
           "StreamMetadataError",
           "StreamOpenOptions",
+          "TunnelAuthorizationDecision",
           "TunnelAuthorizationGrant",
           "TunnelAuthorizationGrantOptions",
-          "TunnelAuthorizationGrantOptionsV3",
-          "TunnelAuthorizationGrantV3",
-          "TunnelAuthorizationDecision",
-          "TunnelAuthorizationDecisionV3",
           "TunnelRuntime",
           "TunnelRuntimeListener",
-          "TunnelRuntimeListenerV3",
           "TunnelRuntimeOptions",
-          "TunnelRuntimeOptionsV3",
-          "TunnelRuntimeV3",
           "UnreliableMessageChannel",
           "UnreliableMessageError",
           "UnreliableMessageErrorCode",
@@ -1901,16 +1829,10 @@
         "runtime_exports": [
           "Artifact",
           "ArtifactError",
-          "ArtifactHandleV3",
           "ArtifactLease",
           "ArtifactLeaseError",
-          "ArtifactLeaseV3",
-          "ArtifactLeaseV3Error",
-          "ArtifactParseErrorV3",
           "ConnectError",
-          "ConnectErrorV3",
           "ConnectionControllerError",
-          "ConnectionControllerV3Error",
           "HandlerRegistrationError",
           "PRIVATE_LOOPBACK_PROFILE_V1",
           "PrivateLoopbackArtifactErrorV1",
@@ -1918,54 +1840,33 @@
           "StreamHandlers",
           "StreamMetadataError",
           "UnreliableMessageError",
-          "connectionDiagnostic",
-          "connectionDiagnosticV3",
           "connect",
           "connectPrivateLoopbackV1",
-          "connectV3",
+          "connectionDiagnostic",
           "createArtifactLease",
-          "createArtifactLeaseV3",
           "createConnectionController",
           "createPrivateLoopbackArtifactLeaseV1",
           "createPrivateLoopbackConnectionControllerV1",
-          "createConnectionControllerV3",
           "createStreamMetadata",
           "parseArtifact",
-          "parsePrivateLoopbackArtifactV1",
-          "parseArtifactV3",
-          "v2"
+          "parsePrivateLoopbackArtifactV1"
         ],
         "type_exports": [
           "Artifact",
           "ArtifactError",
           "ArtifactErrorCode",
-          "ArtifactHandleV3",
           "ArtifactLease",
           "ArtifactLeaseError",
-          "ArtifactLeaseV3",
-          "ArtifactLeaseV3Error",
-          "ArtifactParseErrorCodeV3",
-          "ArtifactParseErrorV3",
           "ArtifactSource",
           "ArtifactSourceResult",
-          "ArtifactSourceResultV3",
-          "ArtifactSourceV3",
           "ByteStream",
           "ConnectError",
           "ConnectErrorCode",
-          "ConnectErrorV3",
           "ConnectionController",
           "ConnectionControllerError",
           "ConnectionControllerFailure",
-          "ConnectionControllerFailureV3",
           "ConnectionControllerOptions",
-          "ConnectionControllerOptionsV3",
-          "ConnectionControllerSnapshotV3",
-          "ConnectionControllerStateV3",
-          "ConnectionControllerV3",
-          "ConnectionControllerV3Error",
           "ConnectionDiagnostic",
-          "ConnectionDiagnosticV3",
           "ConnectionSnapshot",
           "ConnectionState",
           "HandlerRegistrationError",
@@ -1974,7 +1875,6 @@
           "JsonPrimitive",
           "JsonValue",
           "OperationOptions",
-          "PublicConnectErrorCodeV3",
           "PrivateLoopbackArtifactLeaseV1",
           "PrivateLoopbackArtifactSourceResultV1",
           "PrivateLoopbackArtifactSourceV1",
@@ -1982,14 +1882,12 @@
           "PrivateLoopbackConnectionControllerOptionsV1",
           "PrivateLoopbackSessionOptionsV1",
           "RetryDisposition",
-          "RetryDispositionV3",
           "RpcPeer",
           "RpcResult",
           "Session",
           "SessionError",
           "SessionErrorCode",
           "SessionOptions",
-          "SessionOptionsV3",
           "SessionTermination",
           "StreamHandler",
           "StreamHandlerOptions",
@@ -2064,6 +1962,14 @@
           "WebSocketPatchOptions"
         ]
       }
+    ],
+    "bins": [
+      {
+        "name": "flowersec-ts-cli",
+        "path": "./dist/cli.js",
+        "source": "flowersec-ts/src/cli.ts",
+        "requires_shebang": true
+      }
     ]
   },
   "swift": {
@@ -2085,7 +1991,7 @@
       "`StreamHandlers`",
       "`RetryDisposition`"
     ],
-    "signature_sha256": "b73a49bdac524c4995b7304d33dc9facf6476b480ab46ecf1858ffd83f05f951",
+    "signature_sha256": "ce9bf897d7334deac4463ebe1f58e3d94e0659500904240e4ac760c4fec67d97",
     "symbols": [
       {
         "kind": "swift.class",
@@ -2094,17 +2000,7 @@
       },
       {
         "kind": "swift.class",
-        "name": "ArtifactV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.class",
         "name": "ConnectionController",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.class",
-        "name": "ConnectionControllerV2",
         "doc_token": ""
       },
       {
@@ -2119,17 +2015,7 @@
       },
       {
         "kind": "swift.enum",
-        "name": "ArtifactErrorV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum",
         "name": "ArtifactLeaseError",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum",
-        "name": "ArtifactLeaseErrorV2",
         "doc_token": ""
       },
       {
@@ -2139,27 +2025,12 @@
       },
       {
         "kind": "swift.enum",
-        "name": "ConnectErrorV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum",
         "name": "ConnectionAttemptFailure",
         "doc_token": ""
       },
       {
         "kind": "swift.enum",
-        "name": "ConnectionAttemptFailureV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum",
         "name": "ConnectionControllerConfigurationError",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum",
-        "name": "ConnectionControllerConfigurationErrorV2",
         "doc_token": ""
       },
       {
@@ -2179,11 +2050,6 @@
       },
       {
         "kind": "swift.enum",
-        "name": "ConnectionStateV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum",
         "name": "HandlerRegistrationError",
         "doc_token": ""
       },
@@ -2199,12 +2065,7 @@
       },
       {
         "kind": "swift.enum",
-        "name": "RetryDispositionV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum",
-        "name": "RetryDispositionV3",
+        "name": "RetryDisposition",
         "doc_token": ""
       },
       {
@@ -2229,27 +2090,7 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "ArtifactErrorV2.artifactTooLarge",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ArtifactErrorV2.invalidArtifact",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ArtifactErrorV2.invalidCandidate",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
         "name": "ArtifactLeaseError.unavailable",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ArtifactLeaseErrorV2.alreadyCommitted",
         "doc_token": ""
       },
       {
@@ -2279,51 +2120,6 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.artifactInvalid",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.canceled",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.connectionFailed",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.expiredArtifact",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.invalidOptions",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.runtimeUnsupported",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.timeout",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.transportSecurityFailed",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectErrorV2.transportSecurityUnsupported",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
         "name": "ConnectionAttemptFailure.artifactSource(_:)",
         "doc_token": ""
       },
@@ -2339,32 +2135,7 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectionAttemptFailureV2.artifactSource(_:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionAttemptFailureV2.connection(_:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionAttemptFailureV2.session(_:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionAttemptFailureV2.unknownArtifactSource",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
         "name": "ConnectionControllerConfigurationError.invalidMaximumAttempts",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionControllerConfigurationErrorV2.invalidMaximumAttempts",
         "doc_token": ""
       },
       {
@@ -2429,36 +2200,6 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "ConnectionStateV2.closed",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionStateV2.connected",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionStateV2.connecting",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionStateV2.failed",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionStateV2.idle",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "ConnectionStateV2.waiting",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
         "name": "HandlerRegistrationError.alreadyRegistered",
         "doc_token": ""
       },
@@ -2509,32 +2250,17 @@
       },
       {
         "kind": "swift.enum.case",
-        "name": "RetryDispositionV2.retryAfter(_:)",
+        "name": "RetryDisposition.retryAfter(_:)",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "RetryDispositionV2.retryable",
+        "name": "RetryDisposition.retryable",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
-        "name": "RetryDispositionV2.terminal",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "RetryDispositionV3.retryAfter(_:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "RetryDispositionV3.retryable",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.enum.case",
-        "name": "RetryDispositionV3.terminal",
+        "name": "RetryDisposition.terminal",
         "doc_token": ""
       },
       {
@@ -2599,27 +2325,7 @@
       },
       {
         "kind": "swift.func",
-        "name": "connectV2(lease:options:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.func",
-        "name": "connectV3(lease:options:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.func",
         "name": "parseArtifact(_:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.func",
-        "name": "parseArtifactV2(_:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.func",
-        "name": "parseArtifactV3(_:)",
         "doc_token": ""
       },
       {
@@ -2629,27 +2335,12 @@
       },
       {
         "kind": "swift.init",
-        "name": "ArtifactLeaseV2.init(artifact:commitSpend:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.init",
         "name": "ArtifactSourceFailure.init(disposition:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
-        "name": "ArtifactSourceFailureV2.init(disposition:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.init",
         "name": "ConnectErrorCode.init(rawValue:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.init",
-        "name": "ConnectErrorV2.init(rawValue:)",
         "doc_token": ""
       },
       {
@@ -2664,22 +2355,12 @@
       },
       {
         "kind": "swift.init",
-        "name": "ConnectionControllerV2.init(source:options:maximumAttempts:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.init",
         "name": "ConnectionFailurePhase.init(rawValue:)",
         "doc_token": ""
       },
       {
         "kind": "swift.init",
         "name": "ConnectionState.init(rawValue:)",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.init",
-        "name": "ConnectionStateV2.init(rawValue:)",
         "doc_token": ""
       },
       {
@@ -2725,11 +2406,6 @@
       {
         "kind": "swift.method",
         "name": "ArtifactSource.acquireArtifact()",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.method",
-        "name": "ArtifactSourceV2.acquireArtifact()",
         "doc_token": ""
       },
       {
@@ -2790,31 +2466,6 @@
       {
         "kind": "swift.method",
         "name": "ConnectionController.waitForSession()",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.method",
-        "name": "ConnectionControllerV2.close()",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.method",
-        "name": "ConnectionControllerV2.retryNow()",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.method",
-        "name": "ConnectionControllerV2.snapshot()",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.method",
-        "name": "ConnectionControllerV2.start()",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.method",
-        "name": "ConnectionControllerV2.updates()",
         "doc_token": ""
       },
       {
@@ -2919,26 +2570,6 @@
       },
       {
         "kind": "swift.property",
-        "name": "ArtifactSourceFailureV2.disposition",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ArtifactV2.customMirror",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ArtifactV2.debugDescription",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ArtifactV2.description",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
         "name": "ByteStream.kind",
         "doc_token": ""
       },
@@ -2954,27 +2585,7 @@
       },
       {
         "kind": "swift.property",
-        "name": "ConnectError.retryDispositionV3",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectErrorV2.retryDisposition",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectErrorV2.retryDispositionV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
         "name": "ConnectionAttemptFailure.retryDisposition",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionAttemptFailureV2.retryDisposition",
         "doc_token": ""
       },
       {
@@ -3010,26 +2621,6 @@
       {
         "kind": "swift.property",
         "name": "ConnectionControllerError.diagnostic",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionControllerV2.attempt",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionControllerV2.currentSession",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionControllerV2.failure",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionControllerV2.state",
         "doc_token": ""
       },
       {
@@ -3090,26 +2681,6 @@
       {
         "kind": "swift.property",
         "name": "ConnectionSnapshot.state",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionSnapshotV2.attempt",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionSnapshotV2.currentSession",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionSnapshotV2.failure",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "ConnectionSnapshotV2.state",
         "doc_token": ""
       },
       {
@@ -3179,16 +2750,6 @@
       },
       {
         "kind": "swift.property",
-        "name": "SessionError.retryDispositionV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
-        "name": "SessionError.retryDispositionV3",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.property",
         "name": "SessionTermination.error",
         "doc_token": ""
       },
@@ -3210,11 +2771,6 @@
       {
         "kind": "swift.protocol",
         "name": "ArtifactSource",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.protocol",
-        "name": "ArtifactSourceV2",
         "doc_token": ""
       },
       {
@@ -3244,17 +2800,7 @@
       },
       {
         "kind": "swift.struct",
-        "name": "ArtifactLeaseV2",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.struct",
         "name": "ArtifactSourceFailure",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.struct",
-        "name": "ArtifactSourceFailureV2",
         "doc_token": ""
       },
       {
@@ -3280,11 +2826,6 @@
       {
         "kind": "swift.struct",
         "name": "ConnectionSnapshot",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.struct",
-        "name": "ConnectionSnapshotV2",
         "doc_token": ""
       },
       {
@@ -3349,36 +2890,6 @@
       },
       {
         "kind": "swift.typealias",
-        "name": "ArtifactErrorV3",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.typealias",
-        "name": "ArtifactLeaseErrorV3",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.typealias",
-        "name": "ArtifactLeaseV3",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.typealias",
-        "name": "ArtifactV3",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.typealias",
-        "name": "ConnectErrorV3",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.typealias",
-        "name": "RetryDisposition",
-        "doc_token": ""
-      },
-      {
-        "kind": "swift.typealias",
         "name": "StreamHandler",
         "doc_token": ""
       }
@@ -3389,7 +2900,6 @@
     "crate_path": "flowersec-rust",
     "doc_tokens": [
       "`flowersec`",
-      "`flowersec::v2`",
       "`Acceptor`",
       "`AcceptorOptions`",
       "`AcceptErrorCode::as_str()`",
@@ -3438,20 +2948,9 @@
       "`TunnelAuthorizer`"
     ],
     "compile_entries": [
-      "let _ = std::mem::size_of::<flowersec::v2::AcceptError>()",
-      "let _ = std::mem::size_of::<flowersec::v2::AcceptErrorCode>()",
-      "let _ = flowersec::v2::AcceptErrorCode::InvalidInput.as_str()",
-      "let _ = std::mem::size_of::<flowersec::v2::Acceptor>()",
-      "let _ = std::mem::size_of::<flowersec::v2::AcceptorOptions>()",
-      "let _ = flowersec::v2::Acceptor::accept_with_handlers",
       "let _ = std::mem::size_of::<flowersec::AcceptedSession>()",
       "let _ = flowersec::AcceptedSession::session",
       "let _ = flowersec::AcceptedSession::serve",
-      "let _ = std::mem::size_of::<flowersec::v2::TunnelAdmissionOptions>()",
-      "let _ = flowersec::v2::TunnelRuntime::bind_websocket_with_admission_options",
-      "let _ = flowersec::v2::TunnelRuntime::bind_raw_quic_with_admission_options",
-      "let _ = std::mem::size_of::<flowersec::v2::Issuer>()",
-      "let _ = flowersec::v2::connect",
       "let _ = std::mem::size_of::<flowersec::AcceptError>()",
       "let _ = std::mem::size_of::<flowersec::AcceptErrorCode>()",
       "let _ = flowersec::AcceptErrorCode::InvalidInput.as_str()",
@@ -3511,10 +3010,6 @@
       "let _: Result<flowersec::Artifact, flowersec::ArtifactError> = flowersec::Artifact::parse(b\"{}\")",
       "let _ = flowersec::ArtifactLease::new::<fn() -> std::future::Ready<Result<(), flowersec::ArtifactSpendError>>, std::future::Ready<Result<(), flowersec::ArtifactSpendError>>>",
       "let _ = flowersec::ArtifactLease::new_with_retire::<fn() -> std::future::Ready<Result<(), flowersec::ArtifactSpendError>>, std::future::Ready<Result<(), flowersec::ArtifactSpendError>>, fn() -> std::future::Ready<Result<(), flowersec::ArtifactSpendError>>, std::future::Ready<Result<(), flowersec::ArtifactSpendError>>>",
-      "let _ = std::mem::size_of::<flowersec::v3::Artifact>()",
-      "let _ = std::mem::size_of::<flowersec::v3::Acceptor>()",
-      "let _ = std::mem::size_of::<flowersec::v3::TunnelRuntime>()",
-      "let _ = flowersec::v3::connect",
       "let _: Option<&dyn flowersec::ByteStream> = None",
       "let _ = std::mem::size_of::<flowersec::ConnectError>()",
       "let _ = std::mem::size_of::<flowersec::ConnectErrorCode>()",
@@ -3618,14 +3113,24 @@
       "require_portable_sdk_traits::<flowersec::UnreliableMessageError>()"
     ]
   },
+  "native_abi": {
+    "package": "@floegence/flowersec-node-native",
+    "contract_version": 3,
+    "wire_version": 3,
+    "runtime_exports": [
+      "bindRawQuic",
+      "connectRawQuic",
+      "contractVersion"
+    ]
+  },
   "coverage": {
     "go": [
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/v3",
+        "package": "github.com/floegence/flowersec/flowersec-go/v4",
         "min_statements_pct": 25
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/v3/controlplane",
+        "package": "github.com/floegence/flowersec/flowersec-go/v4/controlplane",
         "min_statements_pct": 75
       }
     ],

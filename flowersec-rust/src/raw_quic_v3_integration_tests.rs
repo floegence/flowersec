@@ -25,7 +25,7 @@ use time::{Duration as TimeDuration, OffsetDateTime};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    Acceptor, AcceptorOptions, ArtifactLeaseV3, ConnectorOptions, RpcHandler, RpcHandlers,
+    Acceptor, AcceptorOptions, ArtifactLease, ConnectorOptions, RpcHandler, RpcHandlers,
     RuntimeAuthorizationRequest, TunnelAuthorizationError, TunnelAuthorizationResponse,
     TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
     artifact_v3::{AdmissionStatusV3, ArtifactV3, decode_fsa3, hash_lp, jcs_value},
@@ -33,7 +33,7 @@ use crate::{
     protocol_v3::CipherSuiteV3,
     raw_quic_v3::carrier_from_native_session,
     session_v3::{RpcHandlerV3, SessionConfigV3, SessionDeadlinesV3, establish_session_v3},
-    transport_v2::{RpcError, Session, StreamMetadata, UnreliableSendOutcome},
+    transport::{RpcError, Session, StreamMetadata, UnreliableSendOutcome},
     transport_v3::{
         CarrierSessionV3, CarrierStreamV3, PathKind, SessionRole, carrier_inbound_stream_limit_v3,
     },
@@ -116,11 +116,11 @@ async fn production_raw_quic_tunnel_runtime_relays_a_complete_v3_session() {
     let options = ConnectorOptions::new;
     let (client, server) = tokio::join!(
         connect_v3(
-            ArtifactLeaseV3::new(client_artifact, || async { Ok(()) }),
+            ArtifactLease::new(client_artifact, || async { Ok(()) }),
             options(),
         ),
         connect_v3(
-            ArtifactLeaseV3::new(server_artifact, || async { Ok(()) }),
+            ArtifactLease::new(server_artifact, || async { Ok(()) }),
             options(),
         ),
     );
@@ -219,7 +219,7 @@ async fn production_raw_quic_acceptor_establishes_a_complete_v3_session() {
             .unwrap()
     });
     let client = connect_v3(
-        ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+        ArtifactLease::new(artifact, || async { Ok(()) }),
         ConnectorOptions::new()
             .with_trust_roots_der(vec![test_certificate()])
             .unwrap(),
@@ -310,7 +310,7 @@ async fn rust_client_to_go_session(profile: NativePathProfile) {
     let artifact = interop_artifact(address, profile);
     let spends = Arc::new(AtomicUsize::new(0));
     let spend_capture = spends.clone();
-    let lease = ArtifactLeaseV3::new(artifact, move || async move {
+    let lease = ArtifactLease::new(artifact, move || async move {
         spend_capture.fetch_add(1, Ordering::SeqCst);
         Ok(())
     });
@@ -427,7 +427,7 @@ async fn read_to_end(stream: &dyn CarrierStreamV3) -> Vec<u8> {
 
 async fn dial_native(address: SocketAddr, profile: NativePathProfile) -> NativeSession {
     let config =
-        NativeClientConfig::new_v3_ca(profile, vec![test_certificate()], native_limits()).unwrap();
+        NativeClientConfig::new_ca(profile, vec![test_certificate()], native_limits()).unwrap();
     NativeSession::dial(
         vec![address],
         "localhost".into(),
@@ -439,7 +439,7 @@ async fn dial_native(address: SocketAddr, profile: NativePathProfile) -> NativeS
 }
 
 fn native_listener(profile: NativePathProfile) -> NativeListener {
-    let config = NativeServerConfig::new_v3(
+    let config = NativeServerConfig::new(
         profile,
         vec![test_certificate()],
         test_private_key(),

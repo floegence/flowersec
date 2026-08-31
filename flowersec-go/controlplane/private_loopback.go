@@ -3,7 +3,7 @@ package controlplane
 import (
 	"slices"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/privateloopbackv1"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/privateloopbackv1"
 )
 
 const PrivateLoopbackProfile = privateloopbackv1.Profile

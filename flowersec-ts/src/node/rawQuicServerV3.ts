@@ -1,7 +1,7 @@
 import { adaptNativeCarrierSessionV3, type CarrierSessionV3 } from "../v3/carrier.js";
 import type { PathKind } from "../v3/contract.js";
-import type { NativeRawQuicDriverV3, NativeRawQuicListenerV3 } from "./nativeTransportAddon.js";
-import { normalizeCertificateChain, normalizePrivateKey } from "./rawQuicAdapter.js";
+import type { NativeRawQuicDriver, NativeRawQuicListener } from "./nativeTransportAddon.js";
+import { normalizeCertificateChain, normalizePrivateKey } from "./rawQuicTls.js";
 
 export type NodeRawQuicListenerOptionsV3 = Readonly<{
   host: string;
@@ -18,11 +18,11 @@ export type NodeRawQuicListenerV3 = Readonly<{
 }>;
 
 export async function startNodeRawQuicListenerV3(
-  driver: NativeRawQuicDriverV3,
+  driver: NativeRawQuicDriver,
   options: NodeRawQuicListenerOptionsV3,
 ): Promise<NodeRawQuicListenerV3> {
   validateOptions(options);
-  let listener: NativeRawQuicListenerV3;
+  let listener: NativeRawQuicListener;
   try {
     listener = await driver.bindRawQuic({
       host: options.host,

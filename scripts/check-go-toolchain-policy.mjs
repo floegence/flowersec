@@ -10,7 +10,7 @@ import {
 } from "./check-container-release-policy.mjs";
 import { goSecurityToolVersions } from "./check-go-security.mjs";
 
-export const goSecurityBaseline = "1.26.6";
+export const goSecurityBaseline = "1.27.0";
 const goToolchain = `go${goSecurityBaseline}`;
 const forbiddenGoVersion = [1, 26, 5].join(".");
 
@@ -95,16 +95,19 @@ export function verifyGoToolchainPolicy(repoRoot) {
   const contractImage = /\bgolang:([^@\s]+)@sha256:[0-9a-f]{64}\b/.exec(contractBuilder)?.[1];
   assertEqual(contractImage, `${goSecurityBaseline}-alpine`, "runtime Dockerfile policy Go builder tag");
 
-  const workflowFiles = [".github/workflows/ci.yml", ".github/workflows/release.yml"];
-  let setupGoCount = 0;
-  for (const relative of workflowFiles) {
+  const workflowContracts = new Map([
+    [".github/workflows/ci.yml", 1],
+    [".github/workflows/release.yml", 2],
+  ]);
+  for (const [relative, expectedCount] of workflowContracts) {
     const steps = parseSetupGoSteps(read(repoRoot, relative), relative);
+    if (steps.length !== expectedCount) {
+      throw new Error(`${relative} must contain ${expectedCount} setup-go step(s); found ${steps.length}`);
+    }
     for (const step of steps) {
       assertEqual(step.versionFile, "flowersec-go/go.mod", `${relative} setup-go version file`);
     }
-    setupGoCount += steps.length;
   }
-  if (setupGoCount !== 2) throw new Error(`maintained workflows must contain two setup-go steps; found ${setupGoCount}`);
 
   const securityScanner = read(repoRoot, "scripts/check-go-security.mjs");
   assertEqual(
@@ -121,9 +124,6 @@ export function verifyGoToolchainPolicy(repoRoot) {
     || !hostInit.includes('grep -F "go${go_version}"')) {
     throw new Error("test host bootstrap must derive downloads and validation from go_version");
   }
-
-  const contract = JSON.parse(read(repoRoot, "stability/transport_v2_contract.json"));
-  assertEqual(contract.go_native_dependencies?.toolchain, goSecurityBaseline, "transport contract Go toolchain");
 
   const inventoryGenerator = read(repoRoot, "scripts/generate-source-inventory.mjs");
   assertEqual(
@@ -143,9 +143,6 @@ export function verifyGoToolchainPolicy(repoRoot) {
     goToolchain,
     "stability checker Go toolchain",
   );
-  const artifactVectors = JSON.parse(read(repoRoot, "testdata/transport_v2/artifact_vectors.json"));
-  assertEqual(artifactVectors.source?.go, goToolchain, "artifact vector producer Go toolchain");
-
   const banned = [];
   const ignored = new Set([".build", ".git", ".swiftpm", "coverage", "dist", "node_modules", "target", "test-results"]);
   const pending = [repoRoot];

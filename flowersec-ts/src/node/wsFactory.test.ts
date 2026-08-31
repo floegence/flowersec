@@ -11,7 +11,7 @@ const wsMod = require("ws") as any;
 const WebSocketServerCtor = wsMod?.WebSocketServer ?? wsMod?.Server;
 
 describe("createNodeWsFactory", () => {
-  test.each(["flowersec.direct.v2", "flowersec.tunnel.v2"])("negotiates the %s subprotocol", async (subprotocol) => {
+  test.each(["flowersec.direct.v3", "flowersec.tunnel.v3"])("negotiates the %s subprotocol", async (subprotocol) => {
     const server = createServer();
     const wss = new WebSocketServerCtor({ server, handleProtocols: (protocols: Set<string>) => protocols.has(subprotocol) ? subprotocol : false });
     server.listen(0);

@@ -35,6 +35,5 @@
     "handler_failure_is_isolated",
     "session_close_terminates_subscriptions"
   ],
-  "inherited_codec_from": "transport_v2",
   "transport_contract_version": 3
 }

@@ -9,8 +9,8 @@ connections.
 | Language | Cookbook | What it demonstrates |
 | --- | --- | --- |
 | Go | [`ExampleConnect`](../flowersec-go/example_client_test.go) and [`controlplane.ExampleIssuer_IssueTunnelPair`](../flowersec-go/controlplane/example_test.go) | Typed RPC, notifications, reliable stream FIN, close, durable invitation use, and control-plane issuance |
-| TypeScript | [examples/ts](ts/README.md) | A runnable Node.js client with typed RPC, decoded notifications, reliable stream FIN, and close |
-| Swift | [examples/swift](swift/README.md) | An Apple client with typed RPC, decoded notifications, reliable stream FIN, and close |
+| TypeScript | [examples/ts](ts/README.md) | A runnable Node.js client with typed RPC, notification send, reliable stream FIN, liveness, and close |
+| Swift | [examples/swift](swift/README.md) | An Apple client with typed RPC, notification send, reliable stream FIN, liveness, and close |
 | Rust | [examples/rust](rust/README.md) | A Tokio client with typed RPC, notifications, reliable stream FIN, and close |
 
 ## Run the Examples

@@ -142,9 +142,9 @@ final class ConnectionControllerTests: XCTestCase {
       let projected = try XCTUnwrap(projections[code])
       switch code {
       case "expired_artifact", "connection_failed":
-        XCTAssertEqual(projected.retryDispositionV3, .retryable, key)
+        XCTAssertEqual(projected.retryDisposition, .retryable, key)
       default:
-        XCTAssertEqual(projected.retryDispositionV3, .terminal, key)
+        XCTAssertEqual(projected.retryDisposition, .terminal, key)
       }
     }
     XCTAssertEqual(seen, Set(expectedActions.keys))
@@ -156,7 +156,7 @@ final class ConnectionControllerTests: XCTestCase {
     for value in valid {
       XCTAssertTrue(validRetryAfterVectorValue(value), "valid retry_after \(value)")
       XCTAssertEqual(
-        RetryDispositionV3.retryAfter(value.uint64Value),
+        RetryDisposition.retryAfter(value.uint64Value),
         .retryAfter(value.uint64Value))
     }
     XCTAssertEqual(valid.map(\.uint64Value).max(), 253_402_300_799_999)
@@ -1325,7 +1325,7 @@ final class ConnectionControllerTests: XCTestCase {
     }
     XCTAssertEqual(failure.code, .connectionFailed)
     let failureDisposition = snapshot.failure?.retryDisposition
-    XCTAssertEqual(failureDisposition, RetryDispositionV3.terminal)
+    XCTAssertEqual(failureDisposition, RetryDisposition.terminal)
     XCTAssertEqual(snapshot.retryDisposition, .terminal)
     let attemptCount = await attempts.value
     XCTAssertEqual(attemptCount, 2)
@@ -1681,9 +1681,9 @@ final class ConnectionControllerTests: XCTestCase {
       return
     }
     XCTAssertEqual(refreshFailure.code.rawValue, expected["public_error"] as? String)
-    XCTAssertEqual(refreshSnapshot.retryDisposition, RetryDispositionV3.terminal)
+    XCTAssertEqual(refreshSnapshot.retryDisposition, RetryDisposition.terminal)
     XCTAssertEqual(staleFailure.code.rawValue, expected["peer_public_error"] as? String)
-    XCTAssertEqual(staleSnapshot.retryDisposition, RetryDispositionV3.terminal)
+    XCTAssertEqual(staleSnapshot.retryDisposition, RetryDisposition.terminal)
     XCTAssertEqual(expected["disposition"] as? String, "terminal")
     assertControllerSnapshotV3(refreshSnapshot, expected: expected, id: "browser refresh")
     var peerExpected = expected
@@ -2553,7 +2553,7 @@ final class ConnectionControllerTests: XCTestCase {
 }
 
 private func nativePinFailureV3(
-  disposition: RetryDispositionV3 = .terminal,
+  disposition: RetryDisposition = .terminal,
   failedIDs: Set<String> = ["w-pin"]
 ) -> ControllerConnectFailureV3 {
   .connection(

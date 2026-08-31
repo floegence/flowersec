@@ -157,6 +157,5 @@
       }
     }
   ],
-  "inherited_codec_from": "transport_v2",
   "transport_contract_version": 3
 }

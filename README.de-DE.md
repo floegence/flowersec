@@ -76,25 +76,26 @@ Beginne mit dem [Cookbook-Index](examples/README.md). Die Beispiele verwenden di
 
 Alle vier SDKs verwenden dasselbe Sitzungsmodell. Der Plattformumfang unterscheidet sich, wenn eine Runtime eine Verbindungsart nicht bereitstellen kann.
 
+<!-- capability-table:start -->
 | Anwendungsfunktion | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
+| Opake, einmal verwendbare Verbindungseinladungen | Ja | Ja | Ja | Ja |
+| Einmalige sichere Verbindung | Ja | Ja | Ja | Ja |
 | Ende-zu-Ende-verschlüsselte Sitzungen | Ja | Ja | Ja | Ja |
-| RPC-Aufrufe und Benachrichtigungen senden | Ja | Ja | Ja | Ja |
-| RPC-Benachrichtigungen empfangen | Ja | Ja | Ja | Ja |
-| Zuverlässige Byte-Streams | Ja | Ja | Ja | Ja |
-| Anwendungs-Streams in jeder Sitzung bedienen | Ja | Ja | Ja | Ja |
+| RPC-Aufrufe und Benachrichtigungen | Ja | Ja | Ja | Ja |
+| Validierte Stream-Metadaten | Ja | Ja | Ja | Ja |
+| Handler für Anwendungsstreams | Ja | Ja | Ja | Ja |
 | Wiederherstellung langlebiger Verbindungen | Ja | Ja | Ja | Ja |
-| Unzuverlässige Nachrichten, wenn verfügbar | Ja | Ja | Nein | Ja |
-| Browserverbindungen | Nein | Ja | Nein | Nein |
-| Apple-Clientverbindungen | Nein | Nein | Ja | Nein |
-| Native QUIC-Verbindungen | Ja | Node.js | Nein | Ja |
-| WebSocket-Verbindungen | Ja | Ja | Ja | Ja |
-| WebTransport-Verbindungen | Go H4 | Browser H3 client (wenn die WebTransport-API verfügbar ist) | Nein | Nein |
-| Serverseitige Sitzungsannahme | Ja | Node.js | Nein | Ja |
-| Undurchsichtige Relay-Laufzeit | Ja | Node.js | Nein | Ja |
-| Verbindungseinladungen der Control Plane | Ja | Nein | Nein | Nein |
-| HTTP- und WebSocket-ProxyServer | Ja | Node.js | Nein | Ja |
-
+| Ausgehandelte unzuverlässige Nachrichten | Ja | Ja | Nein | Ja |
+| Clientseitige RPC-Handler | Ja | Ja | Nein | Ja |
+| Serverseitige Sitzungsannahme | Ja | Ja | Nein | Ja |
+| Serverseitige Sitzungs-Handler | Ja | Ja | Nein | Ja |
+| Ausgabe und Autorisierung der Control Plane | Ja | Nein | Nein | Nein |
+| Zulassung direkter und getunnelter Verbindungen | Ja | Ja | Nein | Ja |
+| HTTP- und WebSocket-ProxyServer | Ja | Ja | Nein | Ja |
+| Carrier-neutraler Stream-Vertrag | Ja | Ja | Ja | Ja |
+| Transport-v3-Wire-Sicherheit | Ja | Ja | Ja | Ja |
+<!-- capability-table:end -->
 Bereitstellungsprofile trennen die Plattformverfuegbarkeit vom gemeinsamen Flowersec-Anwendungsprotokoll:
 
 | Profil | Laufzeiten | Erforderliche Carrier- und Rollenoberflaeche | Optionale Oberflaeche |

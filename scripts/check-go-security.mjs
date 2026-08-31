@@ -49,8 +49,8 @@ const ignoredModuleSearchDirectories = new Set([
 ]);
 
 const fixedGoSecurityTools = {
-  govulncheckVersion: "v1.1.4",
-  goToolchain: "go1.26.6",
+  govulncheckVersion: "v1.7.0",
+  goToolchain: "go1.27.0",
 };
 
 export function goSecurityToolVersions(environment = process.env) {

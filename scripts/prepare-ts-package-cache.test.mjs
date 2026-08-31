@@ -19,11 +19,11 @@ test("derives the published production dependency ranges with lock coverage", ()
     name: "flowersec-package-cache-preflight",
     private: true,
     dependencies: {
-      "@noble/ciphers": "^2.2.0",
-      "@noble/curves": "^2.3.0",
-      "@noble/hashes": "^2.3.0",
-      tr46: "5.0.0",
-      ws: "^8.21.2",
+      "@noble/ciphers": "2.4.0",
+      "@noble/curves": "2.4.0",
+      "@noble/hashes": "2.4.0",
+      tr46: "6.0.0",
+      ws: "8.21.2",
     },
   });
 });

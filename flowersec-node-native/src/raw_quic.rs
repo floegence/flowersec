@@ -6,7 +6,7 @@ use std::{
 };
 
 use flowersec_native_transport::{
-    ApplicationClose, Cancellation, DatagramSendOutcome, PathProfile, ProtocolVersion,
+    ApplicationClose, Cancellation, DatagramSendOutcome, PathProfile,
     RawQuicClientConfig, RawQuicError, RawQuicLimits, RawQuicListener, RawQuicServerConfig,
     RawQuicSession, RawQuicStream,
 };
@@ -23,17 +23,6 @@ type OperationTask<T> =
 
 #[napi(object)]
 pub struct RawQuicConnectOptions {
-    pub host: String,
-    pub port: u16,
-    pub server_name: String,
-    pub path: String,
-    pub trust_roots_der: Vec<Uint8Array>,
-    pub inbound_bidirectional_stream_capacity: u32,
-    pub handshake_timeout_ms: u32,
-}
-
-#[napi(object)]
-pub struct RawQuicConnectOptionsV3 {
     pub host: String,
     pub port: u16,
     pub server_name: String,
@@ -69,26 +58,6 @@ pub fn connect_raw_quic(options: RawQuicConnectOptions) -> Result<RawQuicConnect
         options.inbound_bidirectional_stream_capacity,
         options.handshake_timeout_ms,
     )?;
-    let config = RawQuicClientConfig::new(
-        profile,
-        options
-            .trust_roots_der
-            .into_iter()
-            .map(|root| root.to_vec())
-            .collect(),
-        limits,
-    )
-    .map_err(native_error)?;
-    connect_operation(options.host, options.port, options.server_name, config)
-}
-
-#[napi(js_name = "connectRawQuicV3")]
-pub fn connect_raw_quic_v3(options: RawQuicConnectOptionsV3) -> Result<RawQuicConnectOperation> {
-    let profile = profile(&options.path)?;
-    let limits = limits(
-        options.inbound_bidirectional_stream_capacity,
-        options.handshake_timeout_ms,
-    )?;
     let config = match options.tls_mode.as_str() {
         "ca" => {
             if options.active_leaf_der_sha256.is_some() {
@@ -100,7 +69,7 @@ pub fn connect_raw_quic_v3(options: RawQuicConnectOptionsV3) -> Result<RawQuicCo
                 .into_iter()
                 .map(|root| root.to_vec())
                 .collect();
-            RawQuicClientConfig::new_v3_ca(profile, roots, limits)
+            RawQuicClientConfig::new_ca(profile, roots, limits)
         }
         "pin" => {
             if options.trust_roots_der.is_some() {
@@ -116,7 +85,7 @@ pub fn connect_raw_quic_v3(options: RawQuicConnectOptionsV3) -> Result<RawQuicCo
                         .map_err(|_| stable_error("invalid_tls_policy"))
                 })
                 .collect::<Result<Vec<[u8; 32]>>>()?;
-            RawQuicClientConfig::new_v3_pin(profile, pins, limits)
+            RawQuicClientConfig::new_pin(profile, pins, limits)
         }
         _ => return Err(stable_error("invalid_tls_policy")),
     }
@@ -150,18 +119,6 @@ fn connect_operation(
 
 #[napi(js_name = "bindRawQuic")]
 pub async fn bind_raw_quic(options: RawQuicBindOptions) -> Result<RawQuicListenerBinding> {
-    bind_raw_quic_for_version(options, false).await
-}
-
-#[napi(js_name = "bindRawQuicV3")]
-pub async fn bind_raw_quic_v3(options: RawQuicBindOptions) -> Result<RawQuicListenerBinding> {
-    bind_raw_quic_for_version(options, true).await
-}
-
-async fn bind_raw_quic_for_version(
-    options: RawQuicBindOptions,
-    v3: bool,
-) -> Result<RawQuicListenerBinding> {
     let address = SocketAddr::new(
         options
             .host
@@ -180,12 +137,8 @@ async fn bind_raw_quic_for_version(
         .map(|certificate| certificate.to_vec())
         .collect();
     let private_key = options.private_key_der.to_vec();
-    let config = if v3 {
-        RawQuicServerConfig::new_v3(profile, certificate_chain, private_key, limits)
-    } else {
-        RawQuicServerConfig::new(profile, certificate_chain, private_key, limits)
-    }
-    .map_err(native_error)?;
+    let config = RawQuicServerConfig::new(profile, certificate_chain, private_key, limits)
+        .map_err(native_error)?;
     let listener = RawQuicListener::bind(address, config).map_err(native_error)?;
     Ok(RawQuicListenerBinding {
         listener: Arc::new(listener),
@@ -322,10 +275,7 @@ impl RawQuicSessionBinding {
 
     #[napi(getter, js_name = "wireVersion")]
     pub fn wire_version(&self) -> u32 {
-        match self.session.protocol_version() {
-            ProtocolVersion::V2 => 2,
-            ProtocolVersion::V3 => 3,
-        }
+        3
     }
 
     #[napi(getter, js_name = "inboundBidirectionalStreamCapacity")]

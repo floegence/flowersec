@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
 )
 
 func hashTestLeg(role uint8, credential string, contract, candidates byte, replacement bool) *admittedLeg {

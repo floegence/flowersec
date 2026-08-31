@@ -21,7 +21,7 @@ use crate::{
     raw_quic_v3::RawQuicListenerV3,
     session_handlers::{AcceptedSession, SessionHandlers, rpc_router_v3},
     session_v3::{SessionConfigV3, SessionDeadlinesV3, establish_session_v3},
-    transport_v2::Session,
+    transport::Session,
     transport_v3::{
         CarrierKind, CarrierSessionV3, CarrierStreamV3, PathKind, SessionRole,
         carrier_inbound_stream_limit_v3,

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/defaults"
 	libyamux "github.com/libp2p/go-yamux/v5"
 )
 

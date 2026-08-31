@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
 )
 
 func TestReceiveRekeySuppressionRollsBackOnlyOwnedRoot(t *testing.T) {

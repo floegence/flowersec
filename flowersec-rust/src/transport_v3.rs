@@ -12,15 +12,27 @@ use subtle::ConstantTimeEq as _;
 
 use crate::artifact_v3::{ArtifactErrorV3, hash_lp, jcs_serialize};
 
-pub(crate) use crate::transport_v2::{
-    ByteStream, IncomingStream, JsonObject, NotificationSubscription, PathKind, RpcCallError,
-    RpcError, RpcPeer, Session, SessionError, SessionRole, SessionTermination, StreamMetadata,
-    UnreliableMessageChannel, UnreliableMessageError, UnreliableSendOutcome,
+pub(crate) use crate::transport::{
+    ByteStream, IncomingStream, JsonObject, NotificationSubscription, RpcCallError, RpcError,
+    RpcPeer, Session, SessionError, SessionTermination, StreamMetadata, UnreliableMessageChannel,
+    UnreliableMessageError, UnreliableSendOutcome,
 };
 
-/// v3 carrier identity. This is deliberately a distinct type from the v2
-/// identity so a v3 candidate cannot accidentally be routed through a v2
-/// capability table.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum SessionRole {
+    Client,
+    Server,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum PathKind {
+    Direct,
+    Tunnel,
+}
+
+/// Closed carrier identity for the current transport capability table.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub(crate) enum CarrierKind {
     #[serde(rename = "websocket")]
@@ -719,7 +731,9 @@ mod tests {
         assert!(value.len().is_multiple_of(2));
         value
             .as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| {
                 u8::from_str_radix(std::str::from_utf8(pair).expect("ASCII hex"), 16)
                     .expect("valid hex")

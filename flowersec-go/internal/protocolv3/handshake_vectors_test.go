@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	protocolv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	protocolv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
 )
 
 type handshakeVectorFile struct {

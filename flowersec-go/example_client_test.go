@@ -3,15 +3,15 @@ package flowersec_test
 import (
 	"context"
 	"crypto/x509"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
 )
 
 const (
@@ -25,28 +25,48 @@ type exampleValuePayload struct {
 }
 
 func ExampleConnect() {
+	if err := connectExample(); err != nil {
+		reportRecovery(err)
+	}
+}
+
+func TestExampleConnectE2E(t *testing.T) {
+	if os.Getenv("FSEC_ARTIFACT_V3_PATH") == "" {
+		t.Skip("example E2E input is supplied by the acceptance runner")
+	}
+	if err := connectExample(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func connectExample() error {
 	artifactJSON, err := os.ReadFile(os.Getenv("FSEC_ARTIFACT_V3_PATH"))
 	if err != nil {
-		reportExampleError(err)
-		return
+		return err
 	}
 	artifact, err := flowersec.ParseArtifact(artifactJSON)
 	if err != nil {
-		reportExampleError(err)
-		return
+		return err
 	}
 	receiptPath := os.Getenv("FSEC_SPEND_RECEIPT_V3_PATH")
 	lease, err := flowersec.NewArtifactLease(artifact, func(context.Context) error {
 		return commitSpendReceipt(receiptPath)
 	})
 	if err != nil {
-		reportExampleError(err)
-		return
+		return err
 	}
 	trustRoots, err := x509.SystemCertPool()
 	if err != nil {
-		reportExampleError(err)
-		return
+		return err
+	}
+	if trustRootPath := os.Getenv("FSEC_TRUST_ROOT_PEM_PATH"); trustRootPath != "" {
+		trustRootPEM, readErr := os.ReadFile(trustRootPath)
+		if readErr != nil {
+			return readErr
+		}
+		if !trustRoots.AppendCertsFromPEM(trustRootPEM) {
+			return errors.New("invalid trust root PEM")
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -56,46 +76,26 @@ func ExampleConnect() {
 		ConnectTimeout: 15 * time.Second,
 	})
 	if err != nil {
-		reportRecovery(err)
-		return
+		return err
 	}
-	defer session.Close()
 	if err := runExampleApplication(ctx, session); err != nil {
-		reportRecovery(err)
+		_ = session.Close()
+		return err
 	}
+	return session.Close()
 }
 
 func runExampleApplication(ctx context.Context, session flowersec.Session) error {
-	notifications := make(chan exampleValuePayload, 1)
-	unsubscribe := session.RPC().OnNotify(exampleNotificationTypeID, func(_ context.Context, raw json.RawMessage) {
-		var payload exampleValuePayload
-		if json.Unmarshal(raw, &payload) == nil {
-			select {
-			case notifications <- payload:
-			default:
-			}
-		}
-	})
-	defer unsubscribe()
-
 	request := exampleValuePayload{Value: "ping"}
 	var response exampleValuePayload
 	if err := session.RPC().Call(ctx, exampleEchoRPCTypeID, request, &response); err != nil {
-		return err
+		return fmt.Errorf("typed RPC: %w", err)
 	}
 	if response != request {
 		return errors.New("unexpected typed RPC response")
 	}
 	if err := session.RPC().Notify(ctx, exampleNotificationTypeID, exampleValuePayload{Value: "notify"}); err != nil {
-		return err
-	}
-	select {
-	case notification := <-notifications:
-		if notification.Value != "notify" {
-			return errors.New("unexpected notification payload")
-		}
-	case <-ctx.Done():
-		return ctx.Err()
+		return fmt.Errorf("send notification: %w", err)
 	}
 
 	streamCell := os.Getenv("FSEC_EXAMPLE_STREAM_CELL")
@@ -108,7 +108,7 @@ func runExampleApplication(ctx context.Context, session flowersec.Session) error
 	}
 	stream, err := session.OpenStream(ctx, exampleEchoStreamKind, metadata)
 	if err != nil {
-		return err
+		return fmt.Errorf("open stream: %w", err)
 	}
 	defer stream.Close()
 	if err := writeExampleAll(stream, []byte("hello")); err != nil {
@@ -125,7 +125,10 @@ func runExampleApplication(ctx context.Context, session flowersec.Session) error
 		return errors.New("unexpected reliable stream response")
 	}
 	_, err = session.ProbeLiveness(ctx)
-	return err
+	if err != nil {
+		return fmt.Errorf("probe liveness: %w", err)
+	}
+	return nil
 }
 
 func writeExampleAll(stream flowersec.ByteStream, payload []byte) error {

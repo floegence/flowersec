@@ -8,10 +8,9 @@ use tokio::{sync::Semaphore, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    protocol_v2::valid_open_kind,
-    session_v2::RpcHandlerV2,
+    protocol_v3::valid_open_kind,
     session_v3::RpcHandlerV3,
-    transport_v2::{IncomingStream, RpcError, Session, SessionError},
+    transport::{IncomingStream, RpcError, Session, SessionError},
 };
 
 const DEFAULT_MAX_CONCURRENT_STREAMS: usize = 64;
@@ -286,10 +285,6 @@ pub(crate) struct RpcHandlerSnapshot {
     notifications: HashMap<u32, Arc<dyn NotificationHandler>>,
 }
 
-pub(crate) fn rpc_router(snapshot: Arc<RpcHandlerSnapshot>) -> Arc<dyn RpcHandlerV2> {
-    Arc::new(RpcRouterAdapter::new(snapshot))
-}
-
 pub(crate) fn rpc_router_v3(snapshot: Arc<RpcHandlerSnapshot>) -> Arc<dyn RpcHandlerV3> {
     Arc::new(RpcRouterAdapter::new(snapshot))
 }
@@ -307,31 +302,6 @@ impl RpcRouterAdapter {
 impl fmt::Debug for RpcRouterAdapter {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("RpcRouterAdapter { <opaque> }")
-    }
-}
-
-#[async_trait]
-impl RpcHandlerV2 for RpcRouterAdapter {
-    async fn call(
-        &self,
-        type_id: u32,
-        request: serde_json::Value,
-    ) -> Result<serde_json::Value, RpcError> {
-        let handler = self.snapshot.requests.get(&type_id).ok_or_else(|| {
-            RpcError::new(404, Some("handler not found".into())).expect("valid RPC error")
-        })?;
-        handler.call(type_id, request).await
-    }
-
-    async fn notify(&self, type_id: u32, request: serde_json::Value) -> Result<(), RpcError> {
-        if let Some(handler) = self.snapshot.notifications.get(&type_id) {
-            return handler.handle_notification(type_id, request).await;
-        }
-        if let Some(handler) = self.snapshot.requests.get(&type_id) {
-            handler.notify(type_id, request).await
-        } else {
-            Ok(())
-        }
     }
 }
 
@@ -560,7 +530,7 @@ mod tests {
     use tokio::sync::{Mutex as AsyncMutex, Notify, mpsc};
 
     use super::*;
-    use crate::transport_v2::{
+    use crate::transport::{
         ByteStream, NotificationSubscription, RpcCallError, RpcPeer, SessionTermination,
         StreamMetadata,
     };
@@ -1225,8 +1195,8 @@ mod tests {
         );
 
         let snapshot = handlers.into_snapshot();
-        let first = rpc_router(snapshot.clone());
-        let second = rpc_router(snapshot);
+        let first = rpc_router_v3(snapshot.clone());
+        let second = rpc_router_v3(snapshot);
         assert!(!Arc::ptr_eq(&first, &second));
         assert_eq!(
             first.call(1, serde_json::Value::Null).await,
@@ -1260,10 +1230,9 @@ mod tests {
 
     #[test]
     fn enforces_shared_utf8_stream_kind_contract() {
-        for version in ["v2", "v3"] {
-            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-                "../testdata/transport_{version}/session_handler_vectors.json"
-            ));
+        {
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../testdata/transport_v3/session_handler_vectors.json");
             let vectors: StreamKindVectors =
                 serde_json::from_slice(&fs::read(path).expect("read session handler vectors"))
                     .expect("decode session handler vectors");
@@ -1275,7 +1244,7 @@ mod tests {
                 assert_eq!(
                     result.is_ok(),
                     vector.valid,
-                    "{version} stream kind vector {}",
+                    "Transport v3 stream kind vector {}",
                     vector.id
                 );
                 if !vector.valid {
@@ -1286,7 +1255,7 @@ mod tests {
                 assert_eq!(
                     portable_result.is_ok(),
                     vector.valid,
-                    "{version} portable stream kind vector {}",
+                    "Transport v3 portable stream kind vector {}",
                     vector.id
                 );
             }
@@ -1307,7 +1276,7 @@ mod tests {
                 assert_eq!(
                     result.is_ok(),
                     vector.valid,
-                    "{version} RPC type ID vector {}",
+                    "Transport v3 RPC type ID vector {}",
                     vector.id
                 );
             }

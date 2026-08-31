@@ -1,4 +1,4 @@
-// Package carrier defines the transport-neutral substrate used by Flowersec v2.
+// Package carrier defines Flowersec's transport-neutral carrier substrate.
 package carrier
 
 import (
@@ -8,7 +8,7 @@ import (
 	"io"
 )
 
-// Kind identifies a v2 carrier without exposing its implementation type.
+// Kind identifies a carrier without exposing its implementation type.
 type Kind string
 
 const (
@@ -17,7 +17,7 @@ const (
 	KindWebTransport Kind = "webtransport"
 )
 
-// Path identifies the negotiated Flowersec v2 routing profile.
+// Path identifies the negotiated Flowersec routing profile.
 type Path string
 
 const (

@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"sync"
 
-	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
 )
 
 type browserCapacityArtifact interface {

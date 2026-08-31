@@ -92,11 +92,11 @@ test("consumer examples expose structured connection and session recovery", () =
   const rustReadme = read("flowersec-rust/README.md");
   assert.match(
     rustReadme,
-    /ConnectorOptions::new\(\)\s*\.with_trust_roots_der\(vec!\[root_der\]\)/u,
+    /ConnectorOptions::new\(\)\s*\.with_trust_roots_der\(roots\)/u,
   );
-  assert.match(rustReadme, /CA candidates use platform trust roots by default/u);
-  assert.match(rustReadme, /Pin candidates use\s+only the active leaf-certificate SHA-256 pins/u);
-  assert.match(rustReadme, /never fall back to CA verification/u);
+  assert.match(rustReadme, /CA candidates use platform or explicit DER trust roots/u);
+  assert.match(rustReadme, /Pin candidates use only\s+the active artifact-bound leaf-certificate SHA-256 pins/u);
+  assert.match(rustReadme, /never fall back to\s+CA verification/u);
   assert.doesNotMatch(rustReadme, /plaintext direct WebSocket/u);
 });
 
@@ -135,7 +135,23 @@ test("portable contract documents unreliable messages as an explicit SDK profile
   const readme = read("README.md");
   const apiContract = read("docs/API_CONTRACT.md");
 
-  assert.match(readme, /\| Unreliable messages when available \| Yes \| Yes \| No \| Yes \|/u);
+  assert.match(readme, /\| Negotiated unreliable messages \| Yes \| Yes \| No \| Yes \|/u);
   assert.match(apiContract, /Unreliable messages are an SDK-profile capability/u);
   assert.match(apiContract, /Swift explicitly reports the capability as unsupported/u);
+});
+
+test("built public SDK examples run the shared application contract", () => {
+  const runner = read("scripts/test-sdk-examples-e2e.mjs");
+  const makefile = read("Makefile");
+  const registry = read("flowersec-go/internal/cmd/flowersec-test/registry.go");
+
+  for (const language of ["go", "typescript", "rust", "swift"]) {
+    assert.match(runner, new RegExp(`name: "${language}"`));
+  }
+  assert.match(runner, /npm", \[\s*"pack"/u);
+  assert.match(runner, /"--scratch-path", path\.join\(scratch, "swift-build"\)/u);
+  assert.match(runner, /"--only-use-versions-from-resolved-file"/u);
+  assert.match(runner, /"rpc", "notification", "stream-fin", "liveness", "close"/u);
+  assert.match(makefile, /example-check:[\s\S]*node scripts\/test-sdk-examples-e2e\.mjs/u);
+  assert.match(registry, /"examples\/public-sdk-e2e"[\s\S]*"scripts\/test-sdk-examples-e2e\.mjs"/u);
 });

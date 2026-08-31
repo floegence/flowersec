@@ -19,19 +19,19 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
-	flowercontrol "github.com/floegence/flowersec/flowersec-go/v3/controlplane"
-	admissionws "github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
-	session "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/tunnelv3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
+	flowercontrol "github.com/floegence/flowersec/flowersec-go/v4/controlplane"
+	admissionws "github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
+	session "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/tunnelv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 
-func TestWSSDirectListenerTerminatesV2AndBridgesAuthorizedTCP(t *testing.T) {
+func TestWSSDirectListenerTerminatesTransportAndBridgesAuthorizedTCP(t *testing.T) {
 	upstream := startEchoServer(t)
 	releaseStarted := make(chan string, 1)
 	releaseContinue := make(chan struct{})

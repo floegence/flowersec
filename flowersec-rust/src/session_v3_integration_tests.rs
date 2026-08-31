@@ -366,13 +366,13 @@ struct PostWriteGatedCarrierStream {
 
 impl TestDatagramCarrierSession {
     fn wrap_control(&self, stream: Arc<dyn CarrierStreamV3>) -> Arc<dyn CarrierStreamV3> {
-        if self.streams.fetch_add(1, Ordering::AcqRel) == 0 {
-            if let Some(gate) = &self.control_post_write_gate {
-                return Arc::new(PostWriteGatedCarrierStream {
-                    inner: stream,
-                    gate: gate.clone(),
-                });
-            }
+        if self.streams.fetch_add(1, Ordering::AcqRel) == 0
+            && let Some(gate) = &self.control_post_write_gate
+        {
+            return Arc::new(PostWriteGatedCarrierStream {
+                inner: stream,
+                gate: gate.clone(),
+            });
         }
         stream
     }
@@ -3704,7 +3704,9 @@ async fn previous_version_datagram_fails_the_established_session() {
         let encoded = vector[field].as_str().unwrap();
         let wire = encoded
             .as_bytes()
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
             .collect::<Vec<_>>();
         let (client_inner, server_inner) = memory_carrier_pair_for_logical(1);

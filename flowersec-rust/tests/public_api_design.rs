@@ -1,17 +1,12 @@
-use flowersec::v2::{
-    Acceptor, TunnelAdmissionOptions, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
-    WebSocketAcceptorOptions,
-};
 use flowersec::{
-    ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
+    Acceptor, ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
     ConnectionControllerOptions, ConnectorOptions, IncomingStream, NotificationHandler,
     RetryDisposition, RpcError, RpcHandler, RpcHandlers, RpcPeer, RpcPeerExt,
-    RuntimeAuthorizationRequest as RuntimeAuthorizationRequestV3, SessionError,
-    SessionHandlerOptions, SessionHandlers, SessionTermination, StreamHandler,
-    StreamHandlerOptions, StreamHandlers, StreamMetadata, StreamMetadataError,
-    TunnelAuthorizationError as TunnelAuthorizationErrorV3,
-    TunnelAuthorizationResponse as TunnelAuthorizationResponseV3,
-    TunnelAuthorizer as TunnelAuthorizerV3, connect,
+    RuntimeAuthorizationRequest, SessionError, SessionHandlerOptions, SessionHandlers,
+    SessionTermination, StreamHandler, StreamHandlerOptions, StreamHandlers, StreamMetadata,
+    StreamMetadataError, TunnelAdmissionOptions, TunnelAuthorizationError,
+    TunnelAuthorizationResponse, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
+    WebSocketAcceptorOptions, connect,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -56,17 +51,17 @@ impl NotificationHandler for NotificationWithoutDebug {
 
 struct StreamWithoutDebug;
 
-struct CompileV3Authorizer;
+struct CompileAuthorizer;
 
 #[async_trait::async_trait]
-impl TunnelAuthorizerV3 for CompileV3Authorizer {
+impl TunnelAuthorizer for CompileAuthorizer {
     async fn authorize(
         &self,
-        _request: RuntimeAuthorizationRequestV3,
+        _request: RuntimeAuthorizationRequest,
         cancellation: CancellationToken,
-    ) -> Result<TunnelAuthorizationResponseV3, TunnelAuthorizationErrorV3> {
+    ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
         let _ = cancellation.is_cancelled();
-        Err(TunnelAuthorizationErrorV3)
+        Err(TunnelAuthorizationError)
     }
 }
 
@@ -134,21 +129,6 @@ fn exposes_explicit_options_and_typed_rpc() {
     let _ = compile_retry_disposition;
 }
 
-#[allow(deprecated)]
-#[test]
-fn deprecated_v3_root_names_remain_source_compatible() {
-    fn parse(encoded: &[u8]) -> Result<flowersec::ArtifactV3, flowersec::ArtifactErrorV3> {
-        flowersec::ArtifactV3::parse(encoded)
-    }
-    fn lease(artifact: flowersec::ArtifactV3) -> flowersec::ArtifactLeaseV3 {
-        flowersec::ArtifactLeaseV3::new(artifact, || async { Ok(()) })
-    }
-    let _ = parse;
-    let _ = lease;
-    let _ = flowersec::connect_v3;
-    let _ = flowersec::connect_v3_with_cancellation;
-}
-
 #[test]
 fn exposes_a_production_websocket_direct_listener() {
     fn compile_listener(options: WebSocketAcceptorOptions) {
@@ -160,8 +140,8 @@ fn exposes_a_production_websocket_direct_listener() {
 
 #[test]
 fn exposes_an_independent_opaque_tunnel_runtime() {
-    let _ = CompileV3Authorizer;
-    let _: Option<&dyn TunnelAuthorizerV3> = None;
+    let _ = CompileAuthorizer;
+    let _: Option<&dyn TunnelAuthorizer> = None;
     fn compile_runtime(options: TunnelRuntimeOptions, authorizer: Arc<dyn TunnelAuthorizer>) {
         let runtime =
             TunnelRuntime::bind_websocket(options, authorizer).expect("bind opaque tunnel runtime");
@@ -216,9 +196,7 @@ fn handler_registration_is_generic_and_does_not_require_debug_or_arc() {
 #[test]
 fn connection_controller_requires_a_refreshable_artifact_source() {
     fn compile_controller(source: Arc<dyn ArtifactSource>) -> ConnectionController {
-        let connector = ConnectorOptions::new()
-            .with_trust_roots_der(vec![vec![1]])
-            .expect("explicit trust roots");
+        let connector = ConnectorOptions::new();
         ConnectionController::new(
             source,
             ConnectionControllerOptions::new(connector)
@@ -342,6 +320,8 @@ fn rustdoc_uses_real_unversioned_portable_types() {
         }
         let source = fs::read_to_string(&page).expect("read rustdoc page");
         for name in [
+            "ArtifactV3",
+            "ArtifactLeaseV3",
             "SessionV2",
             "ByteStreamV2",
             "IncomingStreamV2",

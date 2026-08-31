@@ -4,18 +4,12 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import {
   createNativeRawQuicDriver,
-  createNativeRawQuicDriverV3,
   type NativeRawQuicDriver,
-  type NativeRawQuicDriverV3,
   type NativeRawQuicListener,
   type NativeTransportAddonBinding,
 } from "./nativeTransportAddon.js";
-import type { NativeCarrierSessionV2 } from "../v2/carrier.js";
-import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
-import { parseArtifact, type Artifact } from "../v2/opaqueArtifact.js";
-import { connect, createConnectionController } from "./connectSession.js";
-import { createAcceptor, SessionHandlersV3 } from "./acceptor.js";
-import { createEndpointSet, Issuer } from "./controlplane.js";
+import type { NativeCarrierSessionV3 } from "../v3/carrier.js";
+import { SessionHandlersV3 } from "./acceptor.js";
 import {
   decodeArtifactV3JSON,
   encodeArtifactV3JSON,
@@ -65,7 +59,7 @@ afterAll(() => {
 
 describe("Node native raw QUIC driver", () => {
   test("runs the explicit v3 addon entries with isolated ALPN", async () => {
-    const v3 = loadDriverV3();
+    const v3 = loadDriver();
     const listener = await v3.bindRawQuic({
       host: "127.0.0.1",
       port: 0,
@@ -100,28 +94,11 @@ describe("Node native raw QUIC driver", () => {
       server?.abort();
       await listener.close();
     }
-
-    const v2Listener = await bindListener(loadDriver(), 4);
-    try {
-      const address = v2Listener.address();
-      await expect(v3.connectRawQuic({
-        host: address.host,
-        port: address.port,
-        serverName: "localhost",
-        path: "direct",
-        tlsMode: "ca",
-        trustRootsDer: [CERTIFICATE_DER],
-        inboundBidirectionalStreamCapacity: 4,
-        handshakeTimeoutMs: 2_000,
-      })).rejects.toThrow();
-    } finally {
-      await v2Listener.close();
-    }
   }, 20_000);
 
   test("enforces a short-lived P-256 leaf pin without CA fallback", async () => {
     const directory = mkdtempSync(join(tmpdir(), "flowersec-node-raw-pin-v3-"));
-    const driver = loadDriverV3();
+    const driver = loadDriver();
     let listener: Awaited<ReturnType<typeof driver.bindRawQuic>> | undefined;
     try {
       const certificatePath = join(directory, "leaf.pem");
@@ -275,6 +252,7 @@ describe("Node native raw QUIC driver", () => {
         port: address.port,
         serverName: "localhost",
         path: "direct",
+        tlsMode: "ca",
         trustRootsDer: [CERTIFICATE_DER],
         inboundBidirectionalStreamCapacity: 10,
         handshakeTimeoutMs: 2_000,
@@ -485,113 +463,9 @@ describe("Node production raw QUIC runtime v3", () => {
   }, 20_000);
 });
 
-describe("Node public raw QUIC connector", () => {
-  test("connects a raw-QUIC-only artifact without origin", async () => {
-    const authorized = new Map<string, Artifact>();
-    const acceptor = await rawQuicAcceptor(authorized);
-    try {
-      const address = acceptor.addresses()[0]!;
-      const issued = issueDirect(`quic://127.0.0.1:${address.port}`, "node-no-origin-oneshot");
-      authorized.set(issued.authorizationRecord().lookupKey(), parseArtifact(issued.artifactJSON()));
-      let spends = 0;
-      const acceptedPromise = acceptor.accept();
-      const clientPromise = connect(
-        createArtifactLeaseV2(parseArtifact(issued.artifactJSON()), async () => { spends += 1; }),
-        { tls: { ca: CERTIFICATE_DER } },
-      );
-      const [client, accepted] = await Promise.all([clientPromise, acceptedPromise]);
-      expect(spends).toBe(1);
-      await Promise.all([client.close(), accepted.close()]);
-    } finally {
-      await acceptor.close();
-    }
-  }, 20_000);
-
-  test("uses only raw QUIC from a mixed artifact when origin is absent", async () => {
-    const { createServer } = await import("node:http");
-    const { once } = await import("node:events");
-    const websocketProbe = createServer();
-    let upgrades = 0;
-    websocketProbe.on("upgrade", (_request, socket) => {
-      upgrades += 1;
-      socket.destroy();
-    });
-    websocketProbe.listen(0, "127.0.0.1");
-    await once(websocketProbe, "listening");
-    const websocketAddress = websocketProbe.address();
-    if (typeof websocketAddress !== "object" || websocketAddress === null) throw new Error("probe did not bind");
-
-    const authorized = new Map<string, Artifact>();
-    const acceptor = await rawQuicAcceptor(authorized);
-    try {
-      const address = acceptor.addresses()[0]!;
-      const issued = issueDirect(
-        `ws://127.0.0.1:${websocketAddress.port}/flowersec/v2/direct`,
-        "node-no-origin-mixed",
-        `quic://127.0.0.1:${address.port}`,
-      );
-      authorized.set(issued.authorizationRecord().lookupKey(), parseArtifact(issued.artifactJSON()));
-      const [client, accepted] = await Promise.all([
-        connect(
-          createArtifactLeaseV2(parseArtifact(issued.artifactJSON()), async () => undefined),
-          { tls: { ca: CERTIFICATE_DER } },
-        ),
-        acceptor.accept(),
-      ]);
-      expect(upgrades).toBe(0);
-      await Promise.all([client.close(), accepted.close()]);
-    } finally {
-      await acceptor.close();
-      await new Promise<void>((resolve) => websocketProbe.close(() => resolve()));
-    }
-  }, 20_000);
-
-  test("keeps no-origin semantics across ConnectionController generations", async () => {
-    const authorized = new Map<string, Artifact>();
-    const acceptor = await rawQuicAcceptor(authorized);
-    let acquisitions = 0;
-    let spends = 0;
-    const address = acceptor.addresses()[0]!;
-    const source = {
-      acquire: async () => {
-        acquisitions += 1;
-        const issued = issueDirect(`quic://127.0.0.1:${address.port}`, `node-no-origin-controller-${acquisitions}`);
-        const artifact = parseArtifact(issued.artifactJSON());
-        authorized.set(issued.authorizationRecord().lookupKey(), artifact);
-        return {
-          kind: "lease" as const,
-          lease: createArtifactLeaseV2(artifact, async () => { spends += 1; }),
-        };
-      },
-    };
-    const controller = createConnectionController(source, { tls: { ca: CERTIFICATE_DER }, maximumAttempts: 3 });
-    try {
-      const firstAcceptedPromise = acceptor.accept();
-      controller.start();
-      const first = await controller.waitForSession();
-      const firstAccepted = await firstAcceptedPromise;
-      expect(acquisitions).toBe(1);
-      expect(spends).toBe(1);
-
-      const replacementPromise = waitForReplacement(controller, first);
-      const secondAcceptedPromise = acceptor.accept();
-      await firstAccepted.close();
-      const replacement = await replacementPromise;
-      const secondAccepted = await secondAcceptedPromise;
-      expect(replacement).not.toBe(first);
-      expect(acquisitions).toBe(2);
-      expect(spends).toBe(2);
-      await secondAccepted.close();
-    } finally {
-      await controller.close();
-      await acceptor.close();
-    }
-  }, 20_000);
-});
-
 type NativePair = Readonly<{
-  client: NativeCarrierSessionV2;
-  server: NativeCarrierSessionV2;
+  client: NativeCarrierSessionV3;
+  server: NativeCarrierSessionV3;
   listener: NativeRawQuicListener;
   cleanup(): Promise<void>;
 }>;
@@ -599,8 +473,8 @@ type NativePair = Readonly<{
 async function openPair(capacity: number): Promise<NativePair> {
   const driver = loadDriver();
   const listener = await bindListener(driver, capacity);
-  let client: NativeCarrierSessionV2 | undefined;
-  let server: NativeCarrierSessionV2 | undefined;
+  let client: NativeCarrierSessionV3 | undefined;
+  let server: NativeCarrierSessionV3 | undefined;
   try {
     const accepting = listener.accept();
     const address = listener.address();
@@ -609,6 +483,7 @@ async function openPair(capacity: number): Promise<NativePair> {
       port: address.port,
       serverName: "localhost",
       path: "direct",
+      tlsMode: "ca",
       trustRootsDer: [CERTIFICATE_DER],
       inboundBidirectionalStreamCapacity: capacity,
       handshakeTimeoutMs: 2_000,
@@ -641,13 +516,6 @@ function loadDriver(): NativeRawQuicDriver {
   return createNativeRawQuicDriver(addon);
 }
 
-function loadDriverV3(): NativeRawQuicDriverV3 {
-  const addonPath = process.env.FLOWERSEC_NATIVE_ADDON_PATH;
-  if (addonPath === undefined) throw new Error("FLOWERSEC_NATIVE_ADDON_PATH is required");
-  const addon = createRequire(import.meta.url)(addonPath) as NativeTransportAddonBinding;
-  return createNativeRawQuicDriverV3(addon);
-}
-
 async function bindListener(driver: NativeRawQuicDriver, capacity: number): Promise<NativeRawQuicListener> {
   return await driver.bindRawQuic({
     host: "127.0.0.1",
@@ -657,53 +525,6 @@ async function bindListener(driver: NativeRawQuicDriver, capacity: number): Prom
     privateKeyDer: PRIVATE_KEY_DER,
     inboundBidirectionalStreamCapacity: capacity,
     handshakeTimeoutMs: 2_000,
-  });
-}
-
-async function rawQuicAcceptor(authorized: Map<string, Artifact>) {
-  return await createAcceptor({
-    listeners: [{
-      carrier: "raw_quic",
-      path: "direct",
-      host: "127.0.0.1",
-      port: 0,
-      tls: { certificate: CERTIFICATE_PEM, privateKey: PRIVATE_KEY_PEM },
-    }],
-    maxInboundStreams: 10,
-    authorize: async (request) => {
-      const artifact = authorized.get(request.lookupKey());
-      return artifact === undefined
-        ? { decision: "reject" as const, reason: "unknown_credential" }
-        : { decision: "allow" as const, artifact };
-    },
-  });
-}
-
-function issueDirect(firstUrl: string, channelId: string, ...additionalUrls: string[]) {
-  return new Issuer().issueDirect({
-    session: { channelId, maxInboundStreams: 10 },
-    endpoints: createEndpointSet(firstUrl, ...additionalUrls),
-    rendezvousGroupId: `${channelId}-group`,
-    listenerAudience: "node-native-listener",
-    upstreamAddress: "127.0.0.1:9000",
-  });
-}
-
-async function waitForReplacement(
-  controller: ReturnType<typeof createConnectionController>,
-  previous: Awaited<ReturnType<typeof connect>>,
-) {
-  return await new Promise<Awaited<ReturnType<typeof connect>>>((resolve, reject) => {
-    let unsubscribe: () => void = () => undefined;
-    unsubscribe = controller.subscribe((snapshot) => {
-      if (snapshot.state === "connected" && snapshot.currentSession !== undefined && snapshot.currentSession !== previous) {
-        unsubscribe();
-        resolve(snapshot.currentSession);
-      } else if (snapshot.state === "failed" || snapshot.state === "closed") {
-        unsubscribe();
-        reject(new Error(`controller stopped in ${snapshot.state}`));
-      }
-    });
   });
 }
 

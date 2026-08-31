@@ -6,7 +6,7 @@
   "github.com/cespare/xxhash/v2": { "license": "MIT", "file": "LICENSE.txt" },
   "github.com/davecgh/go-spew": { "license": "ISC", "file": "LICENSE" },
   "github.com/dunglas/httpsfv": { "license": "BSD-3-Clause", "file": "LICENSE" },
-  "github.com/floegence/flowersec/flowersec-go/v2": { "license": "MIT", "file": "LICENSE" },
+  "github.com/floegence/flowersec/flowersec-go/v4": { "license": "MIT", "file": "LICENSE" },
   "github.com/go-kit/log": { "license": "MIT", "file": "LICENSE" },
   "github.com/go-logfmt/logfmt": { "license": "MIT", "file": "LICENSE" },
   "github.com/golang/protobuf": { "license": "BSD-3-Clause", "file": "LICENSE" },

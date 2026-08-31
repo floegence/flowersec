@@ -25,7 +25,7 @@ use crate::{
     ArtifactLease, ConnectError, ConnectErrorCode, ConnectorOptions, SessionError,
     artifact_v3::{ArtifactV3, ClaimedArtifactLeaseV3, TlsPolicyWireV3},
     connector_v3::connect_v3_with_cancellation,
-    transport_v2::Session,
+    transport::Session,
 };
 
 const DEFAULT_INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
@@ -1463,7 +1463,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::transport_v2::{
+    use crate::transport::{
         ByteStream, IncomingStream, RpcPeer, SessionTermination, StreamMetadata,
     };
 

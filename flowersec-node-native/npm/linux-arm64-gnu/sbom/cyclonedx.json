@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:941fb027-adc0-5f16-87fa-8c3231ac089c",
+  "serialNumber": "urn:uuid:fe72c0a8-ff85-5e35-8a1c-c1661d195e6b",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-      "version": "3.2.1",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.2.1",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.2.1"
+      "version": "4.0.0",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@4.0.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@4.0.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "924213e1745b00a8af5242e0f5327a12352797dada4fdc1c5c1d62a8c092b86d"
+        "value": "3a2d59d3f7676d053eafa979e8e2ba785a5a54cff487e70ed584fb34f4caf372"
       }
     ]
   },
@@ -246,9 +246,9 @@
     {
       "type": "library",
       "name": "cc",
-      "version": "1.4.3",
-      "purl": "pkg:cargo/cc@1.4.3",
-      "bom-ref": "pkg:cargo/cc@1.4.3",
+      "version": "1.4.4",
+      "purl": "pkg:cargo/cc@1.4.4",
+      "bom-ref": "pkg:cargo/cc@1.4.4",
       "licenses": [
         {
           "expression": "MIT"
@@ -330,9 +330,9 @@
     {
       "type": "library",
       "name": "chacha20",
-      "version": "0.10.1",
-      "purl": "pkg:cargo/chacha20@0.10.1",
-      "bom-ref": "pkg:cargo/chacha20@0.10.1",
+      "version": "0.10.2",
+      "purl": "pkg:cargo/chacha20@0.10.2",
+      "bom-ref": "pkg:cargo/chacha20@0.10.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -414,9 +414,9 @@
     {
       "type": "library",
       "name": "cpufeatures",
-      "version": "0.3.0",
-      "purl": "pkg:cargo/cpufeatures@0.3.0",
-      "bom-ref": "pkg:cargo/cpufeatures@0.3.0",
+      "version": "0.3.1",
+      "purl": "pkg:cargo/cpufeatures@0.3.1",
+      "bom-ref": "pkg:cargo/cpufeatures@0.3.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -2038,9 +2038,9 @@
     {
       "type": "library",
       "name": "rustls-webpki",
-      "version": "0.103.14",
-      "purl": "pkg:cargo/rustls-webpki@0.103.14",
-      "bom-ref": "pkg:cargo/rustls-webpki@0.103.14",
+      "version": "0.103.15",
+      "purl": "pkg:cargo/rustls-webpki@0.103.15",
+      "bom-ref": "pkg:cargo/rustls-webpki@0.103.15",
       "licenses": [
         {
           "expression": "ISC"
@@ -2346,9 +2346,9 @@
     {
       "type": "library",
       "name": "syn",
-      "version": "3.0.3",
-      "purl": "pkg:cargo/syn@3.0.3",
-      "bom-ref": "pkg:cargo/syn@3.0.3",
+      "version": "3.0.4",
+      "purl": "pkg:cargo/syn@3.0.4",
+      "bom-ref": "pkg:cargo/syn@3.0.4",
       "licenses": [
         {
           "expression": "MIT"
@@ -3410,7 +3410,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@3.2.1",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@4.0.0",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/napi-build@2.4.1",
@@ -3479,7 +3479,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/cc@1.4.3",
+      "ref": "pkg:cargo/cc@1.4.4",
       "dependsOn": [
         "pkg:cargo/find-msvc-tools@0.1.11",
         "pkg:cargo/shlex@2.0.1"
@@ -3494,10 +3494,10 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/chacha20@0.10.1",
+      "ref": "pkg:cargo/chacha20@0.10.2",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
-        "pkg:cargo/cpufeatures@0.3.0",
+        "pkg:cargo/cpufeatures@0.3.1",
         "pkg:cargo/rand_core@0.10.1"
       ]
     },
@@ -3512,7 +3512,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/cpufeatures@0.3.0",
+      "ref": "pkg:cargo/cpufeatures@0.3.1",
       "dependsOn": [
         "pkg:cargo/libc@0.2.189"
       ]
@@ -3559,7 +3559,7 @@
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@3.0.3"
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {
@@ -3606,7 +3606,7 @@
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@3.0.3"
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {
@@ -3848,7 +3848,7 @@
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/socket2@0.6.5",
         "pkg:cargo/tracing@0.1.44",
-        "pkg:cargo/windows-sys@0.52.0"
+        "pkg:cargo/windows-sys@0.61.2"
       ]
     },
     {
@@ -3864,7 +3864,7 @@
     {
       "ref": "pkg:cargo/rand@0.10.2",
       "dependsOn": [
-        "pkg:cargo/chacha20@0.10.1",
+        "pkg:cargo/chacha20@0.10.2",
         "pkg:cargo/getrandom@0.4.3",
         "pkg:cargo/rand_core@0.10.1"
       ]
@@ -3882,7 +3882,7 @@
     {
       "ref": "pkg:cargo/ring@0.17.14",
       "dependsOn": [
-        "pkg:cargo/cc@1.4.3",
+        "pkg:cargo/cc@1.4.4",
         "pkg:cargo/cfg-if@1.0.4",
         "pkg:cargo/getrandom@0.2.17",
         "pkg:cargo/libc@0.2.189",
@@ -3906,7 +3906,7 @@
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustls-pki-types@1.15.1",
-        "pkg:cargo/rustls-webpki@0.103.14",
+        "pkg:cargo/rustls-webpki@0.103.15",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/zeroize@1.9.0"
       ]
@@ -3919,7 +3919,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/rustls-webpki@0.103.14",
+      "ref": "pkg:cargo/rustls-webpki@0.103.15",
       "dependsOn": [
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustls-pki-types@1.15.1",
@@ -3945,14 +3945,14 @@
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@3.0.3"
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {
       "ref": "pkg:cargo/sha2@0.11.0",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
-        "pkg:cargo/cpufeatures@0.3.0",
+        "pkg:cargo/cpufeatures@0.3.1",
         "pkg:cargo/digest@0.11.3"
       ]
     },
@@ -3984,7 +3984,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/syn@3.0.3",
+      "ref": "pkg:cargo/syn@3.0.4",
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
@@ -4010,7 +4010,7 @@
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@3.0.3"
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {
@@ -4062,7 +4062,7 @@
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@3.0.3"
+        "pkg:cargo/syn@3.0.4"
       ]
     },
     {

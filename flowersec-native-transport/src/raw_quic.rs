@@ -28,10 +28,8 @@ use x509_parser::{
     prelude::{FromDer, X509Certificate, X509Version},
 };
 
-pub const ALPN_DIRECT: &str = "flowersec-direct/2";
-pub const ALPN_TUNNEL: &str = "flowersec-tunnel/2";
-pub const ALPN_DIRECT_V3: &str = "flowersec-direct/3";
-pub const ALPN_TUNNEL_V3: &str = "flowersec-tunnel/3";
+pub const ALPN_DIRECT: &str = "flowersec-direct/3";
+pub const ALPN_TUNNEL: &str = "flowersec-tunnel/3";
 
 const STREAM_RESET_CODE: u32 = 0x0000_f502;
 const SESSION_CLOSE_CODE: u32 = 0x0000_f500;
@@ -170,39 +168,13 @@ impl PathProfile {
         }
     }
 
-    pub const fn alpn_v3(self) -> &'static str {
-        match self {
-            Self::Direct => ALPN_DIRECT_V3,
-            Self::Tunnel => ALPN_TUNNEL_V3,
-        }
-    }
-
-    const fn alpn_for(self, version: ProtocolVersion) -> &'static str {
-        match version {
-            ProtocolVersion::V2 => self.alpn(),
-            ProtocolVersion::V3 => self.alpn_v3(),
-        }
-    }
-
-    fn from_alpn(alpn: &[u8]) -> Option<(ProtocolVersion, Self)> {
+    fn from_alpn(alpn: &[u8]) -> Option<Self> {
         match alpn {
-            value if value == ALPN_DIRECT.as_bytes() => Some((ProtocolVersion::V2, Self::Direct)),
-            value if value == ALPN_TUNNEL.as_bytes() => Some((ProtocolVersion::V2, Self::Tunnel)),
-            value if value == ALPN_DIRECT_V3.as_bytes() => {
-                Some((ProtocolVersion::V3, Self::Direct))
-            }
-            value if value == ALPN_TUNNEL_V3.as_bytes() => {
-                Some((ProtocolVersion::V3, Self::Tunnel))
-            }
+            value if value == ALPN_DIRECT.as_bytes() => Some(Self::Direct),
+            value if value == ALPN_TUNNEL.as_bytes() => Some(Self::Tunnel),
             _ => None,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProtocolVersion {
-    V2,
-    V3,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -353,30 +325,21 @@ impl Default for Cancellation {
 #[derive(Clone)]
 pub struct RawQuicClientConfig {
     profile: PathProfile,
-    version: ProtocolVersion,
     limits: RawQuicLimits,
     inner: quinn::ClientConfig,
     pin_failure: Option<Arc<AtomicU8>>,
 }
 
 impl RawQuicClientConfig {
-    pub fn new(
+    pub fn new_ca(
         profile: PathProfile,
         trust_roots_der: Vec<Vec<u8>>,
         limits: RawQuicLimits,
     ) -> Result<Self, RawQuicError> {
-        Self::new_ca(ProtocolVersion::V2, profile, trust_roots_der, limits)
+        Self::build_ca(profile, trust_roots_der, limits)
     }
 
-    pub fn new_v3_ca(
-        profile: PathProfile,
-        trust_roots_der: Vec<Vec<u8>>,
-        limits: RawQuicLimits,
-    ) -> Result<Self, RawQuicError> {
-        Self::new_ca(ProtocolVersion::V3, profile, trust_roots_der, limits)
-    }
-
-    pub fn new_v3_pin(
+    pub fn new_pin(
         profile: PathProfile,
         active_leaf_der_sha256: Vec<[u8; 32]>,
         limits: RawQuicLimits,
@@ -404,14 +367,13 @@ impl RawQuicClientConfig {
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(verifier))
             .with_no_client_auth();
-        tls.alpn_protocols = vec![profile.alpn_v3().as_bytes().to_vec()];
+        tls.alpn_protocols = vec![profile.alpn().as_bytes().to_vec()];
         tls.enable_early_data = false;
         tls.resumption = Resumption::disabled();
-        Self::from_tls(ProtocolVersion::V3, profile, limits, tls, Some(pin_failure))
+        Self::from_tls(profile, limits, tls, Some(pin_failure))
     }
 
-    fn new_ca(
-        version: ProtocolVersion,
+    fn build_ca(
         profile: PathProfile,
         trust_roots_der: Vec<Vec<u8>>,
         limits: RawQuicLimits,
@@ -432,16 +394,13 @@ impl RawQuicClientConfig {
             .map_err(|_| RawQuicError::InvalidTls)?
             .with_root_certificates(roots)
             .with_no_client_auth();
-        tls.alpn_protocols = vec![profile.alpn_for(version).as_bytes().to_vec()];
+        tls.alpn_protocols = vec![profile.alpn().as_bytes().to_vec()];
         tls.enable_early_data = false;
-        if version == ProtocolVersion::V3 {
-            tls.resumption = Resumption::disabled();
-        }
-        Self::from_tls(version, profile, limits, tls, None)
+        tls.resumption = Resumption::disabled();
+        Self::from_tls(profile, limits, tls, None)
     }
 
     fn from_tls(
-        version: ProtocolVersion,
         profile: PathProfile,
         limits: RawQuicLimits,
         tls: rustls::ClientConfig,
@@ -453,7 +412,6 @@ impl RawQuicClientConfig {
         inner.transport_config(Arc::new(transport_config(limits)?));
         Ok(Self {
             profile,
-            version,
             limits,
             inner,
             pin_failure,
@@ -516,7 +474,6 @@ impl fmt::Debug for RawQuicClientConfig {
         formatter
             .debug_struct("RawQuicClientConfig")
             .field("profile", &self.profile)
-            .field("version", &self.version)
             .field("limits", &self.limits)
             .finish_non_exhaustive()
     }
@@ -524,44 +481,12 @@ impl fmt::Debug for RawQuicClientConfig {
 
 pub struct RawQuicServerConfig {
     profile: PathProfile,
-    version: ProtocolVersion,
     limits: RawQuicLimits,
     inner: quinn::ServerConfig,
 }
 
 impl RawQuicServerConfig {
     pub fn new(
-        profile: PathProfile,
-        certificate_chain_der: Vec<Vec<u8>>,
-        private_key_der: Vec<u8>,
-        limits: RawQuicLimits,
-    ) -> Result<Self, RawQuicError> {
-        Self::new_for_version(
-            ProtocolVersion::V2,
-            profile,
-            certificate_chain_der,
-            private_key_der,
-            limits,
-        )
-    }
-
-    pub fn new_v3(
-        profile: PathProfile,
-        certificate_chain_der: Vec<Vec<u8>>,
-        private_key_der: Vec<u8>,
-        limits: RawQuicLimits,
-    ) -> Result<Self, RawQuicError> {
-        Self::new_for_version(
-            ProtocolVersion::V3,
-            profile,
-            certificate_chain_der,
-            private_key_der,
-            limits,
-        )
-    }
-
-    fn new_for_version(
-        version: ProtocolVersion,
         profile: PathProfile,
         certificate_chain_der: Vec<Vec<u8>>,
         private_key_der: Vec<u8>,
@@ -584,18 +509,15 @@ impl RawQuicServerConfig {
             .with_no_client_auth()
             .with_single_cert(certificate_chain, private_key)
             .map_err(|_| RawQuicError::InvalidServerIdentity)?;
-        tls.alpn_protocols = vec![profile.alpn_for(version).as_bytes().to_vec()];
+        tls.alpn_protocols = vec![profile.alpn().as_bytes().to_vec()];
         tls.max_early_data_size = 0;
-        if version == ProtocolVersion::V3 {
-            tls.send_tls13_tickets = 0;
-        }
+        tls.send_tls13_tickets = 0;
         let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)
             .map_err(|_| RawQuicError::InvalidTls)?;
         let mut inner = quinn::ServerConfig::with_crypto(Arc::new(crypto));
         inner.transport_config(Arc::new(transport_config(limits)?));
         Ok(Self {
             profile,
-            version,
             limits,
             inner,
         })
@@ -607,7 +529,6 @@ impl fmt::Debug for RawQuicServerConfig {
         formatter
             .debug_struct("RawQuicServerConfig")
             .field("profile", &self.profile)
-            .field("version", &self.version)
             .field("limits", &self.limits)
             .finish_non_exhaustive()
     }
@@ -616,7 +537,6 @@ impl fmt::Debug for RawQuicServerConfig {
 pub struct RawQuicListener {
     endpoint: Endpoint,
     profile: PathProfile,
-    version: ProtocolVersion,
     limits: RawQuicLimits,
     closed: AtomicBool,
 }
@@ -627,7 +547,6 @@ impl RawQuicListener {
         Ok(Self {
             endpoint,
             profile: config.profile,
-            version: config.version,
             limits: config.limits,
             closed: AtomicBool::new(false),
         })
@@ -661,7 +580,6 @@ impl RawQuicListener {
             connection,
             self.endpoint.clone(),
             self.profile,
-            self.version,
             self.limits.max_inbound_bidirectional_streams,
             false,
             None,
@@ -687,7 +605,6 @@ impl fmt::Debug for RawQuicListener {
             .debug_struct("RawQuicListener")
             .field("local_address", &self.local_address().ok())
             .field("profile", &self.profile)
-            .field("version", &self.version)
             .field("closed", &self.closed.load(Ordering::Acquire))
             .finish_non_exhaustive()
     }
@@ -704,7 +621,6 @@ pub struct RawQuicSession {
     connection: quinn::Connection,
     endpoint: Endpoint,
     profile: PathProfile,
-    version: ProtocolVersion,
     inbound_bidirectional_stream_capacity: u32,
     migration_allowed: bool,
     migration_lock: Arc<StdMutex<()>>,
@@ -776,7 +692,6 @@ impl RawQuicSession {
             connection,
             endpoint,
             config.profile,
-            config.version,
             config.limits.max_inbound_bidirectional_streams,
             true,
             preferred_route_local_address(remote_address).ok(),
@@ -787,7 +702,6 @@ impl RawQuicSession {
         connection: quinn::Connection,
         endpoint: Endpoint,
         expected_profile: PathProfile,
-        expected_version: ProtocolVersion,
         inbound_bidirectional_stream_capacity: u32,
         migration_allowed: bool,
         observed_route_local_address: Option<SocketAddr>,
@@ -802,7 +716,7 @@ impl RawQuicSession {
                     .and_then(PathProfile::from_alpn)
             })
             .ok_or(RawQuicError::InvalidNegotiatedAlpn)?;
-        if negotiated != (expected_version, expected_profile) {
+        if negotiated != expected_profile {
             connection.close(
                 VarInt::from_u32(SESSION_CLOSE_CODE),
                 b"invalid negotiated ALPN",
@@ -812,8 +726,7 @@ impl RawQuicSession {
         Ok(Self {
             connection,
             endpoint,
-            profile: negotiated.1,
-            version: negotiated.0,
+            profile: negotiated,
             inbound_bidirectional_stream_capacity,
             migration_allowed,
             migration_lock: Arc::new(StdMutex::new(())),
@@ -823,10 +736,6 @@ impl RawQuicSession {
 
     pub const fn profile(&self) -> PathProfile {
         self.profile
-    }
-
-    pub const fn protocol_version(&self) -> ProtocolVersion {
-        self.version
     }
 
     pub const fn inbound_bidirectional_stream_capacity(&self) -> u32 {

@@ -9,19 +9,12 @@ license = "MIT"
 cargo-fuzz = true
 
 [dependencies]
-flowersec = { version = "=3.2.1", path = "..", features = ["__flowersec_internal_fuzzing"] }
+flowersec = { version = "=4.0.0", path = "..", features = ["__flowersec_internal_fuzzing"] }
 libfuzzer-sys = "0.4"
 
 [[bin]]
 name = "artifact"
 path = "fuzz_targets/artifact.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "admission"
-path = "fuzz_targets/admission.rs"
 test = false
 doc = false
 bench = false

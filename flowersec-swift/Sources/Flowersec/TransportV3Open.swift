@@ -252,7 +252,7 @@ enum OpenMetadataCanonicalizerV3 {
   }
 }
 
-private enum OpenUnicodeV3 {
+enum OpenUnicodeV3 {
   static func valid(_ value: String, maxBytes: Int, allowEmpty: Bool) -> Bool {
     let normalized = value.precomposedStringWithCanonicalMapping
     guard
@@ -266,8 +266,7 @@ private enum OpenUnicodeV3 {
       let codePoint = scalar.value
       guard
         !(codePoint <= 0x1F || (codePoint >= 0x7F && codePoint <= 0x9F)),
-        let age = scalar.properties.age,
-        age.major < 15 || (age.major == 15 && age.minor <= 1)
+        Unicode151Generated.assigned(scalar)
       else {
         return false
       }

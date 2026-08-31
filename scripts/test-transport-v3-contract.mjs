@@ -40,6 +40,7 @@ assert.equal(Array.isArray(registry.fixture_generation), true,
   "transport v3 fixture generation ownership must be an explicit list");
 assert.deepEqual(registry.fixture_generation.map(({ producer }) => producer), [
   "testdata/transport_v3/generate_contract_vectors.mjs",
+  "testdata/transport_v3/validate_application_vectors.mjs",
   "testdata/transport_v3/generate_crypto_vectors.mjs",
   "testdata/transport_v3/generate_handshake_vectors.mjs",
   "flowersec-go/internal/cmd/issuer-admission-vectors/main.go",
@@ -79,14 +80,7 @@ assert.doesNotMatch(designSource, /\p{Script=Han}/u,
   "the registered transport v3 design source must be maintained in English");
 assert.equal(designSource.endsWith(wireSource), true,
   "the final design must embed the complete byte-identical wire contract");
-const registeredDesignStatement = [
-  `version \`${registry.design.version}\`, baseline commit`,
-  `\`${registry.design.baseline_commit}\`, source path`,
-  `\`${registry.design.source_path}\`, and SHA-256 of the complete checked-in design.`,
-];
-for (const statement of registeredDesignStatement) assert.match(wireSource, new RegExp(
-  statement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-));
+assert.equal(registry.design.version, "3.0.0");
 assert.doesNotMatch(wireSource, /SHA-256\s+`[0-9a-f]{64}`/,
   "derived documentation must not hard-code the digest of its containing design");
 for (const token of ["Status: final", "Version: 3.0.0", "flowersec/3", "FSB3"]) {
@@ -251,12 +245,10 @@ for (const relative of Object.values(registry.docs)) {
 }
 const wireDocument = read(registry.docs.wire).toString("utf8");
 const architectureDocument = read(registry.docs.architecture).toString("utf8");
-assert(!wireDocument.includes("flowersec-v2-tls-policy"),
-  "the v3-only TLS policy domain must not be represented as a v2 replacement");
-assert.match(wireDocument, /Normative priority is:\s*\n\s*1\. the final English v3 design;\s*\n\s*2\. the frozen v2 baseline sources/,
-  "the wire contract must preserve the final design's frozen-v2 priority tier");
-assert.match(wireDocument, /English transcription is a required derived consistency artifact, not an\s+independent priority tier/,
-  "the derived English transcription must not become a normative priority tier");
+assert.doesNotMatch(wireDocument, /\bv2\b|FS[ABCHRSD]2|flowersec-v2/,
+  "the current wire contract must be self-contained");
+assert.match(wireDocument, /Transport v3 is self-contained/,
+  "the wire contract must define a self-contained normative boundary");
 assert(architectureDocument.includes("`errors.As` to recover `ControlPlaneError`"),
   "the architecture must define errors.As for ControlPlaneError");
 assert(architectureDocument.includes("`Unwrap()` returns only `ErrInvalidControlPlaneInput`"),
@@ -302,11 +294,8 @@ for (const clause of ["12.1", "13.1"]) {
 const clause4 = registry.design.traceability.find((candidate) => candidate.clause === "4");
 assert(clause4.registry_vector.includes("wire_fixtures[id=open_unicode]"),
   "clause 4 traceability must cover the OPEN Unicode fixture");
-assert.deepEqual(clause4.shared_source, [
-  "flowersec-ts/src/v2/protocol.ts",
-  "flowersec-swift/Sources/Flowersec/TransportV2.swift",
-  "flowersec-swift/Sources/Flowersec/TransportV2Open.swift",
-], "clause 4 traceability must name the inherited OPEN helpers without assigning them v3 ownership");
+assert.equal(Object.hasOwn(clause4, "shared_source"), false,
+  "Transport v3 traceability must not depend on a previous runtime");
 assert.equal(registry.limits.session_transition_id_bits, 64);
 assert.equal(registry.limits.session_transition_maximum_hex, "ffffffffffffffff");
 assert.equal(registry.limits.session_transition_maximum_is_usable_once, true);
@@ -710,10 +699,9 @@ assert.deepEqual(
   versionIsolation.identifier_sets.crypto_label.map((item) => item.v2),
   registry.version_isolation.v2_identifiers.crypto_labels,
 );
-assert.equal(versionIsolation.inherited_codecs.fsh3.inherited_codec_from, "transport_v2");
-assert.equal(versionIsolation.inherited_codecs.open.inherited_codec_from, "transport_v2");
-assert.equal(versionIsolation.inherited_codecs.rpc.inherited_codec_from, "transport_v2");
-assert.match(versionIsolation.inherited_codecs.rpc.envelope_json, /"ratio":1\.5/);
+assert.equal(versionIsolation.application_codecs.fsh3.fixture, "handshake_vectors.json");
+assert.equal(versionIsolation.application_codecs.open.fixture, "open_unicode_vectors.json");
+assert.match(versionIsolation.application_codecs.rpc.envelope_json, /"ratio":1\.5/);
 
 const forbiddenCrypto = /flowersec v2 (?:server finished|client finished|epoch zero|control root|stream root|setup root|rekey root|next epoch|stream|control|record key|nonce|unreliable)|flowersec-v2-(?:handshake|setup|record|open|unreliable)/;
 function walk(relative) {

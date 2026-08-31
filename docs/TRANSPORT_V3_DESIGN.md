@@ -10,10 +10,9 @@ schemas are defined by TRANSPORT_V3_WIRE.md. The registry in
 stability/transport_v3_contract.json is the machine-readable contract.
 The only session profile in this architecture is flowersec/3.
 
-This file is the maintained English source for the final v3 design. It is the
-faithful English transcription of the approved design at baseline commit
-`026cb52d116d2a04de50d0f0621fff57c7657120`; the registry and vectors are
-derived from this source and cannot add or weaken its normative requirements.
+This file is the maintained English source for Transport v3. The registry and
+vectors are derived from this source and cannot add or weaken its normative
+requirements.
 
 ## 1. Security Boundary
 
@@ -575,8 +574,8 @@ Before public API implementation begins:
 2. Generate the v3 artifact, URL/IDNA, capability, Controller, FSB3/FSA3,
    handshake, cryptographic, session-wire, DATAGRAM, Unicode, and invalid-input
    vectors.
-3. Require the stability checker to scan every v3 implementation and reject
-   residual v2 magic, profiles, paths, or cryptographic labels on v3 paths.
+3. Require the stability checker to scan every implementation and reject
+   non-v3 magic, profiles, paths, or cryptographic labels on production paths.
 4. Record every scalar and URL rule in section 5, the closed tuple universe in
    section 8, and every scheduler constant in section 10.4 as machine-readable
    contract data; examples alone are insufficient.
@@ -592,8 +591,8 @@ The four SDKs MUST:
    family with the v3 domain labels.
 3. Update acceptor, tunnel-authorization, and admission-binding validation.
 4. Implement the capability v3 schema and digest.
-5. Keep v2 code paths physically isolated; helpers carrying versioned domain
-   labels MUST NOT be shared between v2 and v3.
+5. Keep domain helpers Transport v3-only; no alternate wire implementation or
+   fallback path may be linked into a maintained SDK.
 
 ### 12.3 Adapters and Controller
 
@@ -609,18 +608,13 @@ The implementation MUST:
 
 ### 12.4 SDK Major and Deployment Isolation
 
-The SDK and deployment boundary is explicit and versioned:
+Flowersec 4.x has one SDK and wire boundary:
 
-- the Go module uses the `/v3` module path;
-- the TypeScript package, Rust crate, and Swift package/tag are released as
-  v3 majors;
-- v3 uses an independent server path, WebSocket subprotocol, and QUIC ALPN;
-- v2 artifacts cannot be passed to v3 APIs, and v3 artifacts cannot be passed
-  to v2 APIs;
-- a parallel migration runs independent v2 and v3 listeners, with the
-  application explicitly selecting the SDK major;
-- Flowersec provides no runtime automatic upgrade or downgrade between v2 and
-  v3.
+- the Go module uses the `/v4` module path;
+- the TypeScript package, Rust crate, and Swift package/tag use major version 4;
+- server paths, WebSocket subprotocols, and QUIC ALPN are fixed by Transport v3;
+- inputs from another wire generation fail closed; and
+- runtime protocol negotiation, automatic upgrade, and downgrade are absent.
 
 ## 13. Verification and Implementation Acceptance Gates
 
@@ -663,10 +657,10 @@ vector, including at least:
 - single- and multi-candidate acceptor-admissions hashes;
 - all `FS*3` frames, transcript, KDF, MAC, AAD, rekey, and unreliable-message
   vectors;
-- cross-version rejection of v2/v3 magic, profile, path, ALPN, and labels;
+- rejection of non-v3 magic, profiles, paths, ALPN values, and labels;
 - unknown or missing fields, duplicate keys, non-JCS bytes, invalid UTF-8,
   boundaries, and trailing bytes;
-- cross-cases proving that inherited FSH3, OPEN, and RPC codecs do not receive
+- cross-cases proving that FSH3, OPEN, and RPC codecs do not receive
   artifact-JCS rejection rules accidentally.
 
 ### 13.2 Real TLS and Browser Tests
@@ -781,7 +775,7 @@ V3 is releasable only when all of the following hold:
 - every declared capability has a real production-adapter test;
 - public CA, private CA, and self-signed pin environments have end-to-end
   evidence;
-- v2/v3 isolation, no downgrade, and one-shot lease invariants pass;
+- version isolation, no downgrade, and one-shot lease invariants pass;
 - every public error and debug representation passes redaction tests;
 - unimplemented support-matrix cells are explicitly `unsupported`, never
   disguised as skipped tests.
@@ -803,8 +797,8 @@ and Session, RPC, Stream, and application APIs never expose pins.
 Flowersec does not issue certificates, manage certificate authorities, or
 orchestrate deployment. Transport v3 does not redesign E2EE, RPC, stream,
 DATAGRAM, or application interfaces. Production artifacts permit no plaintext
-loopback. The wire protocol does not negotiate v2/v3 versions, and failure
-never falls back to another version.
+loopback. The wire protocol does not negotiate versions, and failure never
+falls back to another version.
 
 ## 15. Final Security Invariants
 
@@ -824,8 +818,8 @@ All v3 implementations and subsequent changes MUST preserve these invariants:
    retired lease is never reused.
 9. Each connection cycle obtains at most one policy-sensitive replacement lease
    and never loops on the same old policy.
-10. V2 and v3 magic, profiles, paths, ALPN, subprotocols, hashes, and
-    cryptographic domains are completely isolated.
+10. Previous-version and current magic, profiles, paths, ALPN, subprotocols,
+    hashes, and cryptographic domains are completely isolated.
 
 ---
 
@@ -837,49 +831,32 @@ Version: 3.0.0
 
 This is the normative English wire specification for Flowersec Transport v3.
 Its normative source is the final English design recorded in
-`stability/transport_v3_contract.json` under `design`. The registry records
-version `3.0.0`, baseline commit
-`026cb52d116d2a04de50d0f0621fff57c7657120`, source path
-`docs/TRANSPORT_V3_DESIGN.md`, and SHA-256 of the complete checked-in design.
-Release tooling MUST verify that file against the recorded digest before
-regenerating derived artifacts. This document is the complete English
-transcription. This document, the
-machine-readable registry, and the vectors are derived consistency artifacts.
+`stability/transport_v3_contract.json` under `design`. Release tooling MUST
+verify that source against the registry digest before regenerating derived
+artifacts. This document, the machine-readable registry, and the vectors are
+derived consistency artifacts.
 A conflict among them or with the source design blocks release; no derived
 artifact can replace or expand a general rule from the source design. MUST,
 MUST NOT, SHOULD, SHOULD NOT, and MAY have the meanings from RFC 2119 and RFC
 8174.
 
-## Normative v2 Baseline and Priority
+## Normative Contract and Priority
 
-Rules not explicitly rewritten by the English v3 design are inherited from the
-frozen v2 baseline at design commit `026cb52d116d2a04de50d0f0621fff57c7657120`:
-
-- `docs/TRANSPORT_V2_WIRE.md` and `stability/transport_v2_contract.json` for
-  frame lengths, offsets, reserved values, session wire, and application codec
-  rules;
-- `docs/TRANSPORT_V2_ARCHITECTURE.md` and the same registry only for the
-  carrier tuples, lifecycle, and Controller baseline explicitly referenced by
-  v3;
-- the v2 registry `wire_fixtures` vectors for fields, byte order, registry
-  values, and canonical codec behavior explicitly frozen by the v2 wire
-  document;
-- `testdata/transport_v2/connection_controller_vectors.json` and
-  `stability/connection_controller_recovery.json` only for Controller
-  lifecycle and error-recovery mappings not rewritten by v3.
+Transport v3 is self-contained. Its wire, application codec, Controller, carrier,
+lifecycle, and error-recovery rules are defined by this document,
+`docs/TRANSPORT_V3_ARCHITECTURE.md`,
+`stability/transport_v3_contract.json`, and
+`testdata/transport_v3`.
 
 Normative priority is:
 
-1. the final English v3 design;
-2. the frozen v2 baseline sources listed above, only within their stated
-   inherited scope; and
-3. the audited v3 machine-readable registry and v3 vectors generated from the
-   final design.
+1. this final English Transport v3 design;
+2. the audited Transport v3 machine-readable registry; and
+3. the Transport v3 vectors generated or validated from that registry.
 
-This English transcription is a required derived consistency artifact, not an
-independent priority tier. Source code, v2 runtime behavior, and any other
-document cannot add a v3 exception. A missing or conflicting derived artifact
-blocks release.
+This English specification is required release input. Source code, historical
+runtime behavior, and any other document cannot add an exception. A missing or
+conflicting contract artifact blocks release.
 
 ## 1. Fixed Identifiers
 
@@ -921,12 +898,11 @@ a BOM, unknown or missing fixed fields, non-canonical bytes, trailing bytes,
 bad base64url, invalid array order or duplicates, and resource-limit
 violations.
 
-Those rejection rules apply only to the JCS objects listed above. The FSH3 JSON
-payload inherits the frozen FSH2 canonical encoding and handshake vectors byte
-for byte, with only the specified v3 version and domain replacements. RPC and
-application JSON retain the fixed v2 codec and value domain. FSH3, FSS3, OPEN,
-RPC, and application payloads MUST NOT be subjected to artifact/FSB3 JCS
-rejection rules; each retains its own inherited or explicitly specified codec.
+Those rejection rules apply only to the JCS objects listed above. FSH3 uses its
+canonical handshake JSON codec. RPC and application JSON use the Transport v3
+application value domain. FSH3, FSS3, OPEN, RPC, and application payloads MUST
+NOT be subjected to artifact/FSB3 JCS rejection rules; each uses its explicitly
+specified Transport v3 codec.
 
 JCS never reorders arrays. Artifact candidates accept input order but canonical
 candidates sort by candidate ID. Canonical candidates, capability tuples, and
@@ -1226,16 +1202,13 @@ remote reason string; only its own trusted clock can classify local expiry.
 ## 8. Remaining Frame and Crypto Family
 
 The remaining magic values are FSC3, FSH3, FSS3, FSR3, and FSD3, each with
-version byte 3. Their general framing rules, inherited codec rules, lengths,
-offsets, ordering, limits, and reserved values are fixed by the source design
-and the v2 baseline it explicitly inherits. `testdata/transport_v3` records the
-derived exact vectors and negative examples; it cannot narrow or replace those
-general rules. Wrong magic, version, route, ALPN, subprotocol, reserved data,
-truncation, or trailing data fails closed.
+version byte 3. Their framing rules, codec rules, lengths, offsets, ordering,
+limits, and reserved values are fixed by this contract.
+`testdata/transport_v3` records exact vectors and negative examples; it cannot
+narrow or replace those general rules. Wrong magic, version, route, ALPN,
+subprotocol, reserved data, truncation, or trailing data fails closed.
 
-In particular, FSH3 uses the byte-for-byte inherited FSH2 canonical JSON
-payload and handshake vectors rather than JCS. The v3 version and domain
-replacements do not change that payload codec or its value domain.
+FSH3 uses the canonical Transport v3 handshake JSON payload rather than JCS.
 
 The session rekey transition counter starts at 1 and never wraps on the wire.
 `UINT64_MAX` is usable exactly once; its committed successor is the internal
@@ -1288,59 +1261,21 @@ flowersec-v3-record\0
 flowersec-v3-open\0
 ~~~
 
-The complete v2-to-v3 domain replacement table is:
-
-| v2 label | v3 label |
-| --- | --- |
-| `flowersec-v2-session-contract\0` | `flowersec-v3-session-contract\0` |
-| `flowersec-v2-candidates\0` | `flowersec-v3-candidates\0` |
-| `flowersec-v2-admission\0` | `flowersec-v3-admission\0` |
-| `flowersec-v2-runtime-capability\0` | `flowersec-v3-runtime-capability\0` |
-| `flowersec-v2-handshake\0` | `flowersec-v3-handshake\0` |
-| `flowersec v2 server finished` | `flowersec v3 server finished` |
-| `flowersec v2 client finished` | `flowersec v3 client finished` |
-| `flowersec v2 epoch zero` | `flowersec v3 epoch zero` |
-| `flowersec v2 control root` | `flowersec v3 control root` |
-| `flowersec v2 stream root` | `flowersec v3 stream root` |
-| `flowersec v2 setup root` | `flowersec v3 setup root` |
-| `flowersec v2 rekey root` | `flowersec v3 rekey root` |
-| `flowersec v2 next epoch` | `flowersec v3 next epoch` |
-| `flowersec v2 stream` | `flowersec v3 stream` |
-| `flowersec v2 control` | `flowersec v3 control` |
-| `flowersec v2 record key` | `flowersec v3 record key` |
-| `flowersec v2 nonce` | `flowersec v3 nonce` |
-| `flowersec v2 unreliable root` | `flowersec v3 unreliable root` |
-| `flowersec v2 unreliable` | `flowersec v3 unreliable` |
-| `flowersec v2 unreliable key` | `flowersec v3 unreliable key` |
-| `flowersec v2 unreliable nonce` | `flowersec v3 unreliable nonce` |
-| `flowersec-v2-unreliable` | `flowersec-v3-unreliable` |
-| `flowersec-v2-setup\0` | `flowersec-v3-setup\0` |
-| `flowersec-v2-record\0` | `flowersec-v3-record\0` |
-| `flowersec-v2-open\0` | `flowersec-v3-open\0` |
-| `flowersec-v2-acceptor-admissions\0` | `flowersec-v3-acceptor-admissions\0` |
-
-Every v3 path MUST use the corresponding v3 preimage and MUST reject a v2
-magic, profile, ALPN, subprotocol, or label. The v3-only TLS-policy digest uses
-`flowersec-v3-tls-policy\0`; it has no v2 predecessor. The
-acceptor-admissions label is included because its hash covers the complete
-chosen-candidate FSB3 frames.
-
-A v3 path MUST NOT call a helper containing another protocol version's
-preimage, HKDF info, HMAC input, AAD, frame magic, or version byte.
+Every Transport v3 path MUST use exactly the domain labels listed above. The
+TLS-policy digest uses `flowersec-v3-tls-policy\0`. The acceptor-admissions
+label covers the complete chosen-candidate FSB3 frames. Inputs using any other
+magic, profile, ALPN, subprotocol, label, frame version, HKDF info, HMAC input,
+or AAD fail closed.
 
 ### 8.1 SDK Major and Deployment Isolation
 
-The v3 SDKs are versioned and deployed as an independent contract:
+Flowersec 4.x SDKs implement only Transport v3:
 
-- the Go module uses the `/v3` module path;
-- the TypeScript package, Rust crate, and Swift package/tag are released as
-  v3 majors;
-- v3 uses an independent server path, WebSocket subprotocol, and QUIC ALPN;
-- a v2 artifact MUST NOT be passed to a v3 API, and a v3 artifact MUST NOT be
-  passed to a v2 API;
-- during a parallel migration, the deployment runs independent v2 and v3
-  listeners and the application explicitly selects the SDK major;
-- runtime automatic upgrade or downgrade between v2 and v3 is not provided.
+- the Go module uses the `/v4` module path;
+- the TypeScript package, Rust crate, and Swift package/tag use major version 4;
+- server paths, WebSocket subprotocols, and QUIC ALPN are fixed by Transport v3;
+- inputs from another wire generation fail closed; and
+- runtime protocol negotiation, automatic upgrade, and downgrade are absent.
 
 ## 9. OPEN Metadata
 

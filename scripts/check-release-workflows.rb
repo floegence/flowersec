@@ -176,6 +176,7 @@ rust_workflow = load_workflow(".github/workflows/rust-release.yml")
 ci_workflow = load_workflow(".github/workflows/ci.yml")
 codeql_workflow = load_workflow(".github/workflows/codeql.yml")
 scorecard_workflow = load_workflow(".github/workflows/scorecard.yml")
+container_security_workflow = load_workflow(".github/workflows/container-security.yml")
 
 require_exact_keys(dependabot, ["version", "updates"], "Dependabot configuration")
 require_exact_value(dependabot, {
@@ -190,12 +191,7 @@ require_exact_value(dependabot, {
       },
     },
   }] + [
-    ["npm", "/flowersec-ts", {
-      "ignore" => [{
-        "dependency-name" => "tr46",
-        "versions" => [">= 6.0.0"],
-      }],
-    }],
+    ["npm", "/flowersec-ts"],
     ["gomod", "/flowersec-go", {
       "groups" => {
         "quic-stack" => {
@@ -208,21 +204,14 @@ require_exact_value(dependabot, {
     }],
     ["gomod", "/tools/releasenotes"],
     ["gomod", "/tools/stabilitycheck"],
-    ["cargo", "/flowersec-rust", {
-      "ignore" => [{
-        "dependency-name" => "idna_mapping",
-        "versions" => [">= 1.1.0"],
-      }, {
-        "dependency-name" => "idna_adapter",
-        "versions" => [">= 1.2.0"],
-      }],
-    }],
+    ["cargo", "/flowersec-rust"],
     ["cargo", "/flowersec-native-transport"],
     ["cargo", "/flowersec-node-native"],
     ["cargo", "/flowersec-rust/fuzz"],
     ["cargo", "/examples/rust"],
     ["swift", "/"],
     ["swift", "/examples/swift"],
+    ["docker", "/"],
 ].map { |entry|
   ecosystem, directory, extra = entry
   {
@@ -233,12 +222,12 @@ require_exact_value(dependabot, {
 },
 }, "Dependabot configuration")
 
-[ci_workflow, codeql_workflow].each do |workflow|
+[ci_workflow, codeql_workflow, container_security_workflow].each do |workflow|
   require_exact_keys(workflow, ["name", true, "env", "permissions", "jobs"], "workflow #{workflow["name"].inspect}")
 end
 require_exact_keys(rust_workflow, ["name", true, "env", "permissions", "concurrency", "jobs"], "workflow #{rust_workflow["name"].inspect}")
 require_exact_keys(release_workflow, ["name", true, "env", "permissions", "concurrency", "jobs"], "workflow #{release_workflow["name"].inspect}")
-[release_workflow, rust_workflow, ci_workflow, codeql_workflow].each do |workflow|
+[release_workflow, rust_workflow, ci_workflow, codeql_workflow, container_security_workflow].each do |workflow|
   require_exact_value(workflow["env"], { "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" => "true" }, "workflow #{workflow["name"].inspect} environment")
 end
 require_exact_value(ci_workflow[true], {
@@ -251,6 +240,10 @@ require_exact_value(codeql_workflow[true], {
   "pull_request" => { "branches" => ["main"] },
   "schedule" => [{ "cron" => "17 3 * * *" }],
 }, "CodeQL triggers")
+require_exact_value(container_security_workflow[true], {
+  "workflow_dispatch" => {},
+  "schedule" => [{ "cron" => "41 2 * * *" }],
+}, "container security triggers")
 require_exact_keys(scorecard_workflow, ["name", true, "permissions", "jobs"], "the Scorecard workflow")
 require_exact_value(scorecard_workflow[true], {
   "push" => { "branches" => ["main"] },
@@ -259,6 +252,7 @@ require_exact_value(scorecard_workflow[true], {
 require_exact_value(scorecard_workflow["permissions"], "read-all", "Scorecard workflow permissions")
 require_exact_value(ci_workflow["permissions"], { "contents" => "read" }, "hosted CI permissions")
 require_exact_value(codeql_workflow["permissions"], { "contents" => "read" }, "CodeQL permissions")
+require_exact_value(container_security_workflow["permissions"], { "contents" => "read" }, "container security permissions")
 require_exact_value(release_workflow[true], {
   "push" => { "tags" => ["flowersec-go/v*"] },
   "workflow_dispatch" => { "inputs" => { "version" => {
@@ -309,11 +303,13 @@ rust_jobs = require_hash(rust_workflow["jobs"], "the Rust recovery workflow jobs
 ci_jobs = require_hash(ci_workflow["jobs"], "the hosted CI workflow jobs")
 codeql_jobs = require_hash(codeql_workflow["jobs"], "the CodeQL workflow jobs")
 scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflow jobs")
+container_security_jobs = require_hash(container_security_workflow["jobs"], "the container security workflow jobs")
 require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-recovery"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
-require_exact_keys(ci_jobs, ["repository", "precommit", "node-current", "dependency-review"], "the hosted CI workflow jobs")
+require_exact_keys(ci_jobs, ["repository", "precommit", "node-next", "rust-stable", "rust-windows", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze", "analyze-swift"], "the CodeQL workflow jobs")
 require_exact_keys(scorecard_jobs, ["analysis"], "the Scorecard workflow jobs")
+require_exact_keys(container_security_jobs, ["trivy"], "the container security workflow jobs")
 
 prepare_job = require_job(release_workflow, "prepare", "the unified release workflow")
 release_job = require_job(release_workflow, "release", "the unified release workflow")
@@ -323,12 +319,15 @@ npm_recovery_job = require_job(release_workflow, "npm-recovery", "the unified re
 rust_publish_job = require_job(rust_workflow, "publish", "the Rust recovery workflow")
 repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow")
 precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
-node_current_job = require_job(ci_workflow, "node-current", "the hosted CI workflow")
+node_next_job = require_job(ci_workflow, "node-next", "the hosted CI workflow")
+rust_stable_job = require_job(ci_workflow, "rust-stable", "the hosted CI workflow")
+rust_windows_job = require_job(ci_workflow, "rust-windows", "the hosted CI workflow")
 dependency_review_job = require_job(ci_workflow, "dependency-review", "the hosted CI workflow")
 codeql_job = require_job(codeql_workflow, "analyze", "the CodeQL workflow")
 codeql_swift_job = require_job(codeql_workflow, "analyze-swift", "the CodeQL workflow")
 codeql_plan_job = require_job(codeql_workflow, "plan", "the CodeQL workflow")
 scorecard_job = require_job(scorecard_workflow, "analysis", "the Scorecard workflow")
+container_security_job = require_job(container_security_workflow, "trivy", "the container security workflow")
 
 require_exact_keys(prepare_job, ["runs-on", "timeout-minutes", "outputs", "steps"], "the unified release workflow prepare job")
 require_exact_keys(release_job, ["needs", "if", "runs-on", "timeout-minutes", "permissions", "steps"], "the unified release workflow release job")
@@ -338,7 +337,9 @@ require_exact_keys(npm_recovery_job, ["needs", "if", "runs-on", "timeout-minutes
 require_exact_keys(rust_publish_job, ["runs-on", "timeout-minutes", "permissions", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
-require_exact_keys(node_current_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI current Node job")
+require_exact_keys(node_next_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Node 26 job")
+require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Rust stable job")
+require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Rust Windows job")
 require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")
 require_exact_value(precommit_job["name"], "Precommit quality gate", "the hosted CI precommit job name")
 require_exact_value(precommit_job["runs-on"], "macos-26", "the hosted CI precommit runner")
@@ -346,9 +347,15 @@ require_exact_value(precommit_job["timeout-minutes"], 60, "the hosted CI precomm
 require_exact_value(precommit_job["env"], {
   "DEVELOPER_DIR" => "/Applications/Xcode_26.4.1.app/Contents/Developer",
 }, "the hosted CI precommit Xcode selection")
-require_exact_value(node_current_job["name"], "Current Node compatibility", "the hosted CI current Node job name")
-require_exact_value(node_current_job["runs-on"], "ubuntu-latest", "the hosted CI current Node runner")
-require_exact_value(node_current_job["timeout-minutes"], 10, "the hosted CI current Node timeout")
+require_exact_value(node_next_job["name"], "Node 26 compatibility", "the hosted CI Node 26 job name")
+require_exact_value(node_next_job["runs-on"], "ubuntu-latest", "the hosted CI Node 26 runner")
+require_exact_value(node_next_job["timeout-minutes"], 10, "the hosted CI Node 26 timeout")
+require_exact_value(rust_stable_job["name"], "Rust 1.98 stable", "the hosted CI Rust stable job name")
+require_exact_value(rust_stable_job["runs-on"], "ubuntu-latest", "the hosted CI Rust stable runner")
+require_exact_value(rust_stable_job["timeout-minutes"], 30, "the hosted CI Rust stable timeout")
+require_exact_value(rust_windows_job["name"], "Rust 1.98 Windows", "the hosted CI Rust Windows job name")
+require_exact_value(rust_windows_job["runs-on"], "windows-latest", "the hosted CI Rust Windows runner")
+require_exact_value(rust_windows_job["timeout-minutes"], 30, "the hosted CI Rust Windows timeout")
 require_exact_value(dependency_review_job["name"], "Dependency review", "the hosted CI dependency review job name")
 require_exact_value(dependency_review_job["runs-on"], "ubuntu-latest", "the hosted CI dependency review runner")
 require_exact_value(dependency_review_job["timeout-minutes"], 5, "the hosted CI dependency review timeout")
@@ -407,6 +414,10 @@ require_exact_value(scorecard_job["permissions"], {
   "security-events" => "write",
   "id-token" => "write",
 }, "the Scorecard job permissions")
+require_exact_keys(container_security_job, ["name", "runs-on", "timeout-minutes", "steps"], "the container security job")
+require_exact_value(container_security_job["name"], "Trivy runtime image", "the container security job name")
+require_exact_value(container_security_job["runs-on"], "ubuntu-latest", "the container security runner")
+require_exact_value(container_security_job["timeout-minutes"], 30, "the container security timeout")
 require_exact_value(prepare_job["outputs"], {
   "version" => "${{ steps.version.outputs.version }}",
   "mode" => "${{ steps.version.outputs.mode }}",
@@ -456,9 +467,12 @@ require_exact_value(npm_recovery_job["permissions"], {
   [rust_publish_job, "the Rust recovery workflow publish job"],
   [repository_job, "the hosted CI repository job"],
   [precommit_job, "the hosted CI precommit job"],
-  [node_current_job, "the hosted CI current Node job"],
+  [node_next_job, "the hosted CI Node 26 job"],
+  [rust_stable_job, "the hosted CI Rust stable job"],
+  [rust_windows_job, "the hosted CI Rust Windows job"],
   [codeql_plan_job, "the CodeQL plan job"],
   [scorecard_job, "the Scorecard analysis job"],
+  [container_security_job, "the container security job"],
 ].each { |job, context| require_unconditional(job, context) }
 require_condition_value(release_job, "always() && needs.prepare.result == 'success' && needs.prepare.outputs.mode == 'full' && needs.rust-publish.result == 'success' && ((needs.prepare.outputs.release_complete == 'false' && needs.native-prebuilt.result == 'success') || (needs.prepare.outputs.release_complete == 'true' && needs.native-prebuilt.result == 'skipped'))", "the unified release workflow release job")
 require_condition_value(rust_reuse_job, "needs.prepare.outputs.mode == 'full'", "the unified release workflow rust-publish job")
@@ -480,17 +494,20 @@ native_prebuilt_steps = require_steps(native_prebuilt_job, "the unified release 
 npm_recovery_steps = require_steps(npm_recovery_job, "the unified release workflow npm recovery job")
 ci_steps = require_steps(repository_job, "the hosted CI repository job")
 precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
-node_current_steps = require_steps(node_current_job, "the hosted CI current Node job")
+node_next_steps = require_steps(node_next_job, "the hosted CI Node 26 job")
+rust_stable_steps = require_steps(rust_stable_job, "the hosted CI Rust stable job")
+rust_windows_steps = require_steps(rust_windows_job, "the hosted CI Rust Windows job")
 dependency_review_steps = require_steps(dependency_review_job, "the hosted CI dependency review job")
 codeql_steps = require_steps(codeql_job, "the CodeQL analyze job")
 codeql_swift_steps = require_steps(codeql_swift_job, "the CodeQL Swift analyze job")
 codeql_plan_steps = require_steps(codeql_plan_job, "the CodeQL plan job")
 scorecard_steps = require_steps(scorecard_job, "the Scorecard analysis job")
+container_security_steps = require_steps(container_security_job, "the container security job")
 prepare_steps = require_steps(prepare_job, "the unified release workflow prepare job")
 
-checkout = { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "with" => { "fetch-depth" => 0 } }
+checkout = { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "with" => { "fetch-depth" => 0 } }
 release_checkout = {
-  "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+  "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "with" => {
     "fetch-depth" => 0,
     "persist-credentials" => false,
@@ -498,7 +515,7 @@ release_checkout = {
   },
 }
 npm_release_checkout = {
-  "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+  "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
   "with" => {
     "fetch-depth" => 0,
     "ref" => "refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}",
@@ -534,7 +551,7 @@ validate_step_contracts(ci_steps, [
 validate_step_contracts(precommit_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Setup Go", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff",
+    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
     "with" => {
       "go-version-file" => "flowersec-go/go.mod",
       "cache" => true,
@@ -542,8 +559,8 @@ validate_step_contracts(precommit_steps, [
     },
   } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
-    "with" => { "node-version" => "20.19.0", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
+    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    "with" => { "node-version" => "24.20.0", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
   } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
@@ -551,17 +568,37 @@ validate_step_contracts(precommit_steps, [
   } },
   { name: "Run precommit quality gate", keys: ["name", "run"], values: { "run" => "make precommit" } },
 ], "the hosted CI precommit job")
-validate_step_contracts(node_current_steps, [
+validate_step_contracts(node_next_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Setup current Node", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
-    "with" => { "node-version" => "24", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
+    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    "with" => { "node-version" => "26.8.1", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
   } },
   { name: "Run TypeScript language lane", keys: ["name", "run"], values: { "run" => "make ts-ci ts-build ts-test-short" } },
-], "the hosted CI current Node job")
+], "the hosted CI Node 26 job")
+validate_step_contracts(rust_stable_steps, [
+  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
+  { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
+    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
+    "with" => { "toolchain" => "1.98.0", "components" => "rustfmt,clippy" },
+  } },
+  { name: "Build, test, and lint", keys: ["name", "run"], values: {
+    "run" => "cargo check --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features\ncargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\ncargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
+  } },
+], "the hosted CI Rust stable job")
+validate_step_contracts(rust_windows_steps, [
+  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
+  { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
+    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
+    "with" => { "toolchain" => "1.98.0" },
+  } },
+  { name: "Build and test", keys: ["name", "run"], values: {
+    "run" => "cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features",
+  } },
+], "the hosted CI Rust Windows job")
 validate_step_contracts(dependency_review_steps, [
   { name: nil, keys: ["uses", "with"], values: {
-    "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+    "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
     "with" => { "persist-credentials" => false },
   } },
   { name: "Review dependency changes", keys: ["name", "uses", "with"], values: {
@@ -570,19 +607,19 @@ validate_step_contracts(dependency_review_steps, [
   } },
 ], "the hosted CI dependency review job")
 validate_step_contracts(codeql_steps, [
-  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
-  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28" } },
+  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
+  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@cdf488f595d80d6e07e03d4674febd5ab45fa938" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938" } },
 ], "the CodeQL analyze job")
 validate_step_contracts(codeql_swift_steps, [
-  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" } },
+  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
   { name: "Resolve Swift cache key", keys: ["name", "id", "run"], values: { "id" => "swift-cache-key", "run" => "swift --version | shasum -a 256 | awk '{ print \"toolchain=\" $1 }' >> \"$GITHUB_OUTPUT\"\n" } },
   { name: "Restore Swift build cache", keys: ["name", "uses", "with"], values: { "uses" => "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
   { name: "Prepare Swift build cache", keys: ["name", "run"], values: { "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28", "with" => { "languages" => "swift", "build-mode" => "manual", "queries" => "security-extended" } } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938", "with" => { "languages" => "swift", "build-mode" => "manual", "queries" => "security-extended" } } },
   { name: "Build Swift library", keys: ["name", "run"], values: { "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938" } },
 ], "the CodeQL Swift analyze job")
 validate_step_contracts(codeql_plan_steps, [
   { name: "Check for new main commits", keys: ["name", "id", "env", "run"], values: {
@@ -610,10 +647,40 @@ validate_step_contracts(scorecard_steps, [
     "with" => { "name" => "scorecard-results", "path" => "results.sarif", "retention-days" => 5 },
   } },
   { name: "Upload Scorecard results", keys: ["name", "uses", "with"], values: {
-    "uses" => "github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28",
+    "uses" => "github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938",
     "with" => { "sarif_file" => "results.sarif" },
   } },
 ], "the Scorecard analysis job")
+validate_step_contracts(container_security_steps, [
+  { name: nil, keys: ["uses"], values: {
+    "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+  } },
+  { name: "Setup Buildx", keys: ["name", "uses", "with"], values: {
+    "uses" => "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
+    "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8" },
+  } },
+  { name: "Build runtime image", keys: ["name", "uses", "with"], values: {
+    "uses" => "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+    "with" => {
+      "context" => ".",
+      "file" => "docker/flowersec-runtime/Dockerfile",
+      "load" => true,
+      "tags" => "flowersec-runtime:scan",
+      "pull" => true,
+    },
+  } },
+  { name: "Scan fixable high and critical vulnerabilities", keys: ["name", "uses", "with"], values: {
+    "uses" => "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
+    "with" => {
+      "version" => "v0.74.0",
+      "image-ref" => "flowersec-runtime:scan",
+      "scanners" => "vuln",
+      "severity" => "HIGH,CRITICAL",
+      "ignore-unfixed" => true,
+      "exit-code" => "1",
+    },
+  } },
+], "the container security job")
 validate_step_contracts(release_steps, [
   { name: nil, keys: ["uses", "with"], values: release_checkout },
   { name: "Compute version vars", keys: ["name", "id", "env", "run"], values: {
@@ -623,9 +690,9 @@ validate_step_contracts(release_steps, [
   { name: "Verify tagged commit is the remote main tip", keys: ["name", "env", "run"], values: {
     "env" => { "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}" },
   }, run_sha256: "d4c29c98aae2d8fb96522062eb3fc3d245e24e8bad4f4972c37603f325dd7158" },
-  { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff", "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
-  { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020", "with" => { "node-version" => "24", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
-  { name: "Setup Rust", keys: ["name", "uses"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" } },
+  { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", "with" => { "node-version" => "24.20.0", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
+  { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => "1.98.0" } } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
   { name: "Verify all language tags point to this commit", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
@@ -649,7 +716,7 @@ validate_step_contracts(release_steps, [
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",
   } }, run_sha256: "1bd88ea62d5cfa76a864986943ea296ec1def96e507dcdb60077ac446e1f2658" },
-  { name: "Publish GitHub Release", keys: ["name", "if", "uses", "with"], values: { "if" => "needs.prepare.outputs.release_complete == 'false'", "uses" => "softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228", "with" => {
+  { name: "Publish GitHub Release", keys: ["name", "if", "uses", "with"], values: { "if" => "needs.prepare.outputs.release_complete == 'false'", "uses" => "softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231", "with" => {
     "files" => "dist/*\n",
     "body_path" => "release-notes.md",
     "tag_name" => "${{ steps.vars.outputs.tag }}",
@@ -659,7 +726,7 @@ validate_step_contracts(release_steps, [
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
   } }, run_sha256: "48914de45e63a903ad232d6411666da7c131afb03f21e9ebac1868e98b40d78e" },
-  { name: "Setup Docker Buildx", keys: ["name", "uses", "with"], values: { "uses" => "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec" } } },
+  { name: "Setup Docker Buildx", keys: ["name", "uses", "with"], values: { "uses" => "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e", "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8" } } },
   { name: "Login to GHCR", keys: ["name", "uses", "with"], values: { "uses" => "docker/login-action@dbcb813823bdd20940b903addbd779551569679f", "with" => { "registry" => "ghcr.io", "username" => "${{ github.actor }}", "password" => "${{ secrets.GITHUB_TOKEN }}" } } },
   { name: "Inspect immutable GHCR version tag", keys: ["name", "id", "env", "run"], values: {
     "id" => "runtime-state",
@@ -668,7 +735,7 @@ validate_step_contracts(release_steps, [
       "IMAGE_VERSION" => "${{ steps.vars.outputs.version }}",
     },
   }, run_sha256: "fe22930a59140dc9a193cf7651adeaef1e3cad8cf2b62039c604264f14276d02" },
-  { name: "Build and push runtime image by digest", keys: ["name", "id", "if", "uses", "with"], values: { "id" => "runtime-image", "if" => "steps.runtime-state.outputs.exists == 'false'", "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8", "with" => {
+  { name: "Build and push runtime image by digest", keys: ["name", "id", "if", "uses", "with"], values: { "id" => "runtime-image", "if" => "steps.runtime-state.outputs.exists == 'false'", "uses" => "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a", "with" => {
     "context" => ".",
     "file" => "docker/flowersec-runtime/Dockerfile",
     "platforms" => "linux/amd64,linux/arm64",
@@ -717,16 +784,16 @@ validate_step_contracts(release_steps, [
 ], "the unified release workflow release job")
 validate_step_contracts(native_prebuilt_steps, [
   { name: nil, keys: ["uses", "with"], values: {
-    "uses" => "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+    "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
     "with" => { "ref" => "refs/tags/flowersec-go/v${{ needs.prepare.outputs.version }}" },
   } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "targets" => "${{ matrix.target }}" },
+    "with" => { "toolchain" => "1.98.0", "targets" => "${{ matrix.target }}" },
   } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
-    "with" => { "node-version" => "20.19.0" },
+    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    "with" => { "node-version" => "24.20.0" },
   } },
   { name: "Build native addon", keys: ["name", "env", "run"], values: { "env" => {
     "NATIVE_TARGET" => "${{ matrix.target }}",
@@ -744,8 +811,12 @@ validate_step_contracts(native_prebuilt_steps, [
 validate_step_contracts(npm_recovery_steps, [
   { name: nil, keys: ["uses", "with"], values: npm_release_checkout },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
-    "with" => { "node-version" => "24", "registry-url" => "https://registry.npmjs.org" },
+    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    "with" => { "node-version" => "24.20.0", "registry-url" => "https://registry.npmjs.org" },
+  } },
+  { name: "Setup Go", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" },
   } },
   { name: "Setup cosign", keys: ["name", "uses", "with"], values: {
     "uses" => "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
@@ -754,13 +825,16 @@ validate_step_contracts(npm_recovery_steps, [
   { name: "Publish or recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "4694ff6f5b87792c934779c80cfc4ec28813ed0f086d1f1eea2d60f4ad7b2cd2" },
+  } }, run_sha256: "8ed2d5f0ed206173953be05a8f912461d72ef8bdb6c826dce89945be37dd01fb" },
+  { name: "Verify npm registry consumers", keys: ["name", "env", "run"], values: { "env" => {
+    "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
+  } }, run_sha256: "60dfc6c71b5fcb8dec7d17777678d62aa94c0aba810e1e168861c176a9dfeb65" },
 ], "the unified release workflow npm recovery job")
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Checkout release commit", keys: ["name", "id", "env", "run"], values: { "id" => "version", "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" } }, run_sha256: "5d68a3db64a236498aee55916814fc9d89875553f6ef470b683d96b78b62a336" },
   { name: "Verify tagged commit is the remote main tip", keys: ["name", "run"], run_sha256: "c6b6362a10a06dc03d1e88283f854c3642c9fd2de2c08861a8ba1ac6467b98ab" },
-  { name: "Setup Rust", keys: ["name", "uses"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4" } },
+  { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => "1.98.0" } } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
   { name: "Verify release tags", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "3e5e103b4b32e468d370d25613885b564a2f9f0dfebe2ced9b182a1691038830" },
   { name: "Check whether native transport version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "native-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "66070c8554794b49acd86aa2f9e6177b2857685c1adf85c71a0e2f1f1a485fa4" },

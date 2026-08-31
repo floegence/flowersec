@@ -5,8 +5,8 @@ use cert_test_builder::{
     KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PKCS_ECDSA_P384_SHA384,
 };
 use flowersec_native_transport::{
-    Cancellation, DatagramSendOutcome, PathProfile, ProtocolVersion, RawQuicClientConfig,
-    RawQuicError, RawQuicLimits, RawQuicListener, RawQuicServerConfig, RawQuicSession,
+    Cancellation, DatagramSendOutcome, PathProfile, RawQuicClientConfig, RawQuicError,
+    RawQuicLimits, RawQuicListener, RawQuicServerConfig, RawQuicSession,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
@@ -18,7 +18,7 @@ const PRIVATE_KEY: &str = "MC4CAQAwBQYDK2VwBCIEICxYUWHqGoh0CBBohsaNg/NThm1n3UeWC
 #[test]
 fn raw_quic_requires_explicit_roots_and_tls_identity() {
     assert!(matches!(
-        RawQuicClientConfig::new(PathProfile::Direct, vec![], limits()),
+        RawQuicClientConfig::new_ca(PathProfile::Direct, vec![], limits()),
         Err(RawQuicError::InvalidTrust)
     ));
     assert!(matches!(
@@ -275,12 +275,12 @@ async fn migration_is_client_owned_and_preserves_the_connection() {
 }
 
 #[tokio::test]
-async fn v3_raw_quic_enforces_ca_pin_and_versioned_alpn() {
+async fn raw_quic_enforces_ca_and_pin_tls_profiles() {
     let (root, ca_identity) = private_ca_identity();
     let ca_client =
-        RawQuicClientConfig::new_v3_ca(PathProfile::Direct, vec![root.as_ref().to_vec()], limits())
+        RawQuicClientConfig::new_ca(PathProfile::Direct, vec![root.as_ref().to_vec()], limits())
             .expect("v3 CA client config");
-    let ca_server = RawQuicServerConfig::new_v3(
+    let ca_server = RawQuicServerConfig::new(
         PathProfile::Direct,
         ca_identity.chain_der(),
         ca_identity.key_der(),
@@ -290,17 +290,15 @@ async fn v3_raw_quic_enforces_ca_pin_and_versioned_alpn() {
     let (client, server) = connect_pair(ca_client, ca_server)
         .await
         .expect("v3 CA connection");
-    assert_eq!(client.protocol_version(), ProtocolVersion::V3);
-    assert_eq!(server.protocol_version(), ProtocolVersion::V3);
     client.abort();
     server.abort();
 
     let pinned_identity = self_signed_identity();
     let pin: [u8; 32] = Sha256::digest(pinned_identity.leaf.as_ref()).into();
     let pin_client =
-        RawQuicClientConfig::new_v3_pin(PathProfile::Direct, vec![[0xA5; 32], pin], limits())
+        RawQuicClientConfig::new_pin(PathProfile::Direct, vec![[0xA5; 32], pin], limits())
             .expect("v3 pin client config");
-    let pin_server = RawQuicServerConfig::new_v3(
+    let pin_server = RawQuicServerConfig::new(
         PathProfile::Direct,
         pinned_identity.chain_der(),
         pinned_identity.key_der(),
@@ -315,9 +313,9 @@ async fn v3_raw_quic_enforces_ca_pin_and_versioned_alpn() {
 
     let mismatched_identity = self_signed_identity();
     let mismatch_client =
-        RawQuicClientConfig::new_v3_pin(PathProfile::Direct, vec![[0xA5; 32]], limits())
+        RawQuicClientConfig::new_pin(PathProfile::Direct, vec![[0xA5; 32]], limits())
             .expect("v3 mismatch client config");
-    let mismatch_server = RawQuicServerConfig::new_v3(
+    let mismatch_server = RawQuicServerConfig::new(
         PathProfile::Direct,
         mismatched_identity.chain_der(),
         mismatched_identity.key_der(),
@@ -328,24 +326,6 @@ async fn v3_raw_quic_enforces_ca_pin_and_versioned_alpn() {
         connect_pair(mismatch_client, mismatch_server).await,
         Err(RawQuicError::PinMismatch)
     ));
-
-    let v2_identity = self_signed_identity();
-    let v2_server = RawQuicServerConfig::new(
-        PathProfile::Direct,
-        v2_identity.chain_der(),
-        v2_identity.key_der(),
-        limits(),
-    )
-    .expect("v2 server config");
-    let v2_server_pin: [u8; 32] = Sha256::digest(v2_identity.leaf.as_ref()).into();
-    let v3_client =
-        RawQuicClientConfig::new_v3_pin(PathProfile::Direct, vec![v2_server_pin], limits())
-            .expect("v3 client config");
-    let mismatch = connect_pair(v3_client, v2_server).await;
-    assert!(
-        matches!(mismatch, Err(RawQuicError::Handshake)),
-        "v2/v3 ALPN mismatch returned {mismatch:?}"
-    );
 }
 
 #[tokio::test]
@@ -393,9 +373,9 @@ async fn v3_raw_quic_rejects_every_pinned_certificate_profile_variant() {
             key: PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
         };
         let pin: [u8; 32] = Sha256::digest(leaf.as_ref()).into();
-        let client = RawQuicClientConfig::new_v3_pin(PathProfile::Direct, vec![pin], limits())
+        let client = RawQuicClientConfig::new_pin(PathProfile::Direct, vec![pin], limits())
             .expect("pin client");
-        let server = RawQuicServerConfig::new_v3(
+        let server = RawQuicServerConfig::new(
             PathProfile::Direct,
             identity.chain_der(),
             identity.key_der(),
@@ -528,7 +508,7 @@ fn limits() -> RawQuicLimits {
 }
 
 fn client_config(profile: PathProfile) -> RawQuicClientConfig {
-    RawQuicClientConfig::new(profile, vec![decode_base64(CERTIFICATE)], limits())
+    RawQuicClientConfig::new_ca(profile, vec![decode_base64(CERTIFICATE)], limits())
         .expect("client config")
 }
 

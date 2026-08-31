@@ -10,17 +10,18 @@ rust_workflow=.github/workflows/rust-release.yml
 ci_workflow=.github/workflows/ci.yml
 codeql_workflow=.github/workflows/codeql.yml
 scorecard_workflow=.github/workflows/scorecard.yml
+container_security_workflow=.github/workflows/container-security.yml
 
-expected_workflows=$'.github/workflows/ci.yml\n.github/workflows/codeql.yml\n.github/workflows/release.yml\n.github/workflows/rust-release.yml\n.github/workflows/scorecard.yml'
+expected_workflows=$'.github/workflows/ci.yml\n.github/workflows/codeql.yml\n.github/workflows/container-security.yml\n.github/workflows/release.yml\n.github/workflows/rust-release.yml\n.github/workflows/scorecard.yml'
 actual_workflows=$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print | LC_ALL=C sort)
 if [[ "$actual_workflows" != "$expected_workflows" ]]; then
-  echo "the reviewed workflow set changed; expected only ci.yml, codeql.yml, release.yml, rust-release.yml, and scorecard.yml" >&2
+  echo "the reviewed workflow set changed" >&2
   exit 1
 fi
 
 version_checker=scripts/check-release-version-consistency.mjs
 
-for required in Makefile .github/dependabot.yml "$release_workflow" "$rust_workflow" "$ci_workflow" "$codeql_workflow" "$scorecard_workflow" scripts/release.sh scripts/push-main.sh "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs scripts/check-container-release-policy.mjs scripts/check-release-workflows.rb scripts/check-security-makefile.mjs scripts/run-final-stage.mjs scripts/run-final-stage.test.mjs scripts/run-precommit-wave.mjs scripts/run-precommit-wave.test.mjs .githooks/pre-push; do
+for required in Makefile .github/dependabot.yml "$release_workflow" "$rust_workflow" "$ci_workflow" "$codeql_workflow" "$scorecard_workflow" "$container_security_workflow" scripts/release.sh scripts/push-main.sh "$version_checker" scripts/release.test.mjs scripts/check-release-version-consistency.test.mjs scripts/check-container-release-policy.mjs scripts/check-release-workflows.rb scripts/check-security-makefile.mjs scripts/run-final-stage.mjs scripts/run-final-stage.test.mjs scripts/run-precommit-wave.mjs scripts/run-precommit-wave.test.mjs .githooks/pre-push; do
   if [[ ! -f "$required" ]]; then
     echo "missing release policy file: $required" >&2
     exit 1
@@ -33,7 +34,7 @@ if ! grep -Eq '^node scripts/check-release-version-consistency\.mjs "\$version"$
   echo "the release script must validate all maintained version facts" >&2
   exit 1
 fi
-if grep -Eq '(^|[[:space:]])make([[:space:]]|$)|main-gate-receipt|TRANSPORT_V2_EVIDENCE|TRANSPORT_V2_BASE_SHA' scripts/release.sh; then
+if grep -Eq '(^|[[:space:]])make([[:space:]]|$)|main-gate-receipt' scripts/release.sh; then
   echo "the release script must not run tests or consume test outputs or prior gate state" >&2
   exit 1
 fi
@@ -60,17 +61,17 @@ if grep -Eq '^[[:space:]]+push:' "$rust_workflow"; then
   exit 1
 fi
 
-tag_trigger_files=$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -exec grep -El '^[[:space:]]+tags:' {} + || true)
+tag_trigger_files=$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -exec grep -El '^    tags:' {} + || true)
 if [[ "$tag_trigger_files" != "$release_workflow" ]]; then
   echo "only $release_workflow may contain a tag trigger" >&2
   exit 1
 fi
 
-while IFS= read -r workflow; do
+for workflow in "$release_workflow" "$rust_workflow"; do
   if grep -Eq 'make (check|nightly-check|swift-check|rust-release-check|interop-smoke|interop-stress)|go test|npm test|cargo test|test:coverage|go-test-race|go-vulncheck' "$workflow"; then
     echo "hosted workflow contains a local-only quality gate: $workflow" >&2
     exit 1
   fi
-done <<< "$actual_workflows"
+done
 
 echo "release workflow policy is valid"

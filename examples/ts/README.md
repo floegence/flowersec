@@ -29,11 +29,11 @@ node examples/ts/node-client.mjs \
 The trust root is optional when the endpoint uses a system-trusted certificate.
 The example atomically creates and synchronizes the spend receipt before the
 connector sends connection credentials. Reusing a receipt path fails closed.
-After connecting, it registers a decoded notification handler, makes typed RPC
-type `7001`, exchanges notification type `7002`, writes `hello` to a
+After connecting, it makes typed RPC type `7001`, sends notification type
+`7002`, writes `hello` to a
 `parity.echo` reliable stream, sends FIN, reads `world` through peer FIN, probes
-liveness, cancels the subscription, and closes the session. The decoder rejects
-invalid notification or RPC payloads before application code uses them.
+liveness, and closes the session. The typed RPC decoder rejects invalid payloads
+before application code uses them.
 
 The repository server-parity peers implement this application contract for
 integration coverage; a deployed service must register equivalent handlers.

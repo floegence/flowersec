@@ -13,11 +13,6 @@ updates:
     directory: /flowersec-ts
     schedule:
       interval: weekly
-    ignore:
-      # Flowersec v2 freezes IDNA behavior to Unicode 15.1; tr46 6 uses newer data.
-      - dependency-name: tr46
-        versions:
-          - ">= 6.0.0"
 
   - package-ecosystem: gomod
     directory: /flowersec-go
@@ -43,15 +38,6 @@ updates:
     directory: /flowersec-rust
     schedule:
       interval: weekly
-    ignore:
-      # Flowersec v2 freezes IDNA behavior to Unicode 15.1; 1.1.0 moves to Unicode 16.0.
-      - dependency-name: idna_mapping
-        versions:
-          - ">= 1.1.0"
-      # idna_adapter 1.2 uses newer ICU data that accepts post-15.1 code points.
-      - dependency-name: idna_adapter
-        versions:
-          - ">= 1.2.0"
 
   - package-ecosystem: cargo
     directory: /flowersec-native-transport
@@ -80,5 +66,10 @@ updates:
 
   - package-ecosystem: swift
     directory: /examples/swift
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /
     schedule:
       interval: weekly

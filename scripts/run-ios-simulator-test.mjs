@@ -105,8 +105,8 @@ function main() {
       "-quiet", "-scheme", "Flowersec",
       "-destination", `platform=iOS Simulator,id=${simulator.udid}`,
       "-parallel-testing-enabled", "NO", "test",
-      "-only-testing:FlowersecTests/ConnectorV2Tests/testProductionV3IOSAdapterBuildsPinnedTLSHandlerAndVerifiesLeaf",
-      "-only-testing:FlowersecTests/ConnectorV2Tests/testProductionV3IOSAdapterRejectsWrongPinAndBuildsConfiguredCA",
+      "-only-testing:FlowersecTests/IOSRuntimeV3Tests/testProductionIOSAdapterBuildsPinnedTLSHandlerAndVerifiesLeaf",
+      "-only-testing:FlowersecTests/IOSRuntimeV3Tests/testProductionIOSAdapterRejectsWrongPinAndBuildsConfiguredCA",
       "CODE_SIGNING_ALLOWED=NO",
     ]);
   } finally {

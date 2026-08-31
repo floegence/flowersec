@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
 )
 
 // ErrInvalidMetadata reports application stream metadata that cannot be encoded
-// as the bounded canonical JSON object required by Transport v2 OPEN.
+// as the bounded canonical JSON object required by Transport v3 OPEN.
 var ErrInvalidMetadata = errors.New("invalid Flowersec metadata")
 
 // StreamMetadata is a validated, immutable application stream metadata value.
@@ -23,7 +23,7 @@ func NewStreamMetadata(values map[string]any) (StreamMetadata, error) {
 	if values == nil {
 		values = map[string]any{}
 	}
-	canonical, err := protocolv2.MarshalOpenMetadata(values)
+	canonical, err := protocolv3.MarshalOpenMetadata(values)
 	if err != nil {
 		return StreamMetadata{}, fmt.Errorf("%w: malformed input", ErrInvalidMetadata)
 	}
@@ -41,7 +41,7 @@ func EmptyStreamMetadata() StreamMetadata { return StreamMetadata{values: map[st
 
 // Values returns a defensive JSON-object copy.
 func (metadata StreamMetadata) Values() map[string]any {
-	canonical, err := protocolv2.MarshalOpenMetadata(metadata.values)
+	canonical, err := protocolv3.MarshalOpenMetadata(metadata.values)
 	if err != nil {
 		return map[string]any{}
 	}

@@ -20,7 +20,7 @@ import {
 } from "./acceptor.js";
 import { serveFrozenStreamHandlers } from "../public/streamHandlers.js";
 import {
-  createNativeRawQuicDriverV3,
+  createNativeRawQuicDriver,
   loadNativeTransportAddon,
 } from "./nativeTransportAddon.js";
 import {
@@ -213,7 +213,7 @@ export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<Acce
     options.admissionReasons,
   );
   const listeners: ListenerV3[] = [];
-  let rawDriver: ReturnType<typeof createNativeRawQuicDriverV3> | undefined;
+  let rawDriver: ReturnType<typeof createNativeRawQuicDriver> | undefined;
   try {
     for (const listener of options.listeners) {
       const running = listener.carrier === "websocket"
@@ -222,7 +222,7 @@ export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<Acce
             inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2,
           })
         : await startNodeRawQuicListenerV3(
-            rawDriver ??= createNativeRawQuicDriverV3(loadNativeTransportAddon()),
+            rawDriver ??= createNativeRawQuicDriver(loadNativeTransportAddon()),
             {
               ...listener,
               inboundBidirectionalStreamCapacity: options.maxInboundStreams + 2,

@@ -76,25 +76,26 @@ Commencez par l'[index des exemples](examples/README.md). Ils utilisent la même
 
 Les quatre SDK partagent le même modèle de session. La prise en charge varie lorsqu'une plateforme ne peut pas proposer un type de connexion.
 
-| Fonction applicative | Go | TypeScript | Swift | Rust |
+<!-- capability-table:start -->
+| Capacité applicative | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
+| Invitations de connexion opaques à usage unique | Oui | Oui | Oui | Oui |
+| Connexion sécurisée ponctuelle | Oui | Oui | Oui | Oui |
 | Sessions chiffrées de bout en bout | Oui | Oui | Oui | Oui |
-| Envoyer des appels RPC et des notifications | Oui | Oui | Oui | Oui |
-| Recevoir des notifications RPC | Oui | Oui | Oui | Oui |
-| Flux d'octets fiables | Oui | Oui | Oui | Oui |
-| Servir des flux applicatifs sur toute session | Oui | Oui | Oui | Oui |
-| Rétablissement des connexions durables | Oui | Oui | Oui | Oui |
-| Messages non fiables lorsqu'ils sont disponibles | Oui | Oui | Non | Oui |
-| Connexions depuis un navigateur | Non | Oui | Non | Non |
-| Connexions de clients Apple | Non | Non | Oui | Non |
-| Connexions QUIC natives | Oui | Node.js | Non | Oui |
-| Connexions WebSocket | Oui | Oui | Oui | Oui |
-| Connexions WebTransport | Go H4 | Client Browser H3 (si l'API WebTransport du navigateur est disponible) | Non | Non |
-| Acceptation de sessions côté serveur | Oui | Node.js | Non | Oui |
-| Runtime de relais opaque | Oui | Node.js | Non | Oui |
-| Émission d'invitations par le plan de contrôle | Oui | Non | Non | Non |
-| ProxyServer HTTP et WebSocket | Oui | Node.js | Non | Oui |
-
+| Appels RPC et notifications | Oui | Oui | Oui | Oui |
+| Métadonnées de flux validées | Oui | Oui | Oui | Oui |
+| Gestionnaires de flux applicatifs | Oui | Oui | Oui | Oui |
+| Rétablissement des connexions persistantes | Oui | Oui | Oui | Oui |
+| Messages non fiables négociés | Oui | Oui | Non | Oui |
+| Gestionnaires RPC côté client | Oui | Oui | Non | Oui |
+| Acceptation de sessions côté serveur | Oui | Oui | Non | Oui |
+| Gestionnaires de sessions serveur | Oui | Oui | Non | Oui |
+| Émission et autorisation par le plan de contrôle | Oui | Non | Non | Non |
+| Admission directe et par tunnel | Oui | Oui | Non | Oui |
+| ProxyServer HTTP et WebSocket | Oui | Oui | Non | Oui |
+| Contrat de flux indépendant du transport | Oui | Oui | Oui | Oui |
+| Sécurité wire Transport v3 | Oui | Oui | Oui | Oui |
+<!-- capability-table:end -->
 Les profils de deploiement separent la disponibilite de la plateforme du protocole applicatif Flowersec partage :
 
 | Profil | Runtimes | Surface carrier et role requise | Surface facultative |

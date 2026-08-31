@@ -110,18 +110,14 @@ func TestLanguageCapabilitiesDeclareNamedDeploymentProfiles(t *testing.T) {
 	if err := validateDeploymentProfileCapabilityBindings(capabilityMutation, manifest.PortableCapabilities); err == nil || !strings.Contains(err.Error(), "unknown required capability") {
 		t.Fatalf("mutated profile capability validation error = %v", err)
 	}
-	transport, err := loadTransportV2Contract(repoRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
 	invalidWire := manifest.DeploymentProfiles
 	invalidWire.ApplicationWire = "runtime_private_wire"
-	if err := validateDeploymentProfileTransportBindings(invalidWire, transport, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), "flowersec/3") {
+	if err := validateDeploymentProfileTransportBindings(invalidWire, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), "flowersec/3") {
 		t.Fatalf("mutated profile wire validation error = %v", err)
 	}
 }
 
-func TestDeploymentProfileTransportBindingsRequireExactRolePathTuple(t *testing.T) {
+func TestDeploymentProfileTransportBindingsRequireCurrentRuntimeAndRolePathUnits(t *testing.T) {
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
 		t.Fatal(err)
@@ -130,47 +126,19 @@ func TestDeploymentProfileTransportBindingsRequireExactRolePathTuple(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	transport, err := loadTransportV2Contract(repoRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cases := []struct {
-		name, runtime, carrier, network, role, path string
-	}{
-		{"native endpoint direct", "rust/native", "websocket", "dial", "client", "direct"},
-		{"native endpoint tunnel", "rust/native", "websocket", "dial", "client", "tunnel"},
-		{"native endpoint tunnel peer", "rust/native", "websocket", "dial", "server", "tunnel"},
-		{"native direct server", "rust/native", "websocket", "listen", "server", "direct"},
-		{"browser direct", "typescript/browser", "websocket", "dial", "client", "direct"},
-		{"browser tunnel", "typescript/browser", "websocket", "dial", "client", "tunnel"},
-		{"browser tunnel peer", "typescript/browser", "websocket", "dial", "server", "tunnel"},
-		{"apple direct", "swift/ios", "websocket", "dial", "client", "direct"},
-		{"apple tunnel", "swift/macos", "websocket", "dial", "client", "tunnel"},
-		{"apple tunnel peer", "swift/macos", "websocket", "dial", "server", "tunnel"},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			mutated := *transport
-			mutated.Runtimes = slices.Clone(transport.Runtimes)
-			for i, runtime := range mutated.Runtimes {
-				if runtime.ID != strings.ReplaceAll(testCase.runtime, "/", "_") {
-					continue
-				}
-				mutated.Runtimes[i].Tuples = slices.DeleteFunc(slices.Clone(runtime.Tuples), func(tuple transportV2RuntimeTuple) bool {
-					return tuple.Carrier == testCase.carrier && tuple.NetworkMode == testCase.network && tuple.SessionRole == testCase.role && tuple.Path == testCase.path
-				})
-			}
-			if err := validateDeploymentProfileTransportBindings(manifest.DeploymentProfiles, &mutated, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), testCase.runtime) || !strings.Contains(err.Error(), testCase.path) {
-				t.Fatalf("missing exact runtime role/path tuple error = %v", err)
-			}
-		})
+	invalidRuntime := manifest.DeploymentProfiles
+	invalidRuntime.Profiles = slices.Clone(invalidRuntime.Profiles)
+	invalidRuntime.Profiles[0].TransportRuntimeIDs = slices.Clone(invalidRuntime.Profiles[0].TransportRuntimeIDs)
+	invalidRuntime.Profiles[0].TransportRuntimeIDs[0] = "go/legacy"
+	if err := validateDeploymentProfileTransportBindings(invalidRuntime, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), "go/legacy") {
+		t.Fatalf("unknown current runtime error = %v", err)
 	}
 
 	parity := *manifest.ServerParityContract
 	parity.Units = slices.DeleteFunc(slices.Clone(parity.Units), func(unit serverParityUnit) bool {
 		return unit.Runtime == "rust" && unit.Role == "tunnel-runtime" && unit.Carrier == "websocket" && unit.Path == "tunnel"
 	})
-	if err := validateDeploymentProfileTransportBindings(manifest.DeploymentProfiles, transport, &parity); err == nil || !strings.Contains(err.Error(), "tunnel-runtime") {
+	if err := validateDeploymentProfileTransportBindings(manifest.DeploymentProfiles, &parity); err == nil || !strings.Contains(err.Error(), "tunnel-runtime") {
 		t.Fatalf("missing opaque tunnel production unit error = %v", err)
 	}
 }

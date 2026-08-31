@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/transporttest"
 	"github.com/gorilla/websocket"
 )
 

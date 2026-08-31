@@ -23,13 +23,14 @@ var removedLegacyTSDocTokens = map[string]struct{}{
 }
 
 type manifest struct {
-	Version  int              `json:"version"`
-	Docs     docsManifest     `json:"docs"`
-	Go       goManifest       `json:"go"`
-	TS       tsManifest       `json:"ts"`
-	Swift    swiftManifest    `json:"swift"`
-	Rust     rustManifest     `json:"rust"`
-	Coverage coverageManifest `json:"coverage"`
+	Version   int               `json:"version"`
+	Docs      docsManifest      `json:"docs"`
+	Go        goManifest        `json:"go"`
+	TS        tsManifest        `json:"ts"`
+	Swift     swiftManifest     `json:"swift"`
+	Rust      rustManifest      `json:"rust"`
+	NativeABI nativeABIManifest `json:"native_abi"`
+	Coverage  coverageManifest  `json:"coverage"`
 }
 
 type docsManifest struct {
@@ -66,6 +67,21 @@ type goCompileExpr struct {
 
 type tsManifest struct {
 	Subpaths []tsSubpath `json:"subpaths"`
+	Bins     []tsBin     `json:"bins"`
+}
+
+type tsBin struct {
+	Name            string `json:"name"`
+	Path            string `json:"path"`
+	Source          string `json:"source"`
+	RequiresShebang bool   `json:"requires_shebang"`
+}
+
+type nativeABIManifest struct {
+	Package         string   `json:"package"`
+	ContractVersion int      `json:"contract_version"`
+	WireVersion     int      `json:"wire_version"`
+	RuntimeExports  []string `json:"runtime_exports"`
 }
 
 type tsSubpath struct {
@@ -284,6 +300,28 @@ func validateManifest(repoRoot string, m *manifest) error {
 		return err
 	}
 	if err := requireUnique("ts.subpaths.package_json_export", exports); err != nil {
+		return err
+	}
+	if len(m.TS.Bins) == 0 {
+		return errors.New("ts.bins must not be empty")
+	}
+	binNames := make([]string, 0, len(m.TS.Bins))
+	for _, bin := range m.TS.Bins {
+		if strings.TrimSpace(bin.Name) == "" || strings.TrimSpace(bin.Path) == "" || strings.TrimSpace(bin.Source) == "" {
+			return errors.New("ts.bins name, path, and source must not be empty")
+		}
+		binNames = append(binNames, bin.Name)
+	}
+	if err := requireUnique("ts.bins.name", binNames); err != nil {
+		return err
+	}
+	if m.NativeABI.Package != "@floegence/flowersec-node-native" || m.NativeABI.ContractVersion != 3 || m.NativeABI.WireVersion != 3 {
+		return errors.New("native_abi must describe the Flowersec contract 3 / wire 3 package")
+	}
+	if len(m.NativeABI.RuntimeExports) == 0 {
+		return errors.New("native_abi.runtime_exports must not be empty")
+	}
+	if err := requireUnique("native_abi.runtime_exports", m.NativeABI.RuntimeExports); err != nil {
 		return err
 	}
 

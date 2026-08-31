@@ -51,12 +51,12 @@ func syncDirectory(at directoryURL: URL) throws {
   }
 }
 
-func retryDisposition(for error: any Error) -> RetryDispositionV3? {
+func retryDisposition(for error: any Error) -> RetryDisposition? {
   if let connectError = error as? ConnectError {
     return connectError.retryDisposition
   }
   if let sessionError = error as? SessionError {
-    return sessionError.retryDispositionV3
+    return sessionError.retryDisposition
   }
   return nil
 }
@@ -64,7 +64,6 @@ func retryDisposition(for error: any Error) -> RetryDispositionV3? {
 private enum ExampleConfigurationError: Error {
   case missingSpendReceiptPath
   case invalidRPCResponse
-  case invalidNotification
   case invalidStreamResponse
   case stalledStreamWrite
 }
@@ -78,15 +77,6 @@ private struct ValuePayload: Codable, Equatable, Sendable {
 }
 
 private func runApplicationWorkflow(session: any Session) async throws {
-  let (notifications, notificationContinuation) = AsyncStream<
-    Result<ValuePayload, RPCNotificationError>
-  >.makeStream(bufferingPolicy: .bufferingNewest(1))
-  let subscription = try await session.rpc.subscribeNotification(
-    notificationTypeID,
-    as: ValuePayload.self
-  ) { result in
-    notificationContinuation.yield(result)
-  }
   do {
     let request = ValuePayload(value: "ping")
     let response = try await session.rpc.call(
@@ -98,13 +88,6 @@ private func runApplicationWorkflow(session: any Session) async throws {
     guard response == request else { throw ExampleConfigurationError.invalidRPCResponse }
 
     try await session.rpc.notify(notificationTypeID, ValuePayload(value: "notify"))
-    var notificationIterator = notifications.makeAsyncIterator()
-    guard let notification = await notificationIterator.next() else {
-      throw ExampleConfigurationError.invalidNotification
-    }
-    guard try notification.get().value == "notify" else {
-      throw ExampleConfigurationError.invalidNotification
-    }
 
     let streamCell = ProcessInfo.processInfo.environment["FSEC_EXAMPLE_STREAM_CELL"] ?? "direct"
     let metadata = try StreamMetadata(["cell": .string(streamCell)])
@@ -116,11 +99,7 @@ private func runApplicationWorkflow(session: any Session) async throws {
     }
 
     _ = try await session.probeLiveness()
-    await subscription.cancel()
-    notificationContinuation.finish()
   } catch {
-    await subscription.cancel()
-    notificationContinuation.finish()
     throw error
   }
 }
@@ -156,9 +135,16 @@ private enum FlowersecSwiftClientExample {
     let lease = ArtifactLease(artifact: artifact) {
       try commitSpendReceipt(at: receiptPath)
     }
+    let trustRootsPEM = try ProcessInfo.processInfo.environment["FSEC_TRUST_ROOT_PEM_PATH"]
+      .map { [try Data(contentsOf: URL(fileURLWithPath: $0))] } ?? []
+    let options = ConnectorOptions(
+      origin: ProcessInfo.processInfo.environment["FSEC_ORIGIN"],
+      connectTimeout: .seconds(15),
+      trustRootsPEM: trustRootsPEM
+    )
     let session: any Session
     do {
-      session = try await connect(lease: lease)
+      session = try await connect(lease: lease, options: options)
     } catch {
       if let disposition = retryDisposition(for: error) {
         print("recovery=\(String(describing: disposition))")

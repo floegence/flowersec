@@ -1,6 +1,6 @@
 {
   "name": "@floegence/flowersec-node-native",
-  "version": "3.2.1",
+  "version": "4.0.0",
   "description": "Prebuilt Flowersec native transport driver for Node.js",
   "license": "MIT",
   "repository": {
@@ -20,13 +20,13 @@
     "sbom/**"
   ],
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=24.20.0"
   },
   "optionalDependencies": {
-    "@floegence/flowersec-node-native-darwin-arm64": "3.2.1",
-    "@floegence/flowersec-node-native-darwin-x64": "3.2.1",
-    "@floegence/flowersec-node-native-linux-arm64-gnu": "3.2.1",
-    "@floegence/flowersec-node-native-linux-x64-gnu": "3.2.1"
+    "@floegence/flowersec-node-native-darwin-arm64": "4.0.0",
+    "@floegence/flowersec-node-native-darwin-x64": "4.0.0",
+    "@floegence/flowersec-node-native-linux-arm64-gnu": "4.0.0",
+    "@floegence/flowersec-node-native-linux-x64-gnu": "4.0.0"
   },
   "napi": {
     "binaryName": "flowersec-node-native",

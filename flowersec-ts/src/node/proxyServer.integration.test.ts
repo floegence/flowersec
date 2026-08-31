@@ -5,11 +5,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { createProxyRuntime } from "../proxy/runtime.js";
-import { createArtifactLeaseV2 } from "../v2/artifactLease.js";
-import { parseArtifact } from "../v2/opaqueArtifact.js";
-import { createAcceptor, SessionHandlers } from "./acceptor.js";
-import { connect } from "./connectSession.js";
-import { ProxyServer } from "./proxyServer.js";
+import { testCertificatePEM, testPrivateKeyPEM } from "../testSupport/tlsFixture.js";
+import { createAcceptor, createArtifactLease, connect, parseArtifact, ProxyServer, SessionHandlers } from "./index.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const cleanups: Array<() => Promise<void> | void> = [];
@@ -60,20 +57,27 @@ describe("Node ProxyServer real Session integration", () => {
     const handlers = new SessionHandlers({ maxConcurrentStreams: 2 });
     proxy.register(handlers);
     const acceptor = await createAcceptor({
-      listeners: [{ carrier: "websocket", path: "direct", host: "127.0.0.1", port: 0, allowedOrigins: ["https://app.example"] }],
+      listeners: [{
+        carrier: "websocket",
+        path: "direct",
+        host: "127.0.0.1",
+        port: 0,
+        allowedOrigins: ["https://app.example"],
+        tls: { certificate: testCertificatePEM, privateKey: testPrivateKeyPEM },
+      }],
       maxInboundStreams: artifact.session.max_inbound_streams,
-      authorize: async () => ({ decision: "allow", artifact: parseArtifact(JSON.stringify(artifact)) }),
+      authorize: async () => ({ accepted: true, artifact: parseArtifact(JSON.stringify(artifact)) }),
       resolveHandlers: () => handlers,
     });
     cleanups.push(async () => await acceptor.close());
     const acceptAddress = acceptor.addresses()[0];
     if (acceptAddress === undefined) throw new Error("WebSocket listener did not bind");
-    artifact.path.candidates[0]!.url = `ws://127.0.0.1:${acceptAddress.port}/flowersec/v2/direct`;
+    artifact.path.candidates[0]!.url = `wss://localhost:${acceptAddress.port}/flowersec/v3/direct`;
 
     const acceptedPromise = acceptor.accept();
     const client = await connect(
-      createArtifactLeaseV2(parseArtifact(JSON.stringify(artifact)), async () => undefined),
-      { origin: "https://app.example" },
+      createArtifactLease(parseArtifact(JSON.stringify(artifact)), async () => undefined),
+      { origin: "https://app.example", roots: testCertificatePEM },
     );
     cleanups.push(async () => await client.close().catch(() => undefined));
     const accepted = await acceptedPromise;
@@ -158,14 +162,15 @@ async function dispatch(runtime: ProxyRuntime, request: ProxyRequest): Promise<R
 
 function directWebSocketArtifact(): {
   session: { max_inbound_streams: number };
-  path: { candidates: Array<{ id: string; carrier: string; url: string }> };
+  path: { candidates: Array<{ id: string; carrier: string; url: string; tls: { mode: string } }> };
 } {
-  const vectors = JSON.parse(readFileSync(`${repositoryRoot}/testdata/transport_v2/artifact_vectors.json`, "utf8")) as {
+  const vectors = JSON.parse(readFileSync(`${repositoryRoot}/testdata/transport_v3/artifact_vectors.json`, "utf8")) as {
     positive: Array<{ id: string; artifact_json: string }>;
   };
-  const source = vectors.positive.find((entry) => entry.id === "direct-three-carriers");
+  const source = vectors.positive.find((entry) => entry.id === "direct-mixed-security");
   if (source === undefined) throw new Error("missing direct artifact fixture");
   const artifact = JSON.parse(source.artifact_json) as ReturnType<typeof directWebSocketArtifact>;
-  artifact.path.candidates = artifact.path.candidates.filter((candidate) => candidate.carrier === "websocket");
+  artifact.path.candidates = artifact.path.candidates.filter((candidate) =>
+    candidate.carrier === "websocket" && candidate.tls.mode === "ca");
   return artifact;
 }

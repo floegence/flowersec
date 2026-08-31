@@ -2,8 +2,8 @@
 
 The Swift example prints the opaque Flowersec v3 public contract marker and
 optionally establishes a macOS WSS session from an artifact lease. A connected
-client exercises typed RPC, decoded notification delivery, reliable stream
-write/read/FIN, liveness, subscription cancellation, and session close.
+client exercises typed RPC, notification send, reliable stream write/read/FIN,
+liveness, and session close.
 
 ## Run
 
@@ -26,19 +26,21 @@ macOS-compatible WSS candidate and a new path for the durable spend receipt:
 ```bash
 FSEC_ARTIFACT_V3_PATH=/secure/path/artifact-v3.json \
 FSEC_SPEND_RECEIPT_V3_PATH=/durable/state/artifact.spent \
+FSEC_ORIGIN=https://app.example \
+FSEC_TRUST_ROOT_PEM_PATH=/secure/path/custom-root.pem \
   swift run --package-path ./examples/swift
 ```
 
 The example creates the receipt with no overwrite, restricts it to the current
 user, synchronizes it before connection credentials are sent, and fails closed
 when the path already exists. The receipt contains no artifact or key material.
-After connecting, the client registers notification type `7002`, makes typed
-RPC type `7001` with `{ "value": "ping" }`, exchanges
+After connecting, the client makes typed RPC type `7001` with
+`{ "value": "ping" }`, sends notification type `7002` with
 `{ "value": "notify" }`, then writes `hello` on a `parity.echo` stream,
 sends FIN, and reads `world` through peer FIN. The repository server-parity
 fixtures implement this application contract; a deployed service must register
 equivalent handlers. Connection and session failures expose only a structured
-`RetryDispositionV3`.
+`RetryDisposition`.
 Long-lived applications give `ConnectionController` a refreshable artifact
 source; this one-shot example never reuses its spend receipt.
 

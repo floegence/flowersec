@@ -16,7 +16,7 @@ import { readyNativeAdmissionV3, readyWebSocketAdmissionV3 } from "../v3/runtime
 import { ConnectErrorV3, TransportFailureV3 } from "../v3/security.js";
 import { nodeSessionRuntimeV3 } from "../v3/nodeSessionRuntime.js";
 import {
-  createNativeRawQuicDriverV3,
+  createNativeRawQuicDriver,
   tryLoadNativeTransportAddon,
 } from "./nativeTransportAddon.js";
 import { createNodeRawQuicClientV3 } from "./rawQuicAdapterV3.js";
@@ -77,7 +77,7 @@ function nodeRuntime(options: Readonly<{
     throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
   }
   const addon = tryLoadNativeTransportAddon();
-  const rawQuic = addon === undefined ? undefined : createNativeRawQuicDriverV3(addon);
+  const rawQuic = addon === undefined ? undefined : createNativeRawQuicDriver(addon);
   const capability = detectNodeRuntimeCapabilityV3(rawQuic !== undefined, options.origin !== undefined);
   let rpcSnapshot: FrozenRPCHandlers | undefined;
   try {

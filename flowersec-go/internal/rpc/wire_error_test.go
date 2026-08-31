@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v3/internal/rpcwire"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v4/internal/rpcwire"
 )
 
 func TestToWireError_Nil(t *testing.T) {

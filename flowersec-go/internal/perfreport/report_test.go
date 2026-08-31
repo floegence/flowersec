@@ -54,7 +54,7 @@ func TestWriteMarkdownPreservesObservedMetricsAndPartialFailure(t *testing.T) {
 	started := time.Date(2026, 8, 14, 1, 2, 3, 0, time.UTC)
 	report := Report{
 		SourceSHA: strings.Repeat("a", 40), Status: StatusFail, StartedAt: started, EndedAt: started.Add(3 * time.Second),
-		Environment: Environment{HostName: "udesk24", OS: "Ubuntu 24.04", Kernel: "6.8", Architecture: "amd64", CPUModel: "Test CPU", LogicalCPUs: 8, MemoryBytes: 16 << 30, GoVersion: "go1.24", NodeVersion: "v22", ChromiumVersion: "Chromium 130"},
+		Environment: Environment{HostName: "udesk24", OS: "Ubuntu 24.04", Kernel: "6.8", Architecture: "amd64", CPUModel: "Test CPU", LogicalCPUs: 8, MemoryBytes: 16 << 30, GoVersion: "go1.27", NodeVersion: "v24.20.0", ChromiumVersion: "Chromium 140"},
 		Cases:       []CaseResult{{ID: "performance/throughput/wss", Section: SectionStreamingThroughput, Status: StatusFail, Stage: "measurement", FirstError: "connection reset", Measurements: []Measurement{{Name: "throughput", Observed: 42.5, Threshold: 50, Unit: "MiB/s", Comparator: ">=", Status: StatusFail}}, RawSamples: []RawSample{{Round: 1, Values: map[string]float64{"throughput_mib_s": 42.5}}}}},
 	}
 	path := filepath.Join(t.TempDir(), "performance-report.md")

@@ -5,9 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
-	"unicode"
 
-	protocolv3 "github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
+	protocolv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
 )
 
 func TestOpenUnicodeAndCanonicalMetadataVectors(t *testing.T) {
@@ -55,12 +54,7 @@ func TestOpenUnicodeAndCanonicalMetadataVectors(t *testing.T) {
 	}
 }
 
-func TestOpenUnicodeUsesReviewedGo15TablePlus15_1Delta(t *testing.T) {
-	// A Go Unicode table change must fail this gate so the non-ASCII fail-close
-	// branch in unicode15_1Assigned is reviewed before the SDK is released.
-	if unicode.Version != "15.0.0" {
-		t.Fatalf("Go Unicode version = %q, want reviewed 15.0.0 base", unicode.Version)
-	}
+func TestOpenUnicodeUsesGeneratedUnicode15_1Table(t *testing.T) {
 	for _, input := range []protocolv3.OpenPayload{
 		{LogicalStreamID: 1, Kind: "rpc.𮯰", Metadata: []byte(`{}`)},
 		{LogicalStreamID: 1, Kind: "rpc", Metadata: []byte(`{"value":"𮯰"}`)},

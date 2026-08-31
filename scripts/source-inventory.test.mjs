@@ -20,8 +20,8 @@ function stableJson(value) {
 }
 
 function goSourceArchiveVersion(modulePath) {
+  if (modulePath.endsWith("/v4")) return "v4.0.0-securityinventory";
   if (modulePath.endsWith("/v3")) return "v3.0.0-securityinventory";
-  if (modulePath.endsWith("/v2")) return "v2.0.0-securityinventory";
   return "v0.0.0-securityinventory";
 }
 
@@ -59,12 +59,12 @@ function fixtureGraph() {
     root: {
       ecosystem: "npm",
       name: "@floegence/flowersec-core",
-      version: "2.0.0",
-      purl: "pkg:npm/%40floegence/flowersec-core@2.0.0",
+      version: "4.0.0",
+      purl: "pkg:npm/%40floegence/flowersec-core@4.0.0",
     },
     components,
     edges: components.map((component) => ({
-      from: "pkg:npm/%40floegence/flowersec-core@2.0.0",
+      from: "pkg:npm/%40floegence/flowersec-core@4.0.0",
       to: component.purl,
       kind: "runtime",
     })),
@@ -180,7 +180,7 @@ test("source inventory output closure is explicit and package-local", async () =
 
 test("Go source archive pseudo-versions match module path majors", () => {
   assert.equal(goSourceArchiveVersion("example.com/flowersec/v3"), "v3.0.0-securityinventory");
-  assert.equal(goSourceArchiveVersion("example.com/flowersec/v2"), "v2.0.0-securityinventory");
+  assert.equal(goSourceArchiveVersion("example.com/flowersec/v4"), "v4.0.0-securityinventory");
   assert.equal(goSourceArchiveVersion("example.com/flowersec"), "v0.0.0-securityinventory");
 });
 
@@ -194,19 +194,19 @@ test("SPDX, CycloneDX, and notices are deterministic and preserve license decisi
   } = await loadGenerator();
   const graph = fixtureGraph();
   const components = graph.components;
-  const spdx = renderSpdx("fixture", graph, "abc123");
+  const spdx = renderSpdx("fixture", graph, "abc123", "2026-08-31T12:07:14Z");
   assert.equal(spdx.spdxVersion, "SPDX-2.3");
   assert.equal(spdx.packages[0].name, "@floegence/flowersec-core");
-  assert.equal(spdx.packages[0].versionInfo, "2.0.0");
+  assert.equal(spdx.packages[0].versionInfo, "4.0.0");
   assert.notEqual(spdx.packages[0].versionInfo, "abc123");
   assert.ok(spdx.relationships.some((edge) => edge.relationshipType === "DEPENDS_ON"));
-  assert.equal(spdx.creationInfo.created, "1970-01-01T00:00:00Z");
+  assert.equal(spdx.creationInfo.created, "2026-08-31T12:07:14Z");
   assert.doesNotThrow(() => validateSpdxDocument(spdx));
 
   const cyclone = renderCycloneDx("fixture", graph, "abc123");
   assert.equal(cyclone.bomFormat, "CycloneDX");
   assert.equal(cyclone.specVersion, "1.5");
-  assert.equal(cyclone.metadata.component.version, "2.0.0");
+  assert.equal(cyclone.metadata.component.version, "4.0.0");
   assert.notEqual(cyclone.metadata.component.version, "abc123");
   assert.equal(cyclone.components.length, 2);
   assert.ok(cyclone.serialNumber.startsWith("urn:uuid:"));
@@ -231,7 +231,7 @@ test("SBOM validators reject schema and exact dependency graph mutations", async
     validateSpdxDocument,
   } = await loadGenerator();
   const graph = fixtureGraph();
-  const spdx = renderSpdx("fixture", graph, "abc123");
+  const spdx = renderSpdx("fixture", graph, "abc123", "2026-08-31T12:07:14Z");
   assert.doesNotThrow(() => validateOfficialSbomSchema(sourceRoot, "spdx", spdx));
   const noSpdxEdges = structuredClone(spdx);
   noSpdxEdges.relationships = noSpdxEdges.relationships.filter((edge) => (
@@ -369,7 +369,7 @@ test("SPDX expressions use strict reviewed normalization", async () => {
     SPDXID: "SPDXRef-DOCUMENT",
     name: "invalid",
     documentNamespace: "https://example.invalid/spdx/invalid",
-    creationInfo: { created: "1970-01-01T00:00:00Z", creators: ["Tool: fixture"] },
+    creationInfo: { created: "2026-08-31T12:07:14Z", creators: ["Tool: fixture"] },
     packages: [{
       name: "bad",
       SPDXID: "SPDXRef-Package-bad",
@@ -689,7 +689,7 @@ test("npm, Rust, Go, and Swift source archives carry exact generated distributio
   fs.mkdirSync(goZipTool);
   fs.writeFileSync(
     path.join(goZipTool, "go.mod"),
-    "module flowersec.local/source-zip-test\n\ngo 1.26.6\n\nrequire golang.org/x/mod v0.37.0\n",
+    "module flowersec.local/source-zip-test\n\ngo 1.27.0\n\nrequire golang.org/x/mod v0.37.0\n",
   );
   fs.writeFileSync(
     path.join(goZipTool, "go.sum"),

@@ -20,12 +20,11 @@ use crate::{
         decode_fsa3, decode32,
     },
     connection_controller::RetryDisposition,
-    native_runtime_v2::ConnectorOptions as ConnectorOptionsV2,
     raw_quic_v3::{self, RawQuicDialFailureV3},
     session_handlers::{RpcHandlerSnapshot, RpcHandlers, rpc_router_v3},
     session_v3::{SessionConfigV3, SessionDeadlinesV3, establish_session_v3},
     tls_v3::NativeTlsPolicyV3,
-    transport_v2::Session,
+    transport::Session,
     transport_v3::{
         ALPN_DIRECT_V3, ALPN_TUNNEL_V3, CarrierSessionV3, CarrierStreamV3, PathKind, SessionRole,
         carrier_inbound_stream_limit_v3,
@@ -137,7 +136,11 @@ impl ConnectError {
 /// Native v3 connector trust, handler, and lifecycle configuration.
 #[derive(Clone)]
 pub struct ConnectorOptions {
-    inner: ConnectorOptionsV2,
+    trust_roots_der: Vec<Vec<u8>>,
+    connect_timeout: Duration,
+    close_flush_timeout: Option<Duration>,
+    websocket_origin: Option<String>,
+    rpc_handlers: Option<Arc<RpcHandlerSnapshot>>,
 }
 
 impl fmt::Debug for ConnectorOptions {
@@ -151,31 +154,36 @@ impl ConnectorOptions {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
-            inner: ConnectorOptionsV2::new(),
+            trust_roots_der: Vec::new(),
+            connect_timeout: Duration::from_secs(10),
+            close_flush_timeout: None,
+            websocket_origin: None,
+            rpc_handlers: None,
         }
     }
 
     pub fn with_trust_roots_der(mut self, roots: Vec<Vec<u8>>) -> Result<Self, ConnectError> {
-        self.inner = self
-            .inner
-            .with_trust_roots_der(roots)
-            .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
+        NativeTlsPolicyV3::ca_with_configured_roots(
+            roots.iter().cloned().map(CertificateDer::from),
+        )
+        .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
+        self.trust_roots_der = roots;
         Ok(self)
     }
 
     pub fn with_connect_timeout(mut self, timeout: Duration) -> Result<Self, ConnectError> {
-        self.inner = self
-            .inner
-            .with_connect_timeout(timeout)
-            .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
+        if timeout.is_zero() {
+            return Err(terminal_error(ConnectErrorCode::ArtifactInvalid));
+        }
+        self.connect_timeout = timeout;
         Ok(self)
     }
 
     pub fn with_close_flush_timeout(mut self, timeout: Duration) -> Result<Self, ConnectError> {
-        self.inner = self
-            .inner
-            .with_close_flush_timeout(timeout)
-            .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
+        if timeout.is_zero() {
+            return Err(terminal_error(ConnectErrorCode::ArtifactInvalid));
+        }
+        self.close_flush_timeout = Some(timeout);
         Ok(self)
     }
 
@@ -183,36 +191,44 @@ impl ConnectorOptions {
         mut self,
         origin: impl Into<String>,
     ) -> Result<Self, ConnectError> {
-        self.inner = self
-            .inner
-            .with_websocket_origin(origin)
-            .map_err(|_| terminal_error(ConnectErrorCode::ArtifactInvalid))?;
+        let origin = origin.into();
+        let valid = url::Url::parse(&origin).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.path() == "/"
+                && url.query().is_none()
+                && url.fragment().is_none()
+        });
+        if !valid {
+            return Err(terminal_error(ConnectErrorCode::ArtifactInvalid));
+        }
+        self.websocket_origin = Some(origin);
         Ok(self)
     }
 
     pub fn with_rpc_handlers(mut self, handlers: RpcHandlers) -> Self {
-        self.inner = self.inner.with_rpc_handlers(handlers);
+        self.rpc_handlers = Some(handlers.into_snapshot());
         self
     }
 
     pub fn trust_roots_der(&self) -> &[Vec<u8>] {
-        self.inner.trust_roots_der()
+        &self.trust_roots_der
     }
 
     pub const fn connect_timeout(&self) -> Duration {
-        self.inner.connect_timeout()
+        self.connect_timeout
     }
 
     pub(crate) const fn close_flush_timeout(&self) -> Option<Duration> {
-        self.inner.close_flush_timeout()
+        self.close_flush_timeout
     }
 
     pub(crate) fn websocket_origin(&self) -> Option<&str> {
-        self.inner.websocket_origin()
+        self.websocket_origin.as_deref()
     }
 
     pub(crate) fn rpc_handler_snapshot(&self) -> Option<Arc<RpcHandlerSnapshot>> {
-        self.inner.rpc_handler_snapshot()
+        self.rpc_handlers.clone()
     }
 }
 

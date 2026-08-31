@@ -1,4 +1,4 @@
-import { canonicalStreamMetadataJSONV2Internal } from "../v2/protocol.js";
+import { canonicalStreamMetadataJSONV3Internal } from "../v3/protocol.js";
 import type { JsonObject } from "./contract.js";
 
 export class StreamMetadataError extends Error {
@@ -23,7 +23,7 @@ export class StreamMetadata {
 
 export function createStreamMetadata(values: JsonObject): StreamMetadata {
   try {
-    const canonical = canonicalStreamMetadataJSONV2Internal(values);
+    const canonical = canonicalStreamMetadataJSONV3Internal(values);
     return StreamMetadata.fromCanonicalValues(deepFreeze(JSON.parse(canonical) as JsonObject));
   } catch {
     throw new StreamMetadataError();

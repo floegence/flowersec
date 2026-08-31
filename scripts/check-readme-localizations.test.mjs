@@ -118,14 +118,14 @@ test("README support claims state WebTransport and native package boundaries", (
   const goReadme = fs.readFileSync(path.join(repoRoot, "flowersec-go/README.md"), "utf8");
   const typescriptReadme = fs.readFileSync(path.join(repoRoot, "flowersec-ts/README.md"), "utf8");
   const nativeReadme = fs.readFileSync(path.join(repoRoot, "flowersec-node-native/README.md"), "utf8");
-  assert.match(rootReadme, /Browser H3 client \(when available\)/u);
+  assert.match(rootReadme, /Browser profile uses the H3 WebTransport API when present/u);
   assert.match(rootReadme, /native-server carrier surface is\s+WebSocket and raw QUIC for Go, Rust, and Node\.js/u);
   assert.match(goReadme, /supports WebSocket, raw QUIC, and WebTransport across H4/u);
   assert.match(goReadme, /Go the H4\s+runtime that claims the complete `webtransport-server` profile/u);
   assert.match(goReadme, /WebSocket, raw QUIC,\s+and WebTransport are selected internally for either artifact-bound direct or\s+tunnel path/u);
   assert.doesNotMatch(goReadme, /WebTransport is selected only\s+for direct invitations/u);
-  assert.match(typescriptReadme, /Browser WebTransport is capability-dependent/u);
-  assert.match(typescriptReadme, /WebTransport\s+uses browser-owned HTTP\/3 streams and\s+is not available in the Node entrypoint/u);
+  assert.match(typescriptReadme, /Browsers support WSS and optional browser-owned WebTransport/u);
+  assert.match(typescriptReadme, /Node\.js does not expose WebTransport/u);
   assert.match(nativeReadme, /macOS\s+arm64, macOS x64, Linux arm64 glibc, and Linux x64 glibc/u);
   assert.match(nativeReadme, /Windows and\s+musl packages are not published/u);
 });

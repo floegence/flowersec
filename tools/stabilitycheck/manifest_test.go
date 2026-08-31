@@ -32,11 +32,11 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 			TransportV3Tokens: []string{"flowersec/3"},
 		},
 		Go: goManifest{
-			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v3",
-			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v3/legacy"},
+			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v4",
+			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v4/legacy"},
 			CompileTargets: []goCompileTarget{
 				{
-					Package:         "github.com/floegence/flowersec/flowersec-go/v3/client",
+					Package:         "github.com/floegence/flowersec/flowersec-go/v4/client",
 					Alias:           "client",
 					DocPackageToken: "`client`",
 					Entries: []goCompileExpr{
@@ -52,7 +52,7 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 			},
 		},
 		Coverage: coverageManifest{
-			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v3/client", MinStatementsPct: 1}},
+			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v4/client", MinStatementsPct: 1}},
 			TS: tsCoverageTarget{Lines: 1, Functions: 1, Statements: 1, Branches: 1},
 		},
 	}
@@ -190,10 +190,10 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 			TransportV3Tokens: []string{"flowersec/3"},
 		},
 		Go: goManifest{
-			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v3",
-			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v3/legacy"},
+			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v4",
+			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v4/legacy"},
 			CompileTargets: []goCompileTarget{{
-				Package:         "github.com/floegence/flowersec/flowersec-go/v3/client",
+				Package:         "github.com/floegence/flowersec/flowersec-go/v4/client",
 				Alias:           "client",
 				DocPackageToken: "`client`",
 				Entries: []goCompileExpr{{
@@ -201,12 +201,15 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 				}},
 			}},
 		},
-		TS: tsManifest{Subpaths: []tsSubpath{{
-			Specifier:         "@floegence/flowersec-core",
-			PackageJSONExport: ".",
-			DocTokens:         []string{"`@floegence/flowersec-core`"},
-			RuntimeExports:    []string{"connect"},
-		}}},
+		TS: tsManifest{
+			Subpaths: []tsSubpath{{
+				Specifier:         "@floegence/flowersec-core",
+				PackageJSONExport: ".",
+				DocTokens:         []string{"`@floegence/flowersec-core`"},
+				RuntimeExports:    []string{"connect"},
+			}},
+			Bins: []tsBin{{Name: "flowersec-ts-cli", Path: "./dist/cli.js", Source: "flowersec-ts/src/cli.ts", RequiresShebang: true}},
+		},
 		Swift: swiftManifest{
 			PackageName:     "Flowersec",
 			Product:         "Flowersec",
@@ -221,8 +224,14 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 			DocTokens:      []string{"`flowersec`"},
 			CompileEntries: []string{"let _ = flowersec::connect"},
 		},
+		NativeABI: nativeABIManifest{
+			Package:         "@floegence/flowersec-node-native",
+			ContractVersion: 3,
+			WireVersion:     3,
+			RuntimeExports:  []string{"bindRawQuic", "connectRawQuic", "contractVersion"},
+		},
 		Coverage: coverageManifest{
-			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v3/client", MinStatementsPct: 1}},
+			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v4/client", MinStatementsPct: 1}},
 			TS: tsCoverageTarget{Lines: 1, Functions: 1, Statements: 1, Branches: 1},
 		},
 	}, root
@@ -231,10 +240,10 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 	m := &manifest{
 		Go: goManifest{
-			ModulePath: "github.com/floegence/flowersec/flowersec-go/v3",
+			ModulePath: "github.com/floegence/flowersec/flowersec-go/v4",
 			CompileTargets: []goCompileTarget{
 				{
-					Package:         "github.com/floegence/flowersec/flowersec-go/v3/endpoint",
+					Package:         "github.com/floegence/flowersec/flowersec-go/v4/endpoint",
 					Alias:           "endpoint",
 					DocPackageToken: "`endpoint`",
 					Entries: []goCompileExpr{
@@ -264,9 +273,9 @@ func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 
 func TestRenderGoVerifierIncludesTypedFieldChecks(t *testing.T) {
 	m := &manifest{Go: goManifest{
-		ModulePath: "github.com/floegence/flowersec/flowersec-go/v3",
+		ModulePath: "github.com/floegence/flowersec/flowersec-go/v4",
 		CompileTargets: []goCompileTarget{{
-			Package: "github.com/floegence/flowersec/flowersec-go/v3/fserrors",
+			Package: "github.com/floegence/flowersec/flowersec-go/v4/fserrors",
 			Alias:   "fserrors",
 			Entries: []goCompileExpr{{
 				Kind:      "field",
@@ -319,7 +328,7 @@ func (Session) Close() error { return nil }
 			if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.26.6\n"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.27.0\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			packageDir := filepath.Join(moduleRoot, "sample")

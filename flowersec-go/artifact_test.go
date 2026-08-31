@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"testing"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
 )
 
 func TestOpaqueArtifactAndLease(t *testing.T) {

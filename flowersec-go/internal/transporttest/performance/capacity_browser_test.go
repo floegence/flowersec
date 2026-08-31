@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/transporttest/linuxnetlab"
 )
 
 func TestBrowserCapacityWorkerProcess(t *testing.T) {

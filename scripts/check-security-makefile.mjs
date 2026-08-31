@@ -132,7 +132,7 @@ function verifyGraph(source) {
     .map((token) => check.recipe.findIndex((line) => line.includes(token)));
   if (order.some((value, index) => value < 0 || index > 0 && value <= order[index - 1])) throw new Error("check phase order is invalid");
 
-  if (/transportcheck|transport-test-runner|ubuntu-test-runner|run-transport-v2|flowersec-test-helper|CHECK_INTEROP/.test(source)) {
+  if (/transportcheck|transport-test-runner|ubuntu-test-runner|run-retired-transport|flowersec-test-helper|CHECK_INTEROP/.test(source)) {
     throw new Error("Makefile retains retired test orchestration");
   }
 

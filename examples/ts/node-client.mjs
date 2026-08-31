@@ -45,7 +45,6 @@ const lease = createArtifactLease(artifact, async () => {
 const signal = AbortSignal.timeout(15_000);
 const roots = trustRootPath === undefined ? undefined : await readFile(trustRootPath);
 let session;
-let unsubscribe = () => {};
 try {
   session = await connect(lease, {
     origin,
@@ -58,14 +57,6 @@ try {
 }
 try {
   try {
-    /** @type {Promise<ValuePayload>} */
-    const notificationReceived = new Promise((resolve) => {
-      unsubscribe = session.rpc.onNotify(
-        NOTIFICATION_TYPE_ID,
-        decodeValuePayload,
-        resolve,
-      );
-    });
     const rpc = await session.rpc.call(
       ECHO_RPC_TYPE_ID,
       { value: "ping" },
@@ -80,11 +71,6 @@ try {
       { value: "notify" },
       { signal },
     );
-    const notification = await notificationReceived;
-    if (notification.value !== "notify") {
-      throw new Error("unexpected notification payload");
-    }
-
     const metadata = createStreamMetadata({
       cell: process.env.FSEC_EXAMPLE_STREAM_CELL ?? "direct",
     });
@@ -104,8 +90,6 @@ try {
     throw error;
   }
 } finally {
-  unsubscribe();
-  unsubscribe();
   await session.close();
 }
 

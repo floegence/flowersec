@@ -4,7 +4,7 @@ import {
   type OperationOptions,
   type Session,
 } from "./contract.js";
-import { validApplicationStreamKind } from "../v2/protocol.js";
+import { validApplicationStreamKind } from "../v3/protocol.js";
 
 const DEFAULT_MAX_CONCURRENT_STREAMS = 64;
 const MAX_CONCURRENT_STREAMS = 128;
@@ -41,6 +41,7 @@ export type FrozenStreamHandlers = Readonly<{
 }>;
 
 const streamHandlerStates = new WeakMap<StreamHandlers, StreamHandlerState>();
+// The v2 identifier is denied so it cannot be repurposed as an application stream.
 const RESERVED_RPC_KINDS = new Set(["flowersec.rpc.v2", "flowersec.rpc.v3"]);
 
 /** Carrier-neutral application-stream handlers for any established Session. */
@@ -81,9 +82,6 @@ export class StreamHandlers {
     );
   }
 }
-
-/** Explicit-compatibility application-stream handlers. */
-export class LegacyStreamHandlers extends StreamHandlers {}
 
 function mutableStreamHandlerState(handlers: StreamHandlers): StreamHandlerState {
   const state = streamHandlerStates.get(handlers);

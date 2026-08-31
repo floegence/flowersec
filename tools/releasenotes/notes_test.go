@@ -36,11 +36,11 @@ func TestBuildReleaseNotesSkipsReleaseHousekeeping(t *testing.T) {
 }
 
 func TestBuildReleaseNotesPrefersReviewedCommitBody(t *testing.T) {
-	notes := buildReleaseNotes("flowersec-go/v2.5.4", "flowersec-go/v2.5.3", releaseKindGo, []commit{
+	notes := buildReleaseNotes("flowersec-go/v4.5.4", "flowersec-go/v4.5.3", releaseKindGo, []commit{
 		{
 			Hash: "1", Subject: "fix: harden transport lifecycle",
 			Body: releaseNotesBegin + `
-Flowersec 2.5.4 tightens proxy security and bounded shutdown behavior across the SDKs.
+Flowersec 4.5.4 tightens proxy security and bounded shutdown behavior across the SDKs.
 
 ## Proxy security and lifecycle
 

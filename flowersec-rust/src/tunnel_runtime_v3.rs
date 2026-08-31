@@ -950,11 +950,10 @@ impl TaskRuntime {
                 // caller receives the correct artifact-expiry reason. It
                 // still carries the authorizer's lease and must be released
                 // before retiring the admission.
-                if reason == "expired_artifact" {
-                    if let Some(lease_id) = response_lease_id(&response) {
-                        release_bounded(self.authorizer.as_ref(), lease_id, admission_deadline)
-                            .await;
-                    }
+                if reason == "expired_artifact"
+                    && let Some(lease_id) = response_lease_id(&response)
+                {
+                    release_bounded(self.authorizer.as_ref(), lease_id, admission_deadline).await;
                 }
                 let _ = send_fsa3(
                     admission.as_ref(),

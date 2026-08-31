@@ -24,8 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
-	"github.com/floegence/flowersec/flowersec-go/v3/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
+	"github.com/floegence/flowersec/flowersec-go/v4/controlplane"
 )
 
 const (
@@ -217,7 +217,7 @@ func runServer(ctx context.Context, carrier string) error {
 		if err == nil {
 			_, port, splitErr := net.SplitHostPort(listener.Address())
 			err = splitErr
-			endpoint = "https://127.0.0.1:" + port + "/flowersec/webtransport/v2/direct"
+			endpoint = "https://127.0.0.1:" + port + "/flowersec/webtransport/v3/direct"
 		}
 	}
 	if err != nil {
@@ -333,6 +333,7 @@ func exerciseExternalServer(ctx context.Context, session flowersec.Session, exec
 	if _, err := session.ProbeLiveness(ctx); err != nil {
 		return fmt.Errorf("external client session did not survive cancellation: %w", err)
 	}
+	executed.record("liveness")
 	if _, err := session.WaitTermination(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
@@ -474,7 +475,7 @@ func runTunnelRelay(ctx context.Context, carrier string) error {
 		if err == nil {
 			_, port, splitErr := net.SplitHostPort(listener.Address())
 			err = splitErr
-			endpoint = "https://127.0.0.1:" + port + "/flowersec/webtransport/v2/tunnel"
+			endpoint = "https://127.0.0.1:" + port + "/flowersec/webtransport/v3/tunnel"
 		}
 	}
 	if err != nil || listener == nil || endpoint == "" {

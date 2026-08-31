@@ -827,7 +827,7 @@ function collectGoBinaryGraph(repoRoot, policy, releaseVersion, kind, definition
           GOENV: "off",
           GOFLAGS: "",
           GOOS: platform.goos,
-          GOTOOLCHAIN: "go1.26.6",
+          GOTOOLCHAIN: "go1.27.0",
           GOWORK: "off",
         },
       ));
@@ -1336,8 +1336,11 @@ export function validateDependencyGraph(graph) {
   return graph;
 }
 
-export function renderSpdx(name, graph, inventoryDigest) {
+export function renderSpdx(name, graph, inventoryDigest, createdAtUtc) {
   validateDependencyGraph(graph);
+  if (!/^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\dZ$/u.test(createdAtUtc)) {
+    throw new Error("SPDX creation time must be a real UTC timestamp");
+  }
   const sorted = [...graph.components].sort(compareComponents);
   const packages = [
     rootSpdxPackage(graph.root, inventoryDigest),
@@ -1369,7 +1372,7 @@ export function renderSpdx(name, graph, inventoryDigest) {
     name,
     documentNamespace: `https://github.com/floegence/flowersec/sbom/${encodeURIComponent(name)}/${inventoryDigest}`,
     creationInfo: {
-      created: "1970-01-01T00:00:00Z",
+      created: createdAtUtc,
       creators: ["Tool: flowersec-source-inventory-1"],
     },
     packages,
@@ -1494,7 +1497,7 @@ export function validateSpdxDocument(document, expectedGraph) {
     || !document.documentNamespace.startsWith("https://")
     || typeof document.name !== "string"
     || document.SPDXID !== "SPDXRef-DOCUMENT"
-    || !document.creationInfo?.created
+    || !/^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\dZ$/u.test(document.creationInfo?.created)
     || !Array.isArray(document.creationInfo?.creators)) {
     throw new Error("invalid SPDX document namespace or creation schema");
   }
@@ -1677,7 +1680,16 @@ export function assertReleaseNoticeLicenseClosure(notice, graph) {
   }
 }
 
-function addDistributionArtifacts(artifacts, repoRoot, prefix, name, graph, digest, includeNotice = true) {
+function addDistributionArtifacts(
+  artifacts,
+  repoRoot,
+  prefix,
+  name,
+  graph,
+  digest,
+  createdAtUtc,
+  includeNotice = true,
+) {
   if (includeNotice) {
     const notice = renderNotice(name, graph.components);
     if (graph.components.some((component) => component.ecosystem === "go" && component.licenseFiles)) {
@@ -1685,7 +1697,7 @@ function addDistributionArtifacts(artifacts, repoRoot, prefix, name, graph, dige
     }
     artifacts.set(`${prefix}THIRD_PARTY_NOTICES.md`, notice);
   }
-  const spdx = renderSpdx(name, graph, digest);
+  const spdx = renderSpdx(name, graph, digest, createdAtUtc);
   const cyclonedx = renderCycloneDx(name, graph, digest);
   validateSpdxDocument(spdx, graph);
   validateCycloneDxDocument(cyclonedx, graph);
@@ -1730,6 +1742,12 @@ function renderSbomScope(kind) {
 export function generateSourceArtifacts(repoRoot) {
   const policy = loadLicensePolicy(repoRoot);
   const releaseVersion = readReleaseVersion(repoRoot);
+  const sbomMetadata = readJson(path.join(repoRoot, "stability/sbom_metadata.json"));
+  if (sbomMetadata.schema !== "flowersec.sbom-metadata.v1"
+    || sbomMetadata.version !== releaseVersion) {
+    throw new Error("SBOM metadata must match the maintained release version");
+  }
+  const createdAtUtc = sbomMetadata.created_at_utc;
   const goContexts = collectGoContexts(repoRoot, policy, releaseVersion);
   const npmContext = collectNpmContext(
     readJson(path.join(repoRoot, "flowersec-ts/package-lock.json")),
@@ -1816,7 +1834,7 @@ export function generateSourceArtifacts(repoRoot) {
   const artifacts = new Map();
   artifacts.set("THIRD_PARTY_NOTICES.md", renderNotice("Flowersec source tree", allComponents));
   artifacts.set("sbom/source-inventory.json", inventoryText);
-  const sourceSpdx = renderSpdx("flowersec-source", sourceGraph, digest);
+  const sourceSpdx = renderSpdx("flowersec-source", sourceGraph, digest, createdAtUtc);
   const sourceCycloneDx = renderCycloneDx("flowersec-source", sourceGraph, digest);
   validateSpdxDocument(sourceSpdx, sourceGraph);
   validateCycloneDxDocument(sourceCycloneDx, sourceGraph);
@@ -1824,9 +1842,9 @@ export function generateSourceArtifacts(repoRoot) {
   validateOfficialSbomSchema(repoRoot, "cyclonedx", sourceCycloneDx);
   artifacts.set("sbom/source.spdx.json", stableJson(sourceSpdx));
   artifacts.set("sbom/source.cyclonedx.json", stableJson(sourceCycloneDx));
-  addDistributionArtifacts(artifacts, repoRoot, "flowersec-go/", "flowersec-go", goDistribution, digest);
-  addDistributionArtifacts(artifacts, repoRoot, "flowersec-ts/", "flowersec-ts", npmContext.distribution, digest);
-  addDistributionArtifacts(artifacts, repoRoot, "flowersec-rust/", "flowersec-rust", rustDistribution, digest);
+  addDistributionArtifacts(artifacts, repoRoot, "flowersec-go/", "flowersec-go", goDistribution, digest, createdAtUtc);
+  addDistributionArtifacts(artifacts, repoRoot, "flowersec-ts/", "flowersec-ts", npmContext.distribution, digest, createdAtUtc);
+  addDistributionArtifacts(artifacts, repoRoot, "flowersec-rust/", "flowersec-rust", rustDistribution, digest, createdAtUtc);
   for (const prefix of nativeNodeArtifactPrefixes) {
     const platform = /^flowersec-node-native\/npm\/([^/]+)\/$/.exec(prefix)?.[1];
     const packageName = platform === undefined
@@ -1841,9 +1859,9 @@ export function generateSourceArtifacts(repoRoot) {
       ),
       [nodeNativeCargoDistribution],
     );
-    addDistributionArtifacts(artifacts, repoRoot, prefix, packageName, graph, digest);
+    addDistributionArtifacts(artifacts, repoRoot, prefix, packageName, graph, digest, createdAtUtc);
   }
-  addDistributionArtifacts(artifacts, repoRoot, "", "flowersec-swift", swiftRootContext, digest, false);
+  addDistributionArtifacts(artifacts, repoRoot, "", "flowersec-swift", swiftRootContext, digest, createdAtUtc, false);
   artifacts.set("sbom/swift/spdx.json", artifacts.get("sbom/spdx.json"));
   artifacts.set("sbom/swift/cyclonedx.json", artifacts.get("sbom/cyclonedx.json"));
   artifacts.delete("sbom/spdx.json");
@@ -1856,6 +1874,7 @@ export function generateSourceArtifacts(repoRoot) {
       `flowersec-${kind}`,
       graph,
       digest,
+      createdAtUtc,
     );
     artifacts.set(`release-compliance/${kind}/SBOM_SCOPE.md`, renderSbomScope(kind));
   }

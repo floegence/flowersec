@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"testing"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
 )
 
 // This compile contract keeps listener registration carrier-neutral. Concrete

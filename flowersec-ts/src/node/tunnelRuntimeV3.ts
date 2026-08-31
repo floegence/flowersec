@@ -17,7 +17,7 @@ import type {
 } from "../v3/carrier.js";
 import type { OperationOptions } from "../public/contract.js";
 import { startNodeWebSocketListenerV3, type NodeWebSocketListenerV3 } from "./webSocketServerV3.js";
-import { createNativeRawQuicDriverV3 } from "./nativeTransportAddon.js";
+import { createNativeRawQuicDriver } from "./nativeTransportAddon.js";
 import { startNodeRawQuicListenerV3, type NodeRawQuicListenerV3 } from "./rawQuicServerV3.js";
 import {
   consumeTunnelAuthorizationGrantV3,
@@ -204,7 +204,7 @@ async function startTunnelRuntimeV3(state: TunnelRuntimeStateV3): Promise<void> 
   let started = starts.get(state);
   if (started === undefined) {
     started = (async () => {
-      let rawQuicDriver: ReturnType<typeof createNativeRawQuicDriverV3> | undefined;
+      let rawQuicDriver: ReturnType<typeof createNativeRawQuicDriver> | undefined;
       try {
         for (const listener of state.options.listeners) {
           if (state.abort.signal.aborted) throw new Error("Flowersec tunnel runtime is closed");
@@ -218,7 +218,7 @@ async function startTunnelRuntimeV3(state: TunnelRuntimeStateV3): Promise<void> 
                 cleanupTimeoutMs: state.limits.cleanupTimeoutMs,
               })
             : await startNodeRawQuicListenerV3(
-                rawQuicDriver ??= createNativeRawQuicDriverV3(),
+                rawQuicDriver ??= createNativeRawQuicDriver(),
                 {
                   ...listener,
                   path: "tunnel",

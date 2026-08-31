@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
 )
 
 func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
@@ -251,7 +251,7 @@ func TestMetadataPublicConstructorValidatesAndCopiesJSONObjectBoundary(t *testin
 	}
 	for _, negativeZero := range []any{math.Copysign(0, -1), json.Number("-0")} {
 		if _, err := flowersec.NewStreamMetadata(map[string]any{"negative_zero": negativeZero}); !errors.Is(err, flowersec.ErrInvalidMetadata) {
-			t.Fatalf("NewStreamMetadata() negative zero error = %v, want ErrInvalidMetadata", err)
+			t.Fatalf("NewStreamMetadata(%T(%v)) negative zero error = %v, want ErrInvalidMetadata", negativeZero, negativeZero, err)
 		}
 	}
 	if got := flowersec.EmptyStreamMetadata().Values(); len(got) != 0 {

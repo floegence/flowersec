@@ -10,11 +10,11 @@ import {
   type StreamHandler,
 } from "../public/streamHandlers.js";
 import {
-  SessionHandlers,
+  SessionHandlersV3,
   registerSessionStreamHandlersAtomically,
 } from "./acceptor.js";
 
-export type StreamHandlerRegistrar = StreamHandlers | SessionHandlers;
+export type StreamHandlerRegistrar = StreamHandlers | SessionHandlersV3;
 
 const HTTP_KIND = "flowersec-proxy/http1";
 const WS_KIND = "flowersec-proxy/ws";
@@ -112,7 +112,7 @@ export class ProxyServer {
       ] as const;
       if (handlers instanceof StreamHandlers) {
         registerStreamHandlersAtomically(handlers, registrations);
-      } else if (handlers instanceof SessionHandlers) {
+      } else if (handlers instanceof SessionHandlersV3) {
         registerSessionStreamHandlersAtomically(handlers, registrations);
       } else {
         throw new TypeError("invalid Flowersec stream handler registrar");

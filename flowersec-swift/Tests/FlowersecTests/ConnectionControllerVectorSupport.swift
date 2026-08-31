@@ -115,7 +115,7 @@ struct ConnectionControllerVectorPolicy: Decodable {
 
 func loadConnectionControllerVectors() throws -> ConnectionControllerVectorDocument {
   let url = packageRoot().appendingPathComponent(
-    "testdata/transport_v2/connection_controller_vectors.json")
+    "testdata/transport_v3/controller_vectors.json")
   return try JSONDecoder().decode(
     ConnectionControllerVectorDocument.self,
     from: Data(contentsOf: url)

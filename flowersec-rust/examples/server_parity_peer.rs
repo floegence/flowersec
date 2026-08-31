@@ -7,29 +7,18 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
-use flowersec::v2::{
-    Acceptor, AcceptorOptions, Artifact, ArtifactLease, ConnectorOptions, ControlPlaneError,
-    DirectIssueOptions, EndpointSet, IssuedArtifact, Issuer, RuntimeAuthorizationRequest,
-    SessionOptions, TunnelAuthorizationResponse, TunnelAuthorizer, TunnelIssueOptions,
-    TunnelRuntime, TunnelRuntimeOptions, WebSocketAcceptorOptions, allow_tunnel_runtime, connect,
-};
 use flowersec::{
-    Acceptor as AcceptorV3, AcceptorOptions as AcceptorOptionsV3, Artifact as ArtifactV3,
-    ArtifactLease as ArtifactLeaseV3, ConnectorOptions as ConnectorOptionsV3, IncomingStream,
-    NotificationHandler, RpcError, RpcHandler,
-    RuntimeAuthorizationRequest as RuntimeAuthorizationRequestV3, Session, SessionError,
+    Acceptor, AcceptorOptions, Artifact, ArtifactLease, ConnectorOptions, IncomingStream,
+    NotificationHandler, RpcError, RpcHandler, RuntimeAuthorizationRequest, Session, SessionError,
     SessionHandlerOptions, SessionHandlers, StreamHandler, StreamMetadata,
-    TunnelAuthorizationError as TunnelAuthorizationErrorV3,
-    TunnelAuthorizationResponse as TunnelAuthorizationResponseV3,
-    TunnelAuthorizer as TunnelAuthorizerV3, TunnelRuntime as TunnelRuntimeV3,
-    TunnelRuntimeOptions as TunnelRuntimeOptionsV3, UnreliableSendOutcome,
-    WebSocketAcceptorOptions as WebSocketAcceptorOptionsV3, connect as connect_v3,
+    TunnelAuthorizationError, TunnelAuthorizationResponse, TunnelAuthorizer, TunnelRuntime,
+    TunnelRuntimeOptions, UnreliableSendOutcome, WebSocketAcceptorOptions, connect,
 };
 use rustls::pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
@@ -123,7 +112,7 @@ struct TunnelEndpointBReady {
 }
 
 #[derive(Debug, Deserialize)]
-struct IssuerResponseV3 {
+struct IssuerResponse {
     artifact_json: Option<String>,
     endpoint_a_artifact_json: Option<String>,
     endpoint_b_artifact_json: Option<String>,
@@ -131,16 +120,9 @@ struct IssuerResponseV3 {
     verification_records: Option<std::collections::HashMap<String, String>>,
 }
 
-#[derive(Clone, Debug)]
-struct RelayDecision {
-    lease_id: String,
-    expires_at: SystemTime,
-    expected_peer_endpoint_instance_id: String,
-    allow_replacement: bool,
-}
-
 struct ParityTunnelAuthorizer {
-    decisions: std::sync::Mutex<std::collections::HashMap<String, RelayDecision>>,
+    artifacts: std::sync::Mutex<std::collections::HashMap<String, Artifact>>,
+    leases: std::sync::Mutex<std::collections::HashMap<String, String>>,
     released: Arc<AtomicUsize>,
     released_notify: Arc<Notify>,
 }
@@ -150,52 +132,17 @@ impl TunnelAuthorizer for ParityTunnelAuthorizer {
     async fn authorize(
         &self,
         request: RuntimeAuthorizationRequest,
-    ) -> Result<TunnelAuthorizationResponse, ControlPlaneError> {
-        let decision = self
-            .decisions
-            .lock()
-            .expect("relay decision lock poisoned")
-            .get(request.lookup_key())
-            .cloned()
-            .ok_or(ControlPlaneError::InvalidInput)?;
-        allow_tunnel_runtime(
-            &request,
-            &decision.lease_id,
-            decision.expires_at,
-            &decision.expected_peer_endpoint_instance_id,
-            decision.allow_replacement,
-        )
-    }
-
-    async fn release(&self, _lease_id: &str) {
-        self.released.fetch_add(1, Ordering::SeqCst);
-        self.released_notify.notify_waiters();
-    }
-}
-
-struct ParityTunnelAuthorizerV3 {
-    artifacts: std::sync::Mutex<std::collections::HashMap<String, ArtifactV3>>,
-    leases: std::sync::Mutex<std::collections::HashMap<String, String>>,
-    released: Arc<AtomicUsize>,
-    released_notify: Arc<Notify>,
-}
-
-#[async_trait]
-impl TunnelAuthorizerV3 for ParityTunnelAuthorizerV3 {
-    async fn authorize(
-        &self,
-        request: RuntimeAuthorizationRequestV3,
         _cancellation: CancellationToken,
-    ) -> Result<TunnelAuthorizationResponseV3, TunnelAuthorizationErrorV3> {
+    ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
         let artifacts = self.artifacts.lock().expect("v3 artifact lock poisoned");
         let leases = self.leases.lock().expect("v3 lease lock poisoned");
         let artifact = artifacts
             .get(request.lookup_key())
-            .ok_or(TunnelAuthorizationErrorV3)?;
+            .ok_or(TunnelAuthorizationError)?;
         let lease_id = leases
             .get(request.lookup_key())
-            .ok_or(TunnelAuthorizationErrorV3)?;
-        TunnelAuthorizationResponseV3::allow(&request, artifact, lease_id, false)
+            .ok_or(TunnelAuthorizationError)?;
+        TunnelAuthorizationResponse::allow(&request, artifact, lease_id, false)
     }
 
     async fn release(&self, _lease_id: &str) {
@@ -481,11 +428,7 @@ fn cert_pem(value: &[u8]) -> String {
     )
 }
 
-fn protocol_v3() -> bool {
-    env::var("FLOWERSEC_PARITY_PROTOCOL").as_deref() == Ok("v3")
-}
-
-fn issue_v3(mode: &str, endpoint: &str, topology_id: Option<&str>) -> IssuerResponseV3 {
+fn issue(mode: &str, endpoint: &str, topology_id: Option<&str>) -> IssuerResponse {
     let mut child = Command::new("go")
         .args([
             "-C",
@@ -514,25 +457,6 @@ fn issue_v3(mode: &str, endpoint: &str, topology_id: Option<&str>) -> IssuerResp
         );
     }
     serde_json::from_slice(&output.stdout).expect("decode v3 parity issuer output")
-}
-
-fn issue(carrier: &str, address: SocketAddr) -> IssuedArtifact {
-    let endpoint = match carrier {
-        "websocket" => format!("wss://127.0.0.1:{}", address.port()),
-        "raw-quic" => format!("quic://127.0.0.1:{}", address.port()),
-        _ => panic!("unsupported carrier"),
-    };
-    let mut session = SessionOptions::new("rust-direct-parity");
-    session.max_inbound_streams = 16;
-    Issuer::new()
-        .issue_direct(DirectIssueOptions {
-            session,
-            endpoints: EndpointSet::new([endpoint]).unwrap(),
-            rendezvous_group_id: "rust-direct-parity-group".into(),
-            listener_audience: "rust-direct-parity-listener".into(),
-            upstream_address: "127.0.0.1:1".into(),
-        })
-        .unwrap()
 }
 
 fn print_result(message_type: &str, carrier: &str, executed: &ExecutionLedger) {
@@ -665,9 +589,6 @@ async fn server_datagram(session: &dyn Session, executed: &ExecutionLedger) {
 }
 
 async fn run_server(carrier: &str) {
-    if protocol_v3() {
-        return run_server_v3(carrier).await;
-    }
     let origin = parity_origin();
     let notifications = Arc::new(AtomicUsize::new(0));
     let notification_received = Arc::new(Notify::new());
@@ -694,85 +615,12 @@ async fn run_server(carrier: &str) {
     }
     .unwrap();
     let address = acceptor.local_address().unwrap();
-    let issued = issue(carrier, address);
-    println!(
-        "{}",
-        serde_json::json!({
-            "type":"ready", "runtime":"rust", "carrier":carrier, "path":"direct",
-            "artifact_json":String::from_utf8(issued.artifact_json()).unwrap(),
-            "trust_roots_der":[STANDARD.encode(&root)], "trust_pem":cert_pem(&root),
-            "server_certificate_der":STANDARD.encode(&leaf), "origin":origin
-        })
-    );
-    let artifact = Artifact::parse(issued.artifact_json()).unwrap();
-    let accepted = acceptor
-        .accept_with_handlers(
-            &artifact,
-            handlers(
-                notifications.clone(),
-                notification_received.clone(),
-                "direct",
-                executed.clone(),
-            ),
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-    let session = accepted.session();
-    executed.record(&["admission"]);
-    let (serve_result, ()) = tokio::join!(accepted.serve(CancellationToken::new()), async {
-        assert_cancellable_wait(session).await;
-        executed.record(&["cancel"]);
-        if env::var("FLOWERSEC_PARITY_CLIENT_PROFILE").is_ok() {
-            external_server(session, &executed).await;
-        } else if carrier == "websocket" {
-            rpc_and_notifications(session, &notifications, &notification_received, &executed).await;
-        } else {
-            tokio::join!(
-                rpc_and_notifications(session, &notifications, &notification_received, &executed),
-                server_datagram(session, &executed),
-            );
-        }
-        session.wait_termination().await;
-    });
-    assert_eq!(serve_result.unwrap_err(), SessionError::Closed);
-    executed.record(&["close", "cleanup"]);
-    print_result("server-result", carrier, &executed);
-}
-
-async fn run_server_v3(carrier: &str) {
-    let origin = parity_origin();
-    let notifications = Arc::new(AtomicUsize::new(0));
-    let notification_received = Arc::new(Notify::new());
-    let executed = ExecutionLedger::default();
-    let root = root_cert();
-    let leaf = leaf_cert();
-    let acceptor = match carrier {
-        "websocket" => AcceptorV3::bind_websocket(WebSocketAcceptorOptionsV3 {
-            bind_address: "127.0.0.1:0".parse().unwrap(),
-            certificate_chain_der: vec![leaf.clone(), root.clone()],
-            private_key_der: key(),
-            allowed_origins: vec![origin.clone()],
-            max_inbound_streams: 16,
-            accept_timeout: Duration::from_secs(10),
-        }),
-        "raw-quic" => AcceptorV3::bind(AcceptorOptionsV3 {
-            bind_address: "127.0.0.1:0".parse().unwrap(),
-            certificate_chain_der: vec![leaf.clone(), root.clone()],
-            private_key_der: key(),
-            max_inbound_streams: 16,
-            accept_timeout: Duration::from_secs(10),
-        }),
-        _ => panic!("unsupported carrier"),
-    }
-    .unwrap();
-    let address = acceptor.local_address().unwrap();
     let endpoint = match carrier {
         "websocket" => format!("wss://localhost:{}/flowersec/v3/direct", address.port()),
         "raw-quic" => format!("quic://127.0.0.1:{}", address.port()),
         _ => unreachable!(),
     };
-    let issued = issue_v3("direct", &endpoint, None);
+    let issued = issue("direct", &endpoint, None);
     let artifact_json = issued.artifact_json.expect("v3 direct artifact");
     println!(
         "{}",
@@ -782,7 +630,7 @@ async fn run_server_v3(carrier: &str) {
             "trust_pem":cert_pem(&root), "server_certificate_der":STANDARD.encode(&leaf), "origin":origin
         })
     );
-    let artifact = ArtifactV3::parse(artifact_json.as_bytes()).unwrap();
+    let artifact = Artifact::parse(artifact_json.as_bytes()).unwrap();
     let accepted = acceptor
         .accept_with_handlers(
             &artifact,
@@ -819,9 +667,6 @@ async fn run_server_v3(carrier: &str) {
 }
 
 async fn run_client(carrier: &str, ready: Ready) {
-    if protocol_v3() {
-        return run_client_v3(carrier, ready).await;
-    }
     let notifications = Arc::new(AtomicUsize::new(0));
     let notification_received = Arc::new(Notify::new());
     let executed = ExecutionLedger::default();
@@ -855,92 +700,6 @@ async fn run_client(carrier: &str, ready: Ready) {
         options = options.with_websocket_origin(ready.origin).unwrap();
     }
     let session = connect(lease, options).await.unwrap();
-    executed.record(&["admission"]);
-    assert_cancellable_wait(session.as_ref()).await;
-    executed.record(&["cancel"]);
-    if env::var("FLOWERSEC_PARITY_CLIENT_PROFILE").is_ok() {
-        external_server(session.as_ref(), &executed).await;
-    } else {
-        tokio::join!(
-            rpc_and_notifications(
-                session.as_ref(),
-                &notifications,
-                &notification_received,
-                &executed
-            ),
-            client_streams(session.as_ref(), "direct", &executed)
-        );
-    }
-    call_barrier(session.as_ref(), DATAGRAM_READY_RPC, "datagram-ready").await;
-    if carrier != "websocket" {
-        let channel = session.unreliable_messages().unwrap();
-        assert_eq!(
-            channel
-                .send(
-                    Bytes::from_static(&[1, 2, 3]),
-                    SystemTime::now() + Duration::from_secs(2)
-                )
-                .await
-                .unwrap(),
-            UnreliableSendOutcome::Accepted
-        );
-        assert_eq!(
-            channel.receive().await.unwrap(),
-            Bytes::from_static(&[3, 2, 1])
-        );
-        executed.record(&["datagram"]);
-    }
-    session.rekey().await.unwrap();
-    executed.record(&["rekey"]);
-    session.probe_liveness().await.unwrap();
-    executed.record(&["liveness"]);
-    call_barrier(session.as_ref(), COMPLETE_RPC, "complete").await;
-    session
-        .rpc()
-        .notify(NOTIFY_RPC, serde_json::json!({"value":"notify"}))
-        .await
-        .unwrap();
-    if let Err(error) = session.close().await {
-        assert_eq!(error, SessionError::Closed);
-    }
-    executed.record(&["close", "cleanup"]);
-    print_result("client-result", carrier, &executed);
-}
-
-async fn run_client_v3(carrier: &str, ready: Ready) {
-    let notifications = Arc::new(AtomicUsize::new(0));
-    let notification_received = Arc::new(Notify::new());
-    let executed = ExecutionLedger::default();
-    let artifact = ArtifactV3::parse(ready.artifact_json.as_bytes()).unwrap();
-    let trust_roots = if ready.trust_roots_der.is_empty() {
-        ready
-            .trust_pem
-            .as_deref()
-            .into_iter()
-            .flat_map(|pem| CertificateDer::pem_slice_iter(pem.as_bytes()))
-            .filter_map(Result::ok)
-            .map(|certificate| certificate.to_vec())
-            .collect()
-    } else {
-        ready
-            .trust_roots_der
-            .iter()
-            .map(|value| STANDARD.decode(value).unwrap())
-            .collect()
-    };
-    let lease = ArtifactLeaseV3::new(artifact, || async { Ok(()) });
-    let mut options = ConnectorOptionsV3::new()
-        .with_trust_roots_der(trust_roots)
-        .unwrap()
-        .with_rpc_handlers(rpc_handlers(
-            notifications.clone(),
-            notification_received.clone(),
-            executed.clone(),
-        ));
-    if carrier == "websocket" {
-        options = options.with_websocket_origin(ready.origin).unwrap();
-    }
-    let session = connect_v3(lease, options).await.unwrap();
     executed.record(&["admission"]);
     assert_cancellable_wait(session.as_ref()).await;
     executed.record(&["cancel"]);
@@ -994,30 +753,9 @@ async fn external_server(session: &dyn Session, executed: &ExecutionLedger) {
 
 fn relay_endpoint(carrier: &str, address: SocketAddr) -> String {
     match carrier {
-        "websocket" => format!("wss://localhost:{}/flowersec/v2/tunnel", address.port()),
-        "raw-quic" => format!("quic://127.0.0.1:{}", address.port()),
-        _ => panic!("unsupported carrier"),
-    }
-}
-
-fn relay_endpoint_v3(carrier: &str, address: SocketAddr) -> String {
-    match carrier {
         "websocket" => format!("wss://localhost:{}/flowersec/v3/tunnel", address.port()),
         "raw-quic" => format!("quic://127.0.0.1:{}", address.port()),
         _ => panic!("unsupported carrier"),
-    }
-}
-
-fn tunnel_runtime_options(_carrier: &str, origin: &str) -> TunnelRuntimeOptions {
-    TunnelRuntimeOptions {
-        bind_address: "127.0.0.1:0".parse().unwrap(),
-        certificate_chain_der: vec![leaf_cert(), root_cert()],
-        private_key_der: key(),
-        allowed_origins: vec![origin.to_owned()],
-        max_inbound_streams: 16,
-        pair_timeout: Duration::from_secs(10),
-        max_pending_legs: 16,
-        max_active_pairs: 8,
     }
 }
 
@@ -1026,21 +764,7 @@ fn bind_tunnel_runtime(
     authorizer: Arc<dyn TunnelAuthorizer>,
     origin: &str,
 ) -> TunnelRuntime {
-    let options = tunnel_runtime_options(carrier, origin);
-    match carrier {
-        "websocket" => TunnelRuntime::bind_websocket(options, authorizer),
-        "raw-quic" => TunnelRuntime::bind_raw_quic(options, authorizer),
-        _ => panic!("unsupported carrier"),
-    }
-    .unwrap()
-}
-
-fn bind_tunnel_runtime_v3(
-    carrier: &str,
-    authorizer: Arc<dyn TunnelAuthorizerV3>,
-    origin: &str,
-) -> TunnelRuntimeV3 {
-    let options = TunnelRuntimeOptionsV3 {
+    let options = TunnelRuntimeOptions {
         bind_address: "127.0.0.1:0".parse().unwrap(),
         certificate_chain_der: vec![leaf_cert(), root_cert()],
         private_key_der: key(),
@@ -1052,36 +776,20 @@ fn bind_tunnel_runtime_v3(
         max_active_pairs: 8,
     };
     match carrier {
-        "websocket" => TunnelRuntimeV3::bind_websocket(options, authorizer),
-        "raw-quic" => TunnelRuntimeV3::bind_raw_quic(options, authorizer),
+        "websocket" => TunnelRuntime::bind_websocket(options, authorizer),
+        "raw-quic" => TunnelRuntime::bind_raw_quic(options, authorizer),
         _ => panic!("unsupported carrier"),
     }
     .unwrap()
 }
 
-fn tunnel_relay_ready(carrier: &str, address: SocketAddr, origin: &str) -> RelayReady {
-    RelayReady {
-        message_type: "relay-ready".into(),
-        runtime: "rust".into(),
-        carrier: carrier.into(),
-        path: "tunnel".into(),
-        endpoint_url: relay_endpoint(carrier, address),
-        trust_pem: cert_pem(&root_cert()),
-        trust_roots_der: vec![STANDARD.encode(root_cert())],
-        server_certificate_der: STANDARD.encode(leaf_cert()),
-        origin: origin.into(),
-    }
-}
-
 async fn run_tunnel_relay(carrier: &str) {
-    if protocol_v3() {
-        return run_tunnel_relay_v3(carrier).await;
-    }
     let origin = parity_origin();
     let released = Arc::new(AtomicUsize::new(0));
     let executed = ExecutionLedger::default();
     let authorizer = Arc::new(ParityTunnelAuthorizer {
-        decisions: std::sync::Mutex::new(std::collections::HashMap::new()),
+        artifacts: std::sync::Mutex::new(std::collections::HashMap::new()),
+        leases: std::sync::Mutex::new(std::collections::HashMap::new()),
         released: released.clone(),
         released_notify: Arc::new(Notify::new()),
     });
@@ -1089,108 +797,9 @@ async fn run_tunnel_relay(carrier: &str) {
     let address = runtime.local_address().unwrap();
     println!(
         "{}",
-        serde_json::to_string(&tunnel_relay_ready(carrier, address, &origin)).unwrap()
-    );
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    let configure: Value = serde_json::from_str(input.trim()).unwrap();
-    if configure.get("type").and_then(Value::as_str) != Some("configure") {
-        panic!("relay did not receive configure command");
-    }
-    let authorizations = configure
-        .get("authorizations")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("relay did not receive authorizations"));
-    {
-        let mut decisions = authorizer.decisions.lock().unwrap();
-        for value in authorizations {
-            let wire: TunnelAuthorizationWire = serde_json::from_value(value.clone()).unwrap();
-            if wire.decision != "allow"
-                || wire.credential_id.is_empty()
-                || wire.lease_id.is_empty()
-                || wire.expected_peer_endpoint_instance_id.is_empty()
-            {
-                panic!("invalid secret-free tunnel authorization");
-            }
-            decisions.insert(
-                wire.credential_id,
-                RelayDecision {
-                    lease_id: wire.lease_id,
-                    expires_at: UNIX_EPOCH + Duration::from_secs(wire.expires_at_unix_seconds),
-                    expected_peer_endpoint_instance_id: wire.expected_peer_endpoint_instance_id,
-                    allow_replacement: wire.allow_replacement,
-                },
-            );
-        }
-    }
-
-    let cancellation = CancellationToken::new();
-    let serving = {
-        let runtime = runtime.clone();
-        let cancellation = cancellation.clone();
-        tokio::spawn(async move { runtime.serve(cancellation).await })
-    };
-    input.clear();
-    io::stdin().read_line(&mut input).unwrap();
-    if serde_json::from_str::<Value>(input.trim())
-        .ok()
-        .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
-        .as_deref()
-        != Some("close")
-    {
-        panic!("relay did not receive close command");
-    }
-    executed.record(&["close", "cancel"]);
-    cancellation.cancel();
-    runtime.close().await;
-    let _ = tokio::time::timeout(Duration::from_secs(3), serving).await;
-    let expected = authorizer.decisions.lock().unwrap().len();
-    let release_wait = async {
-        while released.load(Ordering::SeqCst) < expected {
-            authorizer.released_notify.notified().await;
-        }
-    };
-    let _ = tokio::time::timeout(Duration::from_secs(3), release_wait).await;
-    if released.load(Ordering::SeqCst) != expected {
-        panic!(
-            "relay cleanup released {} of {} leases",
-            released.load(Ordering::SeqCst),
-            expected
-        );
-    }
-    executed.record(&["admission", "pairing", "opaque-forwarding"]);
-    if carrier != "websocket" {
-        executed.record(&["datagram-forwarding"]);
-    }
-    executed.record(&["cleanup"]);
-    println!(
-        "{}",
-        serde_json::json!({
-            "type": "relay-result", "runtime": "rust", "carrier": carrier, "path": "tunnel",
-            "cases": executed.snapshot(), "observed_plaintext": false,
-            "released_leases": released.load(Ordering::SeqCst),
-        })
-    );
-}
-
-async fn run_tunnel_relay_v3(carrier: &str) {
-    let origin = parity_origin();
-    let released = Arc::new(AtomicUsize::new(0));
-    let executed = ExecutionLedger::default();
-    let authorizer = Arc::new(ParityTunnelAuthorizerV3 {
-        artifacts: std::sync::Mutex::new(std::collections::HashMap::new()),
-        leases: std::sync::Mutex::new(std::collections::HashMap::new()),
-        released: released.clone(),
-        released_notify: Arc::new(Notify::new()),
-    });
-    let runtime = Arc::new(bind_tunnel_runtime_v3(carrier, authorizer.clone(), &origin));
-    let address = runtime.local_address().unwrap();
-    println!(
-        "{}",
         serde_json::json!({
             "type":"relay-ready", "runtime":"rust", "carrier":carrier, "path":"tunnel",
-            "endpoint_url":relay_endpoint_v3(carrier,address), "trust_pem":cert_pem(&root_cert()),
+            "endpoint_url":relay_endpoint(carrier,address), "trust_pem":cert_pem(&root_cert()),
             "trust_roots_der":[STANDARD.encode(root_cert())],
             "server_certificate_der":STANDARD.encode(leaf_cert()), "origin":origin
         })
@@ -1218,7 +827,7 @@ async fn run_tunnel_relay_v3(carrier: &str) {
                 .expect("v3 verification artifact");
             artifacts.insert(
                 wire.credential_id.clone(),
-                ArtifactV3::parse(artifact_json.as_bytes()).unwrap(),
+                Artifact::parse(artifact_json.as_bytes()).unwrap(),
             );
             leases.insert(wire.credential_id, wire.lease_id);
         }
@@ -1269,52 +878,6 @@ async fn run_tunnel_relay_v3(carrier: &str) {
     );
 }
 
-fn artifact_tunnel_claims(artifact_json: &[u8]) -> (u64, String) {
-    let value: Value = serde_json::from_slice(artifact_json).unwrap();
-    let expiry = value["session"]["init_expire_at_unix_s"].as_u64().unwrap();
-    let expected = value["path"]["expected_peer_endpoint_instance_id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    (expiry, expected)
-}
-
-fn tunnel_authorization(
-    issued: &IssuedArtifact,
-    carrier: &str,
-    lease_id: &str,
-) -> TunnelAuthorizationWire {
-    let artifact_json = issued.artifact_json();
-    let (expiry, expected_peer) = artifact_tunnel_claims(&artifact_json);
-    let wire_carrier = match carrier {
-        "raw-quic" => "raw_quic",
-        value => value,
-    };
-    let request = issued
-        .runtime_authorization_request(wire_carrier, "127.0.0.1:1")
-        .unwrap();
-    let response = allow_tunnel_runtime(
-        &request,
-        lease_id,
-        UNIX_EPOCH + Duration::from_secs(expiry),
-        &expected_peer,
-        false,
-    )
-    .unwrap();
-    let value: Value = serde_json::from_slice(&response.json()).unwrap();
-    TunnelAuthorizationWire {
-        decision: value["decision"].as_str().unwrap().to_owned(),
-        credential_id: value["credential_id"].as_str().unwrap().to_owned(),
-        lease_id: value["lease_id"].as_str().unwrap().to_owned(),
-        expires_at_unix_seconds: expiry,
-        expected_peer_endpoint_instance_id: value["expected_peer_endpoint_instance_id"]
-            .as_str()
-            .unwrap()
-            .to_owned(),
-        allow_replacement: value["allow_replacement"].as_bool().unwrap_or(false),
-    }
-}
-
 fn tunnel_connector_options(
     carrier: &str,
     relay: &RelayReady,
@@ -1348,43 +911,7 @@ async fn connect_tunnel_artifact(
         .unwrap()
 }
 
-fn tunnel_connector_options_v3(
-    carrier: &str,
-    relay: &RelayReady,
-    handlers: flowersec::RpcHandlers,
-) -> ConnectorOptionsV3 {
-    let roots = relay
-        .trust_roots_der
-        .iter()
-        .map(|root| STANDARD.decode(root).unwrap())
-        .collect();
-    let mut options = ConnectorOptionsV3::new()
-        .with_trust_roots_der(roots)
-        .unwrap()
-        .with_rpc_handlers(handlers);
-    if carrier == "websocket" {
-        options = options.with_websocket_origin(relay.origin.clone()).unwrap();
-    }
-    options
-}
-
-async fn connect_tunnel_artifact_v3(
-    carrier: &str,
-    relay: &RelayReady,
-    artifact_json: String,
-    handlers: flowersec::RpcHandlers,
-) -> Arc<dyn Session> {
-    let artifact = ArtifactV3::parse(artifact_json.as_bytes()).unwrap();
-    let lease = ArtifactLeaseV3::new(artifact, || async { Ok(()) });
-    connect_v3(lease, tunnel_connector_options_v3(carrier, relay, handlers))
-        .await
-        .unwrap()
-}
-
 async fn run_tunnel_endpoint_b(carrier: &str) {
-    if protocol_v3() {
-        return run_tunnel_endpoint_b_v3(carrier).await;
-    }
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
     let envelope: TunnelEndpointBInput = serde_json::from_str(input.trim()).unwrap();
@@ -1397,114 +924,7 @@ async fn run_tunnel_endpoint_b(carrier: &str) {
     {
         panic!("invalid tunnel endpoint B input");
     }
-    let mut session_options = SessionOptions::new(format!("parity-{}", envelope.topology.id));
-    session_options.max_inbound_streams = 16;
-    session_options.expires_at = Some(SystemTime::now() + Duration::from_secs(60));
-    let pair = Issuer::new()
-        .issue_tunnel_pair(TunnelIssueOptions {
-            session: session_options,
-            endpoints: EndpointSet::new([envelope.relay.endpoint_url.clone()]).unwrap(),
-            rendezvous_group_id: envelope.topology.id.clone(),
-            listener_audience: "server-parity".into(),
-            first_endpoint_id: format!("{}-a", envelope.topology.id),
-            second_endpoint_id: format!("{}-b", envelope.topology.id),
-            allow_replacement: false,
-        })
-        .unwrap();
-    let first_json = String::from_utf8(pair.first().artifact_json()).unwrap();
-    let second_json = String::from_utf8(pair.second().artifact_json()).unwrap();
-    let authorizations = vec![
-        tunnel_authorization(pair.first(), carrier, "lease-endpoint-a"),
-        tunnel_authorization(pair.second(), carrier, "lease-endpoint-b"),
-    ];
-    let ready = TunnelEndpointBReady {
-        message_type: "endpoint-b-ready".into(),
-        runtime: "rust".into(),
-        carrier: carrier.into(),
-        path: "tunnel".into(),
-        endpoint_a_artifact_json: first_json,
-        endpoint_b_artifact_json: second_json.clone(),
-        relay: envelope.relay.clone(),
-        authorizations,
-        verification_records: std::collections::HashMap::new(),
-    };
-    println!("{}", serde_json::to_string(&ready).unwrap());
-    input.clear();
-    io::stdin().read_line(&mut input).unwrap();
-    if serde_json::from_str::<Value>(input.trim())
-        .ok()
-        .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
-        .as_deref()
-        != Some("connect")
-    {
-        panic!("endpoint B did not receive connect command");
-    }
-    let notifications = Arc::new(AtomicUsize::new(0));
-    let notification_received = Arc::new(Notify::new());
-    let executed = ExecutionLedger::default();
-    let session = connect_tunnel_artifact(
-        carrier,
-        &envelope.relay,
-        second_json,
-        rpc_handlers(
-            notifications.clone(),
-            notification_received.clone(),
-            executed.clone(),
-        ),
-    )
-    .await;
-    executed.record(&["admission"]);
-    assert_cancellable_wait(session.as_ref()).await;
-    executed.record(&["cancel"]);
-    if env::var("FLOWERSEC_PARITY_CLIENT_PROFILE").is_ok() {
-        tokio::join!(
-            external_server(session.as_ref(), &executed),
-            server_streams(session.as_ref(), "tunnel", &executed),
-        );
-    } else if carrier == "websocket" {
-        tokio::join!(
-            rpc_and_notifications(
-                session.as_ref(),
-                &notifications,
-                &notification_received,
-                &executed
-            ),
-            server_streams(session.as_ref(), "tunnel", &executed),
-        );
-    } else {
-        tokio::join!(
-            rpc_and_notifications(
-                session.as_ref(),
-                &notifications,
-                &notification_received,
-                &executed
-            ),
-            server_streams(session.as_ref(), "tunnel", &executed),
-            server_datagram(session.as_ref(), &executed),
-        );
-    }
-    session.wait_termination().await;
-    executed.record(&["close", "cleanup"]);
-    println!(
-        "{}",
-        serde_json::json!({"type":"endpoint-b-result","runtime":"rust","carrier":carrier,"path":"tunnel","cases":executed.snapshot()})
-    );
-}
-
-async fn run_tunnel_endpoint_b_v3(carrier: &str) {
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    let envelope: TunnelEndpointBInput = serde_json::from_str(input.trim()).unwrap();
-    if envelope.topology.endpoint_b != "rust"
-        || envelope.topology.tunnel_runtime != envelope.relay.runtime
-        || envelope.topology.ingress_carrier_a != carrier
-        || envelope.topology.ingress_carrier_b != carrier
-        || envelope.relay.carrier != carrier
-        || envelope.relay.path != "tunnel"
-    {
-        panic!("invalid tunnel endpoint B input");
-    }
-    let issued = issue_v3(
+    let issued = issue(
         "tunnel",
         &envelope.relay.endpoint_url,
         Some(&envelope.topology.id),
@@ -1542,7 +962,7 @@ async fn run_tunnel_endpoint_b_v3(carrier: &str) {
     let notifications = Arc::new(AtomicUsize::new(0));
     let notification_received = Arc::new(Notify::new());
     let executed = ExecutionLedger::default();
-    let session = connect_tunnel_artifact_v3(
+    let session = connect_tunnel_artifact(
         carrier,
         &envelope.relay,
         second_json,
@@ -1591,9 +1011,6 @@ fn parity_origin() -> String {
 }
 
 async fn run_tunnel_endpoint_a(carrier: &str) {
-    if protocol_v3() {
-        return run_tunnel_endpoint_a_v3(carrier).await;
-    }
     let mut input = String::new();
     io::stdin().read_to_string(&mut input).unwrap();
     let envelope: TunnelEndpointAInput =
@@ -1612,84 +1029,6 @@ async fn run_tunnel_endpoint_a(carrier: &str) {
     let notification_received = Arc::new(Notify::new());
     let executed = ExecutionLedger::default();
     let session = connect_tunnel_artifact(
-        carrier,
-        &ready.relay,
-        ready.endpoint_a_artifact_json.clone(),
-        rpc_handlers(
-            notifications.clone(),
-            notification_received.clone(),
-            executed.clone(),
-        ),
-    )
-    .await;
-    executed.record(&["admission"]);
-    assert_cancellable_wait(session.as_ref()).await;
-    executed.record(&["cancel"]);
-    tokio::join!(
-        rpc_and_notifications(
-            session.as_ref(),
-            &notifications,
-            &notification_received,
-            &executed
-        ),
-        client_streams(session.as_ref(), "tunnel", &executed),
-    );
-    call_barrier(session.as_ref(), DATAGRAM_READY_RPC, "datagram-ready").await;
-    if carrier != "websocket" {
-        let channel = session.unreliable_messages().unwrap();
-        assert_eq!(
-            channel
-                .send(
-                    Bytes::from_static(&[1, 2, 3]),
-                    SystemTime::now() + Duration::from_secs(2)
-                )
-                .await
-                .unwrap(),
-            UnreliableSendOutcome::Accepted
-        );
-        assert_eq!(
-            channel.receive().await.unwrap(),
-            Bytes::from_static(&[3, 2, 1])
-        );
-        executed.record(&["datagram"]);
-    }
-    session.rekey().await.unwrap();
-    executed.record(&["rekey"]);
-    session.probe_liveness().await.unwrap();
-    executed.record(&["liveness"]);
-    call_barrier(session.as_ref(), COMPLETE_RPC, "complete").await;
-    session
-        .rpc()
-        .notify(NOTIFY_RPC, serde_json::json!({"value":"notify"}))
-        .await
-        .unwrap();
-    let _ = session.close().await;
-    executed.record(&["close", "cleanup"]);
-    println!(
-        "{}",
-        serde_json::json!({"type":"endpoint-a-result","runtime":"rust","carrier":carrier,"path":"tunnel","cases":executed.snapshot()})
-    );
-}
-
-async fn run_tunnel_endpoint_a_v3(carrier: &str) {
-    let mut input = String::new();
-    io::stdin().read_to_string(&mut input).unwrap();
-    let envelope: TunnelEndpointAInput =
-        serde_json::from_str(input.lines().next().unwrap()).unwrap();
-    let ready = &envelope.endpoint_b;
-    if envelope.topology.endpoint_a != "rust"
-        || envelope.topology.tunnel_runtime != ready.relay.runtime
-        || envelope.topology.ingress_carrier_a != carrier
-        || envelope.topology.ingress_carrier_b != carrier
-        || ready.carrier != carrier
-        || ready.path != "tunnel"
-    {
-        panic!("invalid tunnel endpoint A input");
-    }
-    let notifications = Arc::new(AtomicUsize::new(0));
-    let notification_received = Arc::new(Notify::new());
-    let executed = ExecutionLedger::default();
-    let session = connect_tunnel_artifact_v3(
         carrier,
         &ready.relay,
         ready.endpoint_a_artifact_json.clone(),

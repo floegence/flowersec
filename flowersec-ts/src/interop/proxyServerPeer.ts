@@ -1,13 +1,13 @@
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
 import {
-  authorizeRuntime,
   createAcceptor,
-  createEndpointSet,
-  Issuer,
   parseArtifact,
   ProxyServer,
   SessionHandlers,
-  type AuthorizationRecord,
-} from "../node/v2.js";
+} from "../node/index.js";
+import { testCertificatePEM, testPrivateKeyPEM } from "../testSupport/tlsFixture.js";
 
 const ORIGIN = "https://app.example";
 const args = process.argv.slice(2);
@@ -15,7 +15,7 @@ if (args.length !== 2 || args[0] !== "--upstream" || args[1] === undefined) {
   throw new Error("usage: proxyServerPeer --upstream http://127.0.0.1:<port>");
 }
 
-void run(args[1]).catch((error: unknown) => {
+await run(args[1]).catch((error: unknown) => {
   console.error(error instanceof Error ? error.stack ?? error.message : String(error));
   process.exitCode = 1;
 });
@@ -25,6 +25,7 @@ async function run(upstream: string): Promise<void> {
   if (parsedUpstream.protocol !== "http:" || parsedUpstream.hostname !== "127.0.0.1" || parsedUpstream.pathname !== "/") {
     throw new Error("proxy peer upstream must be a loopback HTTP origin");
   }
+
   const proxy = new ProxyServer({
     upstream,
     upstreamOrigin: upstream,
@@ -42,12 +43,12 @@ async function run(upstream: string): Promise<void> {
     extraWebSocketHeaders: ["x-request-id"],
     forbiddenCookieNames: ["secret"],
     forbiddenCookieNamePrefixes: ["private_"],
-    onError: (error) => console.error(error instanceof Error ? error.message : String(error)),
+    onError: (error: unknown) => console.error(error instanceof Error ? error.message : String(error)),
   });
   const handlers = new SessionHandlers({ maxConcurrentStreams: 4 });
   proxy.register(handlers);
 
-  let record: AuthorizationRecord | undefined;
+  let trustedArtifact: ReturnType<typeof parseArtifact> | undefined;
   const acceptor = await createAcceptor({
     listeners: [{
       carrier: "websocket",
@@ -55,33 +56,28 @@ async function run(upstream: string): Promise<void> {
       host: "127.0.0.1",
       port: 0,
       allowedOrigins: [ORIGIN],
+      tls: { certificate: testCertificatePEM, privateKey: testPrivateKeyPEM },
     }],
-    maxInboundStreams: 8,
-    authorize: async (request) => {
-      if (record === undefined) throw new Error("authorization record is unavailable");
-      const artifact = parseArtifact(record.artifactJSON);
-      authorizeRuntime(request, record, "proxy-matrix-node");
-      return { decision: "allow", artifact };
-    },
+    maxInboundStreams: 16,
+    authorize: async () => trustedArtifact === undefined
+      ? { accepted: false, retryable: false, reason: "invalid_credential" }
+      : { accepted: true, artifact: trustedArtifact },
     resolveHandlers: () => handlers,
   });
 
   try {
     const address = acceptor.addresses()[0];
     if (address === undefined) throw new Error("Node ProxyServer listener did not bind");
-    const issued = new Issuer().issueDirect({
-      session: { channelId: "browser-proxy-node", maxInboundStreams: 8 },
-      endpoints: createEndpointSet(`ws://127.0.0.1:${address.port}/flowersec/v2/direct`),
-      rendezvousGroupId: "browser-proxy-node",
-      listenerAudience: "browser-proxy-matrix",
-      upstreamAddress: `${address.host}:${address.port}`,
-    });
-    record = issued.authorizationRecord();
+    const artifactJSON = await issueArtifact(
+      `wss://localhost:${address.port}/flowersec/v3/direct`,
+    );
+    trustedArtifact = parseArtifact(artifactJSON);
     const acceptedPromise = acceptor.accept();
     process.stdout.write(`${JSON.stringify({
       runtime: "node-typescript",
-      artifact_json: new TextDecoder().decode(issued.artifactJSON()),
+      artifact_json: artifactJSON,
       origin: ORIGIN,
+      trust_pem: testCertificatePEM,
     })}\n`);
 
     const accepted = await acceptedPromise;
@@ -92,4 +88,22 @@ async function run(upstream: string): Promise<void> {
     await proxy.close();
     await acceptor.close();
   }
+}
+
+async function issueArtifact(endpoint: string): Promise<string> {
+  const child = spawn("go", ["run", "./internal/cmd/parity-artifact-issuer"], {
+    cwd: fileURLToPath(new URL("../../../flowersec-go", import.meta.url)),
+    env: { ...process.env, FLOWERSEC_SERVER_PARITY_PEER: "1" },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.end(`${JSON.stringify({ mode: "direct", endpoint })}\n`);
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+  const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+  if (code !== 0) throw new Error(`proxy artifact issuer failed: ${Buffer.concat(stderr).toString("utf8")}`);
+  const response = JSON.parse(Buffer.concat(stdout).toString("utf8")) as { artifact_json?: string };
+  if (response.artifact_json === undefined) throw new Error("proxy artifact issuer omitted artifact");
+  return response.artifact_json;
 }

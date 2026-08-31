@@ -99,7 +99,6 @@
       "input": "xn--c4f.example"
     }
   ],
-  "inherited_codec_from": "transport_v2",
   "transport_contract_version": 3,
   "url_normalization": {
     "positive": [

@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import fs from "node:fs/promises";
+import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
@@ -16,9 +17,12 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), "flowersec-npm-consumer-"))
 try {
   await fs.writeFile(path.join(root, "package.json"), '{"private":true,"type":"module"}\n');
   await execFileAsync("npm", ["install", "--ignore-scripts", "--audit=false", `@floegence/flowersec-core@${version}`, `@floegence/flowersec-node-native@${version}`], { cwd: root });
+  await verifyCLIReadback(root);
   const wrapper = await import(path.join(root, "node_modules/@floegence/flowersec-node-native/index.js"));
   const addon = wrapper.default ?? wrapper;
-  assert.equal(addon.contractVersion(), 2);
+  assert.equal(addon.contractVersion(), 3);
+  assert.equal("bindRawQuicV3" in addon, false);
+  assert.equal("connectRawQuicV3" in addon, false);
   const addonPath = path.join(root, "node_modules/@floegence/flowersec-node-native/index.js");
   await execFileAsync(process.execPath, [path.resolve("scripts/native-addon-smoke.mjs")], {
     env: { ...process.env, FLOWERSEC_NATIVE_ADDON_PATH: addonPath },
@@ -33,9 +37,9 @@ try {
   await fs.writeFile(path.join(goRoot, "go.mod"), [
     "module flowersec_release_consumer",
     "",
-    "go 1.26.6",
+    "go 1.27.0",
     "",
-    `require github.com/floegence/flowersec/flowersec-go/v3 v${version}`,
+    `require github.com/floegence/flowersec/flowersec-go/v4 v${version}`,
     "",
   ].join("\n"));
   const goEnvironment = { ...process.env, GOWORK: "off", GOTOOLCHAIN: "local" };
@@ -85,6 +89,92 @@ process.stdout.write(JSON.stringify({
   await execFileAsync(process.execPath, ["--input-type=module", "--eval", "await import('@floegence/flowersec-core/browser')"], { cwd: browserRoot });
 } finally {
   await fs.rm(root, { recursive: true, force: true });
+}
+
+async function verifyCLIReadback(consumerRoot) {
+  const cliPath = path.join(
+    consumerRoot,
+    "node_modules/@floegence/flowersec-core/dist/cli.js",
+  );
+  const vectors = JSON.parse(await fs.readFile(
+    path.resolve("testdata/transport_v3/artifact_vectors.json"),
+    "utf8",
+  ));
+  const sourceArtifact = vectors.positive
+    .map(({ artifact_json }) => JSON.parse(artifact_json))
+    .find((artifact) => artifact.path.kind === "direct" &&
+      artifact.path.candidates.length === 1 &&
+      artifact.path.candidates[0].carrier === "websocket");
+  assert.ok(sourceArtifact, "missing direct WebSocket release artifact fixture");
+
+  const certificate = path.join(consumerRoot, "cli-cert.pem");
+  const privateKey = path.join(consumerRoot, "cli-key.pem");
+  await execFileAsync("openssl", [
+    "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+    "-sha256", "-nodes", "-days", "2", "-subj", "/CN=localhost",
+    "-addext", "basicConstraints=critical,CA:FALSE",
+    "-addext", "keyUsage=critical,digitalSignature",
+    "-addext", "extendedKeyUsage=serverAuth",
+    "-addext", "subjectAltName=DNS:localhost",
+    "-keyout", privateKey, "-out", certificate,
+  ], { cwd: consumerRoot });
+
+  const port = await reservePort();
+  const origin = "https://release-cli.example";
+  sourceArtifact.path.candidates[0].url =
+    `wss://localhost:${port}/flowersec/v3/direct`;
+  const artifactPath = path.join(consumerRoot, "cli-artifact.json");
+  const spendMarker = path.join(consumerRoot, "cli-spend.marker");
+  await fs.writeFile(artifactPath, JSON.stringify(sourceArtifact));
+
+  const server = spawn(process.execPath, [
+    cliPath, "server", "--transport", "websocket", "--artifact", artifactPath,
+    "--certificate", certificate, "--private-key", privateKey,
+    "--host", "127.0.0.1", "--port", String(port), "--origin", origin,
+    "--max-inbound-streams", String(sourceArtifact.session.max_inbound_streams),
+  ], { cwd: consumerRoot, stdio: ["ignore", "pipe", "pipe"] });
+  const lines = createInterface({ input: server.stdout });
+  let stderr = "";
+  server.stderr.setEncoding("utf8");
+  server.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-65_536); });
+  const timeout = setTimeout(() => server.kill("SIGKILL"), 30_000);
+  try {
+    const address = JSON.parse(await nextLine(lines, "CLI server address"));
+    assert.equal(address.port, port);
+    const client = await execFileAsync(process.execPath, [
+      cliPath, "client", "--transport", "websocket", "--artifact", artifactPath,
+      "--ca", certificate, "--origin", origin, "--spend-marker", spendMarker,
+    ], { cwd: consumerRoot, timeout: 20_000 });
+    assert.equal(client.stdout, "GREEN\n");
+    assert.equal(client.stderr, "");
+    assert.equal(await childExit(server), 0, stderr);
+    await fs.access(spendMarker);
+    process.stdout.write("release/npm-consumer/cli-websocket GREEN\n");
+  } catch (error) {
+    server.kill("SIGKILL");
+    throw new Error(
+      `release/npm-consumer/cli-websocket: ${error instanceof Error ? error.message : String(error)}` +
+      (stderr === "" ? "" : `\n${stderr}`),
+    );
+  } finally {
+    clearTimeout(timeout);
+    lines.close();
+  }
+}
+
+async function reservePort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  const port = address.port;
+  await new Promise((resolve, reject) => {
+    server.close((error) => error === undefined ? resolve() : reject(error));
+  });
+  return port;
 }
 
 async function runGoNodeRawQUICConsumer(goRoot, goEnvironment, clientPath, consumerRoot) {

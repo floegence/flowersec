@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:f42be0f0-577d-54ae-8f50-ea51ec856d31",
+  "serialNumber": "urn:uuid:753b7145-b00e-5595-8f5b-046081bc4e5a",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
-      "name": "github.com/floegence/flowersec/flowersec-go/v3",
-      "version": "v3.2.1",
-      "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.2.1",
-      "bom-ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.2.1"
+      "name": "github.com/floegence/flowersec/flowersec-go/v4",
+      "version": "v4.0.0",
+      "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v4@v4.0.0",
+      "bom-ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v4@v4.0.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "924213e1745b00a8af5242e0f5327a12352797dada4fdc1c5c1d62a8c092b86d"
+        "value": "3a2d59d3f7676d053eafa979e8e2ba785a5a54cff487e70ed584fb34f4caf372"
       }
     ]
   },
@@ -22,9 +22,9 @@
     {
       "type": "library",
       "name": "github.com/dunglas/httpsfv",
-      "version": "v1.1.0",
-      "purl": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
-      "bom-ref": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
+      "version": "v1.1.1",
+      "purl": "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
+      "bom-ref": "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -40,34 +40,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "BSD-3-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/floegence/flowersec/flowersec-go/v2",
-      "version": "v2.5.4",
-      "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.5.4",
-      "bom-ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.5.4",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/floegence/flowersec/flowersec-go/v2"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -190,9 +162,9 @@
     {
       "type": "library",
       "name": "github.com/quic-go/quic-go",
-      "version": "v0.61.0",
-      "purl": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
-      "bom-ref": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
+      "version": "v0.62.0",
+      "purl": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
+      "bom-ref": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -218,9 +190,9 @@
     {
       "type": "library",
       "name": "github.com/quic-go/webtransport-go",
-      "version": "v0.12.0",
-      "purl": "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
-      "bom-ref": "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
+      "version": "v0.13.0",
+      "purl": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
+      "bom-ref": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -246,9 +218,9 @@
     {
       "type": "library",
       "name": "golang.org/x/crypto",
-      "version": "v0.54.0",
-      "purl": "pkg:golang/golang.org/x/crypto@v0.54.0",
-      "bom-ref": "pkg:golang/golang.org/x/crypto@v0.54.0",
+      "version": "v0.55.0",
+      "purl": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "bom-ref": "pkg:golang/golang.org/x/crypto@v0.55.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -274,9 +246,9 @@
     {
       "type": "library",
       "name": "golang.org/x/net",
-      "version": "v0.57.0",
-      "purl": "pkg:golang/golang.org/x/net@v0.57.0",
-      "bom-ref": "pkg:golang/golang.org/x/net@v0.57.0",
+      "version": "v0.58.0",
+      "purl": "pkg:golang/golang.org/x/net@v0.58.0",
+      "bom-ref": "pkg:golang/golang.org/x/net@v0.58.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -330,9 +302,9 @@
     {
       "type": "library",
       "name": "golang.org/x/text",
-      "version": "v0.40.0",
-      "purl": "pkg:golang/golang.org/x/text@v0.40.0",
-      "bom-ref": "pkg:golang/golang.org/x/text@v0.40.0",
+      "version": "v0.41.0",
+      "purl": "pkg:golang/golang.org/x/text@v0.41.0",
+      "bom-ref": "pkg:golang/golang.org/x/text@v0.41.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -358,41 +330,24 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v3@v3.2.1",
+      "ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v4@v4.0.0",
       "dependsOn": [
-        "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
-        "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.5.4",
+        "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
         "pkg:golang/github.com/gorilla/websocket@v1.5.3",
         "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
         "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
-        "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
-        "pkg:golang/golang.org/x/crypto@v0.54.0",
-        "pkg:golang/golang.org/x/net@v0.57.0",
+        "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
+        "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
+        "pkg:golang/golang.org/x/crypto@v0.55.0",
+        "pkg:golang/golang.org/x/net@v0.58.0",
         "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.40.0"
+        "pkg:golang/golang.org/x/text@v0.41.0"
       ]
     },
     {
-      "ref": "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
+      "ref": "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v2@v2.5.4",
-      "dependsOn": [
-        "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
-        "pkg:golang/github.com/gorilla/websocket@v1.5.3",
-        "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
-        "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-        "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
-        "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
-        "pkg:golang/golang.org/x/crypto@v0.54.0",
-        "pkg:golang/golang.org/x/net@v0.57.0",
-        "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.40.0"
-      ]
     },
     {
       "ref": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
@@ -411,45 +366,45 @@
     {
       "ref": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/net@v0.57.0"
+        "pkg:golang/golang.org/x/net@v0.58.0"
       ]
     },
     {
-      "ref": "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
+      "ref": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
       "dependsOn": [
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/golang.org/x/crypto@v0.54.0",
-        "pkg:golang/golang.org/x/net@v0.57.0",
+        "pkg:golang/golang.org/x/crypto@v0.55.0",
+        "pkg:golang/golang.org/x/net@v0.58.0",
         "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.40.0"
+        "pkg:golang/golang.org/x/text@v0.41.0"
       ]
     },
     {
-      "ref": "pkg:golang/github.com/quic-go/webtransport-go@v0.12.0",
+      "ref": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
       "dependsOn": [
-        "pkg:golang/github.com/dunglas/httpsfv@v1.1.0",
+        "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/github.com/quic-go/quic-go@v0.61.0",
-        "pkg:golang/golang.org/x/crypto@v0.54.0",
-        "pkg:golang/golang.org/x/net@v0.57.0",
+        "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
+        "pkg:golang/golang.org/x/crypto@v0.55.0",
+        "pkg:golang/golang.org/x/net@v0.58.0",
         "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.40.0"
+        "pkg:golang/golang.org/x/text@v0.41.0"
       ]
     },
     {
-      "ref": "pkg:golang/golang.org/x/crypto@v0.54.0",
+      "ref": "pkg:golang/golang.org/x/crypto@v0.55.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/net@v0.57.0",
+        "pkg:golang/golang.org/x/net@v0.58.0",
         "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.40.0"
+        "pkg:golang/golang.org/x/text@v0.41.0"
       ]
     },
     {
-      "ref": "pkg:golang/golang.org/x/net@v0.57.0",
+      "ref": "pkg:golang/golang.org/x/net@v0.58.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/crypto@v0.54.0",
+        "pkg:golang/golang.org/x/crypto@v0.55.0",
         "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.40.0"
+        "pkg:golang/golang.org/x/text@v0.41.0"
       ]
     },
     {
@@ -457,7 +412,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:golang/golang.org/x/text@v0.40.0",
+      "ref": "pkg:golang/golang.org/x/text@v0.41.0",
       "dependsOn": []
     }
   ]

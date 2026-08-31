@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	internalprotocolv2 "github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv2"
+	internalprotocolv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
 )
 
 // StreamHandler processes one accepted application stream. A non-nil error
@@ -94,7 +94,7 @@ func (handlers *StreamHandlers) registerStreams(registrations map[string]StreamH
 }
 
 func validStreamHandler(kind string, handler StreamHandler) bool {
-	return handler != nil && internalprotocolv2.ValidApplicationStreamKind(kind) &&
+	return handler != nil && internalprotocolv3.ValidApplicationStreamKind(kind) &&
 		kind != "flowersec.rpc.v2" && kind != "flowersec.rpc.v3"
 }
 

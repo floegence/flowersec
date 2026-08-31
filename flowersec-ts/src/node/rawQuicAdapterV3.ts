@@ -7,17 +7,17 @@ import {
   TransportFailureV3,
 } from "../v3/security.js";
 import type {
-  NativeRawQuicConnectOptionsV3,
-  NativeRawQuicDriverV3,
+  NativeRawQuicConnectOptions,
+  NativeRawQuicDriver,
 } from "./nativeTransportAddon.js";
-import { normalizeCertificateChain } from "./rawQuicAdapter.js";
+import { normalizeCertificateChain } from "./rawQuicTls.js";
 import { alpnForPathV3 } from "../v3/transportConstants.js";
 
 const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
 type NodeTLSRootsV3 = string | Uint8Array | readonly (string | Uint8Array)[];
 
 export async function createNodeRawQuicClientV3(
-  driver: NativeRawQuicDriverV3,
+  driver: NativeRawQuicDriver,
   candidate: CanonicalArtifactCandidateV3,
   artifact: ArtifactV3,
   attemptNowUnixSeconds: number,
@@ -58,7 +58,7 @@ export async function createNodeRawQuicClientV3(
     inboundBidirectionalStreamCapacity: artifact.session.max_inbound_streams + 2,
     handshakeTimeoutMs,
   } as const;
-  const nativeOptions: NativeRawQuicConnectOptionsV3 = policy.mode === "ca"
+  const nativeOptions: NativeRawQuicConnectOptions = policy.mode === "ca"
     ? {
         ...common,
         tlsMode: "ca",

@@ -76,25 +76,26 @@ Flowersec 將應用工作階段與承載它的網路路徑分離：
 
 四種 SDK 共用一致的工作階段模型；當平台無法提供特定連線方式時，支援範圍會有所不同。
 
+<!-- capability-table:start -->
 | 應用能力 | Go | TypeScript | Swift | Rust |
 | --- | :---: | :---: | :---: | :---: |
-| 端對端加密工作階段 | 是 | 是 | 是 | 是 |
-| 傳送 RPC 呼叫與通知 | 是 | 是 | 是 | 是 |
-| 接收 RPC 通知 | 是 | 是 | 是 | 是 |
-| 可靠位元組串流 | 是 | 是 | 是 | 是 |
-| 在任意工作階段上處理應用程式串流 | 是 | 是 | 是 | 是 |
-| 長連線自動恢復 | 是 | 是 | 是 | 是 |
-| 條件允許時傳送不可靠訊息 | 是 | 是 | 否 | 是 |
-| 瀏覽器連線 | 否 | 是 | 否 | 否 |
-| Apple 用戶端連線 | 否 | 否 | 是 | 否 |
-| 原生 QUIC 連線 | 是 | Node.js | 否 | 是 |
-| WebSocket 連線 | 是 | 是 | 是 | 是 |
-| WebTransport 連線 | Go H4 | Browser H3 client（瀏覽器 API 可用時） | 否 | 否 |
-| 伺服器端接收工作階段 | 是 | Node.js | 否 | 是 |
-| 不透明中繼執行時 | 是 | Node.js | 否 | 是 |
-| 控制面簽發連線邀請 | 是 | 否 | 否 | 否 |
-| HTTP 與 WebSocket ProxyServer | 是 | Node.js | 否 | 是 |
-
+| 不透明、單次使用的連線邀請 | 是 | 是 | 是 | 是 |
+| 一次性安全連線 | 是 | 是 | 是 | 是 |
+| 端對端加密 Session | 是 | 是 | 是 | 是 |
+| RPC 呼叫與通知 | 是 | 是 | 是 | 是 |
+| 已驗證的 stream metadata | 是 | 是 | 是 | 是 |
+| 應用 stream handler | 是 | 是 | 是 | 是 |
+| 長連線自動復原 | 是 | 是 | 是 | 是 |
+| 協商後的不可靠訊息 | 是 | 是 | 否 | 是 |
+| 用戶端 RPC handler | 是 | 是 | 否 | 是 |
+| 伺服器端 Session 接收 | 是 | 是 | 否 | 是 |
+| 伺服器端 Session handler | 是 | 是 | 否 | 是 |
+| 控制平面簽發與授權 | 是 | 否 | 否 | 否 |
+| 直接與隧道准入 | 是 | 是 | 否 | 是 |
+| HTTP 與 WebSocket ProxyServer | 是 | 是 | 否 | 是 |
+| 與 carrier 無關的 stream 合同 | 是 | 是 | 是 | 是 |
+| Transport v3 wire 安全 | 是 | 是 | 是 | 是 |
+<!-- capability-table:end -->
 部署 profile 將平台可用性與共享的 Flowersec 應用協定分離：
 
 | Profile | 執行環境 | 必要的 carrier 與角色範圍 | 選用範圍 |

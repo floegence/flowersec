@@ -26,6 +26,7 @@ const releasePolicyFixtureFiles = [
   ".githooks/pre-push",
   ".github/workflows/ci.yml",
   ".github/workflows/codeql.yml",
+  ".github/workflows/container-security.yml",
   ".github/workflows/release.yml",
   ".github/workflows/rust-release.yml",
   ".github/workflows/scorecard.yml",
@@ -1453,21 +1454,22 @@ test("bounded child readback classifies limits and kills background descendants"
 
 test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {
   const matrix = fs.readFileSync(path.join(sourceRoot, "docs/TEST_MATRIX.md"), "utf8");
-  const architecture = fs.readFileSync(path.join(sourceRoot, "docs/TRANSPORT_V2_ARCHITECTURE.md"), "utf8");
+  const architecture = fs.readFileSync(path.join(sourceRoot, "docs/TRANSPORT_V3_ARCHITECTURE.md"), "utf8");
   assert.match(matrix, /diagnostic\/flowersec-weaknet\/\{websocket,raw-quic\}\/direct/);
   assert.match(matrix, /diagnostic\/flowersec-weaknet\/\{websocket,raw-quic\}\/tunnel\/representative/);
   assert.match(matrix, /Go-owned/);
   assert.match(matrix, /performance\/throughput\/\{wss,raw-quic\}/);
   assert.match(matrix, /performance-optional/);
   assert.doesNotMatch(matrix, /Swift WSS against Go, Rust, and Node/);
-  assert.match(architecture, /not multi-language performance parity/);
-  assert.match(architecture, /not a supported endpoint-client\s+tunnel path or TunnelRuntime capability/);
+  assert.match(architecture, /typescript\/node[^\n]*node_webtransport_driver_unavailable/);
+  assert.match(architecture, /\| go\/native \|[^\n]*no migration \|/);
   assert.doesNotMatch(architecture, /Linux system tests include[^\n]*real path migration[^\n]*IPv4\/IPv6 PMTUD/);
 });
 
-test("npm release readback verifies tarball integrity, manifest, platform metadata, and source commit", () => {
+test("npm release readback verifies tarballs, ABI, CLI, and public consumers", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const readback = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-package.mjs"), "utf8");
+  const consumer = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-consumer.mjs"), "utf8");
   assert.match(workflow, /node scripts\/verify-npm-release-package\.mjs/);
   assert.match(
     readback,
@@ -1488,7 +1490,11 @@ test("npm release readback verifies tarball integrity, manifest, platform metada
   assert.match(readback, /manifest\.main/);
   assert.match(readback, /flowersec-node-native/);
   assert.doesNotMatch(workflow, /npm-consumer-smoke:/);
-  assert.doesNotMatch(workflow, /verify-npm-release-consumer\.mjs/);
+  assert.match(workflow, /node scripts\/verify-npm-release-consumer\.mjs "\$RELEASE_VERSION"/);
+  assert.match(consumer, /addon\.contractVersion\(\), 3/);
+  assert.match(consumer, /release\/npm-consumer\/cli-websocket GREEN/);
+  assert.match(consumer, /cliPath, "server"/);
+  assert.match(consumer, /cliPath, "client"/);
   assert.match(workflow, /actions\/setup-go/);
   const goConsumer = fs.readFileSync(
     path.join(sourceRoot, "scripts/fixtures/npm-release-go-node-raw-quic/main.go"),
@@ -1508,12 +1514,12 @@ test("release recovery restores readback scripts from the reviewed workflow SHA 
   const releaseWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const rustWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
   const npmRecovery = releaseWorkflow.slice(releaseWorkflow.indexOf("\n  npm-recovery:"));
-  for (const [workflow, files, invocation] of [[npmRecovery, ["scripts/release-readback.mjs", "scripts/verify-npm-release-package.mjs"], "node scripts/verify-npm-release-package.mjs"], [rustWorkflow, ["scripts/release-readback.mjs", "scripts/verify-crates-release-package.mjs", "scripts/verify-crates-release-consumer.mjs"], "node scripts/verify-crates-release-package.mjs"]]) {
+  for (const [workflow, files, invocation] of [[npmRecovery, ["scripts/release-readback.mjs", "scripts/verify-npm-release-package.mjs", "scripts/verify-npm-release-consumer.mjs", "scripts/native-addon-smoke.mjs"], "node scripts/verify-npm-release-package.mjs"], [rustWorkflow, ["scripts/release-readback.mjs", "scripts/verify-crates-release-package.mjs", "scripts/verify-crates-release-consumer.mjs"], "node scripts/verify-crates-release-package.mjs"]]) {
     const restore = workflow.indexOf("git checkout \"$GITHUB_SHA\" --");
     assert.ok(restore >= 0);
     const checkout = workflow.lastIndexOf("refs/tags/flowersec-", restore);
     assert.ok(checkout >= 0);
-    for (const file of files) assert.match(workflow.slice(restore, restore + 500), new RegExp(file.replaceAll(".", "\\.")));
+    for (const file of files) assert.match(workflow.slice(restore, restore + 700), new RegExp(file.replaceAll(".", "\\.")));
     assert.ok(workflow.indexOf(invocation) > restore);
   }
 });
@@ -2304,7 +2310,7 @@ test("default and final Go gates use the maintained source and test runner", () 
   const goTest = makefile.match(/^go-test:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   assert.match(goTest, /\.\.\/scripts\/list-default-go-test-packages\.sh/);
   assert.doesNotMatch(goTest, /transport-test-runner|transportcheck/);
-  assert.doesNotMatch(makefile, /tools\/transportcheck|transportcheck-diagnostic-contract|transport-v2-unit/);
+  assert.doesNotMatch(makefile, /tools\/transportcheck|transportcheck-diagnostic-contract|retired-transport-unit/);
   assert.match(makefile, /^test:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
   assert.match(makefile, /^test-resume:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
   assert.match(makefile, /^browser-smoke:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite browser-smoke$/m);
@@ -2324,11 +2330,11 @@ test("release stays publication-only while main push owns fast acceptance", () =
 
   assert.doesNotMatch(releaseRecipe, /\$\(MAKE\) check/);
   assert.match(releaseRecipe, /check-release-version-consistency\.mjs/);
-  assert.doesNotMatch(releaseRecipe, /transport-v2|receipt|evidence|\$\(MAKE\)/);
+  assert.doesNotMatch(releaseRecipe, /retired-transport|receipt|evidence|\$\(MAKE\)/);
   assert.doesNotMatch(releaseScript, /\bmake\b/);
   assert.doesNotMatch(
     releaseScript,
-    /\b(?:go run|go test|npm|cargo|swift (?:build|test)|transport-v2-(?:release|signed|result))\b/,
+    /\b(?:go run|go test|npm|cargo|swift (?:build|test)|retired-transport-(?:release|signed|result))\b/,
   );
   assert.match(releaseScript, /go -C tools\/releasenotes run \. \\[\r\n]+\s*--repo \.\.\/\.\./);
   assert.doesNotMatch(releaseScript, /go run \.\/tools\/releasenotes/);
@@ -2382,10 +2388,13 @@ test("release workflows pin actions and pass expressions through fields, not she
     ["gomod", "/tools/releasenotes"],
     ["gomod", "/tools/stabilitycheck"],
     ["cargo", "/flowersec-rust"],
+    ["cargo", "/flowersec-native-transport"],
+    ["cargo", "/flowersec-node-native"],
     ["cargo", "/flowersec-rust/fuzz"],
     ["cargo", "/examples/rust"],
     ["swift", "/"],
     ["swift", "/examples/swift"],
+    ["docker", "/"],
   ]) {
     const escapedDirectory = directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     assert.match(
@@ -2402,18 +2411,7 @@ test("release workflows pin actions and pass expressions through fields, not she
     dependabot,
     /  - package-ecosystem: gomod\n    directory: \/flowersec-go\n    schedule:\n      interval: weekly\n    groups:\n      quic-stack:\n        patterns:\n          - github\.com\/quic-go\/quic-go\n          - github\.com\/quic-go\/webtransport-go/m,
   );
-  assert.match(
-    dependabot,
-    /  - package-ecosystem: cargo\n    directory: \/flowersec-rust\n    schedule:\n      interval: weekly\n    ignore:\n      # Flowersec v2 freezes IDNA behavior to Unicode 15\.1; 1\.1\.0 moves to Unicode 16\.0\.\n      - dependency-name: idna_mapping\n        versions:\n          - ">= 1\.1\.0"/m,
-  );
-  assert.match(
-    dependabot,
-    /  - package-ecosystem: npm\n    directory: \/flowersec-ts\n    schedule:\n      interval: weekly\n    ignore:\n      # Flowersec v2 freezes IDNA behavior to Unicode 15\.1; tr46 6 uses newer data\.\n      - dependency-name: tr46\n        versions:\n          - ">= 6\.0\.0"/m,
-  );
-  assert.match(
-    dependabot,
-    /      # idna_adapter 1\.2 uses newer ICU data that accepts post-15\.1 code points\.\n      - dependency-name: idna_adapter\n        versions:\n          - ">= 1\.2\.0"/m,
-  );
+  assert.doesNotMatch(dependabot, /idna_mapping|idna_adapter|dependency-name: tr46/u);
 });
 
 test("CodeQL policy structurally separates scheduled Swift analysis", () => {
@@ -2871,7 +2869,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       "\trelease-check:",
       "\t$(MAKE) check",
       "\t$(MAKE) interop-stress-full",
-      "\t$(MAKE) transport-v2-result-check",
+	"\t$(MAKE) retired-transport-result-check",
     ].join("\n"));
     fs.writeFileSync(makefilePath, makefile);
     const result = runReleasePolicy(root);
@@ -2908,7 +2906,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       "release-check:",
       "\t$(MAKE) check",
       "\t$(MAKE) interop-stress-full",
-      "\t$(MAKE) transport-v2-result-check",
+	"\t$(MAKE) retired-transport-result-check",
       "endef",
       "release-check::",
       "\t@:",
@@ -3070,6 +3068,8 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const guardedSteps = [
       "      - name: Setup Rust",
       "        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable",
+      "        with:",
+      "          toolchain: 1.98.0",
       "",
       "      - name: Validate release version facts",
       "        env:",
@@ -3418,7 +3418,7 @@ test("main push gates the exact SHA with fast acceptance before opening the remo
   assert.ok(gate < push, "the gate must finish before git opens the push transport");
   assert.match(source, /FLOWERSEC_PUSH_MAIN_SHA="\$head" git push/);
   assert.doesNotMatch(source, /make (?:precommit|check)/);
-  assert.doesNotMatch(source, /receipt|TRANSPORT_V2_EVIDENCE/);
+  assert.doesNotMatch(source, /receipt|legacy-gate-evidence/);
   assert.doesNotMatch(source, /--no-verify/);
 });
 
@@ -3473,8 +3473,8 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
 
 test("browser compatibility remains explicit and separate from Chromium smoke", () => {
   const registry = fs.readFileSync(path.join(sourceRoot, "flowersec-go/internal/cmd/flowersec-test/registry.go"), "utf8");
-  assert.match(registry, /browserCompatibilityEntry\("compat\/v2\/browser\/firefox\/webtransport-capability"/);
-  assert.match(registry, /browserCompatibilityEntry\("compat\/v2\/browser\/webkit\/webtransport-capability"/);
+  assert.match(registry, /browserCompatibilityEntry\("browser\/firefox\/webtransport-pin-capability"/);
+  assert.match(registry, /browserCompatibilityEntry\("browser\/webkit\/webtransport-pin-capability"/);
   assert.doesNotMatch(registry, /"diagnostic\/browser"/);
   const packageManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8");
   assert.match(packageManifest, /"test:browser": "npm run test:browser:chromium"/);

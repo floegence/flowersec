@@ -1,12 +1,12 @@
 # Flowersec for Go
 
-The Go 3.x module lets services open end-to-end encrypted sessions and use RPC,
+The Go v4 module lets services open end-to-end encrypted sessions and use RPC,
 notifications, and reliable byte streams without managing connection details.
 
 ## Install
 
 ```bash
-go get github.com/floegence/flowersec/flowersec-go/v3
+go get github.com/floegence/flowersec/flowersec-go/v4
 ```
 
 ## Public API
@@ -122,7 +122,7 @@ RPC and notification registrations share one nonzero uint32 namespace. Consuming
 a registry freezes it; later registrations return `ErrHandlerRegistryFrozen`.
 Stream kinds contain 1 through 128 canonical UTF-8 bytes, reject leading or
 trailing Unicode whitespace, controls, and unassigned scalars, and reserve the
-package-owned `flowersec.rpc.v2` and `flowersec.rpc.v3` names.
+Flowersec-reserved RPC names.
 `NewStreamMetadata(...)` validates and
 defensively copies metadata before a stream is opened. Handler and connection
 state remain private, and public failures are bounded `ConnectError` and
@@ -150,7 +150,7 @@ PSK.
 
 ## Server Control Plane
 
-Go service control planes use `github.com/floegence/flowersec/flowersec-go/v3/controlplane` to issue direct artifacts or complementary tunnel pairs and to validate `flowersec-runtime` authorization callbacks. Endpoint sets, issued artifacts, authorization records, runtime requests, and responses are opaque. Artifact and record bytes cross only explicit serialization methods; the caller owns permissions, placement, durable one-time lease state, and upstream selection.
+Go service control planes use `github.com/floegence/flowersec/flowersec-go/v4/controlplane` to issue direct artifacts or complementary tunnel pairs and to validate `flowersec-runtime` authorization callbacks. Endpoint sets, issued artifacts, authorization records, runtime requests, and responses are opaque. Artifact and record bytes cross only explicit serialization methods; the caller owns permissions, placement, durable one-time lease state, and upstream selection.
 
 See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for artifact delivery and authorization-record persistence. The package exposes opaque endpoint, issuance, authorization-record, and runtime callback types.
 

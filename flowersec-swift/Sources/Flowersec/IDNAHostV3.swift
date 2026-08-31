@@ -12,7 +12,7 @@ enum IDNAHostErrorV3: Error, Equatable, Sendable {
 
 /// Frozen host normalization shared by Flowersec v3 artifacts and Origin policies.
 enum IDNAHostV3 {
-  static let unicodeVersion = "15.1.0"
+  static let unicodeVersion = Unicode151Generated.version
 
   /// Returns a lowercase A-label host under the Flowersec v3 IDNA profile.
   ///
@@ -215,10 +215,7 @@ enum IDNAHostV3 {
 
   private static func requireUnicode151(_ value: String) throws {
     for scalar in value.unicodeScalars {
-      guard let age = scalar.properties.age else {
-        throw IDNAHostErrorV3.invalidHost
-      }
-      guard age.major < 15 || (age.major == 15 && age.minor <= 1) else {
+      guard Unicode151Generated.assigned(scalar) else {
         throw IDNAHostErrorV3.invalidHost
       }
     }

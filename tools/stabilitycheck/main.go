@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-const repoGoToolchain = "go1.26.6"
+const repoGoToolchain = "go1.27.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -34,7 +34,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: go run . <verify-source|verify-manifest|verify-go|verify-ts|verify-swift|update-swift-manifest|verify-rust|verify-docs|verify-go-coverage-short|verify-go-coverage|verify-parity|verify-server-parity-completion|verify-defaults|report>")
+		return errors.New("usage: go run . <verify-source|verify-manifest|verify-go|verify-ts|verify-swift|update-swift-manifest|update-capabilities|verify-rust|verify-docs|verify-go-coverage-short|verify-go-coverage|verify-parity|verify-server-parity-completion|verify-defaults|report>")
 	}
 	repoRoot, err := repoRootFromWD()
 	if err != nil {
@@ -58,6 +58,8 @@ func run(args []string) error {
 		return verifySwift(repoRoot, m)
 	case "update-swift-manifest":
 		return updateSwiftManifest(repoRoot, m)
+	case "update-capabilities":
+		return updateCapabilities(repoRoot)
 	case "verify-rust":
 		return verifyRust(repoRoot, m)
 	case "verify-docs":
@@ -89,6 +91,7 @@ func verifySource(repoRoot string, m *manifest) error {
 		func() error { return verifyDocs(repoRoot, m) },
 		func() error { return verifyGo(repoRoot, m) },
 		func() error { return verifyTS(repoRoot, m) },
+		func() error { return verifyNativeABI(repoRoot, m) },
 		func() error { return report(repoRoot, m) },
 	}
 	for _, check := range checks {
@@ -105,10 +108,6 @@ func verifyManifest(m *manifest) error {
 }
 
 func report(repoRoot string, m *manifest) error {
-	transport, err := loadTransportV2Contract(repoRoot)
-	if err != nil {
-		return err
-	}
 	transportV3, err := loadTransportV3Registry(repoRoot)
 	if err != nil {
 		return err
@@ -124,8 +123,6 @@ func report(repoRoot string, m *manifest) error {
 	if capabilities, err := loadCapabilityManifest(repoRoot); err == nil {
 		fmt.Printf("portable_capabilities=%d\n", len(capabilities.PortableCapabilities))
 	}
-	fmt.Printf("transport_v2_carriers=%d\n", len(transport.Carriers))
-	fmt.Printf("transport_v2_runtimes=%d\n", len(transport.Runtimes))
 	fmt.Printf("transport_v3_fixtures=%d\n", len(transportV3.WireFixtures))
 	return nil
 }
@@ -184,6 +181,7 @@ type tsPackageExport struct {
 type tsPackageJSON struct {
 	Exports map[string]tsPackageExport `json:"exports"`
 	Scripts map[string]string          `json:"scripts"`
+	Bin     map[string]string          `json:"bin"`
 }
 
 func verifyTS(repoRoot string, m *manifest) error {
@@ -195,6 +193,18 @@ func verifyTS(repoRoot string, m *manifest) error {
 	var packageJSON tsPackageJSON
 	if err := json.Unmarshal(packageData, &packageJSON); err != nil {
 		return fmt.Errorf("parse flowersec-ts/package.json: %w", err)
+	}
+	for _, bin := range m.TS.Bins {
+		if packageJSON.Bin[bin.Name] != bin.Path {
+			return fmt.Errorf("TypeScript package bin %s must map to %s", bin.Name, bin.Path)
+		}
+		source, err := os.ReadFile(filepath.Join(repoRoot, bin.Source))
+		if err != nil {
+			return fmt.Errorf("TypeScript package bin %s source: %w", bin.Name, err)
+		}
+		if bin.RequiresShebang && !bytes.HasPrefix(source, []byte("#!/usr/bin/env node\n")) {
+			return fmt.Errorf("TypeScript package bin %s must use the Node shebang", bin.Name)
+		}
 	}
 
 	probeDir := filepath.Join(repoRoot, ".build", "stability-ts-probe")
@@ -272,7 +282,7 @@ func verifyTS(repoRoot string, m *manifest) error {
 		return err
 	}
 	tsc := exec.Command(
-		filepath.Join(packageRoot, "node_modules", "typescript", "bin", "tsc"),
+		filepath.Join(packageRoot, "node_modules", "@typescript", "native", "bin", "tsc"),
 		"-p", filepath.Join(probeDir, "tsconfig.json"),
 	)
 	tsc.Dir = probeDir
@@ -283,6 +293,34 @@ func verifyTS(repoRoot string, m *manifest) error {
 		return fmt.Errorf("TypeScript public source compile probe failed: %w\n%s", err, tscOutput.String())
 	}
 	fmt.Printf("TypeScript source symbols OK: %d runtime exports and %d type exports verified\n", runtimeIndex, typeIndex)
+	return nil
+}
+
+func verifyNativeABI(repoRoot string, m *manifest) error {
+	declaration, err := os.ReadFile(filepath.Join(repoRoot, "flowersec-node-native", "index.d.ts"))
+	if err != nil {
+		return err
+	}
+	source := string(declaration)
+	for _, exportName := range m.NativeABI.RuntimeExports {
+		if !strings.Contains(source, "export function "+exportName+"(") {
+			return fmt.Errorf("native ABI declaration missing export %s", exportName)
+		}
+	}
+	if strings.Contains(source, "RawQuicV2") || strings.Contains(source, "RawQuicV3") {
+		return errors.New("native ABI declaration must expose only unversioned names")
+	}
+	if !strings.Contains(source, fmt.Sprintf("readonly wireVersion: %d;", m.NativeABI.WireVersion)) {
+		return fmt.Errorf("native ABI declaration must freeze wireVersion %d", m.NativeABI.WireVersion)
+	}
+	implementation, err := os.ReadFile(filepath.Join(repoRoot, "flowersec-node-native", "src", "lib.rs"))
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(implementation), fmt.Sprintf("%d", m.NativeABI.ContractVersion)) {
+		return fmt.Errorf("native ABI implementation must expose contract version %d", m.NativeABI.ContractVersion)
+	}
+	fmt.Printf("native ABI OK: contract=%d wire=%d exports=%d\n", m.NativeABI.ContractVersion, m.NativeABI.WireVersion, len(m.NativeABI.RuntimeExports))
 	return nil
 }
 
@@ -428,6 +466,9 @@ func verifySwift(repoRoot string, m *manifest) error {
 }
 
 func updateSwiftManifest(repoRoot string, m *manifest) error {
+	if err := prepareCurrentManifest(m); err != nil {
+		return err
+	}
 	symbols, err := dumpSwiftPublicSymbols(repoRoot, m.Swift.Module)
 	if err != nil {
 		return err
@@ -449,6 +490,64 @@ func updateSwiftManifest(repoRoot string, m *manifest) error {
 	}
 	fmt.Printf("updated Swift manifest: %d symbols, signature %s\n", len(symbols), m.Swift.SignatureSHA256)
 	return nil
+}
+
+func prepareCurrentManifest(m *manifest) error {
+	for index := range m.TS.Subpaths {
+		subpath := &m.TS.Subpaths[index]
+		for _, value := range append(slices.Clone(subpath.RuntimeExports), subpath.TypeExports...) {
+			if versionedPublicSymbol(value) {
+				return fmt.Errorf("TypeScript manifest contains retired versioned symbol %q", value)
+			}
+		}
+		if subpath.Specifier == "@floegence/flowersec-core/node" {
+			subpath.DocTokens = appendUnique(subpath.DocTokens, "`ProxyServer`")
+			subpath.RuntimeExports = appendUnique(
+				subpath.RuntimeExports,
+				"ProxyServer",
+				"ProxyServerError",
+			)
+			subpath.TypeExports = appendUnique(
+				subpath.TypeExports,
+				"ProxyServer",
+				"ProxyServerError",
+				"ProxyServerOptions",
+			)
+		}
+		slices.Sort(subpath.RuntimeExports)
+		slices.Sort(subpath.TypeExports)
+	}
+	m.TS.Bins = []tsBin{{
+		Name:            "flowersec-ts-cli",
+		Path:            "./dist/cli.js",
+		Source:          "flowersec-ts/src/cli.ts",
+		RequiresShebang: true,
+	}}
+	for _, value := range append(slices.Clone(m.Rust.DocTokens), m.Rust.CompileEntries...) {
+		if strings.Contains(value, "flowersec::v2") || strings.Contains(value, "flowersec::v3") {
+			return fmt.Errorf("Rust manifest contains retired versioned entry %q", value)
+		}
+	}
+	m.NativeABI = nativeABIManifest{
+		Package:         "@floegence/flowersec-node-native",
+		ContractVersion: 3,
+		WireVersion:     3,
+		RuntimeExports:  []string{"bindRawQuic", "connectRawQuic", "contractVersion"},
+	}
+	return nil
+}
+
+func versionedPublicSymbol(value string) bool {
+	return value == "v2" || strings.Contains(value, "V2") || strings.Contains(value, "V3")
+}
+
+func appendUnique(values []string, additions ...string) []string {
+	for _, value := range additions {
+		if !slices.Contains(values, value) {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 type dumpedSwiftSymbol struct {
@@ -1116,7 +1215,7 @@ func renderGoVerifier(m *manifest) (string, string, error) {
 		fmt.Fprintf(&checks, "\tvar _ %s = (manifestInterface%d)(nil)\n", group.receiver, index)
 	}
 
-	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.26.6\n\nrequire %s %s\n", m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
+	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.27.0\n\nrequire %s %s\n", m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
 	goTest := fmt.Sprintf("package flowersecstabilitychecktmp\n\nimport (\n%s)\n\nfunc TestContractSymbolsCompile(t *testing.T) {\n%s}\n", imports.String()+"\t\"testing\"\n", checks.String())
 	return goMod, goTest, nil
 }

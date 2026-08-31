@@ -30,12 +30,12 @@ export function parseDockerfile(source) {
 
 export const containerDockerfileContracts = Object.freeze({
   "docker/flowersec-runtime/Dockerfile": Object.freeze({
-    syntax: "# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
-    buildFrom: "--platform=$BUILDPLATFORM golang:1.26.6-alpine@sha256:af8d6740070b8906d12eae1c3e3ea0957fb63f492051ea05e354c38ef9fe88df AS build",
+    syntax: "# syntax=docker/dockerfile:1.26.0@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
+    buildFrom: "--platform=$BUILDPLATFORM golang:1.27.0-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS build",
     buildOutput: "/out/flowersec-runtime",
     buildPackage: "./cmd/flowersec-runtime",
     final: [
-      { instruction: "FROM", value: "gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35" },
+      { instruction: "FROM", value: "gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7" },
       { instruction: "COPY", value: "--from=build /out/flowersec-runtime /usr/local/bin/flowersec-runtime" },
       { instruction: "COPY", value: "LICENSE /usr/share/doc/flowersec/LICENSE" },
       { instruction: "COPY", value: "release-compliance/runtime-image/THIRD_PARTY_NOTICES.md /usr/share/doc/flowersec/THIRD_PARTY_NOTICES.md" },

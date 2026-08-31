@@ -120,7 +120,6 @@ final class TransportV3SessionTests: XCTestCase {
       }
     }
 
-    XCTAssertEqual(vectors.inheritedCodecFrom, "transport_v2")
     XCTAssertEqual(vectors.transportContractVersion, 3)
 
     let streamHandlers = try StreamHandlers()
@@ -2542,7 +2541,6 @@ private struct SessionHandlerVectors: Decodable {
   let duplicateKind: String
   let rpcTypeIDs: [SessionHandlerRPCTypeIDVector]
   let duplicateTypeID: UInt32
-  let inheritedCodecFrom: String
   let transportContractVersion: UInt8
 
   enum CodingKeys: String, CodingKey {
@@ -2550,7 +2548,6 @@ private struct SessionHandlerVectors: Decodable {
     case duplicateKind = "duplicate_kind"
     case rpcTypeIDs = "rpc_type_ids"
     case duplicateTypeID = "duplicate_type_id"
-    case inheritedCodecFrom = "inherited_codec_from"
     case transportContractVersion = "transport_contract_version"
   }
 }

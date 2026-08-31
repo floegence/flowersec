@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v3/internal/rpc"
-	session "github.com/floegence/flowersec/flowersec-go/v3/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
+	session "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
 )
 
 func mustParseInternalFixtureArtifact(t *testing.T) Artifact {
@@ -597,7 +597,7 @@ func TestPublicByteStreamPreservesEOF(t *testing.T) {
 }
 
 func TestRPCProjectionPreservesApplicationErrorAndRedactsTransportFailure(t *testing.T) {
-	peer := &opaqueRPCPeer{inner: staticRPCPeer{err: &internalrpc.CallError{
+	peer := &opaqueRPCPeerV3{inner: staticRPCPeer{err: &internalrpc.CallError{
 		TypeID: 7, Code: 404, Message: "handler not found",
 	}}}
 	err := peer.Call(context.Background(), 7, struct{}{}, &struct{}{})
@@ -606,7 +606,7 @@ func TestRPCProjectionPreservesApplicationErrorAndRedactsTransportFailure(t *tes
 		t.Fatalf("RPC application error = %#v, want code/message projection", err)
 	}
 
-	peer = &opaqueRPCPeer{inner: staticRPCPeer{err: errors.New("candidate secret at wss://secret.example")}}
+	peer = &opaqueRPCPeerV3{inner: staticRPCPeer{err: errors.New("candidate secret at wss://secret.example")}}
 	err = peer.Call(context.Background(), 7, struct{}{}, &struct{}{})
 	var sessionErr *SessionError
 	if !errors.As(err, &sessionErr) || sessionErr.Code() != SessionOperationFailed || strings.Contains(err.Error(), "secret") {
@@ -616,7 +616,7 @@ func TestRPCProjectionPreservesApplicationErrorAndRedactsTransportFailure(t *tes
 
 func TestRPCProjectionMapsMalformedApplicationEnvelopeToOperationFailure(t *testing.T) {
 	const secret = "malformed-rpc-secret-marker"
-	peer := &opaqueRPCPeer{inner: staticRPCPeer{err: errors.New("rpc invalid application error: " + secret)}}
+	peer := &opaqueRPCPeerV3{inner: staticRPCPeer{err: errors.New("rpc invalid application error: " + secret)}}
 	err := peer.Call(context.Background(), 7, struct{}{}, &struct{}{})
 	var sessionErr *SessionError
 	if !errors.As(err, &sessionErr) || sessionErr.Code() != SessionOperationFailed {

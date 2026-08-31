@@ -31,17 +31,17 @@ function mutate(root, relative, from, to) {
   return () => fs.writeFileSync(filename, source);
 }
 
-test("the maintained Go security baseline is exactly 1.26.6", () => {
-  assert.equal(goSecurityBaseline, "1.26.6");
+test("the maintained Go security baseline is exactly 1.27.0", () => {
+  assert.equal(goSecurityBaseline, "1.27.0");
   assert.doesNotThrow(() => verifyGoToolchainPolicy(sourceRoot));
 });
 
 test("Go module policy rejects the previous patch and ambiguous toolchain directives", () => {
-  assert.equal(parseGoModPolicy("module example.com/ok\n\ngo 1.26.6\n", "fixture"), "1.26.6");
+  assert.equal(parseGoModPolicy("module example.com/ok\n\ngo 1.27.0\n", "fixture"), "1.27.0");
   const staleVersion = [1, 26, 5].join(".");
   assert.equal(parseGoModPolicy(`module example.com/stale\n\ngo ${staleVersion}\n`, "fixture"), staleVersion);
   assert.throws(
-    () => parseGoModPolicy(`module example.com/ambiguous\n\ngo 1.26.6\ntoolchain go${staleVersion}\n`, "fixture"),
+    () => parseGoModPolicy(`module example.com/ambiguous\n\ngo 1.27.0\ntoolchain go${staleVersion}\n`, "fixture"),
     /must not contain a toolchain directive/,
   );
 });
@@ -60,15 +60,15 @@ test("each maintained toolchain source rejects a stale structured value", (t) =>
   for (const fixture of [
     {
       relative: "flowersec-go/go.mod",
-      from: "go 1.26.6",
+      from: "go 1.27.0",
       to: `go ${stale}`,
-      error: /flowersec-go\/go\.mod must be 1\.26\.6/,
+      error: /flowersec-go\/go\.mod must be 1\.27\.0/,
     },
     {
       relative: "docker/flowersec-runtime/Dockerfile",
-      from: "golang:1.26.6-alpine",
+      from: "golang:1.27.0-alpine",
       to: `golang:${stale}-alpine`,
-      error: /runtime Dockerfile Go builder tag must be 1\.26\.6-alpine/,
+      error: /runtime Dockerfile Go builder tag must be 1\.27\.0-alpine/,
     },
     {
       relative: ".github/workflows/ci.yml",
@@ -77,28 +77,34 @@ test("each maintained toolchain source rejects a stale structured value", (t) =>
       error: /ci\.yml setup-go version file must be flowersec-go\/go\.mod/,
     },
     {
+      relative: ".github/workflows/release.yml",
+      from: "go-version-file: flowersec-go/go.mod",
+      to: "go-version-file: tools/releasenotes/go.mod",
+      error: /release\.yml setup-go version file must be flowersec-go\/go\.mod/,
+    },
+    {
       relative: "scripts/check-go-security.mjs",
-      from: 'goToolchain: "go1.26.6"',
+      from: 'goToolchain: "go1.27.0"',
       to: `goToolchain: "go${stale}"`,
-      error: /Go security scanner toolchain must be go1\.26\.6/,
+      error: /Go security scanner toolchain must be go1\.27\.0/,
     },
     {
       relative: "scripts/test-host-init.sh",
-      from: "readonly go_version=1.26.6",
+      from: "readonly go_version=1.27.0",
       to: `readonly go_version=${stale}`,
-      error: /test host Go version must be 1\.26\.6/,
+      error: /test host Go version must be 1\.27\.0/,
     },
     {
       relative: "scripts/generate-source-inventory.mjs",
-      from: 'GOTOOLCHAIN: "go1.26.6"',
+      from: 'GOTOOLCHAIN: "go1.27.0"',
       to: `GOTOOLCHAIN: "go${stale}"`,
-      error: /source inventory Go toolchain must be go1\.26\.6/,
+      error: /source inventory Go toolchain must be go1\.27\.0/,
     },
     {
       relative: "scripts/run-final-stage.mjs",
-      from: 'state.version !== "go1.26.6"',
+      from: 'state.version !== "go1.27.0"',
       to: `state.version !== "go${stale}"`,
-      error: /final stage Go toolchain must be go1\.26\.6/,
+      error: /final stage Go toolchain must be go1\.27\.0/,
     },
   ]) {
     const restore = mutate(root, fixture.relative, fixture.from, fixture.to);

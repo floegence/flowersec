@@ -19,14 +19,14 @@ import (
 	"testing"
 	"time"
 
-	admissionws "github.com/floegence/flowersec/flowersec-go/v3/internal/admissionv3/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquicv3"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/websocketv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/transportsecurity"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/weaknet"
+	admissionws "github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/rawquicv3"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/transportsecurity"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/weaknet"
 	gorillaws "github.com/gorilla/websocket"
 )
 

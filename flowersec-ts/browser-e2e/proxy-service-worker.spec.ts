@@ -142,7 +142,7 @@ async function installRuntimePage(page: Page, artifactJSON: string, externalOrig
     const proxy = await import("/dist/proxy/index.js");
     const sdk = await import("/dist/browser/index.js");
     const handle = await proxy.connectProxyBrowser(
-      sdk.v2.createArtifactLease(sdk.v2.parseArtifact(encodedArtifact), async () => undefined),
+      sdk.createArtifactLease(sdk.parseArtifact(encodedArtifact), async () => undefined),
       {
         runtime: { externalOrigin: origin, maxBodyBytes: 4_096, maxChunkBytes: 8, maxWsFrameBytes: 32 },
         serviceWorker: { scriptUrl: "/proxy-sw.js", scope: "/", controllerTimeoutMs: 5_000 },
@@ -193,7 +193,7 @@ async function runWebSocketPatchContract(): Promise<Readonly<{ echoed: string; r
 
 function startProxyPeer(upstream: string, origin: string): ReturnType<typeof spawn> {
   return spawn("go", [
-    "run", "./internal/cmd/ts-proxy-peer-v2", "--upstream", upstream, "--origin", origin,
+    "run", "./internal/cmd/ts-proxy-peer", "--upstream", upstream, "--origin", origin,
     "--max-body-bytes", "4096", "--http-timeout", "15s",
   ], {
     cwd: path.join(repositoryRoot, "flowersec-go"),

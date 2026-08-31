@@ -452,7 +452,7 @@ const artifactVectors = {
   profile: PROFILE,
   source: {
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
-    design_sha256: "1dd99bb79d2e26ea00324f89f8beb0387cc0ce5a218a88271ad1fd3a2b5e75ed",
+    design_sha256: "b6ac3ac6c619c896d7fc5b6b971b26c2e17f9d9a9ee73cb53005e8cad240a2c5",
   },
   constants: {
     maximum_safe_integer: SAFE_MAX,
@@ -885,7 +885,7 @@ const v2CryptoLabels = [
 write("version_isolation_vectors.json", {
   version: 3,
   source: {
-    design_sha256: "1dd99bb79d2e26ea00324f89f8beb0387cc0ce5a218a88271ad1fd3a2b5e75ed",
+    design_sha256: "b6ac3ac6c619c896d7fc5b6b971b26c2e17f9d9a9ee73cb53005e8cad240a2c5",
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
     rules_are_not_extended_by_vectors: true,
   },
@@ -911,23 +911,20 @@ write("version_isolation_vectors.json", {
     alpn: v2ALPNIdentifiers,
     crypto_label: v2CryptoLabels,
   },
-  inherited_codecs: {
+  application_codecs: {
     fsh3: {
       fixture: "handshake_vectors.json",
       frame_id: "x25519-direct",
-      inherited_codec_from: "transport_v2",
-      semantic: "FSH3 keeps the inherited canonical handshake JSON codec after versioned framing replacement",
+      semantic: "FSH3 uses the canonical Transport v3 handshake JSON codec",
     },
     open: {
       fixture: "open_unicode_vectors.json",
       vector_id: "minimal-string-escaping",
-      inherited_codec_from: "transport_v2",
-      semantic: "OPEN keeps the inherited non-JCS session codec and is not artifact JCS input",
+      semantic: "OPEN uses the Transport v3 application JSON codec and is not artifact JCS input",
     },
     rpc: {
-      inherited_codec_from: "transport_v2",
       envelope_json: "{\"payload\":{\"ratio\":1.5},\"request_id\":1,\"response_to\":0,\"type_id\":7}",
-      semantic: "RPC keeps the inherited application JSON value domain; float payload is not artifact JCS",
+      semantic: "RPC uses the Transport v3 application JSON value domain; float payload is not artifact JCS",
     },
   },
 });
@@ -1743,125 +1740,3 @@ for (const scenario of [...controllerVectors.scenarios, ...controllerVectors.bro
   scenario.expected.failure_phase = failurePhase;
 }
 write("controller_vectors.json", controllerVectors);
-
-const inherited = [
-  "idna_vectors.json",
-  "open_unicode_vectors.json",
-  "rpc_error_vectors.json",
-  "rpc_malformed_envelopes.json",
-  "rpc_notification_vectors.json",
-  "session_handler_vectors.json",
-];
-for (const name of inherited) {
-  const value = JSON.parse(readFileSync(join(root, "..", "transport_v2", name), "utf8"));
-  value.inherited_codec_from = "transport_v2";
-  value.transport_contract_version = 3;
-  if (name === "session_handler_vectors.json") {
-    const reserved = value.stream_kinds.find(({ id }) => id === "reserved-rpc-kind");
-    if (reserved === undefined) throw new Error("missing inherited reserved RPC stream-kind vector");
-    value.stream_kinds.splice(value.stream_kinds.indexOf(reserved), 0, {
-      ...reserved,
-      id: "reserved-previous-rpc-kind",
-    });
-    reserved.unit = "flowersec.rpc.v3";
-  }
-  if (name === "idna_vectors.json") {
-    value.url_normalization = {
-      positive: [
-        {
-          id: "canonical-ipv4",
-          carrier: "websocket",
-          path_kind: "direct",
-          input: "WSS://127.0.0.1:443/flowersec/v3/direct",
-          normalized: "wss://127.0.0.1/flowersec/v3/direct",
-          whatwg_roundtrip: true,
-        },
-        {
-          id: "unicode-host",
-          carrier: "websocket",
-          path_kind: "direct",
-          input: "wss://bücher.example/flowersec/v3/direct",
-          normalized: "wss://xn--bcher-kva.example/flowersec/v3/direct",
-          whatwg_roundtrip: true,
-        },
-        {
-          id: "ipv6-rfc5952",
-          carrier: "raw_quic",
-          path_kind: "direct",
-          input: "quic://[2001:0db8:0:0:0:0:0:1]:0443/",
-          normalized: "quic://[2001:db8::1]",
-          whatwg_roundtrip: true,
-        },
-        {
-          id: "non-default-port",
-          carrier: "webtransport",
-          path_kind: "tunnel",
-          input: "HTTPS://EXAMPLE.COM:8443/flowersec/webtransport/v3/tunnel",
-          normalized: "https://example.com:8443/flowersec/webtransport/v3/tunnel",
-          whatwg_roundtrip: true,
-        },
-        {
-          id: "nonnumeric-final-dns-label",
-          carrier: "websocket",
-          path_kind: "direct",
-          input: "wss://gateway.123a/flowersec/v3/direct",
-          normalized: "wss://gateway.123a/flowersec/v3/direct",
-          whatwg_roundtrip: true,
-        },
-      ],
-      negative: [
-        ["ipv4-leading-zero", "websocket", "direct", "wss://127.0.0.01/flowersec/v3/direct"],
-        ["ipv4-short", "websocket", "direct", "wss://127.1/flowersec/v3/direct"],
-        ["single-integer", "websocket", "direct", "wss://2130706433/flowersec/v3/direct"],
-        ["legacy-hex", "websocket", "direct", "wss://0x7f000001/flowersec/v3/direct"],
-        ["mixed-hex-first", "websocket", "direct", "wss://0x7f.0.0.1/flowersec/v3/direct"],
-        ["mixed-hex-last", "websocket", "direct", "wss://1.2.3.0x7f/flowersec/v3/direct"],
-        ["dns-final-decimal", "websocket", "direct", "wss://example.1/flowersec/v3/direct"],
-        ["dns-final-empty-hex", "websocket", "direct", "wss://example.0x/flowersec/v3/direct"],
-        ["dns-empty-label", "websocket", "direct", "wss://example..com/flowersec/v3/direct"],
-        ["dns-trailing-dot", "websocket", "direct", "wss://example.com./flowersec/v3/direct"],
-        ["empty-url", "websocket", "direct", ""],
-        ["empty-authority", "websocket", "direct", "wss:///flowersec/v3/direct"],
-        ["empty-host", "websocket", "direct", "wss://:443/flowersec/v3/direct"],
-        ["empty-port", "websocket", "direct", "wss://example.com:/flowersec/v3/direct"],
-        ["zero-port", "websocket", "direct", "wss://example.com:0/flowersec/v3/direct"],
-        ["port-overflow", "websocket", "direct", "wss://example.com:65536/flowersec/v3/direct"],
-        ["nondigit-port", "websocket", "direct", "wss://example.com:https/flowersec/v3/direct"],
-        ["ipv6-unclosed-bracket", "websocket", "direct", "wss://[2001:db8::1/flowersec/v3/direct"],
-        ["ipv6-bracketless", "websocket", "direct", "wss://2001:db8::1/flowersec/v3/direct"],
-        ["ipv6-zone-id", "websocket", "direct", "wss://[fe80::1%25en0]/flowersec/v3/direct"],
-        ["ipv6-embedded-ipv4", "websocket", "direct", "wss://[::ffff:192.0.2.128]/flowersec/v3/direct"],
-        ["oversized-url", "websocket", "direct", `wss://${"a".repeat(2_020)}.example/flowersec/v3/direct`],
-        ["oversized-dns-label", "websocket", "direct", `wss://${"a".repeat(64)}.example/flowersec/v3/direct`],
-        ["oversized-dns-host", "websocket", "direct", `wss://${`${"a".repeat(63)}.`.repeat(4)}example/flowersec/v3/direct`],
-        ["oversized-authority", "websocket", "direct", `wss://${"a".repeat(256)}/flowersec/v3/direct`],
-        ["websocket-scheme-mismatch", "websocket", "direct", "https://example.com/flowersec/v3/direct"],
-        ["webtransport-scheme-mismatch", "webtransport", "direct", "wss://example.com/flowersec/webtransport/v3/direct"],
-        ["raw-quic-scheme-mismatch", "raw_quic", "direct", "wss://example.com"],
-        ["direct-path-mismatch", "websocket", "direct", "wss://example.com/flowersec/v3/tunnel"],
-        ["tunnel-path-mismatch", "websocket", "tunnel", "wss://example.com/flowersec/v3/direct"],
-        ["webtransport-path-mismatch", "webtransport", "direct", "https://example.com/flowersec/v3/direct"],
-        ["raw-quic-path", "raw_quic", "direct", "quic://example.com/flowersec/v3/direct"],
-        ["percent-escape", "websocket", "direct", "wss://example.com/%66lowersec/v3/direct"],
-        ["userinfo", "websocket", "direct", "wss://user@example.com/flowersec/v3/direct"],
-        ["query", "websocket", "direct", "wss://example.com/flowersec/v3/direct?x=1"],
-        ["fragment", "websocket", "direct", "wss://example.com/flowersec/v3/direct#x"],
-        ["backslash", "websocket", "direct", "wss://example.com\\flowersec/v3/direct"],
-      ].map(([id, carrier, path_kind, input]) => ({
-        id,
-        carrier,
-        path_kind,
-        input,
-        error_code: "invalid_artifact",
-      })),
-    };
-  }
-  if (name === "open_unicode_vectors.json") {
-    value.negative.push({
-      id: "metadata-negative-zero",
-      kind: "rpc",
-      metadata_json: "{\"a\":-0}",
-    });
-  }
-  write(name, value);
-}

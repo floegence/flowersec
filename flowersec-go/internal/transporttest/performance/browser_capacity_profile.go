@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest/tunnelworkload"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/transporttest/tunnelworkload"
 )
 
 type browserCapacityWorkerPlan struct {

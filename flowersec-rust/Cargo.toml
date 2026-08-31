@@ -1,6 +1,6 @@
 [package]
 name = "flowersec"
-version = "3.2.1"
+version = "4.0.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Native Rust SDK for Flowersec secure direct and tunneled sessions"
@@ -19,7 +19,7 @@ async-trait = "0.1"
 base64 = "0.23"
 bytes = "1"
 futures-util = { version = "0.3", features = ["io", "sink", "std"] }
-flowersec-native-transport = { version = "=3.2.1", path = "../flowersec-native-transport" }
+flowersec-native-transport = { version = "=4.0.0", path = "../flowersec-native-transport" }
 hkdf = "0.13"
 hmac = "0.13"
 http = "1"
@@ -27,8 +27,8 @@ http-body-util = "0.1"
 hyper = { version = "1", default-features = false, features = ["client", "http1"] }
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 idna = { version = "=1.1.0", default-features = false, features = ["std", "compiled_data"] }
-idna_adapter = { version = "=1.1.0", features = ["compiled_data"] }
-idna_mapping = "=1.0.0"
+idna_adapter = { version = "=1.2.2", features = ["compiled_data"] }
+idna_mapping = "=1.1.0"
 p256 = { version = "0.14", features = ["ecdh"] }
 rand = "0.10"
 ring = { version = "=0.17.14", default-features = false, features = ["alloc"] }
@@ -40,7 +40,7 @@ sha2 = "0.11"
 thiserror = "2"
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
-tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
 tokio-util = { version = "0.7", features = ["compat", "rt"] }
 unicode-normalization = "=0.1.25"
 url = { version = "2", features = ["serde"] }
@@ -52,7 +52,7 @@ subtle = "2"
 time = { version = "0.3", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
-flowersec-native-transport = { version = "=3.2.1", path = "../flowersec-native-transport", features = ["__flowersec_internal_test_support"] }
+flowersec-native-transport = { version = "=4.0.0", path = "../flowersec-native-transport", features = ["__flowersec_internal_test_support"] }
 proptest = "1"
 tempfile = "3"
 cert_test_builder = { package = "rcgen", version = "0.14" }

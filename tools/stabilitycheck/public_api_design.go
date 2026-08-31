@@ -17,8 +17,8 @@ func verifyPublicAPIDesign(repoRoot string) error {
 	}
 
 	leaseChecks := map[string]string{
-		"flowersec-swift/Sources/Flowersec/Artifact.swift": "  public func commitSpend()",
-		"flowersec-rust/src/artifact_v2.rs":                "    pub async fn commit_spend(",
+		"flowersec-swift/Sources/Flowersec/ArtifactV3.swift": "  public func commitSpend()",
+		"flowersec-rust/src/artifact_v3.rs":                  "    pub async fn commit_spend(",
 	}
 	for path, forbidden := range leaseChecks {
 		source, err := read(path)
@@ -29,18 +29,18 @@ func verifyPublicAPIDesign(repoRoot string) error {
 			return fmt.Errorf("%s publicly exposes connector-owned artifact spending", path)
 		}
 	}
-	tsLease, err := read("flowersec-ts/src/public/artifactLease.ts")
+	tsLease, err := read("flowersec-ts/src/v3/artifactLease.ts")
 	if err != nil {
 		return err
 	}
-	tsLeaseBody, err := declarationBody(tsLease, "class ArtifactLease {")
+	tsLeaseBody, err := declarationBody(tsLease, "class ArtifactLeaseV3 {")
 	if err != nil {
 		return err
 	}
 	if strings.Contains(tsLeaseBody, "commitSpend(") {
 		return fmt.Errorf("TypeScript ArtifactLease publicly exposes connector-owned artifact spending")
 	}
-	if !strings.Contains(tsLeaseBody, "private constructor") || !strings.Contains(tsLeaseBody, "#artifactLeaseBrand") {
+	if !strings.Contains(tsLeaseBody, "private constructor") || !strings.Contains(tsLeaseBody, "leaseBrand") {
 		return fmt.Errorf("TypeScript ArtifactLease must have a private constructor and opaque brand")
 	}
 
@@ -60,12 +60,12 @@ func verifyPublicAPIDesign(repoRoot string) error {
 			forbidden: []string{"waitClosed(): Promise<SessionTermination>;", "SessionV2", "ByteStreamV2"},
 		},
 		{
-			path:      "flowersec-swift/Sources/Flowersec/TransportV2.swift",
+			path:      "flowersec-swift/Sources/Flowersec/Transport.swift",
 			required:  []string{"public struct SessionTermination", "func waitTermination() async -> SessionTermination"},
 			forbidden: []string{"func waitClosed() async -> SessionError"},
 		},
 		{
-			path:      "flowersec-rust/src/transport_v2.rs",
+			path:      "flowersec-rust/src/transport.rs",
 			required:  []string{"pub struct SessionTermination", "async fn wait_termination(&self) -> SessionTermination;"},
 			forbidden: []string{"async fn wait_closed(&self) -> Result<(), SessionError>;"},
 		},
@@ -94,7 +94,7 @@ func verifyPublicAPIDesign(repoRoot string) error {
 	if !strings.Contains(tsContract, "decodeResponse: (payload: JsonValue) => Response") {
 		return fmt.Errorf("TypeScript RpcPeer.call must require a successful-response decoder")
 	}
-	tsProjection, err := read("flowersec-ts/src/v2/publicSession.ts")
+	tsProjection, err := read("flowersec-ts/src/v3/publicSession.ts")
 	if err != nil {
 		return err
 	}
@@ -127,8 +127,6 @@ func verifyPublicAPIDesign(repoRoot string) error {
 		"flowersec-rust/src/connection_controller.rs":                  {"pub struct RetryPolicy", "pub enum RetryPolicyError", "ConnectionControllerStartError", "pub struct ConnectionStatus"},
 		"flowersec-swift/Sources/Flowersec/ConnectionController.swift": {"ConnectionRetryPolicy", "nextRetryAt", "retryPolicy:"},
 		"flowersec-ts/src/facade.ts":                                   {"SessionV2", "ArtifactLeaseV2", "ConnectorArtifactLeaseV2"},
-		"flowersec-ts/src/browser/connectSession.ts":                   {"connectBrowserSession"},
-		"flowersec-ts/src/node/connectSession.ts":                      {"connectNodeSession"},
 	} {
 		source, err := read(path)
 		if err != nil {
@@ -171,7 +169,7 @@ func verifyPublicAPIDesign(repoRoot string) error {
 		}
 	}
 
-	rustTransport, err := read("flowersec-rust/src/transport_v2.rs")
+	rustTransport, err := read("flowersec-rust/src/transport.rs")
 	if err != nil {
 		return err
 	}

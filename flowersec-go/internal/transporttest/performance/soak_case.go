@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/quicbase"
-	rawquic "github.com/floegence/flowersec/flowersec-go/v3/internal/carrier/rawquicv3"
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/quicbase"
+	rawquic "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/rawquicv3"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/transporttest"
 )
 
 var (

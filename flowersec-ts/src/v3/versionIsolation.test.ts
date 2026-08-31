@@ -27,7 +27,7 @@ import {
 import type { DirectionV3, CipherSuiteV3 } from "./protocol.js";
 import { readyWebSocketAdmissionV3, type WebSocketLikeV3 } from "./runtimeAdapters.js";
 import { createNodeRawQuicClientV3 } from "../node/rawQuicAdapterV3.js";
-import type { NativeRawQuicConnectOptionsV3, NativeRawQuicDriverV3 } from "../node/nativeTransportAddon.js";
+import type { NativeRawQuicConnectOptions, NativeRawQuicDriver } from "../node/nativeTransportAddon.js";
 import type { ArtifactV3 } from "./artifact.js";
 import type { NativeCarrierSessionV3 } from "./carrier.js";
 import {
@@ -48,7 +48,7 @@ type IsolationFixture = Readonly<{
   subprotocol_mutations: readonly Readonly<{ id: string; v3: string; v2: string; error_code: string }>[];
   alpn_mutations: readonly Readonly<{ id: string; v3: string; v2: string; error_code: string }>[];
   crypto_label_mutations: readonly Readonly<{ id: string; v3: string; v2: string; error_code: string }>[];
-  inherited_codecs: Readonly<{
+  application_codecs: Readonly<{
     fsh3: Readonly<{ frame_id: string }>;
     open: Readonly<{ vector_id: string }>;
     rpc: Readonly<{ envelope_json: string }>;
@@ -153,8 +153,8 @@ describe("transport v3 version isolation", () => {
   });
 
   test("raw QUIC adapter binds the candidate to the v3 ALPN profile", async () => {
-    const calls: NativeRawQuicConnectOptionsV3[] = [];
-    const driver: NativeRawQuicDriverV3 = {
+    const calls: NativeRawQuicConnectOptions[] = [];
+    const driver: NativeRawQuicDriver = {
       connectRawQuic: async (options) => { calls.push(options); return {} as NativeCarrierSessionV3; },
       bindRawQuic: async () => { throw new Error("unused"); },
     };
@@ -295,7 +295,7 @@ describe("transport v3 version isolation", () => {
       new URL("../../../testdata/transport_v3/open_unicode_vectors.json", import.meta.url), "utf8"),
     );
     const open = openFixture.positive.find((vector: { id: string }) =>
-      vector.id === fixture.inherited_codecs.open.vector_id);
+      vector.id === fixture.application_codecs.open.vector_id);
     expect(open).toBeDefined();
     const encoded = encodeOpenPayload({
       logicalStreamID: 1n,
@@ -305,7 +305,7 @@ describe("transport v3 version isolation", () => {
     });
     expect(new TextDecoder().decode(decodeOpenPayload(encoded).metadata)).toBe(open.metadata_json);
 
-    const rpc = assertRpcEnvelope(JSON.parse(fixture.inherited_codecs.rpc.envelope_json));
+    const rpc = assertRpcEnvelope(JSON.parse(fixture.application_codecs.rpc.envelope_json));
     expect((rpc.payload as { ratio: number }).ratio).toBe(1.5);
   });
 });

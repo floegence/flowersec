@@ -10,7 +10,6 @@ import {
   StreamHandlers,
   type HandlerRegistrationError,
 } from "./streamHandlers.js";
-import { StreamHandlers as StreamHandlersV2 } from "../v2/index.js";
 
 type StreamKindVectors = Readonly<{
   stream_kinds: readonly Readonly<{
@@ -23,10 +22,10 @@ type StreamKindVectors = Readonly<{
 }>;
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));
-const vectorFixtures = ([2, 3] as const).map((version) => JSON.parse(readFileSync(
-  path.join(repositoryRoot, `testdata/transport_v${version}/session_handler_vectors.json`),
+const vectors = JSON.parse(readFileSync(
+  path.join(repositoryRoot, "testdata/transport_v3/session_handler_vectors.json"),
   "utf8",
-)) as StreamKindVectors);
+)) as StreamKindVectors;
 
 function scriptedSession(incoming: readonly IncomingStream[]): {
   session: Session;
@@ -155,28 +154,17 @@ describe("StreamHandlers", () => {
     expect(() => handlers.handleStream("flowersec.rpc.v2", async () => undefined)).toThrowError(
       expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
     );
-    const handlersV2 = new StreamHandlersV2();
-    expect(() => handlersV2.handleStream("flowersec.rpc.v2", async () => undefined)).toThrowError(
-      expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
-    );
-    expect(() => handlersV2.handleStream("flowersec.rpc.v3", async () => undefined)).toThrowError(
-      expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
-    );
   });
 
   test("applies the shared OPEN kind contract", () => {
-    const handlerTypes = [StreamHandlersV2, StreamHandlers] as const;
-    for (const [index, vectors] of vectorFixtures.entries()) {
-      for (const vector of vectors.stream_kinds) {
-        const handlers = new handlerTypes[index]!();
-        const kind = vector.unit.repeat(vector.repeat) + vector.suffix;
-        const registration = (): void => handlers.handleStream(kind, async () => undefined);
-        const id = `v${index + 2}/${vector.id}`;
-        if (vector.valid) expect(registration, id).not.toThrow();
-        else expect(registration, id).toThrowError(
-          expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
-        );
-      }
+    for (const vector of vectors.stream_kinds) {
+      const handlers = new StreamHandlers();
+      const kind = vector.unit.repeat(vector.repeat) + vector.suffix;
+      const registration = (): void => handlers.handleStream(kind, async () => undefined);
+      if (vector.valid) expect(registration, vector.id).not.toThrow();
+      else expect(registration, vector.id).toThrowError(
+        expect.objectContaining<Partial<HandlerRegistrationError>>({ code: "invalid_handler" }),
+      );
     }
   });
 

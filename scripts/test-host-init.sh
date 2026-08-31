@@ -10,9 +10,9 @@ readonly host_go_root=$host_cache/toolchains/go
 readonly host_swift_toolchains=$host_cache/toolchains/swift
 readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:$host_home/.local/bin:$host_home/.swiftly/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 readonly playwright_download_host=https://npmmirror.com/mirrors/playwright
-readonly go_version=1.26.6
-readonly node_version=24.14.1
-readonly rust_version=1.88.0
+readonly go_version=1.27.0
+readonly node_version=24.20.0
+readonly rust_version=1.98.0
 readonly swiftly_version=1.1.3
 readonly swift_version=6.1.3
 # SHA-256 of the Swift version, Swiftly version, PGP verification, and the
@@ -43,12 +43,12 @@ case $(uname -m) in
   x86_64|amd64)
     architecture=amd64
     go_arch=amd64
-    go_sha256=708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89
+    go_sha256=675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685
     node_arch=x64
-    node_sha256=84d38715d449447117d05c3e71acd78daa49d5b1bfa8aacf610303920c3322be
+    node_sha256=2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2
     rustup_target=x86_64-unknown-linux-gnu
     rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c
-    rust_archive_sha256=7b5437c1d18a174faae253a18eac22c32288dccfc09ff78d5ee99b7467e21bca
+    rust_archive_sha256=ed8ee2df70909c88cbaf87a6cfa3920dac00b537de12a6abe6906641e0f5952f
     swiftly_arch=x86_64
     swiftly_sha256=4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0
     swiftly_binary_sha256=e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61
@@ -65,12 +65,12 @@ case $(uname -m) in
   aarch64|arm64)
     architecture=arm64
     go_arch=arm64
-    go_sha256=d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e
+    go_sha256=51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda
     node_arch=arm64
-    node_sha256=71e427e28b78846f201d4d5ecc30cb13d1508ca099ef3871889a1256c7d6f67e
+    node_sha256=5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7
     rustup_target=aarch64-unknown-linux-gnu
     rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c
-    rust_archive_sha256=d5decc46123eb888f809f2ee3b118d13586a37ffad38afaefe56aa7139481d34
+    rust_archive_sha256=ac9283184301aeed06ecc9f5aa4c1be7041e18a1b197b6cb6c5d162d98f566da
     swiftly_arch=aarch64
     swiftly_sha256=cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a
     swiftly_binary_sha256=6531421eeb80eb69db21e41b1ed94bac1467548972eb82861fc4beb6664bd6aa

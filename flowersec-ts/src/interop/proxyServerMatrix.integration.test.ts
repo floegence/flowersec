@@ -6,16 +6,11 @@ import { describe, expect, test } from "vitest";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
 import {
-  connect as connectV3,
-  createArtifactLease as createArtifactLeaseV3,
-  parseArtifact as parseArtifactV3,
-} from "../node/index.js";
-import {
-  connect as connectV2,
-  createArtifactLease as createArtifactLeaseV2,
-  parseArtifact as parseArtifactV2,
+  connect,
+  createArtifactLease,
+  parseArtifact,
   SessionError,
-} from "../node/v2.js";
+} from "../node/index.js";
 import { createProxyRuntime } from "../proxy/runtime.js";
 import { ProxyByteReader, writeAll } from "../proxy/stream.js";
 
@@ -24,11 +19,7 @@ const TEST_RESPONSE_COOKIE = "theme=light; Secure; HttpOnly; SameSite=Strict";
 
 describe("Browser TypeScript ProxyServer interoperability", () => {
   test("runs Browser TypeScript HTTP and WebSocket semantics against Go ProxyServer", async () => {
-    await runMatrixCell("go", "v2");
-  }, 30_000);
-
-  test("runs Browser TypeScript HTTP and WebSocket semantics over v3 against Go ProxyServer", async () => {
-    await runMatrixCell("go", "v3");
+    await runMatrixCell("go");
   }, 30_000);
 
   test("runs Browser TypeScript HTTP and WebSocket semantics against Rust ProxyServer", async () => {
@@ -41,12 +32,11 @@ describe("Browser TypeScript ProxyServer interoperability", () => {
 });
 
 type Runtime = "go" | "rust" | "node-typescript";
-type Protocol = "v2" | "v3";
 type ProxyRuntime = ReturnType<typeof createProxyRuntime>;
 type ProxyRequest = Parameters<ProxyRuntime["dispatchFetch"]>[0];
 type PeerEndpoint = Readonly<{ runtime: Runtime; artifact_json: string; origin: string; trust_pem?: string }>;
 
-async function runMatrixCell(runtime: Runtime, protocol: Protocol = "v2"): Promise<void> {
+async function runMatrixCell(runtime: Runtime): Promise<void> {
   const observed: Array<Readonly<{
     body: string;
     authorization?: string;
@@ -125,37 +115,30 @@ async function runMatrixCell(runtime: Runtime, protocol: Protocol = "v2"): Promi
   const address = upstream.address();
   if (address === null || typeof address === "string") throw new Error("proxy upstream did not bind");
   const upstreamOrigin = `http://127.0.0.1:${address.port}`;
-  const peer = spawnPeer(runtime, upstreamOrigin, protocol);
+  const peer = spawnPeer(runtime, upstreamOrigin);
   const stderr: string[] = [];
   peer.stderr.setEncoding("utf8");
   peer.stderr.on("data", (chunk: string) => stderr.push(chunk));
-  let session: Awaited<ReturnType<typeof connectV2>> | undefined;
+  let session: Awaited<ReturnType<typeof connect>> | undefined;
   let proxyRuntime: ProxyRuntime | undefined;
   try {
     const endpoint = await readEndpoint(peer.stdout, runtime);
-    if (protocol === "v3") {
-      if (endpoint.trust_pem === undefined || !endpoint.trust_pem.startsWith("-----BEGIN CERTIFICATE-----\n")) {
-        throw new Error("v3 Go ProxyServer peer omitted its private CA trust PEM");
-      }
-      let untrustedSpends = 0;
-      await expect(connectV3(
-        createArtifactLeaseV3(parseArtifactV3(endpoint.artifact_json), async () => { untrustedSpends += 1; }),
-        { origin: endpoint.origin },
-      )).rejects.toMatchObject({
-        code: "transport_security_failed",
-        disposition: { kind: "terminal" },
-      });
-      expect(untrustedSpends).toBe(0);
-      session = await connectV3(
-        createArtifactLeaseV3(parseArtifactV3(endpoint.artifact_json), async () => undefined),
-        { origin: endpoint.origin, roots: endpoint.trust_pem },
-      );
-    } else {
-      session = await connectV2(
-        createArtifactLeaseV2(parseArtifactV2(endpoint.artifact_json), async () => undefined),
-        { origin: endpoint.origin },
-      );
+    if (endpoint.trust_pem === undefined || !endpoint.trust_pem.startsWith("-----BEGIN CERTIFICATE-----\n")) {
+      throw new Error(`${runtime} ProxyServer peer omitted its private CA trust PEM`);
     }
+    let untrustedSpends = 0;
+    await expect(connect(
+      createArtifactLease(parseArtifact(endpoint.artifact_json), async () => { untrustedSpends += 1; }),
+      { origin: endpoint.origin },
+    )).rejects.toMatchObject({
+      code: "transport_security_failed",
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(untrustedSpends).toBe(0);
+    session = await connect(
+      createArtifactLease(parseArtifact(endpoint.artifact_json), async () => undefined),
+      { origin: endpoint.origin, roots: endpoint.trust_pem },
+    );
     proxyRuntime = createProxyRuntime({
       session,
       externalOrigin: "https://app.example",
@@ -269,7 +252,7 @@ async function runMatrixCell(runtime: Runtime, protocol: Protocol = "v2"): Promi
     session = undefined;
     expect(await processExit(peer), stderr.join("")).toBe(0);
   } catch (error) {
-    throw new Error(`${runtime} ${protocol} ProxyServer matrix failed during ${phase}: ${error instanceof Error ? error.message : String(error)}; handshakes=${JSON.stringify(handshakes)}\n${stderr.join("")}`);
+    throw new Error(`${runtime} ProxyServer matrix failed during ${phase}: ${error instanceof Error ? error.message : String(error)}; handshakes=${JSON.stringify(handshakes)}\n${stderr.join("")}`);
   } finally {
     proxyRuntime?.dispose();
     await session?.close().catch(() => undefined);
@@ -280,14 +263,12 @@ async function runMatrixCell(runtime: Runtime, protocol: Protocol = "v2"): Promi
   }
 }
 
-function spawnPeer(runtime: Runtime, upstream: string, protocol: Protocol): ChildProcessWithoutNullStreams {
+function spawnPeer(runtime: Runtime, upstream: string): ChildProcessWithoutNullStreams {
   if (runtime === "go") {
-    const command = protocol === "v3" ? "./internal/cmd/ts-proxy-peer" : "./internal/cmd/ts-proxy-peer-v2";
-    return spawn("go", ["run", command, "--upstream", upstream], {
+    return spawn("go", ["run", "./internal/cmd/ts-proxy-peer", "--upstream", upstream], {
       cwd: `${repositoryRoot}/flowersec-go`, stdio: ["pipe", "pipe", "pipe"],
     });
   }
-  if (protocol !== "v2") throw new Error(`${runtime} ProxyServer peer does not implement v3`);
   if (runtime === "node-typescript") {
     return spawn(process.execPath, ["--import", "tsx", "src/interop/proxyServerPeer.ts", "--upstream", upstream], {
       cwd: `${repositoryRoot}/flowersec-ts`, stdio: ["pipe", "pipe", "pipe"],

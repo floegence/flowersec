@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v3/internal/defaults"
-	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v3/internal/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v4/internal/defaults"
+	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v4/internal/framing/jsonframe"
 	"github.com/gorilla/websocket"
 )
 

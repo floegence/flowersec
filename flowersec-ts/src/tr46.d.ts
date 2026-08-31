@@ -11,6 +11,7 @@ declare module "tr46" {
 
   const tr46: Readonly<{
     toASCII(domainName: string, options?: Options): string | null;
+    toUnicode(domainName: string, options?: Options): Readonly<{ domain: string; error: boolean }>;
   }>;
 
   export default tr46;

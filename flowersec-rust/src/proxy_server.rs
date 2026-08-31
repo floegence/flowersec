@@ -34,8 +34,8 @@ use url::Url;
 
 use crate::{
     HandlerRegistrationError, IncomingStream, SessionError, SessionHandlers, StreamHandler,
-    StreamHandlerRegistrar, session_handlers::register_stream_handlers, transport_v2::ByteStream,
-    websocket_v2,
+    StreamHandlerRegistrar, session_handlers::register_stream_handlers, transport::ByteStream,
+    websocket_transport,
 };
 
 const HTTP_KIND: &str = "flowersec-proxy/http1";
@@ -199,7 +199,7 @@ impl ProxyServer {
     pub fn new(options: ProxyServerOptions) -> Result<Self, ProxyServerError> {
         let (config, max_concurrent, on_error) = compile_options(options)?;
         if config.upstream.scheme() == "https" {
-            websocket_v2::client_tls(config.upstream_trust_roots_der.clone())
+            websocket_transport::client_tls(config.upstream_trust_roots_der.clone())
                 .map_err(|_| ProxyServerError::InvalidOptions)?;
         }
         Ok(Self {
@@ -979,7 +979,7 @@ async fn send_http_request(
     let io = if inner.config.upstream.scheme() == "https" {
         let server_name = ServerName::try_from(host).map_err(|_| HttpRequestFailure::Dial)?;
         let tls = TlsConnector::from(
-            websocket_v2::client_tls(inner.config.upstream_trust_roots_der.clone())
+            websocket_transport::client_tls(inner.config.upstream_trust_roots_der.clone())
                 .map_err(|_| HttpRequestFailure::Dial)?,
         );
         let connected = tokio::select! {
@@ -1150,7 +1150,7 @@ async fn serve_websocket_with_establishment_timeout(
         let server_name =
             ServerName::try_from(host).map_err(|_| ProxyServerError::OperationFailed)?;
         let tls = TlsConnector::from(
-            websocket_v2::client_tls(inner.config.upstream_trust_roots_der.clone())
+            websocket_transport::client_tls(inner.config.upstream_trust_roots_der.clone())
                 .map_err(|_| ProxyServerError::OperationFailed)?,
         );
         let tls = await_websocket_establishment(
@@ -1834,6 +1834,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::result_large_err)]
     async fn websocket_proxy_relays_frames_and_closes_after_upstream_close() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await

@@ -44,7 +44,7 @@ test("every Rust lock is audited and denied without suppressions", async () => {
   const run = (command, args, options) => {
     calls.push({ command, args, options });
     if (args.join(" ") === "audit --version") return "cargo-audit-audit 0.22.2\n";
-    if (args.join(" ") === "deny --version") return "cargo-deny 0.19.9\n";
+    if (args.join(" ") === "deny --version") return "cargo-deny 0.20.2\n";
     return "";
   };
 
@@ -77,7 +77,7 @@ test("final Rust security checks reuse the preflight database without network ac
   const run = (command, args) => {
     calls.push({ command, args });
     if (args.join(" ") === "audit --version") return "cargo-audit-audit 0.22.2\n";
-    if (args.join(" ") === "deny --version") return "cargo-deny 0.19.9\n";
+    if (args.join(" ") === "deny --version") return "cargo-deny 0.20.2\n";
     return "";
   };
 
@@ -125,11 +125,11 @@ test("non-published Rust roots remain licensed and version their local Flowersec
   assert.match(policy, /^  "NCSA",$/m);
 });
 
-test("Rust native runtime owns carrier trust without implicit platform root stores", () => {
+test("Rust native runtime owns carrier trust policy", () => {
   const manifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
   const readme = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/README.md"), "utf8");
-  const connector = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/connector_v2.rs"), "utf8");
-  const runtime = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/native_runtime_v2.rs"), "utf8");
+  const connector = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/connector_v3.rs"), "utf8");
+  const tls = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/tls_v3.rs"), "utf8");
   const crateRoot = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/lib.rs"), "utf8");
   const fuzzManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/fuzz/Cargo.toml"), "utf8");
 
@@ -144,15 +144,16 @@ test("Rust native runtime owns carrier trust without implicit platform root stor
     manifest,
     /^tokio-tungstenite = \{ version = "[^"]+", default-features = false, features = \["connect"\] \}$/m,
   );
-  assert.match(readme, /CA candidates use platform trust roots by default/u);
-  assert.match(readme, /Pin candidates use\s+only the active leaf-certificate SHA-256 pins/u);
-  assert.match(readme, /never fall back to CA verification/u);
-  assert.match(readme, /No system trust store is selected\s+implicitly outside the explicit CA policy/u);
+  assert.match(readme, /CA candidates use platform or explicit DER trust roots/u);
+  assert.match(readme, /Pin candidates use only\s+the active artifact-bound leaf-certificate SHA-256 pins/u);
+  assert.match(readme, /never fall back to\s+CA verification/u);
+  assert.match(readme, /No system trust store is selected implicitly outside the\s+explicit CA policy/u);
   assert.doesNotMatch(readme, /plaintext direct WebSocket/u);
   assert.doesNotMatch(connector, /impl Default for ConnectorOptions/u);
-  assert.doesNotMatch(connector, /trust_roots_der/u);
-  assert.match(runtime, /pub fn new\(\) -> Self/u);
-  assert.match(runtime, /pub fn with_trust_roots_der\(/u);
+  assert.match(connector, /pub fn new\(\) -> Self/u);
+  assert.match(connector, /pub fn with_trust_roots_der\(/u);
+  assert.match(connector, /NativeTlsPolicyV3::ca_with_platform_roots\(\)/u);
+  assert.match(tls, /rustls_native_certs::load_native_certs\(\)/u);
 });
 
 test("serde_with is absent or patched for GHSA-7gcf-g7xr-8hxj without drifting the published MSRV", async () => {
@@ -173,7 +174,7 @@ test("serde_with is absent or patched for GHSA-7gcf-g7xr-8hxj without drifting t
   const readme = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/README.md"), "utf8");
   assert.match(manifest, /^rust-version = "1\.88"$/m);
   assert.match(makefile, /^\tcd flowersec-rust && rustup run 1\.88\.0 cargo check --all-targets --all-features$/m);
-  assert.match(readme, /targets Rust 1\.88 or newer/);
+  assert.match(readme, /supports Rust 1\.88\s+or newer/);
 
   const releaseCargoRecipes = makefile
     .split("\n")

@@ -17,13 +17,13 @@ use tokio_util::sync::CancellationToken;
 
 use super::*;
 use crate::{
-    ArtifactSpendErrorV3,
+    ArtifactSpendError,
     artifact_v3::{CanonicalCandidateV3, ConnectionPlanV3},
     connector_v3::{
         CandidateFailureV3, CandidatePrepareFutureV3, CandidatePreparerV3,
         connect_v3_with_cancellation_and_preparer,
     },
-    transport_v2::{ByteStream, IncomingStream, RpcPeer, SessionTermination, StreamMetadata},
+    transport::{ByteStream, IncomingStream, RpcPeer, SessionTermination, StreamMetadata},
 };
 
 #[derive(Clone, Debug, Deserialize)]
@@ -141,7 +141,7 @@ impl TrackedLease {
 
     fn new_with_retire_result(
         artifact: ArtifactV3,
-        retire_result: Result<(), ArtifactSpendErrorV3>,
+        retire_result: Result<(), ArtifactSpendError>,
     ) -> Self {
         let terminal = Arc::new(Mutex::new(None));
         let spends = Arc::new(AtomicU64::new(0));
@@ -1956,9 +1956,7 @@ async fn run_lease_cancel_race(scenario: &ScenarioV3) {
     let winner = scenario.input["linearization_winner"]
         .as_str()
         .expect("linearization winner");
-    let status;
-    let acquisitions;
-    match winner {
+    let (status, acquisitions) = match winner {
         "cancellation" => {
             let source = Arc::new(LateVectorSource {
                 lease: Mutex::new(Some(lease.lease.clone())),
@@ -1974,8 +1972,10 @@ async fn run_lease_cancel_race(scenario: &ScenarioV3) {
                 tokio::task::yield_now().await;
             }
             controller.close().await;
-            status = controller.status();
-            acquisitions = source.acquisitions.load(Ordering::SeqCst);
+            (
+                controller.status(),
+                source.acquisitions.load(Ordering::SeqCst),
+            )
         }
         "delivery" => {
             let source = Arc::new(VectorSource::new([primary(&lease)]));
@@ -2001,11 +2001,13 @@ async fn run_lease_cancel_race(scenario: &ScenarioV3) {
             .await
             .expect("delivery wins before cancellation");
             controller.close().await;
-            status = controller.status();
-            acquisitions = source.acquisitions.load(Ordering::SeqCst);
+            (
+                controller.status(),
+                source.acquisitions.load(Ordering::SeqCst),
+            )
         }
         value => panic!("unknown cancellation winner {value}"),
-    }
+    };
     assert_observed(
         scenario,
         observe_counts(status, acquisitions, 0, &metrics, &[&lease], vec![]),
@@ -2516,10 +2518,7 @@ fn assert_clock_vector(scenario: &ScenarioV3) -> (&'static str, Vec<u64>) {
     let mut monotonic = monotonic_start;
     let monotonic_deadline = monotonic.saturating_add(backoff);
     let mut sleeps = Vec::with_capacity(wall_advances.len());
-    for (wall_advance, monotonic_advance) in wall_advances
-        .into_iter()
-        .zip(monotonic_advances.into_iter())
-    {
+    for (wall_advance, monotonic_advance) in wall_advances.into_iter().zip(monotonic_advances) {
         let mut remaining = retry_after.saturating_sub(wall).clamp(0, 1_000);
         let monotonic_remaining = monotonic_deadline.saturating_sub(monotonic);
         if monotonic_remaining > 0 && monotonic_remaining < remaining {
@@ -2592,10 +2591,8 @@ async fn run_multi_trigger(scenario: &ScenarioV3) {
 }
 
 async fn run_retire_cleanup(scenario: &ScenarioV3) {
-    let first = TrackedLease::new_with_retire_result(
-        ca_artifact(),
-        Err(ArtifactSpendErrorV3::CommitFailed),
-    );
+    let first =
+        TrackedLease::new_with_retire_result(ca_artifact(), Err(ArtifactSpendError::CommitFailed));
     let second = TrackedLease::new(ca_artifact());
     let source = Arc::new(VectorSource::new([primary(&first), primary(&second)]));
     let metrics = Arc::new(ConnectorMetrics::default());
