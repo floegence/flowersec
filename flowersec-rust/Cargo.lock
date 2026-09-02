@@ -464,7 +464,7 @@ checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
 name = "flowersec"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "flowersec-native-transport"
-version = "5.0.0"
+version = "5.0.1"
 dependencies = [
  "bytes",
  "quinn",

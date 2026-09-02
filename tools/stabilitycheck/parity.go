@@ -88,6 +88,9 @@ var expectedServerParityEntrypoints = map[string]string{
 }
 
 var expectedPortableServerEntrypoints = map[string]map[string]string{
+	"controlplane_issue_authorize": {
+		"go": "flowersec-go/v5/controlplane",
+	},
 	"server_admission_paths": {
 		"go":         "flowersec.NewAcceptor: WebSocket/raw QUIC/WebTransport direct",
 		"typescript": "@floegence/flowersec-core/node createAcceptor: WebSocket and raw QUIC direct",

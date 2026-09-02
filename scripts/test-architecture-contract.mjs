@@ -23,11 +23,11 @@ const apiManifest = JSON.parse(read("stability/api_contract_manifest.json"));
 const packageJSON = JSON.parse(read("flowersec-ts/package.json"));
 
 assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v5");
-assert.equal(packageJSON.version, "5.0.0");
+assert.equal(packageJSON.version, "5.0.1");
 assert.equal(packageJSON.engines.node, ">=24.20.0");
 assert.deepEqual(packageJSON.bin, { "flowersec-ts-cli": "./dist/cli.js" });
 assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "5");
-assert.match(read("flowersec-rust/Cargo.toml"), /^version = "5\.0\.0"$/m);
+assert.match(read("flowersec-rust/Cargo.toml"), /^version = "5\.0\.1"$/m);
 
 const rustlsFeatures = run("cargo", [
   "tree", "--locked", "--manifest-path", "flowersec-rust/Cargo.toml",
@@ -68,6 +68,11 @@ assert.equal(capabilities.version, 3);
 assert.equal(capabilities.deployment_profiles.application_wire, "flowersec/3");
 assert.equal(capabilities.portable_capabilities.length, 16);
 assert.equal(capabilities.portable_capabilities.some(({ id }) => id.includes("v2")), false);
+const controlPlane = capabilities.portable_capabilities.find(({ id }) => id === "controlplane_issue_authorize");
+assert.ok(controlPlane);
+assert.equal(controlPlane.implementations.go.status, "supported");
+assert.equal(controlPlane.implementations.go.entrypoint, "flowersec-go/v5/controlplane");
+assert.doesNotMatch(JSON.stringify(capabilities), /flowersec-go\/(?:v[1-4]\/)?controlplane/u);
 const proxy = capabilities.portable_capabilities.find(({ id }) => id === "browser_proxy_runtime");
 assert.ok(proxy);
 for (const [language, testID] of [
@@ -159,6 +164,7 @@ for (const relative of productionFiles.stdout.split("\0").filter((item) => item 
 
 assert.doesNotMatch(read("flowersec-go/proxy_server.go"), /func \(server \*ProxyServer\) Register\(/u);
 assert.doesNotMatch(read("flowersec-go/connector.go"), /func \(err \*UnreliableMessageError\) Unwrap\(/u);
+assert.doesNotMatch(read("docs/API_CONTRACT.md"), /UnreliableMessageError[^\n]*unwrap/iu);
 assert.doesNotMatch(read("flowersec-ts/src/v3/security.ts"), /get disposition\(|absoluteUnixMilliseconds/u);
 assert.doesNotMatch(read("flowersec-rust/src/proxy_server.rs"), /pub fn register\(/u);
 assert.doesNotMatch(read("flowersec-rust/src/transport.rs"),

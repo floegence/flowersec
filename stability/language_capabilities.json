@@ -363,7 +363,7 @@
       "implementations": {
         "go": {
           "status": "supported",
-          "entrypoint": "flowersec-go/v3/controlplane",
+          "entrypoint": "flowersec-go/v5/controlplane",
           "test_ids": [
             "server/go-controlplane"
           ]

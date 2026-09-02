@@ -357,6 +357,18 @@ func TestCapabilityManifestRejectsUnverifiableServerClaims(t *testing.T) {
 		}
 	})
 
+	t.Run("control-plane capability rejects a retired Go module path", func(t *testing.T) {
+		copy := cloneCapabilityManifest(t, manifest)
+		capability := portableCapabilityByID(t, &copy, "controlplane_issue_authorize")
+		implementation := capability.Implementations["go"]
+		implementation.Entrypoint = "flowersec-go/v3/controlplane"
+		capability.Implementations["go"] = implementation
+		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
+		if err == nil || !strings.Contains(err.Error(), "production entrypoint") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
 	t.Run("unsupported server capability needs only a stable reason", func(t *testing.T) {
 		copy := cloneCapabilityManifest(t, manifest)
 		capability := portableCapabilityByID(t, &copy, "server_acceptor_session")
