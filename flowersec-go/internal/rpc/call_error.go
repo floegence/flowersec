@@ -1,7 +1,7 @@
 package rpc
 
 import (
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v4/internal/rpcwire"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v5/internal/rpcwire"
 )
 
 // RemoteError is the sanitized application error returned by a remote RPC handler.

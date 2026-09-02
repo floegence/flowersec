@@ -31,9 +31,7 @@
     ],
     "retry": {
       "error_property": "retryDisposition",
-      "deprecated_error_property": "disposition",
-      "retry_after_property": "notBeforeUnixMilliseconds",
-      "deprecated_retry_after_property": "absoluteUnixMilliseconds"
+      "retry_after_property": "notBeforeUnixMilliseconds"
     },
     "unreliable_error_codes": [
       "unavailable",

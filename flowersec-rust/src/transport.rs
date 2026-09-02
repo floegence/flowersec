@@ -193,19 +193,15 @@ pub enum UnreliableMessageError {
     #[error("unreliable messages are unavailable for this session")]
     Unavailable,
     #[error("invalid unreliable message")]
-    InvalidInput,
+    InvalidMessage,
     #[error("unreliable message exceeds the negotiated maximum")]
     TooLarge,
-    #[error("unreliable message expired before it was sent")]
-    Expired,
-    #[error("unreliable message was dropped by the bounded send budget")]
-    DroppedBudget,
     #[error("unreliable message operation was canceled")]
     Canceled,
     #[error("unreliable message channel is closed")]
     Closed,
     #[error("unreliable message operation failed")]
-    Failed,
+    OperationFailed,
 }
 
 /// Portable code set for unreliable-message failures. Dropped sends remain
@@ -237,11 +233,11 @@ impl UnreliableMessageError {
     pub const fn code(self) -> UnreliableMessageErrorCode {
         match self {
             Self::Unavailable => UnreliableMessageErrorCode::Unavailable,
-            Self::InvalidInput | Self::Expired => UnreliableMessageErrorCode::InvalidMessage,
+            Self::InvalidMessage => UnreliableMessageErrorCode::InvalidMessage,
             Self::TooLarge => UnreliableMessageErrorCode::TooLarge,
             Self::Canceled => UnreliableMessageErrorCode::Canceled,
             Self::Closed => UnreliableMessageErrorCode::Closed,
-            Self::DroppedBudget | Self::Failed => UnreliableMessageErrorCode::OperationFailed,
+            Self::OperationFailed => UnreliableMessageErrorCode::OperationFailed,
         }
     }
 
@@ -513,16 +509,14 @@ mod tests {
     use std::sync::Mutex;
 
     #[test]
-    fn unreliable_error_codes_collapse_legacy_variants() {
+    fn unreliable_error_codes_are_exact() {
         let cases = [
             (UnreliableMessageError::Unavailable, "unavailable"),
-            (UnreliableMessageError::InvalidInput, "invalid_message"),
-            (UnreliableMessageError::Expired, "invalid_message"),
+            (UnreliableMessageError::InvalidMessage, "invalid_message"),
             (UnreliableMessageError::TooLarge, "too_large"),
             (UnreliableMessageError::Canceled, "canceled"),
             (UnreliableMessageError::Closed, "closed"),
-            (UnreliableMessageError::DroppedBudget, "operation_failed"),
-            (UnreliableMessageError::Failed, "operation_failed"),
+            (UnreliableMessageError::OperationFailed, "operation_failed"),
         ];
         for (error, expected) in cases {
             assert_eq!(error.as_str(), expected);

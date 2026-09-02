@@ -8,6 +8,8 @@ import {
   type ServiceWorkerControllerGuardRepairOptions,
 } from "./controllerGuard.js";
 import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
+import { ensureServiceWorkerRuntimeRegistered } from "./runtime.js";
+import { registerProxyRuntimeServiceWorkerBridge } from "./serviceWorkerRuntime.js";
 import type { ProxyFetchRequest, ProxyRuntime, ProxyRuntimeLimits } from "./types.js";
 
 const FETCH_MESSAGE = "flowersec-proxy:window_fetch_v2";
@@ -304,6 +306,31 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
   });
 }
 
+export function registerProxyAppWindowWithServiceWorkerRuntime(
+  options: RegisterProxyAppWindowOptions,
+): ProxyAppWindowHandle {
+  const target = options.targetWindow ?? globalThis.window;
+  const serviceWorker = target.navigator?.serviceWorker;
+  if (serviceWorker === undefined) throw new Error("proxy service worker is unavailable");
+  const app = registerProxyAppWindow(options);
+  try {
+    const serviceWorkerBridge = registerProxyRuntimeServiceWorkerBridge(app.runtime, serviceWorker);
+    let disposed = false;
+    return Object.freeze({
+      runtime: app.runtime,
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        serviceWorkerBridge.dispose();
+        app.dispose();
+      },
+    });
+  } catch (error) {
+    app.dispose();
+    throw error;
+  }
+}
+
 export type RegisterProxyControllerWindowOptions = Readonly<{
   runtime: ProxyRuntime;
   allowedOrigins: readonly string[];
@@ -432,6 +459,7 @@ export type ProxyAppServiceWorkerControlOptions = Readonly<{
   repair?: ServiceWorkerControllerGuardRepairOptions;
   monitor?: ServiceWorkerControllerGuardMonitorOptions;
   conflicts?: ServiceWorkerControllerGuardConflictPolicy;
+  runtimeRegistrationToken?: string;
 }>;
 
 export type RegisterProxyAppWindowWithServiceWorkerControlOptions = RegisterProxyAppWindowOptions & Readonly<{
@@ -455,10 +483,28 @@ export async function registerProxyAppWindowWithServiceWorkerControl(
     ...(options.serviceWorker.monitor === undefined ? {} : { monitor: options.serviceWorker.monitor }),
     ...(options.serviceWorker.conflicts === undefined ? {} : { conflicts: options.serviceWorker.conflicts }),
   });
-  await guard.ensure();
-  const app = registerProxyAppWindow(options);
-  return Object.freeze({
-    runtime: app.runtime,
-    dispose: () => { app.dispose(); guard.dispose(); },
-  });
+  let app: ProxyAppWindowHandle | undefined;
+  try {
+    await guard.ensure();
+    app = registerProxyAppWindowWithServiceWorkerRuntime(options);
+    await ensureServiceWorkerRuntimeRegistered({
+      ...(options.serviceWorker.runtimeRegistrationToken === undefined
+        ? {}
+        : { runtimeRegistrationToken: options.serviceWorker.runtimeRegistrationToken }),
+    });
+    let disposed = false;
+    return Object.freeze({
+      runtime: app.runtime,
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        app?.dispose();
+        guard.dispose();
+      },
+    });
+  } catch (error) {
+    app?.dispose();
+    guard.dispose();
+    throw error;
+  }
 }

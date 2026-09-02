@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
 )
 
 // ErrInvalidMetadata reports application stream metadata that cannot be encoded

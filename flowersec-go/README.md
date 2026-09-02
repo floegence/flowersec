@@ -6,7 +6,7 @@ notifications, and reliable byte streams without managing connection details.
 ## Install
 
 ```bash
-go get github.com/floegence/flowersec/flowersec-go/v4
+go get github.com/floegence/flowersec/flowersec-go/v5
 ```
 
 ## Public API
@@ -112,7 +112,7 @@ go httpServer.Serve(listener)
 proxy, err := flowersec.NewProxyServer(flowersec.ProxyServerOptions{
     Upstream: upstreamURL,
 })
-err = proxy.Register(handlers)
+err = proxy.RegisterStreamHandlers(handlers)
 
 streamHandlers, err := flowersec.NewStreamHandlers(flowersec.StreamHandlerOptions{})
 err = proxy.RegisterStreamHandlers(streamHandlers)
@@ -150,7 +150,7 @@ PSK.
 
 ## Server Control Plane
 
-Go service control planes use `github.com/floegence/flowersec/flowersec-go/v4/controlplane` to issue direct artifacts or complementary tunnel pairs and to validate `flowersec-runtime` authorization callbacks. Endpoint sets, issued artifacts, authorization records, runtime requests, and responses are opaque. Artifact and record bytes cross only explicit serialization methods; the caller owns permissions, placement, durable one-time lease state, and upstream selection.
+Go service control planes use `github.com/floegence/flowersec/flowersec-go/v5/controlplane` to issue direct artifacts or complementary tunnel pairs and to validate `flowersec-runtime` authorization callbacks. Endpoint sets, issued artifacts, authorization records, runtime requests, and responses are opaque. Artifact and record bytes cross only explicit serialization methods; the caller owns permissions, placement, durable one-time lease state, and upstream selection.
 
 See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for artifact delivery and authorization-record persistence. The package exposes opaque endpoint, issuance, authorization-record, and runtime callback types.
 

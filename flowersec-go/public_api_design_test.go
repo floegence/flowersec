@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
 )
 
 // compileConnectionFailureLayout intentionally uses the historical two-field

@@ -3,7 +3,7 @@
   "profile": "flowersec/3",
   "source": {
     "producer": "testdata/transport_v3/generate_contract_vectors.mjs",
-    "design_sha256": "b6ac3ac6c619c896d7fc5b6b971b26c2e17f9d9a9ee73cb53005e8cad240a2c5"
+    "design_sha256": "51b38465bfd847270408101560023871847becd6196287027c89bfe7c48cd8cf"
   },
   "constants": {
     "maximum_safe_integer": 9007199254740991,

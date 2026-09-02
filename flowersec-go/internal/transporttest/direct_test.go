@@ -18,12 +18,12 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
-	carrieryamux "github.com/floegence/flowersec/flowersec-go/v4/internal/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
-	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	carrieryamux "github.com/floegence/flowersec/flowersec-go/v5/internal/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
+	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 

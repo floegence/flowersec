@@ -608,7 +608,7 @@ The implementation MUST:
 
 ### 12.4 SDK Major and Deployment Isolation
 
-Flowersec 4.x has one SDK and wire boundary:
+Flowersec 5.x has one SDK and wire boundary:
 
 - the Go module uses the `/v4` module path;
 - the TypeScript package, Rust crate, and Swift package/tag use major version 4;
@@ -1269,7 +1269,7 @@ or AAD fail closed.
 
 ### 8.1 SDK Major and Deployment Isolation
 
-Flowersec 4.x SDKs implement only Transport v3:
+Flowersec 5.x SDKs implement only Transport v3:
 
 - the Go module uses the `/v4` module path;
 - the TypeScript package, Rust crate, and Swift package/tag use major version 4;

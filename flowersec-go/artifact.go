@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
 )
 
 // ErrInvalidArtifact reports an invalid or forged opaque artifact handle.
@@ -91,14 +91,6 @@ func (lease ArtifactLease) claimArtifact() (claimedArtifactLease, bool) {
 	}
 	lease.state.status = artifactLeaseClaimed
 	return claimedArtifactLease{lease: lease}, true
-}
-
-// claimForConnectionController is retained for package-local compatibility
-// with existing one-shot lease tests. New connection paths use claimArtifact
-// so the claimed proof is carried explicitly.
-func (lease ArtifactLease) claimForConnectionController() bool {
-	_, ok := lease.claimArtifact()
-	return ok
 }
 
 func (claimed claimedArtifactLease) valid() bool {

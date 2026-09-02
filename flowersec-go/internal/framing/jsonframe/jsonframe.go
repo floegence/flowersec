@@ -5,8 +5,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/bin"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/bin"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/defaults"
 )
 
 var ErrFrameTooLarge = errors.New("json frame too large")

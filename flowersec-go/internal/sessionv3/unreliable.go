@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
 )
 
 const unreliableSendBudget = 64

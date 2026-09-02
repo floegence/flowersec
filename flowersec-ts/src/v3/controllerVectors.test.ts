@@ -359,7 +359,7 @@ async function runInvalidSourceRetryAfter(scenario: ControllerScenario): Promise
         code: "connection_failed",
         disposition: {
           kind: "retry_after",
-          absoluteUnixMilliseconds: numberInput(scenario, "retry_after_unix_ms"),
+          notBeforeUnixMilliseconds: numberInput(scenario, "retry_after_unix_ms"),
         },
       };
     },
@@ -390,7 +390,7 @@ async function runRetryAfterController(scenario: ControllerScenario): Promise<vo
         code: "connection_failed",
         disposition: {
           kind: "retry_after" as const,
-          absoluteUnixMilliseconds: numberInput(scenario, "retry_after_unix_ms"),
+          notBeforeUnixMilliseconds: numberInput(scenario, "retry_after_unix_ms"),
         },
       };
       return { kind: "lease" as const, lease: tracker.leases[0]!.lease };
@@ -419,7 +419,10 @@ async function runSecurityPriority(scenario: ControllerScenario): Promise<void> 
         failure: transportFailure(result),
       }));
       const aggregate = aggregateCandidateFailuresV3(failures, false);
-      expect(aggregate).toMatchObject({ code: scenario.expected.public_error, disposition: { kind: "terminal" } });
+      expect(aggregate).toMatchObject({
+        code: scenario.expected.public_error,
+        retryDisposition: { kind: "terminal" },
+      });
       return { kind: "candidate_failures", failures };
     }, controllerOptions(1));
     await finishControllerScenario(controller, scenario, tracker);
@@ -533,7 +536,7 @@ async function runClockBoundary(scenario: ControllerScenario): Promise<void> {
   const abort = new AbortController();
   const waiting = wait.wait({
     kind: "retry_after",
-    absoluteUnixMilliseconds: numberInput(scenario, "retry_after_unix_ms"),
+    notBeforeUnixMilliseconds: numberInput(scenario, "retry_after_unix_ms"),
   }, numberInput(scenario, "failure_ordinal"), abort.signal);
   if (scenario.expected.final_state === "waiting") {
     await clock.waitForSleepCount(scenario.expected.retry_delays_ms.length);

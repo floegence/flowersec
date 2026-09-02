@@ -78,9 +78,7 @@ describe("transport v3 top-level controller contract vectors", () => {
       ],
       retry: {
         error_property: "retryDisposition",
-        deprecated_error_property: "disposition",
         retry_after_property: "notBeforeUnixMilliseconds",
-        deprecated_retry_after_property: "absoluteUnixMilliseconds",
       },
       unreliable_error_codes: [
         "unavailable", "invalid_message", "too_large", "canceled", "closed", "operation_failed",
@@ -145,7 +143,7 @@ describe("transport v3 top-level controller contract vectors", () => {
 
       const projected = projectTransportFailureV3(failure, candidate.tls.mode);
       const projectionRetryable = code === "expired_artifact" || code === "connection_failed";
-      expect(projected.disposition.kind, key).toBe(projectionRetryable ? "retryable" : "terminal");
+      expect(projected.retryDisposition.kind, key).toBe(projectionRetryable ? "retryable" : "terminal");
     }
     expect(seen).toEqual(new Set(expectedActions.keys()));
   });
@@ -155,26 +153,24 @@ describe("transport v3 top-level controller contract vectors", () => {
     for (const value of fixture.retry_after.valid) {
       expect(validateRetryDispositionV3({
         kind: "retry_after",
-        absoluteUnixMilliseconds: value,
+        notBeforeUnixMilliseconds: value,
       })).toEqual({
         kind: "retry_after",
         notBeforeUnixMilliseconds: value,
-        absoluteUnixMilliseconds: value,
       });
     }
     for (const value of fixture.retry_after.invalid) {
       expect(() => validateRetryDispositionV3({
         kind: "retry_after",
-        absoluteUnixMilliseconds: value as number,
+        notBeforeUnixMilliseconds: value as number,
       })).toThrow();
     }
     expect(aggregateRetryDispositionsV3(fixture.retry_after.valid.map((value) => ({
       kind: "retry_after" as const,
-      absoluteUnixMilliseconds: value,
+      notBeforeUnixMilliseconds: value,
     })))).toEqual({
       kind: "retry_after",
       notBeforeUnixMilliseconds: 253_402_300_799_999,
-      absoluteUnixMilliseconds: 253_402_300_799_999,
     });
 
     expect(fixture.lease_state_machine).toEqual({

@@ -21,6 +21,7 @@ export type {
 export {
   registerProxyAppWindow,
   registerProxyAppWindowWithServiceWorkerControl,
+  registerProxyAppWindowWithServiceWorkerRuntime,
   registerProxyControllerWindow,
 } from "./windowBridge.js";
 export type {

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/perfreport"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/perfreport"
 )
 
 const testSourceSHA = "0123456789abcdef0123456789abcdef01234567"

@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
-	carrierlife "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/internal/lifecycle"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	carrierlife "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/internal/lifecycle"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/quicbase"
 	quic "github.com/quic-go/quic-go"
 )
 

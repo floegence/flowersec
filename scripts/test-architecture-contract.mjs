@@ -22,12 +22,12 @@ const capabilities = JSON.parse(read("stability/language_capabilities.json"));
 const apiManifest = JSON.parse(read("stability/api_contract_manifest.json"));
 const packageJSON = JSON.parse(read("flowersec-ts/package.json"));
 
-assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v4");
-assert.equal(packageJSON.version, "4.0.0");
+assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v5");
+assert.equal(packageJSON.version, "5.0.0");
 assert.equal(packageJSON.engines.node, ">=24.20.0");
 assert.deepEqual(packageJSON.bin, { "flowersec-ts-cli": "./dist/cli.js" });
-assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "4");
-assert.match(read("flowersec-rust/Cargo.toml"), /^version = "4\.0\.0"$/m);
+assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "5");
+assert.match(read("flowersec-rust/Cargo.toml"), /^version = "5\.0\.0"$/m);
 
 const rustlsFeatures = run("cargo", [
   "tree", "--locked", "--manifest-path", "flowersec-rust/Cargo.toml",
@@ -152,6 +152,20 @@ for (const relative of productionFiles.stdout.split("\0").filter((item) => item 
   assert.doesNotMatch(source,
     /(?:export|public|pub)\s+(?:type\s+|class\s+|struct\s+|enum\s+|func\s+|fn\s+|const\s+)?\w*V2\b/u,
     `${relative} exposes a retired V2 symbol`);
+  assert.doesNotMatch(source,
+    /SessionUnreliable(?:Unavailable|TooLarge|Dropped)|LegacyUnreliableSessionErrorCode|absoluteUnixMilliseconds/u,
+    `${relative} contains a removed Flowersec compatibility API`);
 }
 
-process.stdout.write("Flowersec 4 architecture contract is internally consistent\n");
+assert.doesNotMatch(read("flowersec-go/proxy_server.go"), /func \(server \*ProxyServer\) Register\(/u);
+assert.doesNotMatch(read("flowersec-go/connector.go"), /func \(err \*UnreliableMessageError\) Unwrap\(/u);
+assert.doesNotMatch(read("flowersec-ts/src/v3/security.ts"), /get disposition\(|absoluteUnixMilliseconds/u);
+assert.doesNotMatch(read("flowersec-rust/src/proxy_server.rs"), /pub fn register\(/u);
+assert.doesNotMatch(read("flowersec-rust/src/transport.rs"),
+  /UnreliableMessageError::(?:InvalidInput|Expired|DroppedBudget|Failed)/u);
+const proxyPublicEntrypoint = read("flowersec-ts/src/proxy/index.ts");
+assert.match(proxyPublicEntrypoint, /registerProxyAppWindowWithServiceWorkerRuntime/u);
+assert.doesNotMatch(proxyPublicEntrypoint,
+  /RuntimeFetchMessage|parseRuntimeRequest|flowersec-proxy:fetch|response_flow_control|external_origin/u);
+
+process.stdout.write("Flowersec 5 architecture contract is internally consistent\n");

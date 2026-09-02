@@ -16,13 +16,13 @@ import (
 	"strings"
 	"testing"
 
-	artifactv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/quicbase"
-	rawquicv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/rawquicv3"
-	websocketv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/websocketv3"
-	webtransportv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/webtransportv3"
-	internalhkdf "github.com/floegence/flowersec/flowersec-go/v4/internal/hkdf"
-	runtimev3 "github.com/floegence/flowersec/flowersec-go/v4/internal/runtimev3"
+	artifactv3 "github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/quicbase"
+	rawquicv3 "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/rawquicv3"
+	websocketv3 "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/websocketv3"
+	webtransportv3 "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/webtransportv3"
+	internalhkdf "github.com/floegence/flowersec/flowersec-go/v5/internal/hkdf"
+	runtimev3 "github.com/floegence/flowersec/flowersec-go/v5/internal/runtimev3"
 	gorillaws "github.com/gorilla/websocket"
 )
 

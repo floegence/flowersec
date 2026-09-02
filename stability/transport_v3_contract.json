@@ -3,7 +3,7 @@
   "status": "final",
   "design": {
     "version": "3.0.0",
-    "sha256": "b6ac3ac6c619c896d7fc5b6b971b26c2e17f9d9a9ee73cb53005e8cad240a2c5",
+    "sha256": "51b38465bfd847270408101560023871847becd6196287027c89bfe7c48cd8cf",
     "source_path": "docs/TRANSPORT_V3_DESIGN.md",
     "traceability": [
       {"clause": "3.1", "title": "Version, profile, path, and routing identifiers", "source": ["flowersec-go/internal/artifactv3", "flowersec-ts/src/v3/artifact.ts", "flowersec-rust/src/artifact_v3.rs", "flowersec-swift/Sources/Flowersec/TransportV3.swift"], "tests": ["flowersec-go/internal/artifactv3/vectors_test.go", "flowersec-ts/src/v3/artifact.test.ts", "flowersec-rust/src/artifact_v3.rs", "flowersec-swift/Tests/FlowersecTests/TransportV3Tests.swift"], "docs": ["docs/TRANSPORT_V3_ARCHITECTURE.md", "docs/TRANSPORT_V3_WIRE.md"], "registry_vector": ["profiles", "routes", "wire_fixtures[id=version_isolation]"]},

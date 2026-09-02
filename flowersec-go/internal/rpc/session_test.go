@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/framing/jsonframe"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v4/internal/rpcwire"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v5/internal/rpcwire"
 )
 
 func TestRPC_NotificationAndRequest(t *testing.T) {

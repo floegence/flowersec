@@ -14,6 +14,7 @@ import {
   installWebSocketPatch,
   registerProxyAppWindow,
   registerProxyAppWindowWithServiceWorkerControl,
+  registerProxyAppWindowWithServiceWorkerRuntime,
   registerProxyControllerWindow,
   registerServiceWorkerAndEnsureControl,
   type ProxyRuntime,
@@ -35,6 +36,7 @@ describe("proxy v2 public contract", () => {
     expect(installWebSocketPatch).toBeTypeOf("function");
     expect(registerProxyAppWindow).toBeTypeOf("function");
     expect(registerProxyAppWindowWithServiceWorkerControl).toBeTypeOf("function");
+    expect(registerProxyAppWindowWithServiceWorkerRuntime).toBeTypeOf("function");
     expect(registerProxyControllerWindow).toBeTypeOf("function");
     expect(registerServiceWorkerAndEnsureControl).toBeTypeOf("function");
   });
@@ -60,6 +62,19 @@ describe("proxy v2 public contract", () => {
       const source = fs.readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
       expect(source).not.toContain("chunk_credit_v1");
       expect(source).not.toContain('"flowersec-proxy:window_fetch"');
+    }
+  });
+
+  it("keeps the Service Worker message protocol out of the public proxy entrypoint", () => {
+    const source = fs.readFileSync(fileURLToPath(new URL("index.ts", import.meta.url)), "utf8");
+    for (const token of [
+      "RuntimeFetchMessage",
+      "parseRuntimeRequest",
+      "flowersec-proxy:fetch",
+      "response_flow_control",
+      "external_origin",
+    ]) {
+      expect(source).not.toContain(token);
     }
   });
 });

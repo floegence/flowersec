@@ -45,7 +45,6 @@ export type ProxyFetchRequest = Readonly<{
   path: string;
   headers: readonly ProxyHeader[];
   externalOrigin?: string;
-  responseFlowControl?: "chunk_credit_v2";
   body?: ArrayBuffer;
 }>;
 

@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/defaults"
 )
 
 var (

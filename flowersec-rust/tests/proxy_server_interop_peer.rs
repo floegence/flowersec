@@ -72,7 +72,7 @@ async fn browser_typescript_proxy_runtime_uses_rust_proxy_server() {
     let mut handlers =
         SessionHandlers::new(SessionHandlerOptions::default()).expect("create session handlers");
     proxy
-        .register(&mut handlers)
+        .register_stream_handlers(&mut handlers)
         .expect("register proxy handlers");
 
     println!(

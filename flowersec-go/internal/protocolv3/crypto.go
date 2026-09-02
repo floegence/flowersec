@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 
-	internalhkdf "github.com/floegence/flowersec/flowersec-go/v4/internal/hkdf"
+	internalhkdf "github.com/floegence/flowersec/flowersec-go/v5/internal/hkdf"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 

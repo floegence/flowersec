@@ -5,6 +5,7 @@ import type { ProxyFetchRequest, ProxyRuntime } from "./types.js";
 import {
   MessagePortByteStream,
   registerProxyAppWindow,
+  registerProxyAppWindowWithServiceWorkerRuntime,
   registerProxyControllerWindow,
 } from "./windowBridge.js";
 
@@ -12,6 +13,8 @@ class TestWindow extends EventTarget {
   opener: Window | null = null;
   parent: Window = this as unknown as Window;
 }
+
+class TestServiceWorkerContainer extends EventTarget {}
 
 class BridgeTarget {
   constructor(
@@ -174,6 +177,79 @@ describe("proxy controller/app window bridge", () => {
 
     app.dispose();
     controller.dispose();
+  });
+
+  it("composes the private Service Worker runtime bridge and disposes it idempotently", async () => {
+    const appWindow = new TestWindow();
+    const serviceWorker = new TestServiceWorkerContainer();
+    Object.defineProperty(appWindow, "navigator", { value: { serviceWorker } });
+    const forwarded: unknown[] = [];
+    const controllerWindow = {
+      postMessage(data: unknown): void { forwarded.push(data); },
+    } as unknown as Window;
+    const app = registerProxyAppWindowWithServiceWorkerRuntime({
+      controllerOrigin: "https://controller.example",
+      controllerWindow,
+      targetWindow: appWindow as unknown as Window,
+      capabilityNonce: "capability",
+    });
+    const channel = new MessageChannel();
+    const event = new MessageEvent("message", {
+      data: {
+        type: "flowersec-proxy:fetch",
+        req: {
+          id: "request",
+          method: "GET",
+          path: "/api",
+          headers: [],
+          response_flow_control: "chunk_credit_v2",
+        },
+      },
+      ports: [channel.port1],
+    });
+    serviceWorker.dispatchEvent(event);
+    expect(forwarded).toHaveLength(1);
+
+    app.dispose();
+    app.dispose();
+    serviceWorker.dispatchEvent(event);
+    expect(forwarded).toHaveLength(1);
+    channel.port2.close();
+  });
+
+  it("fails closed on malformed private Service Worker messages and rolls back partial setup", async () => {
+    const appWindow = new TestWindow();
+    const serviceWorker = new TestServiceWorkerContainer();
+    Object.defineProperty(appWindow, "navigator", { value: { serviceWorker } });
+    const app = registerProxyAppWindowWithServiceWorkerRuntime({
+      controllerOrigin: "https://controller.example",
+      controllerWindow: { postMessage() {} } as unknown as Window,
+      targetWindow: appWindow as unknown as Window,
+    });
+    const channel = new MessageChannel();
+    serviceWorker.dispatchEvent(new MessageEvent("message", {
+      data: { type: "flowersec-proxy:fetch", req: { id: 7 } },
+      ports: [channel.port1],
+    }));
+    await expect(within(nextMessage(channel.port2))).resolves.toMatchObject({
+      type: "flowersec-proxy:response_error",
+      status: 400,
+      code: "invalid_request",
+    });
+    app.dispose();
+    channel.port2.close();
+
+    const failingWindow = new TestWindow();
+    const failingWorker = {
+      addEventListener(): never { throw new Error("listener rejected"); },
+      removeEventListener() {},
+    };
+    Object.defineProperty(failingWindow, "navigator", { value: { serviceWorker: failingWorker } });
+    expect(() => registerProxyAppWindowWithServiceWorkerRuntime({
+      controllerOrigin: "https://controller.example",
+      controllerWindow: { postMessage() {} } as unknown as Window,
+      targetWindow: failingWindow as unknown as Window,
+    })).toThrow("listener rejected");
   });
 
   it("fails closed when the inbound stream queue exceeds its byte budget", async () => {

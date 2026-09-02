@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/transporttest/tunnelworkload"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest/tunnelworkload"
 )
 
 func TestBrowserCapacityWorkerCommandPreservesCgroupMountNamespace(t *testing.T) {

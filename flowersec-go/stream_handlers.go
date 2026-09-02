@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 
-	internalprotocolv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
+	internalprotocolv3 "github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
 )
 
 // StreamHandler processes one accepted application stream. A non-nil error

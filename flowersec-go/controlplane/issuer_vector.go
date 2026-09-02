@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/issuervector"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/issuervector"
 )
 
 type issuerAdmissionVector struct {

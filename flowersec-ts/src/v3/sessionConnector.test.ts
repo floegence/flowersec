@@ -143,7 +143,7 @@ describe("transport v3 session connector", () => {
       });
       const rejected = expect(connecting).rejects.toMatchObject({
         code: "connection_failed",
-        disposition: { kind: "retryable" },
+        retryDisposition: { kind: "retryable" },
       });
 
       await vi.advanceTimersByTimeAsync(SDK_DEFAULTS.transport.connectTimeoutMs);
@@ -262,7 +262,7 @@ describe("transport v3 session connector", () => {
       });
       const rejected = expect(connecting).rejects.toMatchObject({
         code: "connection_failed",
-        disposition: { kind: "retryable" },
+        retryDisposition: { kind: "retryable" },
       });
 
       await vi.advanceTimersByTimeAsync(0);
@@ -306,7 +306,7 @@ describe("transport v3 session connector", () => {
       dial,
     }, controller.signal)).rejects.toMatchObject({
       code: "connection_failed",
-      disposition: { kind: "terminal" },
+      retryDisposition: { kind: "terminal" },
     });
 
     expect(dial).not.toHaveBeenCalled();
@@ -343,7 +343,7 @@ describe("transport v3 session connector", () => {
     controller.abort(new Error("caller canceled"));
     await expect(connecting).rejects.toMatchObject({
       code: "connection_failed",
-      disposition: { kind: "terminal" },
+      retryDisposition: { kind: "terminal" },
     });
 
     expect(spend).not.toHaveBeenCalled();
@@ -385,7 +385,7 @@ describe("transport v3 session connector", () => {
       connectTimeoutMs: 0,
     })).rejects.toMatchObject({
       code: "artifact_invalid",
-      disposition: { kind: "terminal" },
+      retryDisposition: { kind: "terminal" },
     });
 
     expect(spend).not.toHaveBeenCalled();
@@ -440,7 +440,7 @@ describe("transport v3 session connector", () => {
       }),
     })).rejects.toMatchObject({
       code: "connection_failed",
-      disposition: { kind: "retryable" },
+      retryDisposition: { kind: "retryable" },
     });
 
     expect(spend).toHaveBeenCalledOnce();
@@ -475,7 +475,7 @@ describe("transport v3 session connector", () => {
       }),
     })).rejects.toMatchObject({
       code: "connection_failed",
-      disposition: { kind: "terminal" },
+      retryDisposition: { kind: "terminal" },
     });
 
     expect(spend).toHaveBeenCalledOnce();
@@ -512,7 +512,7 @@ describe("transport v3 session connector", () => {
       }),
     })).rejects.toMatchObject({
       code: "connection_failed",
-      disposition: { kind: "retryable" },
+      retryDisposition: { kind: "retryable" },
     });
 
     expect(spend).toHaveBeenCalledOnce();

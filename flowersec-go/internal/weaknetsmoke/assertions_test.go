@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/weaknet"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/weaknet"
 )
 
 func TestCounterAssertionsValidateExactCountersAndRelations(t *testing.T) {

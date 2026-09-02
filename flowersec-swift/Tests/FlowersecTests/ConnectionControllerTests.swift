@@ -94,9 +94,7 @@ final class ConnectionControllerTests: XCTestCase {
       api["retry"] as? [String: String],
       [
         "error_property": "retryDisposition",
-        "deprecated_error_property": "disposition",
         "retry_after_property": "notBeforeUnixMilliseconds",
-        "deprecated_retry_after_property": "absoluteUnixMilliseconds",
       ])
     let diagnostic = try XCTUnwrap(api["connection_diagnostic"] as? [String: Any])
     XCTAssertEqual(

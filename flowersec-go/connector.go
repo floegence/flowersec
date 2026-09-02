@@ -10,15 +10,15 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/candidatev3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
-	sessionv3 "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/candidatev3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
+	sessionv3 "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
 )
 
 var (
@@ -94,11 +94,8 @@ const (
 func (code UnreliableMessageErrorCode) String() string { return string(code) }
 
 // UnreliableMessageError is a stable, redacted unreliable-message failure.
-// Unwrap preserves compatibility with the SessionError returned by Flowersec
-// 3.0 while new code should inspect Code.
 type UnreliableMessageError struct {
-	code   UnreliableMessageErrorCode
-	legacy *SessionError
+	code UnreliableMessageErrorCode
 }
 
 func (err *UnreliableMessageError) Error() string {
@@ -106,13 +103,6 @@ func (err *UnreliableMessageError) Error() string {
 		return "<nil>"
 	}
 	return "Flowersec unreliable message failed (code=" + string(err.Code()) + ")"
-}
-
-func (err *UnreliableMessageError) Unwrap() error {
-	if err == nil {
-		return nil
-	}
-	return err.legacy
 }
 
 func (err *UnreliableMessageError) Code() UnreliableMessageErrorCode {
@@ -233,19 +223,16 @@ func (err *ConnectError) Code() ConnectErrorCode {
 type SessionErrorCode string
 
 const (
-	SessionCanceled              SessionErrorCode = "canceled"
-	SessionTimeout               SessionErrorCode = "timeout"
-	SessionClosed                SessionErrorCode = "closed"
-	SessionGoingAway             SessionErrorCode = "going_away"
-	SessionResourceExhausted     SessionErrorCode = "resource_exhausted"
-	SessionStreamRejected        SessionErrorCode = "stream_rejected"
-	SessionStreamReset           SessionErrorCode = "stream_reset"
-	SessionRekeyFailed           SessionErrorCode = "rekey_failed"
-	SessionLivenessFailed        SessionErrorCode = "liveness_failed"
-	SessionUnreliableUnavailable SessionErrorCode = "unreliable_unavailable"
-	SessionUnreliableTooLarge    SessionErrorCode = "unreliable_too_large"
-	SessionUnreliableDropped     SessionErrorCode = "unreliable_dropped"
-	SessionOperationFailed       SessionErrorCode = "operation_failed"
+	SessionCanceled          SessionErrorCode = "canceled"
+	SessionTimeout           SessionErrorCode = "timeout"
+	SessionClosed            SessionErrorCode = "closed"
+	SessionGoingAway         SessionErrorCode = "going_away"
+	SessionResourceExhausted SessionErrorCode = "resource_exhausted"
+	SessionStreamRejected    SessionErrorCode = "stream_rejected"
+	SessionStreamReset       SessionErrorCode = "stream_reset"
+	SessionRekeyFailed       SessionErrorCode = "rekey_failed"
+	SessionLivenessFailed    SessionErrorCode = "liveness_failed"
+	SessionOperationFailed   SessionErrorCode = "operation_failed"
 )
 
 // SessionError contains no carrier, wire, key, credential, or peer detail.
@@ -592,7 +579,6 @@ func redactNilUnreliableMessageError(err error) error {
 }
 
 func redactUnreliableMessageError(err error) *UnreliableMessageError {
-	legacy := redactSessionError(err)
 	code := UnreliableMessageOperationFailed
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -606,7 +592,7 @@ func redactUnreliableMessageError(err error) *UnreliableMessageError {
 	case errors.Is(err, sessionv3.ErrUnreliableMessageTooLarge):
 		code = UnreliableMessageTooLarge
 	}
-	return &UnreliableMessageError{code: code, legacy: legacy}
+	return &UnreliableMessageError{code: code}
 }
 
 func redactRPCError(err error) error {
@@ -643,12 +629,6 @@ func redactSessionError(err error) *SessionError {
 		code = SessionRekeyFailed
 	case errors.Is(err, sessionv3.ErrLivenessProbe):
 		code = SessionLivenessFailed
-	case errors.Is(err, sessionv3.ErrUnreliableUnavailable):
-		code = SessionUnreliableUnavailable
-	case errors.Is(err, sessionv3.ErrUnreliableMessageTooLarge):
-		code = SessionUnreliableTooLarge
-	case errors.Is(err, sessionv3.ErrUnreliableDropped):
-		code = SessionUnreliableDropped
 	}
 	return &SessionError{code: code}
 }

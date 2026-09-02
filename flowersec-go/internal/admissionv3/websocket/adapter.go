@@ -9,9 +9,9 @@ import (
 	"net"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/websocketv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 

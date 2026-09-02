@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
 )
 
 func TestPrivateCAPolicyCompletesRealTLSHandshake(t *testing.T) {

@@ -13,8 +13,8 @@ import (
 	"os"
 	"time"
 
-	flowersession "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/transporttest"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest"
 )
 
 type endpoint struct {

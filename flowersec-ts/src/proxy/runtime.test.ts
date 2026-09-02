@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { u32be } from "../utils/bin.js";
 import type { ByteStream, Session, StreamOpenOptions } from "../public/contract.js";
 import { createProxyRuntime } from "./runtime.js";
+import { registerProxyRuntimeServiceWorkerBridge } from "./serviceWorkerRuntime.js";
 
 function concat(chunks: readonly Uint8Array[]): Uint8Array {
   const output = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
@@ -183,12 +184,24 @@ describe("Session proxy runtime", () => {
       u32be(0),
     ]);
     const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxChunkBytes: 8, maxBodyBytes: 64 });
+    const serviceWorker = new EventTarget();
+    const bridge = registerProxyRuntimeServiceWorkerBridge(
+      runtime,
+      serviceWorker as ServiceWorkerContainer,
+    );
     const channel = new MessageChannel();
     channel.port2.start();
     const metadata = nextPortMessage(channel.port2);
-    runtime.dispatchFetch({
-      id: "credit", method: "GET", path: "/stream", headers: [], responseFlowControl: "chunk_credit_v2",
-    }, channel.port1);
+    serviceWorker.dispatchEvent(new MessageEvent("message", {
+      data: {
+        type: "flowersec-proxy:fetch",
+        req: {
+          id: "credit", method: "GET", path: "/stream", headers: [],
+          response_flow_control: "chunk_credit_v2",
+        },
+      },
+      ports: [channel.port1],
+    }));
     await expect(metadata).resolves.toMatchObject({ type: "flowersec-proxy:response_meta", status: 200 });
     await eventLoopTurn();
     expect(stream.readCalls).toBe(1);
@@ -206,6 +219,7 @@ describe("Session proxy runtime", () => {
     });
     expect(stream.resetCalled).toBe(true);
     channel.port2.close();
+    bridge.dispose();
     runtime.dispose();
   });
 

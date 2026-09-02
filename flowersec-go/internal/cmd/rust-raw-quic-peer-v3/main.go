@@ -14,14 +14,14 @@ import (
 	"os"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/rawquicv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v4/internal/rpcwire"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/rawquicv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v5/internal/rpcwire"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
 )
 
 const testCertDERBase64 = "MIIBjzCCAUGgAwIBAgIUW8hQEpQsUJN9a6qqF2g6hsNpSm8wBQYDK2VwMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAeFw0yNjA3MjAxOTAxMjFaFw0zNjA3MTcxOTAxMjFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAqMAUGAytlcAMhAAihki/Jec+1EaC6E6PsSxjMYFAazrgkNiUIlbj/+A/0o4GkMIGhMB0GA1UdDgQWBBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAfBgNVHSMEGDAWgBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwBQYDK2VwA0EArZng3XitiH2E1pW/NTxQvEOBXJYpYE8coQmLV4yTjfI43CWHMG6lIrwk/so67oe6Z2R4iHGjUm3Tuy50Fl8hBw=="

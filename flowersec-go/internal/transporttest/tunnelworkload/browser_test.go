@@ -17,12 +17,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/candidatev3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/connectv3"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/candidatev3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/connectv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest"
 )
 
 func TestBrowserTunnelTopologiesUseProductionWebTransportBrokerPath(t *testing.T) {

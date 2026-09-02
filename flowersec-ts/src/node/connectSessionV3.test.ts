@@ -25,7 +25,7 @@ describe("Node v3 session facade", () => {
     })).toThrow(expect.objectContaining({
       name: "ConnectError",
       code: "artifact_invalid",
-      disposition: { kind: "terminal" },
+      retryDisposition: { kind: "terminal" },
     }));
   });
 });

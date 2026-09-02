@@ -6,9 +6,9 @@ import (
 	"io"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
 )
 
 var (

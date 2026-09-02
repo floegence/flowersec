@@ -39,7 +39,7 @@ try {
     "",
     "go 1.27.0",
     "",
-    `require github.com/floegence/flowersec/flowersec-go/v4 v${version}`,
+    `require github.com/floegence/flowersec/flowersec-go/v5 v${version}`,
     "",
   ].join("\n"));
   const goEnvironment = { ...process.env, GOWORK: "off", GOTOOLCHAIN: "local" };

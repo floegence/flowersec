@@ -133,33 +133,25 @@ describe("transport v3 controller, lease, and retry semantics", () => {
       expect(controllerBackoffMillisecondsV3(vector.consecutive_failure)).toBe(vector.delay_ms);
     }
     for (const value of controllerFixture.retry_after.valid) {
-      expect(validateRetryDispositionV3({ kind: "retry_after", absoluteUnixMilliseconds: value }))
-        .toEqual({
-          kind: "retry_after",
-          notBeforeUnixMilliseconds: value,
-          absoluteUnixMilliseconds: value,
-        });
       expect(validateRetryDispositionV3({ kind: "retry_after", notBeforeUnixMilliseconds: value }))
         .toEqual({
           kind: "retry_after",
           notBeforeUnixMilliseconds: value,
-          absoluteUnixMilliseconds: value,
         });
     }
     for (const value of controllerFixture.retry_after.invalid) {
       expect(() => validateRetryDispositionV3({
         kind: "retry_after",
-        absoluteUnixMilliseconds: value as number,
+        notBeforeUnixMilliseconds: value as number,
       })).toThrowError();
     }
     expect(aggregateRetryDispositionsV3([
       { kind: "retryable" },
-      { kind: "retry_after", absoluteUnixMilliseconds: 4_000 },
-      { kind: "retry_after", absoluteUnixMilliseconds: 5_000 },
+      { kind: "retry_after", notBeforeUnixMilliseconds: 4_000 },
+      { kind: "retry_after", notBeforeUnixMilliseconds: 5_000 },
     ])).toEqual({
       kind: "retry_after",
       notBeforeUnixMilliseconds: 5_000,
-      absoluteUnixMilliseconds: 5_000,
     });
   });
 
@@ -196,7 +188,7 @@ describe("transport v3 controller, lease, and retry semantics", () => {
     for (const failures of [entries, [...entries].reverse(), [entries[1]!, entries[2]!, entries[0]!]]) {
       expect(aggregateCandidateFailuresV3(failures, false)).toMatchObject({
         code: "transport_security_failed",
-        disposition: { kind: "terminal" },
+        retryDisposition: { kind: "terminal" },
       });
     }
     expect(aggregateCandidateFailuresV3(entries, true)).toBe("policy_refresh");
@@ -207,7 +199,7 @@ describe("transport v3 controller, lease, and retry semantics", () => {
     expect(aggregateCandidateFailuresV3([{ candidate: pinA, failure }], true))
       .toMatchObject({
         code: "transport_security_failed",
-        disposition: { kind: "terminal" },
+        retryDisposition: { kind: "terminal" },
       });
     const cycle = new ControllerCycleStateV3();
     expect(blockPolicyRefreshTriggersV3("direct", [{ candidate: pinA, failure }], cycle))
@@ -237,7 +229,7 @@ describe("transport v3 controller, lease, and retry semantics", () => {
     const clock = new FakeClock(1_000, 0);
     const retry = new ControllerRetryWaitV3(clock);
     const signal = new AbortController();
-    const waiting = retry.wait({ kind: "retry_after", absoluteUnixMilliseconds: 5_000 }, 1, signal.signal);
+    const waiting = retry.wait({ kind: "retry_after", notBeforeUnixMilliseconds: 5_000 }, 1, signal.signal);
     await clock.nextSleep();
     expect(retry.retryNow()).toBe(false);
     clock.advance(1_000, 250);

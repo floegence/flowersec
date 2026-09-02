@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
-	session "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
+	session "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
 )
 
 func mustParseInternalFixtureArtifact(t *testing.T) Artifact {
@@ -53,7 +53,7 @@ func TestArtifactLeaseAuthorizesExactlyOneConcurrentSpend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !lease.claimForConnectionController() {
+	if _, ok := lease.claimArtifact(); !ok {
 		t.Fatal("lease claim failed")
 	}
 	first := make(chan error, 1)
@@ -84,7 +84,7 @@ func TestArtifactLeaseBurnsAfterSpendFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !lease.claimForConnectionController() {
+	if _, ok := lease.claimArtifact(); !ok {
 		t.Fatal("lease claim failed")
 	}
 	if err := lease.commitSpend(context.Background()); err == nil {
@@ -110,7 +110,7 @@ func TestArtifactLeaseBurnsAfterSpendCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !lease.claimForConnectionController() {
+	if _, ok := lease.claimArtifact(); !ok {
 		t.Fatal("lease claim failed")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -139,7 +139,7 @@ func TestArtifactLeaseBurnsWhenSpendCallbackOutlivesCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !lease.claimForConnectionController() {
+	if _, ok := lease.claimArtifact(); !ok {
 		t.Fatal("lease claim failed")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -233,7 +233,7 @@ func TestArtifactLeaseBurnsAfterSpendCallbackPanic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !lease.claimForConnectionController() {
+	if _, ok := lease.claimArtifact(); !ok {
 		t.Fatal("lease claim failed")
 	}
 	if err := lease.commitSpend(context.Background()); err == nil {
@@ -400,13 +400,9 @@ func TestUnreliableUnavailableProjectsStablePublicCode(t *testing.T) {
 	if !errors.As(err, &projected) || projected.Code() != UnreliableMessageUnavailable {
 		t.Fatalf("UnreliableMessages error = %#v, want %q", err, UnreliableMessageUnavailable)
 	}
-	var legacy *SessionError
-	if !errors.As(err, &legacy) || legacy.Code() != SessionUnreliableUnavailable {
-		t.Fatalf("legacy UnreliableMessages error = %#v, want %q", err, SessionUnreliableUnavailable)
-	}
 }
 
-func TestUnreliableMessageErrorCodeSetAndLegacyMatching(t *testing.T) {
+func TestUnreliableMessageErrorCodeSet(t *testing.T) {
 	tests := []struct {
 		name string
 		err  error
@@ -427,10 +423,6 @@ func TestUnreliableMessageErrorCodeSetAndLegacyMatching(t *testing.T) {
 			}
 			if strings.Contains(projected.Error(), test.err.Error()) {
 				t.Fatalf("public error leaks its cause: %q", projected.Error())
-			}
-			var legacy *SessionError
-			if !errors.As(projected, &legacy) {
-				t.Fatalf("errors.As(%T, *SessionError) = false", projected)
 			}
 		})
 	}

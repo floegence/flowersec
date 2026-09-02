@@ -19,8 +19,8 @@ import (
 	"os"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
-	"github.com/floegence/flowersec/flowersec-go/v4/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
+	"github.com/floegence/flowersec/flowersec-go/v5/controlplane"
 )
 
 type endpoint struct {
@@ -76,7 +76,7 @@ func main() {
 	})
 	fail(err)
 	defer proxy.Close()
-	fail(proxy.Register(handlers))
+	fail(proxy.RegisterStreamHandlers(handlers))
 
 	var record controlplane.AuthorizationRecord
 	released := make(chan struct{}, 1)

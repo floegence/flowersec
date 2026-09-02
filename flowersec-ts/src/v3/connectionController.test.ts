@@ -294,7 +294,7 @@ describe("transport v3 production connection controller", () => {
       .mockResolvedValueOnce({
         kind: "failure",
         code: "connection_failed",
-        disposition: { kind: "retry_after", absoluteUnixMilliseconds: 2_000_000_000_000 },
+        disposition: { kind: "retry_after", notBeforeUnixMilliseconds: 2_000_000_000_000 },
       });
     const connector = vi.fn(async (context: LeaseAttemptContextV3) => ({
       kind: "candidate_failures" as const,
@@ -373,7 +373,7 @@ describe("transport v3 production connection controller", () => {
       acquire: async () => {
         throw new ConnectErrorV3("connection_failed", {
           kind: "retry_after",
-          absoluteUnixMilliseconds: 253_402_300_800_000,
+          notBeforeUnixMilliseconds: 253_402_300_800_000,
         });
       },
     }, connector, { maximumAttempts: 2, clock: immediateClock(observed), capabilitySnapshot });
@@ -400,7 +400,7 @@ describe("transport v3 production connection controller", () => {
     const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({
       kind: "failure",
       code: "connection_failed",
-      disposition: { kind: "retry_after", absoluteUnixMilliseconds: deadline },
+      disposition: { kind: "retry_after", notBeforeUnixMilliseconds: deadline },
     }));
     const connector = vi.fn(async () => { throw new Error("connector must not run"); });
     const controller = createConnectionControllerV3({ acquire }, connector, {

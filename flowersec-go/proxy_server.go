@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/defaults"
-	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v4/internal/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/defaults"
+	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v5/internal/framing/jsonframe"
 	"github.com/gorilla/websocket"
 )
 
@@ -108,12 +108,6 @@ func NewProxyServer(options ProxyServerOptions) (*ProxyServer, error) {
 		},
 		wsDialer: &websocket.Dialer{Proxy: nil, HandshakeTimeout: 10 * time.Second, EnableCompression: false},
 	}, nil
-}
-
-// Register installs the HTTP and WebSocket proxy handlers on an accepted-
-// session registry. A handler registry can contain at most one ProxyServer.
-func (server *ProxyServer) Register(handlers *SessionHandlers) error {
-	return server.register(handlers)
 }
 
 // RegisterStreamHandlers installs the HTTP and WebSocket proxy handlers on a

@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/websocketv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
 )
 
 func TestInteropContractMatchesSharedV3Vector(t *testing.T) {

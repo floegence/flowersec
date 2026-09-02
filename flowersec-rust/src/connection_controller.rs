@@ -1612,9 +1612,7 @@ mod tests {
             vectors.sdk_api_consistency["retry"],
             serde_json::json!({
                 "error_property": "retryDisposition",
-                "deprecated_error_property": "disposition",
                 "retry_after_property": "notBeforeUnixMilliseconds",
-                "deprecated_retry_after_property": "absoluteUnixMilliseconds",
             })
         );
         assert_eq!(

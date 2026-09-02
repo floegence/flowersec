@@ -4,13 +4,11 @@ import (
 	"reflect"
 	"testing"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
 )
 
 func TestProxyServerPublicSurfaceIsApplicationOnly(t *testing.T) {
-	var legacyRegister func(*flowersec.ProxyServer, *flowersec.SessionHandlers) error = (*flowersec.ProxyServer).Register
 	var streamRegister func(*flowersec.ProxyServer, flowersec.StreamHandlerRegistrar) error = (*flowersec.ProxyServer).RegisterStreamHandlers
-	_ = legacyRegister
 	_ = streamRegister
 
 	allowedOptions := map[string]struct{}{
@@ -36,7 +34,6 @@ func TestProxyServerPublicSurfaceIsApplicationOnly(t *testing.T) {
 	}
 	for _, symbol := range []any{
 		flowersec.NewProxyServer,
-		(*flowersec.ProxyServer).Register,
 		(*flowersec.ProxyServer).RegisterStreamHandlers,
 		(*flowersec.ProxyServer).Close,
 		flowersec.ErrInvalidProxyServer,

@@ -33,7 +33,7 @@ describe("browser production v3 connector", () => {
       async () => { spends += 1; },
     ))).rejects.toEqual(expect.objectContaining<Partial<ConnectError>>({
       code: "transport_security_unsupported",
-      disposition: { kind: "terminal" },
+      retryDisposition: { kind: "terminal" },
     }));
     expect(spends).toBe(0);
   });

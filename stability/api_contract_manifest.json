@@ -17,12 +17,12 @@
     ]
   },
   "go": {
-    "module_path": "github.com/floegence/flowersec/flowersec-go/v4",
+    "module_path": "github.com/floegence/flowersec/flowersec-go/v5",
     "compile_targets": [
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/v4",
+        "package": "github.com/floegence/flowersec/flowersec-go/v5",
         "alias": "flowersec",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v4`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v5`",
         "stability_group": "transport_v3",
         "entries": [
           {
@@ -573,21 +573,6 @@
           },
           {
             "kind": "const",
-            "expr": "flowersec.SessionUnreliableUnavailable",
-            "doc_token": "`flowersec.SessionUnreliableUnavailable`"
-          },
-          {
-            "kind": "const",
-            "expr": "flowersec.SessionUnreliableTooLarge",
-            "doc_token": "`flowersec.SessionUnreliableTooLarge`"
-          },
-          {
-            "kind": "const",
-            "expr": "flowersec.SessionUnreliableDropped",
-            "doc_token": "`flowersec.SessionUnreliableDropped`"
-          },
-          {
-            "kind": "const",
             "expr": "flowersec.SessionOperationFailed",
             "doc_token": "`flowersec.SessionOperationFailed`"
           },
@@ -825,11 +810,6 @@
             "kind": "func",
             "expr": "flowersec.NewProxyServer",
             "doc_token": "`flowersec.NewProxyServer(...)`"
-          },
-          {
-            "kind": "method",
-            "expr": "(*flowersec.ProxyServer).Register",
-            "doc_token": "`flowersec.ProxyServer.Register(...)`"
           },
           {
             "kind": "method",
@@ -1171,11 +1151,6 @@
           },
           {
             "kind": "method",
-            "expr": "(*flowersec.UnreliableMessageError).Unwrap",
-            "doc_token": "`flowersec.UnreliableMessageChannel`"
-          },
-          {
-            "kind": "method",
             "expr": "(*flowersec.UnreliableMessageError).Code",
             "doc_token": "`flowersec.UnreliableMessageChannel`"
           },
@@ -1187,9 +1162,9 @@
         ]
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/v4/controlplane",
+        "package": "github.com/floegence/flowersec/flowersec-go/v5/controlplane",
         "alias": "controlplane",
-        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v4/controlplane`",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v5/controlplane`",
         "stability_group": "transport_v3",
         "entries": [
           {
@@ -1606,16 +1581,16 @@
       }
     ],
     "forbidden_packages": [
-      "github.com/floegence/flowersec/flowersec-go/v4/client",
-      "github.com/floegence/flowersec/flowersec-go/v4/endpoint",
-      "github.com/floegence/flowersec/flowersec-go/v4/endpoint/serve",
-      "github.com/floegence/flowersec/flowersec-go/v4/rpc",
-      "github.com/floegence/flowersec/flowersec-go/v4/stream",
-      "github.com/floegence/flowersec/flowersec-go/v4/protocolio",
-      "github.com/floegence/flowersec/flowersec-go/v4/framing/jsonframe",
-      "github.com/floegence/flowersec/flowersec-go/v4/proxy",
-      "github.com/floegence/flowersec/flowersec-go/v4/origin",
-      "github.com/floegence/flowersec/flowersec-go/v4/gen/flowersec/v1"
+      "github.com/floegence/flowersec/flowersec-go/v5/client",
+      "github.com/floegence/flowersec/flowersec-go/v5/endpoint",
+      "github.com/floegence/flowersec/flowersec-go/v5/endpoint/serve",
+      "github.com/floegence/flowersec/flowersec-go/v5/rpc",
+      "github.com/floegence/flowersec/flowersec-go/v5/stream",
+      "github.com/floegence/flowersec/flowersec-go/v5/protocolio",
+      "github.com/floegence/flowersec/flowersec-go/v5/framing/jsonframe",
+      "github.com/floegence/flowersec/flowersec-go/v5/proxy",
+      "github.com/floegence/flowersec/flowersec-go/v5/origin",
+      "github.com/floegence/flowersec/flowersec-go/v5/gen/flowersec/v1"
     ]
   },
   "ts": {
@@ -1924,6 +1899,7 @@
           "installWebSocketPatch",
           "registerProxyAppWindow",
           "registerProxyAppWindowWithServiceWorkerControl",
+          "registerProxyAppWindowWithServiceWorkerRuntime",
           "registerProxyControllerWindow",
           "registerServiceWorkerAndEnsureControl"
         ],
@@ -3126,11 +3102,11 @@
   "coverage": {
     "go": [
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/v4",
+        "package": "github.com/floegence/flowersec/flowersec-go/v5",
         "min_statements_pct": 25
       },
       {
-        "package": "github.com/floegence/flowersec/flowersec-go/v4/controlplane",
+        "package": "github.com/floegence/flowersec/flowersec-go/v5/controlplane",
         "min_statements_pct": 75
       }
     ],

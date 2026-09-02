@@ -67,7 +67,7 @@ describe("Node production server runtime v3", () => {
       connectTimeoutMs: 100,
     })).rejects.toMatchObject({
       code: "transport_security_unsupported",
-      disposition: { kind: "terminal" },
+      retryDisposition: { kind: "terminal" },
     });
   });
 
@@ -348,7 +348,7 @@ describe("Node production server runtime v3", () => {
         connectTimeoutMs: 3_000,
       })).rejects.toMatchObject({
         code: "transport_security_failed",
-        disposition: { kind: "terminal" },
+        retryDisposition: { kind: "terminal" },
       });
       expect(spends).toBe(0);
       await peer.wait();

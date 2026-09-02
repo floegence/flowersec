@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/controlplane"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/websocketv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/tunnelv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/controlplane"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/tunnelv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 

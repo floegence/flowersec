@@ -52,12 +52,6 @@ export type StreamOpenOptions = OperationOptions & Readonly<{
   metadata?: StreamMetadata;
 }>;
 
-/** @deprecated Unreliable-message operations use UnreliableMessageErrorCode. */
-export type LegacyUnreliableSessionErrorCode =
-  | "unreliable_unavailable"
-  | "unreliable_too_large"
-  | "unreliable_dropped";
-
 export type SessionErrorCode =
   | "canceled"
   | "timeout"
@@ -68,7 +62,6 @@ export type SessionErrorCode =
   | "stream_reset"
   | "rekey_failed"
   | "liveness_failed"
-  | LegacyUnreliableSessionErrorCode
   | "operation_failed";
 
 /** A closed, carrier-neutral session failure with no internal cause or peer detail. */

@@ -6,6 +6,10 @@ import { SessionError, type ByteStream } from "../public/contract.js";
 import { createStreamMetadata } from "../public/streamMetadata.js";
 
 import { ProxyByteReader, writeAll } from "./stream.js";
+import {
+  registerProxyRuntimeServiceWorkerBridge,
+  usesServiceWorkerResponseFlowControl,
+} from "./serviceWorkerRuntime.js";
 import type {
   ProxyFetchRequest,
   ProxyHeader,
@@ -21,19 +25,6 @@ const DEFAULT_MAX_WS_BUFFERED_AMOUNT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_CONCURRENT_HTTP_STREAMS = 24;
 const DEFAULT_MAX_QUEUED_HTTP_REQUESTS = 128;
 const DEFAULT_MAX_QUEUED_HTTP_BODY_BYTES = 64 * 1024 * 1024;
-
-type RuntimeFetchMessage = Readonly<{
-  type: "flowersec-proxy:fetch";
-  req: Readonly<{
-    id?: unknown;
-    method?: unknown;
-    path?: unknown;
-    headers?: unknown;
-    external_origin?: unknown;
-    response_flow_control?: unknown;
-    body?: unknown;
-  }>;
-}>;
 
 type ResponseMeta = Readonly<{
   v: number;
@@ -204,21 +195,6 @@ function filterHeaders(
   return result;
 }
 
-function parseRuntimeRequest(raw: RuntimeFetchMessage["req"]): ProxyFetchRequest {
-  const headers = Array.isArray(raw.headers) ? raw.headers.filter((entry): entry is ProxyHeader =>
-    typeof entry === "object" && entry !== null && typeof (entry as ProxyHeader).name === "string" && typeof (entry as ProxyHeader).value === "string") : [];
-  const body = raw.body instanceof ArrayBuffer ? raw.body : undefined;
-  return {
-    id: typeof raw.id === "string" ? raw.id : "",
-    method: typeof raw.method === "string" ? raw.method : "GET",
-    path: typeof raw.path === "string" ? raw.path : "",
-    headers,
-    ...(typeof raw.external_origin === "string" ? { externalOrigin: raw.external_origin } : {}),
-    ...(raw.response_flow_control === "chunk_credit_v2" ? { responseFlowControl: "chunk_credit_v2" as const } : {}),
-    ...(body === undefined ? {} : { body }),
-  };
-}
-
 class StreamAdmission {
   private active = 0;
   private queuedBytes = 0;
@@ -364,21 +340,16 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
   }).catch(() => undefined);
 
   const serviceWorker = globalThis.navigator?.serviceWorker;
-  const onMessage = (event: MessageEvent) => {
-    if (event.data === null || typeof event.data !== "object" || (event.data as RuntimeFetchMessage).type !== "flowersec-proxy:fetch") return;
-    const port = event.ports?.[0];
-    if (port === undefined) return;
-    dispatchFetch(parseRuntimeRequest((event.data as RuntimeFetchMessage).req), port);
-  };
-  serviceWorker?.addEventListener("message", onMessage);
   serviceWorker?.addEventListener("controllerchange", register);
   register();
+  let serviceWorkerBridge: Readonly<{ dispose(): void }> | undefined;
 
   function dispatchFetch(request: ProxyFetchRequest, port: MessagePort): void {
     const controller = new AbortController();
     let stream: ByteStream | undefined;
     let release: (() => void) | undefined;
-    let credit = request.responseFlowControl !== "chunk_credit_v2";
+    const flowControlled = usesServiceWorkerResponseFlowControl(request);
+    let credit = !flowControlled;
     let creditWake: (() => void) | undefined;
     port.onmessage = (event) => {
       if (event.data?.type === "flowersec-proxy:abort") {
@@ -395,7 +366,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
         await new Promise<void>((resolve) => { creditWake = resolve; });
         creditWake = undefined;
       }
-      credit = request.responseFlowControl !== "chunk_credit_v2";
+      credit = !flowControlled;
     };
 
     void (async () => {
@@ -487,7 +458,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
     }
   }
 
-  return Object.freeze({
+  const runtime: ProxyRuntime = Object.freeze({
     limits: Object.freeze({
       maxJsonFrameBytes,
       maxChunkBytes,
@@ -504,10 +475,14 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
       if (disposed) return;
       disposed = true;
       admission.close();
-      serviceWorker?.removeEventListener("message", onMessage);
       serviceWorker?.removeEventListener("controllerchange", register);
+      serviceWorkerBridge?.dispose();
     },
   });
+  if (serviceWorker !== undefined) {
+    serviceWorkerBridge = registerProxyRuntimeServiceWorkerBridge(runtime, serviceWorker);
+  }
+  return runtime;
 }
 
 export type EnsureServiceWorkerRuntimeRegisteredOptions = Readonly<{

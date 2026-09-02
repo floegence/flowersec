@@ -1,6 +1,6 @@
 # Flowersec API Change Policy
 
-Flowersec 3.0.0 maintains one strict transport and security contract across Go,
+Flowersec 5.0.0 maintains one strict transport and security contract across Go,
 TypeScript, Swift, and Rust. Public symbols, module paths, wire identifiers,
 registry values, and published artifacts follow SemVer and immutable-tag rules.
 

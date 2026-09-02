@@ -3,7 +3,7 @@ package rpc
 import (
 	"testing"
 
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v4/internal/rpcwire"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v5/internal/rpcwire"
 )
 
 func TestNewCallError(t *testing.T) {

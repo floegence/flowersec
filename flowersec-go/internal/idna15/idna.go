@@ -6,7 +6,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/unicode151"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/unicode151"
 	"golang.org/x/net/idna"
 )
 

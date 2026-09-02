@@ -48,7 +48,7 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer proxy.Close()
-	if err := proxy.Register(handlers); err != nil {
+	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
 		t.Fatal(err)
 	}
 
@@ -157,7 +157,7 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer proxy.Close()
-	if err := proxy.Register(handlers); err != nil {
+	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
 		t.Fatal(err)
 	}
 
@@ -376,7 +376,7 @@ func TestProxyServerCloseCancelsActiveAndRejectsFutureDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.Register(handlers); !errors.Is(err, ErrInvalidProxyServer) {
+	if err := proxy.RegisterStreamHandlers(handlers); !errors.Is(err, ErrInvalidProxyServer) {
 		t.Fatalf("Register after Close error = %v", err)
 	}
 }
@@ -513,10 +513,10 @@ func TestProxyServerRejectsUnsafeAndDuplicateRegistration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.Register(handlers); err != nil {
+	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.Register(handlers); !errors.Is(err, ErrInvalidProxyServer) {
+	if err := proxy.RegisterStreamHandlers(handlers); !errors.Is(err, ErrInvalidProxyServer) {
 		t.Fatalf("duplicate Register error = %v", err)
 	}
 }

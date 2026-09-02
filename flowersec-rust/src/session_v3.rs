@@ -1065,7 +1065,7 @@ async fn send_unreliable_message_v3(
         return Err(UnreliableMessageError::Unavailable);
     }
     if payload.is_empty() {
-        return Err(UnreliableMessageError::InvalidInput);
+        return Err(UnreliableMessageError::InvalidMessage);
     }
     if payload.len() > MAX_UNRELIABLE_PLAINTEXT_V3_BYTES {
         return Err(UnreliableMessageError::TooLarge);
@@ -1090,10 +1090,10 @@ async fn send_unreliable_message_v3(
         let roots = state
             .send_roots
             .get(&epoch)
-            .ok_or(UnreliableMessageError::Failed)?;
+            .ok_or(UnreliableMessageError::OperationFailed)?;
         let material =
             derive_unreliable_material_v3(roots, &session.h3, session.send_direction, epoch)
-                .map_err(|_| UnreliableMessageError::Failed)?;
+                .map_err(|_| UnreliableMessageError::OperationFailed)?;
         let sequence = {
             let mut sequence = session
                 .unreliable_send_sequence
@@ -1103,7 +1103,9 @@ async fn send_unreliable_message_v3(
                 *sequence = (epoch, 1);
             }
             let value = sequence.1;
-            sequence.1 = value.checked_add(1).ok_or(UnreliableMessageError::Failed)?;
+            sequence.1 = value
+                .checked_add(1)
+                .ok_or(UnreliableMessageError::OperationFailed)?;
             value
         };
         let header = UnreliableHeaderV3 {
@@ -1114,7 +1116,7 @@ async fn send_unreliable_message_v3(
         };
         let raw_header = header
             .encode()
-            .map_err(|_| UnreliableMessageError::Failed)?;
+            .map_err(|_| UnreliableMessageError::OperationFailed)?;
         let ciphertext = seal_unreliable_v3(
             session.config.suite,
             &material,
@@ -1123,7 +1125,7 @@ async fn send_unreliable_message_v3(
             header,
             &payload,
         )
-        .map_err(|_| UnreliableMessageError::Failed)?;
+        .map_err(|_| UnreliableMessageError::OperationFailed)?;
         let mut wire = Vec::with_capacity(raw_header.len() + ciphertext.len());
         wire.extend_from_slice(&raw_header);
         wire.extend_from_slice(&ciphertext);
@@ -1225,9 +1227,9 @@ async fn receive_unreliable_message_v3(
 fn unix_millis(value: SystemTime) -> Result<u64, UnreliableMessageError> {
     let millis = value
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| UnreliableMessageError::InvalidInput)?
+        .map_err(|_| UnreliableMessageError::InvalidMessage)?
         .as_millis();
-    u64::try_from(millis).map_err(|_| UnreliableMessageError::InvalidInput)
+    u64::try_from(millis).map_err(|_| UnreliableMessageError::InvalidMessage)
 }
 
 fn record_unreliable_sequence_v3(
@@ -1258,7 +1260,7 @@ fn map_carrier_unreliable_error(error: CarrierUnreliableMessageErrorV3) -> Unrel
     match error {
         CarrierUnreliableMessageErrorV3::Unavailable => UnreliableMessageError::Unavailable,
         CarrierUnreliableMessageErrorV3::TooLarge => UnreliableMessageError::TooLarge,
-        CarrierUnreliableMessageErrorV3::Dropped => UnreliableMessageError::DroppedBudget,
+        CarrierUnreliableMessageErrorV3::Dropped => UnreliableMessageError::OperationFailed,
         CarrierUnreliableMessageErrorV3::Closed => UnreliableMessageError::Closed,
     }
 }

@@ -33,9 +33,8 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::{
-    HandlerRegistrationError, IncomingStream, SessionError, SessionHandlers, StreamHandler,
-    StreamHandlerRegistrar, session_handlers::register_stream_handlers, transport::ByteStream,
-    websocket_transport,
+    HandlerRegistrationError, IncomingStream, SessionError, StreamHandler, StreamHandlerRegistrar,
+    session_handlers::register_stream_handlers, transport::ByteStream, websocket_transport,
 };
 
 const HTTP_KIND: &str = "flowersec-proxy/http1";
@@ -212,11 +211,6 @@ impl ProxyServer {
                 on_error,
             }),
         })
-    }
-
-    /// Atomically installs the HTTP and WebSocket handlers on an accepted-session registry.
-    pub fn register(&self, handlers: &mut SessionHandlers) -> Result<(), ProxyServerError> {
-        self.register_into(handlers)
     }
 
     /// Atomically installs the HTTP and WebSocket handlers on a carrier-neutral registry.
@@ -2176,7 +2170,7 @@ mod tests {
             .handle_stream(WEBSOCKET_KIND, NoopHandler)
             .expect("occupy websocket handler");
         assert_eq!(
-            server.register(&mut handlers),
+            server.register_stream_handlers(&mut handlers),
             Err(ProxyServerError::AlreadyRegistered)
         );
         handlers

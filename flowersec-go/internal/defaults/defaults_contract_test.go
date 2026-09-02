@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/defaults"
 )
 
 func TestDefaultsMatchStabilityContract(t *testing.T) {

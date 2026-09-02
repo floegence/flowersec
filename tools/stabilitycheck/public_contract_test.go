@@ -23,7 +23,7 @@ func TestTransportV3PublicAPIIsExplicitlyRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const goRoot = "github.com/floegence/flowersec/flowersec-go/v4"
+	const goRoot = "github.com/floegence/flowersec/flowersec-go/v5"
 	for _, expression := range []string{
 		"flowersec.Artifact", "flowersec.ArtifactLease", "flowersec.ParseArtifact",
 		"flowersec.NewArtifactLease", "flowersec.ConnectorOptions", "flowersec.Connect",
@@ -150,7 +150,7 @@ func TestTransportV3PublicInterfaceMethodsAreFullyRegistered(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		"github.com/floegence/flowersec/flowersec-go/v4": {
+		"github.com/floegence/flowersec/flowersec-go/v5": {
 			"flowersec.ByteStream.Read", "flowersec.ByteStream.Write", "flowersec.ByteStream.Close",
 			"flowersec.ByteStream.Kind", "flowersec.ByteStream.TerminalError",
 			"flowersec.ByteStream.CloseWrite", "flowersec.ByteStream.Reset",

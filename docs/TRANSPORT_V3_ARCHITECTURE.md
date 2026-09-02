@@ -581,7 +581,7 @@ readback.
 
 ### 12.4 SDK Major and Deployment Isolation
 
-Flowersec 4.x has one SDK and wire boundary:
+Flowersec 5.x has one SDK and wire boundary:
 
 - the Go module uses the `/v4` module path;
 - the TypeScript package, Rust crate, and Swift package/tag use major version 4;

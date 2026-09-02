@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v4"
-	"github.com/floegence/flowersec/flowersec-go/v4/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
+	"github.com/floegence/flowersec/flowersec-go/v5/controlplane"
 )
 
 func TestRawQUICAcceptorListenerEstablishesApplicationSession(t *testing.T) {

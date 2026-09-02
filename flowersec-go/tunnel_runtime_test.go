@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
 )
 
 func TestTunnelRuntimeServeWaitsForAcceptedNativeSessions(t *testing.T) {

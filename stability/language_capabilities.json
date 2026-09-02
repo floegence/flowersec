@@ -1107,7 +1107,7 @@
         "path": "carrier-neutral",
         "feature": "issue-authorize",
         "status": "supported",
-        "entrypoint": "flowersec-go/v4/controlplane",
+        "entrypoint": "flowersec-go/v5/controlplane",
         "test_ids": [
           "server/go-controlplane"
         ]

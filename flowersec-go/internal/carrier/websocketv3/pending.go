@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
-	fsyamux "github.com/floegence/flowersec/flowersec-go/v4/internal/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/v5/internal/mux/yamux"
 	gorillaws "github.com/gorilla/websocket"
 )
 

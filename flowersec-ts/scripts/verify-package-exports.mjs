@@ -23,6 +23,7 @@ const forbiddenRuntimeExportsBySubpath = new Map([
   ['@floegence/flowersec-core/proxy', [
     'resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST',
     'assertProxyRuntimeScopeV1', 'connectArtifactProxyBrowser', 'connectArtifactProxyControllerBrowser',
+    'parseAppProxyFetchMessage', 'parseRuntimeRequest', 'RuntimeFetchMessage',
     'Client', 'YamuxSession',
   ]],
 ]);
@@ -191,6 +192,11 @@ function verifyInstalledDeclarationClosure() {
     /(?:^|["'\/])utils\/errors(?:["'\/]|\.)/u,
     'exported declaration closure referenced internal error implementation',
   );
+  assert.doesNotMatch(
+    publicDeclarations,
+    /LegacyUnreliableSessionErrorCode|absoluteUnixMilliseconds|responseFlowControl|flowersec-proxy:|response_flow_control/u,
+    'exported declarations leaked removed compatibility or private Service Worker protocol fields',
+  );
 }
 
 function verifyInstalledPackage() {
@@ -249,6 +255,8 @@ ${checks}
     assert.equal('candidateId' in redacted, false);
     assert.equal('carrier' in redacted, false);
     assert.equal('cause' in redacted, false);
+    assert.equal('disposition' in redacted, false);
+    assert.deepEqual(redacted.retryDisposition, { kind: 'terminal' });
     const artifact = root.parseArtifact(${JSON.stringify(artifactFixture)});
     assert.deepEqual(Object.keys(artifact), []);
     assert.equal(JSON.stringify(artifact), '{}');
@@ -309,7 +317,7 @@ declare const removed: Removed;
 void removed;
 `
   );
-  run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json'], consumerDir);
+  run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc6'), '-p', 'tsconfig.json'], consumerDir);
 }
 
 function verifyCurrentTypes() {
@@ -365,7 +373,7 @@ void v2;
 void parseArtifactV3;
 `
   );
-  run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc'), '-p', 'tsconfig.json'], consumerDir);
+  run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc6'), '-p', 'tsconfig.json'], consumerDir);
 }
 
 async function verifyPackedBin() {

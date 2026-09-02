@@ -16,13 +16,13 @@ import (
 	"strings"
 	"time"
 
-	websocketadmission "github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/websocketv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
-	rpcwire "github.com/floegence/flowersec/flowersec-go/v4/internal/rpcwire"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	websocketadmission "github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
+	rpcwire "github.com/floegence/flowersec/flowersec-go/v5/internal/rpcwire"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
 	"github.com/gorilla/websocket"
 )
 

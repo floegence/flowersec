@@ -20,7 +20,7 @@ function stableJson(value) {
 }
 
 function goSourceArchiveVersion(modulePath) {
-  if (modulePath.endsWith("/v4")) return "v4.0.0-securityinventory";
+  if (modulePath.endsWith("/v5")) return "v5.0.0-securityinventory";
   if (modulePath.endsWith("/v3")) return "v3.0.0-securityinventory";
   return "v0.0.0-securityinventory";
 }
@@ -59,12 +59,12 @@ function fixtureGraph() {
     root: {
       ecosystem: "npm",
       name: "@floegence/flowersec-core",
-      version: "4.0.0",
-      purl: "pkg:npm/%40floegence/flowersec-core@4.0.0",
+      version: "5.0.0",
+      purl: "pkg:npm/%40floegence/flowersec-core@5.0.0",
     },
     components,
     edges: components.map((component) => ({
-      from: "pkg:npm/%40floegence/flowersec-core@4.0.0",
+      from: "pkg:npm/%40floegence/flowersec-core@5.0.0",
       to: component.purl,
       kind: "runtime",
     })),
@@ -180,7 +180,7 @@ test("source inventory output closure is explicit and package-local", async () =
 
 test("Go source archive pseudo-versions match module path majors", () => {
   assert.equal(goSourceArchiveVersion("example.com/flowersec/v3"), "v3.0.0-securityinventory");
-  assert.equal(goSourceArchiveVersion("example.com/flowersec/v4"), "v4.0.0-securityinventory");
+  assert.equal(goSourceArchiveVersion("example.com/flowersec/v5"), "v5.0.0-securityinventory");
   assert.equal(goSourceArchiveVersion("example.com/flowersec"), "v0.0.0-securityinventory");
 });
 
@@ -197,7 +197,7 @@ test("SPDX, CycloneDX, and notices are deterministic and preserve license decisi
   const spdx = renderSpdx("fixture", graph, "abc123", "2026-08-31T12:07:14Z");
   assert.equal(spdx.spdxVersion, "SPDX-2.3");
   assert.equal(spdx.packages[0].name, "@floegence/flowersec-core");
-  assert.equal(spdx.packages[0].versionInfo, "4.0.0");
+  assert.equal(spdx.packages[0].versionInfo, "5.0.0");
   assert.notEqual(spdx.packages[0].versionInfo, "abc123");
   assert.ok(spdx.relationships.some((edge) => edge.relationshipType === "DEPENDS_ON"));
   assert.equal(spdx.creationInfo.created, "2026-08-31T12:07:14Z");
@@ -206,7 +206,7 @@ test("SPDX, CycloneDX, and notices are deterministic and preserve license decisi
   const cyclone = renderCycloneDx("fixture", graph, "abc123");
   assert.equal(cyclone.bomFormat, "CycloneDX");
   assert.equal(cyclone.specVersion, "1.5");
-  assert.equal(cyclone.metadata.component.version, "4.0.0");
+  assert.equal(cyclone.metadata.component.version, "5.0.0");
   assert.notEqual(cyclone.metadata.component.version, "abc123");
   assert.equal(cyclone.components.length, 2);
   assert.ok(cyclone.serialNumber.startsWith("urn:uuid:"));

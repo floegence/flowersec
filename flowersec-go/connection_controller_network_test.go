@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/admissionv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/rawquicv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/protocolv3"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/rpc"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/rawquicv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
 )
 
 // TestConnectionControllerRealNetworkRestartReconnect owns a real raw QUIC

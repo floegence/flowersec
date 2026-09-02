@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	flowersession "github.com/floegence/flowersec/flowersec-go/v4/internal/sessionv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
 )
 
 // ServeBrowserBulk serves the fixed bidirectional bulk phases used by the

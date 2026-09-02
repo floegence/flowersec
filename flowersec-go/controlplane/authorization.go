@@ -13,7 +13,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
 )
 
 const maxAuthorizationRecordBytes = 96 * 1024

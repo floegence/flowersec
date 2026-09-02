@@ -34,10 +34,10 @@ async fn proxy_server_public_api_is_application_session_only() {
     let mut handlers =
         SessionHandlers::new(SessionHandlerOptions::default()).expect("create handlers");
     server
-        .register(&mut handlers)
+        .register_stream_handlers(&mut handlers)
         .expect("register proxy handlers");
     assert_eq!(
-        server.register(&mut handlers),
+        server.register_stream_handlers(&mut handlers),
         Err(ProxyServerError::AlreadyRegistered)
     );
     let mut streams =

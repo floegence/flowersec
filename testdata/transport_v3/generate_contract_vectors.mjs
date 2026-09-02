@@ -452,7 +452,7 @@ const artifactVectors = {
   profile: PROFILE,
   source: {
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
-    design_sha256: "b6ac3ac6c619c896d7fc5b6b971b26c2e17f9d9a9ee73cb53005e8cad240a2c5",
+    design_sha256: "51b38465bfd847270408101560023871847becd6196287027c89bfe7c48cd8cf",
   },
   constants: {
     maximum_safe_integer: SAFE_MAX,
@@ -885,7 +885,7 @@ const v2CryptoLabels = [
 write("version_isolation_vectors.json", {
   version: 3,
   source: {
-    design_sha256: "b6ac3ac6c619c896d7fc5b6b971b26c2e17f9d9a9ee73cb53005e8cad240a2c5",
+    design_sha256: "51b38465bfd847270408101560023871847becd6196287027c89bfe7c48cd8cf",
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
     rules_are_not_extended_by_vectors: true,
   },
@@ -1132,9 +1132,7 @@ const controllerVectors = {
     ],
     retry: {
       error_property: "retryDisposition",
-      deprecated_error_property: "disposition",
       retry_after_property: "notBeforeUnixMilliseconds",
-      deprecated_retry_after_property: "absoluteUnixMilliseconds",
     },
     unreliable_error_codes: [
       "unavailable",

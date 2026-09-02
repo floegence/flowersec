@@ -202,7 +202,7 @@ describe("Node native raw QUIC driver", () => {
         connectTimeoutMs: 3_000,
       })).rejects.toMatchObject({
         code: "transport_security_failed",
-        disposition: { kind: "terminal" },
+        retryDisposition: { kind: "terminal" },
       });
       expect(spends).toBe(0);
     } finally {

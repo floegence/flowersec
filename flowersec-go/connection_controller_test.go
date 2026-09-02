@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/defaults"
 )
 
 type controllerV3VectorFile struct {
@@ -25,10 +25,8 @@ type controllerV3VectorFile struct {
 		UnreliableErrorCodes  []string `json:"unreliable_error_codes"`
 		UnreliableSendResults []string `json:"unreliable_send_results"`
 		Retry                 struct {
-			ErrorProperty                string `json:"error_property"`
-			DeprecatedErrorProperty      string `json:"deprecated_error_property"`
-			RetryAfterProperty           string `json:"retry_after_property"`
-			DeprecatedRetryAfterProperty string `json:"deprecated_retry_after_property"`
+			ErrorProperty      string `json:"error_property"`
+			RetryAfterProperty string `json:"retry_after_property"`
 		} `json:"retry"`
 		ConnectionDiagnostic struct {
 			Fields          []string `json:"fields"`
@@ -177,9 +175,8 @@ func TestConnectionControllerSharedLifecycleVectors(t *testing.T) {
 		"accepted,dropped_budget,dropped_expired,dropped_carrier"; got != want {
 		t.Fatalf("unreliable send results = %q, want %q", got, want)
 	}
-	if api.Retry.ErrorProperty != "retryDisposition" || api.Retry.DeprecatedErrorProperty != "disposition" ||
-		api.Retry.RetryAfterProperty != "notBeforeUnixMilliseconds" ||
-		api.Retry.DeprecatedRetryAfterProperty != "absoluteUnixMilliseconds" {
+	if api.Retry.ErrorProperty != "retryDisposition" ||
+		api.Retry.RetryAfterProperty != "notBeforeUnixMilliseconds" {
 		t.Fatalf("retry API vector = %+v", api.Retry)
 	}
 	if got, want := strings.Join(api.ConnectionDiagnostic.Fields, ","),

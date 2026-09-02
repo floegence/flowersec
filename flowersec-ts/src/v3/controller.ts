@@ -343,17 +343,13 @@ function validateControllerWaitDisposition(value: RetryDispositionV3): RetryDisp
   if (value.kind !== "retry_after") {
     throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
   }
-  const deadline = value.notBeforeUnixMilliseconds ?? value.absoluteUnixMilliseconds;
-  if (deadline === undefined || !Number.isSafeInteger(deadline) || deadline < 0 ||
-      deadline > 253_402_300_799_999 || value.notBeforeUnixMilliseconds !== undefined &&
-      value.absoluteUnixMilliseconds !== undefined &&
-      value.notBeforeUnixMilliseconds !== value.absoluteUnixMilliseconds) {
+  const deadline = value.notBeforeUnixMilliseconds;
+  if (!Number.isSafeInteger(deadline) || deadline < 0 || deadline > 253_402_300_799_999) {
     throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
   }
   return Object.freeze({
     kind: "retry_after",
     notBeforeUnixMilliseconds: deadline,
-    absoluteUnixMilliseconds: deadline,
   });
 }
 

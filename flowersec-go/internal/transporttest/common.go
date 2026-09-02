@@ -16,9 +16,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v4/internal/carrier/rawquicv3"
-	carrieryamux "github.com/floegence/flowersec/flowersec-go/v4/internal/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/rawquicv3"
+	carrieryamux "github.com/floegence/flowersec/flowersec-go/v5/internal/mux/yamux"
 	gorillaws "github.com/gorilla/websocket"
 	"github.com/quic-go/quic-go/http3"
 )
