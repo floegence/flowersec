@@ -24,7 +24,7 @@ The public application surface includes `Session`, `RpcPeer`, `ByteStream`,
 let options = flowersec::ConnectorOptions::new()
     .with_trust_roots_der(roots)?;
 let session = flowersec::connect(lease, options).await?;
-session.probe_liveness(tokio_util::sync::CancellationToken::new()).await?;
+session.probe_liveness().await?;
 session.close().await?;
 # Ok(()) }
 ```

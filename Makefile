@@ -175,6 +175,7 @@ rust-test:
 
 rust-test-short:
 	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib
+	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --doc
 	rustup run 1.88.0 cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features --lib
 
 rust-doc:
