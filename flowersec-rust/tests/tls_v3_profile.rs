@@ -113,7 +113,7 @@ fn identity(profile: InvalidProfile) -> TestIdentity {
         InvalidProfile::NonP256 => KeyPair::generate_for(&PKCS_ECDSA_P384_SHA384).unwrap(),
         _ => KeyPair::generate().unwrap(),
     };
-    let mut params = CertificateParams::new(vec!["localhost".into()]).unwrap();
+    let mut params = CertificateParams::new(vec!["127.0.0.1".into()]).unwrap();
     params.not_before = not_before;
     params.not_after = not_after;
     params.key_usages.push(KeyUsagePurpose::DigitalSignature);
@@ -195,7 +195,7 @@ fn artifact(address: SocketAddr, pin: String) -> Artifact {
                     "not_after_unix_s": unix_seconds() + 600,
                     "value_b64u": pin
                 }]},
-                "url": format!("wss://localhost:{}/flowersec/v3/direct", address.port()),
+                "url": format!("wss://127.0.0.1:{}/flowersec/v3/direct", address.port()),
                 "wire_profile": "flowersec-direct/3"
             }],
             "kind": "direct",
