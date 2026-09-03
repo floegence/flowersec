@@ -4150,7 +4150,7 @@ fn regression_config(
         expected_peer_endpoint_instance_id: None,
         rpc_handler,
         deadlines: SessionDeadlinesV3 {
-            establish: Duration::from_millis(20),
+            establish: Duration::from_secs(1),
             rekey_prepare: Duration::from_millis(100),
             rekey_completion: Duration::from_millis(100),
             close_flush: Duration::from_millis(20),

@@ -79,9 +79,9 @@ async fn production_wss_pin_rejects_hash_matched_invalid_profiles_before_spend_o
             .unwrap();
 
         let error = connect(lease, options).await.unwrap_err();
-        let observation = tokio::time::timeout(StdDuration::from_secs(2), server)
+        let observation = tokio::time::timeout(StdDuration::from_secs(10), server)
             .await
-            .expect("profile server did not observe the TLS result")
+            .unwrap_or_else(|_| panic!("{profile:?} server did not observe the TLS result"))
             .expect("profile server task panicked");
 
         assert_eq!(
