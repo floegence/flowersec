@@ -42,8 +42,17 @@ try {
     },
     ...(process.platform === "darwin" ? [{
       name: "swift",
+      prepare: async () => await runProcess("swift", [
+        "build",
+        "--package-path", "examples/swift",
+        "--scratch-path", path.join(scratch, "swift-build"),
+        "--cache-path", path.join(repositoryRoot, ".flowersec", "swiftpm-cache"),
+        "--skip-update",
+        "--only-use-versions-from-resolved-file",
+      ], repositoryRoot, process.env),
       run: async (fixture) => await runProcess("swift", [
         "run",
+        "--skip-build",
         "--package-path", "examples/swift",
         "--scratch-path", path.join(scratch, "swift-build"),
         "--cache-path", path.join(repositoryRoot, ".flowersec", "swiftpm-cache"),
@@ -53,7 +62,10 @@ try {
     }] : []),
   ];
 
-  for (const example of examples) await runExample(example);
+  for (const example of examples) {
+    await example.prepare?.();
+    await runExample(example);
+  }
   const required = process.platform === "darwin" ? 4 : 3;
   assert.equal(examples.length, required);
   process.stdout.write(`public SDK examples E2E OK: ${examples.length} languages\n`);

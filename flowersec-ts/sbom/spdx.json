@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-ts",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/defe64cdc0f7455c71897dd768ebe609b2c00aea6aa8f104fc24acb05723315d",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/ad7ae66b9d3abe5a53c7327b89d1f7c530c0b6324169c432d849c30eea269621",
   "creationInfo": {
     "created": "2026-09-02T09:13:34Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: defe64cdc0f7455c71897dd768ebe609b2c00aea6aa8f104fc24acb05723315d",
+      "comment": "Flowersec source inventory SHA-256: ad7ae66b9d3abe5a53c7327b89d1f7c530c0b6324169c432d849c30eea269621",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -201,9 +201,9 @@
     },
     {
       "name": "ws",
-      "SPDXID": "SPDXRef-Package-320dd9f8ed00f90837e2",
-      "versionInfo": "8.21.2",
-      "downloadLocation": "https://registry.npmjs.org/ws/-/ws-8.21.2.tgz",
+      "SPDXID": "SPDXRef-Package-b779412f685822663496",
+      "versionInfo": "8.21.3",
+      "downloadLocation": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -212,7 +212,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/ws@8.21.2"
+          "referenceLocator": "pkg:npm/ws@8.21.3"
         }
       ]
     }
@@ -251,7 +251,7 @@
     {
       "spdxElementId": "SPDXRef-Package-75e0bf315de60f5c22bf",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-320dd9f8ed00f90837e2"
+      "relatedSpdxElement": "SPDXRef-Package-b779412f685822663496"
     },
     {
       "spdxElementId": "SPDXRef-Package-83fe1f071de804c59aa4",

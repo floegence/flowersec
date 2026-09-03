@@ -716,7 +716,7 @@ validate_step_contracts(release_steps, [
     "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}",
     "RELEASE_TAG" => "${{ steps.vars.outputs.tag }}",
   } }, run_sha256: "1bd88ea62d5cfa76a864986943ea296ec1def96e507dcdb60077ac446e1f2658" },
-  { name: "Publish GitHub Release", keys: ["name", "if", "uses", "with"], values: { "if" => "needs.prepare.outputs.release_complete == 'false'", "uses" => "softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231", "with" => {
+  { name: "Publish GitHub Release", keys: ["name", "if", "uses", "with"], values: { "if" => "needs.prepare.outputs.release_complete == 'false'", "uses" => "softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64", "with" => {
     "files" => "dist/*\n",
     "body_path" => "release-notes.md",
     "tag_name" => "${{ steps.vars.outputs.tag }}",

@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:971dbc25-07fd-5919-8a85-44acdd022886",
+  "serialNumber": "urn:uuid:6fe19777-2eec-5ce7-8abe-644d23e876c3",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "defe64cdc0f7455c71897dd768ebe609b2c00aea6aa8f104fc24acb05723315d"
+        "value": "ad7ae66b9d3abe5a53c7327b89d1f7c530c0b6324169c432d849c30eea269621"
       }
     ]
   },
@@ -302,9 +302,9 @@
     {
       "type": "library",
       "name": "ws",
-      "version": "8.21.2",
-      "purl": "pkg:npm/ws@8.21.2",
-      "bom-ref": "pkg:npm/ws@8.21.2",
+      "version": "8.21.3",
+      "purl": "pkg:npm/ws@8.21.3",
+      "bom-ref": "pkg:npm/ws@8.21.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -313,7 +313,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/ws/-/ws-8.21.2.tgz"
+          "url": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz"
         }
       ],
       "properties": [
@@ -337,7 +337,7 @@
         "pkg:npm/%40noble/curves@2.4.0",
         "pkg:npm/%40noble/hashes@2.4.0",
         "pkg:npm/tr46@6.0.0",
-        "pkg:npm/ws@8.21.2"
+        "pkg:npm/ws@8.21.3"
       ]
     },
     {
@@ -390,7 +390,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/ws@8.21.2",
+      "ref": "pkg:npm/ws@8.21.3",
       "dependsOn": []
     }
   ]

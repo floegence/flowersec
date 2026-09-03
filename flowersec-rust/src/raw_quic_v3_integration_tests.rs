@@ -28,7 +28,7 @@ use crate::{
     Acceptor, AcceptorOptions, ArtifactLease, ConnectorOptions, RpcHandler, RpcHandlers,
     RuntimeAuthorizationRequest, TunnelAuthorizationError, TunnelAuthorizationResponse,
     TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
-    artifact_v3::{AdmissionStatusV3, ArtifactV3, decode_fsa3, hash_lp, jcs_value},
+    artifact_v3::{AdmissionStatusV3, Artifact, decode_fsa3, hash_lp, jcs_value},
     connector_v3::connect_v3,
     protocol_v3::CipherSuiteV3,
     raw_quic_v3::carrier_from_native_session,
@@ -254,7 +254,7 @@ async fn production_raw_quic_acceptor_establishes_a_complete_v3_session() {
 
 #[derive(Default)]
 struct TestTunnelAuthorizer {
-    artifacts: StdMutex<Vec<ArtifactV3>>,
+    artifacts: StdMutex<Vec<Artifact>>,
 }
 
 #[async_trait]
@@ -457,7 +457,7 @@ fn native_limits() -> NativeLimits {
     .unwrap()
 }
 
-fn interop_artifact(address: SocketAddr, profile: NativePathProfile) -> ArtifactV3 {
+fn interop_artifact(address: SocketAddr, profile: NativePathProfile) -> Artifact {
     interop_artifact_with_host(address, profile, "127.0.0.1")
 }
 
@@ -465,7 +465,7 @@ fn interop_artifact_with_host(
     address: SocketAddr,
     profile: NativePathProfile,
     host: &str,
-) -> ArtifactV3 {
+) -> Artifact {
     let projection = json!({
         "allowed_suites": [1],
         "channel_id": CHANNEL_ID,
@@ -532,7 +532,7 @@ fn interop_artifact_with_host(
         },
         "v": 3
     });
-    ArtifactV3::parse(jcs_value(&value).unwrap()).unwrap()
+    Artifact::parse(jcs_value(&value).unwrap()).unwrap()
 }
 
 fn tunnel_relay_artifact(
@@ -542,7 +542,7 @@ fn tunnel_relay_artifact(
     peer_endpoint: &str,
     token: &str,
     pin: &str,
-) -> ArtifactV3 {
+) -> Artifact {
     let projection = json!({
         "allowed_suites": [1],
         "channel_id": CHANNEL_ID,
@@ -599,7 +599,7 @@ fn tunnel_relay_artifact(
         },
         "v": 3
     });
-    ArtifactV3::parse(jcs_value(&value).unwrap()).unwrap()
+    Artifact::parse(jcs_value(&value).unwrap()).unwrap()
 }
 
 fn session_config(

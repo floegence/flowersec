@@ -135,12 +135,12 @@ struct TrackedLease {
 }
 
 impl TrackedLease {
-    fn new(artifact: ArtifactV3) -> Self {
+    fn new(artifact: Artifact) -> Self {
         Self::new_with_retire_result(artifact, Ok(()))
     }
 
     fn new_with_retire_result(
-        artifact: ArtifactV3,
+        artifact: Artifact,
         retire_result: Result<(), ArtifactSpendError>,
     ) -> Self {
         let terminal = Arc::new(Mutex::new(None));
@@ -171,7 +171,7 @@ impl TrackedLease {
         }
     }
 
-    fn new_with_retire_gate(artifact: ArtifactV3, gate: Arc<AsyncGate>) -> Self {
+    fn new_with_retire_gate(artifact: Artifact, gate: Arc<AsyncGate>) -> Self {
         let terminal = Arc::new(Mutex::new(None));
         let spends = Arc::new(AtomicU64::new(0));
         let retires = Arc::new(AtomicU64::new(0));
@@ -914,7 +914,7 @@ async fn top_level_controller_vectors_bind_production_results_retry_and_lease_st
         ["consumed", "retired"]
     );
 
-    let artifact = ArtifactV3::parse(
+    let artifact = Artifact::parse(
         crate::artifact_v3::jcs_value(&base_artifact_value()).expect("artifact JCS"),
     )
     .expect("controller lease artifact");
@@ -2831,7 +2831,7 @@ async fn run_duplicate_lease(scenario: &ScenarioV3) {
     controller.close().await;
 }
 
-fn pin_artifact(pin: [u8; 32]) -> ArtifactV3 {
+fn pin_artifact(pin: [u8; 32]) -> Artifact {
     artifact_with_candidates(serde_json::json!([pin_candidate(
         "w-pin",
         "wss://pin.example.org/flowersec/v3/direct",
@@ -2839,13 +2839,13 @@ fn pin_artifact(pin: [u8; 32]) -> ArtifactV3 {
     )]))
 }
 
-fn browser_pin_artifact(id: &str, host: &str, pin: [u8; 32]) -> ArtifactV3 {
+fn browser_pin_artifact(id: &str, host: &str, pin: [u8; 32]) -> Artifact {
     browser_pin_artifact_with_candidates([(id, host, pin)])
 }
 
 fn browser_pin_artifact_with_candidates<const N: usize>(
     candidates: [(&str, &str, [u8; 32]); N],
-) -> ArtifactV3 {
+) -> Artifact {
     artifact_with_candidates(Value::Array(
         candidates
             .into_iter()
@@ -2856,7 +2856,7 @@ fn browser_pin_artifact_with_candidates<const N: usize>(
     ))
 }
 
-fn browser_replacement_artifact() -> ArtifactV3 {
+fn browser_replacement_artifact() -> Artifact {
     artifact_with_candidates(serde_json::json!([
         pin_candidate(
             "refresh-pin",
@@ -2873,7 +2873,7 @@ fn browser_replacement_artifact() -> ArtifactV3 {
     ]))
 }
 
-fn pin_artifact_with_expiry(pin: [u8; 32], expires_at_unix_seconds: u64) -> ArtifactV3 {
+fn pin_artifact_with_expiry(pin: [u8; 32], expires_at_unix_seconds: u64) -> Artifact {
     let mut value = base_artifact_value();
     value["session"]["init_expire_at_unix_s"] = expires_at_unix_seconds.into();
     value["path"]["candidates"] = serde_json::json!([pin_candidate(
@@ -2881,11 +2881,11 @@ fn pin_artifact_with_expiry(pin: [u8; 32], expires_at_unix_seconds: u64) -> Arti
         "wss://pin.example.org/flowersec/v3/direct",
         pin
     )]);
-    ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).expect("artifact JCS"))
+    Artifact::parse(crate::artifact_v3::jcs_value(&value).expect("artifact JCS"))
         .expect("valid expiring controller vector artifact")
 }
 
-fn ca_artifact() -> ArtifactV3 {
+fn ca_artifact() -> Artifact {
     artifact_with_candidates(serde_json::json!([{
         "carrier": "websocket",
         "id": "w-ca",
@@ -2895,7 +2895,7 @@ fn ca_artifact() -> ArtifactV3 {
     }]))
 }
 
-fn pin_and_unrelated_ca_artifact(pin: [u8; 32]) -> ArtifactV3 {
+fn pin_and_unrelated_ca_artifact(pin: [u8; 32]) -> Artifact {
     artifact_with_candidates(serde_json::json!([
         pin_candidate(
             "w-pin",
@@ -2912,7 +2912,7 @@ fn pin_and_unrelated_ca_artifact(pin: [u8; 32]) -> ArtifactV3 {
     ]))
 }
 
-fn two_pin_artifact(first: [u8; 32], second: [u8; 32]) -> ArtifactV3 {
+fn two_pin_artifact(first: [u8; 32], second: [u8; 32]) -> Artifact {
     artifact_with_candidates(serde_json::json!([
         pin_candidate(
             "a-pin",
@@ -2941,10 +2941,10 @@ fn pin_candidate(id: &str, url: &str, pin: [u8; 32]) -> Value {
     })
 }
 
-fn artifact_with_candidates(candidates: Value) -> ArtifactV3 {
+fn artifact_with_candidates(candidates: Value) -> Artifact {
     let mut value = base_artifact_value();
     value["path"]["candidates"] = candidates;
-    ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).expect("artifact JCS"))
+    Artifact::parse(crate::artifact_v3::jcs_value(&value).expect("artifact JCS"))
         .expect("valid controller vector artifact")
 }
 

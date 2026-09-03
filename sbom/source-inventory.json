@@ -2043,11 +2043,11 @@
         {
           "ecosystem": "npm",
           "name": "@humanfs/core",
-          "version": "0.19.1",
+          "version": "0.19.2",
           "declaredLicense": "Apache-2.0",
           "concludedLicense": "Apache-2.0",
-          "source": "https://registry.npmjs.org/@humanfs/core/-/core-0.19.1.tgz",
-          "purl": "pkg:npm/%40humanfs/core@0.19.1",
+          "source": "https://registry.npmjs.org/@humanfs/core/-/core-0.19.2.tgz",
+          "purl": "pkg:npm/%40humanfs/core@0.19.2",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -2057,9 +2057,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==",
-            "sourceEvidenceSha256": "0236d6cacf93aeef67410dd0057bad66d4af6950adc1178df1a81bfbc84fe699",
-            "expressionEvidenceSha256": "e681ba9a7a3dc466b5fe1acb5f854570b912ed20506ad9c0780a64aa856258c3",
+            "sourceEvidenceValue": "sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==",
+            "sourceEvidenceSha256": "eac40daf04a1339178e9e41e3a739170862b01a632635ae2548f2f88f91778cd",
+            "expressionEvidenceSha256": "33a1737b9c3496ef4c694026724ea19feb13d7a5d0df462384fa32f0d118680c",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -2077,11 +2077,11 @@
         {
           "ecosystem": "npm",
           "name": "@humanfs/node",
-          "version": "0.16.7",
+          "version": "0.16.8",
           "declaredLicense": "Apache-2.0",
           "concludedLicense": "Apache-2.0",
-          "source": "https://registry.npmjs.org/@humanfs/node/-/node-0.16.7.tgz",
-          "purl": "pkg:npm/%40humanfs/node@0.16.7",
+          "source": "https://registry.npmjs.org/@humanfs/node/-/node-0.16.8.tgz",
+          "purl": "pkg:npm/%40humanfs/node@0.16.8",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -2091,9 +2091,43 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-/zUx+yOsIrG4Y43Eh2peDeKCxlRt/gET6aHfaKpuq267qXdYDFViVHfMaLyygZOnl0kGWxFIgsBy8QFuTLUXEQ==",
-            "sourceEvidenceSha256": "8686d4d93b7005f05a744f93bd3458e89ad4b2202d3696f3203676dbf52d98c9",
-            "expressionEvidenceSha256": "98f26fc28069ed814c6958ef55ea5e44b69a00a3f4cb094a5e1b8cd2f3c3c735",
+            "sourceEvidenceValue": "sha512-gE1eQNZ3R++kTzFUpdGlpmy8kDZD/MLyHqDwqjkVQI0JMdI1D51sy1H958PNXYkM2rAac7e5/CnIKZrHtPh3BQ==",
+            "sourceEvidenceSha256": "370cfe5a11a016b1b7045c4c877cfdb4bd8eb557e96ac920cbb881aa1fc01334",
+            "expressionEvidenceSha256": "82a0a153cf5da194b82a72a251e2134dce6806315a1757cafa83cda656738e9b",
+            "copyright": {
+              "requirement": "retain-upstream-copyright-and-license-notices",
+              "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+            },
+            "notice": {
+              "required": true,
+              "fulfillment": "component-entry-in-generated-third-party-notice"
+            },
+            "sourceOffer": {
+              "required": false,
+              "fulfillment": "not-required-by-concluded-license"
+            }
+          }
+        },
+        {
+          "ecosystem": "npm",
+          "name": "@humanfs/types",
+          "version": "0.15.0",
+          "declaredLicense": "Apache-2.0",
+          "concludedLicense": "Apache-2.0",
+          "source": "https://registry.npmjs.org/@humanfs/types/-/types-0.15.0.tgz",
+          "purl": "pkg:npm/%40humanfs/types@0.15.0",
+          "sourceOfferRequired": false,
+          "review": {
+            "decision": "approved",
+            "declaredExpression": "Apache-2.0",
+            "concludedExpression": "Apache-2.0",
+            "reviewer": "flowersec-security-license-review",
+            "reviewedAt": "2026-08-07",
+            "policyRevision": "source-license-policy-v3",
+            "sourceEvidenceKind": "npm-lock-integrity",
+            "sourceEvidenceValue": "sha512-ZZ1w0aoQkwuUuC7Yf+7sdeaNfqQiiLcSRbfI08oAxqLtpXQr9AIVX7Ay7HLDuiLYAaFPu8oBYNq/QIi9URHJ3Q==",
+            "sourceEvidenceSha256": "88abebf15c769f1f0b32782574a1ef3bb9719d24380d5e165100919408253e37",
+            "expressionEvidenceSha256": "4ed2bc7dfd4e08b859b8fc328bfeb6e04c9c82a02a7de7fa8569268d4fad603c",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -3233,11 +3267,11 @@
         {
           "ecosystem": "npm",
           "name": "@types/ws",
-          "version": "8.5.12",
+          "version": "8.18.1",
           "declaredLicense": "MIT",
           "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/@types/ws/-/ws-8.5.12.tgz",
-          "purl": "pkg:npm/%40types/ws@8.5.12",
+          "source": "https://registry.npmjs.org/@types/ws/-/ws-8.18.1.tgz",
+          "purl": "pkg:npm/%40types/ws@8.18.1",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -3247,9 +3281,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-3tPRkv1EtkDpzlgyKyI8pGsGZAGPEaXeu0DOj5DI25Ja91bdAYddYHbADRYVrZMRbfW+1l5YwXVDKohDJNQxkQ==",
-            "sourceEvidenceSha256": "3a9cb24d1f995a1221482955f18caf3d6a3696d1ccdbe042d76bd4917f0876f3",
-            "expressionEvidenceSha256": "1e868d4bfe60b2ca7d5f7c96561585e533e0ef9ca9cc50e94b01ffdf90dfa19b",
+            "sourceEvidenceValue": "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==",
+            "sourceEvidenceSha256": "b53c5df852c5f1d50bd55cef6dc6711d159edc2c9747b7985e1a64da97abd2e9",
+            "expressionEvidenceSha256": "d235b16973c9456487edb1f8b6547f0e03575eea0c43e3ca0f9b48b4a03f53f8",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -5851,11 +5885,11 @@
         {
           "ecosystem": "npm",
           "name": "fast-uri",
-          "version": "3.1.5",
+          "version": "3.1.7",
           "declaredLicense": "BSD-3-Clause",
           "concludedLicense": "BSD-3-Clause",
-          "source": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz",
-          "purl": "pkg:npm/fast-uri@3.1.5",
+          "source": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz",
+          "purl": "pkg:npm/fast-uri@3.1.7",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -5865,9 +5899,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==",
-            "sourceEvidenceSha256": "147ef4056e465f25e39aa7dcfcb4f561c44e78822cb46156bedc92d837576b78",
-            "expressionEvidenceSha256": "58c3b8f00f27ac3e4e41908476e4f4bb3e33772a1c45124bddf13a0fe9b2bf42",
+            "sourceEvidenceValue": "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==",
+            "sourceEvidenceSha256": "1d11dd01e75aa3626def4448172f6160da80e955657bb12273e7cfe50f35392c",
+            "expressionEvidenceSha256": "5087334ff4f9e35bab1da8db09cd6e28ca65da006b6b5423a532268f70589f88",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -9059,11 +9093,11 @@
         {
           "ecosystem": "npm",
           "name": "ws",
-          "version": "8.21.2",
+          "version": "8.21.3",
           "declaredLicense": "MIT",
           "concludedLicense": "MIT",
-          "source": "https://registry.npmjs.org/ws/-/ws-8.21.2.tgz",
-          "purl": "pkg:npm/ws@8.21.2",
+          "source": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz",
+          "purl": "pkg:npm/ws@8.21.3",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -9073,9 +9107,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "npm-lock-integrity",
-            "sourceEvidenceValue": "sha512-54dMVAo4WIe6SKy3vBgN+9bJZqqQ8IMRevAkOLQALhi49qkkQDQfWdAZ8KQlXiEabw88ARXXdUrlvtbKQX+aKw==",
-            "sourceEvidenceSha256": "bd18860f84fef5babd94f133caa8f3df771c574f0c25263cbb21106504f3fe40",
-            "expressionEvidenceSha256": "11e6fb8bfa0b3a93ecaef4970d8e3e8bf8a0c25069cba886bc5f744029024c37",
+            "sourceEvidenceValue": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==",
+            "sourceEvidenceSha256": "2849e0126b78466812bfc3e4faef2234972d45c6a09b3c61c32e69e789bd3386",
+            "expressionEvidenceSha256": "3fd4631440b96c82c1f5fdcb5443b08a633f5c07b3dfd87030e517cbd3ba3a17",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -9218,7 +9252,7 @@
         },
         {
           "from": "pkg:npm/%40floegence/flowersec-core@5.0.1",
-          "to": "pkg:npm/%40types/ws@8.5.12",
+          "to": "pkg:npm/%40types/ws@8.18.1",
           "kind": "dev"
         },
         {
@@ -9288,7 +9322,7 @@
         },
         {
           "from": "pkg:npm/%40floegence/flowersec-core@5.0.1",
-          "to": "pkg:npm/ws@8.21.2",
+          "to": "pkg:npm/ws@8.21.3",
           "kind": "runtime"
         },
         {
@@ -9312,12 +9346,22 @@
           "kind": "optional"
         },
         {
-          "from": "pkg:npm/%40humanfs/node@0.16.7",
-          "to": "pkg:npm/%40humanfs/core@0.19.1",
+          "from": "pkg:npm/%40humanfs/core@0.19.2",
+          "to": "pkg:npm/%40humanfs/types@0.15.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40humanfs/node@0.16.7",
+          "from": "pkg:npm/%40humanfs/node@0.16.8",
+          "to": "pkg:npm/%40humanfs/core@0.19.2",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:npm/%40humanfs/node@0.16.8",
+          "to": "pkg:npm/%40humanfs/types@0.15.0",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:npm/%40humanfs/node@0.16.8",
           "to": "pkg:npm/%40humanwhocodes/retry@0.4.3",
           "kind": "runtime"
         },
@@ -9357,7 +9401,7 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:npm/%40types/ws@8.5.12",
+          "from": "pkg:npm/%40types/ws@8.18.1",
           "to": "pkg:npm/%40types/node@26.4.0",
           "kind": "runtime"
         },
@@ -9933,7 +9977,7 @@
         },
         {
           "from": "pkg:npm/ajv@8.20.0",
-          "to": "pkg:npm/fast-uri@3.1.5",
+          "to": "pkg:npm/fast-uri@3.1.7",
           "kind": "runtime"
         },
         {
@@ -10168,7 +10212,7 @@
         },
         {
           "from": "pkg:npm/eslint@10.9.1",
-          "to": "pkg:npm/%40humanfs/node@0.16.7",
+          "to": "pkg:npm/%40humanfs/node@0.16.8",
           "kind": "runtime"
         },
         {
@@ -64054,11 +64098,11 @@
     {
       "ecosystem": "npm",
       "name": "@humanfs/core",
-      "version": "0.19.1",
+      "version": "0.19.2",
       "declaredLicense": "Apache-2.0",
       "concludedLicense": "Apache-2.0",
-      "source": "https://registry.npmjs.org/@humanfs/core/-/core-0.19.1.tgz",
-      "purl": "pkg:npm/%40humanfs/core@0.19.1",
+      "source": "https://registry.npmjs.org/@humanfs/core/-/core-0.19.2.tgz",
+      "purl": "pkg:npm/%40humanfs/core@0.19.2",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -64068,9 +64112,9 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA==",
-        "sourceEvidenceSha256": "0236d6cacf93aeef67410dd0057bad66d4af6950adc1178df1a81bfbc84fe699",
-        "expressionEvidenceSha256": "e681ba9a7a3dc466b5fe1acb5f854570b912ed20506ad9c0780a64aa856258c3",
+        "sourceEvidenceValue": "sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==",
+        "sourceEvidenceSha256": "eac40daf04a1339178e9e41e3a739170862b01a632635ae2548f2f88f91778cd",
+        "expressionEvidenceSha256": "33a1737b9c3496ef4c694026724ea19feb13d7a5d0df462384fa32f0d118680c",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -64088,11 +64132,11 @@
     {
       "ecosystem": "npm",
       "name": "@humanfs/node",
-      "version": "0.16.7",
+      "version": "0.16.8",
       "declaredLicense": "Apache-2.0",
       "concludedLicense": "Apache-2.0",
-      "source": "https://registry.npmjs.org/@humanfs/node/-/node-0.16.7.tgz",
-      "purl": "pkg:npm/%40humanfs/node@0.16.7",
+      "source": "https://registry.npmjs.org/@humanfs/node/-/node-0.16.8.tgz",
+      "purl": "pkg:npm/%40humanfs/node@0.16.8",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -64102,9 +64146,43 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-/zUx+yOsIrG4Y43Eh2peDeKCxlRt/gET6aHfaKpuq267qXdYDFViVHfMaLyygZOnl0kGWxFIgsBy8QFuTLUXEQ==",
-        "sourceEvidenceSha256": "8686d4d93b7005f05a744f93bd3458e89ad4b2202d3696f3203676dbf52d98c9",
-        "expressionEvidenceSha256": "98f26fc28069ed814c6958ef55ea5e44b69a00a3f4cb094a5e1b8cd2f3c3c735",
+        "sourceEvidenceValue": "sha512-gE1eQNZ3R++kTzFUpdGlpmy8kDZD/MLyHqDwqjkVQI0JMdI1D51sy1H958PNXYkM2rAac7e5/CnIKZrHtPh3BQ==",
+        "sourceEvidenceSha256": "370cfe5a11a016b1b7045c4c877cfdb4bd8eb557e96ac920cbb881aa1fc01334",
+        "expressionEvidenceSha256": "82a0a153cf5da194b82a72a251e2134dce6806315a1757cafa83cda656738e9b",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "npm",
+      "name": "@humanfs/types",
+      "version": "0.15.0",
+      "declaredLicense": "Apache-2.0",
+      "concludedLicense": "Apache-2.0",
+      "source": "https://registry.npmjs.org/@humanfs/types/-/types-0.15.0.tgz",
+      "purl": "pkg:npm/%40humanfs/types@0.15.0",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "Apache-2.0",
+        "concludedExpression": "Apache-2.0",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-08-07",
+        "policyRevision": "source-license-policy-v3",
+        "sourceEvidenceKind": "npm-lock-integrity",
+        "sourceEvidenceValue": "sha512-ZZ1w0aoQkwuUuC7Yf+7sdeaNfqQiiLcSRbfI08oAxqLtpXQr9AIVX7Ay7HLDuiLYAaFPu8oBYNq/QIi9URHJ3Q==",
+        "sourceEvidenceSha256": "88abebf15c769f1f0b32782574a1ef3bb9719d24380d5e165100919408253e37",
+        "expressionEvidenceSha256": "4ed2bc7dfd4e08b859b8fc328bfeb6e04c9c82a02a7de7fa8569268d4fad603c",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -65244,11 +65322,11 @@
     {
       "ecosystem": "npm",
       "name": "@types/ws",
-      "version": "8.5.12",
+      "version": "8.18.1",
       "declaredLicense": "MIT",
       "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/@types/ws/-/ws-8.5.12.tgz",
-      "purl": "pkg:npm/%40types/ws@8.5.12",
+      "source": "https://registry.npmjs.org/@types/ws/-/ws-8.18.1.tgz",
+      "purl": "pkg:npm/%40types/ws@8.18.1",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -65258,9 +65336,9 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-3tPRkv1EtkDpzlgyKyI8pGsGZAGPEaXeu0DOj5DI25Ja91bdAYddYHbADRYVrZMRbfW+1l5YwXVDKohDJNQxkQ==",
-        "sourceEvidenceSha256": "3a9cb24d1f995a1221482955f18caf3d6a3696d1ccdbe042d76bd4917f0876f3",
-        "expressionEvidenceSha256": "1e868d4bfe60b2ca7d5f7c96561585e533e0ef9ca9cc50e94b01ffdf90dfa19b",
+        "sourceEvidenceValue": "sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==",
+        "sourceEvidenceSha256": "b53c5df852c5f1d50bd55cef6dc6711d159edc2c9747b7985e1a64da97abd2e9",
+        "expressionEvidenceSha256": "d235b16973c9456487edb1f8b6547f0e03575eea0c43e3ca0f9b48b4a03f53f8",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -67862,11 +67940,11 @@
     {
       "ecosystem": "npm",
       "name": "fast-uri",
-      "version": "3.1.5",
+      "version": "3.1.7",
       "declaredLicense": "BSD-3-Clause",
       "concludedLicense": "BSD-3-Clause",
-      "source": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz",
-      "purl": "pkg:npm/fast-uri@3.1.5",
+      "source": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz",
+      "purl": "pkg:npm/fast-uri@3.1.7",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -67876,9 +67954,9 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==",
-        "sourceEvidenceSha256": "147ef4056e465f25e39aa7dcfcb4f561c44e78822cb46156bedc92d837576b78",
-        "expressionEvidenceSha256": "58c3b8f00f27ac3e4e41908476e4f4bb3e33772a1c45124bddf13a0fe9b2bf42",
+        "sourceEvidenceValue": "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg==",
+        "sourceEvidenceSha256": "1d11dd01e75aa3626def4448172f6160da80e955657bb12273e7cfe50f35392c",
+        "expressionEvidenceSha256": "5087334ff4f9e35bab1da8db09cd6e28ca65da006b6b5423a532268f70589f88",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -71070,11 +71148,11 @@
     {
       "ecosystem": "npm",
       "name": "ws",
-      "version": "8.21.2",
+      "version": "8.21.3",
       "declaredLicense": "MIT",
       "concludedLicense": "MIT",
-      "source": "https://registry.npmjs.org/ws/-/ws-8.21.2.tgz",
-      "purl": "pkg:npm/ws@8.21.2",
+      "source": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz",
+      "purl": "pkg:npm/ws@8.21.3",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -71084,9 +71162,9 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "npm-lock-integrity",
-        "sourceEvidenceValue": "sha512-54dMVAo4WIe6SKy3vBgN+9bJZqqQ8IMRevAkOLQALhi49qkkQDQfWdAZ8KQlXiEabw88ARXXdUrlvtbKQX+aKw==",
-        "sourceEvidenceSha256": "bd18860f84fef5babd94f133caa8f3df771c574f0c25263cbb21106504f3fe40",
-        "expressionEvidenceSha256": "11e6fb8bfa0b3a93ecaef4970d8e3e8bf8a0c25069cba886bc5f744029024c37",
+        "sourceEvidenceValue": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==",
+        "sourceEvidenceSha256": "2849e0126b78466812bfc3e4faef2234972d45c6a09b3c61c32e69e789bd3386",
+        "expressionEvidenceSha256": "3fd4631440b96c82c1f5fdcb5443b08a633f5c07b3dfd87030e517cbd3ba3a17",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -74637,7 +74715,7 @@
     },
     {
       "from": "pkg:generic/flowersec-source@5.0.1",
-      "to": "pkg:npm/%40types/ws@8.5.12",
+      "to": "pkg:npm/%40types/ws@8.18.1",
       "kind": "dev"
     },
     {
@@ -74707,7 +74785,7 @@
     },
     {
       "from": "pkg:generic/flowersec-source@5.0.1",
-      "to": "pkg:npm/ws@8.21.2",
+      "to": "pkg:npm/ws@8.21.3",
       "kind": "runtime"
     },
     {
@@ -74906,12 +74984,22 @@
       "kind": "optional"
     },
     {
-      "from": "pkg:npm/%40humanfs/node@0.16.7",
-      "to": "pkg:npm/%40humanfs/core@0.19.1",
+      "from": "pkg:npm/%40humanfs/core@0.19.2",
+      "to": "pkg:npm/%40humanfs/types@0.15.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:npm/%40humanfs/node@0.16.7",
+      "from": "pkg:npm/%40humanfs/node@0.16.8",
+      "to": "pkg:npm/%40humanfs/core@0.19.2",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:npm/%40humanfs/node@0.16.8",
+      "to": "pkg:npm/%40humanfs/types@0.15.0",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:npm/%40humanfs/node@0.16.8",
       "to": "pkg:npm/%40humanwhocodes/retry@0.4.3",
       "kind": "runtime"
     },
@@ -74951,7 +75039,7 @@
       "kind": "runtime"
     },
     {
-      "from": "pkg:npm/%40types/ws@8.5.12",
+      "from": "pkg:npm/%40types/ws@8.18.1",
       "to": "pkg:npm/%40types/node@26.4.0",
       "kind": "runtime"
     },
@@ -75527,7 +75615,7 @@
     },
     {
       "from": "pkg:npm/ajv@8.20.0",
-      "to": "pkg:npm/fast-uri@3.1.5",
+      "to": "pkg:npm/fast-uri@3.1.7",
       "kind": "runtime"
     },
     {
@@ -75762,7 +75850,7 @@
     },
     {
       "from": "pkg:npm/eslint@10.9.1",
-      "to": "pkg:npm/%40humanfs/node@0.16.7",
+      "to": "pkg:npm/%40humanfs/node@0.16.8",
       "kind": "runtime"
     },
     {

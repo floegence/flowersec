@@ -267,8 +267,8 @@ fn artifact_lease_does_not_expose_its_artifact() {
     )
     .expect("write lease API probe source");
 
-    let output = Command::new("rustup")
-        .args(["run", "1.88.0", "cargo", "check", "--offline", "--quiet"])
+    let output = Command::new(env!("CARGO"))
+        .args(["check", "--offline", "--quiet"])
         .current_dir(fixture.path())
         .env("CARGO_TARGET_DIR", fixture.path().join("target"))
         .output()
@@ -288,16 +288,8 @@ fn artifact_lease_does_not_expose_its_artifact() {
 fn rustdoc_uses_real_unversioned_portable_types() {
     let _probe_guard = CARGO_PROBE_LOCK.lock().expect("cargo probe lock");
     let fixture = tempfile::tempdir().expect("create rustdoc target directory");
-    let output = Command::new("rustup")
-        .args([
-            "run",
-            "1.88.0",
-            "cargo",
-            "doc",
-            "--no-deps",
-            "--quiet",
-            "--target-dir",
-        ])
+    let output = Command::new(env!("CARGO"))
+        .args(["doc", "--no-deps", "--quiet", "--target-dir"])
         .arg(fixture.path())
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()

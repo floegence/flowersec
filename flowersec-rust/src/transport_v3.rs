@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq as _;
 
-use crate::artifact_v3::{ArtifactErrorV3, hash_lp, jcs_serialize};
+use crate::artifact_v3::{ArtifactError, hash_lp, jcs_serialize};
 
 pub(crate) use crate::transport::{
     ByteStream, IncomingStream, JsonObject, NotificationSubscription, RpcCallError, RpcError,
@@ -233,34 +233,33 @@ impl RuntimeCapabilityDescriptorV3 {
         }
     }
 
-    pub(crate) fn canonical_json(&self) -> Result<Vec<u8>, ArtifactErrorV3> {
+    pub(crate) fn canonical_json(&self) -> Result<Vec<u8>, ArtifactError> {
         self.validate()?;
         jcs_serialize(self)
     }
-    pub(crate) fn decode(input: &[u8]) -> Result<Self, ArtifactErrorV3> {
+    pub(crate) fn decode(input: &[u8]) -> Result<Self, ArtifactError> {
         crate::artifact_v3::reject_duplicate_json_keys(input)?;
-        let descriptor: Self =
-            serde_json::from_slice(input).map_err(|_| ArtifactErrorV3::Invalid)?;
+        let descriptor: Self = serde_json::from_slice(input).map_err(|_| ArtifactError::Invalid)?;
         let canonical = descriptor.canonical_json()?;
         if canonical != input {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         Ok(descriptor)
     }
-    pub(crate) fn digest(&self) -> Result<[u8; 32], ArtifactErrorV3> {
+    pub(crate) fn digest(&self) -> Result<[u8; 32], ArtifactError> {
         Ok(hash_lp(
             RUNTIME_CAPABILITY_LABEL_V3,
             &self.canonical_json()?,
         ))
     }
 
-    fn validate(&self) -> Result<(), ArtifactErrorV3> {
+    fn validate(&self) -> Result<(), ArtifactError> {
         if self.schema_version != 3
             || !capability_token(&self.language)
             || !capability_token(&self.runtime)
             || self.tuples.len() + self.unsupported.len() == 0
         {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
 
         let mut previous_tuple: Option<&RuntimeCapabilityTupleV3> = None;
@@ -269,7 +268,7 @@ impl RuntimeCapabilityDescriptorV3 {
             if previous_tuple.is_some_and(|previous| {
                 capability_tuple_identity(previous) >= capability_tuple_identity(tuple)
             }) {
-                return Err(ArtifactErrorV3::Invalid);
+                return Err(ArtifactError::Invalid);
             }
             previous_tuple = Some(tuple);
         }
@@ -282,7 +281,7 @@ impl RuntimeCapabilityDescriptorV3 {
                     .iter()
                     .any(|tuple| tuple.carrier == unsupported.carrier)
             {
-                return Err(ArtifactErrorV3::Invalid);
+                return Err(ArtifactError::Invalid);
             }
             previous_unsupported = Some(unsupported.carrier);
         }
@@ -294,16 +293,16 @@ impl RuntimeCapabilityDescriptorV3 {
             let supported = self.tuples.iter().any(|tuple| tuple.carrier == carrier);
             let unsupported = self.unsupported.iter().any(|item| item.carrier == carrier);
             if supported == unsupported {
-                return Err(ArtifactErrorV3::Invalid);
+                return Err(ArtifactError::Invalid);
             }
         }
 
         validate_registered_runtime(self)
     }
 
-    fn validate_local_rust_profile(&self) -> Result<(), ArtifactErrorV3> {
+    fn validate_local_rust_profile(&self) -> Result<(), ArtifactError> {
         if self != &Self::native_rust() {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         self.validate()
     }
@@ -330,7 +329,7 @@ fn capability_tuple_identity(
     )
 }
 
-fn validate_capability_tuple(tuple: &RuntimeCapabilityTupleV3) -> Result<(), ArtifactErrorV3> {
+fn validate_capability_tuple(tuple: &RuntimeCapabilityTupleV3) -> Result<(), ArtifactError> {
     let valid_deployment = match tuple.path {
         PathV3::Direct => {
             (tuple.network_mode == NetworkModeV3::Dial
@@ -351,7 +350,7 @@ fn validate_capability_tuple(tuple: &RuntimeCapabilityTupleV3) -> Result<(), Art
         || !valid_modes
         || (tuple.carrier == CarrierV3::Websocket && (tuple.datagrams || tuple.migration))
     {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     Ok(())
 }
@@ -414,7 +413,7 @@ fn validate_registered_carrier(
     carrier: CarrierV3,
     tuple_sets: Vec<Vec<RuntimeCapabilityTupleV3>>,
     unsupported_reasons: &[&str],
-) -> Result<(), ArtifactErrorV3> {
+) -> Result<(), ArtifactError> {
     let actual = descriptor
         .tuples
         .iter()
@@ -427,17 +426,17 @@ fn validate_registered_carrier(
         .find(|unsupported| unsupported.carrier == carrier)
     {
         if !actual.is_empty() || !unsupported_reasons.contains(&unsupported.reason.as_str()) {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
     } else if !tuple_sets.iter().any(|expected| expected == &actual) {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     Ok(())
 }
 
 fn validate_registered_runtime(
     descriptor: &RuntimeCapabilityDescriptorV3,
-) -> Result<(), ArtifactErrorV3> {
+) -> Result<(), ArtifactError> {
     let ca = &["ca"];
     let ca_pin = &["ca", "pin"];
     let id = (descriptor.language.as_str(), descriptor.runtime.as_str());
@@ -619,7 +618,7 @@ fn validate_registered_runtime(
                 &["swift_apple_client_profile_excludes_webtransport"],
             )
         }
-        _ => Err(ArtifactErrorV3::Invalid),
+        _ => Err(ArtifactError::Invalid),
     }
 }
 
@@ -755,7 +754,7 @@ mod tests {
     fn native_capability_rejects_partial_or_mutated_registry_tuples() {
         let mut partial = RuntimeCapabilityDescriptorV3::native_rust();
         partial.tuples.pop();
-        assert_eq!(partial.validate(), Err(ArtifactErrorV3::Invalid));
+        assert_eq!(partial.validate(), Err(ArtifactError::Invalid));
 
         let mut mutated = RuntimeCapabilityDescriptorV3::native_rust();
         let raw_quic_dial = mutated
@@ -766,7 +765,7 @@ mod tests {
             })
             .expect("native Rust raw-QUIC dial tuple");
         raw_quic_dial.migration = false;
-        assert_eq!(mutated.validate(), Err(ArtifactErrorV3::Invalid));
+        assert_eq!(mutated.validate(), Err(ArtifactError::Invalid));
     }
     #[test]
     fn carrier_contract_is_physically_isolated_from_v2() {
@@ -918,7 +917,7 @@ mod tests {
             "../../testdata/transport_v3/go_issuer_admission_vectors.json"
         ))
         .expect("parse Go issuer admission vector");
-        let artifact = crate::artifact_v3::ArtifactV3::parse(vector.artifact_json.as_bytes())
+        let artifact = crate::artifact_v3::Artifact::parse(vector.artifact_json.as_bytes())
             .expect("decode Go-issued artifact");
         let frame = artifact
             .encode_fsb3(&vector.chosen_candidate_id)

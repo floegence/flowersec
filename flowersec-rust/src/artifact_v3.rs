@@ -53,16 +53,16 @@ const FORBIDDEN_FSA3_REASONS: &[&str] = &[
 ];
 
 #[derive(Clone)]
-pub struct ArtifactV3(Arc<ValidatedArtifactV3>, Option<Arc<HashSet<String>>>);
+pub struct Artifact(Arc<ValidatedArtifactV3>, Option<Arc<HashSet<String>>>);
 
-impl std::fmt::Debug for ArtifactV3 {
+impl std::fmt::Debug for Artifact {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("ArtifactV3 { <opaque> }")
+        formatter.write_str("Artifact { <opaque> }")
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ArtifactErrorV3 {
+pub enum ArtifactError {
     #[error("Flowersec v3 artifact is too large")]
     TooLarge,
     #[error("invalid Flowersec v3 artifact")]
@@ -76,8 +76,8 @@ pub(crate) enum Fsb3DecodeErrorV3 {
     NonCanonical,
 }
 
-impl From<ArtifactErrorV3> for Fsb3DecodeErrorV3 {
-    fn from(_: ArtifactErrorV3) -> Self {
+impl From<ArtifactError> for Fsb3DecodeErrorV3 {
+    fn from(_: ArtifactError) -> Self {
         Self::Invalid
     }
 }
@@ -91,24 +91,24 @@ struct ValidatedArtifactV3 {
     candidate_set_hash: [u8; 32],
 }
 
-impl ArtifactV3 {
-    pub fn parse(input: impl AsRef<[u8]>) -> Result<Self, ArtifactErrorV3> {
+impl Artifact {
+    pub fn parse(input: impl AsRef<[u8]>) -> Result<Self, ArtifactError> {
         let input = input.as_ref();
         if input.len() > MAX_ARTIFACT_BYTES {
-            return Err(ArtifactErrorV3::TooLarge);
+            return Err(ArtifactError::TooLarge);
         }
         preflight_artifact_json(input)?;
-        let value: Value = serde_json::from_slice(input).map_err(|_| ArtifactErrorV3::Invalid)?;
+        let value: Value = serde_json::from_slice(input).map_err(|_| ArtifactError::Invalid)?;
         let canonical = jcs_value(&value)?;
         if canonical.as_slice() != input {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let wire: ArtifactWireV3 =
-            serde_json::from_value(value).map_err(|_| ArtifactErrorV3::Invalid)?;
+            serde_json::from_value(value).map_err(|_| ArtifactError::Invalid)?;
         let candidates = validate_artifact(&wire)?;
         let candidate_set_json = jcs_serialize(&candidates)?;
         if candidate_set_json.len() > MAX_CANDIDATE_SET_BYTES {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let candidate_set_hash = hash_lp(CANDIDATES_LABEL_V3, &candidate_set_json);
         Ok(Self(
@@ -170,7 +170,7 @@ impl ArtifactV3 {
         self.0.candidate_set_hash
     }
 
-    pub(crate) fn connection_plan(&self) -> Result<ConnectionPlanV3, ArtifactErrorV3> {
+    pub(crate) fn connection_plan(&self) -> Result<ConnectionPlanV3, ArtifactError> {
         let wire = &self.0.wire;
         let (path, role, local_endpoint_instance_id, expected_peer_endpoint_instance_id) =
             match &wire.path {
@@ -195,7 +195,7 @@ impl ArtifactV3 {
         let suite = match session.default_suite {
             1 => CipherSuiteV3::ChaCha20Poly1305,
             2 => CipherSuiteV3::Aes256Gcm,
-            _ => return Err(ArtifactErrorV3::Invalid),
+            _ => return Err(ArtifactError::Invalid),
         };
         Ok(ConnectionPlanV3 {
             candidates: self.controller_candidates(),
@@ -207,11 +207,11 @@ impl ArtifactV3 {
             session: SessionParametersV3 {
                 channel_id: session.channel_id.clone(),
                 session_contract_hash: decode32(&session.contract_hash_b64u)
-                    .ok_or(ArtifactErrorV3::Invalid)?,
+                    .ok_or(ArtifactError::Invalid)?,
                 suite,
-                psk: decode32(&session.e2ee_psk_b64u).ok_or(ArtifactErrorV3::Invalid)?,
+                psk: decode32(&session.e2ee_psk_b64u).ok_or(ArtifactError::Invalid)?,
                 max_inbound_streams: u16::try_from(session.max_inbound_streams)
-                    .map_err(|_| ArtifactErrorV3::Invalid)?,
+                    .map_err(|_| ArtifactError::Invalid)?,
                 idle_timeout: Duration::from_secs(session.idle_timeout_seconds),
                 establish_timeout: Duration::from_secs(session.establish_timeout_seconds),
                 rekey_prepare_timeout: Duration::from_secs(session.rekey_prepare_timeout_seconds),
@@ -225,17 +225,17 @@ impl ArtifactV3 {
     pub(crate) fn encode_fsb3(
         &self,
         chosen_candidate_id: &str,
-    ) -> Result<EncodedFsb3, ArtifactErrorV3> {
+    ) -> Result<EncodedFsb3, ArtifactError> {
         if !self
             .0
             .candidates
             .iter()
             .any(|candidate| candidate.id == chosen_candidate_id)
         {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let wire = &self.0.wire;
-        let common = |object: &mut serde_json::Map<String, Value>| -> Result<(), ArtifactErrorV3> {
+        let common = |object: &mut serde_json::Map<String, Value>| -> Result<(), ArtifactError> {
             object.insert(
                 "candidate_set_hash_b64u".into(),
                 Value::String(URL_SAFE_NO_PAD.encode(self.0.candidate_set_hash)),
@@ -243,7 +243,7 @@ impl ArtifactV3 {
             object.insert(
                 "candidates".into(),
                 serde_json::from_slice(&self.0.candidate_set_json)
-                    .map_err(|_| ArtifactErrorV3::Invalid)?,
+                    .map_err(|_| ArtifactError::Invalid)?,
             );
             object.insert(
                 "channel_id".into(),
@@ -294,7 +294,7 @@ impl ArtifactV3 {
         };
         let payload = jcs_value(&payload_value)?;
         if payload.is_empty() || payload.len() > MAX_FSB3_PAYLOAD_BYTES {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let mut raw = Vec::with_capacity(12 + payload.len());
         raw.extend_from_slice(b"FSB3");
@@ -318,11 +318,9 @@ pub(crate) struct EncodedFsb3 {
     chosen_candidate_id: String,
 }
 
-pub(crate) fn acceptor_admissions_hash(
-    frames: &[EncodedFsb3],
-) -> Result<[u8; 32], ArtifactErrorV3> {
+pub(crate) fn acceptor_admissions_hash(frames: &[EncodedFsb3]) -> Result<[u8; 32], ArtifactError> {
     if frames.is_empty() || frames.len() > 4 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let mut ordered = frames.iter().collect::<Vec<_>>();
     ordered
@@ -331,11 +329,11 @@ pub(crate) fn acceptor_admissions_hash(
         .windows(2)
         .all(|pair| pair[0].chosen_candidate_id < pair[1].chosen_candidate_id)
     {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let mut preimage = ACCEPTOR_ADMISSIONS_LABEL_V3.to_vec();
     for frame in ordered {
-        let length = u32::try_from(frame.raw.len()).map_err(|_| ArtifactErrorV3::Invalid)?;
+        let length = u32::try_from(frame.raw.len()).map_err(|_| ArtifactError::Invalid)?;
         preimage.extend_from_slice(&length.to_be_bytes());
         preimage.extend_from_slice(&frame.raw);
     }
@@ -355,32 +353,32 @@ pub(crate) struct AdmissionResponseV3 {
     pub(crate) reason: String,
 }
 
-pub(crate) fn decode_fsa3(frame: &[u8]) -> Result<AdmissionResponseV3, ArtifactErrorV3> {
+pub(crate) fn decode_fsa3(frame: &[u8]) -> Result<AdmissionResponseV3, ArtifactError> {
     if frame.len() < 8 || &frame[..4] != b"FSA3" || frame[4] != 3 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let status = match frame[5] {
         0 => AdmissionStatusV3::Success,
         1 => AdmissionStatusV3::Reject,
         2 => AdmissionStatusV3::Retryable,
-        _ => return Err(ArtifactErrorV3::Invalid),
+        _ => return Err(ArtifactError::Invalid),
     };
     let length = usize::from(u16::from_be_bytes([frame[6], frame[7]]));
     if length > 64 || frame.len() != 8 + length {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let reason = std::str::from_utf8(&frame[8..])
-        .map_err(|_| ArtifactErrorV3::Invalid)?
+        .map_err(|_| ArtifactError::Invalid)?
         .to_owned();
     match status {
-        AdmissionStatusV3::Success if !reason.is_empty() => return Err(ArtifactErrorV3::Invalid),
+        AdmissionStatusV3::Success if !reason.is_empty() => return Err(ArtifactError::Invalid),
         AdmissionStatusV3::Reject if reason == "expired_artifact" => {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         AdmissionStatusV3::Reject | AdmissionStatusV3::Retryable
             if !valid_reason(&reason) || FORBIDDEN_FSA3_REASONS.contains(&reason.as_str()) =>
         {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         _ => {}
     }
@@ -691,9 +689,9 @@ fn validate_fsb3_candidates<'a>(
     wire_profile: &str,
     candidate_set_hash_b64u: &str,
     chosen_candidate_id: &str,
-) -> Result<&'a CanonicalCandidateV3, ArtifactErrorV3> {
+) -> Result<&'a CanonicalCandidateV3, ArtifactError> {
     if !valid_candidate_id(chosen_candidate_id) || candidates.is_empty() || candidates.len() > 4 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
 
     let mut endpoints = HashSet::new();
@@ -703,11 +701,11 @@ fn validate_fsb3_candidates<'a>(
             || normalize_url_v3(path, candidate.carrier, &candidate.normalized_url)?
                 != candidate.normalized_url
         {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         validate_tls_policy(&candidate.tls)?;
         if jcs_serialize(candidate)?.len() > MAX_CANDIDATE_BYTES {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let endpoint = format!(
             "{}\0{}\0{}",
@@ -716,23 +714,23 @@ fn validate_fsb3_candidates<'a>(
             candidate.normalized_url
         );
         if !endpoints.insert(endpoint) {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
     }
     if !candidates.windows(2).all(|pair| pair[0].id < pair[1].id) {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let candidate_set_json = jcs_serialize(candidates)?;
     if candidate_set_json.len() > MAX_CANDIDATE_SET_BYTES
         || decode32(candidate_set_hash_b64u)
             != Some(hash_lp(CANDIDATES_LABEL_V3, &candidate_set_json))
     {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     candidates
         .iter()
         .find(|candidate| candidate.id == chosen_candidate_id)
-        .ok_or(ArtifactErrorV3::Invalid)
+        .ok_or(ArtifactError::Invalid)
 }
 
 pub(crate) struct ConnectionPlanV3 {
@@ -758,7 +756,7 @@ pub(crate) struct SessionParametersV3 {
 }
 
 impl CanonicalCandidateV3 {
-    pub(crate) fn policy_digest(&self) -> Result<[u8; 32], ArtifactErrorV3> {
+    pub(crate) fn policy_digest(&self) -> Result<[u8; 32], ArtifactError> {
         Ok(hash_lp(
             b"flowersec-v3-tls-policy\0",
             &jcs_serialize(&self.tls)?,
@@ -799,19 +797,19 @@ pub(crate) enum TransportSecurityFailureV3 {
     UnknownTls,
 }
 
-fn validate_artifact(wire: &ArtifactWireV3) -> Result<Vec<CanonicalCandidateV3>, ArtifactErrorV3> {
+fn validate_artifact(wire: &ArtifactWireV3) -> Result<Vec<CanonicalCandidateV3>, ArtifactError> {
     if wire.v != 3 || wire.profile != SESSION_PROFILE_V3 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     validate_session(&wire.session)?;
     if !valid_registry_id(wire.path.rendezvous_group_id(), 128)
         || !valid_registry_id(wire.path.listener_audience(), 128)
     {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     match &wire.path {
         PathWireV3::Direct { routing_token, .. } if !valid_ascii(routing_token, 8192) => {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         PathWireV3::Tunnel {
             role,
@@ -825,13 +823,13 @@ fn validate_artifact(wire: &ArtifactWireV3) -> Result<Vec<CanonicalCandidateV3>,
             || local_endpoint_instance_id == expected_peer_endpoint_instance_id
             || !valid_ascii(token, 8192) =>
         {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         _ => {}
     }
     let candidates = validate_candidates(wire.path.kind(), wire.path.candidates())?;
     if wire.scoped.len() > 8 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let mut scopes = HashSet::new();
     for scope in &wire.scoped {
@@ -839,17 +837,17 @@ fn validate_artifact(wire: &ArtifactWireV3) -> Result<Vec<CanonicalCandidateV3>,
             || !valid_lower_id(&scope.scope, 64)
             || !scopes.insert(scope.scope.as_str())
         {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let payload = Value::Object(scope.payload.clone());
         if jcs_value(&payload)?.len() > 4096 {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let mut nodes = 0;
         validate_scoped_value(&payload, 1, &mut nodes, true)?;
     }
     if wire.correlation.v != 3 || wire.correlation.tags.len() > 8 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let mut tags = HashSet::new();
     for tag in &wire.correlation.tags {
@@ -857,13 +855,13 @@ fn validate_artifact(wire: &ArtifactWireV3) -> Result<Vec<CanonicalCandidateV3>,
             || !valid_ascii(&tag.value, 128)
             || !tags.insert(tag.key.as_str())
         {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
     }
     Ok(candidates)
 }
 
-fn validate_session(session: &SessionWireV3) -> Result<(), ArtifactErrorV3> {
+fn validate_session(session: &SessionWireV3) -> Result<(), ArtifactError> {
     if !valid_registry_id(&session.channel_id, 128)
         || !(1..=MAX_SAFE_INTEGER).contains(&session.init_expire_at_unix_s)
         || session.idle_timeout_seconds > u64::from(u32::MAX)
@@ -885,7 +883,7 @@ fn validate_session(session: &SessionWireV3) -> Result<(), ArtifactErrorV3> {
             .all(|value| matches!(value, 1 | 2))
         || !session.allowed_suites.contains(&session.default_suite)
     {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let projection = serde_json::json!({
         "allowed_suites": session.allowed_suites, "channel_id": session.channel_id,
@@ -896,7 +894,7 @@ fn validate_session(session: &SessionWireV3) -> Result<(), ArtifactErrorV3> {
     });
     let expected = hash_lp(SESSION_CONTRACT_LABEL_V3, &jcs_value(&projection)?);
     if decode32(&session.contract_hash_b64u) != Some(expected) {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     Ok(())
 }
@@ -904,9 +902,9 @@ fn validate_session(session: &SessionWireV3) -> Result<(), ArtifactErrorV3> {
 fn validate_candidates(
     kind: &str,
     source: &[CandidateWireV3],
-) -> Result<Vec<CanonicalCandidateV3>, ArtifactErrorV3> {
+) -> Result<Vec<CanonicalCandidateV3>, ArtifactError> {
     if source.is_empty() || source.len() > 4 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let mut ids = HashSet::new();
     let mut endpoints = HashSet::new();
@@ -918,16 +916,16 @@ fn validate_candidates(
                 != match kind {
                     "direct" => DIRECT_PROFILE_V3,
                     "tunnel" => TUNNEL_PROFILE_V3,
-                    _ => return Err(ArtifactErrorV3::Invalid),
+                    _ => return Err(ArtifactError::Invalid),
                 }
         {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         validate_tls_policy(&candidate.tls)?;
         let normalized_url = normalize_url_v3(kind, candidate.carrier, &candidate.url)?;
         let endpoint = format!("{}\0{kind}\0{normalized_url}", candidate.carrier.as_str());
         if !endpoints.insert(endpoint) {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let canonical = CanonicalCandidateV3 {
             carrier: candidate.carrier,
@@ -937,7 +935,7 @@ fn validate_candidates(
             wire_profile: candidate.wire_profile.clone(),
         };
         if jcs_serialize(&canonical)?.len() > MAX_CANDIDATE_BYTES {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         candidates.push(canonical);
     }
@@ -945,26 +943,26 @@ fn validate_candidates(
     Ok(candidates)
 }
 
-fn validate_tls_policy(policy: &TlsPolicyWireV3) -> Result<(), ArtifactErrorV3> {
+fn validate_tls_policy(policy: &TlsPolicyWireV3) -> Result<(), ArtifactError> {
     let TlsPolicyWireV3::Pin { pins } = policy else {
         return Ok(());
     };
     if pins.is_empty() || pins.len() > 4 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     for pin in pins {
         if pin.algorithm != "sha-256"
             || !(1..=MAX_SAFE_INTEGER).contains(&pin.not_after_unix_s)
             || decode32(&pin.value_b64u).is_none()
         {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
     }
     if !pins.windows(2).all(|pair| {
         (pair[0].algorithm.as_str(), pair[0].value_b64u.as_str())
             < (pair[1].algorithm.as_str(), pair[1].value_b64u.as_str())
     }) {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     Ok(())
 }
@@ -974,13 +972,13 @@ fn validate_scoped_value(
     depth: usize,
     nodes: &mut usize,
     root: bool,
-) -> Result<(), ArtifactErrorV3> {
+) -> Result<(), ArtifactError> {
     if depth > 16 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     *nodes += 1;
     if *nodes > 256 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     match value {
         Value::Null | Value::Bool(_) => Ok(()),
@@ -991,13 +989,13 @@ fn validate_scoped_value(
             .try_for_each(|value| validate_scoped_value(value, depth + 1, nodes, false)),
         Value::Object(values) if values.len() <= 64 => {
             if values.keys().any(|key| key.len() > 128) {
-                return Err(ArtifactErrorV3::Invalid);
+                return Err(ArtifactError::Invalid);
             }
             values
                 .values()
                 .try_for_each(|value| validate_scoped_value(value, depth + 1, nodes, false))
         }
-        _ => Err(ArtifactErrorV3::Invalid),
+        _ => Err(ArtifactError::Invalid),
     }
 }
 
@@ -1005,25 +1003,25 @@ pub(crate) fn normalize_url_v3(
     kind: &str,
     carrier: CarrierWireV3,
     raw: &str,
-) -> Result<String, ArtifactErrorV3> {
+) -> Result<String, ArtifactError> {
     if raw.is_empty() || raw.len() > 2048 || raw.contains(['\\', '?', '#', '%']) {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
-    let (scheme_raw, remainder) = raw.split_once("://").ok_or(ArtifactErrorV3::Invalid)?;
+    let (scheme_raw, remainder) = raw.split_once("://").ok_or(ArtifactError::Invalid)?;
     if scheme_raw.is_empty()
         || !scheme_raw.as_bytes()[0].is_ascii_alphabetic()
         || !scheme_raw
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"+.-".contains(&b))
     {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let scheme = scheme_raw.to_ascii_lowercase();
     let (authority, path) = remainder.find('/').map_or((remainder, ""), |index| {
         (&remainder[..index], &remainder[index..])
     });
     if authority.is_empty() || authority.contains('@') {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let (host, port) = normalize_authority(authority)?;
     let expected = match carrier {
@@ -1032,59 +1030,59 @@ pub(crate) fn normalize_url_v3(
         CarrierWireV3::Webtransport if scheme == "https" => {
             format!("/flowersec/webtransport/v3/{kind}")
         }
-        _ => return Err(ArtifactErrorV3::Invalid),
+        _ => return Err(ArtifactError::Invalid),
     };
     if !matches!(carrier, CarrierWireV3::RawQuic) && path != expected {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let normalized = format!(
         "{scheme}://{host}{}{expected}",
         port.map(|value| format!(":{value}")).unwrap_or_default()
     );
     if normalized.len() > 2048 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     Ok(normalized)
 }
 
-fn normalize_authority(authority: &str) -> Result<(String, Option<u16>), ArtifactErrorV3> {
+fn normalize_authority(authority: &str) -> Result<(String, Option<u16>), ArtifactError> {
     let (host, port_text) = if let Some(after_open) = authority.strip_prefix('[') {
-        let close = after_open.find(']').ok_or(ArtifactErrorV3::Invalid)?;
+        let close = after_open.find(']').ok_or(ArtifactError::Invalid)?;
         let address = &after_open[..close];
         if address.contains('.') || address.is_empty() {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let tail = &after_open[close + 1..];
         let port = if tail.is_empty() {
             None
         } else {
-            Some(tail.strip_prefix(':').ok_or(ArtifactErrorV3::Invalid)?)
+            Some(tail.strip_prefix(':').ok_or(ArtifactError::Invalid)?)
         };
-        let parsed: Ipv6Addr = address.parse().map_err(|_| ArtifactErrorV3::Invalid)?;
+        let parsed: Ipv6Addr = address.parse().map_err(|_| ArtifactError::Invalid)?;
         (format!("[{parsed}]"), port)
     } else {
         if authority.matches(':').count() > 1 {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let (raw_host, port) = authority
             .split_once(':')
             .map_or((authority, None), |(host, port)| (host, Some(port)));
         if raw_host.is_empty() {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
         let host = if raw_host.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
             normalize_ipv4(raw_host)?
         } else {
             let ascii =
-                crate::idna_v3::lookup_ascii(raw_host).map_err(|_| ArtifactErrorV3::Invalid)?;
-            let last = ascii.rsplit('.').next().ok_or(ArtifactErrorV3::Invalid)?;
+                crate::idna_v3::lookup_ascii(raw_host).map_err(|_| ArtifactError::Invalid)?;
+            let last = ascii.rsplit('.').next().ok_or(ArtifactError::Invalid)?;
             let lower = last.to_ascii_lowercase();
             if lower.bytes().all(|b| b.is_ascii_digit())
                 || lower
                     .strip_prefix("0x")
                     .is_some_and(|rest| rest.bytes().all(|b| b.is_ascii_hexdigit()))
             {
-                return Err(ArtifactErrorV3::Invalid);
+                return Err(ArtifactError::Invalid);
             }
             ascii
         };
@@ -1093,28 +1091,28 @@ fn normalize_authority(authority: &str) -> Result<(String, Option<u16>), Artifac
     let port = match port_text {
         None => None,
         Some(value) if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) => {
-            let parsed: u32 = value.parse().map_err(|_| ArtifactErrorV3::Invalid)?;
+            let parsed: u32 = value.parse().map_err(|_| ArtifactError::Invalid)?;
             if !(1..=65535).contains(&parsed) {
-                return Err(ArtifactErrorV3::Invalid);
+                return Err(ArtifactError::Invalid);
             }
             (parsed != 443).then_some(parsed as u16)
         }
-        _ => return Err(ArtifactErrorV3::Invalid),
+        _ => return Err(ArtifactError::Invalid),
     };
     Ok((host, port))
 }
 
-fn normalize_ipv4(value: &str) -> Result<String, ArtifactErrorV3> {
+fn normalize_ipv4(value: &str) -> Result<String, ArtifactError> {
     let parts = value.split('.').collect::<Vec<_>>();
     if parts.len() != 4 {
-        return Err(ArtifactErrorV3::Invalid);
+        return Err(ArtifactError::Invalid);
     }
     let mut normalized = Vec::with_capacity(4);
     for part in parts {
         if part.is_empty() || part.len() > 1 && part.starts_with('0') {
-            return Err(ArtifactErrorV3::Invalid);
+            return Err(ArtifactError::Invalid);
         }
-        let octet: u8 = part.parse().map_err(|_| ArtifactErrorV3::Invalid)?;
+        let octet: u8 = part.parse().map_err(|_| ArtifactError::Invalid)?;
         normalized.push(octet.to_string());
     }
     Ok(normalized.join("."))
@@ -1171,26 +1169,26 @@ pub(crate) fn hash_lp(domain: &[u8], canonical: &[u8]) -> [u8; 32] {
     Sha256::digest(preimage).into()
 }
 
-pub(crate) fn jcs_serialize<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, ArtifactErrorV3> {
-    let value = serde_json::to_value(value).map_err(|_| ArtifactErrorV3::Invalid)?;
+pub(crate) fn jcs_serialize<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, ArtifactError> {
+    let value = serde_json::to_value(value).map_err(|_| ArtifactError::Invalid)?;
     jcs_value(&value)
 }
 
-pub(crate) fn jcs_value(value: &Value) -> Result<Vec<u8>, ArtifactErrorV3> {
-    fn encode(value: &Value, output: &mut Vec<u8>) -> Result<(), ArtifactErrorV3> {
+pub(crate) fn jcs_value(value: &Value) -> Result<Vec<u8>, ArtifactError> {
+    fn encode(value: &Value, output: &mut Vec<u8>) -> Result<(), ArtifactError> {
         match value {
             Value::Null => output.extend_from_slice(b"null"),
             Value::Bool(true) => output.extend_from_slice(b"true"),
             Value::Bool(false) => output.extend_from_slice(b"false"),
             Value::Number(number) => {
                 if !is_safe_json_integer(number) {
-                    return Err(ArtifactErrorV3::Invalid);
+                    return Err(ArtifactError::Invalid);
                 }
                 output.extend_from_slice(number.to_string().as_bytes());
             }
             Value::String(value) => output.extend_from_slice(
                 serde_json::to_string(value)
-                    .map_err(|_| ArtifactErrorV3::Invalid)?
+                    .map_err(|_| ArtifactError::Invalid)?
                     .as_bytes(),
             ),
             Value::Array(values) => {
@@ -1214,7 +1212,7 @@ pub(crate) fn jcs_value(value: &Value) -> Result<Vec<u8>, ArtifactErrorV3> {
                     }
                     output.extend_from_slice(
                         serde_json::to_string(key)
-                            .map_err(|_| ArtifactErrorV3::Invalid)?
+                            .map_err(|_| ArtifactError::Invalid)?
                             .as_bytes(),
                     );
                     output.push(b':');
@@ -1239,25 +1237,25 @@ fn is_safe_json_integer(number: &serde_json::Number) -> bool {
             .is_some_and(|value| value <= MAX_SAFE_INTEGER)
 }
 
-pub(crate) fn reject_duplicate_json_keys(input: &[u8]) -> Result<(), ArtifactErrorV3> {
+pub(crate) fn reject_duplicate_json_keys(input: &[u8]) -> Result<(), ArtifactError> {
     let mut deserializer = serde_json::Deserializer::from_slice(input);
     DuplicateKeySeedV3
         .deserialize(&mut deserializer)
-        .map_err(|_| ArtifactErrorV3::Invalid)?;
-    deserializer.end().map_err(|_| ArtifactErrorV3::Invalid)
+        .map_err(|_| ArtifactError::Invalid)?;
+    deserializer.end().map_err(|_| ArtifactError::Invalid)
 }
 
-fn preflight_artifact_json(input: &[u8]) -> Result<(), ArtifactErrorV3> {
+fn preflight_artifact_json(input: &[u8]) -> Result<(), ArtifactError> {
     reject_negative_zero_tokens(input)?;
     reject_duplicate_json_keys(input)?;
     let mut deserializer = serde_json::Deserializer::from_slice(input);
     ArtifactScopedPreflightSeedV3
         .deserialize(&mut deserializer)
-        .map_err(|_| ArtifactErrorV3::Invalid)?;
-    deserializer.end().map_err(|_| ArtifactErrorV3::Invalid)
+        .map_err(|_| ArtifactError::Invalid)?;
+    deserializer.end().map_err(|_| ArtifactError::Invalid)
 }
 
-fn reject_negative_zero_tokens(input: &[u8]) -> Result<(), ArtifactErrorV3> {
+fn reject_negative_zero_tokens(input: &[u8]) -> Result<(), ArtifactError> {
     let mut in_string = false;
     let mut escaped = false;
     for index in 0..input.len() {
@@ -1281,7 +1279,7 @@ fn reject_negative_zero_tokens(input: &[u8]) -> Result<(), ArtifactErrorV3> {
             if tail.is_none_or(|value| {
                 matches!(value, b',' | b'}' | b']' | b' ' | b'\n' | b'\r' | b'\t')
             }) {
-                return Err(ArtifactErrorV3::Invalid);
+                return Err(ArtifactError::Invalid);
             }
         }
     }
@@ -1567,12 +1565,11 @@ impl<'de> Visitor<'de> for DuplicateKeyVisitorV3 {
     }
 }
 
-type LeaseFutureV3 =
-    Pin<Box<dyn Future<Output = Result<(), ArtifactSpendErrorV3>> + Send + 'static>>;
+type LeaseFutureV3 = Pin<Box<dyn Future<Output = Result<(), ArtifactSpendError>> + Send + 'static>>;
 type LeaseCallbackV3 = Box<dyn FnOnce() -> LeaseFutureV3 + Send>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum ArtifactSpendErrorV3 {
+pub enum ArtifactSpendError {
     #[error("artifact lease transition is no longer available")]
     Unavailable,
     #[error("artifact spend commit failed")]
@@ -1580,14 +1577,14 @@ pub enum ArtifactSpendErrorV3 {
 }
 
 #[derive(Clone)]
-pub struct ArtifactLeaseV3 {
-    artifact: ArtifactV3,
+pub struct ArtifactLease {
+    artifact: Artifact,
     shared: Arc<LeaseStateV3>,
     controller_capability: Option<Arc<AtomicBool>>,
 }
-impl std::fmt::Debug for ArtifactLeaseV3 {
+impl std::fmt::Debug for ArtifactLease {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("ArtifactLeaseV3 { <opaque> }")
+        formatter.write_str("ArtifactLease { <opaque> }")
     }
 }
 struct LeaseStateV3 {
@@ -1596,20 +1593,20 @@ struct LeaseStateV3 {
     retire: Mutex<Option<LeaseCallbackV3>>,
 }
 
-impl ArtifactLeaseV3 {
-    pub fn new<F, Fut>(artifact: ArtifactV3, spend: F) -> Self
+impl ArtifactLease {
+    pub fn new<F, Fut>(artifact: Artifact, spend: F) -> Self
     where
         F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), ArtifactSpendErrorV3>> + Send + 'static,
+        Fut: Future<Output = Result<(), ArtifactSpendError>> + Send + 'static,
     {
         Self::new_with_retire(artifact, spend, || async { Ok(()) })
     }
-    pub fn new_with_retire<F, Fut, R, RFut>(artifact: ArtifactV3, spend: F, retire: R) -> Self
+    pub fn new_with_retire<F, Fut, R, RFut>(artifact: Artifact, spend: F, retire: R) -> Self
     where
         F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), ArtifactSpendErrorV3>> + Send + 'static,
+        Fut: Future<Output = Result<(), ArtifactSpendError>> + Send + 'static,
         R: FnOnce() -> RFut + Send + 'static,
-        RFut: Future<Output = Result<(), ArtifactSpendErrorV3>> + Send + 'static,
+        RFut: Future<Output = Result<(), ArtifactSpendError>> + Send + 'static,
     {
         Self {
             artifact,
@@ -1627,17 +1624,17 @@ impl ArtifactLeaseV3 {
         self.shared.state.load(Ordering::Acquire) == 3
     }
 
-    pub(crate) fn artifact_for_connector(&self) -> &ArtifactV3 {
+    pub(crate) fn artifact_for_connector(&self) -> &Artifact {
         &self.artifact
     }
 
     pub(crate) fn claim_for_controller(
         &self,
-    ) -> Result<ClaimedArtifactLeaseV3, ArtifactSpendErrorV3> {
+    ) -> Result<ClaimedArtifactLeaseV3, ArtifactSpendError> {
         self.shared
             .state
             .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| ArtifactSpendErrorV3::Unavailable)?;
+            .map_err(|_| ArtifactSpendError::Unavailable)?;
         Ok(ClaimedArtifactLeaseV3 {
             artifact: self.artifact.clone(),
             shared: self.shared.clone(),
@@ -1645,19 +1642,19 @@ impl ArtifactLeaseV3 {
         })
     }
 
-    pub(crate) fn claim(&self) -> Result<ClaimedArtifactLeaseV3, ArtifactSpendErrorV3> {
+    pub(crate) fn claim(&self) -> Result<ClaimedArtifactLeaseV3, ArtifactSpendError> {
         if let Some(capability) = &self.controller_capability {
             capability
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .map_err(|_| ArtifactSpendErrorV3::Unavailable)?;
+                .map_err(|_| ArtifactSpendError::Unavailable)?;
             if self.shared.state.load(Ordering::Acquire) != 1 {
-                return Err(ArtifactSpendErrorV3::Unavailable);
+                return Err(ArtifactSpendError::Unavailable);
             }
         } else {
             self.shared
                 .state
                 .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
-                .map_err(|_| ArtifactSpendErrorV3::Unavailable)?;
+                .map_err(|_| ArtifactSpendError::Unavailable)?;
         }
         Ok(ClaimedArtifactLeaseV3 {
             artifact: self.artifact.clone(),
@@ -1668,7 +1665,7 @@ impl ArtifactLeaseV3 {
 }
 
 pub(crate) struct ClaimedArtifactLeaseV3 {
-    artifact: ArtifactV3,
+    artifact: Artifact,
     shared: Arc<LeaseStateV3>,
     controller_capability: Option<Arc<AtomicBool>>,
 }
@@ -1690,11 +1687,11 @@ pub(crate) struct SpendOperationV3 {
 }
 
 impl SpendOperationV3 {
-    pub(crate) async fn commit(mut self) -> Result<ConsumedArtifactLeaseV3, ArtifactSpendErrorV3> {
+    pub(crate) async fn commit(mut self) -> Result<ConsumedArtifactLeaseV3, ArtifactSpendError> {
         let callback = self
             .callback
             .take()
-            .ok_or(ArtifactSpendErrorV3::Unavailable)?;
+            .ok_or(ArtifactSpendError::Unavailable)?;
         let result = callback().await;
         result.map(|_| ConsumedArtifactLeaseV3 {
             _shared: self.shared.clone(),
@@ -1707,30 +1704,30 @@ pub(crate) struct RetireOperationV3 {
 }
 
 impl RetireOperationV3 {
-    pub(crate) async fn finish(mut self) -> Result<(), ArtifactSpendErrorV3> {
+    pub(crate) async fn finish(mut self) -> Result<(), ArtifactSpendError> {
         let Some(callback) = self.callback.take() else {
             return Ok(());
         };
         let future = std::panic::catch_unwind(std::panic::AssertUnwindSafe(callback))
-            .map_err(|_| ArtifactSpendErrorV3::CommitFailed)?;
+            .map_err(|_| ArtifactSpendError::CommitFailed)?;
         std::panic::AssertUnwindSafe(future)
             .catch_unwind()
             .await
-            .map_err(|_| ArtifactSpendErrorV3::CommitFailed)?
+            .map_err(|_| ArtifactSpendError::CommitFailed)?
     }
 }
 
 impl ClaimedArtifactLeaseV3 {
-    pub(crate) fn artifact(&self) -> &ArtifactV3 {
+    pub(crate) fn artifact(&self) -> &Artifact {
         &self.artifact
     }
-    pub(crate) fn connector_lease_with_artifact(&self, artifact: ArtifactV3) -> ArtifactLeaseV3 {
+    pub(crate) fn connector_lease_with_artifact(&self, artifact: Artifact) -> ArtifactLease {
         let controller_capability = self
             .controller_capability
             .as_ref()
             .expect("only a controller-owned claim can create a connector lease")
             .clone();
-        ArtifactLeaseV3 {
+        ArtifactLease {
             artifact,
             shared: self.shared.clone(),
             controller_capability: Some(controller_capability),
@@ -1739,11 +1736,11 @@ impl ClaimedArtifactLeaseV3 {
     pub(crate) fn is_consumed(&self) -> bool {
         matches!(self.shared.state.load(Ordering::Acquire), 2 | 3)
     }
-    pub(crate) fn begin_spend(self) -> Result<SpendOperationV3, ArtifactSpendErrorV3> {
+    pub(crate) fn begin_spend(self) -> Result<SpendOperationV3, ArtifactSpendError> {
         self.shared
             .state
             .compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| ArtifactSpendErrorV3::Unavailable)?;
+            .map_err(|_| ArtifactSpendError::Unavailable)?;
         let completion = SpendCompletionV3 {
             shared: self.shared.clone(),
         };
@@ -1751,9 +1748,9 @@ impl ClaimedArtifactLeaseV3 {
             .shared
             .spend
             .lock()
-            .map_err(|_| ArtifactSpendErrorV3::CommitFailed)?
+            .map_err(|_| ArtifactSpendError::CommitFailed)?
             .take()
-            .ok_or(ArtifactSpendErrorV3::Unavailable)?;
+            .ok_or(ArtifactSpendError::Unavailable)?;
         Ok(SpendOperationV3 {
             shared: self.shared.clone(),
             callback: Some(callback),
@@ -1761,27 +1758,25 @@ impl ClaimedArtifactLeaseV3 {
         })
     }
 
-    pub(crate) async fn commit_spend(
-        self,
-    ) -> Result<ConsumedArtifactLeaseV3, ArtifactSpendErrorV3> {
+    pub(crate) async fn commit_spend(self) -> Result<ConsumedArtifactLeaseV3, ArtifactSpendError> {
         self.begin_spend()?.commit().await
     }
 
-    pub(crate) fn begin_retire(self) -> Result<RetireOperationV3, ArtifactSpendErrorV3> {
+    pub(crate) fn begin_retire(self) -> Result<RetireOperationV3, ArtifactSpendError> {
         self.shared
             .state
             .compare_exchange(1, 4, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| ArtifactSpendErrorV3::Unavailable)?;
+            .map_err(|_| ArtifactSpendError::Unavailable)?;
         let callback = self
             .shared
             .retire
             .lock()
-            .map_err(|_| ArtifactSpendErrorV3::CommitFailed)?
+            .map_err(|_| ArtifactSpendError::CommitFailed)?
             .take();
         Ok(RetireOperationV3 { callback })
     }
 
-    pub(crate) async fn retire(self) -> Result<(), ArtifactSpendErrorV3> {
+    pub(crate) async fn retire(self) -> Result<(), ArtifactSpendError> {
         self.begin_retire()?.finish().await
     }
 }
@@ -1831,13 +1826,13 @@ mod tests {
         for positive in vectors.positive {
             let envelope: Value = serde_json::from_str(&positive.artifact_json).unwrap();
             assert!(matches!(
-                ArtifactV3::parse(positive.artifact_json.as_bytes()),
-                Err(ArtifactErrorV3::Invalid)
+                Artifact::parse(positive.artifact_json.as_bytes()),
+                Err(ArtifactError::Invalid)
             ));
             let inner = URL_SAFE_NO_PAD
                 .decode(envelope["artifact_b64u"].as_str().unwrap())
                 .unwrap();
-            assert!(ArtifactV3::parse(inner).is_ok());
+            assert!(Artifact::parse(inner).is_ok());
         }
     }
 
@@ -1976,7 +1971,7 @@ mod tests {
     #[test]
     fn parses_strict_artifact_and_binds_tls_into_fsb3() {
         let encoded_artifact = valid_artifact();
-        let artifact = ArtifactV3::parse(&encoded_artifact).unwrap();
+        let artifact = Artifact::parse(&encoded_artifact).unwrap();
         assert_eq!(artifact.encode().as_ref(), encoded_artifact);
         assert_eq!(artifact.expires_at_unix_seconds(), 9_999_999_999);
         assert_eq!(
@@ -2056,7 +2051,7 @@ mod tests {
                 other => panic!("unknown profile mutation {other}"),
             }
             assert!(
-                ArtifactV3::parse(jcs_value(&value).unwrap()).is_err(),
+                Artifact::parse(jcs_value(&value).unwrap()).is_err(),
                 "v2 profile mutation {id} was accepted"
             );
         }
@@ -2177,17 +2172,11 @@ mod tests {
     fn rejects_noncanonical_unknown_and_legacy_inputs() {
         let canonical = valid_artifact();
         let spaced = [b" ".as_slice(), canonical.as_slice()].concat();
-        assert_eq!(
-            ArtifactV3::parse(spaced).unwrap_err(),
-            ArtifactErrorV3::Invalid
-        );
+        assert_eq!(Artifact::parse(spaced).unwrap_err(), ArtifactError::Invalid);
         let legacy = String::from_utf8(canonical)
             .unwrap()
             .replace("flowersec/3", "flowersec/2");
-        assert_eq!(
-            ArtifactV3::parse(legacy).unwrap_err(),
-            ArtifactErrorV3::Invalid
-        );
+        assert_eq!(Artifact::parse(legacy).unwrap_err(), ArtifactError::Invalid);
     }
 
     #[test]
@@ -2223,7 +2212,7 @@ mod tests {
         ] {
             assert_eq!(
                 preflight_artifact_json(&scoped_preflight_input(&payload)),
-                Err(ArtifactErrorV3::Invalid)
+                Err(ArtifactError::Invalid)
             );
         }
     }
@@ -2231,10 +2220,7 @@ mod tests {
     #[test]
     fn artifact_preflight_rejects_escaped_nested_duplicate_keys() {
         let input = scoped_preflight_input(r#"{"nested":{"mode":"ca","m\u006fde":"pin"}}"#);
-        assert_eq!(
-            preflight_artifact_json(&input),
-            Err(ArtifactErrorV3::Invalid)
-        );
+        assert_eq!(preflight_artifact_json(&input), Err(ArtifactError::Invalid));
     }
 
     #[test]
@@ -2276,30 +2262,24 @@ mod tests {
 
     #[tokio::test]
     async fn copied_lease_has_one_atomic_owner_and_terminal_states() {
-        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
+        let artifact = Artifact::parse(valid_artifact()).unwrap();
         let spends = Arc::new(AtomicUsize::new(0));
         let capture = spends.clone();
-        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+        let lease = ArtifactLease::new(artifact, move || async move {
             capture.fetch_add(1, Ordering::SeqCst);
             Ok(())
         });
         let copy = lease.clone();
         let claimed = lease.claim().unwrap();
-        assert!(matches!(
-            copy.claim(),
-            Err(ArtifactSpendErrorV3::Unavailable)
-        ));
+        assert!(matches!(copy.claim(), Err(ArtifactSpendError::Unavailable)));
         claimed.commit_spend().await.unwrap();
         assert_eq!(spends.load(Ordering::SeqCst), 1);
-        assert!(matches!(
-            copy.claim(),
-            Err(ArtifactSpendErrorV3::Unavailable)
-        ));
+        assert!(matches!(copy.claim(), Err(ArtifactSpendError::Unavailable)));
 
-        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
+        let artifact = Artifact::parse(valid_artifact()).unwrap();
         let retires = Arc::new(AtomicUsize::new(0));
         let capture = retires.clone();
-        let lease = ArtifactLeaseV3::new_with_retire(
+        let lease = ArtifactLease::new_with_retire(
             artifact,
             || async { Ok(()) },
             move || async move {
@@ -2315,18 +2295,18 @@ mod tests {
 
     #[tokio::test]
     async fn spend_failure_consumes_the_lease_without_a_second_callback() {
-        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
+        let artifact = Artifact::parse(valid_artifact()).unwrap();
         let spends = Arc::new(AtomicUsize::new(0));
         let spends_capture = spends.clone();
-        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+        let lease = ArtifactLease::new(artifact, move || async move {
             spends_capture.fetch_add(1, Ordering::SeqCst);
-            Err(ArtifactSpendErrorV3::CommitFailed)
+            Err(ArtifactSpendError::CommitFailed)
         });
         let copy = lease.clone();
         let claimed = lease.claim().unwrap();
         assert!(matches!(
             claimed.commit_spend().await,
-            Err(ArtifactSpendErrorV3::CommitFailed)
+            Err(ArtifactSpendError::CommitFailed)
         ));
         assert_eq!(spends.load(Ordering::SeqCst), 1);
         assert!(copy.claim().is_err(), "failed spend became reusable");
@@ -2335,10 +2315,10 @@ mod tests {
     #[tokio::test]
     async fn retire_panics_are_opaque_and_leave_the_lease_retired() {
         for panic_while_polling in [false, true] {
-            let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
+            let artifact = Artifact::parse(valid_artifact()).unwrap();
             let retire_calls = Arc::new(AtomicUsize::new(0));
             let retire_calls_capture = retire_calls.clone();
-            let lease = ArtifactLeaseV3::new_with_retire(
+            let lease = ArtifactLease::new_with_retire(
                 artifact,
                 || async { Ok(()) },
                 move || {
@@ -2357,7 +2337,7 @@ mod tests {
 
             let result = lease.claim().unwrap().retire().await;
 
-            assert_eq!(result, Err(ArtifactSpendErrorV3::CommitFailed));
+            assert_eq!(result, Err(ArtifactSpendError::CommitFailed));
             assert_eq!(
                 result.unwrap_err().to_string(),
                 "artifact spend commit failed"
@@ -2369,8 +2349,8 @@ mod tests {
 
     #[tokio::test]
     async fn spend_panic_consumes_the_lease_even_when_owned_task_panics() {
-        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
-        let lease = ArtifactLeaseV3::new(artifact, || async {
+        let artifact = Artifact::parse(valid_artifact()).unwrap();
+        let lease = ArtifactLease::new(artifact, || async {
             panic!("injected spend panic");
             #[allow(unreachable_code)]
             Ok(())
@@ -2384,8 +2364,8 @@ mod tests {
 
     #[tokio::test]
     async fn aborting_an_unpolled_spend_operation_consumes_the_lease() {
-        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
-        let lease = ArtifactLeaseV3::new(artifact, || async { Ok(()) });
+        let artifact = Artifact::parse(valid_artifact()).unwrap();
+        let lease = ArtifactLease::new(artifact, || async { Ok(()) });
         let copy = lease.clone();
         let operation = lease.claim().unwrap().begin_spend().unwrap();
         let task = tokio::spawn(operation.commit());
@@ -2399,10 +2379,10 @@ mod tests {
 
     #[tokio::test]
     async fn controller_claim_is_the_shared_one_shot_owner() {
-        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
+        let artifact = Artifact::parse(valid_artifact()).unwrap();
         let spends = Arc::new(AtomicUsize::new(0));
         let capture = spends.clone();
-        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+        let lease = ArtifactLease::new(artifact, move || async move {
             capture.fetch_add(1, Ordering::SeqCst);
             Ok(())
         });
@@ -2411,7 +2391,7 @@ mod tests {
 
         assert!(matches!(
             one_shot_copy.claim(),
-            Err(ArtifactSpendErrorV3::Unavailable)
+            Err(ArtifactSpendError::Unavailable)
         ));
         let connector_lease =
             controller_claim.connector_lease_with_artifact(controller_claim.artifact().clone());
@@ -2419,7 +2399,7 @@ mod tests {
         let connector_claim = connector_lease.claim().unwrap();
         assert!(matches!(
             connector_copy.claim(),
-            Err(ArtifactSpendErrorV3::Unavailable)
+            Err(ArtifactSpendError::Unavailable)
         ));
         connector_claim.commit_spend().await.unwrap();
         assert_eq!(spends.load(Ordering::SeqCst), 1);
@@ -2427,8 +2407,8 @@ mod tests {
 
     #[tokio::test]
     async fn controller_and_one_shot_claims_have_exactly_one_concurrent_winner() {
-        let artifact = ArtifactV3::parse(valid_artifact()).unwrap();
-        let lease = ArtifactLeaseV3::new(artifact, || async { Ok(()) });
+        let artifact = Artifact::parse(valid_artifact()).unwrap();
+        let lease = ArtifactLease::new(artifact, || async { Ok(()) });
         let barrier = Arc::new(std::sync::Barrier::new(3));
         let controller_lease = lease.clone();
         let controller_barrier = barrier.clone();
@@ -2497,7 +2477,7 @@ mod tests {
         let vectors = artifact_vectors();
         assert!(!vectors.positive.is_empty());
         for vector in vectors.positive {
-            let artifact = ArtifactV3::parse(vector.artifact_json.as_bytes())
+            let artifact = Artifact::parse(vector.artifact_json.as_bytes())
                 .unwrap_or_else(|error| panic!("{}: {error:?}", vector.id));
             assert_eq!(
                 artifact.encode().as_ref(),
@@ -2629,8 +2609,8 @@ mod tests {
             negative_ids.insert(vector.id.clone());
             assert_eq!(vector.kind, "artifact_json", "{} vector kind", vector.id);
             assert_eq!(
-                ArtifactV3::parse(vector.value).unwrap_err(),
-                ArtifactErrorV3::Invalid,
+                Artifact::parse(vector.value).unwrap_err(),
+                ArtifactError::Invalid,
                 "{}",
                 vector.id
             );
@@ -2642,7 +2622,7 @@ mod tests {
             .into_iter()
             .chain(vectors.scoped_payload_boundaries)
         {
-            let parsed = ArtifactV3::parse(vector.artifact_json.as_bytes());
+            let parsed = Artifact::parse(vector.artifact_json.as_bytes());
             if vector.accepted {
                 let artifact = parsed.unwrap_or_else(|error| panic!("{}: {error:?}", vector.id));
                 assert_eq!(
@@ -2657,7 +2637,7 @@ mod tests {
         }
         for vector in vectors.artifact_byte_negative {
             assert_eq!(
-                ArtifactV3::parse(decode_hex(&vector.value_hex)).unwrap_err(),
+                Artifact::parse(decode_hex(&vector.value_hex)).unwrap_err(),
                 artifact_vector_error(&vector.error_code),
                 "{}",
                 vector.id
@@ -2704,9 +2684,9 @@ mod tests {
         }
     }
 
-    fn artifact_vector_error(code: &str) -> ArtifactErrorV3 {
+    fn artifact_vector_error(code: &str) -> ArtifactError {
         match code {
-            "invalid_artifact" | "invalid_fsb3" | "invalid_fsa3" => ArtifactErrorV3::Invalid,
+            "invalid_artifact" | "invalid_fsb3" | "invalid_fsa3" => ArtifactError::Invalid,
             other => panic!("unknown artifact vector error code {other}"),
         }
     }

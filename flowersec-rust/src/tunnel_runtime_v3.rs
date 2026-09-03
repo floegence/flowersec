@@ -31,7 +31,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    artifact_v3::{ArtifactV3, CarrierWireV3, decode_tunnel_fsb3},
+    artifact_v3::{Artifact, CarrierWireV3, decode_tunnel_fsb3},
     raw_quic_v3::RawQuicListenerV3,
     transport_v3::{
         CarrierKind, CarrierSessionV3, CarrierStreamV3, CarrierUnreliableMessageErrorV3,
@@ -118,7 +118,7 @@ impl RuntimeAuthorizationRequest {
 
     fn verify_artifact(
         &self,
-        artifact: &ArtifactV3,
+        artifact: &Artifact,
     ) -> Result<VerifiedArtifactClaims, TunnelAuthorizationError> {
         let expected = artifact
             .encode_fsb3(&self.claims.chosen_candidate_id)
@@ -191,7 +191,7 @@ impl TunnelAuthorizationResponse {
     /// verification against the stored Artifact.
     pub fn allow(
         request: &RuntimeAuthorizationRequest,
-        artifact: &ArtifactV3,
+        artifact: &Artifact,
         lease_id: &str,
         allow_replacement: bool,
     ) -> Result<Self, TunnelAuthorizationError> {
@@ -241,7 +241,7 @@ impl TunnelAuthorizationResponse {
     pub fn bind_to_artifact(
         mut self,
         request: &RuntimeAuthorizationRequest,
-        artifact: &ArtifactV3,
+        artifact: &Artifact,
     ) -> Result<Self, TunnelAuthorizationError> {
         let verified = request.verify_artifact(artifact)?;
         let value: Value =
@@ -2396,7 +2396,7 @@ mod tests {
         }
     }
 
-    fn vector_tunnel_artifact(role: u8, endpoint: &str, token: &str) -> ArtifactV3 {
+    fn vector_tunnel_artifact(role: u8, endpoint: &str, token: &str) -> Artifact {
         let vectors: Value = serde_json::from_str(include_str!(
             "../../testdata/transport_v3/artifact_vectors.json"
         ))
@@ -2420,7 +2420,7 @@ mod tests {
             .into(),
         );
         value["path"]["token"] = Value::String(token.into());
-        ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
+        Artifact::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
     }
 
     fn vector_tunnel_admission(role: u8, endpoint: &str, token: &str) -> Vec<u8> {
@@ -2546,7 +2546,7 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct LeaseRecordingAuthorizer {
-        artifacts: StdMutex<Vec<ArtifactV3>>,
+        artifacts: StdMutex<Vec<Artifact>>,
         releases: StdMutex<Vec<String>>,
     }
 
@@ -2576,7 +2576,7 @@ mod tests {
     #[derive(Debug, Default)]
     struct LateAllowAuthorizer {
         cancellation_observed: AtomicBool,
-        artifacts: StdMutex<Vec<ArtifactV3>>,
+        artifacts: StdMutex<Vec<Artifact>>,
         releases: StdMutex<Vec<String>>,
     }
 
@@ -3897,7 +3897,7 @@ mod tests {
 
         for (name, value) in mutations {
             let mismatched =
-                ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap();
+                Artifact::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap();
             assert!(
                 TunnelAuthorizationResponse::allow(&request, &mismatched, "lease-mismatch", false,)
                     .is_err(),
@@ -3931,7 +3931,7 @@ mod tests {
         .unwrap();
         let mut value: Value = serde_json::from_slice(&artifact.encode()).unwrap();
         value["session"]["init_expire_at_unix_s"] = Value::from(1);
-        let expired = ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap();
+        let expired = Artifact::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap();
         assert!(
             TunnelAuthorizationResponse::allow(
                 &request,

@@ -82,10 +82,7 @@ mod defaults_contract;
 pub use acceptor_v3::{
     AcceptError, AcceptErrorCode, Acceptor, AcceptorOptions, WebSocketAcceptorOptions,
 };
-pub use artifact_v3::{
-    ArtifactErrorV3 as ArtifactError, ArtifactLeaseV3 as ArtifactLease,
-    ArtifactSpendErrorV3 as ArtifactSpendError, ArtifactV3 as Artifact,
-};
+pub use artifact_v3::{Artifact, ArtifactError, ArtifactLease, ArtifactSpendError};
 pub use connection_controller::{
     ArtifactSource, ArtifactSourceError, ConnectionController,
     ConnectionControllerConfigurationError, ConnectionControllerError,

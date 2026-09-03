@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-source",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/defe64cdc0f7455c71897dd768ebe609b2c00aea6aa8f104fc24acb05723315d",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/ad7ae66b9d3abe5a53c7327b89d1f7c530c0b6324169c432d849c30eea269621",
   "creationInfo": {
     "created": "2026-09-02T09:13:34Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: defe64cdc0f7455c71897dd768ebe609b2c00aea6aa8f104fc24acb05723315d",
+      "comment": "Flowersec source inventory SHA-256: ad7ae66b9d3abe5a53c7327b89d1f7c530c0b6324169c432d849c30eea269621",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -5318,9 +5318,9 @@
     },
     {
       "name": "@humanfs/core",
-      "SPDXID": "SPDXRef-Package-712fe61ab1c81246f61c",
-      "versionInfo": "0.19.1",
-      "downloadLocation": "https://registry.npmjs.org/@humanfs/core/-/core-0.19.1.tgz",
+      "SPDXID": "SPDXRef-Package-8c71c5db07bba5cfa2de",
+      "versionInfo": "0.19.2",
+      "downloadLocation": "https://registry.npmjs.org/@humanfs/core/-/core-0.19.2.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
@@ -5329,15 +5329,15 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40humanfs/core@0.19.1"
+          "referenceLocator": "pkg:npm/%40humanfs/core@0.19.2"
         }
       ]
     },
     {
       "name": "@humanfs/node",
-      "SPDXID": "SPDXRef-Package-3db3b719d811a9190c19",
-      "versionInfo": "0.16.7",
-      "downloadLocation": "https://registry.npmjs.org/@humanfs/node/-/node-0.16.7.tgz",
+      "SPDXID": "SPDXRef-Package-4d2281a9fbdb5224a8ae",
+      "versionInfo": "0.16.8",
+      "downloadLocation": "https://registry.npmjs.org/@humanfs/node/-/node-0.16.8.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
       "licenseDeclared": "Apache-2.0",
@@ -5346,7 +5346,24 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40humanfs/node@0.16.7"
+          "referenceLocator": "pkg:npm/%40humanfs/node@0.16.8"
+        }
+      ]
+    },
+    {
+      "name": "@humanfs/types",
+      "SPDXID": "SPDXRef-Package-8be37efdb2fcab869614",
+      "versionInfo": "0.15.0",
+      "downloadLocation": "https://registry.npmjs.org/@humanfs/types/-/types-0.15.0.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/%40humanfs/types@0.15.0"
         }
       ]
     },
@@ -5913,9 +5930,9 @@
     },
     {
       "name": "@types/ws",
-      "SPDXID": "SPDXRef-Package-c01b20f8bfdcd045aa40",
-      "versionInfo": "8.5.12",
-      "downloadLocation": "https://registry.npmjs.org/@types/ws/-/ws-8.5.12.tgz",
+      "SPDXID": "SPDXRef-Package-9b32fe06cd752e0372f8",
+      "versionInfo": "8.18.1",
+      "downloadLocation": "https://registry.npmjs.org/@types/ws/-/ws-8.18.1.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -5924,7 +5941,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40types/ws@8.5.12"
+          "referenceLocator": "pkg:npm/%40types/ws@8.18.1"
         }
       ]
     },
@@ -7222,9 +7239,9 @@
     },
     {
       "name": "fast-uri",
-      "SPDXID": "SPDXRef-Package-0e74d42758a0ebdcd157",
-      "versionInfo": "3.1.5",
-      "downloadLocation": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz",
+      "SPDXID": "SPDXRef-Package-d6d7c7d4b0a82700caff",
+      "versionInfo": "3.1.7",
+      "downloadLocation": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.7.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "BSD-3-Clause",
       "licenseDeclared": "BSD-3-Clause",
@@ -7233,7 +7250,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/fast-uri@3.1.5"
+          "referenceLocator": "pkg:npm/fast-uri@3.1.7"
         }
       ]
     },
@@ -8820,9 +8837,9 @@
     },
     {
       "name": "ws",
-      "SPDXID": "SPDXRef-Package-320dd9f8ed00f90837e2",
-      "versionInfo": "8.21.2",
-      "downloadLocation": "https://registry.npmjs.org/ws/-/ws-8.21.2.tgz",
+      "SPDXID": "SPDXRef-Package-b779412f685822663496",
+      "versionInfo": "8.21.3",
+      "downloadLocation": "https://registry.npmjs.org/ws/-/ws-8.21.3.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -8831,7 +8848,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/ws@8.21.2"
+          "referenceLocator": "pkg:npm/ws@8.21.3"
         }
       ]
     },
@@ -12236,7 +12253,7 @@
     {
       "spdxElementId": "SPDXRef-Package-82d9e4ed524a5e96b01a",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-c01b20f8bfdcd045aa40"
+      "relatedSpdxElement": "SPDXRef-Package-9b32fe06cd752e0372f8"
     },
     {
       "spdxElementId": "SPDXRef-Package-82d9e4ed524a5e96b01a",
@@ -12306,7 +12323,7 @@
     {
       "spdxElementId": "SPDXRef-Package-82d9e4ed524a5e96b01a",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-320dd9f8ed00f90837e2"
+      "relatedSpdxElement": "SPDXRef-Package-b779412f685822663496"
     },
     {
       "spdxElementId": "SPDXRef-Package-82d9e4ed524a5e96b01a",
@@ -12504,12 +12521,22 @@
       "relatedSpdxElement": "SPDXRef-Package-c5c47617fd9236d6f5d1"
     },
     {
-      "spdxElementId": "SPDXRef-Package-3db3b719d811a9190c19",
+      "spdxElementId": "SPDXRef-Package-8c71c5db07bba5cfa2de",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-712fe61ab1c81246f61c"
+      "relatedSpdxElement": "SPDXRef-Package-8be37efdb2fcab869614"
     },
     {
-      "spdxElementId": "SPDXRef-Package-3db3b719d811a9190c19",
+      "spdxElementId": "SPDXRef-Package-4d2281a9fbdb5224a8ae",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-8c71c5db07bba5cfa2de"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4d2281a9fbdb5224a8ae",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-8be37efdb2fcab869614"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4d2281a9fbdb5224a8ae",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-70ce03500032ffd63af9"
     },
@@ -12549,7 +12576,7 @@
       "relatedSpdxElement": "SPDXRef-Package-16154e3019600e56754e"
     },
     {
-      "spdxElementId": "SPDXRef-Package-c01b20f8bfdcd045aa40",
+      "spdxElementId": "SPDXRef-Package-9b32fe06cd752e0372f8",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-f155265b0db97b607227"
     },
@@ -13121,7 +13148,7 @@
     {
       "spdxElementId": "SPDXRef-Package-5a7706814dab8c35587c",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-0e74d42758a0ebdcd157"
+      "relatedSpdxElement": "SPDXRef-Package-d6d7c7d4b0a82700caff"
     },
     {
       "spdxElementId": "SPDXRef-Package-5a7706814dab8c35587c",
@@ -13356,7 +13383,7 @@
     {
       "spdxElementId": "SPDXRef-Package-a360b0be50461f1485f1",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-3db3b719d811a9190c19"
+      "relatedSpdxElement": "SPDXRef-Package-4d2281a9fbdb5224a8ae"
     },
     {
       "spdxElementId": "SPDXRef-Package-a360b0be50461f1485f1",

@@ -15,9 +15,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     artifact_v3::{
-        AdmissionStatusV3, ArtifactLeaseV3, ArtifactSpendErrorV3, CanonicalCandidateV3,
-        CarrierWireV3, ClaimedArtifactLeaseV3, ConnectionPlanV3, SpendOperationV3, TlsPolicyWireV3,
-        decode_fsa3, decode32,
+        AdmissionStatusV3, ArtifactLease, ArtifactSpendError, CanonicalCandidateV3, CarrierWireV3,
+        ClaimedArtifactLeaseV3, ConnectionPlanV3, SpendOperationV3, TlsPolicyWireV3, decode_fsa3,
+        decode32,
     },
     connection_controller::RetryDisposition,
     raw_quic_v3::{self, RawQuicDialFailureV3},
@@ -282,7 +282,7 @@ impl CandidatePreparerV3 for ProductionCandidatePreparerV3 {
 
 /// Establishes one strict v3 session from a single-use artifact lease.
 pub async fn connect_v3(
-    lease: ArtifactLeaseV3,
+    lease: ArtifactLease,
     options: ConnectorOptions,
 ) -> Result<Arc<dyn Session>, ConnectError> {
     connect_v3_with_cancellation(lease, options, CancellationToken::new()).await
@@ -290,7 +290,7 @@ pub async fn connect_v3(
 
 /// Establishes one strict v3 session with caller-owned cancellation.
 pub async fn connect_v3_with_cancellation(
-    lease: ArtifactLeaseV3,
+    lease: ArtifactLease,
     options: ConnectorOptions,
     cancellation: CancellationToken,
 ) -> Result<Arc<dyn Session>, ConnectError> {
@@ -304,7 +304,7 @@ pub async fn connect_v3_with_cancellation(
 }
 
 pub(crate) async fn connect_v3_with_cancellation_and_preparer(
-    lease: ArtifactLeaseV3,
+    lease: ArtifactLease,
     options: ConnectorOptions,
     cancellation: CancellationToken,
     preparer: &dyn CandidatePreparerV3,
@@ -782,14 +782,14 @@ impl PreSpendLeaseGuardV3 {
         }
     }
 
-    fn artifact(&self) -> &crate::artifact_v3::ArtifactV3 {
+    fn artifact(&self) -> &crate::artifact_v3::Artifact {
         self.claimed
             .as_ref()
             .expect("pre-spend lease ownership is present")
             .artifact()
     }
 
-    async fn retire(mut self) -> Result<(), ArtifactSpendErrorV3> {
+    async fn retire(mut self) -> Result<(), ArtifactSpendError> {
         self.claimed
             .take()
             .expect("pre-spend lease ownership is present")
@@ -797,7 +797,7 @@ impl PreSpendLeaseGuardV3 {
             .await
     }
 
-    fn begin_spend(mut self) -> Result<SpendOperationV3, ArtifactSpendErrorV3> {
+    fn begin_spend(mut self) -> Result<SpendOperationV3, ArtifactSpendError> {
         self.claimed
             .take()
             .expect("pre-spend lease ownership is present")
@@ -1038,7 +1038,7 @@ mod tests {
         Acceptor, IncomingStream, SessionError, SessionHandlerOptions, SessionHandlers,
         StreamHandler, TunnelAuthorizationError, TunnelAuthorizationResponse, TunnelAuthorizer,
         TunnelRuntime, TunnelRuntimeOptions, WebSocketAcceptorOptions,
-        artifact_v3::{ArtifactV3, hash_lp, jcs_value},
+        artifact_v3::{Artifact, hash_lp, jcs_value},
     };
 
     struct TestIdentityV3 {
@@ -1333,7 +1333,7 @@ mod tests {
         let spend_entered = entered.clone();
         let spend_release = release.clone();
         let spend_settled = settled.clone();
-        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+        let lease = ArtifactLease::new(artifact, move || async move {
             spend_entered.notify_one();
             spend_release.notified().await;
             spend_settled.store(1, Ordering::Release);
@@ -1391,7 +1391,7 @@ mod tests {
         let spend_release = Arc::new(tokio::sync::Notify::new());
         let spend_entered_capture = spend_entered.clone();
         let spend_release_capture = spend_release.clone();
-        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+        let lease = ArtifactLease::new(artifact, move || async move {
             spend_entered_capture.notify_one();
             spend_release_capture.notified().await;
             Ok(())
@@ -1458,7 +1458,7 @@ mod tests {
         })]);
         let plan = artifact.connection_plan().unwrap();
         let candidate = plan.candidates[0].clone();
-        let claimed = ArtifactLeaseV3::new(artifact, || async { Ok(()) })
+        let claimed = ArtifactLease::new(artifact, || async { Ok(()) })
             .claim()
             .unwrap();
         let carrier = Arc::new(HangingAdmissionCarrier {
@@ -1523,7 +1523,7 @@ mod tests {
         });
         let spends = Arc::new(AtomicUsize::new(0));
         let spend_capture = spends.clone();
-        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+        let lease = ArtifactLease::new(artifact, move || async move {
             spend_capture.fetch_add(1, Ordering::SeqCst);
             Ok(())
         });
@@ -1571,7 +1571,7 @@ mod tests {
             })]);
             let spends = Arc::new(AtomicUsize::new(0));
             let spend_counter = spends.clone();
-            let lease = ArtifactLeaseV3::new(artifact, move || {
+            let lease = ArtifactLease::new(artifact, move || {
                 let spend_counter = spend_counter.clone();
                 async move {
                     spend_counter.fetch_add(1, Ordering::SeqCst);
@@ -1669,7 +1669,7 @@ mod tests {
             let spends = Arc::new(AtomicUsize::new(0));
             let spend_capture = spends.clone();
             let error = connect_v3_with_cancellation_and_preparer(
-                ArtifactLeaseV3::new(artifact_with_candidates(vec![candidate]), move || {
+                ArtifactLease::new(artifact_with_candidates(vec![candidate]), move || {
                     spend_capture.fetch_add(1, Ordering::SeqCst);
                     async { Ok(()) }
                 }),
@@ -1725,7 +1725,7 @@ mod tests {
         let options = ConnectorOptions::new()
             .with_websocket_origin("https://app.example")
             .unwrap();
-        let session = connect_v3(ArtifactLeaseV3::new(artifact, || async { Ok(()) }), options)
+        let session = connect_v3(ArtifactLease::new(artifact, || async { Ok(()) }), options)
             .await
             .unwrap();
         let server = server.await.unwrap();
@@ -1761,7 +1761,7 @@ mod tests {
         })]);
         let spends = Arc::new(AtomicUsize::new(0));
         let spend_capture = spends.clone();
-        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+        let lease = ArtifactLease::new(artifact, move || async move {
             spend_capture.fetch_add(1, Ordering::SeqCst);
             Ok(())
         });
@@ -1791,7 +1791,7 @@ mod tests {
         })]);
         let retires = Arc::new(AtomicUsize::new(0));
         let retires_capture = retires.clone();
-        let lease = ArtifactLeaseV3::new_with_retire(
+        let lease = ArtifactLease::new_with_retire(
             artifact,
             || async { Ok(()) },
             move || async move {
@@ -1821,7 +1821,7 @@ mod tests {
         })]);
         let retires = Arc::new(AtomicUsize::new(0));
         let retires_capture = retires.clone();
-        let lease = ArtifactLeaseV3::new_with_retire(
+        let lease = ArtifactLease::new_with_retire(
             artifact,
             || async { Ok(()) },
             move || async move {
@@ -1890,7 +1890,7 @@ mod tests {
             }),
         };
         let mut operation = Box::pin(connect_v3_with_cancellation_and_preparer(
-            ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+            ArtifactLease::new(artifact, || async { Ok(()) }),
             ConnectorOptions::new(),
             CancellationToken::new(),
             &preparer,
@@ -1947,7 +1947,7 @@ mod tests {
             loser: loser.clone(),
         };
         let mut operation = Box::pin(connect_v3_with_cancellation_and_preparer(
-            ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+            ArtifactLease::new(artifact, || async { Ok(()) }),
             ConnectorOptions::new(),
             CancellationToken::new(),
             &preparer,
@@ -2003,7 +2003,7 @@ mod tests {
             "wire_profile": "flowersec-direct/3"
         })]);
         let error = connect_v3_with_cancellation_and_preparer(
-            ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+            ArtifactLease::new(artifact, || async { Ok(()) }),
             ConnectorOptions::new(),
             CancellationToken::new(),
             &FailingCandidatePreparer {
@@ -2050,7 +2050,7 @@ mod tests {
             }),
         ]);
         let error = connect_v3_with_cancellation_and_preparer(
-            ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+            ArtifactLease::new(artifact, || async { Ok(()) }),
             ConnectorOptions::new(),
             CancellationToken::new(),
             &FailingCandidatePreparer {
@@ -2080,7 +2080,7 @@ mod tests {
                 "wire_profile": "flowersec-direct/3"
             })]);
             let error = connect_v3_with_cancellation_and_preparer(
-                ArtifactLeaseV3::new(artifact, || async { Ok(()) }),
+                ArtifactLease::new(artifact, || async { Ok(()) }),
                 ConnectorOptions::new(),
                 CancellationToken::new(),
                 &FailingCandidatePreparer {
@@ -2110,7 +2110,7 @@ mod tests {
         let plan = artifact.connection_plan().expect("valid connection plan");
         let retires = Arc::new(AtomicUsize::new(0));
         let retire_capture = retires.clone();
-        let claimed = ArtifactLeaseV3::new_with_retire(
+        let claimed = ArtifactLease::new_with_retire(
             artifact,
             || async { Ok(()) },
             move || async move {
@@ -2226,7 +2226,7 @@ mod tests {
             .unwrap()
             .with_websocket_origin("https://app.example")
             .unwrap();
-        let session = connect_v3(ArtifactLeaseV3::new(artifact, || async { Ok(()) }), options)
+        let session = connect_v3(ArtifactLease::new(artifact, || async { Ok(()) }), options)
             .await
             .unwrap();
         let stream = session
@@ -2329,7 +2329,7 @@ mod tests {
         });
         let spends = Arc::new(AtomicUsize::new(0));
         let spend_capture = spends.clone();
-        let lease = ArtifactLeaseV3::new(artifact, move || async move {
+        let lease = ArtifactLease::new(artifact, move || async move {
             spend_capture.fetch_add(1, Ordering::SeqCst);
             Ok(())
         });
@@ -2406,11 +2406,11 @@ mod tests {
         };
         let (client, server) = tokio::join!(
             connect_v3(
-                ArtifactLeaseV3::new(client_artifact, || async { Ok(()) }),
+                ArtifactLease::new(client_artifact, || async { Ok(()) }),
                 options(),
             ),
             connect_v3(
-                ArtifactLeaseV3::new(server_artifact, || async { Ok(()) }),
+                ArtifactLease::new(server_artifact, || async { Ok(()) }),
                 options(),
             ),
         );
@@ -2459,7 +2459,7 @@ mod tests {
 
     #[derive(Default)]
     struct TestTunnelAuthorizer {
-        artifacts: StdMutex<Vec<ArtifactV3>>,
+        artifacts: StdMutex<Vec<Artifact>>,
     }
 
     struct InvalidProofPeer {
@@ -2530,27 +2530,27 @@ mod tests {
         }
     }
 
-    fn artifact_with_candidates(candidates: Vec<Value>) -> ArtifactV3 {
+    fn artifact_with_candidates(candidates: Vec<Value>) -> Artifact {
         parse_artifact_with_candidates(candidates).unwrap()
     }
 
     fn artifact_with_candidates_and_expiry(
         candidates: Vec<Value>,
         expires_at_unix_seconds: u64,
-    ) -> ArtifactV3 {
+    ) -> Artifact {
         parse_artifact_with_candidates_and_expiry(candidates, expires_at_unix_seconds).unwrap()
     }
 
     fn parse_artifact_with_candidates(
         candidates: Vec<Value>,
-    ) -> Result<ArtifactV3, crate::artifact_v3::ArtifactErrorV3> {
+    ) -> Result<Artifact, crate::artifact_v3::ArtifactError> {
         parse_artifact_with_candidates_and_expiry(candidates, unix_seconds() + 600)
     }
 
     fn parse_artifact_with_candidates_and_expiry(
         candidates: Vec<Value>,
         expires_at_unix_seconds: u64,
-    ) -> Result<ArtifactV3, crate::artifact_v3::ArtifactErrorV3> {
+    ) -> Result<Artifact, crate::artifact_v3::ArtifactError> {
         let projection = json!({
             "allowed_suites": [1],
             "channel_id": "channel",
@@ -2594,7 +2594,7 @@ mod tests {
             },
             "v": 3
         });
-        ArtifactV3::parse(jcs_value(&value).unwrap())
+        Artifact::parse(jcs_value(&value).unwrap())
     }
 
     fn tunnel_artifact(
@@ -2604,7 +2604,7 @@ mod tests {
         peer_endpoint: &str,
         token: &str,
         pin: &str,
-    ) -> ArtifactV3 {
+    ) -> Artifact {
         let projection = json!({
             "allowed_suites": [1],
             "channel_id": "channel",
@@ -2661,7 +2661,7 @@ mod tests {
             },
             "v": 3
         });
-        ArtifactV3::parse(jcs_value(&value).unwrap()).unwrap()
+        Artifact::parse(jcs_value(&value).unwrap()).unwrap()
     }
 
     fn validity() -> (OffsetDateTime, OffsetDateTime) {

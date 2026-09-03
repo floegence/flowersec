@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     ArtifactLease, ConnectError, ConnectErrorCode, ConnectorOptions, SessionError,
-    artifact_v3::{ArtifactV3, ClaimedArtifactLeaseV3, TlsPolicyWireV3},
+    artifact_v3::{Artifact, ClaimedArtifactLeaseV3, TlsPolicyWireV3},
     connector_v3::connect_v3_with_cancellation,
     transport::Session,
 };
@@ -766,7 +766,7 @@ fn merge_policy_public_code(
     }
 }
 
-fn policy_identity(artifact: &ArtifactV3, error: ConnectError) -> PolicyIdentity {
+fn policy_identity(artifact: &Artifact, error: ConnectError) -> PolicyIdentity {
     let path = artifact.path_kind_for_controller();
     // Connector candidate masks are indexed over the controller-filtered
     // plan, so provenance must use that same ordering after blocked policies
@@ -819,7 +819,7 @@ fn policy_identity(artifact: &ArtifactV3, error: ConnectError) -> PolicyIdentity
 }
 
 fn replacement_candidate_ids(
-    artifact: &ArtifactV3,
+    artifact: &Artifact,
     trigger: &PolicyIdentity,
     blocked: &HashSet<PinIdentity>,
 ) -> Option<HashSet<String>> {
@@ -875,7 +875,7 @@ fn replacement_candidate_ids(
     (changed && !eligible.is_empty()).then_some(eligible)
 }
 
-fn primary_candidate_ids(artifact: &ArtifactV3, blocked: &HashSet<PinIdentity>) -> HashSet<String> {
+fn primary_candidate_ids(artifact: &Artifact, blocked: &HashSet<PinIdentity>) -> HashSet<String> {
     let path = artifact.path_kind_for_controller();
     artifact
         .canonical_candidates()
@@ -3290,7 +3290,7 @@ mod tests {
     }
 
     fn test_lease(
-        artifact: ArtifactV3,
+        artifact: Artifact,
         spends: Arc<AtomicU64>,
         retires: Arc<AtomicU64>,
     ) -> ArtifactLease {
@@ -3724,11 +3724,11 @@ mod tests {
         assert!(controller.current_session().is_none());
     }
 
-    fn pin_only_artifact(pin: [u8; 32]) -> ArtifactV3 {
+    fn pin_only_artifact(pin: [u8; 32]) -> Artifact {
         pin_policy_artifact(pin, 2_000_000_300)
     }
 
-    fn pin_policy_artifact(pin: [u8; 32], not_after_unix_s: u64) -> ArtifactV3 {
+    fn pin_policy_artifact(pin: [u8; 32], not_after_unix_s: u64) -> Artifact {
         let mut value = base_artifact_value();
         value["path"]["candidates"] = serde_json::json!([{
             "carrier": "websocket",
@@ -3741,10 +3741,10 @@ mod tests {
             "url": "wss://pin.example.org/flowersec/v3/direct",
             "wire_profile": "flowersec-direct/3"
         }]);
-        ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
+        Artifact::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
     }
 
-    fn ca_only_artifact() -> ArtifactV3 {
+    fn ca_only_artifact() -> Artifact {
         let mut value = base_artifact_value();
         value["path"]["candidates"] = serde_json::json!([{
             "carrier": "websocket",
@@ -3753,10 +3753,10 @@ mod tests {
             "url": "wss://pin.example.org/flowersec/v3/direct",
             "wire_profile": "flowersec-direct/3"
         }]);
-        ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
+        Artifact::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
     }
 
-    fn mixed_ca_pin_artifact() -> ArtifactV3 {
+    fn mixed_ca_pin_artifact() -> Artifact {
         let mut value = base_artifact_value();
         value["path"]["candidates"] = serde_json::json!([
             {
@@ -3778,7 +3778,7 @@ mod tests {
                 "wire_profile": "flowersec-direct/3"
             }
         ]);
-        ArtifactV3::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
+        Artifact::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
     }
 
     fn base_artifact_value() -> serde_json::Value {

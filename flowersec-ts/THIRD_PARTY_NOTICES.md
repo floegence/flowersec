@@ -13,7 +13,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - @noble/hashes 2.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/hashes/-/hashes-2.4.0.tgz)
 - punycode 2.3.1 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz)
 - tr46 6.0.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz)
-- ws 8.21.2 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/ws/-/ws-8.21.2.tgz)
+- ws 8.21.3 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/ws/-/ws-8.21.3.tgz)
 ## Distributed Dependency License Materials
 
 The following dependencies are incorporated into distributed Flowersec files or binaries.

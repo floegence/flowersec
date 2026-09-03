@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     artifact_v3::{
-        ArtifactV3, CarrierWireV3, ConnectionPlanV3, EncodedFsb3, acceptor_admissions_hash,
+        Artifact, CarrierWireV3, ConnectionPlanV3, EncodedFsb3, acceptor_admissions_hash,
         decode_direct_fsb3,
     },
     raw_quic_v3::RawQuicListenerV3,
@@ -232,7 +232,7 @@ impl Acceptor {
 
     pub async fn accept(
         &self,
-        artifact: &ArtifactV3,
+        artifact: &Artifact,
         cancellation: CancellationToken,
     ) -> Result<Arc<dyn Session>, AcceptError> {
         self.accept_session(artifact, cancellation, None).await
@@ -240,7 +240,7 @@ impl Acceptor {
 
     pub async fn accept_with_handlers(
         &self,
-        artifact: &ArtifactV3,
+        artifact: &Artifact,
         handlers: SessionHandlers,
         cancellation: CancellationToken,
     ) -> Result<AcceptedSession, AcceptError> {
@@ -254,7 +254,7 @@ impl Acceptor {
 
     async fn accept_session(
         &self,
-        artifact: &ArtifactV3,
+        artifact: &Artifact,
         cancellation: CancellationToken,
         rpc_handler: Option<Arc<dyn crate::session_v3::RpcHandlerV3>>,
     ) -> Result<Arc<dyn Session>, AcceptError> {
@@ -368,7 +368,7 @@ struct AcceptPlanV3 {
     registration_id: [u8; 32],
 }
 
-fn accept_plan(artifact: &ArtifactV3, carrier: CarrierKind) -> Result<AcceptPlanV3, AcceptError> {
+fn accept_plan(artifact: &Artifact, carrier: CarrierKind) -> Result<AcceptPlanV3, AcceptError> {
     let mut connection = artifact
         .connection_plan()
         .map_err(|_| error(AcceptErrorCode::InvalidInput))?;
