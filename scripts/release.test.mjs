@@ -1366,7 +1366,7 @@ test("release workflow reports bounded asset and registry publication timeouts",
 
     const npmPublish = runNpmCommandTimeoutHarness(t, "publish", timeoutExit);
     assert.equal(npmPublish.status, 124, `${npmPublish.stdout}${npmPublish.stderr}`);
-    assert.match(npmPublish.stderr, /npm publish timed out after 180s \(killed after 5s grace\): @floegence\/test-package@3\.0\.1/);
+    assert.match(npmPublish.stderr, /npm publish timed out after 600s \(killed after 5s grace\): @floegence\/test-package@3\.0\.1/);
 
     for (const [stepName, crateName] of [
       ["Publish native transport crate", "flowersec-native-transport"],

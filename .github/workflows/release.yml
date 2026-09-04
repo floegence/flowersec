@@ -1147,11 +1147,11 @@ jobs:
                 return 2
               fi
               set +e
-              timeout --kill-after=5s 180s npx -y npm@11.5.1 publish "${publish_args[@]}" "./$archive"
+              timeout --kill-after=5s 600s npx -y npm@11.5.1 publish "${publish_args[@]}" "./$archive"
               publish_status=$?
               set -e
               if [[ $publish_status -eq 124 || $publish_status -eq 137 ]]; then
-                echo "npm publish timed out after 180s (killed after 5s grace): ${package}@${VERSION}" >&2
+                echo "npm publish timed out after 600s (killed after 5s grace): ${package}@${VERSION}" >&2
                 return 124
               fi
               if [[ $publish_status -ne 0 ]]; then
