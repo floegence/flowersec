@@ -1543,19 +1543,12 @@ mod tests {
         for carrier in ["websocket", "raw_quic"] {
             let peer = InvalidProofPeer::start(carrier);
             let pin = URL_SAFE_NO_PAD.encode(Sha256::digest(&peer.leaf_der));
-            let port = peer
-                .address
-                .rsplit_once(':')
-                .unwrap()
-                .1
-                .parse::<u16>()
-                .unwrap();
             let (url, origin) = match carrier {
                 "websocket" => (
-                    format!("wss://localhost:{port}/flowersec/v3/direct"),
+                    format!("wss://{}/flowersec/v3/direct", peer.address),
                     Some("https://app.example"),
                 ),
-                "raw_quic" => (format!("quic://localhost:{port}"), None),
+                "raw_quic" => (format!("quic://{}", peer.address), None),
                 _ => unreachable!(),
             };
             let artifact = artifact_with_candidates(vec![json!({

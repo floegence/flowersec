@@ -824,13 +824,24 @@ func TestSuccessfulRunRemovesTempDirectoryAndFailureLog(t *testing.T) {
 
 func TestCancelledCommandReceivesTermAndIsWaited(t *testing.T) {
 	directory := t.TempDir()
+	ready := filepath.Join(directory, "ready")
 	marker := filepath.Join(directory, "descendant-terminated")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runCommand(ctx, directory, []string{"MARKER=" + marker}, "sh", "-c", `trap 'exit 0' TERM; sh -c 'trap '\''sleep 0.2; touch "$MARKER"; exit 0'\'' TERM; while :; do sleep 1; done' & wait`)
+		done <- runCommand(ctx, directory, []string{
+			"READY=" + ready,
+			"MARKER=" + marker,
+		}, "sh", "-c", `trap 'exit 0' TERM; sh -c 'trap '\''sleep 0.2; touch "$MARKER"; exit 0'\'' TERM; touch "$READY"; while :; do sleep 1; done' & wait`)
 	}()
-	time.Sleep(100 * time.Millisecond)
+	deadline := time.Now().Add(time.Second)
+	for !regularFile(ready) && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !regularFile(ready) {
+		cancel()
+		t.Fatal("cancellation command did not become ready")
+	}
 	cancel()
 	select {
 	case err := <-done:
