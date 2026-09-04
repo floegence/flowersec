@@ -23,11 +23,11 @@ const apiManifest = JSON.parse(read("stability/api_contract_manifest.json"));
 const packageJSON = JSON.parse(read("flowersec-ts/package.json"));
 
 assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v5");
-assert.equal(packageJSON.version, "5.0.1");
+assert.equal(packageJSON.version, "5.0.2");
 assert.equal(packageJSON.engines.node, ">=24.20.0");
 assert.deepEqual(packageJSON.bin, { "flowersec-ts-cli": "./dist/cli.js" });
 assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "5");
-assert.match(read("flowersec-rust/Cargo.toml"), /^version = "5\.0\.1"$/m);
+assert.match(read("flowersec-rust/Cargo.toml"), /^version = "5\.0\.2"$/m);
 
 const rustlsFeatures = run("cargo", [
   "tree", "--locked", "--manifest-path", "flowersec-rust/Cargo.toml",
