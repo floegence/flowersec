@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-source",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/067c52a32ae4a997588985519d9ab527d8cc5bf50f7c2f5c559813fa7088fe41",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-source/c6e5b1e0decb548a26303cf750bea8331a58853ca8666992c84adca0d747eb0d",
   "creationInfo": {
     "created": "2026-09-04T01:34:01Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 067c52a32ae4a997588985519d9ab527d8cc5bf50f7c2f5c559813fa7088fe41",
+      "comment": "Flowersec source inventory SHA-256: c6e5b1e0decb548a26303cf750bea8331a58853ca8666992c84adca0d747eb0d",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -4106,6 +4106,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/wnaf@0.14.0"
+        }
+      ]
+    },
+    {
+      "name": "wnaf",
+      "SPDXID": "SPDXRef-Package-84bea3511bf37be4bf20",
+      "versionInfo": "0.14.1",
+      "downloadLocation": "https://github.com/RustCrypto/elliptic-curves",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/wnaf@0.14.1"
         }
       ]
     },
@@ -10511,6 +10528,11 @@
       "relatedSpdxElement": "SPDXRef-Package-b509915e3a6cd87063b5"
     },
     {
+      "spdxElementId": "SPDXRef-Package-beb76f14e9f99e5b9a32",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-84bea3511bf37be4bf20"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-45dd5651836b8cff9453",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-c03abf6c9fbecd7346f6"
@@ -11694,6 +11716,26 @@
       "spdxElementId": "SPDXRef-Package-b509915e3a6cd87063b5",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-1aa220a2766b11514d66"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-84bea3511bf37be4bf20",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-fa1fe1fed437f1672c7e"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-84bea3511bf37be4bf20",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-020cd8ba4c0a1b79708b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-84bea3511bf37be4bf20",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-1aa220a2766b11514d66"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-84bea3511bf37be4bf20",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-5ef2a6e360ec22483cf3"
     },
     {
       "spdxElementId": "SPDXRef-Package-38d47068e006dfd23ad0",

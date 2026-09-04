@@ -243,6 +243,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - windows-targets 0.52.6 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/microsoft/windows-rs)
 - wit-bindgen 0.57.1 (Declared: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; selected: MIT; source: https://github.com/bytecodealliance/wit-bindgen)
 - wnaf 0.14.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/elliptic-curves)
+- wnaf 0.14.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/elliptic-curves)
 - writeable 0.6.4 (Declared: Unicode-3.0; selected: Unicode-3.0; source: https://github.com/unicode-org/icu4x)
 - x25519-dalek 3.0.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek)
 - x509-parser 0.18.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/x509-parser.git)

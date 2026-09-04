@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/%40floegence%2Fflowersec-node-native-linux-arm64-gnu/067c52a32ae4a997588985519d9ab527d8cc5bf50f7c2f5c559813fa7088fe41",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/%40floegence%2Fflowersec-node-native-linux-arm64-gnu/c6e5b1e0decb548a26303cf750bea8331a58853ca8666992c84adca0d747eb0d",
   "creationInfo": {
     "created": "2026-09-04T01:34:01Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 067c52a32ae4a997588985519d9ab527d8cc5bf50f7c2f5c559813fa7088fe41",
+      "comment": "Flowersec source inventory SHA-256: c6e5b1e0decb548a26303cf750bea8331a58853ca8666992c84adca0d747eb0d",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",

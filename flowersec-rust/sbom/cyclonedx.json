@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:5b03bf48-34d9-511a-8656-8413af01ec50",
+  "serialNumber": "urn:uuid:847fbf4e-2130-5c2a-8015-5cbc5da1e0af",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "067c52a32ae4a997588985519d9ab527d8cc5bf50f7c2f5c559813fa7088fe41"
+        "value": "c6e5b1e0decb548a26303cf750bea8331a58853ca8666992c84adca0d747eb0d"
       }
     ]
   },
@@ -5650,9 +5650,9 @@
     {
       "type": "library",
       "name": "wnaf",
-      "version": "0.14.0",
-      "purl": "pkg:cargo/wnaf@0.14.0",
-      "bom-ref": "pkg:cargo/wnaf@0.14.0",
+      "version": "0.14.1",
+      "purl": "pkg:cargo/wnaf@0.14.1",
+      "bom-ref": "pkg:cargo/wnaf@0.14.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -6889,7 +6889,7 @@
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/primefield@0.14.0",
         "pkg:cargo/serdect@0.4.3",
-        "pkg:cargo/wnaf@0.14.0"
+        "pkg:cargo/wnaf@0.14.1"
       ]
     },
     {
@@ -7503,11 +7503,12 @@
       ]
     },
     {
-      "ref": "pkg:cargo/wnaf@0.14.0",
+      "ref": "pkg:cargo/wnaf@0.14.1",
       "dependsOn": [
         "pkg:cargo/ff@0.14.0",
         "pkg:cargo/group@0.14.0",
-        "pkg:cargo/hybrid-array@0.4.14"
+        "pkg:cargo/hybrid-array@0.4.14",
+        "pkg:cargo/primefield@0.14.0"
       ]
     },
     {

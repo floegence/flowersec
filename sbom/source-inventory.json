@@ -18688,11 +18688,11 @@
         {
           "ecosystem": "cargo",
           "name": "wnaf",
-          "version": "0.14.0",
+          "version": "0.14.1",
           "declaredLicense": "Apache-2.0 OR MIT",
           "concludedLicense": "MIT",
           "source": "https://github.com/RustCrypto/elliptic-curves",
-          "purl": "pkg:cargo/wnaf@0.14.0",
+          "purl": "pkg:cargo/wnaf@0.14.1",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -18702,9 +18702,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "cargo-lock-checksum",
-            "sourceEvidenceValue": "ab12e7090f27e2ffd9322651492942d50c2926094af30601e1964337db39daf1",
-            "sourceEvidenceSha256": "7478d39714bb73434f4d007648b1868883edbad42d5f5fea203ae0118aa7350c",
-            "expressionEvidenceSha256": "7d3837477064f28c908cc0751729783cb69acf9ad4e8311feb1db79610b61d58",
+            "sourceEvidenceValue": "795ca18b3fdb5e62bf982199278341ddcf7ebf7d32e25e212ad05d496e95f6fa",
+            "sourceEvidenceSha256": "d236aa3173f88a0675e4b448357ae6cb7f9ad014320d90cfc91f57aeaccda566",
+            "expressionEvidenceSha256": "57ce6c916b327043a2ebe780f48392ffeeb5eec4b41b220231dae59d71a382fa",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -20856,7 +20856,7 @@
         },
         {
           "from": "pkg:cargo/primeorder@0.14.0",
-          "to": "pkg:cargo/wnaf@0.14.0",
+          "to": "pkg:cargo/wnaf@0.14.1",
           "kind": "runtime"
         },
         {
@@ -22030,18 +22030,23 @@
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/wnaf@0.14.0",
+          "from": "pkg:cargo/wnaf@0.14.1",
           "to": "pkg:cargo/ff@0.14.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/wnaf@0.14.0",
+          "from": "pkg:cargo/wnaf@0.14.1",
           "to": "pkg:cargo/group@0.14.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:cargo/wnaf@0.14.0",
+          "from": "pkg:cargo/wnaf@0.14.1",
           "to": "pkg:cargo/hybrid-array@0.4.14",
+          "kind": "runtime"
+        },
+        {
+          "from": "pkg:cargo/wnaf@0.14.1",
+          "to": "pkg:cargo/primefield@0.14.0",
           "kind": "runtime"
         },
         {
@@ -61683,6 +61688,40 @@
     },
     {
       "ecosystem": "cargo",
+      "name": "wnaf",
+      "version": "0.14.1",
+      "declaredLicense": "Apache-2.0 OR MIT",
+      "concludedLicense": "MIT",
+      "source": "https://github.com/RustCrypto/elliptic-curves",
+      "purl": "pkg:cargo/wnaf@0.14.1",
+      "sourceOfferRequired": false,
+      "review": {
+        "decision": "approved",
+        "declaredExpression": "Apache-2.0 OR MIT",
+        "concludedExpression": "MIT",
+        "reviewer": "flowersec-security-license-review",
+        "reviewedAt": "2026-08-07",
+        "policyRevision": "source-license-policy-v3",
+        "sourceEvidenceKind": "cargo-lock-checksum",
+        "sourceEvidenceValue": "795ca18b3fdb5e62bf982199278341ddcf7ebf7d32e25e212ad05d496e95f6fa",
+        "sourceEvidenceSha256": "d236aa3173f88a0675e4b448357ae6cb7f9ad014320d90cfc91f57aeaccda566",
+        "expressionEvidenceSha256": "57ce6c916b327043a2ebe780f48392ffeeb5eec4b41b220231dae59d71a382fa",
+        "copyright": {
+          "requirement": "retain-upstream-copyright-and-license-notices",
+          "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
+        },
+        "notice": {
+          "required": true,
+          "fulfillment": "component-entry-in-generated-third-party-notice"
+        },
+        "sourceOffer": {
+          "required": false,
+          "fulfillment": "not-required-by-concluded-license"
+        }
+      }
+    },
+    {
+      "ecosystem": "cargo",
       "name": "writeable",
       "version": "0.6.4",
       "declaredLicense": "Unicode-3.0",
@@ -72969,6 +73008,11 @@
       "kind": "runtime"
     },
     {
+      "from": "pkg:cargo/primeorder@0.14.0",
+      "to": "pkg:cargo/wnaf@0.14.1",
+      "kind": "runtime"
+    },
+    {
       "from": "pkg:cargo/proc-macro2@1.0.107",
       "to": "pkg:cargo/unicode-ident@1.0.24",
       "kind": "runtime"
@@ -74151,6 +74195,26 @@
     {
       "from": "pkg:cargo/wnaf@0.14.0",
       "to": "pkg:cargo/hybrid-array@0.4.14",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/wnaf@0.14.1",
+      "to": "pkg:cargo/ff@0.14.0",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/wnaf@0.14.1",
+      "to": "pkg:cargo/group@0.14.0",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/wnaf@0.14.1",
+      "to": "pkg:cargo/hybrid-array@0.4.14",
+      "kind": "runtime"
+    },
+    {
+      "from": "pkg:cargo/wnaf@0.14.1",
+      "to": "pkg:cargo/primefield@0.14.0",
       "kind": "runtime"
     },
     {
