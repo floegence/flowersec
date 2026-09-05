@@ -3,12 +3,15 @@ import XCTest
 
 @testable import Flowersec
 
+private let controllerOptionsV3 = ConnectorOptions(origin: "https://app.example")
+
 final class ConnectionControllerTests: XCTestCase {
   func testWaitForSessionIsPassiveAndReturnsStructuredOutcomes() async throws {
     let idleSource = SequenceArtifactSourceV3([])
     let idle = try ConnectionController(
       source: idleSource,
       maximumAttempts: 1,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in ControllerSessionV3() })
     let waiting = Task { try await idle.waitForSession() }
     waiting.cancel()
@@ -28,6 +31,7 @@ final class ConnectionControllerTests: XCTestCase {
         ArtifactLease(artifact: try artifactV3(), commitSpend: {})
       ]),
       maximumAttempts: 1,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         let claimed = try await lease.claim()
         try await claimed.commitSpend()
@@ -46,6 +50,7 @@ final class ConnectionControllerTests: XCTestCase {
     let failed = try ConnectionController(
       source: SequenceArtifactSourceV3([]),
       maximumAttempts: 1,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in ControllerSessionV3() })
     await failed.start()
     do {
@@ -64,6 +69,7 @@ final class ConnectionControllerTests: XCTestCase {
 
     let closed = try ConnectionController(
       source: SequenceArtifactSourceV3([]),
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in ControllerSessionV3() })
     await closed.close()
     do {
@@ -251,6 +257,7 @@ final class ConnectionControllerTests: XCTestCase {
     )
     let controller = try ConnectionController(
       source: SequenceArtifactSourceV3([lease]),
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in throw ConnectError.connectionFailed }
     )
     await controller.start()
@@ -327,6 +334,7 @@ final class ConnectionControllerTests: XCTestCase {
     let source = SequenceArtifactSourceV3([tracked])
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         let claimed = try await lease.claim()
         do {
@@ -462,6 +470,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         if await attempts.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
@@ -502,6 +511,7 @@ final class ConnectionControllerTests: XCTestCase {
     let calls = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         if await calls.increment() == 1 {
           throw ControllerConnectFailureV3.connection(
@@ -534,6 +544,7 @@ final class ConnectionControllerTests: XCTestCase {
     let session = ControllerSessionV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         if await calls.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
@@ -566,6 +577,7 @@ final class ConnectionControllerTests: XCTestCase {
     let session = ControllerSessionV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         if await calls.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
@@ -603,6 +615,7 @@ final class ConnectionControllerTests: XCTestCase {
       let controller = try ConnectionController(
         source: source,
         maximumAttempts: maximumAttempts,
+        options: controllerOptionsV3,
         connectOneShot: { _, _ in throw nativePinFailureV3() }
       )
 
@@ -633,6 +646,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       maximumAttempts: 2,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in throw nativePinFailureV3() }
     )
 
@@ -659,6 +673,7 @@ final class ConnectionControllerTests: XCTestCase {
     let attempts = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await attempts.increment()
         throw nativePinFailureV3()
@@ -690,6 +705,7 @@ final class ConnectionControllerTests: XCTestCase {
     let attempts = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await attempts.increment()
         throw ControllerConnectFailureV3.connection(
@@ -725,6 +741,7 @@ final class ConnectionControllerTests: XCTestCase {
     let attempts = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         if await attempts.increment() == 1 {
           throw nativePinFailureV3()
@@ -765,6 +782,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await calls.increment()
         throw ControllerConnectFailureV3.connection(
@@ -806,6 +824,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         if await calls.increment() == 1 {
           throw ControllerConnectFailureV3.connection(
@@ -854,6 +873,7 @@ final class ConnectionControllerTests: XCTestCase {
       let controller = try ConnectionController(
         source: source,
         clock: clock.controllerClock,
+        options: controllerOptionsV3,
         connectOneShot: { _, _ in
           _ = await calls.increment()
           throw nativePinFailureV3()
@@ -898,6 +918,7 @@ final class ConnectionControllerTests: XCTestCase {
     let calls = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await calls.increment()
         throw ControllerConnectFailureV3.connection(
@@ -930,6 +951,7 @@ final class ConnectionControllerTests: XCTestCase {
     let calls = AsyncCounterV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await calls.increment()
         throw ConnectError.transportSecurityFailed
@@ -963,6 +985,7 @@ final class ConnectionControllerTests: XCTestCase {
     let session = ControllerSessionV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         if await attempts.increment() == 1 {
           throw ControllerConnectFailureV3.connection(
@@ -1004,6 +1027,7 @@ final class ConnectionControllerTests: XCTestCase {
       source: source,
       maximumAttempts: 1,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await connectAttempts.increment()
         throw ConnectError.transportSecurityUnsupported
@@ -1064,6 +1088,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         switch await calls.increment() {
         case 1: throw nativePinFailureV3()
@@ -1127,6 +1152,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         if await calls.increment() == 1 { throw nativePinFailureV3() }
         let claimed = try await lease.claim()
@@ -1177,6 +1203,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         let call = await calls.increment()
         if call == 2 {
@@ -1252,6 +1279,7 @@ final class ConnectionControllerTests: XCTestCase {
       source: source,
       maximumAttempts: 2,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await connectAttempts.increment()
         throw ConnectError.connectionFailed
@@ -1302,6 +1330,7 @@ final class ConnectionControllerTests: XCTestCase {
       source: source,
       maximumAttempts: 2,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await attempts.increment()
         throw ConnectError.connectionFailed
@@ -1342,6 +1371,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in throw ConnectError.connectionFailed })
 
     await controller.start()
@@ -1372,7 +1402,11 @@ final class ConnectionControllerTests: XCTestCase {
       let source = ResultArtifactSourceV3([
         .failure(ArtifactSourceFailure(disposition: .retryAfter(deadline)))
       ])
-      let controller = try ConnectionController(source: source, maximumAttempts: 1)
+      let controller = try ConnectionController(
+        source: source,
+        maximumAttempts: 1,
+        options: controllerOptionsV3,
+        connectOneShot: { _, _ in ControllerSessionV3() })
 
       await controller.start()
       let failed = await waitForState(.failed, controller: controller)
@@ -1401,6 +1435,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         _ = await connectAttempts.increment()
         let claimed = try await lease.claim()
@@ -1560,6 +1595,7 @@ final class ConnectionControllerTests: XCTestCase {
     let refreshController = try ConnectionController(
       source: refreshSource,
       clock: refreshClock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, options in
         if await refreshCalls.increment() == 1 {
           return try await SessionConnectorV3(
@@ -1575,6 +1611,7 @@ final class ConnectionControllerTests: XCTestCase {
     let staleController = try ConnectionController(
       source: staleSource,
       clock: staleClock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, options in
         _ = await staleCalls.increment()
         return try await SessionConnectorV3(
@@ -1710,6 +1747,7 @@ final class ConnectionControllerTests: XCTestCase {
       let controller = try ConnectionController(
         source: source,
         clock: clock.controllerClock,
+        options: controllerOptionsV3,
         connectOneShot: { _, _ in
           _ = await connects.increment()
           throw ConnectError.connectionFailed
@@ -1747,6 +1785,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await started.increment()
         do { try await Task.sleep(for: .seconds(60)) } catch { throw ConnectError.canceled }
@@ -1780,6 +1819,7 @@ final class ConnectionControllerTests: XCTestCase {
     let source = BlockingErrorArtifactSourceV3()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in throw ConnectError.connectionFailed }
     )
     await controller.start()
@@ -1807,6 +1847,7 @@ final class ConnectionControllerTests: XCTestCase {
     await source.release()
     let controller = try ConnectionController(
       source: source,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in throw ConnectError.connectionFailed }
     )
 
@@ -1839,6 +1880,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         let claimed = try await lease.claim()
         try await claimed.commitSpend()
@@ -1877,7 +1919,10 @@ final class ConnectionControllerTests: XCTestCase {
 
   func testRetryNowReportsWakeWhenTheCallingTaskIsCancelled() async throws {
     let source = RetryableFailureArtifactSourceV3()
-    let controller = try ConnectionController(source: source)
+    let controller = try ConnectionController(
+      source: source,
+      options: controllerOptionsV3,
+      connectOneShot: { _, _ in ControllerSessionV3() })
     await controller.start()
     let waiting = await waitForState(.waiting, controller: controller)
     XCTAssertTrue(waiting)
@@ -1908,6 +1953,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         for _ in 0..<expectedAttempts { _ = await attempts.increment() }
         throw ControllerConnectFailureV3.connection(
@@ -1963,6 +2009,7 @@ final class ConnectionControllerTests: XCTestCase {
       let controller = try ConnectionController(
         source: source,
         clock: clock.controllerClock,
+        options: controllerOptionsV3,
         connectOneShot: { lease, options in
           try await SessionConnectorV3(
             lease: lease, options: options, runtime: runtime,
@@ -2017,6 +2064,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in
         _ = await attempts.increment()
         _ = await attempts.increment()
@@ -2050,6 +2098,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         if !preRace { _ = await attempts.increment() }
         if postSpend {
@@ -2088,6 +2137,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         let call = await calls.increment()
         if call == 1 { throw ConnectError.connectionFailed }
@@ -2132,6 +2182,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         _ = await calls.increment()
         let claimed = try await lease.claim()
@@ -2180,6 +2231,7 @@ final class ConnectionControllerTests: XCTestCase {
       let controller = try ConnectionController(
         source: source,
         clock: clock.controllerClock,
+        options: controllerOptionsV3,
         connectOneShot: { lease, _ in
           let claimed = try await lease.claim()
           try await claimed.commitSpend()
@@ -2211,6 +2263,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         let claimed = try await lease.claim()
         try await claimed.commitSpend()
@@ -2271,6 +2324,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         let call = await calls.increment()
         if call == 2 {
@@ -2317,6 +2371,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         if await calls.increment() == 1 { throw ConnectError.connectionFailed }
         let claimed = try await lease.claim()
@@ -2358,6 +2413,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         switch await calls.increment() {
         case 1: throw ConnectError.connectionFailed
@@ -2397,6 +2453,7 @@ final class ConnectionControllerTests: XCTestCase {
       maximumAttempts: maxSafe,
       clock: clock.controllerClock,
       initialAttempt: maxSafe,
+      options: controllerOptionsV3,
       connectOneShot: { _, _ in throw ConnectError.connectionFailed })
     await controller.start()
     let connecting = await waitForState(.connecting, controller: controller)
@@ -2421,6 +2478,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, options in
         try await SessionConnectorV3(
           lease: lease, options: options, runtime: runtime,
@@ -2462,6 +2520,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         let call = await calls.increment()
         if replacement && call == 1 { throw nativePinFailureV3() }
@@ -2505,6 +2564,7 @@ final class ConnectionControllerTests: XCTestCase {
     let controller = try ConnectionController(
       source: source,
       clock: clock.controllerClock,
+      options: controllerOptionsV3,
       connectOneShot: { lease, _ in
         _ = await calls.increment()
         if consumed {

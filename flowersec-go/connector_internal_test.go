@@ -589,13 +589,29 @@ func TestPublicByteStreamPreservesEOF(t *testing.T) {
 }
 
 func TestRPCProjectionPreservesApplicationErrorAndRedactsTransportFailure(t *testing.T) {
+	message := "handler not found"
 	peer := &opaqueRPCPeerV3{inner: staticRPCPeer{err: &internalrpc.CallError{
-		TypeID: 7, Code: 404, Message: "handler not found",
+		TypeID: 7, Code: 404, Message: &message,
 	}}}
 	err := peer.Call(context.Background(), 7, struct{}{}, &struct{}{})
 	var application *RPCError
-	if !errors.As(err, &application) || application.Code != 404 || application.Message != "handler not found" {
+	if !errors.As(err, &application) || application.Code != 404 || application.Message != "handler not found" || !application.MessagePresent {
 		t.Fatalf("RPC application error = %#v, want code/message projection", err)
+	}
+
+	peer = &opaqueRPCPeerV3{inner: staticRPCPeer{err: &internalrpc.CallError{TypeID: 7, Code: 405}}}
+	err = peer.Call(context.Background(), 7, struct{}{}, &struct{}{})
+	if !errors.As(err, &application) || application.Code != 405 || application.Message != "" || application.MessagePresent {
+		t.Fatalf("RPC absent message = %#v, want absent message projection", err)
+	}
+
+	emptyMessage := ""
+	peer = &opaqueRPCPeerV3{inner: staticRPCPeer{err: &internalrpc.CallError{
+		TypeID: 7, Code: 406, Message: &emptyMessage,
+	}}}
+	err = peer.Call(context.Background(), 7, struct{}{}, &struct{}{})
+	if !errors.As(err, &application) || application.Code != 406 || application.Message != "" || !application.MessagePresent {
+		t.Fatalf("RPC empty message = %#v, want explicitly empty message projection", err)
 	}
 
 	peer = &opaqueRPCPeerV3{inner: staticRPCPeer{err: errors.New("candidate secret at wss://secret.example")}}

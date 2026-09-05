@@ -79,6 +79,7 @@ export type CandidateDialerV3 = (
 
 export type SessionConnectorRuntimeV3 = Readonly<{
   capabilitySnapshot(): RuntimeCapabilityDescriptorV3;
+  candidateEligible?: (candidate: CanonicalArtifactCandidateV3) => boolean;
   dial: CandidateDialerV3;
   protocolRuntime: SessionProtocolRuntimeV3;
   connectTimeoutMilliseconds?: number;
@@ -207,6 +208,10 @@ async function attemptClaimedArtifactLeaseWithinDeadlineV3(
 
   for (const [index, candidate] of context.candidates.entries()) {
     throwIfAborted(context.signal);
+    if (runtime.candidateEligible?.(candidate) === false) {
+      failures.push({ candidate, failure: new TransportFailureV3("tls_unsupported") });
+      continue;
+    }
     if (!supportsCandidateSecurityV3(
       context.capability,
       candidate.carrier,

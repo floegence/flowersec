@@ -3,9 +3,9 @@ import Foundation
 
 internal struct FlowersecRPCError: LocalizedError, Equatable, Sendable {
   internal var code: UInt32
-  internal var message: String
+  internal var message: String?
 
-  internal init(code: UInt32, message: String) {
+  internal init(code: UInt32, message: String? = nil) {
     self.code = code
     self.message = message
   }
@@ -259,7 +259,7 @@ internal actor RPCClient {
         _ = finishRequest(
           envelope.responseTo,
           result: .failure(
-            FlowersecRPCError(code: error.code, message: error.message ?? "RPC request failed."))
+            FlowersecRPCError(code: error.code, message: error.message))
         )
       } else {
         _ = finishRequest(envelope.responseTo, result: .success(envelope.payload))

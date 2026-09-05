@@ -5,7 +5,7 @@ import Testing
 
 struct SDKDefaultsContractTests {
   @Test func publicConnectorUsesSharedConnectTimeoutDefault() {
-    #expect(ConnectorOptions().connectTimeout == FlowersecSDKDefaults.Transport.connectTimeout)
+    #expect(ConnectorOptions(origin: "https://app.example").connectTimeout == FlowersecSDKDefaults.Transport.connectTimeout)
   }
 
   @Test func defaultsMatchSharedStabilityManifest() throws {

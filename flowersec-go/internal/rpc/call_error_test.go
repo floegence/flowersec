@@ -19,8 +19,8 @@ func TestNewCallError(t *testing.T) {
 	if ce.Code != 123 {
 		t.Fatalf("Code=%d, want 123", ce.Code)
 	}
-	if ce.Message != msg {
-		t.Fatalf("Message=%q, want %q", ce.Message, msg)
+	if ce.Message == nil || *ce.Message != msg {
+		t.Fatalf("Message=%v, want %q", ce.Message, msg)
 	}
 	if ce.Error() != msg {
 		t.Fatalf("Error()=%q, want %q", ce.Error(), msg)

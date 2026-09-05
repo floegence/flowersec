@@ -121,6 +121,7 @@ final class FlowersecRPCTests: XCTestCase {
     }
 
     for (name, error) in [
+      ("missing message", ["code": 7]),
       ("ASCII 1024 bytes", ["code": 7, "message": validASCII]),
       ("multibyte UTF-8 1024 bytes", ["code": 7, "message": validMultibyte]),
     ] as [(String, [String: Any])] {

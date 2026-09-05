@@ -12,6 +12,9 @@ then select the `Flowersec` library product.
 
 Parse an opaque `Artifact` with `parseArtifact(...)`, bind it to a single-use
 `ArtifactLease`, and call `connect(lease:options:)` with `ConnectorOptions`.
+The Apple WebSocket runtime requires an explicit absolute HTTP(S) `origin` in
+`ConnectorOptions`; there is no implicit origin because it is part of the
+server's admission policy.
 The returned `Session` exposes `RPCPeer`, `ByteStream`, `IncomingStream`,
 validated `StreamMetadata`, liveness, rekeying, termination, and close.
 

@@ -1,12 +1,12 @@
 import Foundation
 
 public struct ConnectorOptions: Sendable {
-  public var origin: String?
+  public var origin: String
   public var connectTimeout: Duration
   public var trustRootsPEM: [Data]
 
   public init(
-    origin: String? = nil,
+    origin: String,
     connectTimeout: Duration = .seconds(10),
     trustRootsPEM: [Data] = []
   ) {
@@ -57,7 +57,7 @@ public struct ConnectError: Error, Equatable, Sendable {
 /// single-use lease is spent. No downgrade path is available.
 public func connect(
   lease: ArtifactLease,
-  options: ConnectorOptions = ConnectorOptions()
+  options: ConnectorOptions
 ) async throws -> any Session {
   try await connectOneShotV3(lease: lease, options: options)
 }
@@ -87,7 +87,7 @@ private func connectOneShotV3(
 
 func connectV3ForController(
   lease: ArtifactLease,
-  options: ConnectorOptions = ConnectorOptions()
+  options: ConnectorOptions
 ) async throws -> any Session {
   #if os(macOS) || os(iOS)
     return try await SessionConnectorV3(

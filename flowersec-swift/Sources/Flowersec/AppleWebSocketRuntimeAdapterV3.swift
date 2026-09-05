@@ -17,7 +17,7 @@ import Foundation
     #endif
 
     func validate(options: ConnectorOptions) throws {
-      guard let origin = options.origin, validOrigin(origin) else {
+      guard validOrigin(options.origin) else {
         throw SwiftRuntimeErrorV3.invalidConfiguration
       }
       for pem in options.trustRootsPEM {
@@ -43,14 +43,14 @@ import Foundation
             ? TransportV3Contract.directWebSocketPath
             : TransportV3Contract.tunnelWebSocketPath),
         url.query == nil, url.fragment == nil, url.user == nil, url.password == nil,
-        let host = url.host, let origin = options.origin
+        let host = url.host
       else { throw ConnectorBoundaryErrorV3.runtimeUnsupported }
       let subprotocol =
         path == .direct
         ? TransportV3Contract.directWebSocketSubprotocol
         : TransportV3Contract.tunnelWebSocketSubprotocol
       var headers = [ProxyHeader(name: "Sec-WebSocket-Protocol", value: subprotocol)]
-      headers.append(ProxyHeader(name: "Origin", value: origin))
+      headers.append(ProxyHeader(name: "Origin", value: options.origin))
       let roots = try options.trustRootsPEM.flatMap {
         try NIOSSLCertificate.fromPEMBytes(Array($0))
       }

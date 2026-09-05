@@ -151,7 +151,7 @@ struct TransportV3Tests {
         retire: { await retired.increment() })
 
       await #expect(throws: ConnectError.transportSecurityUnsupported) {
-        _ = try await connect(lease: lease)
+        _ = try await connect(lease: lease, options: ConnectorOptions(origin: "https://app.example"))
       }
       #expect(await spend.value == 0)
       #expect(await retired.value == 1)
@@ -159,7 +159,7 @@ struct TransportV3Tests {
         try await lease.claim()
       }
       await #expect(throws: ConnectError.artifactInvalid) {
-        _ = try await connect(lease: lease)
+        _ = try await connect(lease: lease, options: ConnectorOptions(origin: "https://app.example"))
       }
       #expect(await retired.value == 1)
     }

@@ -310,6 +310,9 @@ func validRPCWireError(rpcErr *RPCError) *rpcwire.RpcError {
 	if rpcErr == nil || rpcErr.Code == 0 || len(rpcErr.Message) > maxRPCErrorMessageBytes || !utf8.ValidString(rpcErr.Message) {
 		return internalRPCError()
 	}
+	if rpcErr.Message == "" && !rpcErr.MessagePresent {
+		return &rpcwire.RpcError{Code: rpcErr.Code}
+	}
 	message := rpcErr.Message
 	return &rpcwire.RpcError{Code: rpcErr.Code, Message: &message}
 }

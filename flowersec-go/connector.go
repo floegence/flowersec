@@ -412,8 +412,12 @@ func (connector *connector) connectInternal(ctx context.Context) (Session, error
 // Code and Message are application-level values; transport and session causes
 // are projected through SessionError instead.
 type RPCError struct {
-	Code    uint32
-	Message string
+	Code uint32
+	// Message is the optional sanitized application message. A non-empty value
+	// is always considered present; set MessagePresent for an explicitly empty
+	// message received from or sent to the wire.
+	Message        string
+	MessagePresent bool
 }
 
 func (err *RPCError) Error() string {
@@ -601,7 +605,10 @@ func redactRPCError(err error) error {
 	}
 	var application *internalrpc.CallError
 	if errors.As(err, &application) && application != nil {
-		return &RPCError{Code: application.Code, Message: application.Message}
+		if application.Message == nil {
+			return &RPCError{Code: application.Code}
+		}
+		return &RPCError{Code: application.Code, Message: *application.Message, MessagePresent: true}
 	}
 	return redactSessionError(err)
 }

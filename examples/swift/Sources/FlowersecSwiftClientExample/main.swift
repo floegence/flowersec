@@ -63,6 +63,7 @@ func retryDisposition(for error: any Error) -> RetryDisposition? {
 
 private enum ExampleConfigurationError: Error {
   case missingSpendReceiptPath
+  case missingOrigin
   case invalidRPCResponse
   case invalidStreamResponse
   case stalledStreamWrite
@@ -137,8 +138,11 @@ private enum FlowersecSwiftClientExample {
     }
     let trustRootsPEM = try ProcessInfo.processInfo.environment["FSEC_TRUST_ROOT_PEM_PATH"]
       .map { [try Data(contentsOf: URL(fileURLWithPath: $0))] } ?? []
+    guard let origin = ProcessInfo.processInfo.environment["FSEC_ORIGIN"] else {
+      throw ExampleConfigurationError.missingOrigin
+    }
     let options = ConnectorOptions(
-      origin: ProcessInfo.processInfo.environment["FSEC_ORIGIN"],
+      origin: origin,
       connectTimeout: .seconds(15),
       trustRootsPEM: trustRootsPEM
     )

@@ -87,6 +87,7 @@ function nodeRuntime(options: Readonly<{
   }
   return {
     capabilitySnapshot: () => capability,
+    candidateEligible: (candidate) => candidate.carrier !== "websocket" || options.origin !== undefined,
     connectTimeoutMilliseconds,
     protocolRuntime: nodeSessionRuntimeV3,
     ...(rpcSnapshot === undefined ? {} : { createRPCRouter: () => createRPCRouter(rpcSnapshot) }),

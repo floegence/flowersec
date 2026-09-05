@@ -52,9 +52,9 @@ public struct RPCError: Error, Equatable, Sendable, CustomStringConvertible,
   CustomDebugStringConvertible, CustomReflectable
 {
   public let code: UInt32
-  public let message: String
+  public let message: String?
 
-  public init(code: UInt32, message: String) {
+  public init(code: UInt32, message: String? = nil) {
     self.code = code
     self.message = message
   }

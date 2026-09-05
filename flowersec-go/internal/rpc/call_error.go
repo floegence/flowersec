@@ -12,15 +12,15 @@ type RemoteError = rpcv1.RpcError
 type CallError struct {
 	TypeID  uint32
 	Code    uint32
-	Message string
+	Message *string
 }
 
 func (e *CallError) Error() string {
 	if e == nil {
 		return ""
 	}
-	if e.Message != "" {
-		return e.Message
+	if e.Message != nil && *e.Message != "" {
+		return *e.Message
 	}
 	return "rpc error"
 }
@@ -30,13 +30,9 @@ func NewCallError(typeID uint32, rpcErr *rpcv1.RpcError) error {
 	if rpcErr == nil {
 		return nil
 	}
-	msg := ""
-	if rpcErr.Message != nil {
-		msg = *rpcErr.Message
-	}
 	return &CallError{
 		TypeID:  typeID,
 		Code:    rpcErr.Code,
-		Message: msg,
+		Message: rpcErr.Message,
 	}
 }

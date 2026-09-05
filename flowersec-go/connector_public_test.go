@@ -286,7 +286,7 @@ func TestConnectErrorPublicSnapshotContainsNoInternalDetail(t *testing.T) {
 
 func TestRPCErrorPublicSnapshotPreservesApplicationSemantics(t *testing.T) {
 	errorType := reflect.TypeOf(flowersec.RPCError{})
-	wantFields := []string{"Code", "Message"}
+	wantFields := []string{"Code", "Message", "MessagePresent"}
 	if errorType.NumField() != len(wantFields) {
 		t.Fatalf("RPCError has %d fields, want %d", errorType.NumField(), len(wantFields))
 	}

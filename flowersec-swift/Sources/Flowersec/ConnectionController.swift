@@ -133,7 +133,7 @@ public actor ConnectionController {
 
   public init(
     source: any ArtifactSource,
-    options: ConnectorOptions = ConnectorOptions(),
+    options: ConnectorOptions,
     maximumAttempts: UInt64? = nil
   ) throws {
     let normalizedMaximumAttempts = try Self.validate(maximumAttempts: maximumAttempts)
@@ -148,10 +148,10 @@ public actor ConnectionController {
 
   init(
     source: any ArtifactSource,
-    options: ConnectorOptions = ConnectorOptions(),
     maximumAttempts: UInt64? = nil,
     clock: ConnectionControllerClockV3 = .live,
     initialAttempt: UInt64 = 0,
+    options: ConnectorOptions,
     connectOneShot:
       @escaping @Sendable (ArtifactLease, ConnectorOptions) async throws -> any Session
   ) throws {
