@@ -23,7 +23,7 @@ const apiManifest = JSON.parse(read("stability/api_contract_manifest.json"));
 const packageJSON = JSON.parse(read("flowersec-ts/package.json"));
 
 assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v5");
-assert.equal(packageJSON.version, "5.0.3");
+assert.equal(packageJSON.version, "5.0.4");
 assert.equal(packageJSON.engines.node, ">=24.20.0");
 assert.deepEqual(packageJSON.bin, { "flowersec-ts-cli": "./dist/cli.js" });
 assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "5");

@@ -4494,16 +4494,15 @@ async fn rpc_call_v3(
     };
     peer.tasks.spawn(async move {
         let result = run_owned_rpc_write_v3(&session, serial, &envelope).await;
-        if let Err(error) = result {
-            if let Some((_, sender)) = session
+        if let Err(error) = result
+            && let Some((_, sender)) = session
                 .rpc
                 .pending
                 .lock()
                 .expect("RPC pending registry poisoned")
                 .remove(&request_id)
-            {
-                let _ = sender.send(Err(SessionError::from_io(&error)));
-            }
+        {
+            let _ = sender.send(Err(SessionError::from_io(&error)));
         }
     });
     let response = receiver
