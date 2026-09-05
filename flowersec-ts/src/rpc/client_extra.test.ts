@@ -78,6 +78,62 @@ function framePayload(payload: Uint8Array): Uint8Array {
 }
 
 describe("RpcClient extra behavior", () => {
+  test("owns response rejection while a write is still blocked", async () => {
+    const q = new ByteQueue();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const client = new RpcClient(q.readExactly.bind(q), async () => blocked);
+    const result = client.call(1, null).catch((error: unknown) => error);
+    q.close(new Error("peer disconnected"));
+    expect(await result).toBeInstanceOf(Error);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    release();
+    client.close();
+  });
+
+  test("cancels before sending and while queued without writing a canceled frame", async () => {
+    const q = new ByteQueue();
+    let writes = 0;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const client = new RpcClient(q.readExactly.bind(q), async () => { writes += 1; await blocked; });
+    await expect(client.call(1, null, AbortSignal.abort())).rejects.toThrow();
+    expect(writes).toBe(0);
+    const first = client.notify(1, null);
+    await Promise.resolve();
+    const controller = new AbortController();
+    const queued = client.call(2, null, controller.signal);
+    controller.abort();
+    await expect(queued).rejects.toThrow();
+    release();
+    await first;
+    expect(writes).toBe(1);
+    client.close();
+    q.close(new Error("closed"));
+  });
+
+  test("aborts the transport signal during a blocked write", async () => {
+    const q = new ByteQueue();
+    let started!: () => void;
+    const writing = new Promise<void>((resolve) => { started = resolve; });
+    let transportAborted = false;
+    const client = new RpcClient(q.readExactly.bind(q), async (_frame, signal) => {
+      started();
+      await new Promise<void>((_resolve, reject) => signal!.addEventListener("abort", () => {
+        transportAborted = true;
+        reject(signal!.reason);
+      }, { once: true }));
+    });
+    const controller = new AbortController();
+    const result = client.call(1, null, controller.signal);
+    await writing;
+    controller.abort();
+    await expect(result).rejects.toThrow();
+    expect(transportAborted).toBe(true);
+    client.close();
+    q.close(new Error("closed"));
+  });
+
   test("rejects invalid public type IDs without wire normalization", async () => {
     const q = new ByteQueue();
     const writes: Uint8Array[] = [];

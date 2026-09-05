@@ -42,13 +42,69 @@ type Handler func(ctx context.Context, payload json.RawMessage) (json.RawMessage
 
 // Router dispatches RPC requests by type ID.
 type Router struct {
-	mu       sync.RWMutex       // Guards handler registrations.
-	handlers map[uint32]Handler // Handlers keyed by type ID.
+	mu                  sync.RWMutex       // Guards handler registrations.
+	handlers            map[uint32]Handler // Handlers keyed by type ID.
+	notify              map[uint32]map[*routerNotification]struct{}
+	notificationsClosed bool
+}
+
+type routerNotification struct {
+	fn func(context.Context, json.RawMessage)
 }
 
 // NewRouter constructs an empty router.
 func NewRouter() *Router {
-	return &Router{handlers: make(map[uint32]Handler)}
+	return &Router{handlers: make(map[uint32]Handler), notify: make(map[uint32]map[*routerNotification]struct{})}
+}
+
+func (r *Router) OnNotify(typeID uint32, handler func(context.Context, json.RawMessage)) func() {
+	if typeID == 0 || handler == nil {
+		return func() {}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.notificationsClosed {
+		return func() {}
+	}
+	entry := &routerNotification{fn: handler}
+	if r.notify[typeID] == nil {
+		r.notify[typeID] = make(map[*routerNotification]struct{})
+	}
+	r.notify[typeID][entry] = struct{}{}
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.notify[typeID], entry)
+		if len(r.notify[typeID]) == 0 {
+			delete(r.notify, typeID)
+		}
+	}
+}
+
+func (r *Router) CloseNotifications() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.notificationsClosed = true
+	clear(r.notify)
+}
+
+func (r *Router) dispatchNotification(ctx context.Context, typeID uint32, payload json.RawMessage) {
+	_, _ = r.handle(ctx, typeID, append(json.RawMessage(nil), payload...))
+	r.mu.RLock()
+	handlers := make([]*routerNotification, 0, len(r.notify[typeID]))
+	for handler := range r.notify[typeID] {
+		handlers = append(handlers, handler)
+	}
+	r.mu.RUnlock()
+	for _, handler := range handlers {
+		if ctx.Err() != nil {
+			return
+		}
+		func() {
+			defer func() { _ = recover() }()
+			handler.fn(ctx, append(json.RawMessage(nil), payload...))
+		}()
+	}
 }
 
 // Register binds a handler to a type ID.
@@ -188,7 +244,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			case <-workerCtx.Done():
 				return
 			case env := <-notifications:
-				_, _ = s.router.handle(workerCtx, env.TypeId, env.Payload)
+				s.router.dispatchNotification(workerCtx, env.TypeId, env.Payload)
 			}
 		}
 	}()
@@ -267,7 +323,7 @@ type Client struct {
 	r      io.ReadWriteCloser // Underlying stream for framed JSON.
 	maxLen int                // Max frame size for jsonframe.ReadJSONFrame.
 
-	writeMu sync.Mutex // Serializes writes on the stream.
+	writePermit chan struct{} // Serializes writes with cancellable admission.
 
 	mu           sync.Mutex                             // Guards pending/notify state.
 	nextID       uint64                                 // Next request ID to allocate.
@@ -288,6 +344,7 @@ func NewClient(rwc io.ReadWriteCloser) *Client {
 		maxLen:      jsonframe.DefaultMaxJSONFrameBytes,
 		nextID:      1,
 		pending:     make(map[uint64]chan rpcv1.RpcEnvelope),
+		writePermit: make(chan struct{}, 1),
 		notify:      make(map[uint32]map[*notifyHandler]struct{}),
 		notifyQueue: make(chan rpcv1.RpcEnvelope, defaultMaxQueuedNotifications),
 		notifyCtx:   notifyCtx, notifyCancel: notifyCancel,
@@ -365,21 +422,59 @@ func (c *Client) OnNotify(typeID uint32, h func(payload json.RawMessage)) (unsub
 
 // Notify sends a one-way notification to the peer.
 func (c *Client) Notify(typeID uint32, payload json.RawMessage) error {
+	return c.NotifyContext(context.Background(), typeID, payload)
+}
+
+func (c *Client) NotifyContext(ctx context.Context, typeID uint32, payload json.RawMessage) error {
 	env := rpcv1.RpcEnvelope{
 		TypeId:     typeID,
 		RequestId:  0,
 		ResponseTo: 0,
 		Payload:    payload,
 	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	return jsonframe.WriteJSONFrame(c.r, env)
+	return c.writeEnvelope(ctx, env)
+}
+
+func (c *Client) writeEnvelope(ctx context.Context, env rpcv1.RpcEnvelope) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case c.writePermit <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-c.notifyCtx.Done():
+		return c.closedErr()
+	}
+	defer func() { <-c.writePermit }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.notifyCtx.Err() != nil {
+		return c.closedErr()
+	}
+	// A canceled write may have committed a partial frame. Retire the stream
+	// before another caller can append bytes to that uncertain boundary.
+	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+	err := jsonframe.WriteJSONFrame(c.r, env)
+	stop()
+	if contextErr := ctx.Err(); contextErr != nil {
+		c.closeAll(contextErr)
+		return contextErr
+	}
+	return err
 }
 
 // Call sends an RPC request and waits for its response or context cancellation.
 func (c *Client) Call(ctx context.Context, typeID uint32, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
 	}
 	reqID, ch, err := c.reserve()
 	if err != nil {
@@ -393,9 +488,7 @@ func (c *Client) Call(ctx context.Context, typeID uint32, payload json.RawMessag
 		ResponseTo: 0,
 		Payload:    payload,
 	}
-	c.writeMu.Lock()
-	err = jsonframe.WriteJSONFrame(c.r, env)
-	c.writeMu.Unlock()
+	err = c.writeEnvelope(ctx, env)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -480,13 +573,13 @@ func (c *Client) readLoop() {
 		}
 		c.mu.Lock()
 		ch := c.pending[env.ResponseTo]
-		c.mu.Unlock()
 		if ch != nil {
 			select {
 			case ch <- env:
 			default:
 			}
 		}
+		c.mu.Unlock()
 	}
 }
 

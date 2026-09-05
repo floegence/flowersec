@@ -135,7 +135,7 @@ function projectRpcPeerV3(
         assertRpcTypeId(typeId);
         assertJsonValue(payload);
         if (options?.signal?.aborted) throw options.signal.reason ?? new DOMException("The operation was aborted", "AbortError");
-        await raceWithSignal(peer.notify(typeId, payload), options?.signal);
+        await raceWithSignal(peer.notify(typeId, payload, options?.signal), options?.signal);
       } catch (error) { throw redactSessionError(error); }
     },
     onNotify<Payload>(

@@ -42,6 +42,19 @@ fn defaults_match_shared_stability_contract() {
     assert_eq!(deadlines.close_flush, Duration::from_secs(7));
 
     let proxy = &manifest["proxy"];
+    let rpc = &manifest["rpc"];
+    assert_eq!(
+        crate::session_v3::MAX_CONCURRENT_RPC_REQUESTS as u64,
+        rpc["max_concurrent_requests"].as_u64().unwrap()
+    );
+    assert_eq!(
+        crate::session_v3::MAX_QUEUED_RPC_REQUESTS as u64,
+        rpc["max_queued_requests"].as_u64().unwrap()
+    );
+    assert_eq!(
+        crate::session_v3::MAX_QUEUED_RPC_NOTIFICATIONS as u64,
+        rpc["max_queued_notifications"].as_u64().unwrap()
+    );
     assert_eq!(
         DEFAULT_MAX_JSON as u64,
         proxy["max_json_frame_bytes"].as_u64().unwrap()

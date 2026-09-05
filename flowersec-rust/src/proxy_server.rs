@@ -24,7 +24,6 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
     net::TcpStream,
     sync::{Notify, Semaphore},
-    task::JoinHandle,
     time::Instant,
 };
 use tokio_rustls::TlsConnector;
@@ -706,6 +705,21 @@ async fn serve_http(
     stream: &dyn ByteStream,
     cancellation: CancellationToken,
 ) -> Result<(), ProxyServerError> {
+    let started = Instant::now();
+    tokio::time::timeout_at(
+        started + inner.config.max_timeout,
+        serve_http_request(inner, stream, cancellation, started),
+    )
+    .await
+    .map_err(|_| ProxyServerError::OperationFailed)?
+}
+
+async fn serve_http_request(
+    inner: &Inner,
+    stream: &dyn ByteStream,
+    cancellation: CancellationToken,
+    started: Instant,
+) -> Result<(), ProxyServerError> {
     let mut reader = ProxyReader::new(stream);
     let meta: HttpRequestMeta =
         match read_json(&mut reader, inner.config.max_json, &cancellation).await {
@@ -744,155 +758,155 @@ async fn serve_http(
         }
         origin
     };
-    let body = match read_body(&mut reader, &inner.config, &cancellation).await {
-        Ok(body) => body,
-        Err(_) => {
-            write_http_error(stream, request_id, "request_body_invalid", &cancellation).await;
-            return Ok(());
-        }
-    };
     let timeout = if meta.timeout_ms == 0 {
         inner.config.default_timeout
     } else {
         Duration::from_millis(meta.timeout_ms).min(inner.config.max_timeout)
     };
-    let target = inner
-        .config
-        .upstream
-        .join(&path)
-        .map_err(|_| ProxyServerError::OperationFailed)?;
-    let uri = if target.query().is_some() {
-        format!("{}?{}", target.path(), target.query().unwrap_or_default())
-    } else {
-        target.path().to_owned()
-    };
-    let uri: Uri = uri.parse().map_err(|_| ProxyServerError::OperationFailed)?;
-    let mut request = Request::builder()
-        .method(method)
-        .uri(uri)
-        .body(Full::new(Bytes::from(body.clone())))
-        .map_err(|_| ProxyServerError::OperationFailed)?;
-    let connect_host = target
-        .host_str()
-        .ok_or(ProxyServerError::OperationFailed)?
-        .to_owned();
-    let port = target
-        .port_or_known_default()
-        .ok_or(ProxyServerError::OperationFailed)?;
-    let authority = target[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
-    request.headers_mut().insert(
-        header::HOST,
-        authority
-            .parse()
-            .map_err(|_| ProxyServerError::OperationFailed)?,
-    );
-    let request_headers = filter_request_headers(&meta.headers, &inner.config);
-    if let Some(origin) = &external_origin {
-        let expected = origin.origin().ascii_serialization();
-        if request_headers.iter().any(|header| {
-            header.name == "origin"
-                && validate_external_origin(&header.value)
-                    .is_none_or(|value| value.origin().ascii_serialization() != expected)
-        }) {
-            write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
-            return Ok(());
-        }
-    }
-    for header in request_headers {
-        let name = header::HeaderName::from_bytes(header.name.as_bytes())
+    let deadline = started + timeout;
+    tokio::time::timeout_at(deadline, async {
+        let body = match read_body(&mut reader, &inner.config, &cancellation).await {
+            Ok(body) => body,
+            Err(_) => {
+                write_http_error(stream, request_id, "request_body_invalid", &cancellation).await;
+                return Ok(());
+            }
+        };
+        let target = inner
+            .config
+            .upstream
+            .join(&path)
             .map_err(|_| ProxyServerError::OperationFailed)?;
-        let value = header::HeaderValue::from_str(&header.value)
+        let uri = if target.query().is_some() {
+            format!("{}?{}", target.path(), target.query().unwrap_or_default())
+        } else {
+            target.path().to_owned()
+        };
+        let uri: Uri = uri.parse().map_err(|_| ProxyServerError::OperationFailed)?;
+        let mut request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Full::new(Bytes::from(body.clone())))
             .map_err(|_| ProxyServerError::OperationFailed)?;
-        request.headers_mut().append(name, value);
-    }
-    if let Some(origin) = external_origin {
+        let connect_host = target
+            .host_str()
+            .ok_or(ProxyServerError::OperationFailed)?
+            .to_owned();
+        let port = target
+            .port_or_known_default()
+            .ok_or(ProxyServerError::OperationFailed)?;
+        let authority = target[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
         request.headers_mut().insert(
-            "x-forwarded-proto",
-            origin
-                .scheme()
+            header::HOST,
+            authority
                 .parse()
                 .map_err(|_| ProxyServerError::OperationFailed)?,
         );
-    }
-    let deadline = Instant::now() + timeout;
-    let (response, connection_task) = match send_http_request(
-        inner,
-        request,
-        connect_host,
-        port,
-        deadline,
-        &cancellation,
-    )
-    .await
-    {
-        Ok(response) => response,
-        Err(HttpRequestFailure::Closed) => return Err(ProxyServerError::Closed),
-        Err(HttpRequestFailure::Timeout) => {
-            write_http_error(stream, request_id, "timeout", &cancellation).await;
-            return Ok(());
+        let request_headers = filter_request_headers(&meta.headers, &inner.config);
+        if let Some(origin) = &external_origin {
+            let expected = origin.origin().ascii_serialization();
+            if request_headers.iter().any(|header| {
+                header.name == "origin"
+                    && validate_external_origin(&header.value)
+                        .is_none_or(|value| value.origin().ascii_serialization() != expected)
+            }) {
+                write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
+                return Ok(());
+            }
         }
-        Err(HttpRequestFailure::Dial) => {
-            write_http_error(stream, request_id, "upstream_dial_failed", &cancellation).await;
-            return Ok(());
+        for header in request_headers {
+            let name = header::HeaderName::from_bytes(header.name.as_bytes())
+                .map_err(|_| ProxyServerError::OperationFailed)?;
+            let value = header::HeaderValue::from_str(&header.value)
+                .map_err(|_| ProxyServerError::OperationFailed)?;
+            request.headers_mut().append(name, value);
         }
-        Err(HttpRequestFailure::Request) => {
-            write_http_error(stream, request_id, "upstream_request_failed", &cancellation).await;
-            return Ok(());
+        if let Some(origin) = external_origin {
+            request.headers_mut().insert(
+                "x-forwarded-proto",
+                origin
+                    .scheme()
+                    .parse()
+                    .map_err(|_| ProxyServerError::OperationFailed)?,
+            );
         }
-    };
-    let (parts, mut body) = response.into_parts();
-    if parts
-        .headers
-        .get(header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .is_some_and(|length| length > inner.config.max_body as u64)
-    {
-        connection_task.abort();
-        write_http_error(stream, request_id, "response_body_too_large", &cancellation).await;
-        return Ok(());
-    }
-    let status = parts.status.as_u16();
-    let headers = filter_response_headers(&parts.headers, &inner.config);
-    let result = async {
-        write_json(
-            stream,
-            &HttpResponseMeta {
-                v: WIRE_VERSION,
-                request_id,
-                ok: true,
-                status: Some(status),
-                headers,
-                error: None,
-            },
-            &cancellation,
-        )
-        .await?;
-        let mut total = 0usize;
-        while let Some(frame) = tokio::select! {
-            _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
-            frame = tokio::time::timeout_at(deadline, body.frame()) => frame
-                .map_err(|_| ProxyServerError::OperationFailed)?,
-        } {
-            let frame = frame.map_err(|_| ProxyServerError::OperationFailed)?;
-            let Some(chunk) = frame.data_ref() else {
-                continue;
+        let (response, connection_task) =
+            match send_http_request(inner, request, connect_host, port, deadline, &cancellation)
+                .await
+            {
+                Ok(response) => response,
+                Err(HttpRequestFailure::Closed) => return Err(ProxyServerError::Closed),
+                Err(HttpRequestFailure::Timeout) => {
+                    write_http_error(stream, request_id, "timeout", &cancellation).await;
+                    return Ok(());
+                }
+                Err(HttpRequestFailure::Dial) => {
+                    write_http_error(stream, request_id, "upstream_dial_failed", &cancellation)
+                        .await;
+                    return Ok(());
+                }
+                Err(HttpRequestFailure::Request) => {
+                    write_http_error(stream, request_id, "upstream_request_failed", &cancellation)
+                        .await;
+                    return Ok(());
+                }
             };
-            total = total
-                .checked_add(chunk.len())
-                .ok_or(ProxyServerError::OperationFailed)?;
-            if total > inner.config.max_body {
-                return Err(ProxyServerError::OperationFailed);
-            }
-            for payload in chunk.chunks(inner.config.max_chunk) {
-                write_chunk(stream, payload, &cancellation).await?;
-            }
+        let (parts, mut body) = response.into_parts();
+        if parts
+            .headers
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|length| length > inner.config.max_body as u64)
+        {
+            connection_task.abort();
+            write_http_error(stream, request_id, "response_body_too_large", &cancellation).await;
+            return Ok(());
         }
-        write_all(stream, Bytes::from_static(&[0, 0, 0, 0]), &cancellation).await
-    }
-    .await;
-    connection_task.abort();
-    result
+        let status = parts.status.as_u16();
+        let headers = filter_response_headers(&parts.headers, &inner.config);
+        let result = async {
+            write_json(
+                stream,
+                &HttpResponseMeta {
+                    v: WIRE_VERSION,
+                    request_id,
+                    ok: true,
+                    status: Some(status),
+                    headers,
+                    error: None,
+                },
+                &cancellation,
+            )
+            .await?;
+            let mut total = 0usize;
+            while let Some(frame) = tokio::select! {
+                _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
+                frame = tokio::time::timeout_at(deadline, body.frame()) => frame
+                    .map_err(|_| ProxyServerError::OperationFailed)?,
+            } {
+                let frame = frame.map_err(|_| ProxyServerError::OperationFailed)?;
+                let Some(chunk) = frame.data_ref() else {
+                    continue;
+                };
+                total = total
+                    .checked_add(chunk.len())
+                    .ok_or(ProxyServerError::OperationFailed)?;
+                if total > inner.config.max_body {
+                    return Err(ProxyServerError::OperationFailed);
+                }
+                for payload in chunk.chunks(inner.config.max_chunk) {
+                    write_chunk(stream, payload, &cancellation).await?;
+                }
+            }
+            write_all(stream, Bytes::from_static(&[0, 0, 0, 0]), &cancellation).await
+        }
+        .await;
+        connection_task.abort();
+        result
+    })
+    .await
+    .map_err(|_| ProxyServerError::OperationFailed)?
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -961,7 +975,13 @@ async fn send_http_request(
     port: u16,
     deadline: Instant,
     cancellation: &CancellationToken,
-) -> Result<(hyper::Response<Incoming>, JoinHandle<()>), HttpRequestFailure> {
+) -> Result<
+    (
+        hyper::Response<Incoming>,
+        tokio_util::task::AbortOnDropHandle<()>,
+    ),
+    HttpRequestFailure,
+> {
     let tcp = tokio::select! {
         _ = cancellation.cancelled() => return Err(HttpRequestFailure::Closed),
         result = tokio::time::timeout_at(deadline, TcpStream::connect((host.as_str(), port))) => match result {
@@ -996,9 +1016,9 @@ async fn send_http_request(
             Ok(Ok(parts)) => parts,
         },
     };
-    let connection_task = tokio::spawn(async move {
+    let connection_task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
         let _ = connection.await;
-    });
+    }));
     let response = tokio::select! {
         _ = cancellation.cancelled() => {
             connection_task.abort();
@@ -1710,6 +1730,33 @@ mod tests {
             forbidden_cookie_names: vec!["session".into()],
             forbidden_cookie_name_prefixes: vec!["private_".into()],
             on_error: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn http_intake_deadline_covers_incomplete_metadata_and_bodies() {
+        for stage in ["metadata", "GET", "POST"] {
+            let mut options = test_options("http://127.0.0.1:1".parse().unwrap());
+            options.default_http_request_timeout = Duration::from_millis(20);
+            options.max_http_request_timeout = Duration::from_millis(40);
+            let server = ProxyServer::new(options).unwrap();
+            let input = if stage == "metadata" {
+                Vec::new()
+            } else {
+                frame_json(serde_json::json!({
+                    "v": 1, "request_id": "stalled", "method": stage,
+                    "path": "/", "headers": [], "timeout_ms": 20
+                }))
+            };
+            let stream = Arc::new(TestStream::new(input));
+            let result = tokio::time::timeout(
+                Duration::from_secs(1),
+                serve_http(&server.inner, &stream, CancellationToken::new()),
+            )
+            .await
+            .expect("incomplete proxy request ignored deadline");
+            assert!(result.is_err(), "incomplete {stage} was accepted");
+            server.close().await;
         }
     }
 

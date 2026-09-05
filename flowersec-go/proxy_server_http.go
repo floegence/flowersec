@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,6 +24,9 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	if handlerContext == nil {
 		handlerContext = context.Background()
 	}
+	started := time.Now()
+	handlerContext, cancelIntake := context.WithTimeout(handlerContext, server.config.maxTimeout)
+	defer cancelIntake()
 	resetStream := sync.OnceFunc(func() { _ = stream.Reset() })
 	outerResetDone := make(chan struct{})
 	stopOuterReset := context.AfterFunc(handlerContext, func() {
@@ -57,20 +61,18 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	requestContext := handlerContext
 	var cancelRequest context.CancelFunc
 	if timeout > 0 {
-		requestContext, cancelRequest = context.WithTimeout(requestContext, timeout)
+		requestContext, cancelRequest = context.WithDeadline(requestContext, started.Add(timeout))
 	} else {
 		requestContext, cancelRequest = context.WithCancel(requestContext)
 	}
 	var watchDone chan struct{}
-	var resetDone chan struct{}
-	var stopReset func() bool
+	resetDone := make(chan struct{})
+	stopReset := context.AfterFunc(requestContext, func() {
+		defer close(resetDone)
+		resetStream()
+	})
 	startWatcher := func(beforeWatch func() error) {
 		watchDone = make(chan struct{})
-		resetDone = make(chan struct{})
-		stopReset = context.AfterFunc(requestContext, func() {
-			defer close(resetDone)
-			resetStream()
-		})
 		go func() {
 			defer close(watchDone)
 			if beforeWatch != nil && beforeWatch() != nil {
@@ -82,9 +84,9 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	defer func() {
 		if watchDone != nil {
 			<-watchDone
-			if !stopReset() {
-				<-resetDone
-			}
+		}
+		if !stopReset() {
+			<-resetDone
 		}
 		cancelRequest()
 	}()
@@ -235,6 +237,12 @@ func (server *ProxyServer) proxyTimeout(milliseconds int64) (time.Duration, erro
 	}
 	if milliseconds == 0 {
 		return server.config.defaultTimeout, nil
+	}
+	if server.config.maxTimeout > 0 && milliseconds > int64(server.config.maxTimeout/time.Millisecond) {
+		return server.config.maxTimeout, nil
+	}
+	if milliseconds > math.MaxInt64/int64(time.Millisecond) {
+		return 0, ErrInvalidProxyServer
 	}
 	timeout := time.Duration(milliseconds) * time.Millisecond
 	if server.config.maxTimeout > 0 && timeout > server.config.maxTimeout {

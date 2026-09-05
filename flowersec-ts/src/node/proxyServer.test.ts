@@ -7,6 +7,41 @@ import {
   StreamHandlers,
 } from "./index.js";
 import type { StreamHandlerRegistrar } from "./proxyServer.js";
+import { freezeStreamHandlers } from "../public/streamHandlers.js";
+import { createStreamMetadata, type ByteStream } from "../facade.js";
+
+test.each(["metadata", "GET", "POST"])("bounds incomplete proxy %s intake", async (stage) => {
+  const server = new ProxyServer({
+    upstream: "http://127.0.0.1:1", upstreamOrigin: "http://127.0.0.1:1",
+    defaultHTTPRequestTimeoutMs: 20, maxHTTPRequestTimeoutMs: 40,
+  });
+  const handlers = new StreamHandlers();
+  server.register(handlers);
+  const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const payload = new TextEncoder().encode(JSON.stringify({ v: 1, request_id: "stalled", method: stage, path: "/", headers: [], timeout_ms: 20 }));
+  const frame = new Uint8Array(payload.length + 4);
+  new DataView(frame.buffer).setUint32(0, payload.length);
+  frame.set(payload, 4);
+  let delivered = stage === "metadata";
+  let reset = false;
+  let rejectRead: ((error: Error) => void) | undefined;
+  const stream: ByteStream = {
+    kind,
+    async read() {
+      if (!delivered) { delivered = true; return frame; }
+      if (reset) throw new Error("reset");
+      return await new Promise<Uint8Array>((_resolve, reject) => { rejectRead = reject; });
+    },
+    async write(data) { if (reset) throw new Error("reset"); return data.length; },
+    async closeWrite() {},
+    async reset() { reset = true; rejectRead?.(new Error("reset")); },
+    async close() {},
+  };
+  await handler({ kind, metadata: createStreamMetadata({}), stream }, {});
+  expect(reset).toBe(true);
+  expect(server.activeCount).toBe(0);
+  await server.close();
+}, 1_000);
 
 test("exposes a native Node ProxyServer with bounded loopback upstream policy", async () => {
   const options = {

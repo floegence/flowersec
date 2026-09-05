@@ -298,6 +298,9 @@ func validateEngineConfig(carrierSession carrier.Session, config *Config) error 
 }
 
 func newEngineSession(carrierSession carrier.Session, control carrier.Stream, config Config, material handshakeMaterial) (*engineSession, error) {
+	if config.RPCRouter == nil {
+		config.RPCRouter = rpc.NewRouter()
+	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	role := protocolv3.RoleClient
 	sendDirection := protocolv3.DirectionClientToServer
@@ -348,7 +351,8 @@ func newEngineSession(carrierSession carrier.Session, control carrier.Stream, co
 		session.idleTouch = make(chan struct{}, 1)
 	}
 	session.initControlActor()
-	session.rpcPeer = &sessionRPCPeer{session: session}
+	session.rpcPeer = &sessionRPCPeer{session: session, permit: make(chan struct{}, 1)}
+	context.AfterFunc(ctx, config.RPCRouter.CloseNotifications)
 	if material.selectedFeatures&protocolv3.FeatureUnreliableMessages != 0 {
 		transport, ok := carrierSession.(carrier.UnreliableTransport)
 		if !ok || !transport.UnreliableAvailable() {

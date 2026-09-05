@@ -75,7 +75,7 @@ export interface InternalSessionV3 {
 
 export interface InternalRpcPeerV3 {
   call(typeId: number, payload: unknown, signal?: AbortSignal): Promise<{ payload: unknown; error?: RpcError }>;
-  notify(typeId: number, payload: unknown): Promise<void>;
+  notify(typeId: number, payload: unknown, signal?: AbortSignal): Promise<void>;
   onNotify(typeId: number, handler: (payload: unknown) => void): () => void;
   close(): void;
 }

@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::{Mutex, Notify, OwnedMutexGuard, Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 #[cfg(test)]
 use crate::transport_v3::CarrierKind;
@@ -705,7 +706,8 @@ async fn establish_session_v3_inner(
             session: OnceLock::new(),
             serial: Arc::new(Mutex::new(())),
             stream: Arc::new(Mutex::new(None)),
-            read_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            pending: Arc::new(StdMutex::new(HashMap::new())),
+            tasks: TaskTracker::new(),
             next_request_id: AtomicU64::new(1),
             notifications: Arc::new(NotificationRegistryV3::default()),
         },
@@ -771,10 +773,30 @@ impl std::fmt::Debug for SelfSession {
 struct SessionRpcPeerV3 {
     session: OnceLock<Weak<SelfSession>>,
     serial: Arc<Mutex<()>>,
-    stream: Arc<Mutex<Option<Box<dyn ByteStream>>>>,
-    read_buffer: Arc<Mutex<VecDeque<u8>>>,
+    stream: Arc<Mutex<Option<Arc<dyn ByteStream>>>>,
+    pending: Arc<StdMutex<HashMap<u64, PendingRpcCallV3>>>,
+    tasks: TaskTracker,
     next_request_id: AtomicU64,
     notifications: Arc<NotificationRegistryV3>,
+}
+
+type PendingRpcCallV3 = (
+    u32,
+    oneshot::Sender<Result<RpcEnvelopeWireV3, SessionError>>,
+);
+
+struct PendingRpcGuardV3 {
+    pending: Arc<StdMutex<HashMap<u64, PendingRpcCallV3>>>,
+    id: u64,
+}
+
+impl Drop for PendingRpcGuardV3 {
+    fn drop(&mut self) {
+        self.pending
+            .lock()
+            .expect("RPC pending registry poisoned")
+            .remove(&self.id);
+    }
 }
 
 #[derive(Default)]
@@ -2564,7 +2586,11 @@ async fn close_session_workflow_v3(session: &EncryptedSessionV3) -> io::Result<(
         .await
         .map(|_| ())
         .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v3 RPC close timeout"));
-    flush.and(carrier).and(rpc_operation)
+    session.rpc.tasks.close();
+    let rpc_tasks = tokio::time::timeout_at(deadline, session.rpc.tasks.wait())
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Flowersec v3 RPC cleanup timeout"));
+    flush.and(carrier).and(rpc_operation).and(rpc_tasks)
 }
 
 async fn wait_for_close_completion_v3(session: &EncryptedSessionV3) {
@@ -4426,6 +4452,9 @@ fn rpc_handler_error_to_wire_v3(error: RpcError) -> RpcErrorWireV3 {
 
 const MAX_RPC_FRAME_BYTES: usize = 1 << 20;
 const MAX_PORTABLE_RPC_ID: u64 = (1_u64 << 53) - 1;
+pub(crate) const MAX_CONCURRENT_RPC_REQUESTS: usize = 32;
+pub(crate) const MAX_QUEUED_RPC_REQUESTS: usize = 128;
+pub(crate) const MAX_QUEUED_RPC_NOTIFICATIONS: usize = 128;
 
 async fn rpc_call_v3(
     peer: &SessionRpcPeerV3,
@@ -4454,41 +4483,92 @@ async fn rpc_call_v3(
     if session.is_closed() {
         return Err(RpcCallError::Session(SessionError::Closed));
     }
-    let stream = peer.stream.clone();
-    let read_buffer = peer.read_buffer.clone();
     let (sender, receiver) = oneshot::channel();
-    tokio::spawn(async move {
-        let result =
-            run_owned_rpc_call_v3(session, serial, stream, read_buffer, envelope, request_id).await;
-        let _ = sender.send(result);
+    peer.pending
+        .lock()
+        .expect("RPC pending registry poisoned")
+        .insert(request_id, (type_id, sender));
+    let _pending = PendingRpcGuardV3 {
+        pending: peer.pending.clone(),
+        id: request_id,
+    };
+    peer.tasks.spawn(async move {
+        let result = run_owned_rpc_write_v3(&session, serial, &envelope).await;
+        if let Err(error) = result {
+            if let Some((_, sender)) = session
+                .rpc
+                .pending
+                .lock()
+                .expect("RPC pending registry poisoned")
+                .remove(&request_id)
+            {
+                let _ = sender.send(Err(SessionError::from_io(&error)));
+            }
+        }
     });
-    receiver
+    let response = receiver
         .await
         .map_err(|_| RpcCallError::Session(SessionError::Closed))?
+        .map_err(RpcCallError::Session)?;
+    rpc_response_payload_v3(response, request_id)
 }
 
-async fn run_owned_rpc_call_v3(
-    session: Arc<SelfSession>,
+async fn run_owned_rpc_write_v3(
+    session: &Arc<SelfSession>,
     _serial: OwnedMutexGuard<()>,
-    stream: Arc<Mutex<Option<Box<dyn ByteStream>>>>,
-    read_buffer: Arc<Mutex<VecDeque<u8>>>,
-    envelope: RpcEnvelopeWireV3,
-    request_id: u64,
-) -> Result<serde_json::Value, RpcCallError> {
-    let mut stream = stream.lock().await;
+    envelope: &RpcEnvelopeWireV3,
+) -> io::Result<()> {
+    let mut stream = session.rpc.stream.lock().await;
     if stream.is_none() {
-        *stream = Some(
-            open_reserved_rpc_stream_v3(&session)
-                .await
-                .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?,
-        );
+        let opened: Arc<dyn ByteStream> = Arc::from(open_reserved_rpc_stream_v3(session).await?);
+        *stream = Some(opened.clone());
+        let owner = session.clone();
+        session
+            .rpc
+            .tasks
+            .spawn(async move { read_rpc_responses_v3(owner, opened).await });
     }
-    let stream = stream
-        .as_deref()
-        .ok_or(RpcCallError::Session(SessionError::Closed))?;
-    exchange_rpc_call_v3(stream, &read_buffer, &envelope, request_id).await
+    write_rpc_frame_v3(stream.as_deref().ok_or_else(closed)?, envelope).await
 }
 
+async fn read_rpc_responses_v3(session: Arc<SelfSession>, stream: Arc<dyn ByteStream>) {
+    let buffer = Mutex::new(VecDeque::new());
+    loop {
+        let result = tokio::select! {
+            _ = session.canceled.cancelled() => break,
+            response = read_rpc_frame_v3(stream.as_ref(), &buffer) => response,
+        };
+        let response = match result {
+            Ok(response) if response.response_to != 0 => response,
+            _ => {
+                fail_session_v3(&session, invalid("invalid RPC response stream"));
+                break;
+            }
+        };
+        let pending = session
+            .rpc
+            .pending
+            .lock()
+            .expect("RPC pending registry poisoned")
+            .remove(&response.response_to);
+        if let Some((type_id, sender)) = pending {
+            if response.type_id != type_id {
+                let _ = sender.send(Err(SessionError::OperationFailed));
+                fail_session_v3(&session, invalid("RPC response type mismatch"));
+                break;
+            }
+            let _ = sender.send(Ok(response));
+        }
+    }
+    session
+        .rpc
+        .pending
+        .lock()
+        .expect("RPC pending registry poisoned")
+        .clear();
+}
+
+#[cfg(test)]
 async fn exchange_rpc_call_v3(
     stream: &dyn ByteStream,
     read_buffer: &Mutex<VecDeque<u8>>,
@@ -4501,6 +4581,13 @@ async fn exchange_rpc_call_v3(
     let response = read_rpc_frame_v3(stream, read_buffer)
         .await
         .map_err(|error| RpcCallError::Session(SessionError::from_io(&error)))?;
+    rpc_response_payload_v3(response, request_id)
+}
+
+fn rpc_response_payload_v3(
+    response: RpcEnvelopeWireV3,
+    request_id: u64,
+) -> Result<serde_json::Value, RpcCallError> {
     if response.response_to != request_id {
         return Err(RpcCallError::Session(SessionError::OperationFailed));
     }
@@ -4526,100 +4613,144 @@ async fn rpc_notify_v3(
     if session.is_closed() {
         return Err(closed());
     }
-    let stream = peer.stream.clone();
     let (sender, receiver) = oneshot::channel();
-    tokio::spawn(async move {
-        let result = run_owned_rpc_notify_v3(session, serial, stream, type_id, request).await;
+    peer.tasks.spawn(async move {
+        let result = run_owned_rpc_write_v3(
+            &session,
+            serial,
+            &RpcEnvelopeWireV3 {
+                type_id,
+                request_id: 0,
+                response_to: 0,
+                payload: request,
+                error: None,
+            },
+        )
+        .await;
         let _ = sender.send(result);
     });
     receiver.await.map_err(|_| closed())?
 }
 
-async fn run_owned_rpc_notify_v3(
-    session: Arc<SelfSession>,
-    _serial: OwnedMutexGuard<()>,
-    stream: Arc<Mutex<Option<Box<dyn ByteStream>>>>,
-    type_id: u32,
-    request: serde_json::Value,
-) -> io::Result<()> {
-    let mut stream = stream.lock().await;
-    if stream.is_none() {
-        *stream = Some(open_reserved_rpc_stream_v3(&session).await?);
-    }
-    write_rpc_frame_v3(
-        stream.as_deref().ok_or_else(closed)?,
-        &RpcEnvelopeWireV3 {
-            type_id,
-            request_id: 0,
-            response_to: 0,
-            payload: request,
-            error: None,
-        },
-    )
-    .await
-}
-
 async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> io::Result<()> {
     let read_buffer = Mutex::new(VecDeque::new());
-    loop {
-        let request = read_rpc_frame_v3(&stream, &read_buffer).await?;
-        if request.response_to != 0 || request.error.is_some() {
-            return Err(invalid("invalid RPC request envelope"));
-        }
-        let handler = session.config.rpc_handler.as_ref();
-        if request.request_id == 0 {
-            session
-                .rpc
-                .notifications
-                .dispatch(request.type_id, request.payload.clone());
-            if let Some(handler) = handler {
+    let stream = Arc::new(stream);
+    let write_lock = Arc::new(Mutex::new(()));
+    let permits = Arc::new(Semaphore::new(MAX_CONCURRENT_RPC_REQUESTS));
+    let mut workers = tokio::task::JoinSet::new();
+    let (notifications, mut notification_rx) =
+        mpsc::channel::<RpcEnvelopeWireV3>(MAX_QUEUED_RPC_NOTIFICATIONS);
+    let handler = session.config.rpc_handler.clone();
+    let registry = session.rpc.notifications.clone();
+    workers.spawn(async move {
+        while let Some(request) = notification_rx.recv().await {
+            registry.dispatch(request.type_id, request.payload.clone());
+            if let Some(handler) = &handler {
                 let _ =
                     std::panic::AssertUnwindSafe(handler.notify(request.type_id, request.payload))
                         .catch_unwind()
                         .await;
             }
-            continue;
         }
-        let (payload, error) = match handler {
-            Some(handler) => {
-                match std::panic::AssertUnwindSafe(handler.call(request.type_id, request.payload))
-                    .catch_unwind()
-                    .await
-                {
-                    Ok(Ok(payload)) => (payload, None),
-                    Ok(Err(error)) => (
-                        serde_json::Value::Null,
-                        Some(rpc_handler_error_to_wire_v3(error)),
-                    ),
-                    Err(_) => (
+        Ok::<(), io::Error>(())
+    });
+    let result = async {
+        loop {
+            // Keep an in-progress frame read intact while completed handlers are
+            // reaped; canceling that read would lose a partially consumed header.
+            let reading = read_rpc_frame_v3(stream.as_ref(), &read_buffer);
+            tokio::pin!(reading);
+            let request = loop {
+                tokio::select! {
+                    _ = session.canceled.cancelled() => return Err(closed()),
+                    result = &mut reading => break result?,
+                    completed = workers.join_next(), if !workers.is_empty() => {
+                        completed.ok_or_else(closed)?.map_err(|_| invalid("RPC worker failed"))??;
+                    }
+                }
+            };
+            if request.response_to != 0 || request.error.is_some() {
+                return Err(invalid("invalid RPC request envelope"));
+            }
+            if request.request_id == 0 {
+                notifications
+                    .try_send(request)
+                    .map_err(|_| invalid("RPC notification queue exhausted"))?;
+                continue;
+            }
+            if workers.len() > MAX_CONCURRENT_RPC_REQUESTS + MAX_QUEUED_RPC_REQUESTS {
+                let _write = write_lock.lock().await;
+                write_rpc_frame_v3(
+                    stream.as_ref(),
+                    &RpcEnvelopeWireV3 {
+                        type_id: request.type_id,
+                        request_id: 0,
+                        response_to: request.request_id,
+                        payload: serde_json::Value::Null,
+                        error: Some(RpcErrorWireV3 {
+                            code: 429,
+                            message: Some("server overloaded".into()),
+                        }),
+                    },
+                )
+                .await?;
+                continue;
+            }
+            let handler = session.config.rpc_handler.clone();
+            let stream = stream.clone();
+            let write_lock = write_lock.clone();
+            let permits = permits.clone();
+            workers.spawn(async move {
+                let _permit = permits.acquire_owned().await.map_err(|_| closed())?;
+                let (payload, error) = match handler {
+                    Some(handler) => {
+                        match std::panic::AssertUnwindSafe(
+                            handler.call(request.type_id, request.payload),
+                        )
+                        .catch_unwind()
+                        .await
+                        {
+                            Ok(Ok(payload)) => (payload, None),
+                            Ok(Err(error)) => (
+                                serde_json::Value::Null,
+                                Some(rpc_handler_error_to_wire_v3(error)),
+                            ),
+                            Err(_) => (
+                                serde_json::Value::Null,
+                                Some(RpcErrorWireV3 {
+                                    code: 500,
+                                    message: Some("handler failed".into()),
+                                }),
+                            ),
+                        }
+                    }
+                    None => (
                         serde_json::Value::Null,
                         Some(RpcErrorWireV3 {
-                            code: 500,
-                            message: Some("handler failed".into()),
+                            code: 404,
+                            message: Some("handler not found".into()),
                         }),
                     ),
-                }
-            }
-            None => (
-                serde_json::Value::Null,
-                Some(RpcErrorWireV3 {
-                    code: 404,
-                    message: Some("handler not found".into()),
-                }),
-            ),
-        };
-        write_rpc_frame_v3(
-            &stream,
-            &RpcEnvelopeWireV3 {
-                type_id: request.type_id,
-                request_id: 0,
-                response_to: request.request_id,
-                payload,
-                error,
-            },
-        )
-        .await?;
+                };
+                let _write = write_lock.lock().await;
+                write_rpc_frame_v3(
+                    stream.as_ref(),
+                    &RpcEnvelopeWireV3 {
+                        type_id: request.type_id,
+                        request_id: 0,
+                        response_to: request.request_id,
+                        payload,
+                        error,
+                    },
+                )
+                .await
+            });
+        }
     }
+    .await;
+    workers.abort_all();
+    while workers.join_next().await.is_some() {}
+    result
 }
 
 async fn write_rpc_frame_v3(

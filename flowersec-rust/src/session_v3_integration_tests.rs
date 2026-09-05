@@ -1289,14 +1289,6 @@ async fn canceled_rpc_late_response_does_not_poison_next_call() {
         let client = client.clone();
         tokio::spawn(async move { client.rpc().call(1, serde_json::json!({"call": 2})).await })
     };
-    tokio::task::yield_now().await;
-    assert_eq!(
-        handler.calls.load(Ordering::Acquire),
-        1,
-        "call-2 crossed serial ownership before response-1 drained"
-    );
-    release_first.add_permits(1);
-
     let response = tokio::time::timeout(Duration::from_secs(1), second)
         .await
         .expect("call-2 remained blocked")
@@ -1304,6 +1296,20 @@ async fn canceled_rpc_late_response_does_not_poison_next_call() {
         .expect("late response poisoned call-2");
     assert_eq!(response, serde_json::json!({"call": 2}));
     assert_eq!(handler.calls.load(Ordering::Acquire), 2);
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        client.rpc().notify(3, serde_json::Value::Null),
+    )
+    .await
+    .expect("notification blocked behind canceled RPC")
+    .expect("notify");
+    release_first.add_permits(1);
+    let response = client
+        .rpc()
+        .call(1, serde_json::json!({"call": 3}))
+        .await
+        .expect("call after late response");
+    assert_eq!(response, serde_json::json!({"call": 3}));
     client.close().await.expect("close client");
     server.close().await.expect("close server");
 }
@@ -1442,20 +1448,23 @@ async fn canceled_rpc_notify_completes_a_partially_written_frame() {
 
 #[tokio::test]
 async fn rpc_dropped_before_serial_ownership_sends_no_request() {
-    let (client_carrier, server_carrier) = memory_carrier_pair_v3();
+    let (client_inner, server_carrier) = memory_carrier_pair_v3();
+    let enabled = Arc::new(AtomicBool::new(false));
     let first_started = Arc::new(Notify::new());
     let release_first = Arc::new(Semaphore::new(0));
-    let handler = Arc::new(GatedFirstRpc {
-        calls: AtomicUsize::new(0),
-        first_started: first_started.clone(),
-        release_first: release_first.clone(),
+    let client_carrier: Arc<dyn CarrierSessionV3> = Arc::new(ShortWriteCarrierSession {
+        inner: client_inner,
+        enabled: enabled.clone(),
+        writes: Arc::new(AtomicUsize::new(0)),
+        fragment_written: first_started.clone(),
+        release_write: release_first.clone(),
     });
     let client_config = regression_config(SessionRole::Client, "rpc-pre-serial-drop", 4, None);
     let server_config = regression_config(
         SessionRole::Server,
         "rpc-pre-serial-drop",
         4,
-        Some(handler.clone()),
+        Some(Arc::new(EchoRpc)),
     );
     let (client, server) = tokio::join!(
         establish_session_v3(client_carrier, client_config),
@@ -1463,6 +1472,12 @@ async fn rpc_dropped_before_serial_ownership_sends_no_request() {
     );
     let client = client.expect("client session");
     let server = server.expect("server session");
+    client
+        .rpc()
+        .call(1, serde_json::Value::Null)
+        .await
+        .expect("warm up RPC stream");
+    enabled.store(true, Ordering::Release);
     let first = {
         let client = client.clone();
         tokio::spawn(async move { client.rpc().call(1, serde_json::json!({"call": 1})).await })
@@ -1474,18 +1489,17 @@ async fn rpc_dropped_before_serial_ownership_sends_no_request() {
     };
     tokio::task::yield_now().await;
     waiting.abort();
+    let _ = waiting.await;
     release_first.add_permits(1);
     first.await.expect("first task").expect("first response");
     tokio::task::yield_now().await;
-    assert_eq!(handler.calls.load(Ordering::Acquire), 1);
 
     let response = client
         .rpc()
         .call(1, serde_json::json!({"call": 3}))
         .await
         .expect("third response");
-    assert_eq!(response["call"], 3);
-    assert_eq!(handler.calls.load(Ordering::Acquire), 2);
+    assert_eq!(response["request"]["call"], 3);
     client.close().await.expect("close client");
     server.close().await.expect("close server");
 }

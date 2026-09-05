@@ -262,6 +262,9 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 	if maxTimeout == 0 {
 		maxTimeout = defaults.ProxyMaxTimeout
 	}
+	if defaultTimeout > maxTimeout {
+		return fail()
+	}
 	requestHeaders, err := normalizeProxyHeaderSet(options.ExtraRequestHeaders)
 	if err != nil {
 		return fail()

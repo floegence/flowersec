@@ -192,72 +192,86 @@ export class ProxyServer {
   }
   #report(error: unknown): void { try { this.#config.report?.(error); } catch { /* reporting is isolated */ } }
 
-  async #serveHTTP(stream: ByteStream, signal: AbortSignal): Promise<void> {
-    const reader = new ProxyByteReader(stream, { signal });
-    let meta: HTTPMeta;
-    try { meta = decodeHTTPMeta(await readFrame(reader, this.#config.maxJSON)); }
-    catch { await writeHTTPError(stream, "unknown", "invalid_request_meta"); return; }
-    const requestID = meta.request_id.trim();
-    const path = normalizePath(meta.path);
-    if (meta.v !== WIRE_VERSION || requestID === "" || meta.method.trim() === "" || path === undefined) {
-      await writeHTTPError(stream, requestID, "invalid_request_meta"); return;
-    }
-    const timeout = normalizeTimeout(meta.timeout_ms, this.#config.defaultTimeout, this.#config.maxTimeout);
-    if (timeout === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
-    const body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody);
-    if (body === undefined) { await writeHTTPError(stream, requestID, "request_body_invalid"); return; }
-    const externalOrigin = validateOrigin(meta.external_origin, this.#config.allowedOrigins);
-    if (meta.external_origin !== undefined && externalOrigin === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
-    const requestHeaders = filterRequestHeaders(meta.headers, this.#config);
-    if (externalOrigin !== undefined) {
-      const explicitOrigin = requestHeaders.find((header) => header.name === "origin")?.value;
-      if (explicitOrigin !== undefined && explicitOrigin !== externalOrigin) {
+  async #serveHTTP(stream: ByteStream, parentSignal: AbortSignal): Promise<void> {
+    const started = performance.now();
+    const timeoutController = new AbortController();
+    let timer = setTimeout(() => timeoutController.abort(), this.#config.maxTimeout);
+    const linked = linkSignals(parentSignal, timeoutController.signal);
+    const signal = linked.signal;
+    let reset: Promise<void> | undefined;
+    const abort = () => { reset ??= stream.reset().catch(() => undefined); };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    try {
+      const reader = new ProxyByteReader(stream, { signal });
+      let meta: HTTPMeta;
+      try { meta = decodeHTTPMeta(await readFrame(reader, this.#config.maxJSON)); }
+      catch { await writeHTTPError(stream, "unknown", "invalid_request_meta"); return; }
+      const requestID = meta.request_id.trim();
+      const path = normalizePath(meta.path);
+      if (meta.v !== WIRE_VERSION || requestID === "" || meta.method.trim() === "" || path === undefined) {
         await writeHTTPError(stream, requestID, "invalid_request_meta"); return;
       }
-      const origin = new URL(externalOrigin);
-      requestHeaders.push({ name: "x-forwarded-proto", value: origin.protocol.slice(0, -1) });
-    }
-    const headers = Object.fromEntries(requestHeaders.map((header) => [header.name, header.value]));
-    const target = new URL(path, this.#config.upstream);
-    const requestInit: RequestInit & { duplex?: "half" } = {
-      method: meta.method.trim().toUpperCase(), headers, redirect: "manual", signal,
-      ...(body.byteLength === 0 ? {} : { body: body.slice().buffer as ArrayBuffer, duplex: "half" }),
-    };
-    const timeoutController = new AbortController();
-    const timer = setTimeout(() => timeoutController.abort(), timeout);
-    const linked = linkSignals(signal, timeoutController.signal);
-    try {
-      requestInit.signal = linked.signal;
-      const response = await fetch(target, requestInit);
-      const contentLength = response.headers.get("content-length");
-      if (contentLength !== null && Number(contentLength) > this.#config.maxBody) {
-        await writeHTTPError(stream, requestID, "response_body_too_large"); return;
+      const timeout = normalizeTimeout(meta.timeout_ms, this.#config.defaultTimeout, this.#config.maxTimeout);
+      if (timeout === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
+      clearTimeout(timer);
+      const remaining = timeout - (performance.now() - started);
+      if (remaining <= 0) timeoutController.abort();
+      else timer = setTimeout(() => timeoutController.abort(), remaining);
+      const body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody);
+      if (body === undefined) { await writeHTTPError(stream, requestID, "request_body_invalid"); return; }
+      const externalOrigin = validateOrigin(meta.external_origin, this.#config.allowedOrigins);
+      if (meta.external_origin !== undefined && externalOrigin === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
+      const requestHeaders = filterRequestHeaders(meta.headers, this.#config);
+      if (externalOrigin !== undefined) {
+        const explicitOrigin = requestHeaders.find((header) => header.name === "origin")?.value;
+        if (explicitOrigin !== undefined && explicitOrigin !== externalOrigin) {
+          await writeHTTPError(stream, requestID, "invalid_request_meta"); return;
+        }
+        const origin = new URL(externalOrigin);
+        requestHeaders.push({ name: "x-forwarded-proto", value: origin.protocol.slice(0, -1) });
       }
-      await writeFrame(stream, {
-        v: WIRE_VERSION, request_id: requestID, ok: true, status: response.status,
-        headers: filterHeaders(responseHeaderList(response.headers), RESPONSE_HEADERS, this.#config.responseHeaders, this.#config.blockedResponseHeaders),
-      }, signal);
-      let total = 0;
-      const reader = response.body?.getReader();
-      if (reader !== undefined) {
-        while (true) {
-          const result = await reader.read();
-          if (result.done) break;
-          total += result.value.length;
-          if (total > this.#config.maxBody) throw new Error("upstream response body exceeds limit");
-          for (let offset = 0; offset < result.value.length; offset += this.#config.maxChunk) {
-            await writeChunk(stream, result.value.subarray(offset, offset + this.#config.maxChunk), signal);
+      const headers = Object.fromEntries(requestHeaders.map((header) => [header.name, header.value]));
+      const target = new URL(path, this.#config.upstream);
+      const requestInit: RequestInit & { duplex?: "half" } = {
+        method: meta.method.trim().toUpperCase(), headers, redirect: "manual", signal,
+        ...(body.byteLength === 0 ? {} : { body: body.slice().buffer as ArrayBuffer, duplex: "half" }),
+      };
+      try {
+        const response = await fetch(target, requestInit);
+        const contentLength = response.headers.get("content-length");
+        if (contentLength !== null && Number(contentLength) > this.#config.maxBody) {
+          await writeHTTPError(stream, requestID, "response_body_too_large"); return;
+        }
+        await writeFrame(stream, {
+          v: WIRE_VERSION, request_id: requestID, ok: true, status: response.status,
+          headers: filterHeaders(responseHeaderList(response.headers), RESPONSE_HEADERS, this.#config.responseHeaders, this.#config.blockedResponseHeaders),
+        }, signal);
+        let total = 0;
+        const reader = response.body?.getReader();
+        if (reader !== undefined) {
+          while (true) {
+            const result = await reader.read();
+            if (result.done) break;
+            total += result.value.length;
+            if (total > this.#config.maxBody) throw new Error("upstream response body exceeds limit");
+            for (let offset = 0; offset < result.value.length; offset += this.#config.maxChunk) {
+              await writeChunk(stream, result.value.subarray(offset, offset + this.#config.maxChunk), signal);
+            }
           }
         }
+        await writeChunk(stream, new Uint8Array(), signal);
+      } catch (error) {
+        if (signal.aborted) throw error;
+        const code = timeoutController.signal.aborted ? "timeout" : signal.aborted ? "canceled" : "upstream_request_failed";
+        await writeHTTPError(stream, requestID, code);
+        this.#report(error);
       }
-      await writeChunk(stream, new Uint8Array(), signal);
-    } catch (error) {
-      const code = timeoutController.signal.aborted ? "timeout" : signal.aborted ? "canceled" : "upstream_request_failed";
-      await writeHTTPError(stream, requestID, code);
-      this.#report(error);
     } finally {
       clearTimeout(timer);
       linked.dispose();
+      signal.removeEventListener("abort", abort);
+      await reset;
     }
   }
 
@@ -417,7 +431,7 @@ function concat(chunks: readonly Uint8Array[]): Uint8Array { const out = new Uin
 function normalizePath(value: string): string | undefined { if (value.trim() !== value || !value.startsWith("/") || value.startsWith("//") || value.includes("://") || /[\u0000-\u0020\u007f]/u.test(value)) return undefined; try { const parsed = new URL(value, "http://flowersec.invalid"); return parsed.origin === "http://flowersec.invalid" && !parsed.hash ? `${parsed.pathname}${parsed.search}` : undefined; } catch { return undefined; } }
 function normalizeTimeout(value: number | undefined, fallback: number, maximum: number): number | undefined { if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) return undefined; return Math.min(value === undefined || value === 0 ? fallback : value, maximum); }
 function validateOrigin(value: string | undefined, allowed: ReadonlySet<string>): string | undefined { if (value === undefined || value === "") return undefined; try { const origin = new URL(value); return origin.pathname === "/" && !origin.search && !origin.hash && origin.origin === value && allowed.has(origin.origin) ? origin.origin : undefined; } catch { return undefined; } }
-function linkSignals(parent: AbortSignal, timeout: AbortSignal): { signal: AbortSignal; dispose(): void } { const controller = new AbortController(); const abort = (event: Event) => controller.abort((event.target as AbortSignal).reason); parent.addEventListener("abort", abort, { once: true }); timeout.addEventListener("abort", abort, { once: true }); return { signal: controller.signal, dispose: () => { parent.removeEventListener("abort", abort); timeout.removeEventListener("abort", abort); } }; }
+function linkSignals(parent: AbortSignal, timeout: AbortSignal): { signal: AbortSignal; dispose(): void } { const controller = new AbortController(); const abort = (event: Event) => controller.abort((event.target as AbortSignal).reason); parent.addEventListener("abort", abort, { once: true }); timeout.addEventListener("abort", abort, { once: true }); if (parent.aborted) controller.abort(parent.reason); else if (timeout.aborted) controller.abort(timeout.reason); return { signal: controller.signal, dispose: () => { parent.removeEventListener("abort", abort); timeout.removeEventListener("abort", abort); } }; }
 function decodeHTTPMeta(value: unknown): HTTPMeta { if (!isRecord(value) || value.v !== WIRE_VERSION || typeof value.request_id !== "string" || typeof value.method !== "string" || typeof value.path !== "string" || !Array.isArray(value.headers) || (value.external_origin !== undefined && typeof value.external_origin !== "string") || (value.timeout_ms !== undefined && typeof value.timeout_ms !== "number")) throw new Error("invalid HTTP metadata"); return { v: value.v, request_id: value.request_id, method: value.method, path: value.path, headers: value.headers.filter(isHeader), ...(value.external_origin === undefined ? {} : { external_origin: value.external_origin }), ...(value.timeout_ms === undefined ? {} : { timeout_ms: value.timeout_ms }) }; }
 function decodeWSOpen(value: unknown): WSOpen { if (!isRecord(value) || value.v !== WIRE_VERSION || typeof value.conn_id !== "string" || typeof value.path !== "string" || !Array.isArray(value.headers)) throw new Error("invalid WS metadata"); return { v: value.v, conn_id: value.conn_id, path: value.path, headers: value.headers.filter(isHeader) }; }
 function isHeader(value: unknown): value is Header { return isRecord(value) && typeof value.name === "string" && typeof value.value === "string"; }

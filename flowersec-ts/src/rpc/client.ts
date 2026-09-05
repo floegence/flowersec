@@ -15,11 +15,12 @@ export class RpcClient {
   private readonly notifyHandlers = new Map<number, Set<(payload: unknown) => void>>();
   // Closed state to stop the read loop and reject calls.
   private closed = false;
+  private writeTail: Promise<void> = Promise.resolve();
   private readonly onTerminal: ((error: Error) => void) | undefined;
 
   constructor(
     private readonly readExactly: (n: number) => Promise<Uint8Array>,
-    private readonly write: (b: Uint8Array) => Promise<void>,
+    private readonly write: (b: Uint8Array, signal?: AbortSignal) => Promise<void>,
     opts: Readonly<{ onTerminal?: (error: Error) => void }> = {}
   ) {
     this.onTerminal = opts.onTerminal;
@@ -29,6 +30,7 @@ export class RpcClient {
   // call sends a request and awaits a response or abort.
   async call(typeId: number, payload: unknown, signal?: AbortSignal): Promise<{ payload: unknown; error?: RpcError }> {
     if (this.closed) throw new Error("rpc client closed");
+    if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
     const validatedTypeId = assertRpcTypeId(typeId);
     if (this.nextId > MAX_SAFE_REQUEST_ID) throw new Error("request id overflow");
     const requestId = this.nextId;
@@ -42,22 +44,14 @@ export class RpcClient {
     const p = new Promise<RpcEnvelope>((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
     });
-    try {
-      await writeJsonFrame(this.write, env, DEFAULT_MAX_JSON_FRAME_BYTES);
-    } catch (e) {
-      this.pending.delete(requestId);
-      throw e;
-    }
-    if (signal?.aborted) {
-      this.pending.delete(requestId);
-      throw signal.reason ?? new Error("aborted");
-    }
     let resp: RpcEnvelope;
     try {
-      resp = await raceAbort(p, signal);
-    } catch (e) {
+      // Own both rejections before either side can settle. Cancellation covers
+      // queued writes as well as the response wait.
+      const result = await raceAbort(Promise.all([this.writeEnvelope(env, signal), p]), signal);
+      resp = result[1];
+    } finally {
       this.pending.delete(requestId);
-      throw e;
     }
     if (resp.error == null) return { payload: resp.payload };
     return { payload: resp.payload, error: resp.error };
@@ -85,7 +79,7 @@ export class RpcClient {
   }
 
   // notify sends a one-way notification to the peer.
-  async notify(typeId: number, payload: unknown): Promise<void> {
+  async notify(typeId: number, payload: unknown, signal?: AbortSignal): Promise<void> {
     if (this.closed) throw new Error("rpc client closed");
     const validatedTypeId = assertRpcTypeId(typeId);
     const env: RpcEnvelope = {
@@ -94,7 +88,17 @@ export class RpcClient {
       response_to: 0,
       payload
     };
-    await writeJsonFrame(this.write, env, DEFAULT_MAX_JSON_FRAME_BYTES);
+    await raceAbort(this.writeEnvelope(env, signal), signal);
+  }
+
+  private writeEnvelope(envelope: RpcEnvelope, signal?: AbortSignal): Promise<void> {
+    const operation = this.writeTail.then(async () => {
+      if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+      if (this.closed) throw new Error("rpc client closed");
+      await writeJsonFrame((bytes) => this.write(bytes, signal), envelope, DEFAULT_MAX_JSON_FRAME_BYTES);
+    });
+    this.writeTail = operation.catch(() => undefined);
+    return operation;
   }
 
   private async readLoop(): Promise<void> {
@@ -142,6 +146,7 @@ export class RpcClient {
 
 // raceAbort resolves p unless the signal aborts first.
 async function raceAbort<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  void p.catch(() => undefined);
   if (signal == null) return p;
   if (signal.aborted) throw signal.reason ?? new Error("aborted");
   return await new Promise<T>((resolve, reject) => {

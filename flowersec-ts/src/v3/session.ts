@@ -176,8 +176,8 @@ class SessionRpcPeerV3 implements InternalRpcPeerV3 {
     return this.outbound.call(typeId, payload, signal);
   }
 
-  notify(typeId: number, payload: unknown): Promise<void> {
-    return this.outbound.notify(typeId, payload);
+  notify(typeId: number, payload: unknown, signal?: AbortSignal): Promise<void> {
+    return this.outbound.notify(typeId, payload, signal);
   }
 
   onNotify(typeId: number, handler: (payload: unknown) => void): () => void {
@@ -350,10 +350,10 @@ export class SessionV3 implements SessionV3Contract {
         rpcReadState.reader ??= new ExactReader(stream);
         return await rpcReadState.reader.readExactly(length);
       },
-      async (payload) => {
+      async (payload, signal) => {
         this.rpcActivation.resolve();
         const stream = await this.ensureRPCStream();
-        await stream.write(payload);
+        await stream.write(payload, signal === undefined ? {} : { signal });
       },
       { onTerminal: (error) => this.fail(error) },
     );

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
 )
@@ -13,7 +12,7 @@ import (
 type sessionRPCPeer struct {
 	session *engineSession
 
-	mu     sync.Mutex
+	permit chan struct{}
 	client *rpc.Client
 }
 
@@ -43,6 +42,9 @@ func (peer *sessionRPCPeer) Call(ctx context.Context, typeID uint32, request, re
 }
 
 func (peer *sessionRPCPeer) Notify(ctx context.Context, typeID uint32, request any) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	client, err := peer.clientFor(ctx)
 	if err != nil {
 		return err
@@ -54,19 +56,18 @@ func (peer *sessionRPCPeer) Notify(ctx context.Context, typeID uint32, request a
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return client.Notify(typeID, payload)
+	return client.NotifyContext(ctx, typeID, payload)
 }
 
 func (peer *sessionRPCPeer) OnNotify(typeID uint32, handler func(context.Context, []byte)) func() {
 	if handler == nil {
 		return func() {}
 	}
-	client, err := peer.clientFor(context.Background())
-	if err != nil {
+	if peer.session.ctx.Err() != nil {
 		return func() {}
 	}
-	return client.OnNotify(typeID, func(payload json.RawMessage) {
-		handler(context.Background(), append([]byte(nil), payload...))
+	return peer.session.config.RPCRouter.OnNotify(typeID, func(ctx context.Context, payload json.RawMessage) {
+		handler(ctx, payload)
 	})
 }
 
@@ -74,8 +75,20 @@ func (peer *sessionRPCPeer) clientFor(ctx context.Context) (*rpc.Client, error) 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	peer.mu.Lock()
-	defer peer.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case peer.permit <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-peer.session.ctx.Done():
+		return nil, peer.session.sessionError()
+	}
+	defer func() { <-peer.permit }()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if peer.client != nil {
 		return peer.client, nil
 	}
