@@ -354,7 +354,8 @@ function throwIfAborted(signal?: AbortSignal): void {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError" ||
-    error instanceof Error && error.name === "AbortError";
+    error instanceof Error && (error.name === "AbortError" ||
+      (error as { code?: unknown }).code === "aborted");
 }
 
 function labelWith(label: string, ...parts: Uint8Array[]): Uint8Array {

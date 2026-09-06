@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 )
@@ -176,6 +177,9 @@ func proxyWebSocketClosePayload(code int, reason string) []byte {
 	reasonBytes := []byte(reason)
 	if len(reasonBytes) > 123 {
 		reasonBytes = reasonBytes[:123]
+		for len(reasonBytes) > 0 && !utf8.Valid(reasonBytes) {
+			reasonBytes = reasonBytes[:len(reasonBytes)-1]
+		}
 	}
 	payload := make([]byte, 2+len(reasonBytes))
 	binary.BigEndian.PutUint16(payload[:2], uint16(code))

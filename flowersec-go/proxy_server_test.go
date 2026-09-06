@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 )
@@ -89,6 +90,20 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	}
 	if string(body) != "proxy-ok" {
 		t.Fatalf("proxy body = %q", body)
+	}
+}
+
+func TestProxyWebSocketClosePayloadTruncatesAtUTF8Boundary(t *testing.T) {
+	reason := strings.Repeat("界", 100)
+	payload := proxyWebSocketClosePayload(websocket.CloseNormalClosure, reason)
+	if len(payload) != 125 {
+		t.Fatalf("payload length = %d, want 125", len(payload))
+	}
+	if !utf8.Valid(payload[2:]) {
+		t.Fatal("close reason is not valid UTF-8")
+	}
+	if got := string(payload[2:]); !strings.HasPrefix(reason, got) {
+		t.Fatalf("close reason %q is not a prefix of %q", got, reason)
 	}
 }
 

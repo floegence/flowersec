@@ -121,6 +121,8 @@ jobs:
           cargo check --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features
           cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features
           cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings
+      - name: Test shared native transport
+        run: cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
 
   rust-windows:
     name: Rust 1.98 Windows
@@ -136,6 +138,8 @@ jobs:
 
       - name: Build and test
         run: cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features
+      - name: Test shared native transport
+        run: cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
 
   dependency-review:
     name: Dependency review

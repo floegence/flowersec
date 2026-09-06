@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 import { base64urlDecode } from "../utils/base64url.js";
-import type { CipherSuiteV3, DirectionV3 } from "./protocol.js";
+import { CipherSuiteV3, type DirectionV3 } from "./protocol.js";
 import {
+  createInternalUnreliableMessageChannelV3,
   deriveUnreliableMessageMaterialV3,
   encodeUnreliableMessageHeaderV3,
   sealUnreliableMessageDatagramV3,
@@ -98,5 +99,27 @@ describe("transport v3 FSD3 unreliable messages", () => {
       0 as DirectionV3,
       1.5,
     )).toThrow("invalid FSD3 uint32");
+  });
+
+  test("maps carrier abort errors to the public canceled result", async () => {
+    const aborted = Object.assign(new Error("aborted"), { code: "aborted" });
+    const channel = createInternalUnreliableMessageChannelV3({
+      transport: {
+        maxDatagramSize: 1_024,
+        send: async () => { throw aborted; },
+        receive: async () => { throw aborted; },
+      },
+      suite: CipherSuiteV3.ChaCha20Poly1305,
+      h3: new Uint8Array(32),
+      sendDirection: 1,
+      receiveDirection: 2,
+      currentSendEpoch: () => ({ epoch: 0, epochSecret: new Uint8Array(32) }),
+      receiveEpochSecret: () => new Uint8Array(32),
+      onProtocolFailure: () => undefined,
+    });
+    await expect(channel.send(new Uint8Array([1]), {
+      expiresAtUnixMs: Date.now() + 1_000,
+    })).rejects.toMatchObject({ code: "canceled" });
+    await expect(channel.receive()).rejects.toMatchObject({ code: "canceled" });
   });
 });

@@ -106,18 +106,21 @@ export class RpcClient {
       while (!this.closed) {
         const v = assertRpcEnvelope(await readJsonFrame(this.readExactly, DEFAULT_MAX_JSON_FRAME_BYTES));
         if (v.response_to === 0) {
-          // Notification: response_to=0 and request_id=0.
-          if (v.request_id === 0) {
-            const set = this.notifyHandlers.get(v.type_id);
-            if (set != null) {
-              for (const h of set) {
+          if (v.request_id !== 0) {
+            throw new Error("rpc invalid request on client stream");
+          }
+          const set = this.notifyHandlers.get(v.type_id);
+          if (set != null) {
+            const handlers = [...set];
+            setTimeout(() => {
+              for (const h of handlers) {
                 try {
                   h(v.payload);
                 } catch {
                   // User handlers should not be able to take down the transport read loop.
                 }
               }
-            }
+            });
           }
           continue;
         }

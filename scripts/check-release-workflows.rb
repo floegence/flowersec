@@ -585,6 +585,9 @@ validate_step_contracts(rust_stable_steps, [
   { name: "Build, test, and lint", keys: ["name", "run"], values: {
     "run" => "cargo check --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features\ncargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\ncargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
   } },
+  { name: "Test shared native transport", keys: ["name", "run"], values: {
+    "run" => "cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features",
+  } },
 ], "the hosted CI Rust stable job")
 validate_step_contracts(rust_windows_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
@@ -594,6 +597,9 @@ validate_step_contracts(rust_windows_steps, [
   } },
   { name: "Build and test", keys: ["name", "run"], values: {
     "run" => "cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features",
+  } },
+  { name: "Test shared native transport", keys: ["name", "run"], values: {
+    "run" => "cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features",
   } },
 ], "the hosted CI Rust Windows job")
 validate_step_contracts(dependency_review_steps, [

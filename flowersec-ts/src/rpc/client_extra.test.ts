@@ -403,11 +403,30 @@ describe("RpcClient extra behavior", () => {
       payload: { ping: true }
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(notifyOk).toBe(1);
 
     const resp = await client.call(1, { ok: true });
     expect(resp.payload).toEqual({ ok: true });
 
+    client.close();
+    q.close(new Error("eof"));
+  });
+
+  test("rejects rpc requests sent to the client", async () => {
+    const q = new ByteQueue();
+    let terminal: Error | undefined;
+    const client = new RpcClient(q.readExactly.bind(q), async () => undefined, {
+      onTerminal: (error) => { terminal = error; },
+    });
+    await writeJsonFrame(q.write.bind(q), {
+      type_id: 1,
+      request_id: 1,
+      response_to: 0,
+      payload: null,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(terminal?.message).toMatch(/invalid request on client stream/);
     client.close();
     q.close(new Error("eof"));
   });
