@@ -118,5 +118,7 @@
     }
   ],
   "duplicate_type_id": 1,
-  "transport_contract_version": 3
+  "transport_contract_version": 3,
+  "registry_sha256": "723dd43136968959eae22a2ad69218c1c1b99c5c617861afdb9352e454de7c16",
+  "design_sha256": "b229c59818d87d05d886dca8b86b9c46d7af97326d0a1cd8a8408f0a5e477efe"
 }

@@ -125,7 +125,7 @@ func (r *Router) handle(ctx context.Context, typeID uint32, payload json.RawMess
 		if recover() != nil {
 			// Treat handler panics as internal errors so user code cannot crash the process.
 			out = nil
-			rpcErr = &rpcv1.RpcError{Code: 500, Message: strPtr("handler panic")}
+			rpcErr = &rpcv1.RpcError{Code: 500, Message: strPtr("internal error")}
 		}
 	}()
 	return h(ctx, payload)

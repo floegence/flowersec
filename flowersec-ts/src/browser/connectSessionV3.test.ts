@@ -17,7 +17,10 @@ const fixture = JSON.parse(readFileSync(
 const directFixture = fixture.positive.find(({ id }) => id === "direct-mixed-security")!.artifact_json;
 
 describe("browser production v3 connector", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   test("fails closed before lease spend when certificate hashes are unsupported", async () => {
     class UnsupportedWebTransport {
@@ -61,15 +64,97 @@ describe("browser production v3 connector", () => {
 
   test("validates the public browser connection timeout override", async () => {
     installBrowserFeatures(class {});
-    const lease = createArtifactLease(parseArtifact(directFixture), async () => undefined);
+    let retirements = 0;
+    const lease = createArtifactLease(parseArtifact(directFixture), async () => undefined, async () => {
+      retirements += 1;
+    });
     await expect(connect(lease, { connectTimeoutMs: 0 })).rejects.toEqual(
       expect.objectContaining<Partial<ConnectError>>({ code: "artifact_invalid" }),
     );
+    expect(retirements).toBe(1);
     await expect(createConnectionController({
       acquire: async () => ({ kind: "failure", code: "artifact_invalid", disposition: { kind: "terminal" } }),
     }, { connectTimeoutMs: 0 })).rejects.toEqual(
       expect.objectContaining<Partial<ConnectError>>({ code: "artifact_invalid" }),
     );
+  });
+
+  test("claims and retires before observing a pre-canceled signal", async () => {
+    installBrowserFeatures(class {});
+    const controller = new AbortController();
+    controller.abort();
+    let retirements = 0;
+    const lease = createArtifactLease(parseArtifact(directFixture), async () => undefined, async () => {
+      retirements += 1;
+    });
+
+    await expect(connect(lease, { signal: controller.signal })).rejects.toEqual(
+      expect.objectContaining<Partial<ConnectError>>({
+        code: "connection_failed",
+        retryDisposition: { kind: "terminal" },
+      }),
+    );
+    expect(retirements).toBe(1);
+  });
+
+  test("bounds asynchronous capability probing by the connection timeout", async () => {
+    vi.useFakeTimers();
+    installBrowserFeatures(class {});
+    let probing = false;
+    vi.stubGlobal("navigator", {
+      userAgentData: {
+        getHighEntropyValues: async () => {
+          probing = true;
+          return await new Promise<never>(() => undefined);
+        },
+      },
+    });
+    let retirements = 0;
+    const lease = createArtifactLease(parseArtifact(directFixture), async () => undefined, async () => {
+      retirements += 1;
+    });
+
+    const connecting = connect(lease, { connectTimeoutMs: 25 });
+    const rejected = expect(connecting).rejects.toEqual(expect.objectContaining<Partial<ConnectError>>({
+      code: "connection_failed",
+      retryDisposition: { kind: "retryable" },
+    }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(probing).toBe(true);
+    await vi.advanceTimersByTimeAsync(25);
+    await rejected;
+    expect(retirements).toBe(1);
+  });
+
+  test("cancels pending capability probing and ignores a late provider failure", async () => {
+    installBrowserFeatures(class {});
+    let rejectProbe!: (error: Error) => void;
+    const probe = vi.fn(() => new Promise<never>((_resolve, reject) => { rejectProbe = reject; }));
+    vi.stubGlobal("navigator", { userAgentData: { getHighEntropyValues: probe } });
+    const controller = new AbortController();
+    const retire = vi.fn(async () => undefined);
+    const spend = vi.fn(async () => undefined);
+    const lease = createArtifactLease(parseArtifact(directFixture), spend, retire);
+
+    const connecting = connect(lease, { signal: controller.signal });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(probe).toHaveBeenCalledOnce();
+    controller.abort(new Error("private cancellation detail"));
+    await expect(connecting).rejects.toEqual(expect.objectContaining<Partial<ConnectError>>({
+      code: "connection_failed",
+      retryDisposition: { kind: "terminal" },
+    }));
+    rejectProbe(new Error("late provider failure"));
+    await Promise.resolve();
+    expect(spend).not.toHaveBeenCalled();
+    expect(retire).toHaveBeenCalledOnce();
+    await expect(connect(lease)).rejects.toEqual(expect.objectContaining<Partial<ConnectError>>({
+      code: "artifact_invalid",
+      retryDisposition: { kind: "terminal" },
+    }));
+    expect(probe).toHaveBeenCalledOnce();
   });
 });
 

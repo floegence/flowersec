@@ -34,15 +34,8 @@ func ToWireError(err error) *rpcv1.RpcError {
 	}
 	var re *Error
 	if errors.As(err, &re) && re != nil {
-		code := re.Code
-		if code == 0 {
-			code = 500
-		}
-		msg := re.Message
-		if msg == "" {
-			msg = "rpc error"
-		}
-		return &rpcv1.RpcError{Code: code, Message: &msg}
+		message := re.Message
+		return sanitizeWireRPCError(&rpcv1.RpcError{Code: re.Code, Message: &message})
 	}
 	msg := "internal error"
 	return &rpcv1.RpcError{Code: 500, Message: &msg}

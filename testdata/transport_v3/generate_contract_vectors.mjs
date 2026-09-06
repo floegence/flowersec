@@ -4,9 +4,11 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadTransportRegistry, provenance } from "./registry_provenance.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const checkOnly = process.argv.length === 3 && process.argv[2] === "--check";
+const transport = loadTransportRegistry();
 if (process.argv.length > (checkOnly ? 3 : 2)) throw new Error("usage: generate_contract_vectors.mjs [--check]");
 const SAFE_MAX = 9_007_199_254_740_991;
 const PROFILE = "flowersec/3";
@@ -283,6 +285,8 @@ function artifactVector(kind, selectedCandidates) {
       payload: {
         "😀": [-SAFE_MAX, SAFE_MAX, true, null, "portable"],
         "\ue000": { nested: "utf16-key-order" },
+        "e\u0301": "decomposed-key",
+        "\u00e9": "composed-key",
       },
     }],
     correlation: { v: 3, tags: [{ key: "trace", value: "transport-v3-vector" }] },
@@ -329,6 +333,17 @@ const directSingle = {
     normalized_url: "wss://example.com/flowersec/v3/direct",
   }]),
   id: "direct-single-candidate",
+};
+const mappedIPv6 = {
+  ...artifactVector("direct", [{
+    id: "w-mapped",
+    carrier: "websocket",
+    url: "wss://[::ffff:c000:201]/flowersec/v3/direct",
+    normalized_url: "wss://[::ffff:c000:201]/flowersec/v3/direct",
+    wire_profile: "flowersec-direct/3",
+    tls: { mode: "ca" },
+  }]),
+  id: "direct-mapped-ipv6",
 };
 const tunnel = artifactVector("tunnel");
 const tunnelObject = JSON.parse(tunnel.artifact_json);
@@ -452,7 +467,8 @@ const artifactVectors = {
   profile: PROFILE,
   source: {
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
-    design_sha256: "51b38465bfd847270408101560023871847becd6196287027c89bfe7c48cd8cf",
+    design_sha256: transport.designSha256,
+    registry_sha256: transport.registrySha256,
   },
   constants: {
     maximum_safe_integer: SAFE_MAX,
@@ -461,7 +477,7 @@ const artifactVectors = {
     admission_binding_label: "flowersec-v3-admission\u0000",
     acceptor_admissions_label: "flowersec-v3-acceptor-admissions\u0000",
   },
-  positive: [direct, tunnel, directSingle],
+  positive: [direct, tunnel, directSingle, mappedIPv6],
   scalar_boundaries: [
     artifactBoundary("session-channel-id-min", directObject, (artifact) => { artifact.session.channel_id = "a"; }),
     artifactBoundary("session-channel-id-max", directObject, (artifact) => { artifact.session.channel_id = "a".repeat(128); }),
@@ -885,7 +901,8 @@ const v2CryptoLabels = [
 write("version_isolation_vectors.json", {
   version: 3,
   source: {
-    design_sha256: "51b38465bfd847270408101560023871847becd6196287027c89bfe7c48cd8cf",
+    design_sha256: transport.designSha256,
+    registry_sha256: transport.registrySha256,
     producer: "testdata/transport_v3/generate_contract_vectors.mjs",
     rules_are_not_extended_by_vectors: true,
   },

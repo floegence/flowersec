@@ -93,6 +93,7 @@ type Header = Readonly<{ name: string; value: string }>;
 export class ProxyServer {
   readonly #config: Config;
   readonly #active = new Set<AbortController>();
+  readonly #abortLinks = new WeakMap<AbortController, () => void>();
   readonly #permits: Set<unknown> = new Set();
   readonly #completion: Promise<void>;
   #resolveCompletion!: () => void;
@@ -180,13 +181,19 @@ export class ProxyServer {
       return controller;
     }
     if (parent !== undefined) {
-      if (parent.aborted) controller.abort(parent.reason);
-      else parent.addEventListener("abort", () => controller.abort(parent.reason), { once: true });
+      const abort = () => controller.abort(parent.reason);
+      if (parent.aborted) abort();
+      else {
+        parent.addEventListener("abort", abort, { once: true });
+        this.#abortLinks.set(controller, () => parent.removeEventListener("abort", abort));
+      }
     }
     this.#active.add(controller);
     return controller;
   }
   #untrack(controller: AbortController): void {
+    this.#abortLinks.get(controller)?.();
+    this.#abortLinks.delete(controller);
     this.#active.delete(controller);
     if (this.#closed && this.#active.size === 0) this.#resolveCompletion();
   }

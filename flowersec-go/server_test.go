@@ -234,14 +234,14 @@ func TestSessionHandlersServeRegisteredRPC(t *testing.T) {
 		wantMessage        string
 		wantMessagePresent bool
 	}{
-		{name: "zero code", handlerErr: &RPCError{Message: "missing application code"}, wantCode: 500, wantMessage: "handler failed", wantMessagePresent: true},
+		{name: "zero code", handlerErr: &RPCError{Message: "missing application code"}, wantCode: 500, wantMessage: "internal error", wantMessagePresent: true},
 		{name: "missing message", handlerErr: &RPCError{Code: 7}, wantCode: 7},
 		{name: "explicit empty message", handlerErr: &RPCError{Code: 7, MessagePresent: true}, wantCode: 7, wantMessagePresent: true},
 		{name: "ASCII at limit", handlerErr: &RPCError{Code: 7, Message: validASCII}, wantCode: 7, wantMessage: validASCII, wantMessagePresent: true},
-		{name: "ASCII over limit", handlerErr: &RPCError{Code: 7, Message: validASCII + "a"}, wantCode: 500, wantMessage: "handler failed", wantMessagePresent: true},
+		{name: "ASCII over limit", handlerErr: &RPCError{Code: 7, Message: validASCII + "a"}, wantCode: 500, wantMessage: "internal error", wantMessagePresent: true},
 		{name: "multibyte at limit", handlerErr: &RPCError{Code: 7, Message: validMultibyte}, wantCode: 7, wantMessage: validMultibyte, wantMessagePresent: true},
-		{name: "multibyte over limit", handlerErr: &RPCError{Code: 7, Message: validMultibyte + "a"}, wantCode: 500, wantMessage: "handler failed", wantMessagePresent: true},
-		{name: "invalid UTF-8", handlerErr: &RPCError{Code: 7, Message: string([]byte{0xff})}, wantCode: 500, wantMessage: "handler failed", wantMessagePresent: true},
+		{name: "multibyte over limit", handlerErr: &RPCError{Code: 7, Message: validMultibyte + "a"}, wantCode: 500, wantMessage: "internal error", wantMessagePresent: true},
+		{name: "invalid UTF-8", handlerErr: &RPCError{Code: 7, Message: string([]byte{0xff})}, wantCode: 500, wantMessage: "internal error", wantMessagePresent: true},
 	}
 	for index, test := range wireErrorCases {
 		typeID := uint32(43 + index)
@@ -276,7 +276,7 @@ func TestSessionHandlersServeRegisteredRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Call(42) error = %v", err)
 	}
-	if string(payload) != "null" || rpcErr == nil || rpcErr.Code != 500 || rpcErr.Message == nil || *rpcErr.Message != "handler failed" {
+	if string(payload) != "null" || rpcErr == nil || rpcErr.Code != 500 || rpcErr.Message == nil || *rpcErr.Message != "internal error" {
 		t.Fatalf("Call(42) = payload %d bytes, error %#v", len(payload), rpcErr)
 	}
 	for index, test := range wireErrorCases {

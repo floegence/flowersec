@@ -795,7 +795,7 @@ function normalizeAuthority(authority: string): string {
       if (!tail.startsWith(":") || tail.length === 1) throw invalidCandidate("IPv6 port");
       portText = tail.slice(1);
     }
-    if (host.includes(".")) throw invalidCandidate("IPv6 dotted subset");
+    if (host.includes(".")) throw invalidCandidate("embedded IPv4");
     let parsed: URL;
     try {
       parsed = new URL(`http://[${host}]/`);

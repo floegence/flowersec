@@ -127,6 +127,14 @@
         "whatwg_roundtrip": true
       },
       {
+        "id": "ipv6-mapped-hex",
+        "carrier": "websocket",
+        "path_kind": "direct",
+        "input": "wss://[::ffff:c000:201]/flowersec/v3/direct",
+        "normalized": "wss://[::ffff:c000:201]/flowersec/v3/direct",
+        "whatwg_roundtrip": true
+      },
+      {
         "id": "non-default-port",
         "carrier": "webtransport",
         "path_kind": "tunnel",
@@ -404,5 +412,7 @@
         "error_code": "invalid_artifact"
       }
     ]
-  }
+  },
+  "registry_sha256": "723dd43136968959eae22a2ad69218c1c1b99c5c617861afdb9352e454de7c16",
+  "design_sha256": "b229c59818d87d05d886dca8b86b9c46d7af97326d0a1cd8a8408f0a5e477efe"
 }

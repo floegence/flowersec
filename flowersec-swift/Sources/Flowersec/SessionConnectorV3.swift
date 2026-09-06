@@ -61,12 +61,6 @@ struct SessionConnectorV3: Sendable {
       UInt64(max(0, Date().timeIntervalSince1970))
     }
   ) throws {
-    guard options.connectTimeout > .zero else { throw ConnectError.invalidOptions }
-    do {
-      try runtime.validate(options: options)
-    } catch {
-      throw ConnectError.invalidOptions
-    }
     self.lease = lease
     self.options = options
     self.runtime = runtime
@@ -147,10 +141,31 @@ struct SessionConnectorV3: Sendable {
   }
 
   private func connectWithDeadline() async throws -> any Session {
+    let claimed = try await lease.claim()
+    do {
+      // Claim first so every attempted connect consumes or retires exactly one
+      // lease, including a task that was already cancelled at entry.
+      try Task.checkCancellation()
+      guard options.connectTimeout > .zero else { throw ConnectError.invalidOptions }
+      do {
+        try runtime.validate(options: options)
+      } catch {
+        throw ConnectError.invalidOptions
+      }
+      return try await connectClaimedWithDeadline(claimed)
+    } catch {
+      if !(await claimed.isConsumed) { try? await claimed.retire() }
+      throw error
+    }
+  }
+
+  private func connectClaimedWithDeadline(
+    _ claimed: ClaimedArtifactLeaseV3
+  ) async throws -> any Session {
     let completion = ConnectorCompletionRaceV3<any Session>()
     let connectionBox = PreparedConnectionCloseBoxV3()
     let operation = Task<any Session, Error> {
-      try await connectWithoutDeadline(connectionBox: connectionBox)
+      try await connectClaimed(claimed, connectionBox: connectionBox)
     }
     let timeout = Task<Void, Never> {
       do {
@@ -200,19 +215,6 @@ struct SessionConnectorV3: Sendable {
     await observer.value
     await connectionBox.waitForClose()
     return try resolved.get()
-  }
-
-  private func connectWithoutDeadline(
-    connectionBox: PreparedConnectionCloseBoxV3
-  ) async throws -> any Session {
-    try Task.checkCancellation()
-    let claimed = try await lease.claim()
-    do {
-      return try await connectClaimed(claimed, connectionBox: connectionBox)
-    } catch {
-      if !(await claimed.isConsumed) { try? await claimed.retire() }
-      throw error
-    }
   }
 
   private func connectClaimed(

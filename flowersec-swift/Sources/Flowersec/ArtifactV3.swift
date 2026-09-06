@@ -21,19 +21,25 @@ public final class Artifact: @unchecked Sendable, CustomStringConvertible,
   let canonicalCandidates: [CanonicalCandidateV3]
   let candidateSetJSON: Data
   let candidateSetHash: Data
+  // Keep scoped payload bytes independent of Foundation dictionaries. Swift
+  // String equality normalizes canonically equivalent keys and can otherwise
+  // discard distinct JCS object members during decoding.
+  let scopedPayloadJSON: [Data]
 
   fileprivate init(
     value: ArtifactWireV3,
     canonicalJSON: Data,
     canonicalCandidates: [CanonicalCandidateV3],
     candidateSetJSON: Data,
-    candidateSetHash: Data
+    candidateSetHash: Data,
+    scopedPayloadJSON: [Data]
   ) {
     self.value = value
     self.canonicalJSON = canonicalJSON
     self.canonicalCandidates = canonicalCandidates
     self.candidateSetJSON = candidateSetJSON
     self.candidateSetHash = candidateSetHash
+    self.scopedPayloadJSON = scopedPayloadJSON
   }
 
   func filteredForController(candidateIDs: Set<String>) -> Artifact {
@@ -42,7 +48,8 @@ public final class Artifact: @unchecked Sendable, CustomStringConvertible,
       canonicalJSON: canonicalJSON,
       canonicalCandidates: canonicalCandidates.filter { candidateIDs.contains($0.id) },
       candidateSetJSON: candidateSetJSON,
-      candidateSetHash: candidateSetHash
+      candidateSetHash: candidateSetHash,
+      scopedPayloadJSON: scopedPayloadJSON
     )
   }
 
@@ -437,13 +444,17 @@ enum ArtifactCodecV3 {
     guard data.count <= maxBytes else { throw ArtifactError.artifactTooLarge }
     do {
       try JSONPreflightV3.validateArtifact(data)
+      let scopedPayloadJSON = try JSONPreflightV3.scopedPayloads(data)
       let rawRoot = try JSONSerialization.jsonObject(with: data)
-      guard let root = rawRoot as? [String: Any], try FlowersecJCSV3.encode(rawRoot) == data else {
-        throw ArtifactError.invalidArtifact
+      guard let root = rawRoot as? [String: Any] else { throw ArtifactError.invalidArtifact }
+      if try FlowersecJCSV3.encode(rawRoot) != data {
+        guard try JSONPreflightV3.validateCanonicalStructure(data) else {
+          throw ArtifactError.invalidArtifact
+        }
       }
       try validateShapes(root)
       let value = try JSONDecoder().decode(ArtifactWireV3.self, from: data)
-      let candidates = try validate(value, rawRoot: root)
+      let candidates = try validate(value, scopedPayloadJSON: scopedPayloadJSON)
       let candidateObjects = candidates.map { $0.object() }
       let candidateJSON = try FlowersecJCSV3.encode(candidateObjects)
       guard candidateJSON.count <= 12_288 else { throw ArtifactError.invalidArtifact }
@@ -454,7 +465,8 @@ enum ArtifactCodecV3 {
         canonicalJSON: data,
         canonicalCandidates: candidates,
         candidateSetJSON: candidateJSON,
-        candidateSetHash: candidateHash
+        candidateSetHash: candidateHash,
+        scopedPayloadJSON: scopedPayloadJSON
       )
     } catch let error as ArtifactError {
       throw error
@@ -518,7 +530,7 @@ enum ArtifactCodecV3 {
   }
 
   private static func validate(
-    _ artifact: ArtifactWireV3, rawRoot: [String: Any]
+    _ artifact: ArtifactWireV3, scopedPayloadJSON: [Data]
   ) throws -> [CanonicalCandidateV3] {
     guard artifact.v == 3, artifact.profile == TransportV3Contract.sessionProfile else {
       throw ArtifactError.invalidArtifact
@@ -566,18 +578,14 @@ enum ArtifactCodecV3 {
     candidates.sort { $0.id.utf8.lexicographicallyPrecedes($1.id.utf8) }
 
     guard artifact.scoped.count <= 8,
-      let rawScopes = rawRoot["scoped"] as? [[String: Any]],
-      rawScopes.count == artifact.scoped.count
+      scopedPayloadJSON.count == artifact.scoped.count
     else { throw ArtifactError.invalidArtifact }
     var scopes = Set<String>()
     for (index, scope) in artifact.scoped.enumerated() {
       guard validLowerID(scope.scope, max: 64), (1...65_535).contains(scope.scopeVersion),
         scopes.insert(scope.scope).inserted,
-        let payload = rawScopes[index]["payload"] as? [String: Any],
-        try FlowersecJCSV3.encode(payload).count <= 4_096
+        scopedPayloadJSON[index].count <= 4_096
       else { throw ArtifactError.invalidArtifact }
-      var nodes = 0
-      try validateScoped(payload, depth: 1, nodes: &nodes, root: true)
     }
 
     guard artifact.correlation.v == 3, artifact.correlation.tags.count <= 8 else {
@@ -724,13 +732,7 @@ enum ArtifactCodecV3 {
       guard inet_pton(AF_INET6, address, &parsed) == 1 else {
         throw ArtifactError.invalidArtifact
       }
-      var buffer = [CChar](repeating: 0, count: Int(INET6_ADDRSTRLEN))
-      guard inet_ntop(AF_INET6, &parsed, &buffer, socklen_t(INET6_ADDRSTRLEN)) != nil else {
-        throw ArtifactError.invalidArtifact
-      }
-      let end = buffer.firstIndex(of: 0) ?? buffer.endIndex
-      host =
-        "[" + String(decoding: buffer[..<end].map(UInt8.init(bitPattern:)), as: UTF8.self) + "]"
+      host = "[" + hexadecimalIPv6(parsed) + "]"
     } else {
       guard authority.filter({ $0 == ":" }).count <= 1 else {
         throw ArtifactError.invalidArtifact
@@ -748,6 +750,29 @@ enum ArtifactCodecV3 {
       let port = UInt32(portText), (1...65_535).contains(port)
     else { throw ArtifactError.invalidArtifact }
     return port == 443 ? host : "\(host):\(port)"
+  }
+
+  private static func hexadecimalIPv6(_ address: in6_addr) -> String {
+    let bytes = withUnsafeBytes(of: address) { Array($0) }
+    let words = (0..<8).map { UInt16(bytes[$0 * 2]) << 8 | UInt16(bytes[$0 * 2 + 1]) }
+    var bestStart = -1, bestLength = 0, index = 0
+    while index < words.count {
+      guard words[index] == 0 else { index += 1; continue }
+      let start = index
+      while index < words.count && words[index] == 0 { index += 1 }
+      if index - start >= 2 && index - start > bestLength { bestStart = start; bestLength = index - start }
+    }
+    var result = "", i = 0
+    while i < words.count {
+      if i == bestStart {
+        result += "::"; i += bestLength
+        if i == words.count { break }
+      } else {
+        if i > 0 && i != bestStart + bestLength { result += ":" }
+        result += String(words[i], radix: 16); i += 1
+      }
+    }
+    return result
   }
 
   private static func normalizeHost(_ raw: String) throws -> String {

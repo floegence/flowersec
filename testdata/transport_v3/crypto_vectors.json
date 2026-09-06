@@ -26,5 +26,7 @@
       "chacha20_poly1305_ciphertext_hex": "05f91df99c17cb99246fe0d61ffd927c81ed654d53add5763f600b",
       "aes_256_gcm_ciphertext_hex": "fd186340e6c2ec5364892148b7720a0b5f3ef14df599bfef7be5b7"
     }
-  ]
+  ],
+  "registry_sha256": "723dd43136968959eae22a2ad69218c1c1b99c5c617861afdb9352e454de7c16",
+  "design_sha256": "b229c59818d87d05d886dca8b86b9c46d7af97326d0a1cd8a8408f0a5e477efe"
 }

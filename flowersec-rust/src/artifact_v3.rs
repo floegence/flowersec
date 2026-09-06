@@ -12,6 +12,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
+    fmt::Write as _,
     future::Future,
     net::Ipv6Addr,
     pin::Pin,
@@ -1059,7 +1060,7 @@ fn normalize_authority(authority: &str) -> Result<(String, Option<u16>), Artifac
             Some(tail.strip_prefix(':').ok_or(ArtifactError::Invalid)?)
         };
         let parsed: Ipv6Addr = address.parse().map_err(|_| ArtifactError::Invalid)?;
-        (format!("[{parsed}]"), port)
+        (format!("[{}]", hexadecimal_ipv6(parsed)), port)
     } else {
         if authority.matches(':').count() > 1 {
             return Err(ArtifactError::Invalid);
@@ -1100,6 +1101,46 @@ fn normalize_authority(authority: &str) -> Result<(String, Option<u16>), Artifac
         _ => return Err(ArtifactError::Invalid),
     };
     Ok((host, port))
+}
+
+fn hexadecimal_ipv6(address: Ipv6Addr) -> String {
+    let segments = address.segments();
+    let mut best_start = None;
+    let mut best_len = 0;
+    let mut index = 0;
+    while index < segments.len() {
+        if segments[index] != 0 {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < segments.len() && segments[index] == 0 {
+            index += 1;
+        }
+        let len = index - start;
+        if len >= 2 && len > best_len {
+            best_start = Some(start);
+            best_len = len;
+        }
+    }
+    let mut output = String::new();
+    let mut index = 0;
+    while index < segments.len() {
+        if best_start == Some(index) {
+            output.push_str("::");
+            index += best_len;
+            if index == segments.len() {
+                break;
+            }
+        } else {
+            if index > 0 && index != best_start.map_or(usize::MAX, |start| start + best_len) {
+                output.push(':');
+            }
+            let _ = write!(output, "{:x}", segments[index]);
+            index += 1;
+        }
+    }
+    output
 }
 
 fn normalize_ipv4(value: &str) -> Result<String, ArtifactError> {

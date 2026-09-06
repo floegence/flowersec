@@ -8,8 +8,11 @@ import {
 } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { loadTransportRegistry, provenance } from "./registry_provenance.mjs";
 
 const outputPath = fileURLToPath(new URL("./handshake_vectors.json", import.meta.url));
+const transport = loadTransportRegistry();
+const domain = (name) => transport.labels[name];
 const checkOnly = process.argv.length === 3 && process.argv[2] === "--check";
 if (process.argv.length > (checkOnly ? 3 : 2)) {
   throw new Error("usage: generate_handshake_vectors.mjs [--check]");
@@ -64,8 +67,8 @@ function canonicalJSON(value) {
 
 function fsc3() {
   const out = Buffer.alloc(16);
-  out.write("FSC3", 0, "ascii");
-  out[4] = 3;
+  out.write(transport.registry.frame_family.control, 0, "ascii");
+  out[4] = transport.registry.frame_family.version_byte;
   out[5] = 1;
   return out;
 }
@@ -73,8 +76,8 @@ function fsc3() {
 function frame(type, payloadObject) {
   const payload = Buffer.from(canonicalJSON(payloadObject), "utf8");
   const header = Buffer.alloc(12);
-  header.write("FSH3", 0, "ascii");
-  header[4] = 3;
+  header.write(transport.registry.frame_family.handshake, 0, "ascii");
+  header[4] = transport.registry.frame_family.version_byte;
   header[5] = type;
   header.writeUInt32BE(payload.length, 8);
   return Buffer.concat([header, payload]);
@@ -142,14 +145,14 @@ function buildVector({ id, suite, clientPrivate, serverPrivate, path, maxInbound
     channel_id: channelID,
     max_inbound_streams: maxInboundStreams,
     nonce_c_b64u: b64u(nonceC),
-    profile: "flowersec/3",
+    profile: transport.registry.profiles.session,
     selected_features: 0,
     session_contract_hash_b64u: b64u(sessionHash),
     suite,
   });
   const controlPreface = fsc3();
   const handshakePRK = hkdfExtract(psk, agreement.shared);
-  const h0 = sha256(Buffer.from("flowersec-v3-handshake\0", "ascii"), controlPreface, withLength(clientInit));
+  const h0 = sha256(Buffer.from(domain("handshake"), "ascii"), controlPreface, withLength(clientInit));
 
   const serverCoreObject = {
     handshake_id: b64u(handshakeID),
@@ -165,7 +168,7 @@ function buildVector({ id, suite, clientPrivate, serverPrivate, path, maxInbound
   const h1 = sha256(h0, withLength(serverCore));
   const serverConfirmKey = hkdfExpand(
     handshakePRK,
-    Buffer.concat([Buffer.from("flowersec v3 server finished", "ascii"), h1]),
+    Buffer.concat([Buffer.from(domain("server_finished"), "ascii"), h1]),
     32,
   );
   const serverConfirm = hmac(serverConfirmKey, h1);
@@ -176,7 +179,7 @@ function buildVector({ id, suite, clientPrivate, serverPrivate, path, maxInbound
   const h2 = sha256(h1, withLength(serverFinished), withLength(clientCore));
   const clientConfirmKey = hkdfExpand(
     handshakePRK,
-    Buffer.concat([Buffer.from("flowersec v3 client finished", "ascii"), h2]),
+    Buffer.concat([Buffer.from(domain("client_finished"), "ascii"), h2]),
     32,
   );
   const clientConfirm = hmac(clientConfirmKey, h2);
@@ -242,15 +245,15 @@ const vectors = [
   }),
 ];
 
-const output = {
+const output = provenance({
   version: 1,
-  profile: "flowersec/3",
+  profile: transport.registry.profiles.session,
   source: {
     implementation: "Node.js built-in crypto only",
     generator: "testdata/transport_v3/generate_handshake_vectors.mjs",
   },
   vectors,
-};
+}, transport);
 
 const rendered = `${JSON.stringify(output, null, 2)}\n`;
 if (checkOnly) {

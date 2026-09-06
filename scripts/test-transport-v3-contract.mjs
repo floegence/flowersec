@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -363,11 +364,12 @@ for (const fixture of registry.wire_fixtures) {
 }
 
 const artifacts = json("testdata/transport_v3/artifact_vectors.json");
+assert.equal(artifacts.source.registry_sha256, createHash("sha256").update(read("stability/transport_v3_contract.json")).digest("hex"));
 assert.equal(artifacts.version, 3);
 assert.equal(artifacts.profile, "flowersec/3");
 assert.deepEqual(
   artifacts.positive.map((vector) => [vector.id, vector.winners.length]),
-  [["direct-mixed-security", 4], ["tunnel-mixed-security", 4], ["direct-single-candidate", 1]],
+  [["direct-mixed-security", 4], ["tunnel-mixed-security", 4], ["direct-single-candidate", 1], ["direct-mapped-ipv6", 1]],
 );
 const declaredPinCounts = new Set();
 for (const vector of artifacts.positive) {
@@ -571,6 +573,7 @@ assert.deepEqual(idna.url_normalization.positive.map((item) => item.id), [
   "canonical-ipv4",
   "unicode-host",
   "ipv6-rfc5952",
+  "ipv6-mapped-hex",
   "non-default-port",
   "nonnumeric-final-dns-label",
 ]);
@@ -620,6 +623,18 @@ assert.equal(backslashURL, "wss://example.com\\flowersec/v3/direct");
 assert.equal([...backslashURL].filter((character) => character === "\\").length, 1);
 
 const crypto = json("testdata/transport_v3/crypto_vectors.json");
+const registryBytes = read("stability/transport_v3_contract.json");
+const registrySha256 = createHash("sha256").update(registryBytes).digest("hex");
+const designSha256 = createHash("sha256").update(read(registry.design.source_path)).digest("hex");
+for (const [name, fixture] of [["crypto", crypto], ["datagram", json("testdata/transport_v3/datagram_vectors.json")], ["handshake", json("testdata/transport_v3/handshake_vectors.json")], ["session-wire", json("testdata/transport_v3/session_wire_vectors.json")]]) {
+  assert.equal(fixture.registry_sha256, registrySha256, `${name} fixture registry provenance`);
+  assert.equal(fixture.design_sha256, designSha256, `${name} fixture design provenance`);
+}
+for (const name of ["idna_vectors.json", "open_unicode_vectors.json", "rpc_error_vectors.json", "rpc_malformed_envelopes.json", "rpc_notification_vectors.json", "session_handler_vectors.json"]) {
+  const fixture = json(`testdata/transport_v3/${name}`);
+  assert.equal(fixture.registry_sha256, registrySha256, `${name} registry provenance`);
+  assert.equal(fixture.design_sha256, designSha256, `${name} design provenance`);
+}
 for (const vector of crypto.vectors) {
   assert(vector.fss3_hex.startsWith("4653533303"));
   assert(vector.fsr3_header_hex.startsWith("4653523303"));
@@ -634,9 +649,27 @@ for (const vector of handshake.vectors) {
   assert(vector.fsc3_hex.startsWith("4653433303"));
   assert(vector.client_init_hex.startsWith("4653483303"));
 }
+{
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-transport-registry-"));
+  try {
+    const mutated = structuredClone(registry);
+    mutated.domain_labels.handshake = "flowersec-v3-mutated-handshake\0";
+    const registryPath = path.join(temporary, "transport_v3_contract.json");
+    fs.writeFileSync(registryPath, `${JSON.stringify(mutated, null, 2)}\n`);
+    const result = spawnSync(process.execPath, ["testdata/transport_v3/generate_handshake_vectors.mjs", "--check"], {
+      cwd: root,
+      env: { ...process.env, FLOWERSEC_TRANSPORT_REGISTRY_PATH: registryPath },
+      encoding: "utf8",
+    });
+    assert.notEqual(result.status, 0, "handshake vectors must fail when registry domain labels drift");
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+}
 
 const versionIsolation = json("testdata/transport_v3/version_isolation_vectors.json");
 assert.equal(versionIsolation.version, 3);
+assert.equal(versionIsolation.source.registry_sha256, registrySha256);
 assert.equal(versionIsolation.source.design_sha256, registry.design.sha256);
 assert.equal(versionIsolation.source.rules_are_not_extended_by_vectors, true);
 assert.deepEqual(versionIsolation.frames.map((frame) => frame.id), [

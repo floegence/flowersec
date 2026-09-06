@@ -318,7 +318,7 @@ func validRPCWireError(rpcErr *RPCError) *rpcwire.RpcError {
 }
 
 func internalRPCError() *rpcwire.RpcError {
-	message := "handler failed"
+	message := "internal error"
 	return &rpcwire.RpcError{Code: 500, Message: &message}
 }
 

@@ -72,10 +72,36 @@ export async function connectNodeTLSSocketV3(
     ALPNProtocols: ["http/1.1"],
     secureOptions: constants.SSL_OP_NO_TICKET,
     rejectUnauthorized: policy.mode === "ca",
-    ...(isIPAddress(host)
-      ? { checkServerIdentity: (_servername: string, certificate: Parameters<typeof tlsCheckServerIdentity>[1]) =>
-        tlsCheckServerIdentity(host, certificate) }
-      : { servername: host }),
+    ...(policy.mode === "ca"
+      ? (isIPAddress(host)
+        ? { checkServerIdentity: (_servername: string, certificate: Parameters<typeof tlsCheckServerIdentity>[1]) => {
+          const subjectAltName = (certificate as { subjectaltname?: unknown }).subjectaltname;
+          if (typeof subjectAltName !== "string" || !/(?:^|,\s*)(?:DNS|IP Address):/.test(subjectAltName)) {
+            return Object.assign(new Error("certificate is missing a DNS-ID or IP-ID subjectAltName"), {
+              code: "ERR_TLS_CERT_ALTNAME_INVALID",
+            });
+          }
+          return tlsCheckServerIdentity(host, certificate);
+        } }
+        : {
+        servername: host,
+        checkServerIdentity: (_servername: string, certificate: Parameters<typeof tlsCheckServerIdentity>[1]) => {
+          // Node's historical hostname verifier may fall back to CN when the
+          // certificate has no subjectAltName. Transport v3 requires a DNS-ID
+          // or IP-ID SAN; CN alone is never an identity proof.
+          const subjectAltName = (certificate as { subjectaltname?: unknown }).subjectaltname;
+          if (typeof subjectAltName !== "string" || !/(?:^|,\s*)(?:DNS|IP Address):/.test(subjectAltName)) {
+            return Object.assign(new Error("certificate is missing a DNS-ID or IP-ID subjectAltName"), {
+              code: "ERR_TLS_CERT_ALTNAME_INVALID",
+            });
+          }
+          return tlsCheckServerIdentity(host, certificate);
+        },
+      })
+      : isIPAddress(host)
+        ? { checkServerIdentity: (_servername: string, certificate: Parameters<typeof tlsCheckServerIdentity>[1]) =>
+          tlsCheckServerIdentity(host, certificate) }
+        : { servername: host }),
     ...(policy.mode === "ca" && options.roots !== undefined ? { ca: options.roots as ConnectionOptions["ca"] } : {}),
   };
   const timeout = options.timeoutMilliseconds ?? 10_000;
@@ -102,7 +128,7 @@ export async function connectNodeTLSSocketV3(
     const onError = (error: Error & { code?: string }) => {
       if (policy.mode === "ca" && isNodeCertificateTrustErrorV3(error.code)) {
         fail(new TransportFailureV3("tls_failed", "ca_untrusted", error));
-      } else if (policy.mode === "pin" && isTLSProtocolError(error.code)) {
+      } else if (isTLSProtocolError(error.code)) {
         fail(new TransportFailureV3("tls_failed", "unknown", error));
       } else {
         fail(new TransportFailureV3("connection_failed", undefined, error));
@@ -123,6 +149,12 @@ export async function connectNodeTLSSocketV3(
       }
       settled = true;
       cleanup();
+      // Keep a settled error sink attached until close. A live TLSSocket may
+      // emit asynchronous errors after the handshake; letting those escape
+      // without a listener turns a recoverable socket failure into an
+      // uncaught Node process error.
+      socket.on("error", onError);
+      socket.once("close", () => socket.removeListener("error", onError));
       resolve(socket);
     });
     if (options.signal?.aborted === true) abort();

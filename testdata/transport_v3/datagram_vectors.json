@@ -43,5 +43,7 @@
       "ciphertext_b64u": "3r7W907WZVDYi5EVO_2luCOSe1P_aBaXpmUOUJt1vWhqVUDySq_AQpygGrB6",
       "wire_b64u": "RlNEMwMAACAAAAAHAAAAAAAAAAsAAAHRqUogAAAAAC3evtb3TtZlUNiLkRU7_aW4I5J7U_9oFpemZQ5Qm3W9aGpVQPJKr8BCnKAasHo"
     }
-  ]
+  ],
+  "registry_sha256": "723dd43136968959eae22a2ad69218c1c1b99c5c617861afdb9352e454de7c16",
+  "design_sha256": "b229c59818d87d05d886dca8b86b9c46d7af97326d0a1cd8a8408f0a5e477efe"
 }

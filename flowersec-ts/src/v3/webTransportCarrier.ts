@@ -223,6 +223,7 @@ class WebTransportCarrierStreamAdapter implements NativeCarrierStreamV3 {
   private stopSendingPromise: Promise<void> | undefined;
   private resetPromise: Promise<void> | undefined;
   private released = false;
+  private pendingRead = false;
 
   constructor(
     stream: WebTransportBidirectionalLikeV3,
@@ -232,16 +233,32 @@ class WebTransportCarrierStreamAdapter implements NativeCarrierStreamV3 {
     this.writer = stream.writable.getWriter();
   }
 
-  async read(options: OperationOptionsV3 = {}): Promise<Uint8Array | null> {
+  async read(_options: OperationOptionsV3 = {}): Promise<Uint8Array | null> {
     this.assertReadable();
     if (this.readClosed) return null;
-    const result = await carrierCall(raceAbort(this.reader.read(), options.signal), "WebTransport stream read failed", "reset");
-    if (result.done || result.value === undefined) {
-      this.readClosed = true;
-      this.releaseIfComplete();
-      return null;
+    this.pendingRead = true;
+    try {
+      const result = await carrierCall(this.reader.read(), "WebTransport stream read failed", "reset");
+      if (result.done || result.value === undefined) {
+        this.readClosed = true;
+        this.releaseIfComplete();
+        return null;
+      }
+      return result.value.slice();
+    } finally {
+      this.pendingRead = false;
     }
-    return result.value.slice();
+  }
+
+  cancelPending(): void {
+    if (this.terminalError !== undefined || !this.pendingRead) {
+      if (!this.pendingRead && this.terminalError === undefined) this.abort(abortedCarrierError());
+      return;
+    }
+    this.readClosed = true;
+    void this.reader.cancel(abortedCarrierError()).catch(() => undefined).finally(() => {
+      this.releaseIfComplete();
+    });
   }
 
   async write(data: Uint8Array): Promise<number> {

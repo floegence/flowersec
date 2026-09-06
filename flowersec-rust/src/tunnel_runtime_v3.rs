@@ -1924,11 +1924,24 @@ where
     F: Future<Output = ()> + Send + 'static,
 {
     state.active_tasks.fetch_add(1, Ordering::AcqRel);
+    let task_guard = ActiveTaskGuard {
+        state: state.clone(),
+    };
     tokio::spawn(async move {
+        let _task_guard = task_guard;
         future.await;
-        state.active_tasks.fetch_sub(1, Ordering::AcqRel);
-        state.tasks_done.notify_waiters();
     });
+}
+
+struct ActiveTaskGuard {
+    state: Arc<TunnelState>,
+}
+
+impl Drop for ActiveTaskGuard {
+    fn drop(&mut self) {
+        self.state.active_tasks.fetch_sub(1, Ordering::AcqRel);
+        self.state.tasks_done.notify_waiters();
+    }
 }
 
 async fn wait_for_zero(counter: &AtomicUsize, notification: &Notify) {
@@ -3037,6 +3050,22 @@ mod tests {
         let _ = close.await;
         assert!(aborted.load(Ordering::SeqCst));
         assert_eq!(state.admission_permits.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn tracked_task_counter_releases_after_task_panic() {
+        let state = Arc::new(TunnelState::new(1));
+        spawn_tracked(state.clone(), async {
+            panic!("tracked task failure");
+        });
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            wait_for_zero(&state.active_tasks, &state.tasks_done),
+        )
+        .await
+        .expect("a panicking tracked task must release its close barrier");
+        assert_eq!(state.active_tasks.load(Ordering::Acquire), 0);
     }
 
     #[tokio::test]

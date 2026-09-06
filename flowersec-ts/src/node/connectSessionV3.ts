@@ -11,7 +11,11 @@ import {
   connectNodeWebSocketV3,
   detectNodeRuntimeCapabilityV3,
 } from "../v3/nodeRuntime.js";
-import { attemptClaimedArtifactLeaseV3, connectArtifactLeaseV3, type SessionConnectorRuntimeV3 } from "../v3/sessionConnector.js";
+import {
+  attemptClaimedArtifactLeaseV3,
+  connectArtifactLeaseWithRuntimeV3,
+  type SessionConnectorRuntimeV3,
+} from "../v3/sessionConnector.js";
 import { readyNativeAdmissionV3, readyWebSocketAdmissionV3 } from "../v3/runtimeAdapters.js";
 import { ConnectErrorV3, TransportFailureV3 } from "../v3/security.js";
 import { nodeSessionRuntimeV3 } from "../v3/nodeSessionRuntime.js";
@@ -46,7 +50,9 @@ export type ConnectionControllerOptionsV3 = Readonly<{
 }>;
 
 export async function connectV3(lease: ArtifactLeaseV3, options: SessionOptionsV3): Promise<Session> {
-  return await connectArtifactLeaseV3(lease, nodeRuntime(options), options.signal);
+  return await connectArtifactLeaseWithRuntimeV3(
+    lease, options, () => nodeRuntime(options),
+  );
 }
 
 export function createConnectionControllerV3(

@@ -69,7 +69,8 @@ lease permanently. No disposition authorizes credential reuse.
 
 Remote RPC application errors remain separate from connection and session
 failures. They may contain only their bounded semantic code and sanitized
-message. Session replacement never migrates streams or replays RPC calls,
+message. Invalid, oversized, zero-code, or panicking handlers use code `500`
+with the fixed sanitized message `internal error`. Session replacement never migrates streams or replays RPC calls,
 notifications, or writes.
 
 Negotiated unreliable-message operations use one portable error set:

@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadTransportRegistry, provenance } from "./registry_provenance.mjs";
 
-if (process.argv.length !== 3 || process.argv[2] !== "--check") {
-  throw new Error("usage: validate_application_vectors.mjs --check");
+if (process.argv.length !== 3 || !["--check", "--write-provenance"].includes(process.argv[2])) {
+  throw new Error("usage: validate_application_vectors.mjs --check|--write-provenance");
 }
 
 const root = dirname(fileURLToPath(import.meta.url));
+const transport = loadTransportRegistry();
 const names = [
   "idna_vectors.json",
   "open_unicode_vectors.json",
@@ -25,6 +27,12 @@ for (const name of names) {
   assert.equal(source, `${JSON.stringify(value, null, 2)}\n`, `${name} must use stable JSON formatting`);
   assert.equal(value.transport_contract_version, 3, `${name} must be owned by Transport v3`);
   assert.equal(Object.hasOwn(value, "inherited_codec_from"), false, `${name} must be self-contained`);
+  if (process.argv[2] === "--write-provenance") {
+    writeFileSync(join(root, name), `${JSON.stringify(provenance(value, transport), null, 2)}\n`);
+  } else {
+    assert.equal(value.registry_sha256, transport.registrySha256, `${name} registry provenance`);
+    assert.equal(value.design_sha256, transport.designSha256, `${name} design provenance`);
+  }
 }
 
 const idna = JSON.parse(readFileSync(join(root, "idna_vectors.json"), "utf8"));

@@ -25,5 +25,7 @@
     "exhaustion_goaway_reason": 5,
     "receive_after_maximum": "protocol_failure",
     "goaway_delivery_failure": "session_failure"
-  }
+  },
+  "registry_sha256": "723dd43136968959eae22a2ad69218c1c1b99c5c617861afdb9352e454de7c16",
+  "design_sha256": "b229c59818d87d05d886dca8b86b9c46d7af97326d0a1cd8a8408f0a5e477efe"
 }

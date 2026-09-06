@@ -375,7 +375,7 @@ describe("transport v3 session connector", () => {
     expect(lateAbort).toHaveBeenCalledOnce();
   });
 
-  test("rejects an invalid Node connection timeout before claiming or spending", async () => {
+  test("retires a lease when Node connection timeout validation fails", async () => {
     const spend = vi.fn(async () => undefined);
     const retire = vi.fn(async () => undefined);
     const lease = createArtifactLeaseV3Internal(connectorArtifact, spend, retire);
@@ -389,8 +389,45 @@ describe("transport v3 session connector", () => {
     });
 
     expect(spend).not.toHaveBeenCalled();
-    expect(retire).not.toHaveBeenCalled();
-    expect(artifactLeaseStateV3(lease)).toBe("idle");
+    expect(retire).toHaveBeenCalledOnce();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+  });
+
+  test("claims and retires before observing a pre-canceled Node signal", async () => {
+    const spend = vi.fn(async () => undefined);
+    const retire = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(connectorArtifact, spend, retire);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(connectNodeV3(lease, {
+      origin: "https://client.example",
+      signal: controller.signal,
+    })).rejects.toMatchObject({
+      code: "connection_failed",
+      retryDisposition: { kind: "terminal" },
+    });
+
+    expect(spend).not.toHaveBeenCalled();
+    expect(retire).toHaveBeenCalledOnce();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
+  });
+
+  test("retires without spending after invalid Node RPC options", async () => {
+    const spend = vi.fn(async () => undefined);
+    const retire = vi.fn(async () => undefined);
+    const lease = createArtifactLeaseV3Internal(connectorArtifact, spend, retire);
+
+    await expect(connectNodeV3(lease, {
+      origin: "https://client.example",
+      rpcHandlers: {} as never,
+    })).rejects.toMatchObject({
+      code: "artifact_invalid",
+      retryDisposition: { kind: "terminal" },
+    });
+    expect(spend).not.toHaveBeenCalled();
+    expect(retire).toHaveBeenCalledOnce();
+    expect(artifactLeaseStateV3(lease)).toBe("retired");
   });
 
   test("uses one active-pin snapshot for every candidate in a race", async () => {

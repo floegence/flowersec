@@ -13,9 +13,11 @@ import (
 )
 
 type handshakeVectorFile struct {
-	Version int    `json:"version"`
-	Profile string `json:"profile"`
-	Source  struct {
+	Version        int    `json:"version"`
+	Profile        string `json:"profile"`
+	RegistrySHA256 string `json:"registry_sha256"`
+	DesignSHA256   string `json:"design_sha256"`
+	Source         struct {
 		Implementation string `json:"implementation"`
 		Generator      string `json:"generator"`
 	} `json:"source"`

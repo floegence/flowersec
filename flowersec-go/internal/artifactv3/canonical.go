@@ -258,7 +258,7 @@ func normalizeAuthority(authority string) (string, string, error) {
 		if err != nil || !address.Is6() || address.Zone() != "" {
 			return "", "", fmt.Errorf("%w: IPv6 host", ErrInvalidCandidate)
 		}
-		host = "[" + address.String() + "]"
+		host = "[" + hexadecimalIPv6(address) + "]"
 	} else {
 		if strings.Count(authority, ":") > 1 {
 			return "", "", fmt.Errorf("%w: unbracketed IPv6", ErrInvalidCandidate)
@@ -287,6 +287,47 @@ func normalizeAuthority(authority string) (string, string, error) {
 		return host, "", nil
 	}
 	return host, strconv.FormatUint(port, 10), nil
+}
+
+// hexadecimalIPv6 renders every IPv6 address in RFC 5952 form without the
+// dotted-quad shorthand that netip.String uses for IPv4-mapped addresses.
+func hexadecimalIPv6(address netip.Addr) string {
+	bytes := address.As16()
+	var words [8]uint16
+	for i := range words {
+		words[i] = uint16(bytes[i*2])<<8 | uint16(bytes[i*2+1])
+	}
+	bestStart, bestLen := -1, 0
+	for i := 0; i < len(words); {
+		if words[i] != 0 {
+			i++
+			continue
+		}
+		start := i
+		for i < len(words) && words[i] == 0 {
+			i++
+		}
+		if i-start > bestLen && i-start >= 2 {
+			bestStart, bestLen = start, i-start
+		}
+	}
+	var builder strings.Builder
+	for i := 0; i < len(words); {
+		if i == bestStart {
+			builder.WriteString("::")
+			i += bestLen
+			if i == len(words) {
+				break
+			}
+		} else {
+			if i > 0 && i != bestStart+bestLen {
+				builder.WriteByte(':')
+			}
+			builder.WriteString(strconv.FormatUint(uint64(words[i]), 16))
+			i++
+		}
+	}
+	return builder.String()
 }
 
 func normalizeDNSOrIPv4(host string) (string, error) {

@@ -19,6 +19,7 @@ import {
   claimedArtifactV3,
   commitArtifactLeaseSpendV3,
   retireArtifactLeaseV3,
+  type ClaimedArtifactLeaseV3,
   type ArtifactLeaseV3,
 } from "./artifactLease.js";
 import type {
@@ -99,7 +100,72 @@ export async function connectArtifactLeaseV3(
   } catch {
     throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
   }
-  const artifact = claimedArtifactV3(claim);
+  return await connectClaimedArtifactLeaseV3(claim, runtime, signal);
+}
+
+export async function connectArtifactLeaseWithRuntimeV3(
+  lease: ArtifactLeaseV3,
+  options: Readonly<{ connectTimeoutMs?: number; signal?: AbortSignal }>,
+  createRuntime: (signal: AbortSignal) => SessionConnectorRuntimeV3 | Promise<SessionConnectorRuntimeV3>,
+): Promise<Session> {
+  let claim: ClaimedArtifactLeaseV3;
+  try {
+    claim = claimArtifactLeaseV3(lease);
+  } catch {
+    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+  }
+  let timeout: number;
+  let signal: AbortSignal | undefined;
+  try {
+    timeout = normalizeConnectTimeoutMilliseconds(options.connectTimeoutMs);
+    signal = options.signal;
+  } catch (error) {
+    await retireArtifactLeaseV3(claim);
+    throw publicPreSpendError(error);
+  }
+  const controller = new AbortController();
+  const unlink = linkPublicConnectAbort(signal, controller);
+  const timer = setTimeout(() => controller.abort(
+    new ConnectErrorV3("connection_failed", { kind: "retryable" }),
+  ), timeout);
+  try {
+    throwIfAborted(controller.signal);
+    let runtime: SessionConnectorRuntimeV3;
+    try {
+      runtime = await raceAbort(
+        Promise.resolve().then(() => createRuntime(controller.signal)),
+        controller.signal,
+      );
+    } catch (error) {
+      throw publicPreSpendError(error);
+    }
+    return await connectClaimedArtifactLeaseV3(
+      claim,
+      { ...runtime, connectTimeoutMilliseconds: timeout },
+      controller.signal,
+      true,
+    );
+  } catch (error) {
+    if (artifactLeaseStateV3(claim) === "claimed") await retireArtifactLeaseV3(claim);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    unlink();
+  }
+}
+
+async function connectClaimedArtifactLeaseV3(
+  claim: ClaimedArtifactLeaseV3,
+  runtime: SessionConnectorRuntimeV3,
+  signal?: AbortSignal,
+  deadlineStarted = false,
+): Promise<Session> {
+  let artifact: ArtifactV3;
+  try {
+    artifact = claimedArtifactV3(claim);
+  } catch {
+    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+  }
   const now = runtime.nowUnixSeconds ?? (() => Math.floor(Date.now() / 1_000));
   let capability: RuntimeCapabilityDescriptorV3;
   let candidates: readonly CanonicalArtifactCandidateV3[];
@@ -116,7 +182,7 @@ export async function connectArtifactLeaseV3(
   const controller = new AbortController();
   const unlink = linkAbort(signal, controller);
   try {
-    const result = await attemptClaimedArtifactLeaseV3({
+    const context: LeaseAttemptContextV3 = {
       kind: "primary",
       artifact,
       candidates,
@@ -124,7 +190,10 @@ export async function connectArtifactLeaseV3(
       signal: controller.signal,
       capability,
       assertArtifactFresh: () => assertArtifactFresh(artifact, now),
-    }, runtime);
+    };
+    const result = deadlineStarted
+      ? await attemptClaimedArtifactLeaseUnderSignalV3(context, runtime)
+      : await attemptClaimedArtifactLeaseV3(context, runtime);
     if (result.kind === "established") return result.session;
     if (artifactLeaseStateV3(claim) === "claimed") await retireArtifactLeaseV3(claim);
     if (result.kind === "candidate_failures") {
@@ -155,11 +224,22 @@ export async function attemptClaimedArtifactLeaseV3(
     new ConnectErrorV3("connection_failed", { kind: "retryable" }),
   ), timeoutMilliseconds);
   try {
-    throwIfAborted(controller.signal);
-    return await attemptClaimedArtifactLeaseWithinDeadlineV3(
-      { ...context, signal: controller.signal },
-      runtime,
+    return await attemptClaimedArtifactLeaseUnderSignalV3(
+      { ...context, signal: controller.signal }, runtime,
     );
+  } finally {
+    clearTimeout(timer);
+    unlink();
+  }
+}
+
+async function attemptClaimedArtifactLeaseUnderSignalV3(
+  context: LeaseAttemptContextV3,
+  runtime: SessionConnectorRuntimeV3,
+): Promise<LeaseAttemptResultV3<Session>> {
+  try {
+    throwIfAborted(context.signal);
+    return await attemptClaimedArtifactLeaseWithinDeadlineV3(context, runtime);
   } catch (error) {
     const projected = error instanceof ConnectErrorV3
       ? error
@@ -167,9 +247,6 @@ export async function attemptClaimedArtifactLeaseV3(
     return artifactLeaseStateV3(context.claim) === "claimed"
       ? { kind: "pre_spend_failure", error: projected }
       : { kind: "post_spend_failure", error: projected };
-  } finally {
-    clearTimeout(timer);
-    unlink();
   }
 }
 
@@ -481,6 +558,14 @@ function linkAbort(parent: AbortSignal | undefined, child: AbortController): () 
 }
 
 function linkConnectAttemptAbort(parent: AbortSignal, child: AbortController): () => void {
+  const abort = () => child.abort(new ConnectErrorV3("connection_failed", { kind: "terminal" }));
+  if (parent.aborted) abort();
+  else parent.addEventListener("abort", abort, { once: true });
+  return () => parent.removeEventListener("abort", abort);
+}
+
+function linkPublicConnectAbort(parent: AbortSignal | undefined, child: AbortController): () => void {
+  if (parent === undefined) return () => undefined;
   const abort = () => child.abort(new ConnectErrorV3("connection_failed", { kind: "terminal" }));
   if (parent.aborted) abort();
   else parent.addEventListener("abort", abort, { once: true });

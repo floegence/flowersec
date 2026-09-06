@@ -50,7 +50,7 @@ func TestToWireError_Defaults(t *testing.T) {
 	if got.Code != 500 {
 		t.Fatalf("unexpected code: %d", got.Code)
 	}
-	if got.Message == nil || *got.Message != "rpc error" {
+	if got.Message == nil || *got.Message != "internal error" {
 		t.Fatalf("unexpected message: %#v", got.Message)
 	}
 }

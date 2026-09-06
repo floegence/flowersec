@@ -98,6 +98,8 @@
     {
       "critical": true,
       "payload": {
+        "é": "decomposed-key",
+        "é": "composed-key",
         "😀": [
           -9007199254740991,
           9007199254740991,

@@ -446,8 +446,8 @@ or AAD fail closed.
 
 Flowersec 5.x SDKs implement only Transport v3:
 
-- the Go module uses the `/v4` module path;
-- the TypeScript package, Rust crate, and Swift package/tag use major version 4;
+- the Go module uses the `/v5` module path;
+- the TypeScript package, Rust crate, and Swift package/tag use major version 5;
 - server paths, WebSocket subprotocols, and QUIC ALPN are fixed by Transport v3;
 - inputs from another wire generation fail closed; and
 - runtime protocol negotiation, automatic upgrade, and downgrade are absent.

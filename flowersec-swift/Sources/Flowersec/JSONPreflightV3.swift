@@ -14,6 +14,21 @@ enum JSONPreflightV3 {
     try parser.document(context: .artifactRoot)
   }
 
+  static func scopedPayloads(_ data: Data) throws -> [Data] {
+    var parser = Parser(bytes: Array(data))
+    try parser.document(context: .artifactRoot)
+    return parser.payloads
+  }
+
+  // Foundation dictionaries use Swift String equality and therefore collapse
+  // canonically equivalent but byte-distinct member names. Keep a raw-byte
+  // structural check available for canonical documents that contain both.
+  static func validateCanonicalStructure(_ data: Data) throws -> Bool {
+    var parser = CanonicalParser(bytes: Array(data))
+    let collision = try parser.document()
+    return collision
+  }
+
   private enum Context {
     case ordinary
     case artifactRoot
@@ -26,6 +41,7 @@ enum JSONPreflightV3 {
   private struct Parser {
     let bytes: [UInt8]
     var index = 0
+    var payloads = [Data]()
 
     mutating func document(context: Context) throws {
       try value(context: context, depth: 0)
@@ -60,7 +76,10 @@ enum JSONPreflightV3 {
           try value(context: .artifactScopes, depth: depth + 1)
         } else if context == .artifactScope && key == "payload" {
           var budget = ScopedBudget()
+          space()
+          let start = index
           try scopedValue(depth: 1, root: true, budget: &budget)
+          payloads.append(Data(bytes[start..<index]))
         } else {
           try value(context: .ordinary, depth: depth + 1)
         }
@@ -104,14 +123,14 @@ enum JSONPreflightV3 {
     mutating func scopedObject(depth: Int, budget: inout ScopedBudget) throws {
       guard take(123) else { throw ValidationError.invalid }
       space()
-      var keys = Set<String>()
+      var keys = Set<[UInt8]>()
       var members = 0
       if take(125) { return }
       while true {
         space()
         let key = try string(maximumUTF8Bytes: 128)
         members += 1
-        guard members <= 64, keys.insert(key).inserted else { throw ValidationError.invalid }
+        guard members <= 64, keys.insert(Array(key.utf8)).inserted else { throw ValidationError.invalid }
         space()
         guard take(58) else { throw ValidationError.invalid }
         try scopedValue(depth: depth + 1, root: false, budget: &budget)
@@ -236,6 +255,137 @@ enum JSONPreflightV3 {
     private func isDigit(_ byte: UInt8) -> Bool { (48...57).contains(byte) }
     private func isHexDigit(_ byte: UInt8) -> Bool {
       isDigit(byte) || (65...70).contains(byte) || (97...102).contains(byte)
+    }
+  }
+
+  private struct CanonicalParser {
+    let bytes: [UInt8]
+    var index = 0
+    var equivalentKeyCollision = false
+
+    mutating func document() throws -> Bool {
+      try value()
+      guard index == bytes.count else { throw ValidationError.invalid }
+      return equivalentKeyCollision
+    }
+
+    mutating func value() throws {
+      guard index < bytes.count else { throw ValidationError.invalid }
+      switch bytes[index] {
+      case 123: try object()
+      case 91: try array()
+      case 34: _ = try string()
+      case 116: try literal("true")
+      case 102: try literal("false")
+      case 110: try literal("null")
+      default: try number()
+      }
+    }
+
+    mutating func object() throws {
+      guard take(123) else { throw ValidationError.invalid }
+      var keys = [String]()
+      if take(125) { return }
+      while true {
+        let key = try string()
+        if keys.contains(where: { $0 == key }) { equivalentKeyCollision = true }
+        if let previous = keys.last,
+          !Array(previous.utf16).lexicographicallyPrecedes(Array(key.utf16)) {
+          throw ValidationError.invalid
+        }
+        keys.append(key)
+        guard take(58) else { throw ValidationError.invalid }
+        try value()
+        if take(125) { return }
+        guard take(44) else { throw ValidationError.invalid }
+      }
+    }
+
+    mutating func array() throws {
+      guard take(91) else { throw ValidationError.invalid }
+      if take(93) { return }
+      while true {
+        try value()
+        if take(93) { return }
+        guard take(44) else { throw ValidationError.invalid }
+      }
+    }
+
+    mutating func string() throws -> String {
+      let start = index
+      guard take(34) else { throw ValidationError.invalid }
+      while index < bytes.count {
+        switch bytes[index] {
+        case 34:
+          index += 1
+          let quoted = Data(bytes[start..<index])
+          guard let value = try? JSONDecoder().decode(String.self, from: quoted) else {
+            throw ValidationError.invalid
+          }
+          return value
+        case 92:
+          guard index + 1 < bytes.count else { throw ValidationError.invalid }
+          if bytes[index + 1] == 117 {
+            guard index + 5 < bytes.count,
+              bytes[(index + 2)...(index + 5)].allSatisfy({
+                ($0 >= 48 && $0 <= 57) || ($0 >= 65 && $0 <= 70) || ($0 >= 97 && $0 <= 102)
+              }) else { throw ValidationError.invalid }
+            index += 6
+          } else {
+            guard [34, 47, 92, 98, 102, 110, 114, 116].contains(bytes[index + 1])
+            else { throw ValidationError.invalid }
+            index += 2
+          }
+        default:
+          guard bytes[index] >= 0x20 else { throw ValidationError.invalid }
+          index += 1
+        }
+      }
+      throw ValidationError.invalid
+    }
+
+    mutating func literal(_ value: String) throws {
+      let bytes = Array(value.utf8)
+      guard self.bytes[index...].starts(with: bytes) else { throw ValidationError.invalid }
+      index += bytes.count
+    }
+
+    mutating func number() throws {
+      let start = index
+      if take(45) {}
+      guard index < bytes.count else { throw ValidationError.invalid }
+      if take(48) {
+        if index < bytes.count && (48...57).contains(bytes[index]) { throw ValidationError.invalid }
+      } else {
+        guard index < bytes.count && (49...57).contains(bytes[index]) else {
+          throw ValidationError.invalid
+        }
+        index += 1
+        while index < bytes.count && (48...57).contains(bytes[index]) { index += 1 }
+      }
+      if take(46) {
+        guard index < bytes.count && (48...57).contains(bytes[index]) else { throw ValidationError.invalid }
+        while index < bytes.count && (48...57).contains(bytes[index]) { index += 1 }
+      }
+      if index < bytes.count && [101, 69].contains(bytes[index]) {
+        index += 1
+        if index < bytes.count && [43, 45].contains(bytes[index]) { index += 1 }
+        guard index < bytes.count && (48...57).contains(bytes[index]) else { throw ValidationError.invalid }
+        while index < bytes.count && (48...57).contains(bytes[index]) { index += 1 }
+      }
+      guard index > start else { throw ValidationError.invalid }
+      let raw = String(decoding: bytes[start..<index], as: UTF8.self)
+      guard let number = Double(raw), number.isFinite,
+        let encoded = try? JSONSerialization.data(withJSONObject: [number]),
+        encoded.count >= 2,
+        String(decoding: encoded.dropFirst().dropLast(), as: UTF8.self) == raw
+      else { throw ValidationError.invalid }
+    }
+
+    mutating func take(_ byte: UInt8) -> Bool {
+      guard index < bytes.count, bytes[index] == byte else { return false }
+      index += 1
+      return true
     }
   }
 }

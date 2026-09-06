@@ -662,7 +662,7 @@ export class SessionV3 implements SessionV3Contract {
       while (this.lifecycle === "open") {
         const carrierStream = await this.carrier.acceptStream();
         void this.acceptCarrierStream(carrierStream).catch((error) => {
-          void carrierStream.reset();
+          void carrierStream.reset().catch(() => undefined);
           if (error instanceof StreamLifetimeLedgerV3Error && error.code === "duplicate") {
             this.fail(protocolError(error.message));
           }

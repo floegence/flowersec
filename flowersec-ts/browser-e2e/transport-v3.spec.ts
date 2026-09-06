@@ -53,7 +53,7 @@ test("Chromium runs production v3 WebTransport with the artifact TLS pin", async
     ],
     { cwd: path.join(repositoryRoot, "flowersec-go"), stdio: ["ignore", "pipe", "pipe"] },
   );
-  const stderr = captureStderr(peer);
+  captureStderr(peer);
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -129,7 +129,7 @@ test("Chromium WebTransport rejects an unknown v3 pin before durable spend", asy
     ],
     { cwd: path.join(repositoryRoot, "flowersec-go"), stdio: ["ignore", "pipe", "pipe"] },
   );
-  const stderr = captureStderr(peer);
+  captureStderr(peer);
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -235,30 +235,34 @@ test("Chromium WebTransport production adapter accepts a public-CA certificate i
   }
 });
 
-test("Chromium runs the WebSocket open failure as retryable before durable spend", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "requires Chromium browser WebSocket coverage");
+test("Portable browsers run the v3 WebSocket client contract", async ({ page }) => {
   test.setTimeout(30_000);
   const site = await startBrowserModuleSite();
+  const peer = spawn(
+    "go",
+    ["run", "./internal/cmd/ts-session-peer-v3"],
+    { cwd: path.join(repositoryRoot, "flowersec-go"), stdio: ["ignore", "pipe", "pipe"] },
+  );
+  captureStderr(peer);
   try {
+    const endpoint = JSON.parse(await firstLine(peer.stdout)) as { url: string; ca_pem: string };
     const source = fixture.positive.find(({ id }) => id === "direct-mixed-security");
     if (source === undefined) throw new Error("direct mixed-security artifact fixture is missing");
-    const artifact = JSON.parse(source.artifact_json) as {
-      path: { candidates: Array<{ carrier: string; tls: unknown; url: string }> };
-    };
+    const artifact = JSON.parse(source.artifact_json) as { path: { candidates: Array<{ carrier: string; tls: unknown; url: string }> } };
     const candidate = artifact.path.candidates.find(({ carrier }) => carrier === "websocket");
     if (candidate === undefined) throw new Error("WebSocket v3 candidate is missing");
     candidate.tls = { mode: "ca" };
-    candidate.url = "wss://127.0.0.1:1/flowersec/v3/direct";
+    candidate.url = endpoint.url;
     artifact.path.candidates = [candidate];
     await page.goto(site.origin, { waitUntil: "networkidle" });
-    const result = await page.evaluate(async (artifactJSON) => {
+    const result = await page.evaluate(async ({ artifactJSON, roots }) => {
       const sdk = await import("/dist/browser/index.js");
       let spendCount = 0;
       try {
         const session = await sdk.connect(sdk.createArtifactLease(
           sdk.parseArtifact(artifactJSON),
           async () => { spendCount += 1; },
-        ));
+        ), { roots });
         await session.close().catch(() => undefined);
         return { connected: true, spendCount };
       } catch (error) {
@@ -269,14 +273,11 @@ test("Chromium runs the WebSocket open failure as retryable before durable spend
           error: { code: error.code, disposition: error.disposition.kind },
         };
       }
-    }, JSON.stringify(artifact));
-    expect(result).toEqual({
-      connected: false,
-      spendCount: 0,
-      error: { code: "connection_failed", disposition: "retryable" },
-    });
+    }, { artifactJSON: JSON.stringify(artifact), roots: endpoint.ca_pem });
+    expect(result).toEqual({ connected: true, spendCount: 1 });
   } finally {
     await site.close();
+    await stopPeer(peer);
   }
 });
 

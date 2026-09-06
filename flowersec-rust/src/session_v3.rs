@@ -4441,7 +4441,7 @@ fn rpc_handler_error_to_wire_v3(error: RpcError) -> RpcErrorWireV3 {
     {
         return RpcErrorWireV3 {
             code: 500,
-            message: Some("handler failed".into()),
+            message: Some("internal error".into()),
         };
     }
     RpcErrorWireV3 {
@@ -4718,7 +4718,7 @@ async fn serve_rpc_stream_v3(session: &SelfSession, stream: StreamHandleV3) -> i
                                 serde_json::Value::Null,
                                 Some(RpcErrorWireV3 {
                                     code: 500,
-                                    message: Some("handler failed".into()),
+                                    message: Some("internal error".into()),
                                 }),
                             ),
                         }

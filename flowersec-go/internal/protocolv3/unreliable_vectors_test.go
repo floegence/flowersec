@@ -14,8 +14,10 @@ import (
 )
 
 type unreliableVectorFile struct {
-	SchemaVersion int                `json:"schema_version"`
-	Vectors       []unreliableVector `json:"vectors"`
+	SchemaVersion  int                `json:"schema_version"`
+	RegistrySHA256 string             `json:"registry_sha256"`
+	DesignSHA256   string             `json:"design_sha256"`
+	Vectors        []unreliableVector `json:"vectors"`
 }
 
 type unreliableVector struct {

@@ -1,7 +1,8 @@
 {
   "version": 3,
   "source": {
-    "design_sha256": "51b38465bfd847270408101560023871847becd6196287027c89bfe7c48cd8cf",
+    "design_sha256": "b229c59818d87d05d886dca8b86b9c46d7af97326d0a1cd8a8408f0a5e477efe",
+    "registry_sha256": "723dd43136968959eae22a2ad69218c1c1b99c5c617861afdb9352e454de7c16",
     "producer": "testdata/transport_v3/generate_contract_vectors.mjs",
     "rules_are_not_extended_by_vectors": true
   },

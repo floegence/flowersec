@@ -28,6 +28,7 @@ let directory = "";
 let rootCertificate: Buffer;
 let leafCertificate: Buffer;
 let ipLeafCertificate: Buffer;
+let cnOnlyLeafCertificate: Buffer;
 let leafKey: Buffer;
 let purposeLeafCertificate: Buffer;
 let expiredLeafCertificate: Buffer;
@@ -55,6 +56,7 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
     rootCertificate = readFileSync(join(directory, "root.pem"));
     leafCertificate = readFileSync(join(directory, "leaf.pem"));
     ipLeafCertificate = readFileSync(join(directory, "leaf-ip.pem"));
+    cnOnlyLeafCertificate = readFileSync(join(directory, "leaf-cn-only.pem"));
     leafKey = readFileSync(join(directory, "leaf.key"));
     purposeLeafCertificate = readFileSync(join(directory, "leaf-purpose.pem"));
     expiredLeafCertificate = readFileSync(join(directory, "leaf-expired.pem"));
@@ -127,6 +129,23 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
       );
       expect(socket.authorized).toBe(true);
       socket.destroy();
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("rejects a CA-trusted certificate that relies on CN without a SAN", async () => {
+    const server = createTLSServer({ cert: cnOnlyLeafCertificate, key: leafKey });
+    const port = await listen(server);
+    try {
+      await expect(connectNodeTLSSocketV3(
+        websocketCandidate(port, { mode: "ca" }),
+        nowSeconds(),
+        { roots: rootCertificate, timeoutMilliseconds: 2_000 },
+      )).rejects.toMatchObject({
+        code: "tls_failed",
+        detail: "ca_untrusted",
+      });
     } finally {
       await closeServer(server);
     }
@@ -431,6 +450,12 @@ function generateCertificates(target: string): void {
     "extendedKeyUsage=serverAuth",
     "",
   ].join("\n"));
+  writeFileSync(join(target, "leaf-cn-only.ext"), [
+    "basicConstraints=critical,CA:FALSE",
+    "keyUsage=critical,digitalSignature",
+    "extendedKeyUsage=serverAuth",
+    "",
+  ].join("\n"));
   runOpenSSL([
     "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
     "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
@@ -445,6 +470,11 @@ function generateCertificates(target: string): void {
     "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
     "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
     "-extfile", join(target, "leaf-ip.ext"), "-out", join(target, "leaf-ip.pem"),
+  ]);
+  runOpenSSL([
+    "x509", "-req", "-in", join(target, "leaf.csr"), "-CA", join(target, "root.pem"),
+    "-CAkey", join(target, "root.key"), "-CAcreateserial", "-days", "2", "-sha256",
+    "-extfile", join(target, "leaf-cn-only.ext"), "-out", join(target, "leaf-cn-only.pem"),
   ]);
   writeFileSync(join(target, "index.txt"), "");
   writeFileSync(join(target, "serial"), "1000\n");

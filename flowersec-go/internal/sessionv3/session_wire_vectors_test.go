@@ -21,6 +21,8 @@ func TestSharedSessionWireV3Vectors(t *testing.T) {
 	var fixture struct {
 		Version            int    `json:"version"`
 		Profile            string `json:"profile"`
+		RegistrySHA256     string `json:"registry_sha256"`
+		DesignSHA256       string `json:"design_sha256"`
 		StreamKeyUpdateACK []struct {
 			LogicalIDHex    string `json:"logical_id_hex"`
 			TransitionIDHex string `json:"transition_id_hex"`

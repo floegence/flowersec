@@ -1922,7 +1922,7 @@ async fn rpc_outbound_handler_errors_are_sanitized_before_wire() {
         match client.rpc().call(type_id, serde_json::Value::Null).await {
             Err(RpcCallError::Application(error)) => {
                 assert_eq!(error.code(), 500);
-                assert_eq!(error.message(), Some("handler failed"));
+                assert_eq!(error.message(), Some("internal error"));
             }
             result => panic!("invalid handler error was not sanitized: {result:?}"),
         }
@@ -1942,7 +1942,7 @@ impl RpcHandlerV3 for SensitiveRpcFailure {
         _type_id: u32,
         _request: serde_json::Value,
     ) -> Result<serde_json::Value, RpcError> {
-        Err(RpcError::new(500, Some("handler failed".into())).expect("valid RPC error"))
+        Err(RpcError::new(500, Some("internal error".into())).expect("valid RPC error"))
     }
 
     async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
@@ -1991,7 +1991,7 @@ async fn rpc_handler_failure_is_sanitized_before_crossing_the_session() {
     match error {
         RpcCallError::Application(error) => {
             assert_eq!(error.code(), 500);
-            assert_eq!(error.message(), Some("handler failed"));
+            assert_eq!(error.message(), Some("internal error"));
         }
         RpcCallError::Session(error) => panic!("application error collapsed into {error:?}"),
     }

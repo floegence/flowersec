@@ -4,8 +4,11 @@ import { createCipheriv, createHmac } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync, writeFileSync } from "node:fs";
+import { loadTransportRegistry, provenance } from "./registry_provenance.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
+const transport = loadTransportRegistry();
+const domain = (name) => transport.labels[name];
 const checkOnly = process.argv.length === 3 && process.argv[2] === "--check";
 if (process.argv.length > (checkOnly ? 3 : 2)) {
   throw new Error("usage: generate_crypto_vectors.mjs [--check]");
@@ -63,10 +66,10 @@ function seal(algorithm, key, nonce, aad, plaintext) {
 
 function roots(epochSecret) {
   return {
-    controlRoot: hkdfExpand(epochSecret, label("flowersec v3 control root"), 32),
-    streamRoot: hkdfExpand(epochSecret, label("flowersec v3 stream root"), 32),
-    setupRoot: hkdfExpand(epochSecret, label("flowersec v3 setup root"), 32),
-    rekeyRoot: hkdfExpand(epochSecret, label("flowersec v3 rekey root"), 32),
+    controlRoot: hkdfExpand(epochSecret, label(domain("control_root")), 32),
+    streamRoot: hkdfExpand(epochSecret, label(domain("stream_root")), 32),
+    setupRoot: hkdfExpand(epochSecret, label(domain("setup_root")), 32),
+    rekeyRoot: hkdfExpand(epochSecret, label(domain("rekey_root")), 32),
   };
 }
 
@@ -76,33 +79,33 @@ const direction = 1;
 const epoch = 0;
 const logicalStreamID = 1;
 const sequence = 0;
-const epochSecret = hkdfExpand(sessionPRK, label("flowersec v3 epoch zero", Buffer.from([direction])), 32);
+const epochSecret = hkdfExpand(sessionPRK, label(domain("epoch_zero"), Buffer.from([direction])), 32);
 const epochRoots = roots(epochSecret);
 const streamSecret = hkdfExpand(
   epochRoots.streamRoot,
-  label("flowersec v3 stream", h3, u64(logicalStreamID), Buffer.from([direction]), u32(epoch)),
+  label(domain("stream"), h3, u64(logicalStreamID), Buffer.from([direction]), u32(epoch)),
   32,
 );
-const recordKey = hkdfExpand(streamSecret, label("flowersec v3 record key"), 32);
-const noncePrefix = hkdfExpand(streamSecret, label("flowersec v3 nonce"), 4);
+const recordKey = hkdfExpand(streamSecret, label(domain("record_key")), 32);
+const noncePrefix = hkdfExpand(streamSecret, label(domain("nonce")), 4);
 const setupPrefix = Buffer.alloc(24);
-setupPrefix.write("FSS3", 0, "ascii");
-setupPrefix[4] = 3;
+setupPrefix.write(transport.registry.frame_family.setup, 0, "ascii");
+setupPrefix[4] = transport.registry.frame_family.version_byte;
 setupPrefix[5] = 1;
 setupPrefix.writeBigUInt64BE(BigInt(logicalStreamID), 8);
 setupPrefix.writeUInt32BE(epoch, 16);
-const setupMAC = hmac(epochRoots.setupRoot, label("flowersec-v3-setup", h3, setupPrefix));
+const setupMAC = hmac(epochRoots.setupRoot, label(domain("setup_mac").replace(/\0$/, ""), h3, setupPrefix));
 const setup = Buffer.concat([setupPrefix, setupMAC]);
 const inner = Buffer.concat([Buffer.from([4, 0, 0, 0]), u32(3), Buffer.from("abc")]);
 const recordHeader = Buffer.alloc(24);
-recordHeader.write("FSR3", 0, "ascii");
-recordHeader[4] = 3;
+recordHeader.write(transport.registry.frame_family.record, 0, "ascii");
+recordHeader[4] = transport.registry.frame_family.version_byte;
 recordHeader[5] = 24;
 recordHeader.writeUInt32BE(epoch, 8);
 recordHeader.writeBigUInt64BE(BigInt(sequence), 12);
 recordHeader.writeUInt32BE(inner.length + 16, 20);
 const recordAAD = label(
-  "flowersec-v3-record",
+  domain("record_aad").replace(/\0$/, ""),
   h3,
   u64(logicalStreamID),
   Buffer.from([direction]),
@@ -110,9 +113,9 @@ const recordAAD = label(
 );
 const recordNonce = Buffer.concat([noncePrefix, u64(sequence)]);
 
-const cryptoVectors = {
+const cryptoVectors = provenance({
   version: 3,
-  profile: "flowersec/3",
+  profile: transport.registry.profiles.session,
   source: "testdata/transport_v3/generate_crypto_vectors.mjs using Node.js crypto",
   vectors: [
     {
@@ -143,42 +146,42 @@ const cryptoVectors = {
       ).toString("hex"),
     },
   ],
-};
+}, transport);
 write("crypto_vectors.json", cryptoVectors);
 
 function datagramVector(suite) {
   const datagramEpoch = 7;
   const datagramSequence = 11;
   const expiresAt = 2_000_000_000_000;
-  const epochZero = hkdfExpand(sessionPRK, label("flowersec v3 epoch zero", Buffer.from([direction])), 32);
+  const epochZero = hkdfExpand(sessionPRK, label(domain("epoch_zero"), Buffer.from([direction])), 32);
   const rekeyRoot = roots(epochZero).rekeyRoot;
   const datagramEpochSecret = hkdfExpand(
     rekeyRoot,
-    label("flowersec v3 next epoch", h3, Buffer.from([direction]), u32(datagramEpoch)),
+    label(domain("next_epoch"), h3, Buffer.from([direction]), u32(datagramEpoch)),
     32,
   );
   const unreliableRoot = hkdfExpand(
     datagramEpochSecret,
-    label("flowersec v3 unreliable root"),
+    label(domain("unreliable_root")),
     32,
   );
   const materialSecret = hkdfExpand(
     unreliableRoot,
-    label("flowersec v3 unreliable", h3, Buffer.from([direction]), u32(datagramEpoch)),
+    label(domain("unreliable"), h3, Buffer.from([direction]), u32(datagramEpoch)),
     32,
   );
-  const datagramKey = hkdfExpand(materialSecret, label("flowersec v3 unreliable key"), 32);
-  const datagramNoncePrefix = hkdfExpand(materialSecret, label("flowersec v3 unreliable nonce"), 4);
+  const datagramKey = hkdfExpand(materialSecret, label(domain("unreliable_key")), 32);
+  const datagramNoncePrefix = hkdfExpand(materialSecret, label(domain("unreliable_nonce")), 4);
   const plaintext = Buffer.from(`flowersec-datagram-v3-suite-${suite}`);
   const header = Buffer.alloc(32);
-  header.write("FSD3", 0, "ascii");
-  header[4] = 3;
+  header.write(transport.registry.frame_family.datagram, 0, "ascii");
+  header[4] = transport.registry.frame_family.version_byte;
   header.writeUInt16BE(32, 6);
   header.writeUInt32BE(datagramEpoch, 8);
   header.writeBigUInt64BE(BigInt(datagramSequence), 12);
   header.writeBigUInt64BE(BigInt(expiresAt), 20);
   header.writeUInt32BE(plaintext.length + 16, 28);
-  const aad = label("flowersec-v3-unreliable", h3, Buffer.from([direction]), header);
+  const aad = label(domain("unreliable_aad").replace(/\0$/, ""), h3, Buffer.from([direction]), header);
   const nonce = Buffer.concat([datagramNoncePrefix, u64(datagramSequence)]);
   const ciphertext = seal(
     suite === 1 ? "chacha20-poly1305" : "aes-256-gcm",
@@ -210,13 +213,13 @@ function datagramVector(suite) {
   };
 }
 
-write("datagram_vectors.json", { schema_version: 3, vectors: [datagramVector(1), datagramVector(2)] });
+write("datagram_vectors.json", provenance({ schema_version: 3, vectors: [datagramVector(1), datagramVector(2)] }, transport));
 
 write(
   "session_wire_vectors.json",
-  {
+  provenance({
     version: 3,
-    profile: "flowersec/3",
+    profile: transport.registry.profiles.session,
     stream_key_update_ack: [{
       logical_id_hex: "0102030405060708",
       transition_id_hex: "1112131415161718",
@@ -240,5 +243,5 @@ write(
       receive_after_maximum: "protocol_failure",
       goaway_delivery_failure: "session_failure",
     },
-  },
+  }, transport),
 );

@@ -16,7 +16,11 @@ import {
   BrowserRuntimeCapabilityRegistryV3,
   createBrowserWebTransportCarrierV3,
 } from "../v3/browserRuntime.js";
-import { attemptClaimedArtifactLeaseV3, connectArtifactLeaseV3, type SessionConnectorRuntimeV3 } from "../v3/sessionConnector.js";
+import {
+  attemptClaimedArtifactLeaseV3,
+  connectArtifactLeaseWithRuntimeV3,
+  type SessionConnectorRuntimeV3,
+} from "../v3/sessionConnector.js";
 import { readyNativeAdmissionV3, readyWebSocketAdmissionV3, type WebSocketLikeV3 } from "../v3/runtimeAdapters.js";
 import { TransportFailureV3, ConnectErrorV3, type RetryDispositionV3 } from "../v3/security.js";
 import { browserSessionRuntimeV3 } from "../v3/browserSessionRuntime.js";
@@ -53,12 +57,10 @@ export async function connectV3(
   lease: ArtifactLeaseV3,
   options: SessionOptionsV3 = {},
 ): Promise<Session> {
-  const registry = await BrowserRuntimeCapabilityRegistryV3.create();
-  return await connectArtifactLeaseV3(
-    lease,
-    browserRuntime(registry, options.connectTimeoutMs),
-    options.signal,
-  );
+  return await connectArtifactLeaseWithRuntimeV3(lease, options, async () => {
+    const registry = await BrowserRuntimeCapabilityRegistryV3.create();
+    return browserRuntime(registry, options.connectTimeoutMs);
+  });
 }
 
 export async function createConnectionControllerV3(
@@ -83,18 +85,15 @@ export async function connectPrivateLoopbackV1(
   lease: PrivateLoopbackArtifactLeaseV1,
   options: PrivateLoopbackSessionOptionsV1,
 ): Promise<Session> {
-  const privateOrigin = requirePrivateLoopbackOrigin(options.origin);
   const unwrapped = unwrapPrivateLoopbackLease(lease);
-  if (new URL(unwrapped.endpoint).origin.replace(/^ws:/, "http:") !== privateOrigin) {
-    await retireInnerLease(unwrapped.innerLease);
-    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
-  }
-  const registry = await BrowserRuntimeCapabilityRegistryV3.create();
-  return await connectArtifactLeaseV3(
-    unwrapped.innerLease,
-    privateLoopbackBrowserRuntime(registry, options.connectTimeoutMs, privateOrigin),
-    options.signal,
-  );
+  return await connectArtifactLeaseWithRuntimeV3(unwrapped.innerLease, options, async () => {
+    const privateOrigin = requirePrivateLoopbackOrigin(options.origin);
+    if (new URL(unwrapped.endpoint).origin.replace(/^ws:/, "http:") !== privateOrigin) {
+      throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+    }
+    const registry = await BrowserRuntimeCapabilityRegistryV3.create();
+    return privateLoopbackBrowserRuntime(registry, options.connectTimeoutMs, privateOrigin);
+  });
 }
 
 export async function createPrivateLoopbackConnectionControllerV1(

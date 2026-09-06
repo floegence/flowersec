@@ -248,6 +248,81 @@ final class ConnectionControllerTests: XCTestCase {
     if case .success(let claimed) = oneShot { try await claimed.retire() }
   }
 
+  func testOneShotClaimsBeforeInvalidOptionsAndRetires() async throws {
+    let retired = AsyncCounterV3()
+    let lease = ArtifactLease(
+      artifact: try artifactV3(),
+      commitSpend: {},
+      retire: { _ = await retired.increment() })
+    let options = ConnectorOptions(origin: "https://app.example", connectTimeout: .zero)
+    let connector = try SessionConnectorV3(
+      lease: lease, options: options, runtime: ConnectorLifecycleRuntimeV3())
+
+    do {
+      _ = try await connector.connect()
+      XCTFail("an invalid timeout established a session")
+    } catch let error as ConnectError {
+      XCTAssertEqual(error, .artifactInvalid)
+    }
+    let retirements = await retired.value
+    XCTAssertEqual(retirements, 1)
+    do {
+      _ = try await lease.claim()
+      XCTFail("an invalid-options lease remained claimable")
+    } catch is ArtifactLeaseError {}
+  }
+
+  func testOneShotClaimsBeforePreCancellationAndRetires() async throws {
+    let retired = AsyncCounterV3()
+    let lease = ArtifactLease(
+      artifact: try artifactV3(),
+      commitSpend: {},
+      retire: { _ = await retired.increment() })
+    let task = Task {
+      withUnsafeCurrentTask { $0?.cancel() }
+      return try await SessionConnectorV3(
+        lease: lease, options: controllerOptionsV3, runtime: ConnectorLifecycleRuntimeV3()
+      ).connect()
+    }
+
+    do {
+      _ = try await task.value
+      XCTFail("a pre-canceled connection established a session")
+    } catch let error as ConnectError {
+      XCTAssertEqual(error, .canceled)
+    }
+    let retirements = await retired.value
+    XCTAssertEqual(retirements, 1)
+    do {
+      _ = try await lease.claim()
+      XCTFail("a canceled lease remained claimable")
+    } catch is ArtifactLeaseError {}
+  }
+
+  func testOneShotClaimsBeforeRuntimeValidationAndRetires() async throws {
+    let retired = AsyncCounterV3()
+    let lease = ArtifactLease(
+      artifact: try artifactV3(),
+      commitSpend: {},
+      retire: { _ = await retired.increment() })
+    let connector = try SessionConnectorV3(
+      lease: lease, options: controllerOptionsV3,
+      runtime: ConnectorLifecycleRuntimeV3(rejectOptions: true))
+
+    do {
+      _ = try await connector.connect()
+      XCTFail("invalid runtime options established a session")
+    } catch let error as ConnectError {
+      XCTAssertEqual(error, .artifactInvalid)
+    }
+    let retirements = await retired.value
+    XCTAssertEqual(retirements, 1)
+    do {
+      _ = try await lease.claim()
+      XCTFail("a runtime-validation lease remained claimable")
+    } catch is ArtifactLeaseError {}
+  }
+
   func testCloseCancelsBlockedRetirementWithoutPublishingRetryState() async throws {
     let retireGate = CancellationAwareRetireGateV3()
     let lease = ArtifactLease(
@@ -3031,6 +3106,29 @@ private actor BlockingErrorArtifactSourceV3: ArtifactSource {
 
 private enum LateArtifactSourceErrorV3: Error {
   case unexpected
+}
+
+private struct ConnectorLifecycleRuntimeV3: RuntimeCarrierAdapterV3 {
+  let capabilities = RuntimeCapabilitiesV3.macOS
+  var rejectOptions = false
+
+  func validate(options: ConnectorOptions) throws {
+    if rejectOptions { throw ConnectorLifecycleErrorV3.invalidOptions }
+  }
+
+  func prepare(
+    candidate: CanonicalCandidateV3,
+    path: PathKind,
+    role: SessionRoleV3,
+    options: ConnectorOptions,
+    activePinHashes: [Data]?
+  ) async throws -> any PreparedCarrierConnectionV3 {
+    throw ConnectorBoundaryErrorV3.runtimeFailed
+  }
+}
+
+private enum ConnectorLifecycleErrorV3: Error {
+  case invalidOptions
 }
 
 private actor NeverArtifactSourceV3: ArtifactSource {
