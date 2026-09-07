@@ -59,8 +59,14 @@ stay outside the push path. Release publishes validated source and runs no tests
 
 `flowersec-test` reads one suite plan, starts at the first incomplete test ID,
 and records only the source SHA, suite, plan, and completed IDs. A GREEN test
-leaves no output artifact. A RED test stops scheduling and retains only bounded
-output needed to locate the first failure. `make test` starts a fresh local
-acceptance plan, while `make test-resume` continues through the incomplete tail
-until the next RED or `ALL GREEN`. When the source SHA changes, resume updates
-the SHA, clears stale failure output, and preserves the completed prefix.
+leaves no output artifact. Ordinary acceptance and diagnostic suites stop
+scheduling after the first RED and leave tests that never started as `NOT RUN`,
+retaining only bounded output needed to locate the first failure. The
+structured performance suite is the deliberate exception: a case-level
+`FAIL` that has returned a structured result is recorded as `FAIL`, and later
+cases may still run; runner, setup, cleanup, context, or budget errors stop
+the suite, and cases that never started remain `NOT RUN`. `make test` starts a
+fresh local acceptance plan, while `make test-resume` continues through the
+incomplete tail until the next RED or `ALL GREEN`. When the source SHA changes,
+resume updates the SHA, clears stale failure output, and preserves the
+completed prefix.
