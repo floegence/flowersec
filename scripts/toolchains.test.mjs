@@ -19,7 +19,9 @@ test("maintained toolchain declarations satisfy one policy", () => verifyToolcha
 test("independent declaration drift and removal of enforcement fail closed", (t) => {
   const root = fixture(t);
   for (const [file, from, to, error] of [
-    [".nvmrc", "24.20.0", "26.8.1", /\.nvmrc/],
+    [".nvmrc", "26.8.1", "24.20.0", /\.nvmrc/],
+    ["scripts/test-host-init.sh", "readonly node_version=26.8.1", "readonly node_version=24.20.0", /test host node/],
+    ["flowersec-ts/package.json", '"node": ">=24.20.0"', '"node": ">=26.8.1"', /Node minimum/],
     ["rust-toolchain.toml", 'channel = "1.98.0"', 'channel = "stable"', /rust-toolchain/],
     ["flowersec-native-transport/Cargo.toml", 'rust-version = "1.88"', 'rust-version = "1.98"', /Cargo.toml/],
     ["examples/swift/Package.swift", "swift-tools-version: 6.1", "swift-tools-version: 6.3", /Package.swift/],
@@ -44,11 +46,12 @@ test("authoritative config rejects floating, missing and unknown version fields"
     (config) => { config.rust.nightly = "nightly"; },
     (config) => { delete config.go.version; },
     (config) => { config.node.fallback = "latest"; },
+    (config) => { config.node.minimum = "99.0.0"; },
   ]) {
     const config = structuredClone(readToolchains());
     mutate(config);
     fs.writeFileSync(path.join(root, "toolchains.json"), JSON.stringify(config));
-    assert.throws(() => readToolchains(root), /exact version|invalid/);
+    assert.throws(() => readToolchains(root), /exact version|invalid|must satisfy/);
   }
 });
 
@@ -75,9 +78,10 @@ test("runtime detects mismatched tools before work and distinguishes explicit co
   for (const language of ["go", "node", "rust", "swift"]) {
     assert.throws(() => checkRuntime([language], { env: {}, platform: "linux", run: () => ({ status: 0, stdout: "unexpected version" }) }), /expected.*actual/);
   }
-  const next = () => ({ status: 0, stdout: `v${config.node.compatibility}` });
-  assert.throws(() => checkRuntime(["node"], { run: next }), /node: expected/);
-  checkRuntime(["node-compatibility"], { run: next });
+  const nodeMinimum = () => ({ status: 0, stdout: `v${config.node.minimum}` });
+  assert.throws(() => checkRuntime(["node"], { run: nodeMinimum }), /node: expected/);
+  checkRuntime(["node-minimum"], { run: nodeMinimum });
+  assert.throws(() => checkRuntime(["node-minimum"], { run }), /node-minimum: expected/);
   const minimum = () => ({ status: 0, stdout: `rustc ${config.rust.msrv} (fixture)` });
   assert.throws(() => checkRuntime(["rust"], { run: minimum }), /rust: expected/);
   checkRuntime(["rust-msrv"], { run: minimum });

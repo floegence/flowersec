@@ -2501,7 +2501,7 @@ test("CodeQL policy structurally separates scheduled Swift analysis", () => {
 });
 
 test("workflow version expectations follow the authoritative toolchain configuration", async (t) => {
-  for (const [language, field] of [["node", "version"], ["node", "compatibility"], ["rust", "version"], ["rust", "msrv"], ["swift", "xcode"]]) {
+  for (const [language, field] of [["node", "version"], ["node", "minimum"], ["rust", "version"], ["rust", "msrv"], ["swift", "xcode"]]) {
     await t.test(`${language}.${field}`, (t) => {
       const root = createReleasePolicyFixture(t);
       const original = toolchains[language][field];
@@ -2621,11 +2621,23 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       to: "",
     },
     {
-      name: "Node compatibility validates the primary runtime",
+      name: "Node minimum compatibility validates the primary runtime",
       file: "ci.yml",
-      from: "        run: node scripts/toolchains.mjs --check-runtime node-compatibility\n",
+      from: "        run: node scripts/toolchains.mjs --check-runtime node-minimum\n",
       to: "        run: node scripts/toolchains.mjs --check-runtime node\n",
     },
+    {
+      name: "Node minimum compatibility uses the primary runtime",
+      file: "ci.yml",
+      from: `          node-version: "${toolchains.node.minimum}"\n`,
+      to: `          node-version: "${toolchains.node.version}"\n`,
+    },
+    ...["ci.yml", "codeql.yml", "release.yml", "rust-release.yml"].map((file) => ({
+      name: `Node primary runtime is downgraded to the minimum in ${file}`,
+      file,
+      from: `          node-version: "${toolchains.node.version}"\n`,
+      to: `          node-version: "${toolchains.node.minimum}"\n`,
+    })),
     {
       name: "Rust recovery uses the runner default Node",
       file: "rust-release.yml",

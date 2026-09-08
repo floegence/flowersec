@@ -173,7 +173,7 @@ end
 begin
 toolchains = JSON.parse(File.read("toolchains.json"))
 node_version = toolchains.fetch("node").fetch("version")
-node_compatibility = toolchains.fetch("node").fetch("compatibility")
+node_minimum = toolchains.fetch("node").fetch("minimum")
 rust_version = toolchains.fetch("rust").fetch("version")
 rust_msrv = toolchains.fetch("rust").fetch("msrv")
 xcode_directory = "/Applications/Xcode_#{toolchains.fetch("swift").fetch("xcode")}.app/Contents/Developer"
@@ -316,7 +316,7 @@ scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflo
 container_security_jobs = require_hash(container_security_workflow["jobs"], "the container security workflow jobs")
 require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-recovery"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
-require_exact_keys(ci_jobs, ["repository", "precommit", "node-next", "rust-msrv", "rust-stable", "rust-windows", "dependency-review"], "the hosted CI workflow jobs")
+require_exact_keys(ci_jobs, ["repository", "precommit", "node-minimum", "rust-msrv", "rust-stable", "rust-windows", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze", "analyze-swift"], "the CodeQL workflow jobs")
 require_exact_keys(scorecard_jobs, ["analysis"], "the Scorecard workflow jobs")
 require_exact_keys(container_security_jobs, ["trivy"], "the container security workflow jobs")
@@ -329,7 +329,7 @@ npm_recovery_job = require_job(release_workflow, "npm-recovery", "the unified re
 rust_publish_job = require_job(rust_workflow, "publish", "the Rust recovery workflow")
 repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow")
 precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
-node_next_job = require_job(ci_workflow, "node-next", "the hosted CI workflow")
+node_minimum_job = require_job(ci_workflow, "node-minimum", "the hosted CI workflow")
 rust_stable_job = require_job(ci_workflow, "rust-stable", "the hosted CI workflow")
 rust_windows_job = require_job(ci_workflow, "rust-windows", "the hosted CI workflow")
 rust_msrv_job = require_job(ci_workflow, "rust-msrv", "the hosted CI workflow")
@@ -348,7 +348,7 @@ require_exact_keys(npm_recovery_job, ["needs", "if", "runs-on", "timeout-minutes
 require_exact_keys(rust_publish_job, ["runs-on", "timeout-minutes", "permissions", "steps"], "the Rust recovery workflow publish job")
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
-require_exact_keys(node_next_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Node 26 job")
+require_exact_keys(node_minimum_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Node minimum job")
 require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Rust stable job")
 require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Rust Windows job")
 require_exact_keys(rust_msrv_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust MSRV job")
@@ -360,9 +360,9 @@ require_exact_value(precommit_job["timeout-minutes"], 60, "the hosted CI precomm
 require_exact_value(precommit_job["env"], {
   "DEVELOPER_DIR" => xcode_directory,
 }, "the hosted CI precommit Xcode selection")
-require_exact_value(node_next_job["name"], "Node #{node_compatibility.split('.').first} compatibility", "the hosted CI Node compatibility job name")
-require_exact_value(node_next_job["runs-on"], "ubuntu-latest", "the hosted CI Node 26 runner")
-require_exact_value(node_next_job["timeout-minutes"], 10, "the hosted CI Node 26 timeout")
+require_exact_value(node_minimum_job["name"], "Node #{node_minimum.split('.').first} minimum compatibility", "the hosted CI Node minimum job name")
+require_exact_value(node_minimum_job["runs-on"], "ubuntu-latest", "the hosted CI Node minimum runner")
+require_exact_value(node_minimum_job["timeout-minutes"], 10, "the hosted CI Node minimum timeout")
 require_exact_value(rust_stable_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} stable", "the hosted CI Rust stable job name")
 require_exact_value(rust_stable_job["runs-on"], "ubuntu-latest", "the hosted CI Rust stable runner")
 require_exact_value(rust_stable_job["timeout-minutes"], 30, "the hosted CI Rust stable timeout")
@@ -484,7 +484,7 @@ require_exact_value(npm_recovery_job["permissions"], {
   [rust_publish_job, "the Rust recovery workflow publish job"],
   [repository_job, "the hosted CI repository job"],
   [precommit_job, "the hosted CI precommit job"],
-  [node_next_job, "the hosted CI Node 26 job"],
+  [node_minimum_job, "the hosted CI Node minimum job"],
   [rust_stable_job, "the hosted CI Rust stable job"],
   [rust_windows_job, "the hosted CI Rust Windows job"],
   [rust_msrv_job, "the hosted CI Rust MSRV job"],
@@ -512,7 +512,7 @@ native_prebuilt_steps = require_steps(native_prebuilt_job, "the unified release 
 npm_recovery_steps = require_steps(npm_recovery_job, "the unified release workflow npm recovery job")
 ci_steps = require_steps(repository_job, "the hosted CI repository job")
 precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
-node_next_steps = require_steps(node_next_job, "the hosted CI Node 26 job")
+node_minimum_steps = require_steps(node_minimum_job, "the hosted CI Node minimum job")
 rust_stable_steps = require_steps(rust_stable_job, "the hosted CI Rust stable job")
 rust_windows_steps = require_steps(rust_windows_job, "the hosted CI Rust Windows job")
 rust_msrv_steps = require_steps(rust_msrv_job, "the hosted CI Rust MSRV job")
@@ -592,15 +592,15 @@ validate_step_contracts(precommit_steps, [
   { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime go node rust swift" } },
   { name: "Run precommit quality gate", keys: ["name", "run"], values: { "run" => "make precommit" } },
 ], "the hosted CI precommit job")
-validate_step_contracts(node_next_steps, [
+validate_step_contracts(node_minimum_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
-  { name: "Setup current Node", keys: ["name", "uses", "with"], values: {
+  { name: "Setup minimum Node", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-    "with" => { "node-version" => node_compatibility, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
+    "with" => { "node-version" => node_minimum, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
   } },
-  { name: "Validate compatibility runtime", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node-compatibility" } },
+  { name: "Validate minimum runtime", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node-minimum" } },
   { name: "Run TypeScript language lane", keys: ["name", "run"], values: { "run" => "make ts-ci ts-build ts-test-short" } },
-], "the hosted CI Node 26 job")
+], "the hosted CI Node minimum job")
 validate_step_contracts(rust_msrv_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {

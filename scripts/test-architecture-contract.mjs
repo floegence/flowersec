@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import "./test-transport-v3-contract.mjs";
+import { readToolchains } from "./toolchains.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
@@ -24,7 +25,7 @@ const packageJSON = JSON.parse(read("flowersec-ts/package.json"));
 
 assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v5");
 assert.equal(packageJSON.version, "5.0.5");
-assert.equal(packageJSON.engines.node, ">=24.20.0");
+assert.equal(packageJSON.engines.node, `>=${readToolchains(root).node.minimum}`);
 assert.deepEqual(packageJSON.bin, { "flowersec-ts-cli": "./dist/cli.js" });
 assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "5");
 assert.equal(read("flowersec-rust/Cargo.toml").match(/^version = "([^"]+)"$/m)?.[1], packageJSON.version);

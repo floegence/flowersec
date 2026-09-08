@@ -11,7 +11,7 @@ readonly host_swift_toolchains=$host_cache/toolchains/swift
 readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:$host_home/.local/bin:$host_home/.swiftly/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 readonly playwright_download_host=https://npmmirror.com/mirrors/playwright
 readonly go_version=1.27.1
-readonly node_version=24.20.0
+readonly node_version=26.8.1
 readonly rust_version=1.98.0
 readonly swiftly_version=1.1.3
 readonly swift_version=6.3.1
@@ -45,7 +45,7 @@ case $(uname -m) in
     go_arch=amd64
     go_sha256=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445
     node_arch=x64
-    node_sha256=2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2
+    node_sha256=3e301118d7df53d563b7e96c1617545f26e2f76f9724be668d6cab65c15dda5d
     rustup_target=x86_64-unknown-linux-gnu
     rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c
     rust_archive_sha256=ed8ee2df70909c88cbaf87a6cfa3920dac00b537de12a6abe6906641e0f5952f
@@ -67,7 +67,7 @@ case $(uname -m) in
     go_arch=arm64
     go_sha256=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec
     node_arch=arm64
-    node_sha256=5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7
+    node_sha256=23c1b4d19e2f12a7d06fe8aa3d6e0e4923cf77a47e13c5ccdf32fadaa33960f2
     rustup_target=aarch64-unknown-linux-gnu
     rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c
     rust_archive_sha256=ac9283184301aeed06ecc9f5aa4c1be7041e18a1b197b6cb6c5d162d98f566da

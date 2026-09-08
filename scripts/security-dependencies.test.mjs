@@ -47,7 +47,7 @@ function assertHostArchitectureBindings(source) {
       architecture: "amd64",
       tuples: {
         Go: "    go_arch=amd64\n    go_sha256=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445\n",
-        Node: "    node_arch=x64\n    node_sha256=2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2\n",
+        Node: "    node_arch=x64\n    node_sha256=3e301118d7df53d563b7e96c1617545f26e2f76f9724be668d6cab65c15dda5d\n",
         Rust: "    rustup_target=x86_64-unknown-linux-gnu\n    rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c\n    rust_archive_sha256=ed8ee2df70909c88cbaf87a6cfa3920dac00b537de12a6abe6906641e0f5952f\n",
         Swiftly: "    swiftly_arch=x86_64\n    swiftly_sha256=4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0\n    swiftly_binary_sha256=e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61\n",
         Playwright: "    playwright_chromium_archive=builds/cft/${playwright_chromium_version}/linux64/chrome-linux64.zip\n    playwright_chromium_sha256=ae8736ac28bc69278551500f219fc749575648263c43ec5990749eff43b9fcf8\n    playwright_chromium_executable=chrome-linux64/chrome\n    playwright_headless_archive=builds/cft/${playwright_chromium_version}/linux64/chrome-headless-shell-linux64.zip\n    playwright_headless_sha256=3cfc2bd00d1bafcf8a68dc74c9c92bb7150ddc8d26ade948a776316e1cec4f14\n    playwright_headless_executable=chrome-headless-shell-linux64/chrome-headless-shell\n    playwright_ffmpeg_archive=builds/ffmpeg/${playwright_ffmpeg_revision}/ffmpeg-linux.zip\n    playwright_ffmpeg_sha256=ebc74fc5b94830176a3c2914ae96bd8bc7f6a91f4f33890230f84a172ee61ccc\n",
@@ -58,7 +58,7 @@ function assertHostArchitectureBindings(source) {
       architecture: "arm64",
       tuples: {
         Go: "    go_arch=arm64\n    go_sha256=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec\n",
-        Node: "    node_arch=arm64\n    node_sha256=5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7\n",
+        Node: "    node_arch=arm64\n    node_sha256=23c1b4d19e2f12a7d06fe8aa3d6e0e4923cf77a47e13c5ccdf32fadaa33960f2\n",
         Rust: "    rustup_target=aarch64-unknown-linux-gnu\n    rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c\n    rust_archive_sha256=ac9283184301aeed06ecc9f5aa4c1be7041e18a1b197b6cb6c5d162d98f566da\n",
         Swiftly: "    swiftly_arch=aarch64\n    swiftly_sha256=cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a\n    swiftly_binary_sha256=6531421eeb80eb69db21e41b1ed94bac1467548972eb82861fc4beb6664bd6aa\n",
         Playwright: "    playwright_chromium_archive=builds/chromium/${playwright_chromium_revision}/chromium-linux-arm64.zip\n    playwright_chromium_sha256=b5ad7d8fe70f230b34198ddb5626d717c016db2f627cb44b922babbcaf3479b9\n    playwright_chromium_executable=chrome-linux/chrome\n    playwright_headless_archive=builds/chromium/${playwright_chromium_revision}/chromium-headless-shell-linux-arm64.zip\n    playwright_headless_sha256=b03443e1e1a60d06e07b6cdfe650b8c2bfcbb3db497d2b652f73dc6912f4ae15\n    playwright_headless_executable=chrome-linux/headless_shell\n    playwright_ffmpeg_archive=builds/ffmpeg/${playwright_ffmpeg_revision}/ffmpeg-linux-arm64.zip\n    playwright_ffmpeg_sha256=2628c03f05318ff812c8c9baaf207dea2ddf53e818c0dc936714b0fbe3afb009\n",
@@ -305,8 +305,8 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
   for (const digest of [
     "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445",
     "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec",
-    "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2",
-    "5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7",
+    "3e301118d7df53d563b7e96c1617545f26e2f76f9724be668d6cab65c15dda5d",
+    "23c1b4d19e2f12a7d06fe8aa3d6e0e4923cf77a47e13c5ccdf32fadaa33960f2",
     "4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0",
     "cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a",
     "e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61",

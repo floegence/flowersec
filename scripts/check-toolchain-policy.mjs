@@ -29,11 +29,12 @@ export function verifyToolchainPolicy(root = repositoryRoot) {
   }
   const packages = ["flowersec-ts/package.json", "flowersec-node-native/package.json",
     ...["darwin-arm64", "darwin-x64", "linux-arm64-gnu", "linux-x64-gnu"].map((platform) => `flowersec-node-native/npm/${platform}/package.json`)];
-  for (const file of packages) equal(JSON.parse(read(file)).engines.node, `>=${config.node.version}`, `${file} Node minimum`);
+  for (const file of packages) equal(JSON.parse(read(file)).engines.node, `>=${config.node.minimum}`, `${file} Node minimum`);
   const pkg = JSON.parse(read("flowersec-ts/package.json"));
   equal(pkg.devDependencies["@typescript/native"], `npm:typescript@${config.typescript.version}`, "TypeScript compiler");
   equal(pkg.devDependencies.typescript, `npm:@typescript/typescript6@${config.typescript.apiVersion}`, "TypeScript lint API");
   const lock = JSON.parse(read("flowersec-ts/package-lock.json")).packages;
+  equal(lock[""]?.engines?.node, `>=${config.node.minimum}`, "locked package Node minimum");
   equal(lock["node_modules/@typescript/native"]?.version, config.typescript.version, "locked TypeScript compiler");
   equal(lock["node_modules/typescript"]?.version, config.typescript.apiVersion, "locked TypeScript API wrapper");
   equal(lock["node_modules/@typescript/old"]?.version, config.typescript.compatibilityVersion, "locked TypeScript compatibility compiler");

@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 export const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const fields = {
   go: ["version"], rust: ["version", "msrv", "nightly"],
-  node: ["version", "compatibility"], swift: ["version", "xcode", "toolsVersion"],
+  node: ["version", "minimum"], swift: ["version", "xcode", "toolsVersion"],
   typescript: ["version", "apiVersion", "compatibilityVersion"],
 };
 
@@ -27,6 +27,12 @@ export function readToolchains(root = repositoryRoot) {
       }
     }
     Object.freeze(config[language]);
+  }
+  const nodeVersion = config.node.version.split(".").map(Number);
+  const nodeMinimum = config.node.minimum.split(".").map(Number);
+  const firstDifference = nodeVersion.findIndex((part, index) => part !== nodeMinimum[index]);
+  if (firstDifference !== -1 && nodeVersion[firstDifference] < nodeMinimum[firstDifference]) {
+    throw new Error("toolchains.json node.version must satisfy node.minimum");
   }
   return Object.freeze(config);
 }
@@ -52,8 +58,8 @@ export function checkRuntime(languages, { config = readToolchains(), env = proce
         }
         break;
       case "node":
-      case "node-compatibility":
-        expected = language === "node" ? config.node.version : config.node.compatibility;
+      case "node-minimum":
+        expected = language === "node" ? config.node.version : config.node.minimum;
         actual = output("node", ["--version"], env, run).replace(/^v/, "");
         install = `nvm install ${expected} && nvm use ${expected}`;
         break;

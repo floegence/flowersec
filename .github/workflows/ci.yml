@@ -48,7 +48,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.20.0"
+          node-version: "26.8.1"
 
       - name: Check release workflow policy
         run: scripts/check-release-workflow-policy.sh
@@ -77,7 +77,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.20.0"
+          node-version: "26.8.1"
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
@@ -93,8 +93,8 @@ jobs:
       - name: Run precommit quality gate
         run: make precommit
 
-  node-next:
-    name: Node 26 compatibility
+  node-minimum:
+    name: Node 24 minimum compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -102,15 +102,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Setup current Node
+      - name: Setup minimum Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "26.8.1"
+          node-version: "24.20.0"
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
-      - name: Validate compatibility runtime
-        run: node scripts/toolchains.mjs --check-runtime node-compatibility
+      - name: Validate minimum runtime
+        run: node scripts/toolchains.mjs --check-runtime node-minimum
 
       - name: Run TypeScript language lane
         run: make ts-ci ts-build ts-test-short
@@ -127,7 +127,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.20.0"
+          node-version: "26.8.1"
 
       - name: Setup Rust MSRV
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable

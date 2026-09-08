@@ -5,6 +5,9 @@ toolchain versions. Development, primary CI, acceptance, security analysis, and
 publication use these versions. The published SDK minimum versions are separate
 compatibility promises.
 
+Pinned GitHub Actions control their own bundled JavaScript runtime. Repository
+commands use the Node version selected by `actions/setup-node` from this policy.
+
 | Role | Configuration | Execution |
 | --- | --- | --- |
 | Go | `go.version` | All modules, CI, security tools, probes, and the container builder |
@@ -12,7 +15,7 @@ compatibility promises.
 | Rust minimum | `rust.msrv` | Dedicated MSRV checks for all three published Rust crates |
 | Rust fuzzing | `rust.nightly` | Explicit fuzz target using a dated nightly |
 | Node | `node.version` | `.nvmrc`, primary CI, local gates, and publication |
-| Node compatibility | `node.compatibility` | Dedicated compatibility CI only |
+| Node minimum | `node.minimum` | Published SDK engine requirements and dedicated minimum-version compatibility CI |
 | Swift | `swift.version`, `swift.xcode` | Explicit Xcode selection on macOS, including CodeQL; signed Swift release on Linux |
 | Swift package minimum | `swift.toolsVersion` | Swift package manifests |
 | TypeScript compiler | `typescript.version` | Explicit `@typescript/native/bin/tsc` entry point |
