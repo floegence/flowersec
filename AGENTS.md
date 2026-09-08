@@ -103,6 +103,11 @@
 
 ## 4. Test and push gates
 
+- `toolchains.json` is the authority for exact engineering toolchains. Keep
+  native declarations, CI, release, host installers, and runtime checks aligned
+  with it; see `docs/TOOLCHAINS.md`. Minimum-supported and compatibility
+  toolchains are explicit separate roles. Do not bypass version guards, use
+  floating compiler selectors, or raise SDK minimums merely to align build tools.
 - Feature commits run the fast `make precommit` gate. `scripts/push-main.sh` runs the bounded local `make test` acceptance suite once and does not repeat precommit.
 - `make check`, nightly, diagnostic, and performance targets are explicit engineering workflows outside the main push path. Release runs no tests.
 - Swift CodeQL runs on the daily/manual path only and never gates push or release.

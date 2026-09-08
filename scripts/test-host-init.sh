@@ -10,14 +10,14 @@ readonly host_go_root=$host_cache/toolchains/go
 readonly host_swift_toolchains=$host_cache/toolchains/swift
 readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:$host_home/.local/bin:$host_home/.swiftly/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 readonly playwright_download_host=https://npmmirror.com/mirrors/playwright
-readonly go_version=1.27.0
+readonly go_version=1.27.1
 readonly node_version=24.20.0
 readonly rust_version=1.98.0
 readonly swiftly_version=1.1.3
-readonly swift_version=6.1.3
-# SHA-256 of the Swift version, Swiftly version, PGP verification, and the
-# canonical root-owned toolchain directory.
-readonly swift_verification_marker=2cfe642c07bc6b03dcdcf6673440891654cf063b916fae3686bb33728f7dd29f
+readonly swift_version=6.3.1
+# SHA-256 of newline-terminated Swift version, Swiftly version,
+# "pgp-verified", and the canonical root-owned toolchain directory.
+readonly swift_verification_marker=ade6cc65c01d801ab3b43afd8ce6c694a545887f6313c8e8a4d7f44f6200437a
 readonly playwright_version=1.62.1
 readonly playwright_chromium_revision=1234
 readonly playwright_chromium_version=151.0.7922.34
@@ -43,7 +43,7 @@ case $(uname -m) in
   x86_64|amd64)
     architecture=amd64
     go_arch=amd64
-    go_sha256=675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685
+    go_sha256=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445
     node_arch=x64
     node_sha256=2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2
     rustup_target=x86_64-unknown-linux-gnu
@@ -65,7 +65,7 @@ case $(uname -m) in
   aarch64|arm64)
     architecture=arm64
     go_arch=arm64
-    go_sha256=51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda
+    go_sha256=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec
     node_arch=arm64
     node_sha256=5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7
     rustup_target=aarch64-unknown-linux-gnu

@@ -23,8 +23,6 @@ import (
 	"time"
 )
 
-const repoGoToolchain = "go1.27.0"
-
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
@@ -362,7 +360,7 @@ func countTSRuntimeExports(m *manifest) int {
 }
 
 func verifyRust(repoRoot string, m *manifest) error {
-	toolchain, err := rustToolchainVersion(repoRoot, m.Rust.CratePath)
+	toolchain, err := repoToolchainVersion(repoRoot, "rust")
 	if err != nil {
 		return err
 	}
@@ -413,21 +411,23 @@ func createRustProbeDir(_ string) (string, error) {
 	return os.MkdirTemp("", "flowersec-stability-rust-probe-")
 }
 
-func rustToolchainVersion(repoRoot, cratePath string) (string, error) {
-	manifestPath := filepath.Join(repoRoot, cratePath, "Cargo.toml")
-	data, err := os.ReadFile(manifestPath)
+func repoToolchainVersion(repoRoot, language string) (string, error) {
+	configPath := filepath.Join(repoRoot, "toolchains.json")
+	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return "", fmt.Errorf("read Rust crate manifest: %w", err)
+		return "", fmt.Errorf("read repository toolchains: %w", err)
 	}
-	match := regexp.MustCompile(`(?m)^rust-version = "([0-9]+)\.([0-9]+)(?:\.([0-9]+))?"$`).FindSubmatch(data)
-	if match == nil {
-		return "", fmt.Errorf("Rust crate manifest %s must declare a canonical rust-version", filepath.ToSlash(manifestPath))
+	var config map[string]struct {
+		Version string `json:"version"`
 	}
-	patch := "0"
-	if len(match[3]) > 0 {
-		patch = string(match[3])
+	if err := json.Unmarshal(data, &config); err != nil {
+		return "", fmt.Errorf("parse repository toolchains: %w", err)
 	}
-	return fmt.Sprintf("%s.%s.%s", match[1], match[2], patch), nil
+	version := config[language].Version
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(version) {
+		return "", fmt.Errorf("toolchains.json %s.version must be an exact version", language)
+	}
+	return version, nil
 }
 
 func verifySwift(repoRoot string, m *manifest) error {
@@ -951,6 +951,10 @@ func formatSwiftSymbolKey(key string) string {
 }
 
 func verifyGo(repoRoot string, m *manifest) error {
+	goVersion, err := repoToolchainVersion(repoRoot, "go")
+	if err != nil {
+		return err
+	}
 	tmpDir, err := os.MkdirTemp("", "flowersec-stability-go-*")
 	if err != nil {
 		return err
@@ -964,7 +968,7 @@ func verifyGo(repoRoot string, m *manifest) error {
 		return err
 	}
 
-	goMod, goTest, err := renderGoVerifier(m)
+	goMod, goTest, err := renderGoVerifier(m, goVersion)
 	if err != nil {
 		return err
 	}
@@ -983,7 +987,7 @@ func verifyGo(repoRoot string, m *manifest) error {
 			return err
 		}
 	}
-	commandEnvironment := append(withRepoGoToolchain(),
+	commandEnvironment := append(withRepoGoToolchain(goVersion),
 		"GOWORK=off",
 		"GOMODCACHE="+filepath.Join(tmpDir, "modcache"),
 		"GONOSUMDB="+m.Go.ModulePath,
@@ -1005,7 +1009,7 @@ func verifyGo(repoRoot string, m *manifest) error {
 			time.Sleep(time.Duration(attempt) * 200 * time.Millisecond)
 			continue
 		}
-		if err := verifyForbiddenGoPackages(tmpDir, m, commandEnvironment); err != nil {
+		if err := verifyForbiddenGoPackages(tmpDir, m, commandEnvironment, goVersion); err != nil {
 			return err
 		}
 		fmt.Printf("go symbols OK: %d targets and %d forbidden packages verified\n", len(m.Go.CompileTargets), len(m.Go.ForbiddenPackages))
@@ -1014,13 +1018,13 @@ func verifyGo(repoRoot string, m *manifest) error {
 	return errors.New("verify-go exhausted its retry contract")
 }
 
-func verifyForbiddenGoPackages(tmpDir string, m *manifest, environment []string) error {
+func verifyForbiddenGoPackages(tmpDir string, m *manifest, environment []string, goVersion string) error {
 	for index, packagePath := range m.Go.ForbiddenPackages {
 		probeDir := filepath.Join(tmpDir, fmt.Sprintf("negative-%d", index))
 		if err := os.MkdirAll(probeDir, 0o755); err != nil {
 			return err
 		}
-		goMod := fmt.Sprintf("module flowersec-negative-probe\n\ngo %s\n\nrequire %s %s\n", strings.TrimPrefix(repoGoToolchain, "go"), m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
+		goMod := fmt.Sprintf("module flowersec-negative-probe\n\ngo %s\n\nrequire %s %s\n", goVersion, m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
 		if err := os.WriteFile(filepath.Join(probeDir, "go.mod"), []byte(goMod), 0o644); err != nil {
 			return err
 		}
@@ -1165,7 +1169,7 @@ func writeLocalGoModuleProxy(proxyRoot, sourceRoot, modulePath, version string) 
 	return errors.Join(walkErr, zipCloseErr, archiveCloseErr)
 }
 
-func renderGoVerifier(m *manifest) (string, string, error) {
+func renderGoVerifier(m *manifest, goVersion string) (string, string, error) {
 	var imports strings.Builder
 	var checks strings.Builder
 	interfaceGroups := make([]goInterfaceGuard, 0)
@@ -1215,7 +1219,7 @@ func renderGoVerifier(m *manifest) (string, string, error) {
 		fmt.Fprintf(&checks, "\tvar _ %s = (manifestInterface%d)(nil)\n", group.receiver, index)
 	}
 
-	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo 1.27.0\n\nrequire %s %s\n", m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
+	goMod := fmt.Sprintf("module flowersecstabilitychecktmp\n\ngo %s\n\nrequire %s %s\n", goVersion, m.Go.ModulePath, goVerifierModuleVersion(m.Go.ModulePath))
 	goTest := fmt.Sprintf("package flowersecstabilitychecktmp\n\nimport (\n%s)\n\nfunc TestContractSymbolsCompile(t *testing.T) {\n%s}\n", imports.String()+"\t\"testing\"\n", checks.String())
 	return goMod, goTest, nil
 }
@@ -1264,13 +1268,17 @@ func goVerifierUsesQualifier(m *manifest, qualifier string) bool {
 var coverageLine = regexp.MustCompile(`^(?:ok|\?)\s+(\S+)\s+.*coverage:\s+([0-9.]+)% of statements$`)
 
 func verifyGoCoverage(repoRoot string, m *manifest, short bool) error {
+	goVersion, err := repoToolchainVersion(repoRoot, "go")
+	if err != nil {
+		return err
+	}
 	packages, err := defaultGoTestPackages(repoRoot)
 	if err != nil {
 		return err
 	}
 	cmd := goCoverageCommand(short, packages)
 	cmd.Dir = filepath.Join(repoRoot, "flowersec-go")
-	cmd.Env = withRepoGoToolchain()
+	cmd.Env = withRepoGoToolchain(goVersion)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -1300,13 +1308,17 @@ func verifyGoCoverage(repoRoot string, m *manifest, short bool) error {
 }
 
 func defaultGoTestPackages(repoRoot string) ([]string, error) {
+	goVersion, err := repoToolchainVersion(repoRoot, "go")
+	if err != nil {
+		return nil, err
+	}
 	absoluteRoot, err := filepath.Abs(repoRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve repository root: %w", err)
 	}
 	cmd := exec.Command(filepath.Join(absoluteRoot, "scripts", "list-default-go-test-packages.sh"))
 	cmd.Dir = filepath.Join(absoluteRoot, "flowersec-go")
-	cmd.Env = withRepoGoToolchain()
+	cmd.Env = withRepoGoToolchain(goVersion)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("list default Go test packages: %w:\n%s", err, output)
@@ -1348,6 +1360,6 @@ func mustParseFloat(s string) float64 {
 	return whole + frac/fracDiv
 }
 
-func withRepoGoToolchain() []string {
-	return append(os.Environ(), "GOTOOLCHAIN="+repoGoToolchain)
+func withRepoGoToolchain(goVersion string) []string {
+	return append(os.Environ(), "GOTOOLCHAIN=go"+goVersion)
 }

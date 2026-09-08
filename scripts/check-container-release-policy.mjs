@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readToolchains } from "./toolchains.mjs";
 
 export function parseDockerfile(source) {
   if (typeof source !== "string" || source === "") throw new Error("Dockerfile is empty");
@@ -28,24 +29,29 @@ export function parseDockerfile(source) {
   return logicalLines;
 }
 
-export const containerDockerfileContracts = Object.freeze({
-  "docker/flowersec-runtime/Dockerfile": Object.freeze({
-    syntax: "# syntax=docker/dockerfile:1.26.0@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
-    buildFrom: "--platform=$BUILDPLATFORM golang:1.27.0-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS build",
-    buildOutput: "/out/flowersec-runtime",
-    buildPackage: "./cmd/flowersec-runtime",
-    final: [
-      { instruction: "FROM", value: "gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7" },
-      { instruction: "COPY", value: "--from=build /out/flowersec-runtime /usr/local/bin/flowersec-runtime" },
-      { instruction: "COPY", value: "LICENSE /usr/share/doc/flowersec/LICENSE" },
-      { instruction: "COPY", value: "release-compliance/runtime-image/THIRD_PARTY_NOTICES.md /usr/share/doc/flowersec/THIRD_PARTY_NOTICES.md" },
-      { instruction: "COPY", value: "release-compliance/runtime-image/SBOM_SCOPE.md /usr/share/doc/flowersec/SBOM_SCOPE.md" },
-      { instruction: "COPY", value: "release-compliance/runtime-image/sbom /usr/share/doc/flowersec/sbom" },
-      { instruction: "EXPOSE", value: "8080 443/udp" },
-      { instruction: "ENTRYPOINT", value: "[\"/usr/local/bin/flowersec-runtime\"]" },
-    ],
-  }),
-});
+export function getContainerDockerfileContracts(repoRoot) {
+  const goVersion = readToolchains(repoRoot).go.version;
+  return Object.freeze({
+    "docker/flowersec-runtime/Dockerfile": Object.freeze({
+      syntax: "# syntax=docker/dockerfile:1.26.0@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
+      buildFrom: `--platform=$BUILDPLATFORM golang:${goVersion}-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS build`,
+      buildOutput: "/out/flowersec-runtime",
+      buildPackage: "./cmd/flowersec-runtime",
+      final: [
+        { instruction: "FROM", value: "gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7" },
+        { instruction: "COPY", value: "--from=build /out/flowersec-runtime /usr/local/bin/flowersec-runtime" },
+        { instruction: "COPY", value: "LICENSE /usr/share/doc/flowersec/LICENSE" },
+        { instruction: "COPY", value: "release-compliance/runtime-image/THIRD_PARTY_NOTICES.md /usr/share/doc/flowersec/THIRD_PARTY_NOTICES.md" },
+        { instruction: "COPY", value: "release-compliance/runtime-image/SBOM_SCOPE.md /usr/share/doc/flowersec/SBOM_SCOPE.md" },
+        { instruction: "COPY", value: "release-compliance/runtime-image/sbom /usr/share/doc/flowersec/sbom" },
+        { instruction: "EXPOSE", value: "8080 443/udp" },
+        { instruction: "ENTRYPOINT", value: "[\"/usr/local/bin/flowersec-runtime\"]" },
+      ],
+    }),
+  });
+}
+
+export const containerDockerfileContracts = getContainerDockerfileContracts();
 
 export function verifyContainerDockerfile(source, contract) {
   if (!contract) throw new Error("missing container Dockerfile contract");
@@ -64,6 +70,13 @@ export function verifyContainerDockerfile(source, contract) {
     throw new Error("container Dockerfile build stage base changed");
   }
   const buildStage = instructions.slice(0, fromIndexes[1]);
+  const toolchainInstructions = buildStage.filter((entry) => /\bGOTOOLCHAIN\b/.test(entry.value));
+  if (toolchainInstructions.length !== 1
+    || toolchainInstructions[0] !== buildStage[1]
+    || toolchainInstructions[0].instruction !== "ENV"
+    || toolchainInstructions[0].value !== "GOTOOLCHAIN=local") {
+    throw new Error("container Dockerfile builder must set exactly ENV GOTOOLCHAIN=local immediately after FROM without overrides");
+  }
   const buildCommands = buildStage.filter((entry) => (
     entry.instruction === "RUN" && /\bgo build\b/.test(entry.value)
   ));
@@ -79,7 +92,7 @@ export function verifyContainerDockerfile(source, contract) {
 }
 
 export function verifyContainerReleasePolicy(repoRoot) {
-  for (const [relative, contract] of Object.entries(containerDockerfileContracts)) {
+  for (const [relative, contract] of Object.entries(getContainerDockerfileContracts(repoRoot))) {
     verifyContainerDockerfile(fs.readFileSync(path.join(repoRoot, relative), "utf8"), contract);
   }
 }

@@ -4,6 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { readToolchains } from "./toolchains.mjs";
 
 const [, , secondsText, stage, command, ...args] = process.argv;
 const seconds = Number(secondsText);
@@ -40,7 +41,7 @@ function offlineEnvironment() {
   const statePath = path.join(process.cwd(), ".flowersec", "final-go-toolchain.json");
   const state = JSON.parse(readRegularFileNoFollow(statePath, "offline Go toolchain state").toString("utf8"));
   if (state.schema !== "flowersec-final-go-toolchain-v1"
-    || state.version !== "go1.27.0"
+    || state.version !== `go${readToolchains(process.cwd()).go.version}`
     || typeof state.binary !== "string"
     || !path.isAbsolute(state.binary)
     || !/^[0-9a-f]{64}$/.test(state.sha256)

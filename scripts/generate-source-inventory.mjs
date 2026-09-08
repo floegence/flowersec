@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { collectGoModuleDirectories } from "./check-go-security.mjs";
+import { readToolchains } from "./toolchains.mjs";
 import {
   normalizeSwiftPins,
   swiftSecurityGitEnvironment,
@@ -795,6 +796,7 @@ function makeGoBinaryComponent(module, licenseMap, policy, sumEvidence) {
 }
 
 function collectGoBinaryGraph(repoRoot, policy, releaseVersion, kind, definition, platforms) {
+  const goToolchain = `go${readToolchains(repoRoot).go.version}`;
   const root = rootComponent(
     "generic",
     `flowersec-${kind}`,
@@ -827,7 +829,7 @@ function collectGoBinaryGraph(repoRoot, policy, releaseVersion, kind, definition
           GOENV: "off",
           GOFLAGS: "",
           GOOS: platform.goos,
-          GOTOOLCHAIN: "go1.27.0",
+          GOTOOLCHAIN: goToolchain,
           GOWORK: "off",
         },
       ));

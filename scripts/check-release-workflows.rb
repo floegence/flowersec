@@ -2,6 +2,7 @@
 
 require "psych"
 require "digest"
+require "json"
 
 class PolicyError < StandardError; end
 
@@ -170,6 +171,13 @@ def require_step_field(step, field, expected, context)
 end
 
 begin
+toolchains = JSON.parse(File.read("toolchains.json"))
+node_version = toolchains.fetch("node").fetch("version")
+node_compatibility = toolchains.fetch("node").fetch("compatibility")
+rust_version = toolchains.fetch("rust").fetch("version")
+rust_msrv = toolchains.fetch("rust").fetch("msrv")
+xcode_directory = "/Applications/Xcode_#{toolchains.fetch("swift").fetch("xcode")}.app/Contents/Developer"
+
 dependabot = load_workflow(".github/dependabot.yml")
 release_workflow = load_workflow(".github/workflows/release.yml")
 rust_workflow = load_workflow(".github/workflows/rust-release.yml")
@@ -228,7 +236,9 @@ end
 require_exact_keys(rust_workflow, ["name", true, "env", "permissions", "concurrency", "jobs"], "workflow #{rust_workflow["name"].inspect}")
 require_exact_keys(release_workflow, ["name", true, "env", "permissions", "concurrency", "jobs"], "workflow #{release_workflow["name"].inspect}")
 [release_workflow, rust_workflow, ci_workflow, codeql_workflow, container_security_workflow].each do |workflow|
-  require_exact_value(workflow["env"], { "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" => "true" }, "workflow #{workflow["name"].inspect} environment")
+  expected_env = { "FORCE_JAVASCRIPT_ACTIONS_TO_NODE24" => "true" }
+  expected_env["GOTOOLCHAIN"] = "local" if [release_workflow, ci_workflow, codeql_workflow].include?(workflow)
+  require_exact_value(workflow["env"], expected_env, "workflow #{workflow["name"].inspect} environment")
 end
 require_exact_value(ci_workflow[true], {
   "push" => { "branches" => ["main"] },
@@ -306,7 +316,7 @@ scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflo
 container_security_jobs = require_hash(container_security_workflow["jobs"], "the container security workflow jobs")
 require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-recovery"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
-require_exact_keys(ci_jobs, ["repository", "precommit", "node-next", "rust-stable", "rust-windows", "dependency-review"], "the hosted CI workflow jobs")
+require_exact_keys(ci_jobs, ["repository", "precommit", "node-next", "rust-msrv", "rust-stable", "rust-windows", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze", "analyze-swift"], "the CodeQL workflow jobs")
 require_exact_keys(scorecard_jobs, ["analysis"], "the Scorecard workflow jobs")
 require_exact_keys(container_security_jobs, ["trivy"], "the container security workflow jobs")
@@ -322,6 +332,7 @@ precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
 node_next_job = require_job(ci_workflow, "node-next", "the hosted CI workflow")
 rust_stable_job = require_job(ci_workflow, "rust-stable", "the hosted CI workflow")
 rust_windows_job = require_job(ci_workflow, "rust-windows", "the hosted CI workflow")
+rust_msrv_job = require_job(ci_workflow, "rust-msrv", "the hosted CI workflow")
 dependency_review_job = require_job(ci_workflow, "dependency-review", "the hosted CI workflow")
 codeql_job = require_job(codeql_workflow, "analyze", "the CodeQL workflow")
 codeql_swift_job = require_job(codeql_workflow, "analyze-swift", "the CodeQL workflow")
@@ -340,22 +351,27 @@ require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", 
 require_exact_keys(node_next_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Node 26 job")
 require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Rust stable job")
 require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Rust Windows job")
+require_exact_keys(rust_msrv_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust MSRV job")
+require_exact_value(rust_msrv_job["env"], { "RUSTUP_TOOLCHAIN" => rust_msrv }, "the hosted CI Rust MSRV selection")
 require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")
 require_exact_value(precommit_job["name"], "Precommit quality gate", "the hosted CI precommit job name")
 require_exact_value(precommit_job["runs-on"], "macos-26", "the hosted CI precommit runner")
 require_exact_value(precommit_job["timeout-minutes"], 60, "the hosted CI precommit timeout")
 require_exact_value(precommit_job["env"], {
-  "DEVELOPER_DIR" => "/Applications/Xcode_26.4.1.app/Contents/Developer",
+  "DEVELOPER_DIR" => xcode_directory,
 }, "the hosted CI precommit Xcode selection")
-require_exact_value(node_next_job["name"], "Node 26 compatibility", "the hosted CI Node 26 job name")
+require_exact_value(node_next_job["name"], "Node #{node_compatibility.split('.').first} compatibility", "the hosted CI Node compatibility job name")
 require_exact_value(node_next_job["runs-on"], "ubuntu-latest", "the hosted CI Node 26 runner")
 require_exact_value(node_next_job["timeout-minutes"], 10, "the hosted CI Node 26 timeout")
-require_exact_value(rust_stable_job["name"], "Rust 1.98 stable", "the hosted CI Rust stable job name")
+require_exact_value(rust_stable_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} stable", "the hosted CI Rust stable job name")
 require_exact_value(rust_stable_job["runs-on"], "ubuntu-latest", "the hosted CI Rust stable runner")
 require_exact_value(rust_stable_job["timeout-minutes"], 30, "the hosted CI Rust stable timeout")
-require_exact_value(rust_windows_job["name"], "Rust 1.98 Windows", "the hosted CI Rust Windows job name")
+require_exact_value(rust_windows_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} Windows", "the hosted CI Rust Windows job name")
 require_exact_value(rust_windows_job["runs-on"], "windows-latest", "the hosted CI Rust Windows runner")
 require_exact_value(rust_windows_job["timeout-minutes"], 30, "the hosted CI Rust Windows timeout")
+require_exact_value(rust_msrv_job["name"], "Rust #{rust_msrv} MSRV", "the hosted CI Rust MSRV job name")
+require_exact_value(rust_msrv_job["runs-on"], "ubuntu-latest", "the hosted CI Rust MSRV runner")
+require_exact_value(rust_msrv_job["timeout-minutes"], 30, "the hosted CI Rust MSRV timeout")
 require_exact_value(dependency_review_job["name"], "Dependency review", "the hosted CI dependency review job name")
 require_exact_value(dependency_review_job["runs-on"], "ubuntu-latest", "the hosted CI dependency review runner")
 require_exact_value(dependency_review_job["timeout-minutes"], 5, "the hosted CI dependency review timeout")
@@ -396,7 +412,8 @@ require_exact_value(codeql_job["strategy"], {
     { "language" => "rust", "build-mode" => "none", "runner" => "ubuntu-latest" },
   ] },
 }, "the CodeQL matrix")
-require_exact_keys(codeql_swift_job, ["name", "needs", "if", "runs-on", "timeout-minutes", "permissions", "steps"], "the CodeQL Swift analyze job")
+require_exact_keys(codeql_swift_job, ["name", "needs", "if", "runs-on", "timeout-minutes", "env", "permissions", "steps"], "the CodeQL Swift analyze job")
+require_exact_value(codeql_swift_job["env"], { "DEVELOPER_DIR" => xcode_directory }, "the CodeQL Swift Xcode selection")
 require_exact_value(codeql_swift_job["name"], "Analyze (swift)", "the CodeQL Swift job name")
 require_exact_value(codeql_swift_job["needs"], "plan", "the CodeQL Swift analyze dependency")
 require_exact_value(codeql_swift_job["runs-on"], "macos-26", "the CodeQL Swift runner")
@@ -470,6 +487,7 @@ require_exact_value(npm_recovery_job["permissions"], {
   [node_next_job, "the hosted CI Node 26 job"],
   [rust_stable_job, "the hosted CI Rust stable job"],
   [rust_windows_job, "the hosted CI Rust Windows job"],
+  [rust_msrv_job, "the hosted CI Rust MSRV job"],
   [codeql_plan_job, "the CodeQL plan job"],
   [scorecard_job, "the Scorecard analysis job"],
   [container_security_job, "the container security job"],
@@ -497,6 +515,7 @@ precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
 node_next_steps = require_steps(node_next_job, "the hosted CI Node 26 job")
 rust_stable_steps = require_steps(rust_stable_job, "the hosted CI Rust stable job")
 rust_windows_steps = require_steps(rust_windows_job, "the hosted CI Rust Windows job")
+rust_msrv_steps = require_steps(rust_msrv_job, "the hosted CI Rust MSRV job")
 dependency_review_steps = require_steps(dependency_review_job, "the hosted CI dependency review job")
 codeql_steps = require_steps(codeql_job, "the CodeQL analyze job")
 codeql_swift_steps = require_steps(codeql_swift_job, "the CodeQL Swift analyze job")
@@ -546,6 +565,10 @@ validate_step_contracts(ci_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Check changed lines", keys: ["name", "env", "run"], values: { "env" => { "BEFORE_SHA" => "${{ github.event.before }}", "BASE_SHA" => "${{ github.event.pull_request.base.sha }}" } }, run_sha256: "a2ec5f19c1131255e166da2837951a99a958bb074bbdcaf48bd06b11710159a7" },
   { name: "Check shell syntax", keys: ["name", "run"], run_sha256: "37f031d1ced8b2c2554b688709bc5a7faecfee38d494f87d9f4da00284209b0a" },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    "with" => { "node-version" => node_version },
+  } },
   { name: "Check release workflow policy", keys: ["name", "run"], run_sha256: "ca5a81f1c6229ace59783918c84158923cedda3a99d4135a5e95fd812242a47d" },
 ], "the hosted CI repository job")
 validate_step_contracts(precommit_steps, [
@@ -560,27 +583,46 @@ validate_step_contracts(precommit_steps, [
   } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-    "with" => { "node-version" => "24.20.0", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
+    "with" => { "node-version" => node_version, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
   } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => "1.88.0", "components" => "rustfmt,clippy" },
+    "with" => { "toolchain" => rust_version, "components" => "rustfmt,clippy" },
   } },
+  { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime go node rust swift" } },
   { name: "Run precommit quality gate", keys: ["name", "run"], values: { "run" => "make precommit" } },
 ], "the hosted CI precommit job")
 validate_step_contracts(node_next_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Setup current Node", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-    "with" => { "node-version" => "26.8.1", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
+    "with" => { "node-version" => node_compatibility, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
   } },
+  { name: "Validate compatibility runtime", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node-compatibility" } },
   { name: "Run TypeScript language lane", keys: ["name", "run"], values: { "run" => "make ts-ci ts-build ts-test-short" } },
 ], "the hosted CI Node 26 job")
+validate_step_contracts(rust_msrv_steps, [
+  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    "with" => { "node-version" => node_version },
+  } },
+  { name: "Setup Rust MSRV", keys: ["name", "uses", "with"], values: {
+    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
+    "with" => { "toolchain" => rust_msrv },
+  } },
+  { name: "Validate MSRV runtime", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node rust-msrv" } },
+  { name: "Check supported Rust crates at MSRV", keys: ["name", "run"], values: {
+    "run" => ["flowersec-rust", "flowersec-native-transport", "flowersec-node-native", "examples/rust"].map { |crate|
+      "rustup run #{rust_msrv} cargo check --manifest-path #{crate}/Cargo.toml --locked --all-targets --all-features\n"
+    }.join,
+  } },
+], "the hosted CI Rust MSRV job")
 validate_step_contracts(rust_stable_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => "1.98.0", "components" => "rustfmt,clippy" },
+    "with" => { "toolchain" => rust_version, "components" => "rustfmt,clippy" },
   } },
   { name: "Build, test, and lint", keys: ["name", "run"], values: {
     "run" => "cargo check --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features\ncargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\ncargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
@@ -593,7 +635,7 @@ validate_step_contracts(rust_windows_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => "1.98.0" },
+    "with" => { "toolchain" => rust_version },
   } },
   { name: "Build and test", keys: ["name", "run"], values: {
     "run" => "cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features",
@@ -614,12 +656,26 @@ validate_step_contracts(dependency_review_steps, [
 ], "the hosted CI dependency review job")
 validate_step_contracts(codeql_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
+  { name: "Setup Go", keys: ["name", "if", "uses", "with"], values: {
+    "if" => "matrix.language == 'go'",
+    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+    "with" => {
+      "go-version-file" => "flowersec-go/go.mod",
+      "cache" => true,
+      "cache-dependency-path" => "flowersec-go/go.sum\ntools/releasenotes/go.sum\ntools/stabilitycheck/go.sum\n",
+    },
+  } },
   { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
   { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@cdf488f595d80d6e07e03d4674febd5ab45fa938" } },
   { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938" } },
 ], "the CodeQL analyze job")
 validate_step_contracts(codeql_swift_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    "with" => { "node-version" => node_version },
+  } },
+  { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node swift" } },
   { name: "Resolve Swift cache key", keys: ["name", "id", "run"], values: { "id" => "swift-cache-key", "run" => "swift --version | shasum -a 256 | awk '{ print \"toolchain=\" $1 }' >> \"$GITHUB_OUTPUT\"\n" } },
   { name: "Restore Swift build cache", keys: ["name", "uses", "with"], values: { "uses" => "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
   { name: "Prepare Swift build cache", keys: ["name", "run"], values: { "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
@@ -697,8 +753,9 @@ validate_step_contracts(release_steps, [
     "env" => { "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}" },
   }, run_sha256: "d4c29c98aae2d8fb96522062eb3fc3d245e24e8bad4f4972c37603f325dd7158" },
   { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
-  { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", "with" => { "node-version" => "24.20.0", "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
-  { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => "1.98.0" } } },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", "with" => { "node-version" => node_version, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
+  { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => rust_version } } },
+  { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime go node rust" } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
   { name: "Verify all language tags point to this commit", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_VERSION" => "${{ steps.vars.outputs.version }}",
@@ -795,12 +852,13 @@ validate_step_contracts(native_prebuilt_steps, [
   } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => "1.98.0", "targets" => "${{ matrix.target }}" },
+    "with" => { "toolchain" => rust_version, "targets" => "${{ matrix.target }}" },
   } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-    "with" => { "node-version" => "24.20.0" },
+    "with" => { "node-version" => node_version },
   } },
+  { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node rust" } },
   { name: "Build native addon", keys: ["name", "env", "run"], values: { "env" => {
     "NATIVE_TARGET" => "${{ matrix.target }}",
     "NATIVE_PLATFORM" => "${{ matrix.platform }}",
@@ -818,7 +876,7 @@ validate_step_contracts(npm_recovery_steps, [
   { name: nil, keys: ["uses", "with"], values: npm_release_checkout },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-    "with" => { "node-version" => "24.20.0", "registry-url" => "https://registry.npmjs.org" },
+    "with" => { "node-version" => node_version, "registry-url" => "https://registry.npmjs.org" },
   } },
   { name: "Setup Go", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
@@ -840,7 +898,12 @@ validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Checkout release commit", keys: ["name", "id", "env", "run"], values: { "id" => "version", "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" } }, run_sha256: "5d68a3db64a236498aee55916814fc9d89875553f6ef470b683d96b78b62a336" },
   { name: "Verify tagged commit is the remote main tip", keys: ["name", "run"], run_sha256: "c6b6362a10a06dc03d1e88283f854c3642c9fd2de2c08861a8ba1ac6467b98ab" },
-  { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => "1.98.0" } } },
+  { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => rust_version } } },
+  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+    "with" => { "node-version" => node_version },
+  } },
+  { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node rust" } },
   { name: "Validate release version facts", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "9431ce4342dcd8f8af90607321f1ceb9e6e61c13f455b06acd242d96f53e0087" },
   { name: "Verify release tags", keys: ["name", "env", "run"], values: { "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "3e5e103b4b32e468d370d25613885b564a2f9f0dfebe2ced9b182a1691038830" },
   { name: "Check whether native transport version is already published", keys: ["name", "id", "env", "run"], values: { "id" => "native-published", "env" => { "RELEASE_VERSION" => "${{ steps.version.outputs.version }}" } }, run_sha256: "66070c8554794b49acd86aa2f9e6177b2857685c1adf85c71a0e2f1f1a485fa4" },
@@ -952,7 +1015,7 @@ require_step_field(ci_policy_step, "run", "scripts/check-release-workflow-policy
 require_unconditional(ci_policy_step, "the hosted CI policy step")
 
 puts "verified structured release workflows"
-rescue PolicyError => error
+rescue PolicyError, JSON::ParserError, KeyError, Errno::ENOENT => error
   $stderr.puts error.message
   exit 1
 end

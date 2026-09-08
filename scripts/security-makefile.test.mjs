@@ -43,9 +43,9 @@ test("local and external test targets remain separated", () => {
     '@test -n "$(REPORT)" || { echo "REPORT=/absolute/path/performance-report.md is required" >&2; exit 2; }',
     '\t$(FLOWERSEC_TEST_HOST) run --suite performance --report "$(REPORT)" --budget "$(PERFORMANCE_BUDGET)"',
   ].join("\n"));
-  assert.match(canonical, /^test:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
-  assert.match(canonical, /^test-resume:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
-  assert.match(canonical, /^precommit:\n\t\$\(MAKE\) precommit-source$/m);
+  assert.match(canonical, /^test:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
+  assert.match(canonical, /^test-resume:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
+  assert.match(canonical, /^precommit:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\t\$\(MAKE\) precommit-source$/m);
   const ordinary = dryRun("test");
   const resume = dryRun("test-resume");
   const precommit = dryRun("precommit");
@@ -78,12 +78,12 @@ test("release and publication gates stay source-only", () => {
 
 test("protected recipes and definitions cannot be replaced", () => {
   for (const mutation of [
-    canonical.replace("test:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance", "test:\n\t@true"),
-    canonical.replace("test-resume:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance", "test-resume:\n\t@true"),
+    canonical.replace("\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance", "\t@true"),
+    canonical.replace("\tgo -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance", "\t@true"),
     canonical.replace("browser-smoke:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke", "browser-smoke:\n\t@true"),
     canonical.replace("coverage-race:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite coverage-race", "coverage-race:\n\t@true"),
     canonical.replace("browser-compat:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-compat", "browser-compat:\n\t@true"),
-    canonical.replace("precommit:\n\t$(MAKE) precommit-source", "precommit:\n\t$(MAKE) check"),
+    canonical.replace("\t$(MAKE) precommit-source", "\t$(MAKE) check"),
     canonical.replace("final-race-check:\n\t$(MAKE) go-test-race", "final-race-check:\n\t@true"),
     `${canonical}\nsecurity-dependency-check:\n\t@true\n`,
   ]) {

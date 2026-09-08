@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { readToolchains } from "./toolchains.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 const checkerPath = path.join(sourceRoot, "scripts/check-rust-security.mjs");
@@ -169,22 +170,50 @@ test("serde_with is absent or patched for GHSA-7gcf-g7xr-8hxj without drifting t
     );
   }
 
-  const manifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   const readme = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/README.md"), "utf8");
-  assert.match(manifest, /^rust-version = "1\.88"$/m);
-  assert.match(makefile, /^\tcd flowersec-rust && rustup run 1\.88\.0 cargo check --all-targets --all-features$/m);
+  const toolchains = readToolchains(sourceRoot);
+  assert.equal(toolchains.rust.msrv, "1.88.0", "the published MSRV must remain Rust 1.88");
   assert.match(readme, /supports Rust 1\.88\s+or newer/);
 
-  const releaseCargoRecipes = makefile
-    .split("\n")
-    .filter((line) => /\bcargo (?:fmt|clippy|test|doc|check|package|publish|llvm-cov)\b/u.test(line));
-  assert.ok(releaseCargoRecipes.length > 0, "Makefile must retain Rust release cargo recipes");
-  for (const line of releaseCargoRecipes) {
-    assert.match(
-      line,
-      /\brustup run 1\.88\.0 cargo\b/u,
-      `Rust release recipe must use the published MSRV toolchain: ${line}`,
-    );
+  const msrvRecipes = makefile.match(/^rust-msrv-check:[^\n]*\n((?:\t[^\n]*\n)*)/m)?.[1];
+  assert.ok(msrvRecipes, "Makefile must retain an explicit MSRV check");
+  for (const crate of ["flowersec-rust", "flowersec-native-transport", "flowersec-node-native"]) {
+    const manifest = fs.readFileSync(path.join(sourceRoot, crate, "Cargo.toml"), "utf8");
+    assert.match(manifest, /^rust-version = "1\.88"$/m, `${crate} must preserve its published MSRV`);
+    const recipe = msrvRecipes.split("\n").find((line) => line.includes(`cd ${crate} &&`)
+      || line.includes(`--manifest-path ${crate}/Cargo.toml`));
+    assert.ok(recipe, `${crate} must be checked by rust-msrv-check`);
+    assert.match(recipe, /\brustup run 1\.88\.0 cargo check\b/u);
+    assert.match(recipe, /(?:^|\s)--all-targets(?:\s|$)/u);
+    assert.match(recipe, /(?:^|\s)--all-features(?:\s|$)/u);
+  }
+});
+
+test("primary Rust cargo recipes use the root toolchain pinned by toolchains.json", () => {
+  const toolchains = readToolchains(sourceRoot);
+  const rootToolchain = fs.readFileSync(path.join(sourceRoot, "rust-toolchain.toml"), "utf8");
+  assert.match(rootToolchain, /^\[toolchain\]$/m);
+  assert.equal(rootToolchain.match(/^channel = "([^"]+)"$/m)?.[1], toolchains.rust.version);
+
+  const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
+  let target;
+  let primaryRecipes = 0;
+  for (const line of makefile.split("\n")) {
+    const targetMatch = line.match(/^([\w-]+):/u);
+    if (targetMatch) target = targetMatch[1];
+    if (!line.startsWith("\t") || !/\bcargo\b/u.test(line)) continue;
+    if (target === "rust-msrv-check" || target === "rust-fuzz-check") continue;
+    primaryRecipes += 1;
+    assert.doesNotMatch(line, /\brustup\s+run\b|\bcargo\s+\+|\bRUSTUP_TOOLCHAIN\s*=/u,
+      `primary Rust recipe must inherit the root toolchain: ${line}`);
+  }
+  assert.ok(primaryRecipes > 0, "Makefile must retain primary Rust cargo recipes");
+
+  for (const directory of ["flowersec-rust", "flowersec-rust/fuzz", "flowersec-native-transport", "flowersec-node-native", "examples", "examples/rust"]) {
+    for (const filename of ["rust-toolchain", "rust-toolchain.toml"]) {
+      assert.equal(fs.existsSync(path.join(sourceRoot, directory, filename)), false,
+        `${directory}/${filename} must not override the root primary toolchain`);
+    }
   }
 });

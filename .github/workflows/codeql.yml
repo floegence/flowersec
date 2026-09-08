@@ -13,6 +13,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  GOTOOLCHAIN: local
 
 permissions:
   contents: read
@@ -107,6 +108,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Setup Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache: true
+          cache-dependency-path: |
+            flowersec-go/go.sum
+            tools/releasenotes/go.sum
+            tools/stabilitycheck/go.sum
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
@@ -128,12 +140,22 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && needs.plan.outputs.should_scan == 'true')
     runs-on: macos-26
     timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
     permissions:
       actions: read
       contents: read
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.20.0"
+
+      - name: Validate runtime toolchains
+        run: node scripts/toolchains.mjs --check-runtime node swift
 
       - name: Resolve Swift cache key
         id: swift-cache-key

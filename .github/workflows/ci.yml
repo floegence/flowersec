@@ -10,6 +10,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  GOTOOLCHAIN: local
 
 permissions:
   contents: read
@@ -43,6 +44,11 @@ jobs:
           while IFS= read -r -d '' script; do
             bash -n "$script"
           done < <(find scripts .githooks -type f \( -name '*.sh' -o -path '.githooks/*' \) -print0)
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.20.0"
 
       - name: Check release workflow policy
         run: scripts/check-release-workflow-policy.sh
@@ -78,8 +84,11 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.98.0
           components: rustfmt,clippy
+
+      - name: Validate runtime toolchains
+        run: node scripts/toolchains.mjs --check-runtime go node rust swift
 
       - name: Run precommit quality gate
         run: make precommit
@@ -100,8 +109,40 @@ jobs:
           cache: npm
           cache-dependency-path: flowersec-ts/package-lock.json
 
+      - name: Validate compatibility runtime
+        run: node scripts/toolchains.mjs --check-runtime node-compatibility
+
       - name: Run TypeScript language lane
         run: make ts-ci ts-build ts-test-short
+
+  rust-msrv:
+    name: Rust 1.88.0 MSRV
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.20.0"
+
+      - name: Setup Rust MSRV
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.88.0
+
+      - name: Validate MSRV runtime
+        run: node scripts/toolchains.mjs --check-runtime node rust-msrv
+
+      - name: Check supported Rust crates at MSRV
+        run: |
+          rustup run 1.88.0 cargo check --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features
+          rustup run 1.88.0 cargo check --manifest-path flowersec-native-transport/Cargo.toml --locked --all-targets --all-features
+          rustup run 1.88.0 cargo check --manifest-path flowersec-node-native/Cargo.toml --locked --all-targets --all-features
+          rustup run 1.88.0 cargo check --manifest-path examples/rust/Cargo.toml --locked --all-targets --all-features
 
   rust-stable:
     name: Rust 1.98 stable

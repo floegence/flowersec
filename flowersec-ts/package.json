@@ -53,7 +53,7 @@
     "postcss": "^8.5.23"
   },
   "scripts": {
-    "build": "node ./scripts/clean-dist.mjs && tsc -p tsconfig.build.json && node ./scripts/build-browser-vendor.mjs",
+    "build": "node ./scripts/clean-dist.mjs && node ./node_modules/@typescript/native/bin/tsc -p tsconfig.build.json && node ./scripts/build-browser-vendor.mjs",
     "bench": "vitest bench --run",
     "test": "npm run build && vitest run --exclude 'src/**/*.integration.test.ts'",
     "test:browser": "npm run test:browser:chromium",
@@ -64,7 +64,7 @@
     "ensure:browser:firefox": "node ./scripts/ensure-playwright-browsers.mjs firefox",
     "ensure:browser:webkit": "node ./scripts/ensure-playwright-browsers.mjs webkit",
     "test:coverage": "npm run build && node ../scripts/server-parity-native-addon.mjs --test-coverage",
-    "typecheck:native-integration": "tsc -p tsconfig.native-integration.json",
+    "typecheck:native-integration": "node ./node_modules/@typescript/native/bin/tsc -p tsconfig.native-integration.json",
     "lint": "eslint .",
     "verify:package": "node ./scripts/verify-package-exports.mjs",
     "prepack": "npm run build",

@@ -7,9 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
+import { readToolchains } from "./toolchains.mjs";
 
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
+const toolchains = readToolchains(repositoryRoot);
 const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "flowersec-sdk-examples-"));
 const serverBinary = path.join(scratch, "server-parity-peer");
 
@@ -35,7 +37,7 @@ try {
     {
       name: "rust",
       run: async (fixture) => await runProcess("rustup", [
-        "run", "1.88.0", "cargo", "run", "--quiet", "--locked",
+        "run", toolchains.rust.version, "cargo", "run", "--quiet", "--locked",
         "--manifest-path", "examples/rust/Cargo.toml", "--", "connect-v3",
         fixture.artifactPath, fixture.trustDERPath, fixture.receiptPath,
       ], repositoryRoot, fixture.environment),

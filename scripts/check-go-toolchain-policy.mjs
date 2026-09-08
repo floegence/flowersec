@@ -5,13 +5,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  containerDockerfileContracts,
   parseDockerfile,
+  verifyContainerReleasePolicy,
 } from "./check-container-release-policy.mjs";
-import { goSecurityToolVersions } from "./check-go-security.mjs";
+import { discoverGoModuleDirectories, goSecurityToolVersions } from "./check-go-security.mjs";
+import { readToolchains } from "./toolchains.mjs";
 
-export const goSecurityBaseline = "1.27.0";
-const goToolchain = `go${goSecurityBaseline}`;
+export const goSecurityBaseline = readToolchains().go.version;
 const forbiddenGoVersion = [1, 26, 5].join(".");
 
 export function parseGoModPolicy(source, label) {
@@ -36,8 +36,10 @@ export function parseSetupGoSteps(source, label) {
     const indentation = item[1].length;
     const block = [item[2]];
     while (index + 1 < lines.length) {
-      const nextItem = /^(\s*)-\s+/.exec(lines[index + 1]);
-      if (nextItem && nextItem[1].length <= indentation) break;
+      const nextLine = lines[index + 1];
+      const nextContent = /^(\s*)\S/.exec(nextLine);
+      if (nextContent && !nextLine.trimStart().startsWith("#")
+        && nextContent[1].length <= indentation) break;
       block.push(lines[index + 1]);
       index += 1;
     }
@@ -66,18 +68,13 @@ function assertEqual(actual, expected, label) {
   if (actual !== expected) throw new Error(`${label} must be ${expected}; found ${actual}`);
 }
 
-function uniqueCapture(source, pattern, label) {
-  const matches = [...source.matchAll(pattern)];
-  if (matches.length !== 1) throw new Error(`${label} must occur exactly once; found ${matches.length}`);
-  return matches[0][1];
-}
-
 export function verifyGoToolchainPolicy(repoRoot) {
-  const moduleFiles = [
-    "flowersec-go/go.mod",
-    "tools/releasenotes/go.mod",
-    "tools/stabilitycheck/go.mod",
-  ];
+  const goSecurityBaseline = readToolchains(repoRoot).go.version;
+  const goToolchain = `go${goSecurityBaseline}`;
+  const moduleFiles = discoverGoModuleDirectories(repoRoot).map((directory) => (
+    path.relative(repoRoot, path.join(directory, "go.mod"))
+  ));
+  if (moduleFiles.length === 0) throw new Error("repository must contain Go modules");
   for (const relative of moduleFiles) {
     assertEqual(parseGoModPolicy(read(repoRoot, relative), relative), goSecurityBaseline, relative);
   }
@@ -91,12 +88,11 @@ export function verifyGoToolchainPolicy(repoRoot) {
   );
   if (!image) throw new Error("runtime Dockerfile builder must be a digest-pinned golang build stage");
   assertEqual(image[1], `${goSecurityBaseline}-alpine`, "runtime Dockerfile Go builder tag");
-  const contractBuilder = containerDockerfileContracts["docker/flowersec-runtime/Dockerfile"].buildFrom;
-  const contractImage = /\bgolang:([^@\s]+)@sha256:[0-9a-f]{64}\b/.exec(contractBuilder)?.[1];
-  assertEqual(contractImage, `${goSecurityBaseline}-alpine`, "runtime Dockerfile policy Go builder tag");
+  verifyContainerReleasePolicy(repoRoot);
 
   const workflowContracts = new Map([
     [".github/workflows/ci.yml", 1],
+    [".github/workflows/codeql.yml", 1],
     [".github/workflows/release.yml", 2],
   ]);
   for (const [relative, expectedCount] of workflowContracts) {
@@ -109,14 +105,7 @@ export function verifyGoToolchainPolicy(repoRoot) {
     }
   }
 
-  const securityScanner = read(repoRoot, "scripts/check-go-security.mjs");
-  assertEqual(
-    uniqueCapture(securityScanner, /^\s*goToolchain:\s*"(go[^"]+)",$/gm, "Go security scanner toolchain"),
-    goToolchain,
-    "Go security scanner toolchain",
-  );
-  assertEqual(goSecurityToolVersions({}).goToolchain, goToolchain, "loaded Go security scanner toolchain");
-
+  assertEqual(goSecurityToolVersions({}, repoRoot).goToolchain, goToolchain, "loaded Go security scanner toolchain");
   const hostInit = read(repoRoot, "scripts/test-host-init.sh");
   const hostVersion = /^readonly go_version=(\S+)$/m.exec(hostInit)?.[1];
   assertEqual(hostVersion, goSecurityBaseline, "test host Go version");
@@ -124,25 +113,6 @@ export function verifyGoToolchainPolicy(repoRoot) {
     || !hostInit.includes('grep -F "go${go_version}"')) {
     throw new Error("test host bootstrap must derive downloads and validation from go_version");
   }
-
-  const inventoryGenerator = read(repoRoot, "scripts/generate-source-inventory.mjs");
-  assertEqual(
-    uniqueCapture(inventoryGenerator, /^\s*GOTOOLCHAIN:\s*"(go[^"]+)",$/gm, "source inventory Go toolchain"),
-    goToolchain,
-    "source inventory Go toolchain",
-  );
-  const finalStage = read(repoRoot, "scripts/run-final-stage.mjs");
-  assertEqual(
-    uniqueCapture(finalStage, /^\s*\|\| state\.version !== "(go[^"]+)"$/gm, "final stage Go toolchain"),
-    goToolchain,
-    "final stage Go toolchain",
-  );
-  const stabilitySource = read(repoRoot, "tools/stabilitycheck/main.go");
-  assertEqual(
-    uniqueCapture(stabilitySource, /^const repoGoToolchain = "(go[^"]+)"$/gm, "stability checker Go toolchain"),
-    goToolchain,
-    "stability checker Go toolchain",
-  );
   const banned = [];
   const ignored = new Set([".build", ".git", ".swiftpm", "coverage", "dist", "node_modules", "target", "test-results"]);
   const pending = [repoRoot];

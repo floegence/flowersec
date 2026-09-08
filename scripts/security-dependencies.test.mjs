@@ -46,7 +46,7 @@ function assertHostArchitectureBindings(source) {
       selector: "x86_64|amd64",
       architecture: "amd64",
       tuples: {
-        Go: "    go_arch=amd64\n    go_sha256=675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685\n",
+        Go: "    go_arch=amd64\n    go_sha256=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445\n",
         Node: "    node_arch=x64\n    node_sha256=2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2\n",
         Rust: "    rustup_target=x86_64-unknown-linux-gnu\n    rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c\n    rust_archive_sha256=ed8ee2df70909c88cbaf87a6cfa3920dac00b537de12a6abe6906641e0f5952f\n",
         Swiftly: "    swiftly_arch=x86_64\n    swiftly_sha256=4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0\n    swiftly_binary_sha256=e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61\n",
@@ -57,7 +57,7 @@ function assertHostArchitectureBindings(source) {
       selector: "aarch64|arm64",
       architecture: "arm64",
       tuples: {
-        Go: "    go_arch=arm64\n    go_sha256=51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda\n",
+        Go: "    go_arch=arm64\n    go_sha256=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec\n",
         Node: "    node_arch=arm64\n    node_sha256=5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7\n",
         Rust: "    rustup_target=aarch64-unknown-linux-gnu\n    rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c\n    rust_archive_sha256=ac9283184301aeed06ecc9f5aa4c1be7041e18a1b197b6cb6c5d162d98f566da\n",
         Swiftly: "    swiftly_arch=aarch64\n    swiftly_sha256=cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a\n    swiftly_binary_sha256=6531421eeb80eb69db21e41b1ed94bac1467548972eb82861fc4beb6664bd6aa\n",
@@ -206,7 +206,7 @@ test("TypeScript 7 compilation and TypeScript 6 tooling APIs stay explicitly sep
   }
   assert.equal(
     manifest.scripts["typecheck:native-integration"],
-    "tsc -p tsconfig.native-integration.json",
+    "node ./node_modules/@typescript/native/bin/tsc -p tsconfig.native-integration.json",
   );
   assert.match(
     makefile,
@@ -222,6 +222,34 @@ test("TypeScript 7 compilation and TypeScript 6 tooling APIs stay explicitly sep
     "utf8",
   ));
   assert.ok(nativeIntegrationConfig.include.includes("src/node/nativeRawQuic.integration.test.ts"));
+});
+
+test("TypeScript entry points select the primary compiler despite the legacy tsc collision", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8"));
+  const { packages } = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package-lock.json"), "utf8"));
+  const config = JSON.parse(fs.readFileSync(path.join(sourceRoot, "toolchains.json"), "utf8"));
+  const primary = packages["node_modules/@typescript/native"];
+  const api = packages["node_modules/typescript"];
+  assert.equal(primary.name, "typescript");
+  assert.equal(primary.version, config.typescript.version);
+  assert.equal(primary.bin.tsc, "bin/tsc");
+  assert.equal(api.name, "@typescript/typescript6");
+  assert.equal(api.version, config.typescript.apiVersion);
+  assert.equal(api.bin.tsc6, "bin/tsc6");
+  // Both packages export tsc, so a shared .bin entry cannot identify the compiler.
+  assert.equal(packages["node_modules/@typescript/old"].bin.tsc, "bin/tsc");
+  const compiler = `node ./node_modules/@typescript/native/${primary.bin.tsc}`;
+  assert.ok(manifest.scripts.build.split(" && ").includes(`${compiler} -p tsconfig.build.json`));
+  assert.equal(manifest.scripts["typecheck:native-integration"], `${compiler} -p tsconfig.native-integration.json`);
+  for (const script of Object.values(manifest.scripts)) {
+    assert.doesNotMatch(script, /(?:^|&&\s*|;\s*)(?:npx\s+)?tsc\b/u);
+  }
+  const consumerChecks = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/scripts/verify-package-exports.mjs"), "utf8");
+  assert.equal(
+    (consumerChecks.match(/run\(process\.execPath, \[path\.join\(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc6'\)/gu) ?? []).length,
+    2,
+    "both packed consumer type checks must retain the explicit TypeScript 6 compatibility compiler",
+  );
 });
 
 test("npm audit includes build-time dependencies and fails on every severity", () => {
@@ -254,13 +282,13 @@ test("security dependency checks stay wired into local gates", () => {
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   assert.match(
     makefile,
-    /^security-dependency-check:\n\tnode --test .*scripts\/go-toolchain-policy\.test\.mjs.*scripts\/security-makefile\.test\.mjs.*\n\tnode scripts\/check-go-toolchain-policy\.mjs\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
+    /^security-dependency-check:\n\tnode --test .*scripts\/go-toolchain-policy\.test\.mjs.*scripts\/toolchains\.test\.mjs.*scripts\/security-makefile\.test\.mjs.*\n\tnode scripts\/check-go-toolchain-policy\.mjs\n\tnode scripts\/check-toolchain-policy\.mjs\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
   );
   assert.match(
     makefile,
-    /^precommit:\n\t\$\(MAKE\) precommit-source$/m,
+    /^precommit:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\t\$\(MAKE\) precommit-source$/m,
   );
-  assert.match(makefile, /^precommit-source:\n(?:\tnode scripts\/run-precommit-wave\.mjs .*\n){4}$/m);
+  assert.match(makefile, /^precommit-source:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n(?:\tnode scripts\/run-precommit-wave\.mjs .*\n){4}$/m);
   assert.match(makefile, /^\tnode scripts\/run-precommit-wave\.mjs static \$\(MAKE\) security-makefile-check security-dependency-check /m);
   assert.match(
     makefile,
@@ -275,8 +303,8 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
   const hostEntry = fs.readFileSync(path.join(sourceRoot, "scripts/test-host.sh"), "utf8");
   assertHostArchitectureBindings(source);
   for (const digest of [
-    "675c26c449cbb18fc24b74650de1eabbae6e16f64326fd85a283fb3b58280685",
-    "51798d2c42d0e1c6ed7fd9f48728b4193abac9e8aad6dbac2fe96a81f5909bda",
+    "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445",
+    "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec",
     "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2",
     "5f4ddab610c1ab2016b3c227cebdbf6d9495161487e4739c7b90090595f465f7",
     "4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0",

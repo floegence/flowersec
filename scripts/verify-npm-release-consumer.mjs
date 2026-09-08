@@ -12,9 +12,29 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const version = process.argv[2];
 assert.match(version ?? "", /^\d+\.\d+\.\d+$/);
+// The standalone recovery verifier follows the checked-out release tag's Go requirement.
+const goModule = await fs.readFile(path.resolve("flowersec-go/go.mod"), "utf8");
+const goRequirements = [...goModule.matchAll(/^go[ \t]+(\d+\.\d+(?:\.\d+)?)[ \t]*(?:\/\/[^\r\n]*)?\r?$/gm)];
+assert.equal(goRequirements.length, 1, "flowersec-go/go.mod must contain exactly one Go version requirement");
+const goVersion = goRequirements[0][1];
 const testID = "release/npm-consumer/go-node-raw-quic/direct-session";
 const root = await fs.mkdtemp(path.join(os.tmpdir(), "flowersec-npm-consumer-"));
 try {
+  const goRoot = path.join(root, "go-consumer");
+  await fs.mkdir(goRoot);
+  await fs.copyFile(
+    path.resolve("scripts/fixtures/npm-release-go-node-raw-quic/main.go"),
+    path.join(goRoot, "main.go"),
+  );
+  await fs.writeFile(path.join(goRoot, "go.mod"), [
+    "module flowersec_release_consumer",
+    "",
+    `go ${goVersion}`,
+    "",
+    `require github.com/floegence/flowersec/flowersec-go/v5 v${version}`,
+    "",
+  ].join("\n"));
+
   await fs.writeFile(path.join(root, "package.json"), '{"private":true,"type":"module"}\n');
   await execFileAsync("npm", ["install", "--ignore-scripts", "--audit=false", `@floegence/flowersec-core@${version}`, `@floegence/flowersec-node-native@${version}`], { cwd: root });
   await verifyCLIReadback(root);
@@ -28,20 +48,6 @@ try {
     env: { ...process.env, FLOWERSEC_NATIVE_ADDON_PATH: addonPath },
   });
 
-  const goRoot = path.join(root, "go-consumer");
-  await fs.mkdir(goRoot);
-  await fs.copyFile(
-    path.resolve("scripts/fixtures/npm-release-go-node-raw-quic/main.go"),
-    path.join(goRoot, "main.go"),
-  );
-  await fs.writeFile(path.join(goRoot, "go.mod"), [
-    "module flowersec_release_consumer",
-    "",
-    "go 1.27.0",
-    "",
-    `require github.com/floegence/flowersec/flowersec-go/v5 v${version}`,
-    "",
-  ].join("\n"));
   const goEnvironment = { ...process.env, GOWORK: "off", GOTOOLCHAIN: "local" };
   await execFileAsync("go", ["mod", "tidy"], { cwd: goRoot, env: goEnvironment });
 

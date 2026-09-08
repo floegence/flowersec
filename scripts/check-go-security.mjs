@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readToolchains } from "./toolchains.mjs";
 
 function defaultRun(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -48,12 +49,11 @@ const ignoredModuleSearchDirectories = new Set([
   "vendor",
 ]);
 
-const fixedGoSecurityTools = {
-  govulncheckVersion: "v1.7.0",
-  goToolchain: "go1.27.0",
-};
-
-export function goSecurityToolVersions(environment = process.env) {
+export function goSecurityToolVersions(environment = process.env, repoRoot) {
+  const fixedGoSecurityTools = {
+    govulncheckVersion: "v1.7.0",
+    goToolchain: `go${readToolchains(repoRoot).go.version}`,
+  };
   for (const [variable, expected] of [
     ["GOVULNCHECK_VERSION", fixedGoSecurityTools.govulncheckVersion],
     ["GOVULNCHECK_GOTOOLCHAIN", fixedGoSecurityTools.goToolchain],

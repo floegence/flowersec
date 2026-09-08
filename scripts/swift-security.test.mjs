@@ -77,7 +77,9 @@ test("Swift security inventory contains the root and example locks", async () =>
 });
 
 test("Swift toolchain parser accepts Apple and official Linux releases", async () => {
-  const { assertSwiftToolchain } = await loadChecker();
+  const { assertSwiftToolchain, requiredSwiftToolchainVersion } = await loadChecker();
+  const config = JSON.parse(fs.readFileSync(path.join(sourceRoot, "toolchains.json"), "utf8"));
+  assert.equal(requiredSwiftToolchainVersion, config.swift.version);
   assert.doesNotThrow(() => assertSwiftToolchain(
     "swift-driver version: 1.148.6 Apple Swift version 6.3.1",
   ));
@@ -87,6 +89,25 @@ test("Swift toolchain parser accepts Apple and official Linux releases", async (
   assert.throws(() => assertSwiftToolchain("Swift version 6.3.0"), /requires 6\.3\.1/);
   assert.throws(() => assertSwiftToolchain("Swift version 6.3.1-dev"), /cannot determine/);
   assert.throws(() => assertSwiftToolchain("unrecognized"), /cannot determine/);
+});
+
+test("Swift security takes its required compiler version from repository configuration", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-swift-toolchain-config-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "scripts"));
+  for (const script of ["check-swift-security.mjs", "toolchains.mjs"]) {
+    fs.copyFileSync(path.join(sourceRoot, "scripts", script), path.join(root, "scripts", script));
+  }
+  const config = JSON.parse(fs.readFileSync(path.join(sourceRoot, "toolchains.json"), "utf8"));
+  config.swift.version = "6.3.2";
+  fs.writeFileSync(path.join(root, "toolchains.json"), JSON.stringify(config));
+  const { assertSwiftToolchain, requiredSwiftToolchainVersion } = await import(
+    pathToFileURL(path.join(root, "scripts/check-swift-security.mjs"))
+  );
+  assert.equal(requiredSwiftToolchainVersion, "6.3.2");
+  assert.doesNotThrow(() => assertSwiftToolchain("Apple Swift version 6.3.2"));
+  assert.doesNotThrow(() => assertSwiftToolchain("Swift version 6.3.2 (swift-6.3.2-RELEASE)"));
+  assert.throws(() => assertSwiftToolchain("Swift version 6.3.1"), /requires 6\.3\.2/);
 });
 
 test("Swift locks reject missing, duplicate, or incomplete pins", async () => {

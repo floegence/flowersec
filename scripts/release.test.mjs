@@ -9,6 +9,7 @@ import test from "node:test";
 import { execBashBounded, fetchResponseBody } from "./release-readback.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
+const toolchains = JSON.parse(fs.readFileSync(path.join(sourceRoot, "toolchains.json"), "utf8"));
 const testImageDigest = `sha256:${"0".repeat(64)}`;
 const releaseMutationConcurrency = 4;
 const mainGateGraphFiles = [
@@ -22,6 +23,7 @@ const mainGateGraphFiles = [
 ];
 const releasePolicyFixtureFiles = [
   "Makefile",
+  "toolchains.json",
   ".github/dependabot.yml",
   ".githooks/pre-push",
   ".github/workflows/ci.yml",
@@ -36,6 +38,7 @@ const releasePolicyFixtureFiles = [
   "scripts/check-container-release-policy.mjs",
   "scripts/check-release-workflows.rb",
   "scripts/check-release-workflow-policy.sh",
+  "scripts/toolchains.mjs",
   "scripts/check-security-makefile.mjs",
   "scripts/run-final-lanes.mjs",
   "scripts/run-final-stage.mjs",
@@ -1526,6 +1529,78 @@ test("release recovery restores readback scripts from the reviewed workflow SHA 
   }
 });
 
+test("standalone npm recovery uses the target tag Go requirement without current toolchain files", async (t) => {
+  const recovery = extractWorkflowStepRun(
+    path.join(sourceRoot, ".github/workflows/release.yml"),
+    "npm-recovery",
+    "Publish or recover npm registry packages from immutable release assets",
+  );
+  const restore = recovery.slice(
+    recovery.indexOf('git checkout "$GITHUB_SHA" --'),
+    recovery.indexOf('scripts/verify-release-tags.sh'),
+  );
+  const copiedFiles = restore.match(/scripts\/[A-Za-z0-9/._-]+/g);
+  assert.deepEqual(copiedFiles, [
+    "scripts/release-readback.mjs",
+    "scripts/verify-npm-release-package.mjs",
+    "scripts/verify-npm-release-consumer.mjs",
+    "scripts/native-addon-smoke.mjs",
+    "scripts/fixtures/npm-release-go-node-raw-quic/main.go",
+  ]);
+
+  for (const fixture of [
+    { name: "old tag", goModule: "module example.com/release\n\ngo 1.27.0\n", expected: "1.27.0" },
+    { name: "current tag", goModule: fs.readFileSync(path.join(sourceRoot, "flowersec-go/go.mod"), "utf8"), expected: toolchains.go.version },
+    { name: "Go requirement differs from toolchain suggestion", goModule: "module example.com/release\r\n\r\ngo\t1.27.0 // release requirement\r\ntoolchain go1.27.1\r\n", expected: "1.27.0" },
+    { name: "missing Go requirement", goModule: "module example.com/release\n// go 1.27.0\ntoolchain go1.27.1\n", expected: null },
+  ]) {
+    await t.test(fixture.name, (t) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-npm-old-tag-"));
+      t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+      for (const file of copiedFiles) {
+        fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+        fs.copyFileSync(path.join(sourceRoot, file), path.join(root, file));
+      }
+      fs.mkdirSync(path.join(root, "flowersec-go"));
+      fs.writeFileSync(path.join(root, "flowersec-go/go.mod"), fixture.goModule);
+      const bin = path.join(root, "bin");
+      fs.mkdirSync(bin);
+      const capture = path.join(root, "consumer.json");
+      writeExecutable(path.join(bin, "npm"), `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+fs.writeFileSync(process.env.FLOWERSEC_TEST_CONSUMER_CAPTURE, JSON.stringify({
+  root: process.cwd(),
+  goModule: fs.readFileSync(path.join(process.cwd(), "go-consumer/go.mod"), "utf8"),
+}));
+process.stderr.write("stopped before registry access\\n");
+process.exit(73);
+`);
+      assert.equal(fs.existsSync(path.join(root, "toolchains.json")), false);
+      assert.equal(fs.existsSync(path.join(root, "scripts/toolchains.mjs")), false);
+      const result = spawnSync(process.execPath, ["scripts/verify-npm-release-consumer.mjs", "0.26.0"], {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 10_000,
+        env: isolatedEnvironment({
+          PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+          FLOWERSEC_TEST_CONSUMER_CAPTURE: capture,
+        }),
+      });
+      assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
+      if (fixture.expected === null) {
+        assert.match(result.stderr, /must contain exactly one Go version requirement/);
+        assert.equal(fs.existsSync(capture), false, "invalid Go requirements must fail before npm");
+      } else {
+        assert.match(result.stderr, /stopped before registry access/);
+        const consumer = JSON.parse(fs.readFileSync(capture, "utf8"));
+        assert.equal(consumer.goModule, `module flowersec_release_consumer\n\ngo ${fixture.expected}\n\nrequire github.com/floegence/flowersec/flowersec-go/v5 v0.26.0\n`);
+        assert.equal(fs.existsSync(consumer.root), false, "failed readback must clean its scratch directory");
+      }
+    });
+  }
+});
+
 test("release recovery preserves immutable assets and publishes npm from those exact archives", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   assert.match(workflow, /mode:\n\s+description: "Recovery scope"[\s\S]*default: npm-only[\s\S]*options:\n\s+- full\n\s+- npm-only/);
@@ -2265,7 +2340,7 @@ test("release gates stay wired into local checks and publication workflows", () 
   assert.match(makefile, /^release-policy-check:\n(?:\t.*\n)*\t\$\(MAKE\) release-test$/m);
   assert.match(
     makefile,
-    /^check: security-makefile-check\n\t\$\(MAKE\) release-policy-check$/m,
+    /^check: security-makefile-check\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\t\$\(MAKE\) release-policy-check$/m,
   );
   assert.match(makefile, /^check: security-makefile-check\n(?:\t.*\n)*\t\$\(MAKE\) final-integration-lanes$/m);
   assert.match(makefile, /^final-integration-lanes:\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 race \$\(MAKE\) final-race-check\n\tCARGO_NET_OFFLINE=true GOPROXY=off GOSUMDB=off npm_config_offline=true node scripts\/run-final-stage\.mjs 595 languages node scripts\/run-final-lanes\.mjs \$\(MAKE\) final-go-check final-ts-check final-swift-check final-rust-check\n\tnode scripts\/run-final-stage\.mjs 595 browser \$\(MAKE\) browser-smoke$/m);
@@ -2313,8 +2388,8 @@ test("default and final Go gates use the maintained source and test runner", () 
   assert.match(goTest, /\.\.\/scripts\/list-default-go-test-packages\.sh/);
   assert.doesNotMatch(goTest, /transport-test-runner|transportcheck/);
   assert.doesNotMatch(makefile, /tools\/transportcheck|transportcheck-diagnostic-contract|retired-transport-unit/);
-  assert.match(makefile, /^test:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
-  assert.match(makefile, /^test-resume:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
+  assert.match(makefile, /^test:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
+  assert.match(makefile, /^test-resume:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test resume --suite acceptance$/m);
   assert.match(makefile, /^browser-smoke:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite browser-smoke$/m);
   assert.match(makefile, /^diagnostic:\n\t\$\(FLOWERSEC_TEST_HOST\) run --suite diagnostic$/m);
   assert.match(
@@ -2425,6 +2500,32 @@ test("CodeQL policy structurally separates scheduled Swift analysis", () => {
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
 });
 
+test("workflow version expectations follow the authoritative toolchain configuration", async (t) => {
+  for (const [language, field] of [["node", "version"], ["node", "compatibility"], ["rust", "version"], ["rust", "msrv"], ["swift", "xcode"]]) {
+    await t.test(`${language}.${field}`, (t) => {
+      const root = createReleasePolicyFixture(t);
+      const original = toolchains[language][field];
+      const parts = original.split(".");
+      parts[2] = String(Number(parts[2]) + 1);
+      const updated = parts.join(".");
+      const config = structuredClone(toolchains);
+      config[language][field] = updated;
+      fs.writeFileSync(path.join(root, "toolchains.json"), JSON.stringify(config));
+      const check = () => spawnSync("ruby", ["-W0", "scripts/check-release-workflows.rb"], {
+        cwd: root, encoding: "utf8", env: isolatedEnvironment(),
+      });
+      const stale = check();
+      assert.notEqual(stale.status, 0, `${stale.stdout}${stale.stderr}`);
+      assert.match(stale.stderr, /reviewed value/);
+      for (const [file, source] of Object.entries(workflowSnapshot(root))) {
+        fs.writeFileSync(path.join(root, ".github/workflows", file), source.replaceAll(original, updated));
+      }
+      const synchronized = check();
+      assert.equal(synchronized.status, 0, `${synchronized.stdout}${synchronized.stderr}`);
+    });
+  }
+});
+
 test("push and release gates never depend on Swift CodeQL", () => {
   const releaseWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const pushMain = fs.readFileSync(path.join(sourceRoot, "scripts/push-main.sh"), "utf8");
@@ -2493,6 +2594,68 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     const result = runReleasePolicy(root);
     assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   });
+
+  for (const mutation of [
+    {
+      name: "Go CodeQL uses an automatically downloaded compiler",
+      file: "codeql.yml",
+      from: "  GOTOOLCHAIN: local\n",
+      to: "  GOTOOLCHAIN: auto\n",
+    },
+    {
+      name: "Go CodeQL reads the wrong module version",
+      file: "codeql.yml",
+      from: "          go-version-file: flowersec-go/go.mod\n",
+      to: "          go-version-file: tools/releasenotes/go.mod\n",
+    },
+    {
+      name: "MSRV silently uses the repository default Rust compiler",
+      file: "ci.yml",
+      from: `      RUSTUP_TOOLCHAIN: ${toolchains.rust.msrv}\n`,
+      to: `      RUSTUP_TOOLCHAIN: ${toolchains.rust.version}\n`,
+    },
+    {
+      name: "MSRV omits the Node native crate",
+      file: "ci.yml",
+      from: `          rustup run ${toolchains.rust.msrv} cargo check --manifest-path flowersec-node-native/Cargo.toml --locked --all-targets --all-features\n`,
+      to: "",
+    },
+    {
+      name: "Node compatibility validates the primary runtime",
+      file: "ci.yml",
+      from: "        run: node scripts/toolchains.mjs --check-runtime node-compatibility\n",
+      to: "        run: node scripts/toolchains.mjs --check-runtime node\n",
+    },
+    {
+      name: "Rust recovery uses the runner default Node",
+      file: "rust-release.yml",
+      from: [
+        "      - name: Setup Node",
+        "        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0",
+        "        with:",
+        `          node-version: "${toolchains.node.version}"`,
+        "",
+      ].join("\n"),
+      to: "",
+    },
+    {
+      name: "release runtime validation ignores a mismatched toolchain",
+      file: "release.yml",
+      from: "        run: node scripts/toolchains.mjs --check-runtime go node rust\n",
+      to: "        run: node scripts/toolchains.mjs --check-runtime go node rust || true\n",
+    },
+  ]) {
+    schedulePolicyTest(`rejects toolchain policy mutation: ${mutation.name}`, () => {
+      const root = createReleasePolicyFixture(t);
+      const file = path.join(root, ".github/workflows", mutation.file);
+      const source = fs.readFileSync(file, "utf8");
+      assert.ok(source.includes(mutation.from), mutation.name);
+      fs.writeFileSync(file, source.replace(mutation.from, mutation.to));
+      const result = runReleasePolicy(root);
+      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, /environment|reviewed value|step sequence/);
+    });
+  }
 
   for (const bypass of [
     { name: "npm publication before the release gate", run: "npm publish" },
@@ -3071,7 +3234,10 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       "      - name: Setup Rust",
       "        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable",
       "        with:",
-      "          toolchain: 1.98.0",
+      `          toolchain: ${toolchains.rust.version}`,
+      "",
+      "      - name: Validate runtime toolchains",
+      "        run: node scripts/toolchains.mjs --check-runtime go node rust",
       "",
       "      - name: Validate release version facts",
       "        env:",

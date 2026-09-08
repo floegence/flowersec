@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -256,9 +257,12 @@ func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 		},
 	}
 
-	_, testFile, err := renderGoVerifier(m)
+	goMod, testFile, err := renderGoVerifier(m, "1.27.2")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(goMod, "\ngo 1.27.2\n") {
+		t.Fatalf("generated verifier does not use the selected Go version: %s", goMod)
 	}
 	if !strings.Contains(testFile, "var _ endpoint.UpgraderOptions") {
 		t.Fatalf("expected type guard in generated verifier, got:\n%s", testFile)
@@ -285,7 +289,7 @@ func TestRenderGoVerifierIncludesTypedFieldChecks(t *testing.T) {
 		}},
 	}}
 
-	_, testFile, err := renderGoVerifier(m)
+	_, testFile, err := renderGoVerifier(m, "1.27.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,11 +328,18 @@ func (Session) Close() error { return nil }
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			repoRoot := t.TempDir()
+			config, err := os.ReadFile(filepath.Join("..", "..", "toolchains.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repoRoot, "toolchains.json"), config, 0o644); err != nil {
+				t.Fatal(err)
+			}
 			moduleRoot := filepath.Join(repoRoot, "flowersec-go")
 			if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.27.0\n"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.27.1\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			packageDir := filepath.Join(moduleRoot, "sample")
@@ -357,6 +368,8 @@ func (Session) Close() error { return nil }
 
 			if err := verifyGo(repoRoot, m); err == nil {
 				t.Fatalf("verify-go accepted interface change: %s", test.name)
+			} else if !strings.Contains(err.Error(), "verify-go failed:") {
+				t.Fatalf("verify-go failed before checking interface changes: %v", err)
 			}
 		})
 	}
@@ -535,30 +548,41 @@ func TestPrecommitRustRunsStabilityRustCheckExactlyOnce(t *testing.T) {
 	}
 }
 
-func TestRustToolchainVersionUsesDeclaredMSRV(t *testing.T) {
+func TestRepoToolchainVersionUsesRootConfig(t *testing.T) {
 	root := t.TempDir()
-	cratePath := "flowersec-rust"
-	manifestPath := filepath.Join(root, cratePath, "Cargo.toml")
-	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+	configPath := filepath.Join(root, "toolchains.json")
+	if err := os.WriteFile(configPath, []byte(`{"go":{"version":"1.27.2"},"rust":{"version":"1.98.0","msrv":"1.88.0"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(manifestPath, []byte("[package]\nname = \"probe\"\nrust-version = \"1.88\"\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for language, want := range map[string]string{"go": "1.27.2", "rust": "1.98.0"} {
+		got, err := repoToolchainVersion(root, language)
+		if err != nil || got != want {
+			t.Fatalf("%s toolchain = %q, %v; want %s", language, got, err, want)
+		}
 	}
+	for _, invalid := range []string{
+		`{}`, `{"go":{"version":"1.27"}}`, `{"go":{"version":"auto"}}`,
+		`{"go":{"version":1271}}`, `{"go":{"version":"1.27.1"}`,
+	} {
+		if err := os.WriteFile(configPath, []byte(invalid), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repoToolchainVersion(root, "go"); err == nil {
+			t.Fatalf("invalid config must fail closed: %s", invalid)
+		}
+	}
+	if _, err := repoToolchainVersion(t.TempDir(), "go"); err == nil {
+		t.Fatal("missing repository config must fail closed")
+	}
+}
 
-	toolchain, err := rustToolchainVersion(root, cratePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if toolchain != "1.88.0" {
-		t.Fatalf("expected exact Rust 1.88.0 toolchain, got %q", toolchain)
-	}
-
-	if err := os.WriteFile(manifestPath, []byte("[package]\nname = \"probe\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rustToolchainVersion(root, cratePath); err == nil {
-		t.Fatal("missing rust-version must fail closed")
+func TestRepoGoToolchainOverridesAmbientSelection(t *testing.T) {
+	t.Setenv("GOTOOLCHAIN", "auto")
+	command := exec.Command("go", "version")
+	command.Env = withRepoGoToolchain("1.27.2")
+	environment := command.Environ()
+	if got := environment[len(environment)-1]; got != "GOTOOLCHAIN=go1.27.2" {
+		t.Fatalf("selected toolchain is not the final override: %v", environment)
 	}
 }
 

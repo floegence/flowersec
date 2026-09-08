@@ -72,6 +72,9 @@ test("offline stages use the exact prefetched Go toolchain and reject drift", ()
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-final-go-toolchain-"));
   try {
     const gitEnvironment = isolatedGitEnvironment();
+    const configPath = path.join(root, "toolchains.json");
+    const config = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "toolchains.json"), "utf8"));
+    fs.writeFileSync(configPath, JSON.stringify(config));
     assert.equal(spawnSync("git", ["init", "-q"], { cwd: root, env: gitEnvironment }).status, 0);
     assert.equal(spawnSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "fixture"], { cwd: root, env: gitEnvironment }).status, 0);
     const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8", env: gitEnvironment }).stdout.trim();
@@ -79,11 +82,11 @@ test("offline stages use the exact prefetched Go toolchain and reject drift", ()
     const binary = path.join(bin, "go");
     fs.mkdirSync(path.join(root, ".flowersec"), { recursive: true });
     fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(binary, "#!/bin/sh\nprintf 'go version go1.27.0 test/arch\\n'\n", { mode: 0o755 });
+    fs.writeFileSync(binary, "#!/bin/sh\nprintf 'go version go1.27.1 test/arch\\n'\n", { mode: 0o755 });
     const state = {
       schema: "flowersec-final-go-toolchain-v1",
       sourceHead: head,
-      version: "go1.27.0",
+      version: "go1.27.1",
       binary,
       sha256: createHash("sha256").update(fs.readFileSync(binary)).digest("hex"),
     };
@@ -96,9 +99,14 @@ test("offline stages use the exact prefetched Go toolchain and reject drift", ()
       "const { spawnSync } = require('node:child_process');",
       "if (process.env.GOTOOLCHAIN !== 'local') process.exit(21);",
       "const result = spawnSync('go', ['version'], { encoding: 'utf8' });",
-      "if (result.status !== 0 || !result.stdout.includes('go1.27.0 test/arch')) process.exit(22);",
+      "if (result.status !== 0 || !result.stdout.includes('go1.27.1 test/arch')) process.exit(22);",
     ].join("");
     assert.equal(run(["5", "packages", process.execPath, "-e", check], { cwd: root, env: environment }).status, 0);
+    fs.writeFileSync(configPath, JSON.stringify({ ...config, go: { version: "1.27.2" } }));
+    const changedConfig = run(["5", "packages", process.execPath, "-e", "process.exit(0)"], { cwd: root, env: environment });
+    assert.notEqual(changedConfig.status, 0);
+    assert.match(changedConfig.stderr, /offline Go toolchain state is invalid/);
+    fs.writeFileSync(configPath, JSON.stringify(config));
     fs.appendFileSync(binary, "# drift\n");
     const drifted = run(["5", "packages", process.execPath, "-e", "process.exit(0)"], { cwd: root, env: environment });
     assert.notEqual(drifted.status, 0);

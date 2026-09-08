@@ -43,7 +43,7 @@ test("every Go module is downloaded, verified, resolved, and scanned with worksp
   const modules = runGoSecurityChecks({
     repoRoot: sourceRoot,
     govulncheckVersion: "v1.7.0",
-    goToolchain: "go1.27.0",
+    goToolchain: "go1.27.1",
     moduleManifest: { modules: ["flowersec-go"] },
     discoverModules: () => [path.join(sourceRoot, "flowersec-go")],
     run,
@@ -61,7 +61,7 @@ test("every Go module is downloaded, verified, resolved, and scanned with worksp
     ]);
     for (const call of moduleCalls) {
       assert.equal(call.options.env.GOWORK, "off");
-      assert.equal(call.options.env.GOTOOLCHAIN, "go1.27.0");
+      assert.equal(call.options.env.GOTOOLCHAIN, "go1.27.1");
       assert.equal(call.options.env.GOFLAGS, "-mod=readonly");
     }
   }
@@ -80,7 +80,7 @@ test("Go security tool versions are fixed and environment overrides fail closed"
   const { goSecurityToolVersions } = await loadChecker();
   assert.deepEqual(goSecurityToolVersions({}), {
     govulncheckVersion: "v1.7.0",
-    goToolchain: "go1.27.0",
+    goToolchain: "go1.27.1",
   });
   assert.throws(
     () => goSecurityToolVersions({ GOVULNCHECK_VERSION: "not-a-version" }),
@@ -106,14 +106,14 @@ test("offline stages bind the exact prefetched Go toolchain to the source HEAD",
   const sourceHead = "a".repeat(40);
   const run = (command, args, options) => {
     calls.push({ command, args, options });
-    if (command === "go") return `${toolchainRoot}\ngo1.27.0\n`;
-    if (command === realBinary) return "go version go1.27.0 test/arch\n";
+    if (command === "go") return `${toolchainRoot}\ngo1.27.1\n`;
+    if (command === realBinary) return "go version go1.27.1 test/arch\n";
     if (command === "git") return `${sourceHead}\n`;
     throw new Error(`unexpected command: ${command}`);
   };
   const state = prepareOfflineGoToolchain({
     repoRoot,
-    goToolchain: "go1.27.0",
+    goToolchain: "go1.27.1",
     run,
     statePath,
   });
@@ -121,8 +121,22 @@ test("offline stages bind the exact prefetched Go toolchain to the source HEAD",
   assert.equal(state.sourceHead, sourceHead);
   assert.equal(state.binary, realBinary);
   assert.match(state.sha256, /^[0-9a-f]{64}$/);
-  assert.deepEqual(calls[0].options.env, { GOTOOLCHAIN: "go1.27.0", GOWORK: "off" });
+  assert.deepEqual(calls[0].options.env, { GOTOOLCHAIN: "go1.27.1", GOWORK: "off" });
   assert.deepEqual(calls[1].options.env, { GOTOOLCHAIN: "local", GOWORK: "off" });
+});
+
+test("Go security selection follows the supplied config and rejects the previous version", async (t) => {
+  const { goSecurityToolVersions } = await loadChecker();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-go-config-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = JSON.parse(fs.readFileSync(path.join(sourceRoot, "toolchains.json"), "utf8"));
+  config.go.version = "1.27.2";
+  fs.writeFileSync(path.join(root, "toolchains.json"), JSON.stringify(config));
+  assert.equal(goSecurityToolVersions({}, root).goToolchain, "go1.27.2");
+  assert.throws(
+    () => goSecurityToolVersions({ GOVULNCHECK_GOTOOLCHAIN: "go1.27.1" }, root),
+    /must not override the fixed value go1\.27\.2/,
+  );
 });
 
 test("offline toolchain digest reads the verified regular file descriptor", () => {

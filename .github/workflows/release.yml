@@ -21,6 +21,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  GOTOOLCHAIN: local
 
 permissions:
   contents: read
@@ -275,6 +276,9 @@ jobs:
         with:
           node-version: "24.20.0"
 
+      - name: Validate runtime toolchains
+        run: node scripts/toolchains.mjs --check-runtime node rust
+
       - name: Build native addon
         env:
           NATIVE_TARGET: ${{ matrix.target }}
@@ -372,6 +376,9 @@ jobs:
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           toolchain: 1.98.0
+
+      - name: Validate runtime toolchains
+        run: node scripts/toolchains.mjs --check-runtime go node rust
 
       - name: Validate release version facts
         env:

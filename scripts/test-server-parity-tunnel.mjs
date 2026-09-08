@@ -10,8 +10,10 @@ import {
   SERVER_PARITY_RUNTIMES,
 } from "./server-parity-matrix.mjs";
 import { prepareServerParityNativeAddon } from "./server-parity-native-addon.mjs";
+import { readToolchains } from "./toolchains.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const toolchains = readToolchains(repositoryRoot);
 const matrix = JSON.parse(await readFile(path.join(repositoryRoot, "stability/interop_matrix.json"), "utf8"));
 const clientProfile = process.env.FLOWERSEC_PARITY_CLIENT_PROFILE?.trim();
 const clientProfileTestID = process.env.FLOWERSEC_PARITY_TEST_ID?.trim();
@@ -29,7 +31,7 @@ const cellTimeoutMS = 60_000;
 
 const peers = {
   go: { cwd: path.join(repositoryRoot, "flowersec-go"), command: "go", arguments: ["run", "./internal/cmd/server-parity-peer"] },
-  rust: { cwd: repositoryRoot, command: "rustup", arguments: ["run", "1.88.0", "cargo", "run", "--quiet", "--manifest-path", "flowersec-rust/Cargo.toml", "--example", "server_parity_peer", "--"] },
+  rust: { cwd: repositoryRoot, command: "rustup", arguments: ["run", toolchains.rust.version, "cargo", "run", "--quiet", "--manifest-path", "flowersec-rust/Cargo.toml", "--example", "server_parity_peer", "--"] },
   "node-typescript": { cwd: path.join(repositoryRoot, "flowersec-ts"), command: process.execPath, arguments: ["--import", "tsx", "src/interop/serverParityPeer.ts"] },
 };
 validateTopologyContract(matrix.tunnel_topologies);

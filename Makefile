@@ -1,5 +1,7 @@
 .PHONY: test test-resume coverage-race browser-smoke browser-compat precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check native-addon-test swift-package-check swift-security-check swift-source-guard swift-public-api-check swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-public-ca-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check
 
+export GOTOOLCHAIN := local
+
 FLOWERSEC_TEST_HOST ?= ./scripts/test-host.sh
 PERFORMANCE_BUDGET ?= 10m
 SWIFTPM_CACHE_PATH := $(CURDIR)/.flowersec/swiftpm-cache
@@ -10,9 +12,11 @@ SWIFT_SOURCE_GUARD_PRUNE := .build .git .swiftpm dist node_modules
 SWIFT_SOURCE_GUARD_FILE_GLOBS := -name '*.go' -o -name '*.json' -o -name '*.md' -o -name '*.mjs' -o -name '*.swift' -o -name '*.ts' -o -name '*.tsx' -o -name '*.txt' -o -name '*.yaml' -o -name '*.yml'
 
 test:
+	node scripts/toolchains.mjs --check-runtime go node rust swift
 	go -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance
 
 test-resume:
+	node scripts/toolchains.mjs --check-runtime go node rust swift
 	go -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance
 
 coverage-race:
@@ -93,6 +97,7 @@ ts-lint:
 	cd flowersec-ts && npm run lint
 
 ts-build: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime typescript
 	cd flowersec-ts && rm -rf dist && npm run build
 
 ts-package-check:
@@ -163,44 +168,46 @@ swift-final-check:
 		node scripts/check-swift-coverage.mjs "$$coverage_path" 79 80
 
 rust-fmt-check:
-	cd flowersec-rust && rustup run 1.88.0 cargo fmt --all --check
-	cd flowersec-rust && rustup run 1.88.0 cargo fmt --manifest-path fuzz/Cargo.toml --check
+	cd flowersec-rust && cargo fmt --all --check
+	cd flowersec-rust && cargo fmt --manifest-path fuzz/Cargo.toml --check
 
 rust-clippy:
-	cd flowersec-rust && rustup run 1.88.0 cargo clippy --all-targets --all-features -- -D warnings
+	cd flowersec-rust && cargo clippy --all-targets --all-features -- -D warnings
 
 rust-test:
-	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features
-	rustup run 1.88.0 cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
+	cd flowersec-rust && cargo test --all-features
+	cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
 
 rust-test-short:
-	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --lib
-	cd flowersec-rust && rustup run 1.88.0 cargo test --all-features --doc
-	rustup run 1.88.0 cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features --lib
+	cd flowersec-rust && cargo test --all-features --lib
+	cd flowersec-rust && cargo test --all-features --doc
+	cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features --lib
 
 rust-doc:
-	cd flowersec-rust && RUSTDOCFLAGS="-D warnings" rustup run 1.88.0 cargo doc --all-features --no-deps
+	cd flowersec-rust && RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
 
 rust-msrv-check:
-	cd flowersec-rust && rustup run 1.88.0 cargo check --all-targets --all-features
+	cd flowersec-rust && rustup run 1.88.0 cargo check --locked --all-targets --all-features
+	rustup run 1.88.0 cargo check --manifest-path flowersec-native-transport/Cargo.toml --locked --all-targets --all-features
+	rustup run 1.88.0 cargo check --manifest-path flowersec-node-native/Cargo.toml --locked --all-targets --all-features
 
 rust-fetch:
-	cd flowersec-rust && rustup run 1.88.0 cargo fetch --locked
-	cd flowersec-rust && rustup run 1.88.0 cargo fetch --locked --manifest-path fuzz/Cargo.toml
-	rustup run 1.88.0 cargo fetch --locked --manifest-path examples/rust/Cargo.toml
+	cd flowersec-rust && cargo fetch --locked
+	cd flowersec-rust && cargo fetch --locked --manifest-path fuzz/Cargo.toml
+	cargo fetch --locked --manifest-path examples/rust/Cargo.toml
 
 rust-package-check:
-	rustup run 1.88.0 cargo package --manifest-path flowersec-native-transport/Cargo.toml --locked --allow-dirty
-	rustup run 1.88.0 cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty
-	rustup run 1.88.0 cargo package --manifest-path flowersec-rust/Cargo.toml --locked --allow-dirty --list
+	cargo package --manifest-path flowersec-native-transport/Cargo.toml --locked --allow-dirty
+	cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty
+	cargo package --manifest-path flowersec-rust/Cargo.toml --locked --allow-dirty --list
 
 rust-publish-preflight:
-	rustup run 1.88.0 cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty
-	rustup run 1.88.0 cargo package --manifest-path flowersec-rust/Cargo.toml --locked --allow-dirty --list
+	cargo publish --manifest-path flowersec-native-transport/Cargo.toml --locked --dry-run --allow-dirty
+	cargo package --manifest-path flowersec-rust/Cargo.toml --locked --allow-dirty --list
 
 rust-package-offline-check:
-	rustup run 1.88.0 cargo package --allow-dirty --offline --manifest-path flowersec-native-transport/Cargo.toml --locked
-	rustup run 1.88.0 cargo package --allow-dirty --offline --manifest-path flowersec-rust/Cargo.toml --locked --list
+	cargo package --allow-dirty --offline --manifest-path flowersec-native-transport/Cargo.toml --locked
+	cargo package --allow-dirty --offline --manifest-path flowersec-rust/Cargo.toml --locked --list
 
 rust-audit:
 	node scripts/check-rust-security.mjs
@@ -211,13 +218,13 @@ rust-audit-offline:
 rust-deny: rust-audit
 
 rust-cover-check:
-	cd flowersec-rust && rustup run 1.88.0 cargo llvm-cov --all-features --fail-under-lines 85
+	cd flowersec-rust && cargo llvm-cov --all-features --fail-under-lines 85
 
 rust-fuzz-build:
-	cd flowersec-rust && rustup run 1.88.0 cargo check --manifest-path fuzz/Cargo.toml --bins
+	cd flowersec-rust && cargo check --manifest-path fuzz/Cargo.toml --bins
 
 rust-fuzz-check:
-	cd flowersec-rust && cargo +nightly fuzz run artifact -- -max_total_time=10
+	cd flowersec-rust && cargo +$$(node ../scripts/toolchains.mjs --get rust.nightly) fuzz run artifact -- -max_total_time=10
 
 rust-semver-check:
 	@version=$$(sed -n 's/^version = "\([^"]*\)"/\1/p' flowersec-rust/Cargo.toml | head -1); \
@@ -226,7 +233,7 @@ rust-semver-check:
 	if [ -z "$$previous" ]; then \
 		echo "Rust semver check skipped: no previous flowersec-rust tag"; \
 	else \
-		cd flowersec-rust && cargo +stable semver-checks check-release --manifest-path Cargo.toml --baseline-rev "$$previous"; \
+		cd flowersec-rust && cargo semver-checks check-release --manifest-path Cargo.toml --baseline-rev "$$previous"; \
 	fi
 
 rust-check: rust-fmt-check rust-clippy rust-test rust-doc rust-msrv-check rust-package-check rust-fuzz-build
@@ -244,8 +251,8 @@ example-source-check:
 
 example-check: example-source-check
 	cd flowersec-go && go test -run '^$$' .
-	flowersec-ts/node_modules/.bin/tsc --project examples/ts/tsconfig.json
-	rustup run 1.88.0 cargo check --locked --offline --manifest-path examples/rust/Cargo.toml
+	node flowersec-ts/node_modules/@typescript/native/bin/tsc --project examples/ts/tsconfig.json
+	cargo check --locked --offline --manifest-path examples/rust/Cargo.toml
 	swift test --package-path examples/swift --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file
 	node scripts/test-sdk-examples-e2e.mjs
 
@@ -281,8 +288,9 @@ security-makefile-check:
 	node scripts/check-security-makefile.mjs Makefile
 
 security-dependency-check:
-	node --test scripts/security-dependencies.test.mjs scripts/check-dependency-contracts.test.mjs scripts/go-security.test.mjs scripts/go-toolchain-policy.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/prepare-ts-package-cache.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs scripts/test-architecture-contract.mjs
+	node --test scripts/security-dependencies.test.mjs scripts/check-dependency-contracts.test.mjs scripts/go-security.test.mjs scripts/go-toolchain-policy.test.mjs scripts/container-release-policy.test.mjs scripts/toolchains.test.mjs scripts/rust-security.test.mjs scripts/swift-security.test.mjs scripts/prepare-ts-package-cache.test.mjs scripts/security-makefile.test.mjs scripts/run-final-stage.test.mjs scripts/run-final-lanes.test.mjs scripts/run-precommit-wave.test.mjs scripts/test-architecture-contract.mjs
 	node scripts/check-go-toolchain-policy.mjs
+	node scripts/check-toolchain-policy.mjs
 	node scripts/generate-source-inventory.mjs --check
 
 security-package-check: ts-build
@@ -296,32 +304,38 @@ readme-localization-check:
 	node ./scripts/check-readme-localizations.mjs
 
 precommit-go:
+	node scripts/toolchains.mjs --check-runtime go
 	$(MAKE) fmt-check
 	$(MAKE) go-vet
 	$(MAKE) go-test-short
 	$(MAKE) go-cover-check-short
 
 precommit-ts:
+	node scripts/toolchains.mjs --check-runtime node
 	$(MAKE) ts-ensure-deps
 	$(MAKE) ts-lint
 	$(MAKE) ts-build
 	$(MAKE) ts-test-short
 
 precommit-swift:
+	node scripts/toolchains.mjs --check-runtime swift
 	$(MAKE) swift-package-check
 	$(MAKE) swift-security-check
 	$(MAKE) swift-source-guard
 
 precommit-rust:
+	node scripts/toolchains.mjs --check-runtime rust
 	$(MAKE) rust-fmt-check
 	$(MAKE) rust-clippy
 	$(MAKE) rust-test-short
 	$(MAKE) stability-rust-check
 
 precommit:
+	node scripts/toolchains.mjs --check-runtime go node rust swift
 	$(MAKE) precommit-source
 
 precommit-source:
+	node scripts/toolchains.mjs --check-runtime go node rust swift
 	node scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps
 	node scripts/run-precommit-wave.mjs static $(MAKE) flowersec-test-contract security-makefile-check
 	node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check example-source-check
@@ -357,6 +371,7 @@ nightly-check:
 	$(MAKE) diagnostic
 
 check: security-makefile-check
+	node scripts/toolchains.mjs --check-runtime go node rust swift
 	$(MAKE) release-policy-check
 	$(MAKE) readme-localization-check
 	$(MAKE) example-source-check

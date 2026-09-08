@@ -9,8 +9,10 @@ import {
   SERVER_PARITY_RUNTIMES,
 } from "./server-parity-matrix.mjs";
 import { prepareServerParityNativeAddon } from "./server-parity-native-addon.mjs";
+import { readToolchains } from "./toolchains.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const toolchains = readToolchains(repositoryRoot);
 const matrix = JSON.parse(await readFile(path.join(repositoryRoot, "stability/interop_matrix.json"), "utf8"));
 const clientProfile = process.env.FLOWERSEC_PARITY_CLIENT_PROFILE?.trim();
 const clientProfileTestID = process.env.FLOWERSEC_PARITY_TEST_ID?.trim();
@@ -45,7 +47,7 @@ const peers = {
     cwd: repositoryRoot,
     command: "rustup",
     arguments: [
-      "run", "1.88.0", "cargo", "run", "--quiet", "--manifest-path", "flowersec-rust/Cargo.toml",
+      "run", toolchains.rust.version, "cargo", "run", "--quiet", "--manifest-path", "flowersec-rust/Cargo.toml",
       "--example", "server_parity_peer", "--",
     ],
   },

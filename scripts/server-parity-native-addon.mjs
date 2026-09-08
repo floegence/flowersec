@@ -3,6 +3,7 @@ import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { readToolchains } from "./toolchains.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,7 +21,7 @@ export async function prepareServerParityNativeAddon(repositoryRoot, required) {
   if (platform === undefined) throw new Error("server parity native addon is unavailable on this platform");
 
   await execFileAsync("rustup", [
-    "run", "1.88.0", "cargo", "build", "--locked", "--manifest-path",
+    "run", readToolchains(repositoryRoot).rust.version, "cargo", "build", "--locked", "--manifest-path",
     path.join(repositoryRoot, "flowersec-node-native/Cargo.toml"),
   ], { cwd: repositoryRoot });
 

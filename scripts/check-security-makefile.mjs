@@ -7,6 +7,8 @@ const requiredSecurityTests = [
   "scripts/check-dependency-contracts.test.mjs",
   "scripts/go-security.test.mjs",
   "scripts/go-toolchain-policy.test.mjs",
+  "scripts/container-release-policy.test.mjs",
+  "scripts/toolchains.test.mjs",
   "scripts/rust-security.test.mjs",
   "scripts/swift-security.test.mjs",
   "scripts/prepare-ts-package-cache.test.mjs",
@@ -87,13 +89,16 @@ function validateSource(source) {
 }
 
 function verifyGraph(source) {
-  exactRecipe(source, "test", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance"]);
-  exactRecipe(source, "test-resume", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance"]);
+  const runtime = "\tnode scripts/toolchains.mjs --check-runtime go node rust swift";
+  if (!/^export GOTOOLCHAIN := local$/m.test(source)) throw new Error("Make must disable automatic Go toolchain switching");
+  exactRecipe(source, "test", [runtime, "\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance"]);
+  exactRecipe(source, "test-resume", [runtime, "\tgo -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance"]);
   exactRecipe(source, "coverage-race", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite coverage-race"]);
   exactRecipe(source, "browser-smoke", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke"]);
   exactRecipe(source, "browser-compat", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-compat"]);
-  exactRecipe(source, "precommit", ["\t$(MAKE) precommit-source"]);
+  exactRecipe(source, "precommit", [runtime, "\t$(MAKE) precommit-source"]);
   exactRecipe(source, "precommit-ts", [
+    "\tnode scripts/toolchains.mjs --check-runtime node",
     "\t$(MAKE) ts-ensure-deps",
     "\t$(MAKE) ts-lint",
     "\t$(MAKE) ts-build",
@@ -108,6 +113,7 @@ function verifyGraph(source) {
   exactRecipe(source, "security-dependency-check", [
     `\tnode --test ${requiredSecurityTests.join(" ")}`,
     "\tnode scripts/check-go-toolchain-policy.mjs",
+    "\tnode scripts/check-toolchain-policy.mjs",
     "\tnode scripts/generate-source-inventory.mjs --check",
   ]);
   exactRecipe(source, "release-policy-check", [

@@ -127,8 +127,8 @@ assert.match(nativeDeclaration, /connectRawQuic\(/u);
 assert.match(nativeDeclaration, /bindRawQuic\(/u);
 assert.doesNotMatch(nativeDeclaration, /RawQuicV2|RawQuicV3/u);
 
-assert.match(makefile, /^precommit:\n\t\$\(MAKE\) precommit-source$/m);
-assert.match(makefile, /^test:\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
+assert.match(makefile, /^precommit:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\t\$\(MAKE\) precommit-source$/m);
+assert.match(makefile, /^test:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
 assert.doesNotMatch(makefile, /transport-v2|reference\/presets/u);
 const pushMain = read("scripts/push-main.sh");
 assert.equal((pushMain.match(/^make test$/gm) ?? []).length, 1);

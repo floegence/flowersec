@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { readToolchains } from "./toolchains.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
 const generatorPath = path.join(sourceRoot, "scripts/generate-source-inventory.mjs");
@@ -668,7 +669,7 @@ test("npm, Rust, Go, and Swift source archives carry exact generated distributio
   assert.match(browserBundle, /node_modules\/punycode\//, "browser bundle must contain punycode");
 
   const rustTarget = path.join(root, "rust-target");
-  run("rustup", ["run", "1.88.0", "cargo",
+  run("rustup", ["run", readToolchains(sourceRoot).rust.version, "cargo",
     "package", "--allow-dirty",
     "--manifest-path", path.join(sourceRoot, "flowersec-rust/Cargo.toml"),
     "--target-dir", rustTarget,
@@ -689,7 +690,7 @@ test("npm, Rust, Go, and Swift source archives carry exact generated distributio
   fs.mkdirSync(goZipTool);
   fs.writeFileSync(
     path.join(goZipTool, "go.mod"),
-    "module flowersec.local/source-zip-test\n\ngo 1.27.0\n\nrequire golang.org/x/mod v0.37.0\n",
+    `module flowersec.local/source-zip-test\n\ngo ${readToolchains(sourceRoot).go.version}\n\nrequire golang.org/x/mod v0.37.0\n`,
   );
   fs.writeFileSync(
     path.join(goZipTool, "go.sum"),

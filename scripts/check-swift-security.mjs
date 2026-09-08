@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readToolchains } from "./toolchains.mjs";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -541,7 +542,7 @@ export function normalizeSwiftPins(lockfile) {
   return pins.sort((left, right) => left.identity.localeCompare(right.identity));
 }
 
-export const requiredSwiftToolchainVersion = "6.3.1";
+export const requiredSwiftToolchainVersion = readToolchains().swift.version;
 
 export function assertSwiftToolchain(versionOutput) {
   const match = /(?:^|\s)(?:Apple )?Swift version ([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)/.exec(versionOutput);
