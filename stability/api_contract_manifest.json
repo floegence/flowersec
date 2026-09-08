@@ -1158,6 +1158,16 @@
             "kind": "var",
             "expr": "flowersec.ErrInvalidConnectionController",
             "doc_token": "`flowersec.ConnectionController`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.HTTPStreamOptions",
+            "doc_token": "`flowersec.HTTPStreamOptions`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.ServeHTTPStream",
+            "doc_token": "`flowersec.ServeHTTPStream(...)`"
           }
         ]
       },
@@ -1686,7 +1696,8 @@
           "`RuntimeAuthorizationRequest`",
           "`HandlerRegistrationError`",
           "`AcceptedSession`",
-          "`ProxyServer`"
+          "`ProxyServer`",
+          "`createByteStreamDuplex(...)`"
         ],
         "runtime_exports": [
           "AcceptedSession",
@@ -1713,6 +1724,7 @@
           "connectionDiagnostic",
           "createAcceptor",
           "createArtifactLease",
+          "createByteStreamDuplex",
           "createConnectionController",
           "createStreamMetadata",
           "createTunnelRuntime",

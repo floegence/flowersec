@@ -284,3 +284,18 @@ The maintained tree uses the v3 module path and the current Flowersec transport,
 session, control-plane, and proxy contracts.
 
 Public changes follow `docs/API_CHANGE_POLICY.md`; stable failures follow `docs/ERROR_MODEL.md`, and the reviewed symbol inventory is `stability/api_contract_manifest.json`.
+
+## Native HTTP application streams
+
+`flowersec.ServeHTTPStream(...)` serves a single already-authorized ByteStream with
+`flowersec.HTTPStreamOptions` header and idle admission limits. It owns HTTP
+keep-alive, upgrades, and cancellation of hijacked connections without a listening
+TCP port. Read deadline interruption preserves subsequent reads; write deadline
+expiry terminates the stream. Product authorization and stream-kind registration
+remain with the embedding application. There is no response-body transformation.
+
+The Node-only `createByteStreamDuplex(...)` export adapts one ByteStream to a
+bounded Node Duplex with half-close, 64 KiB write chunks, partial-write progress,
+read backpressure, and abort/reset propagation. It never decodes HTTP or WebSocket
+frames, reconnects, or replays application bytes. These embedding helpers do not
+change wire identifiers, artifacts, or carrier selection.

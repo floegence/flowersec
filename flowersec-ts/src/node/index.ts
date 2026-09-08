@@ -53,3 +53,4 @@ export type {
 } from "./acceptor.js";
 export { ProxyServer, ProxyServerError } from "./proxyServer.js";
 export type { ProxyServerOptions } from "./proxyServer.js";
+export { createByteStreamDuplex } from "./byteStreamDuplex.js";

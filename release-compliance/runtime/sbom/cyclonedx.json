@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:81cafee4-bede-5545-8a7d-1b112ee7c3ac",
+  "serialNumber": "urn:uuid:8ec54196-15bb-5998-8381-ab4319d2a2ac",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec-runtime",
-      "version": "5.0.5",
-      "purl": "pkg:generic/flowersec-runtime@5.0.5",
-      "bom-ref": "pkg:generic/flowersec-runtime@5.0.5"
+      "version": "5.1.0",
+      "purl": "pkg:generic/flowersec-runtime@5.1.0",
+      "bom-ref": "pkg:generic/flowersec-runtime@5.1.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "f52ee88ce9361e3a5f87dfa29bbc3f70c025c20fb2a0b274cf90e88a5f773f50"
+        "value": "9152d30ed9f2c92baa032e9e085b406d8491098b5c2c6da19f6793b53cc9cdcf"
       }
     ]
   },
@@ -330,7 +330,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/flowersec-runtime@5.0.5",
+      "ref": "pkg:generic/flowersec-runtime@5.1.0",
       "dependsOn": [
         "pkg:golang/github.com/gorilla/websocket@v1.5.3",
         "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",

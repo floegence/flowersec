@@ -1,15 +1,29 @@
 {
   "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-  "version": "5.0.5",
+  "version": "5.1.0",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/floegence/flowersec.git"
   },
-  "os": ["linux"],
-  "cpu": ["arm64"],
-  "libc": ["glibc"],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "glibc"
+  ],
   "main": "flowersec-node-native.linux-arm64-gnu.node",
-  "files": ["flowersec-node-native.linux-arm64-gnu.node", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "sbom/**"],
-  "engines": { "node": ">=24.20.0" }
+  "files": [
+    "flowersec-node-native.linux-arm64-gnu.node",
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "sbom/**"
+  ],
+  "engines": {
+    "node": ">=24.20.0"
+  }
 }
