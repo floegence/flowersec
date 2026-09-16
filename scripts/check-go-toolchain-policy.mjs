@@ -91,7 +91,7 @@ export function verifyGoToolchainPolicy(repoRoot) {
   verifyContainerReleasePolicy(repoRoot);
 
   const workflowContracts = new Map([
-    [".github/workflows/ci.yml", 1],
+    [".github/workflows/ci.yml", 3],
     [".github/workflows/codeql.yml", 1],
     [".github/workflows/release.yml", 2],
   ]);

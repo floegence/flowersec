@@ -172,7 +172,6 @@ describe("Node native raw QUIC driver", () => {
   test("rejects a hash-matched leaf with an invalid TLS proof before FSB3 or lease spend", async () => {
     const peer = await startInvalidProofPeer();
     let spends = 0;
-    const port = Number(peer.address.slice(peer.address.lastIndexOf(":") + 1));
     const digest = createHash("sha256").update(peer.leafDER).digest("base64url");
     const artifact = {
       ...V3_DIRECT_BASE,
@@ -181,7 +180,9 @@ describe("Node native raw QUIC driver", () => {
         candidates: [{
           carrier: "raw_quic",
           id: "q-invalid-proof",
-          url: `quic://localhost:${port}`,
+          // The peer binds IPv4; target that listener so this TLS proof test
+          // does not spend its handshake budget probing an absent IPv6 server.
+          url: `quic://${peer.address}`,
           tls: {
             mode: "pin",
             pins: [{

@@ -620,6 +620,10 @@ validate_step_contracts(rust_msrv_steps, [
 ], "the hosted CI Rust MSRV job")
 validate_step_contracts(rust_stable_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
+  { name: "Setup Go for protocol interoperability tests", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache-dependency-path" => "flowersec-go/go.sum" },
+  } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
     "with" => { "toolchain" => rust_version, "components" => "rustfmt,clippy" },
@@ -633,6 +637,10 @@ validate_step_contracts(rust_stable_steps, [
 ], "the hosted CI Rust stable job")
 validate_step_contracts(rust_windows_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
+  { name: "Setup Go for protocol interoperability tests", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache-dependency-path" => "flowersec-go/go.sum" },
+  } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
     "with" => { "toolchain" => rust_version },
