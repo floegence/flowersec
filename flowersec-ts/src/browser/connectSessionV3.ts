@@ -31,6 +31,11 @@ import {
   type PrivateLoopbackArtifactSourceV1,
 } from "./privateLoopbackV1.js";
 
+import {
+  unwrapHTTPDirectArtifactLeaseV1, validateHTTPDirectOriginV1,
+  type HTTPDirectArtifactLeaseV1, type HTTPDirectArtifactSourceV1,
+} from "./httpDirectV1.js";
+
 export type SessionOptionsV3 = Readonly<{
   signal?: AbortSignal;
   connectTimeoutMs?: number;
@@ -81,73 +86,90 @@ export async function createConnectionControllerV3(
   );
 }
 
-export async function connectPrivateLoopbackV1(
-  lease: PrivateLoopbackArtifactLeaseV1,
-  options: PrivateLoopbackSessionOptionsV1,
-): Promise<Session> {
-  const unwrapped = unwrapPrivateLoopbackLease(lease);
+export type HTTPDirectSessionOptionsV1 = PrivateLoopbackSessionOptionsV1;
+export type HTTPDirectConnectionControllerOptionsV1 = PrivateLoopbackConnectionControllerOptionsV1;
+
+type DirectProfile = Readonly<{
+  validateOrigin: (raw: string) => string;
+  unwrap: (lease: unknown) => Readonly<{endpoint: string; innerLease: ArtifactLeaseV3}>;
+}>;
+const privateProfile: DirectProfile = {
+  validateOrigin: validatePrivateLoopbackOriginV1,
+  unwrap: (lease) => unwrapPrivateLoopbackArtifactLeaseV1(lease as PrivateLoopbackArtifactLeaseV1),
+};
+const httpProfile: DirectProfile = {
+  validateOrigin: validateHTTPDirectOriginV1,
+  unwrap: (lease) => unwrapHTTPDirectArtifactLeaseV1(lease as HTTPDirectArtifactLeaseV1),
+};
+
+export async function connectPrivateLoopbackV1(lease: PrivateLoopbackArtifactLeaseV1, options: PrivateLoopbackSessionOptionsV1): Promise<Session> {
+  return await connectDirectProfile(lease, options, privateProfile);
+}
+export async function connectHTTPDirectV1(lease: HTTPDirectArtifactLeaseV1, options: HTTPDirectSessionOptionsV1): Promise<Session> {
+  return await connectDirectProfile(lease, options, httpProfile);
+}
+export async function createPrivateLoopbackConnectionControllerV1(source: PrivateLoopbackArtifactSourceV1, options: PrivateLoopbackConnectionControllerOptionsV1): Promise<ConnectionControllerV3<Session>> {
+  return await createDirectProfileController(source, options, privateProfile);
+}
+export async function createHTTPDirectConnectionControllerV1(source: HTTPDirectArtifactSourceV1, options: HTTPDirectConnectionControllerOptionsV1): Promise<ConnectionControllerV3<Session>> {
+  return await createDirectProfileController(source, options, httpProfile);
+}
+
+async function connectDirectProfile(lease: unknown, options: PrivateLoopbackSessionOptionsV1, profile: DirectProfile): Promise<Session> {
+  let unwrapped: ReturnType<DirectProfile["unwrap"]>;
+  try { unwrapped = profile.unwrap(lease); } catch { throw new ConnectErrorV3("artifact_invalid", {kind: "terminal"}); }
   return await connectArtifactLeaseWithRuntimeV3(unwrapped.innerLease, options, async () => {
-    const privateOrigin = requirePrivateLoopbackOrigin(options.origin);
-    if (new URL(unwrapped.endpoint).origin.replace(/^ws:/, "http:") !== privateOrigin) {
-      throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+    const origin = requireProfileOrigin(options.origin, profile);
+    if (new URL(unwrapped.endpoint).origin.replace(/^ws:/, "http:") !== origin) {
+      throw new ConnectErrorV3("artifact_invalid", {kind: "terminal"});
     }
     const registry = await BrowserRuntimeCapabilityRegistryV3.create();
-    return privateLoopbackBrowserRuntime(registry, options.connectTimeoutMs, privateOrigin);
+    return directProfileBrowserRuntime(registry, options.connectTimeoutMs, origin);
   });
 }
 
-export async function createPrivateLoopbackConnectionControllerV1(
-  source: PrivateLoopbackArtifactSourceV1,
+async function createDirectProfileController(
+  source: Readonly<{acquire: (options: Readonly<{signal: AbortSignal}>) => Promise<unknown>}>,
   options: PrivateLoopbackConnectionControllerOptionsV1,
+  profile: DirectProfile,
 ): Promise<ConnectionControllerV3<Session>> {
-  const privateOrigin = requirePrivateLoopbackOrigin(options.origin);
+  const origin = requireProfileOrigin(options.origin, profile);
   const registry = await BrowserRuntimeCapabilityRegistryV3.create();
-  const runtime = privateLoopbackBrowserRuntime(registry, options.connectTimeoutMs, privateOrigin);
+  const runtime = directProfileBrowserRuntime(registry, options.connectTimeoutMs, origin);
   const mappedSource: ArtifactSourceV3 = {
-    acquire: async ({ signal }) => {
-      const result: unknown = await source.acquire({ signal });
-      return await mapPrivateLoopbackSourceResult(result, privateOrigin);
-    },
+    acquire: async ({signal}) => await mapDirectProfileSourceResult(await source.acquire({signal}), origin, profile),
   };
-  return createCoreControllerV3(
-    mappedSource,
-    async (context) => await attemptClaimedArtifactLeaseV3(context, runtime),
-    {
-      capabilitySnapshot: runtime.capabilitySnapshot,
-      projectSessionFailure,
-      ...(options.maximumAttempts === undefined ? {} : { maximumAttempts: options.maximumAttempts }),
-    },
-  );
+  return createCoreControllerV3(mappedSource, async (context) => await attemptClaimedArtifactLeaseV3(context, runtime), {
+    capabilitySnapshot: runtime.capabilitySnapshot,
+    projectSessionFailure,
+    ...(options.maximumAttempts === undefined ? {} : {maximumAttempts: options.maximumAttempts}),
+  });
+}
+function requireProfileOrigin(raw: string, profile: DirectProfile): string {
+  try { return profile.validateOrigin(raw); } catch { throw new ConnectErrorV3("artifact_invalid", {kind: "terminal"}); }
 }
 
-function requirePrivateLoopbackOrigin(raw: string): string {
-  try {
-    return validatePrivateLoopbackOriginV1(raw);
-  } catch {
-    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
-  }
-}
-
-const invalidPrivateSourceResult = (): ArtifactSourceResultV3 => ({
+const invalidProfileSourceResult = (): ArtifactSourceResultV3 => ({
   kind: "failure",
   code: "artifact_invalid",
   disposition: { kind: "terminal" },
 });
 
-async function mapPrivateLoopbackSourceResult(
+async function mapDirectProfileSourceResult(
   result: unknown,
-  privateOrigin: string,
+  profileOrigin: string,
+  profile: DirectProfile,
 ): Promise<ArtifactSourceResultV3> {
   let descriptors: Record<PropertyKey, PropertyDescriptor>;
   let keys: PropertyKey[];
   try {
     if (typeof result !== "object" || result === null || Array.isArray(result)) {
-      return invalidPrivateSourceResult();
+      return invalidProfileSourceResult();
     }
     descriptors = Object.getOwnPropertyDescriptors(result);
     keys = Reflect.ownKeys(result).sort((left, right) => String(left).localeCompare(String(right)));
   } catch {
-    return invalidPrivateSourceResult();
+    return invalidProfileSourceResult();
   }
   const values = keys.every((key) => typeof key === "string" && descriptors[key]?.enumerable === true &&
     Object.hasOwn(descriptors[key]!, "value"));
@@ -155,15 +177,15 @@ async function mapPrivateLoopbackSourceResult(
     keys.every((key, index) => key === expected[index]);
   const kind = descriptors.kind?.value;
   if (kind === "lease" && exactKeys(["kind", "lease"])) {
-    let unwrapped: ReturnType<typeof unwrapPrivateLoopbackArtifactLeaseV1>;
+    let unwrapped: ReturnType<DirectProfile["unwrap"]>;
     try {
-      unwrapped = unwrapPrivateLoopbackArtifactLeaseV1(descriptors.lease!.value as PrivateLoopbackArtifactLeaseV1);
+      unwrapped = profile.unwrap(descriptors.lease!.value);
     } catch {
-      return invalidPrivateSourceResult();
+      return invalidProfileSourceResult();
     }
-    if (new URL(unwrapped.endpoint).origin.replace(/^ws:/, "http:") !== privateOrigin) {
+    if (new URL(unwrapped.endpoint).origin.replace(/^ws:/, "http:") !== profileOrigin) {
       await retireInnerLease(unwrapped.innerLease);
-      return invalidPrivateSourceResult();
+      return invalidProfileSourceResult();
     }
     return { kind: "lease", lease: unwrapped.innerLease };
   }
@@ -176,12 +198,12 @@ async function mapPrivateLoopbackSourceResult(
   }
   const deliveredLease = descriptors.lease?.value;
   try {
-    const unwrapped = unwrapPrivateLoopbackArtifactLeaseV1(deliveredLease as PrivateLoopbackArtifactLeaseV1);
+    const unwrapped = profile.unwrap(deliveredLease);
     await retireInnerLease(unwrapped.innerLease);
   } catch {
-    // Malformed results without an authentic private lease own no cleanup.
+    // Malformed results without an authentic profile lease own no cleanup.
   }
-  return invalidPrivateSourceResult();
+  return invalidProfileSourceResult();
 }
 
 async function retireInnerLease(lease: ArtifactLeaseV3): Promise<void> {
@@ -189,16 +211,6 @@ async function retireInnerLease(lease: ArtifactLeaseV3): Promise<void> {
     await retireArtifactLeaseV3(claimArtifactLeaseV3(lease));
   } catch {
     // Retirement is best-effort only when the lease is already terminal.
-  }
-}
-
-function unwrapPrivateLoopbackLease(
-  lease: PrivateLoopbackArtifactLeaseV1,
-): ReturnType<typeof unwrapPrivateLoopbackArtifactLeaseV1> {
-  try {
-    return unwrapPrivateLoopbackArtifactLeaseV1(lease);
-  } catch {
-    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
   }
 }
 
@@ -235,10 +247,10 @@ function browserRuntime(
   };
 }
 
-function privateLoopbackBrowserRuntime(
+function directProfileBrowserRuntime(
   registry: BrowserRuntimeCapabilityRegistryV3,
   connectTimeoutMs: number | undefined,
-  privateOrigin: string,
+  profileOrigin: string,
 ): SessionConnectorRuntimeV3 {
   const connectTimeoutMilliseconds = connectTimeoutMs ?? SDK_DEFAULTS.transport.connectTimeoutMs;
   if (!Number.isSafeInteger(connectTimeoutMilliseconds) || connectTimeoutMilliseconds < 1) {
@@ -251,7 +263,7 @@ function privateLoopbackBrowserRuntime(
     dial: async (candidate, artifact, _attemptNow, _capability, signal) => {
       const targetURL = artifact.path.kind === "direct" && candidate.carrier === "websocket" &&
         candidate.tls.mode === "ca"
-        ? privateWebSocketURL(candidate.normalized_url, privateOrigin)
+        ? profileWebSocketURL(candidate.normalized_url, profileOrigin)
         : undefined;
       if (targetURL === undefined) throw new TransportFailureV3("tls_unsupported");
       return await dialBrowserWebSocket(candidate, artifact, targetURL, signal);
@@ -277,13 +289,16 @@ async function dialBrowserWebSocket(
   return await readyWebSocketAdmissionV3(candidate, artifact, socket, signal);
 }
 
-function privateWebSocketURL(candidateURL: string, privateOrigin: string): string | undefined {
+function profileWebSocketURL(candidateURL: string, profileOrigin: string): string | undefined {
   try {
     const candidate = new URL(candidateURL);
-    const origin = new URL(privateOrigin);
-    if (candidate.protocol !== "wss:" || candidate.host !== origin.host ||
+    const origin = new URL(profileOrigin);
+    if (candidate.protocol !== "wss:" ||
         candidate.pathname !== "/flowersec/v3/direct" || candidate.search !== "" || candidate.hash !== "") return undefined;
+    const port = candidate.port || "443";
     candidate.protocol = "ws:";
+    candidate.port = port;
+    if (candidate.origin.replace(/^ws:/, "http:") !== origin.origin) return undefined;
     return candidate.href;
   } catch {
     return undefined;

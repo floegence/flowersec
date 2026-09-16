@@ -216,6 +216,25 @@ func ValidatePrivateLoopbackReady(conn *gorillaws.Conn, subprotocol string) erro
 	return nil
 }
 
+// ValidateHTTPDirectReady accepts an explicitly admitted public HTTP direct
+// connection. It does not accept TLS connections or tunnel subprotocols.
+func ValidateHTTPDirectReady(conn *gorillaws.Conn, subprotocol string) error {
+	if conn == nil {
+		return net.ErrClosed
+	}
+	if subprotocol != SubprotocolDirect || conn.Subprotocol() != SubprotocolDirect {
+		return ErrInvalidSubprotocol
+	}
+	if _, usesTLS := conn.NetConn().(*tls.Conn); usesTLS {
+		return ErrTLS13Required
+	}
+	return nil
+}
+
+func NewHTTPDirectAfterAdmission(conn *gorillaws.Conn, role Role, resources ResourcePolicy) (*Session, error) {
+	return newAfterAdmission(conn, role, SubprotocolDirect, resources, ValidateHTTPDirectReady)
+}
+
 // ValidateServerRequest rejects an HTTP Upgrade before any v3 admission bytes
 // when the caller-owned TLS server used an unsupported TLS state.
 func ValidateServerRequest(request *http.Request) error {

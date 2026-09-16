@@ -14,8 +14,8 @@ import (
 )
 
 // ErrInvalidWebSocketServer reports a missing or unsafe WebSocket server
-// configuration. WebSocket v3 endpoints must be served through
-// WebSocketHTTPServer so TLS policy is fixed before the first handshake.
+// configuration. WebSocketHTTPServer fixes the explicitly selected TLS or HTTP
+// policy before the first handshake.
 var ErrInvalidWebSocketServer = errors.New("invalid Flowersec WebSocket server")
 
 const defaultWebSocketReadHeaderTimeout = 10 * time.Second
@@ -25,19 +25,22 @@ const defaultWebSocketReadHeaderTimeout = 10 * time.Second
 // Acceptor.Handler or TunnelRuntime.Handler. The server owns a private clone
 // of TLSConfig and never exposes it for post-construction mutation.
 type WebSocketHTTPServerOptions struct {
-	Handler           http.Handler
-	TLSConfig         *tls.Config
-	ReadHeaderTimeout time.Duration
-	ReadTimeout       time.Duration
-	WriteTimeout      time.Duration
-	IdleTimeout       time.Duration
+	Handler http.Handler
+	// ApplicationHandler serves non-Flowersec paths on the same listener.
+	ApplicationHandler http.Handler
+	TLSConfig          *tls.Config
+	ReadHeaderTimeout  time.Duration
+	ReadTimeout        time.Duration
+	WriteTimeout       time.Duration
+	IdleTimeout        time.Duration
 }
 
-// WebSocketHTTPServer owns the HTTP and TLS boundary for a v3 WebSocket
-// endpoint. Its TLS configuration is immutable from the caller's perspective.
+// WebSocketHTTPServer owns a v3 WebSocket endpoint and optional application
+// routes. Its constructor fixes HTTP or TLS policy for its entire lifetime.
 type WebSocketHTTPServer struct {
 	httpServer      *http.Server
 	tlsConfig       *tls.Config
+	plaintext       bool
 	mu              sync.Mutex
 	listener        net.Listener
 	closing         bool
@@ -64,32 +67,71 @@ func NewWebSocketHTTPServer(options WebSocketHTTPServerOptions) (*WebSocketHTTPS
 	if err != nil {
 		return nil, ErrInvalidWebSocketServer
 	}
+	return newWebSocketHTTPServer(options, boundary.secureHandler(), tlsConfig, false), nil
+}
+
+// HTTPDirectServerOptions explicitly selects unencrypted HTTP direct access.
+// Handler must come from Acceptor.HTTPDirectHandler; TLS and private-loopback
+// handlers cannot be substituted. Application paths share the same listener.
+type HTTPDirectServerOptions struct {
+	Handler            http.Handler
+	ApplicationHandler http.Handler
+	ReadHeaderTimeout  time.Duration
+	ReadTimeout        time.Duration
+	WriteTimeout       time.Duration
+	IdleTimeout        time.Duration
+}
+
+func NewHTTPDirectServer(options HTTPDirectServerOptions) (*WebSocketHTTPServer, error) {
+	boundary, ok := options.Handler.(*httpDirectBoundary)
+	if !ok || boundary == nil || boundary.handler == nil || options.ReadHeaderTimeout < 0 ||
+		options.ReadTimeout < 0 || options.WriteTimeout < 0 || options.IdleTimeout < 0 {
+		return nil, ErrInvalidWebSocketServer
+	}
+	return newWebSocketHTTPServer(WebSocketHTTPServerOptions{
+		ApplicationHandler: options.ApplicationHandler,
+		ReadHeaderTimeout:  options.ReadHeaderTimeout, ReadTimeout: options.ReadTimeout,
+		WriteTimeout: options.WriteTimeout, IdleTimeout: options.IdleTimeout,
+	}, boundary.handler, nil, true), nil
+}
+
+func newWebSocketHTTPServer(options WebSocketHTTPServerOptions, transport http.Handler, tlsConfig *tls.Config, plaintext bool) *WebSocketHTTPServer {
+	handler := transport
+	if options.ApplicationHandler != nil {
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == WebSocketDirectPath || r.URL.Path == WebSocketTunnelPath {
+				transport.ServeHTTP(w, r)
+				return
+			}
+			options.ApplicationHandler.ServeHTTP(w, r)
+		})
+	}
 	readHeaderTimeout := options.ReadHeaderTimeout
 	if readHeaderTimeout == 0 {
 		readHeaderTimeout = defaultWebSocketReadHeaderTimeout
 	}
 	server := &WebSocketHTTPServer{
 		tlsConfig:       tlsConfig,
+		plaintext:       plaintext,
 		connections:     make(map[net.Conn]struct{}),
 		upgrades:        make(map[*webSocketServerUpgrade]struct{}),
 		upgradesChanged: make(chan struct{}),
 	}
 	server.httpServer = &http.Server{
-		Handler:           http.HandlerFunc(server.serveHTTP(boundary.secureHandler())),
+		Handler:           http.HandlerFunc(server.serveHTTP(handler)),
 		ConnState:         server.trackConnection,
 		ReadHeaderTimeout: readHeaderTimeout,
 		ReadTimeout:       options.ReadTimeout,
 		WriteTimeout:      options.WriteTimeout,
 		IdleTimeout:       options.IdleTimeout,
 	}
-	return server, nil
+	return server
 }
 
-// Serve serves one TCP listener with the server-owned TLS policy. Callers pass
-// a plain listener; wrapping it again with TLS would fail the first handshake
-// rather than bypassing the server-owned policy.
+// Serve serves one plain TCP listener with the constructor-selected policy.
+// TLS servers wrap it with the immutable server-owned TLS configuration.
 func (server *WebSocketHTTPServer) Serve(listener net.Listener) error {
-	if server == nil || server.httpServer == nil || server.tlsConfig == nil || listener == nil {
+	if server == nil || server.httpServer == nil || (server.tlsConfig == nil && !server.plaintext) || listener == nil {
 		return ErrInvalidWebSocketServer
 	}
 	server.mu.Lock()
@@ -99,13 +141,15 @@ func (server *WebSocketHTTPServer) Serve(listener net.Listener) error {
 	}
 	server.listener = listener
 	server.mu.Unlock()
-	tlsListener := tls.NewListener(listener, server.tlsConfig.Clone())
-	return server.httpServer.Serve(tlsListener)
+	if !server.plaintext {
+		listener = tls.NewListener(listener, server.tlsConfig.Clone())
+	}
+	return server.httpServer.Serve(listener)
 }
 
-// ListenAndServe binds address and serves it with the server-owned TLS policy.
+// ListenAndServe binds address and serves it with the constructor-selected policy.
 func (server *WebSocketHTTPServer) ListenAndServe(address string) error {
-	if server == nil || server.httpServer == nil || server.tlsConfig == nil || address == "" {
+	if server == nil || server.httpServer == nil || (server.tlsConfig == nil && !server.plaintext) || address == "" {
 		return ErrInvalidWebSocketServer
 	}
 	listener, err := net.Listen("tcp", address)

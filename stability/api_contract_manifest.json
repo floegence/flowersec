@@ -638,6 +638,11 @@
           },
           {
             "kind": "type",
+            "expr": "flowersec.HTTPDirectHandlerOptions",
+            "doc_token": "`flowersec.HTTPDirectHandlerOptions`"
+          },
+          {
+            "kind": "type",
             "expr": "flowersec.DirectListener",
             "doc_token": "`flowersec.DirectListener`"
           },
@@ -675,6 +680,11 @@
             "kind": "method",
             "expr": "(*flowersec.Acceptor).PrivateLoopbackHandler",
             "doc_token": "`flowersec.Acceptor.PrivateLoopbackHandler()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.Acceptor).HTTPDirectHandler",
+            "doc_token": "`flowersec.Acceptor.HTTPDirectHandler()`"
           },
           {
             "kind": "method",
@@ -1168,6 +1178,16 @@
             "kind": "func",
             "expr": "flowersec.ServeHTTPStream",
             "doc_token": "`flowersec.ServeHTTPStream(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.HTTPDirectServerOptions",
+            "doc_token": "`flowersec.HTTPDirectServerOptions`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewHTTPDirectServer",
+            "doc_token": "`flowersec.NewHTTPDirectServer(...)`"
           }
         ]
       },
@@ -1343,9 +1363,19 @@
             "doc_token": "`controlplane.PrivateLoopbackProfile`"
           },
           {
+            "kind": "const",
+            "expr": "controlplane.HTTPDirectProfile",
+            "doc_token": "`controlplane.HTTPDirectProfile`"
+          },
+          {
             "kind": "type",
             "expr": "controlplane.PrivateLoopbackIssueOptions",
             "doc_token": "`controlplane.PrivateLoopbackIssueOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.HTTPDirectIssueOptions",
+            "doc_token": "`controlplane.HTTPDirectIssueOptions`"
           },
           {
             "kind": "type",
@@ -1369,6 +1399,11 @@
           },
           {
             "kind": "method",
+            "expr": "(*controlplane.Issuer).IssueHTTPDirect",
+            "doc_token": "`controlplane.Issuer.IssueHTTPDirect(...)`"
+          },
+          {
+            "kind": "method",
             "expr": "(*controlplane.Issuer).IssueTunnelPair",
             "doc_token": "`controlplane.Issuer.IssueTunnelPair(...)`"
           },
@@ -1381,6 +1416,11 @@
             "kind": "type",
             "expr": "controlplane.IssuedPrivateLoopbackArtifact",
             "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact`"
+          },
+          {
+            "kind": "type",
+            "expr": "controlplane.IssuedHTTPDirectArtifact",
+            "doc_token": "`controlplane.IssuedHTTPDirectArtifact`"
           },
           {
             "kind": "type",
@@ -1424,8 +1464,18 @@
           },
           {
             "kind": "method",
+            "expr": "controlplane.IssuedHTTPDirectArtifact.ArtifactJSON",
+            "doc_token": "`controlplane.IssuedHTTPDirectArtifact.ArtifactJSON()`"
+          },
+          {
+            "kind": "method",
             "expr": "controlplane.IssuedPrivateLoopbackArtifact.AuthorizationRecord",
             "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.AuthorizationRecord()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedHTTPDirectArtifact.AuthorizationRecord",
+            "doc_token": "`controlplane.IssuedHTTPDirectArtifact.AuthorizationRecord()`"
           },
           {
             "kind": "method",
@@ -1434,8 +1484,18 @@
           },
           {
             "kind": "method",
+            "expr": "controlplane.IssuedHTTPDirectArtifact.LookupKey",
+            "doc_token": "`controlplane.IssuedHTTPDirectArtifact.LookupKey()`"
+          },
+          {
+            "kind": "method",
             "expr": "controlplane.IssuedPrivateLoopbackArtifact.String",
             "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedHTTPDirectArtifact.String",
+            "doc_token": "`controlplane.IssuedHTTPDirectArtifact.String()`"
           },
           {
             "kind": "method",
@@ -1444,8 +1504,18 @@
           },
           {
             "kind": "method",
+            "expr": "controlplane.IssuedHTTPDirectArtifact.GoString",
+            "doc_token": "`controlplane.IssuedHTTPDirectArtifact.GoString()`"
+          },
+          {
+            "kind": "method",
             "expr": "controlplane.IssuedPrivateLoopbackArtifact.MarshalJSON",
             "doc_token": "`controlplane.IssuedPrivateLoopbackArtifact.MarshalJSON()`"
+          },
+          {
+            "kind": "method",
+            "expr": "controlplane.IssuedHTTPDirectArtifact.MarshalJSON",
+            "doc_token": "`controlplane.IssuedHTTPDirectArtifact.MarshalJSON()`"
           },
           {
             "kind": "type",
@@ -1808,10 +1878,15 @@
           "`ConnectionController`",
           "`StreamHandlers`",
           "`PRIVATE_LOOPBACK_PROFILE_V1`",
+          "`HTTP_DIRECT_PROFILE_V1`",
           "`parsePrivateLoopbackArtifactV1(...)`",
+          "`parseHTTPDirectArtifactV1(...)`",
           "`createPrivateLoopbackArtifactLeaseV1(...)`",
+          "`createHTTPDirectArtifactLeaseV1(...)`",
           "`connectPrivateLoopbackV1(...)`",
-          "`createPrivateLoopbackConnectionControllerV1(...)`"
+          "`connectHTTPDirectV1(...)`",
+          "`createPrivateLoopbackConnectionControllerV1(...)`",
+          "`createHTTPDirectConnectionControllerV1(...)`"
         ],
         "runtime_exports": [
           "Artifact",
@@ -1822,21 +1897,27 @@
           "ConnectionControllerError",
           "HandlerRegistrationError",
           "PRIVATE_LOOPBACK_PROFILE_V1",
+          "HTTP_DIRECT_PROFILE_V1",
           "PrivateLoopbackArtifactErrorV1",
+          "HTTPDirectArtifactErrorV1",
           "SessionError",
           "StreamHandlers",
           "StreamMetadataError",
           "UnreliableMessageError",
           "connect",
           "connectPrivateLoopbackV1",
+          "connectHTTPDirectV1",
           "connectionDiagnostic",
           "createArtifactLease",
           "createConnectionController",
           "createPrivateLoopbackArtifactLeaseV1",
+          "createHTTPDirectArtifactLeaseV1",
           "createPrivateLoopbackConnectionControllerV1",
+          "createHTTPDirectConnectionControllerV1",
           "createStreamMetadata",
           "parseArtifact",
-          "parsePrivateLoopbackArtifactV1"
+          "parsePrivateLoopbackArtifactV1",
+          "parseHTTPDirectArtifactV1"
         ],
         "type_exports": [
           "Artifact",
@@ -1863,11 +1944,17 @@
           "JsonValue",
           "OperationOptions",
           "PrivateLoopbackArtifactLeaseV1",
+          "HTTPDirectArtifactLeaseV1",
           "PrivateLoopbackArtifactSourceResultV1",
+          "HTTPDirectArtifactSourceResultV1",
           "PrivateLoopbackArtifactSourceV1",
+          "HTTPDirectArtifactSourceV1",
           "PrivateLoopbackArtifactV1",
+          "HTTPDirectArtifactV1",
           "PrivateLoopbackConnectionControllerOptionsV1",
+          "HTTPDirectConnectionControllerOptionsV1",
           "PrivateLoopbackSessionOptionsV1",
+          "HTTPDirectSessionOptionsV1",
           "RetryDisposition",
           "RpcPeer",
           "RpcResult",

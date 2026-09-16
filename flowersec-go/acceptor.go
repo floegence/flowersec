@@ -22,6 +22,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/websocketv3"
 	carrierwt "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/webtransportv3"
+	"github.com/floegence/flowersec/flowersec-go/v5/internal/httpdirectv1"
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/privateloopbackv1"
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
 	internalrpc "github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
@@ -307,15 +308,56 @@ func (acceptor *Acceptor) PrivateLoopbackHandler(options PrivateLoopbackHandlerO
 			request,
 			validatePrivateLoopbackUpgradeRequest,
 			options.AuthorizeRequest,
-			true,
+			webSocketAdmissionPrivate,
 		)
 	})
 	return mux, nil
 }
 
+type webSocketAdmissionMode uint8
+
+const (
+	webSocketAdmissionTLS webSocketAdmissionMode = iota
+	webSocketAdmissionPrivate
+	webSocketAdmissionHTTP
+)
+
+type HTTPDirectHandlerOptions struct {
+	// AuthorizeRequest admits the exact configured HTTP authority and user session.
+	// Flowersec also enforces the direct route and a same-origin HTTP Origin.
+	AuthorizeRequest func(*http.Request) bool
+}
+
+type httpDirectBoundary struct{ handler http.Handler }
+
+func (*httpDirectBoundary) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	http.Error(w, "Flowersec HTTP direct requires NewHTTPDirectServer", http.StatusForbidden)
+}
+
+// HTTPDirectHandler is an explicit public HTTP boundary. It never substitutes
+// for the token-admitted private loopback or the ordinary TLS handler.
+func (acceptor *Acceptor) HTTPDirectHandler(options HTTPDirectHandlerOptions) (http.Handler, error) {
+	if acceptor == nil || options.AuthorizeRequest == nil {
+		return nil, ErrInvalidAcceptor
+	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		acceptor.handleDirectWithAdmission(w, r, func(candidate *http.Request) bool {
+			return httpdirectv1.RequestAllowed(candidate) && validateDirectUpgradeHeaders(candidate)
+		}, options.AuthorizeRequest, webSocketAdmissionHTTP)
+	})
+	return &httpDirectBoundary{handler: handler}, nil
+}
+
 func validatePrivateLoopbackUpgradeRequest(request *http.Request) bool {
 	if request == nil || request.TLS != nil || !privateloopbackv1.RequestAllowed(request) ||
 		!gorillaws.IsWebSocketUpgrade(request) {
+		return false
+	}
+	return validateDirectUpgradeHeaders(request)
+}
+
+func validateDirectUpgradeHeaders(request *http.Request) bool {
+	if request == nil || !gorillaws.IsWebSocketUpgrade(request) {
 		return false
 	}
 	if versions := request.Header.Values("Sec-WebSocket-Version"); len(versions) != 1 || versions[0] != "13" {
@@ -349,7 +391,7 @@ func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {
 func (acceptor *Acceptor) handleDirect(writer http.ResponseWriter, request *http.Request) {
 	acceptor.handleDirectWithAdmission(writer, request, func(candidate *http.Request) bool {
 		return candidate != nil && candidate.Method == http.MethodGet && carrierws.ValidateServerRequest(candidate) == nil
-	}, acceptor.allowedOrigin, false)
+	}, acceptor.allowedOrigin, webSocketAdmissionTLS)
 }
 
 func (acceptor *Acceptor) handleDirectWithAdmission(
@@ -357,7 +399,7 @@ func (acceptor *Acceptor) handleDirectWithAdmission(
 	request *http.Request,
 	validateRequest func(*http.Request) bool,
 	authorizeRequest func(*http.Request) bool,
-	privateLoopback bool,
+	mode webSocketAdmissionMode,
 ) {
 	if request == nil || validateRequest == nil || authorizeRequest == nil ||
 		!validateRequest(request) || !authorizeRequest(request) {
@@ -388,8 +430,10 @@ func (acceptor *Acceptor) handleDirectWithAdmission(
 	var serveHandlers func(context.Context, session.Session) error
 	defer func() { acceptor.releaseLease(request.Context(), leaseID) }()
 	serveAdmission := websocketadmission.Serve
-	if privateLoopback {
+	if mode == webSocketAdmissionPrivate {
 		serveAdmission = websocketadmission.ServePrivateLoopback
+	} else if mode == webSocketAdmissionHTTP {
+		serveAdmission = websocketadmission.ServeHTTPDirect
 	}
 	decoded, err = serveAdmission(ctx, connection, acceptor.reasons(), func(authCtx context.Context, candidate *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
 		if candidate == nil || candidate.Request.PathKind != artifactv3.PathDirect {
@@ -432,8 +476,10 @@ func (acceptor *Acceptor) handleDirectWithAdmission(
 		return
 	}
 	var carrierSession *carrierws.Session
-	if privateLoopback {
+	if mode == webSocketAdmissionPrivate {
 		carrierSession, err = carrierws.NewPrivateLoopbackAfterAdmission(connection, carrierws.ServerRole, acceptor.resources)
+	} else if mode == webSocketAdmissionHTTP {
+		carrierSession, err = carrierws.NewHTTPDirectAfterAdmission(connection, carrierws.ServerRole, acceptor.resources)
 	} else {
 		carrierSession, err = carrierws.NewAfterAdmission(connection, carrierws.ServerRole, carrierws.SubprotocolDirect, acceptor.resources)
 	}

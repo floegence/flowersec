@@ -129,6 +129,11 @@ func ServePrivateLoopback(ctx context.Context, conn *gorillaws.Conn, reasons art
 	return serve(ctx, conn, reasons, authorize, carrierws.ValidatePrivateLoopbackReady)
 }
 
+// ServeHTTPDirect reuses v3 admission after the public HTTP request boundary.
+func ServeHTTPDirect(ctx context.Context, conn *gorillaws.Conn, reasons artifactv3.ReasonRegistry, authorize admissionv3.Authorize) (*artifactv3.DecodedRequest, error) {
+	return serve(ctx, conn, reasons, authorize, carrierws.ValidateHTTPDirectReady)
+}
+
 func serve(
 	ctx context.Context,
 	conn *gorillaws.Conn,

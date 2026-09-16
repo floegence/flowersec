@@ -3,6 +3,8 @@ export {
   connectV3 as connect,
   createConnectionControllerV3 as createConnectionController,
   connectPrivateLoopbackV1,
+  connectHTTPDirectV1,
+  createHTTPDirectConnectionControllerV1,
   createPrivateLoopbackConnectionControllerV1,
 } from "./connectSessionV3.js";
 export {
@@ -25,3 +27,13 @@ export type {
   PrivateLoopbackArtifactSourceV1,
   PrivateLoopbackArtifactV1,
 } from "./privateLoopbackV1.js";
+
+export {
+  HTTP_DIRECT_PROFILE_V1, HTTPDirectArtifactErrorV1,
+  parseHTTPDirectArtifactV1, createHTTPDirectArtifactLeaseV1,
+} from "./httpDirectV1.js";
+export type {
+  HTTPDirectArtifactV1, HTTPDirectArtifactLeaseV1,
+  HTTPDirectArtifactSourceV1, HTTPDirectArtifactSourceResultV1,
+} from "./httpDirectV1.js";
+export type { HTTPDirectSessionOptionsV1, HTTPDirectConnectionControllerOptionsV1 } from "./connectSessionV3.js";

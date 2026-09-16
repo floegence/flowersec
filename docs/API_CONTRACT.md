@@ -98,6 +98,47 @@ origin. Ordinary connectors continue to reject it, and the dedicated
 controller preserves the existing attempt, cancellation, timeout, backoff,
 lease, and replacement-session semantics.
 
+## Explicit public HTTP direct adapter
+
+The Go server surface adds `flowersec.HTTPDirectHandlerOptions` and
+`flowersec.Acceptor.HTTPDirectHandler()`. The Go control plane exposes
+`controlplane.HTTPDirectProfile`,
+`controlplane.HTTPDirectIssueOptions`,
+`controlplane.Issuer.IssueHTTPDirect(...)`, and the opaque
+`controlplane.IssuedHTTPDirectArtifact`. Its only delivery and durable
+authorization boundaries are
+`controlplane.IssuedHTTPDirectArtifact.ArtifactJSON()`,
+`controlplane.IssuedHTTPDirectArtifact.AuthorizationRecord()`, and
+`controlplane.IssuedHTTPDirectArtifact.LookupKey()`; its
+`controlplane.IssuedHTTPDirectArtifact.String()`,
+`controlplane.IssuedHTTPDirectArtifact.GoString()`, and
+`controlplane.IssuedHTTPDirectArtifact.MarshalJSON()` representations are
+redacted.
+
+The TypeScript browser entrypoint exposes the runtime values
+`HTTP_DIRECT_PROFILE_V1`, `HTTPDirectArtifactErrorV1`,
+`parseHTTPDirectArtifactV1(...)`,
+`createHTTPDirectArtifactLeaseV1(...)`,
+`connectHTTPDirectV1(...)`, and
+`createHTTPDirectConnectionControllerV1(...)`. Its opaque types are
+`HTTPDirectArtifactV1`, `HTTPDirectArtifactLeaseV1`,
+`HTTPDirectArtifactSourceV1`,
+`HTTPDirectArtifactSourceResultV1`,
+`HTTPDirectSessionOptionsV1`, and
+`HTTPDirectConnectionControllerOptionsV1`.
+
+These APIs accept only `flowersec-http-direct/1` and an exact same-origin HTTP
+endpoint on localhost or a canonical IP address. HTTP must be explicitly
+selected; TLS failures never select this profile. The private-loopback
+profile remains loopback-only and application-token admitted.
+
+`flowersec.HTTPDirectServerOptions` and `flowersec.NewHTTPDirectServer(...)`
+compose this explicit handler with an `ApplicationHandler` on one HTTP port.
+The existing TLS server also accepts an `ApplicationHandler` on its TLS port.
+Both reserve the direct and tunnel protocol paths and preserve server-owned
+connection shutdown. See `docs/HTTP_DIRECT_V1.md` for the admission and security
+contract. Standard v3 connectors remain TLS-only.
+
 ## Go
 
 The only supported application import is `github.com/floegence/flowersec/flowersec-go/v5`, conventionally named `flowersec`. Its public API is unversioned and every connection uses Transport v3.
@@ -109,7 +150,7 @@ The only supported application import is `github.com/floegence/flowersec/flowers
 - RPC: `flowersec.RPCPeer.Call(...)`, `flowersec.RPCPeer.Notify(...)`, `flowersec.RPCPeer.OnNotify(...)`, and sanitized application `flowersec.RPCError` values.
 - Inbound serving: endpoint clients use `flowersec.RPCHandlers` from `flowersec.NewRPCHandlers()`, with `flowersec.RPCHandler` registrations through `flowersec.RPCHandlers.HandleRPC(...)` and `flowersec.RPCNotificationHandler` registrations through `flowersec.RPCHandlers.HandleNotification(...)`; it has no stream or serve API. Any established Session can use carrier-neutral `flowersec.StreamHandlers` from `flowersec.NewStreamHandlers(...)`, with bounded `flowersec.StreamHandlerOptions`, immutable `flowersec.StreamHandler` registrations through `flowersec.StreamHandlers.HandleStream(...)`, and lifecycle ownership through `flowersec.StreamHandlers.Serve(...)`. Accepted server Sessions use `flowersec.SessionHandlers` from `flowersec.NewSessionHandlers(...)` with `flowersec.SessionHandlerOptions`; that accepted-session configuration composes the same stream dispatcher with request and notification registration. Application stream kinds contain 1 through 128 canonical UTF-8 bytes, have no leading or trailing Unicode whitespace or control or unassigned scalars, and exclude Flowersec-reserved RPC names. RPC and notification registrations share one nonzero uint32 namespace. Consumption freezes a reusable definition; later registrations return `flowersec.ErrHandlerRegistryFrozen`, while repeated snapshot reads remain valid. A successful handler closes its write direction; a handler error or failed write close resets and closes only that stream, and unrelated dispatch continues. Notification failures remain isolated. Unhandled or excess streams are reset and closed. Invalid or duplicate registrations return `flowersec.ErrInvalidHandlerRegistration` or `flowersec.ErrHandlerAlreadyExists`. `flowersec.StreamHandlerRegistrar` is sealed to Flowersec registries. Registry string, debug, and JSON representations reveal no registration state.
 - Accepted Session registries also provide `flowersec.SessionHandlers.HandleStream(...)`, `flowersec.SessionHandlers.HandleRPC(...)`, `flowersec.SessionHandlers.HandleNotification(...)`, and `flowersec.SessionHandlers.Serve(...)`; `flowersec.RPCHandlers.String()`, `flowersec.RPCHandlers.GoString()`, `flowersec.RPCHandlers.MarshalJSON()`, `flowersec.StreamHandlers.String()`, `flowersec.StreamHandlers.GoString()`, `flowersec.StreamHandlers.MarshalJSON()`, `flowersec.SessionHandlers.String()`, `flowersec.SessionHandlers.GoString()`, and `flowersec.SessionHandlers.MarshalJSON()` are redacted and reveal no registration state.
-- Server acceptance: `flowersec.AcceptorOptions`, `flowersec.Acceptor`, `flowersec.NewAcceptor(...)`, `flowersec.Acceptor.Handler()`, and `flowersec.Acceptor.Serve(...)` own direct application Sessions. `flowersec.DirectListener`, `flowersec.RawQUICListenerOptions`, `flowersec.WebTransportListenerOptions`, `flowersec.NewWebSocketDirectListener()`, `flowersec.NewRawQUICDirectListener(...)`, and `flowersec.NewWebTransportDirectListener(...)` are the direct-only listener surface. `AcceptorOptions.ResolveHandlers` freezes one `flowersec.SessionHandlers` registry before Session establishment. `flowersec.TunnelListener`, `flowersec.TunnelRuntimeOptions`, `flowersec.TunnelRuntime`, `flowersec.NewTunnelRuntime(...)`, `flowersec.TunnelRuntime.Handler()`, `flowersec.TunnelRuntime.Serve(...)`, `flowersec.NewWebSocketTunnelListener()`, `flowersec.NewRawQUICTunnelListener(...)`, and `flowersec.NewWebTransportTunnelListener(...)` form the supported opaque relay boundary. `flowersec.WebSocketHTTPServerOptions`, `flowersec.WebSocketHTTPServer`, and `flowersec.NewWebSocketHTTPServer(...)` are required for direct or tunnel WebSocket handlers; its `flowersec.WebSocketHTTPServer.Serve(...)`, `flowersec.WebSocketHTTPServer.ListenAndServe(...)`, `flowersec.WebSocketHTTPServer.Shutdown(...)`, and `flowersec.WebSocketHTTPServer.Close()` methods own lifecycle. The wrapper owns a private TLS clone, forces TLS 1.3 only, and disables session tickets before handshakes. Direct `Handler()` installation on a caller-owned `http.Server` fails closed. `flowersec.ErrInvalidAcceptor`, `flowersec.ErrInvalidTunnelRuntime`, and `flowersec.ErrInvalidWebSocketServer` are the construction failures. `flowersec.WebSocketDirectPath` and `flowersec.WebSocketTunnelPath` remain fixed wire paths.
+- Server acceptance: `flowersec.AcceptorOptions`, `flowersec.Acceptor`, `flowersec.NewAcceptor(...)`, `flowersec.Acceptor.Handler()`, and `flowersec.Acceptor.Serve(...)` own direct application Sessions. `flowersec.DirectListener`, `flowersec.RawQUICListenerOptions`, `flowersec.WebTransportListenerOptions`, `flowersec.NewWebSocketDirectListener()`, `flowersec.NewRawQUICDirectListener(...)`, and `flowersec.NewWebTransportDirectListener(...)` are the direct-only listener surface. `AcceptorOptions.ResolveHandlers` freezes one `flowersec.SessionHandlers` registry before Session establishment. `flowersec.TunnelListener`, `flowersec.TunnelRuntimeOptions`, `flowersec.TunnelRuntime`, `flowersec.NewTunnelRuntime(...)`, `flowersec.TunnelRuntime.Handler()`, `flowersec.TunnelRuntime.Serve(...)`, `flowersec.NewWebSocketTunnelListener()`, `flowersec.NewRawQUICTunnelListener(...)`, and `flowersec.NewWebTransportTunnelListener(...)` form the supported opaque relay boundary. `flowersec.WebSocketHTTPServerOptions`, `flowersec.WebSocketHTTPServer`, and `flowersec.NewWebSocketHTTPServer(...)` are required for standard TLS direct or tunnel WebSocket handlers; its `flowersec.WebSocketHTTPServer.Serve(...)`, `flowersec.WebSocketHTTPServer.ListenAndServe(...)`, `flowersec.WebSocketHTTPServer.Shutdown(...)`, and `flowersec.WebSocketHTTPServer.Close()` methods own lifecycle. The wrapper owns a private TLS clone, forces TLS 1.3 only, and disables session tickets before handshakes. Direct `Handler()` installation on a caller-owned `http.Server` fails closed. `flowersec.ErrInvalidAcceptor`, `flowersec.ErrInvalidTunnelRuntime`, and `flowersec.ErrInvalidWebSocketServer` are the construction failures. `flowersec.WebSocketDirectPath` and `flowersec.WebSocketTunnelPath` remain fixed wire paths.
 - Server proxy application: `flowersec.ProxyServerOptions`, `flowersec.ProxyServer`, `flowersec.NewProxyServer(...)`, `flowersec.ProxyServer.RegisterStreamHandlers(...)`, `flowersec.ProxyServer.Close()`, and `flowersec.ErrInvalidProxyServer` provide the fixed-upstream HTTP and WebSocket counterpart to `@floegence/flowersec-core/proxy`. Registration is atomic on the sealed carrier-neutral `StreamHandlerRegistrar`; upstream selection, proxy wire framing, header filtering, body/frame limits, cancellation, and reset cleanup remain Flowersec-owned. `ProxyServer.Close()` cancels active upstream work, waits for handler cleanup, and makes previously registered handlers reject future dispatch.
 - Optional unreliable messages: `flowersec.Session.UnreliableMessages()` returns the carrier-neutral `flowersec.UnreliableMessageChannel`; `flowersec.UnreliableMessageChannel.MaxMessageBytes()`, `flowersec.UnreliableMessageChannel.Send(...)`, and `flowersec.UnreliableMessageChannel.Receive(...)` use `flowersec.UnreliableSendOptions` and `flowersec.UnreliableSendStatus` without exposing DATAGRAM or carrier objects. Accepted sends and dropped sends are public outcomes. `flowersec.UnreliableMessageError` exposes only `unavailable`, `invalid_message`, `too_large`, `canceled`, `closed`, or `operation_failed` without mapping to session termination errors.
 - Session lifecycle: `flowersec.Session.RPC()`, `flowersec.Session.OpenStream(...)`, `flowersec.Session.AcceptStream(...)`, `flowersec.Session.Rekey(...)`, `flowersec.Session.ProbeLiveness(...)`, `flowersec.Session.WaitTermination(...)`, and `flowersec.Session.Close()`.
