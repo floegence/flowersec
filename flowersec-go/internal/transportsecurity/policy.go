@@ -1,6 +1,7 @@
 package transportsecurity
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
@@ -9,7 +10,11 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"io"
+	"net"
 	"net/url"
+	"os"
+	"syscall"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
@@ -65,8 +70,10 @@ func SnapshotPolicy(policy artifactv3.TLSPolicy, attemptNow time.Time) (artifact
 }
 
 // ClassifyLocatedTLSFailure projects a failure that the transport provider has
-// already proven occurred inside TLS. Network and application-protocol errors
-// must never pass through this boundary.
+// already proven occurred inside TLS. A handshake can also be interrupted by
+// the network; preserve those errors so retry policy can distinguish them from
+// TLS verification and protocol failures. Application-protocol errors must not
+// pass through this boundary.
 func ClassifyLocatedTLSFailure(policy artifactv3.TLSPolicy, err error) error {
 	if err == nil {
 		return nil
@@ -78,8 +85,40 @@ func ClassifyLocatedTLSFailure(policy artifactv3.TLSPolicy, err error) error {
 	detail := FailureUnknown
 	if policy.Mode == artifactv3.TLSModeCA && isX509VerificationError(err) {
 		detail = FailureCAUntrusted
+	} else if isNetworkInterruption(err) {
+		return err
 	}
 	return errors.Join(&Error{detail: detail}, err)
+}
+
+func isNetworkInterruption(err error) bool {
+	// Every cause must be a known network interruption. Matching any joined
+	// cause with errors.Is would let an EOF hide an unknown or security failure.
+	switch err {
+	case io.EOF, io.ErrUnexpectedEOF, net.ErrClosed, os.ErrDeadlineExceeded,
+		context.Canceled, context.DeadlineExceeded,
+		syscall.ECONNRESET, syscall.ECONNABORTED, syscall.EPIPE, syscall.ETIMEDOUT:
+		return true
+	}
+	switch wrapped := err.(type) {
+	case *Error, *tls.CertificateVerificationError:
+		return false
+	case interface{ Unwrap() []error }:
+		causes := wrapped.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !isNetworkInterruption(cause) {
+				return false
+			}
+		}
+		return true
+	case interface{ Unwrap() error }:
+		return isNetworkInterruption(wrapped.Unwrap())
+	default:
+		return false
+	}
 }
 
 func isX509VerificationError(err error) bool {

@@ -12,10 +12,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"os"
 	"slices"
+	"syscall"
 	"testing"
 	"time"
 
@@ -334,6 +337,57 @@ func TestClassifyLocatedTLSFailureUsesPolicyMode(t *testing.T) {
 				t.Fatalf("mode %q classified as %v", test.mode, err)
 			}
 		})
+	}
+}
+
+func TestClassifyLocatedTLSFailurePreservesNetworkInterruptions(t *testing.T) {
+	for _, mode := range []artifactv3.TLSMode{artifactv3.TLSModeCA, artifactv3.TLSModePin} {
+		for name, original := range map[string]error{
+			"eof":              io.EOF,
+			"truncated":        io.ErrUnexpectedEOF,
+			"closed":           net.ErrClosed,
+			"deadline":         os.ErrDeadlineExceeded,
+			"canceled":         context.Canceled,
+			"context-deadline": context.DeadlineExceeded,
+			"reset":            &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)},
+			"aborted":          syscall.ECONNABORTED,
+			"broken-pipe":      syscall.EPIPE,
+			"timeout":          syscall.ETIMEDOUT,
+			"wrapped":          fmt.Errorf("handshake: %w", io.EOF),
+			"joined-network":   errors.Join(io.EOF, net.ErrClosed),
+		} {
+			t.Run(string(mode)+"/"+name, func(t *testing.T) {
+				got := ClassifyLocatedTLSFailure(artifactv3.TLSPolicy{Mode: mode}, original)
+				if got != original {
+					t.Fatalf("network interruption became a security failure: %v", got)
+				}
+			})
+		}
+	}
+}
+
+func TestClassifyLocatedTLSFailureDoesNotHideSecurityFailures(t *testing.T) {
+	for name, original := range map[string]error{
+		"certificate":         x509.UnknownAuthorityError{},
+		"hostname":            x509.HostnameError{},
+		"certificate-wrapper": &tls.CertificateVerificationError{Err: io.EOF},
+		"pin":                 &Error{detail: FailurePinMismatch},
+		"alert":               tls.AlertError(40),
+		"record":              tls.RecordHeaderError{},
+		"unknown":             errors.New("unclassified handshake failure"),
+		"network-wrapper":     &net.OpError{Op: "read", Net: "tcp", Err: tls.AlertError(40)},
+	} {
+		for _, mode := range []artifactv3.TLSMode{artifactv3.TLSModeCA, artifactv3.TLSModePin} {
+			t.Run(string(mode)+"/"+name, func(t *testing.T) {
+				for _, input := range []error{original, errors.Join(io.EOF, original), errors.Join(original, io.EOF)} {
+					got := ClassifyLocatedTLSFailure(artifactv3.TLSPolicy{Mode: mode}, input)
+					var securityError *Error
+					if !errors.As(got, &securityError) || !errors.Is(got, original) {
+						t.Fatalf("security failure lost its classification or cause: %v", got)
+					}
+				}
+			})
+		}
 	}
 }
 
