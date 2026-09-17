@@ -1,9 +1,11 @@
 import type {
   ProxyRuntimeControllerBridgeScope,
+  ProxyRuntimeHTTPScope,
   ProxyRuntimeScopeLimits,
   ProxyRuntimeScope,
   ProxyRuntimeServiceWorkerScope,
 } from "./types.js";
+import { normalizeHeaderNames, normalizePrefixes } from "./policy.js";
 
 export const PROXY_RUNTIME_SCOPE = Object.freeze({ name: "proxy.runtime", version: 2 as const });
 
@@ -64,6 +66,25 @@ function optionalAppBasePath(value: unknown): string | undefined {
   return path;
 }
 
+function httpStrings(name: string, value: unknown): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 32) reject(name);
+  return value.map((entry) => nonEmpty(name, entry));
+}
+
+function optionalHTTP(value: unknown, appBasePath: string | undefined): ProxyRuntimeHTTPScope | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) reject("http");
+  exactFields(value, ["additionalPathPrefixes", "extraRequestHeaders"], "http");
+  const prefixes = httpStrings("http.additionalPathPrefixes", value.additionalPathPrefixes);
+  const headers = httpStrings("http.extraRequestHeaders", value.extraRequestHeaders);
+  if (prefixes !== undefined && prefixes.length > 0 && appBasePath === undefined) reject("http requires appBasePath");
+  return Object.freeze({
+    ...(prefixes === undefined ? {} : { additionalPathPrefixes: normalizePrefixes("http.additionalPathPrefixes", prefixes) }),
+    ...(headers === undefined ? {} : { extraRequestHeaders: Object.freeze([...normalizeHeaderNames(headers)]) }),
+  });
+}
+
 function allowedOrigins(value: unknown): readonly string[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > 16) reject("controllerBridge.allowedOrigins");
   const result: string[] = [];
@@ -95,9 +116,10 @@ export function assertProxyRuntimeScope(payload: unknown): ProxyRuntimeScope {
   if (new TextEncoder().encode(encoded).length > MAX_PAYLOAD_BYTES || containerDepth(payload) > MAX_DEPTH || fieldCount(payload) > MAX_FIELDS) {
     reject("payload bounds");
   }
-  exactFields(payload, ["version", "mode", "appBasePath", "serviceWorker", "controllerBridge", "limits"], "scope");
+  exactFields(payload, ["version", "mode", "appBasePath", "http", "serviceWorker", "controllerBridge", "limits"], "scope");
   if (payload.version !== undefined && payload.version !== 2) reject("version");
   const appBasePath = optionalAppBasePath(payload.appBasePath);
+  const http = optionalHTTP(payload.http, appBasePath);
   const limits = optionalLimits(payload.limits);
 
   if (payload.mode === "service_worker") {
@@ -106,6 +128,7 @@ export function assertProxyRuntimeScope(payload: unknown): ProxyRuntimeScope {
     const result: ProxyRuntimeServiceWorkerScope = {
       mode: "service_worker",
       ...(appBasePath === undefined ? {} : { appBasePath }),
+      ...(http === undefined ? {} : { http }),
       serviceWorker: Object.freeze({
         scriptUrl: nonEmpty("serviceWorker.scriptUrl", payload.serviceWorker.scriptUrl),
         scope: nonEmpty("serviceWorker.scope", payload.serviceWorker.scope),
@@ -120,6 +143,7 @@ export function assertProxyRuntimeScope(payload: unknown): ProxyRuntimeScope {
     const result: ProxyRuntimeControllerBridgeScope = {
       mode: "controller_bridge",
       ...(appBasePath === undefined ? {} : { appBasePath }),
+      ...(http === undefined ? {} : { http }),
       controllerBridge: Object.freeze({ allowedOrigins: allowedOrigins(payload.controllerBridge.allowedOrigins) }),
       ...(limits === undefined ? {} : { limits }),
     };

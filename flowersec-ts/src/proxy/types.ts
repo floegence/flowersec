@@ -66,8 +66,14 @@ export type ProxyRuntimeScopeLimits = Readonly<{
   maxWsFrameBytes?: number;
 }>;
 
+export type ProxyRuntimeHTTPScope = Readonly<{
+  additionalPathPrefixes?: readonly string[];
+  extraRequestHeaders?: readonly string[];
+}>;
+
 type ProxyRuntimeScopeBase = Readonly<{
   appBasePath?: string;
+  http?: ProxyRuntimeHTTPScope;
   limits?: ProxyRuntimeScopeLimits;
 }>;
 

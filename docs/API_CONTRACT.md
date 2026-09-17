@@ -272,6 +272,9 @@ Node `SessionOptions.origin` and `ConnectionControllerOptions.origin` are option
 
 The proxy entrypoint exposes `PROXY_RUNTIME_SCOPE`, `assertProxyRuntimeScope(...)`, `connectProxyBrowser(...)`, `connectProxyControllerBrowser(...)`, `createProxyRuntime(...)`, bounded Service Worker generation and registration, exact-origin controller/app-window bridges, `registerProxyAppWindowWithServiceWorkerRuntime(...)`, and `installWebSocketPatch(...)`. The high-level Service Worker runtime entrypoint composes the existing app-window bridge with Flowersec's private runtime listener and returns only the opaque `ProxyAppWindowHandle`; initialization rolls back partial listeners and disposal is idempotent. Its request envelope, decoder, message constants, ports, flow-control fields, and response protocol remain package-private and are not exported. Composition accepts only an opaque `ArtifactLease`; the runtime accepts only `Session` and returns only `ByteStream`. Carrier, Yamux, candidate selection, raw artifact scopes, proxy wire frames, and `proxy.runtime@2` remain internal. Window bridges fail closed on origin, source, capability, frame-size, queue, or response-contract mismatch; messages expose only closed proxy status/code values.
 
+The validated proxy scope may declare bounded `http.additionalPathPrefixes` and `http.extraRequestHeaders`. Additional HTTP paths require an explicit `appBasePath`; composition permits that base plus the declared paths while retaining the base-only WebSocket policy. Header names use the same forbidden-header validation as the runtime, and absent HTTP additions grant no extra access. These declarations are immutable acquisition authority, not page-message overrides.
+
+
 ## Swift
 
 Swift `ConnectorOptions.origin` is required and must be an absolute HTTP(S) origin for the Apple WebSocket admission policy; the API does not provide an implicit origin.

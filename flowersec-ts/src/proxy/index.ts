@@ -50,6 +50,7 @@ export type {
   ProxyHeader,
   ProxyRuntime,
   ProxyRuntimeControllerBridgeScope,
+  ProxyRuntimeHTTPScope,
   ProxyRuntimeLimits,
   ProxyRuntimeOptions,
   ProxyRuntimePathPolicy,

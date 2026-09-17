@@ -78,6 +78,47 @@ async function collectPort(port: MessagePort, terminal: string): Promise<Record<
 }
 
 describe("Session proxy runtime", () => {
+  it("forwards declared HTTP headers without expanding WebSocket access", async () => {
+    const stream = new FakeStream([concat([
+      jsonFrame({ v: 1, request_id: "platform", ok: true, status: 200, headers: [] }), u32be(0),
+    ])]);
+    const session = new FakeSession([stream]);
+    const runtime = createProxyRuntime({
+      session,
+      pathPolicy: {
+        allowedPathPrefixes: ["/app/", "/platform/api/"],
+        allowedWebSocketPathPrefixes: ["/app/"],
+      },
+      extraRequestHeaders: ["X-Platform-CSRF"],
+    });
+    const channel = new MessageChannel();
+    const collecting = collectPort(channel.port2, "flowersec-proxy:response_end");
+    runtime.dispatchFetch({
+      id: "platform", method: "POST", path: "/platform/api/catalog/query",
+      headers: [
+        { name: "Content-Type", value: "application/json" },
+        { name: "X-Platform-CSRF", value: "proof" },
+        { name: "Authorization", value: "secret" },
+        { name: "X-Unlisted", value: "private" },
+      ],
+      body: new TextEncoder().encode("{}").buffer,
+    }, channel.port1);
+    expect(await collecting).toContainEqual(expect.objectContaining({ status: 200 }));
+    expect(firstWrittenJSON(stream)).toMatchObject({ headers: [
+      { name: "content-type", value: "application/json" },
+      { name: "x-platform-csrf", value: "proof" },
+    ] });
+    await expect(runtime.openWebSocketStream("/platform/api/events")).rejects.toThrow(/not allowed/);
+    for (const path of ["/private/", "/platform/api-other/", "/platform/api/../../private/"]) {
+      const blocked = new MessageChannel();
+      const result = collectPort(blocked.port2, "flowersec-proxy:response_error");
+      runtime.dispatchFetch({ id: "denied", method: "GET", path, headers: [] }, blocked.port1);
+      expect(await result).toContainEqual(expect.objectContaining({ status: 403 }));
+    }
+    expect(session.opens).toHaveLength(1);
+    runtime.dispose();
+  });
+
   it("canonicalizes HTTP and WebSocket paths before applying policy and sending upstream", async () => {
     for (const path of [
       "/safe/../admin",
