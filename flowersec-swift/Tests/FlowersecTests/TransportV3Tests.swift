@@ -180,17 +180,10 @@ struct TransportV3Tests {
     var iterator = started.stream.makeAsyncIterator()
     _ = await iterator.next()
     task.cancel()
-    var consumed = false
-    for _ in 0..<100 {
-      if await claimed.isConsumed {
-        consumed = true
-        break
-      }
-      await Task.yield()
-    }
-    #expect(consumed)
-    release.continuation.finish()
+    // Observe cancellation completion rather than relying on scheduler yields.
     _ = await task.result
+    #expect(await claimed.isConsumed)
+    release.continuation.finish()
   }
 
   @Test func failedSpendIsConsumed() async throws {
