@@ -322,6 +322,25 @@ describe("transport v3 production connection controller", () => {
     await controller.close();
   });
 
+  test.each([
+    [{ kind: "retryable" } as const, 1_900_000_000_250],
+    [{ kind: "retry_after", notBeforeUnixMilliseconds: 1_900_000_005_000 } as const, 1_900_000_005_000],
+    [{ kind: "retry_after", notBeforeUnixMilliseconds: 1_900_000_000_100 } as const, 1_900_000_000_250],
+  ])("publishes the effective retry deadline and clears it after cancellation (%j)", async (disposition, deadline) => {
+    const clock = new HoldingClock();
+    const controller = createConnectionControllerV3({
+      acquire: async () => ({ kind: "failure", code: "connection_failed", disposition }),
+    }, async () => { throw new Error("connector must not run"); }, { clock, capabilitySnapshot });
+    const snapshots: ConnectionControllerSnapshotV3[] = [];
+    controller.subscribe((snapshot) => { snapshots.push(snapshot); });
+    controller.start();
+    await clock.waitForSleepCount(1);
+    expect(snapshots.at(-1)).toMatchObject({ state: "waiting", nextRetryAtUnixMilliseconds: deadline });
+    expect(connectionDiagnosticV3(snapshots.at(-1)!)).toMatchObject({ nextRetryAtUnixMilliseconds: deadline });
+    await controller.close();
+    expect(snapshots.at(-1)).not.toHaveProperty("nextRetryAtUnixMilliseconds");
+  });
+
   test("lets a synchronous waiting subscriber wake the registered retry", async () => {
     const clock = new HoldingClock();
     const acquire = vi.fn(async (): Promise<ArtifactSourceResultV3> => ({

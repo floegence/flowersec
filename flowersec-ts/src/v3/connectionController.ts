@@ -93,6 +93,8 @@ export type ConnectionControllerSnapshotV3<Session extends ManagedSessionV3 = Ma
   currentSession?: Session;
   failure?: ConnectionControllerFailureV3;
   retryDisposition?: RetryDispositionV3;
+  /** Effective retry deadline, present only while waiting; a wall-clock estimate of the owned wait. */
+  nextRetryAtUnixMilliseconds?: number;
 }>;
 
 export type ConnectionDiagnosticV3 = Readonly<{
@@ -100,6 +102,8 @@ export type ConnectionDiagnosticV3 = Readonly<{
   attempt: number;
   failure?: ConnectionControllerFailureV3;
   retryDisposition?: RetryDispositionV3;
+  /** Effective retry deadline, present only while waiting; a wall-clock estimate of the owned wait. */
+  nextRetryAtUnixMilliseconds?: number;
 }>;
 
 /** Produces a stable diagnostic value without retaining a Session or transport detail. */
@@ -117,6 +121,7 @@ export function connectionDiagnosticV3(
     attempt: snapshot.attempt,
     ...(failure === undefined ? {} : { failure }),
     ...(retryDisposition === undefined ? {} : { retryDisposition }),
+    ...(snapshot.nextRetryAtUnixMilliseconds === undefined ? {} : { nextRetryAtUnixMilliseconds: snapshot.nextRetryAtUnixMilliseconds }),
   });
 }
 
@@ -676,6 +681,8 @@ export class ConnectionControllerV3<Session extends ManagedSessionV3 = ManagedSe
     return Object.freeze({
       state: this.#state,
       attempt: this.#state === "connected" ? this.#connectedAttempt : this.#cycle.snapshot().attempts,
+      ...(this.#state === "waiting" && this.#retry.nextRetryAtUnixMilliseconds !== undefined
+        ? { nextRetryAtUnixMilliseconds: this.#retry.nextRetryAtUnixMilliseconds } : {}),
       ...(this.currentSession === undefined ? {} : { currentSession: this.currentSession }),
       ...(this.#failure === undefined ? {} : { failure: this.#failure }),
       ...(this.#disposition === undefined ? {} : { retryDisposition: this.#disposition }),

@@ -93,3 +93,13 @@ See the [TypeScript cookbook](../examples/ts/README.md),
 [Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md),
 [wire contract](../docs/TRANSPORT_V3_WIRE.md), and
 [error model](../docs/ERROR_MODEL.md).
+
+### Connection retry status
+
+While a connection controller is `waiting`, its snapshot and diagnostic include
+`nextRetryAtUnixMilliseconds`, the scheduler-owned wall-clock estimate of the next
+attempt. It accounts for both exponential backoff and any server `retry_after`
+minimum. Hosts may display a countdown without duplicating the retry policy. The
+field is absent outside `waiting`. `retryNow()` can skip backoff but cannot bypass
+a server minimum; `close()` cancels the wait. Wall-clock corrections can change
+the displayed estimate; the scheduler still enforces its monotonic backoff.

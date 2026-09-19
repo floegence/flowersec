@@ -254,10 +254,16 @@ export class ControllerRetryWaitV3 {
   #waiting = false;
   #manual = false;
   #absoluteDeadline: number | undefined;
+  #nextRetryAtUnixMilliseconds: number | undefined;
   #wake: (() => void) | undefined;
 
   constructor(clock: ControllerClockV3 = defaultControllerClockV3()) {
     this.#clock = clock;
+  }
+
+  /** Wall-clock estimate of this wait's effective backoff and server deadline. */
+  get nextRetryAtUnixMilliseconds(): number | undefined {
+    return this.#nextRetryAtUnixMilliseconds;
   }
 
   retryNow(): boolean {
@@ -280,6 +286,10 @@ export class ControllerRetryWaitV3 {
     const backoffDeadline = saturatingAddMilliseconds(
       this.#clock.monotonicNowMilliseconds(),
       controllerBackoffForWait(consecutiveFailure),
+    );
+    this.#nextRetryAtUnixMilliseconds = Math.max(
+      saturatingAddMilliseconds(this.#clock.wallNowMilliseconds(), controllerBackoffForWait(consecutiveFailure)),
+      validated.kind === "retry_after" ? validated.notBeforeUnixMilliseconds : 0,
     );
     this.#waiting = true;
     this.#manual = false;
@@ -310,6 +320,7 @@ export class ControllerRetryWaitV3 {
       this.#waiting = false;
       this.#manual = false;
       this.#absoluteDeadline = undefined;
+      this.#nextRetryAtUnixMilliseconds = undefined;
       this.#wake = undefined;
     }
   }
