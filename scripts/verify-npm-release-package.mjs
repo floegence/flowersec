@@ -8,6 +8,9 @@ const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ENTRY_BYTES = 16 * 1024 * 1024;
 const MAX_METADATA_BYTES = 4 * 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 30_000;
+// npm may finish its asynchronous publication scan several minutes after upload.
+// Bound metadata visibility separately from archive download retries.
+const MAX_METADATA_ATTEMPTS = 61;
 const MAX_ATTEMPTS = 6;
 const [packageName, version, sourceSHA] = process.argv.slice(2);
 assert.match(packageName ?? "", /^@floegence\//);
@@ -19,7 +22,7 @@ const requestHeaders = Object.freeze({
 const metadataURL = `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${version}`;
 
 let metadata;
-for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+for (let attempt = 1; attempt <= MAX_METADATA_ATTEMPTS; attempt++) {
   try {
     const { response, body } = await fetchResponseBody(
       metadataURL,
@@ -42,9 +45,9 @@ for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       throw error;
     }
   } catch (error) {
-    if (attempt === MAX_ATTEMPTS || !isRetryableRegistryError(error)) throw error;
+    if (attempt === MAX_METADATA_ATTEMPTS || !isRetryableRegistryError(error)) throw error;
   }
-  if (attempt === MAX_ATTEMPTS) throw new Error(`${packageName}@${version} did not become readable`);
+  if (attempt === MAX_METADATA_ATTEMPTS) throw new Error(`${packageName}@${version} did not become readable`);
   await new Promise((resolve) => setTimeout(resolve, 10_000));
 }
 assert.equal(metadata.name, packageName);

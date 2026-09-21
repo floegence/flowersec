@@ -915,11 +915,19 @@ test("npm registry readback enforces retries, status classes, JSON, and redirect
 
   const exhausted = createRegistryReadbackHarness(t, {
     kind: "npm",
-    metadataResponses: Array.from({ length: 6 }, () => ({ status: 404 })),
+    metadataResponses: Array.from({ length: 61 }, () => ({ status: 404 })),
     fetchResponses: [],
   });
   assert.notEqual(exhausted.result.status, 0);
-  assert.equal(exhausted.fetchCount, 6);
+  assert.equal(exhausted.fetchCount, 61);
+
+  const processing = createRegistryReadbackHarness(t, {
+    kind: "npm",
+    metadataResponses: [...Array.from({ length: 12 }, () => ({ status: 404 })), { status: 200 }],
+    fetchResponses: success,
+  });
+  assert.equal(processing.result.status, 0, processing.result.stderr);
+  assert.equal(processing.fetchCount, 14, "asynchronous npm processing must become readable before consumer checks");
 
   const forbidden = createRegistryReadbackHarness(t, {
     kind: "npm", metadataResponses: [{ status: 403 }], fetchResponses: [],
