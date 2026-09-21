@@ -45,7 +45,7 @@ export async function prepareProxyFetch(input: RequestInfo | URL, init?: Request
       reader.releaseLock();
     }
   }
-  return { request: enableResponseFlowControl({ id: crypto.randomUUID(), method: request.method, path,
+  return { request: enableResponseFlowControl({ id: "", method: request.method, path,
     headers: Array.from(request.headers, ([name, value]) => ({ name, value })),
     ...(body === undefined ? {} : { body }),
   }), signal: request.signal };

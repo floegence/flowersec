@@ -523,3 +523,11 @@ it("requires consumer credit for event dispatch and releases a stalled bridge on
     expect(stream.resetCalled).toBe(true);
   } finally { runtime.dispose(); channel.port2.close(); }
 });
+
+it("supports HTTP direct pages where secure-context randomUUID is unavailable", async () => {
+  const secureCrypto = globalThis.crypto;
+  vi.stubGlobal("crypto", { getRandomValues: secureCrypto.getRandomValues.bind(secureCrypto) });
+  const runtime = createProxyRuntime({ session: new FakeSession([new FetchResponseStream("text/plain", [])]) });
+  try { expect(await (await runtime.fetch("/api")).text()).toBe(""); }
+  finally { runtime.dispose(); vi.unstubAllGlobals(); }
+});
