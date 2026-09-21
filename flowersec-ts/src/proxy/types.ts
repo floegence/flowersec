@@ -9,6 +9,7 @@ export type ProxyRuntimeLimits = Readonly<{
   maxWsFrameBytes: number;
   maxWsBufferedAmountBytes: number;
   maxConcurrentHttpStreams: number;
+  maxConcurrentEventStreams: number;
   maxQueuedHttpRequests: number;
   maxQueuedHttpBodyBytes: number;
 }>;
@@ -28,6 +29,8 @@ export type ProxyRuntimeOptions = Readonly<{
   maxWsFrameBytes?: number;
   maxWsBufferedAmountBytes?: number;
   maxConcurrentHttpStreams?: number;
+  maxConcurrentEventStreams?: number;
+  eventStreamIdleTimeoutMs?: number;
   maxQueuedHttpRequests?: number;
   maxQueuedHttpBodyBytes?: number;
   timeoutMs?: number;
@@ -50,6 +53,7 @@ export type ProxyFetchRequest = Readonly<{
 
 export type ProxyRuntime = Readonly<{
   limits: ProxyRuntimeLimits;
+  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   dispatchFetch(request: ProxyFetchRequest, port: MessagePort): void;
   openWebSocketStream(
     path: string,

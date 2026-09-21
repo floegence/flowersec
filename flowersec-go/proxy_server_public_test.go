@@ -13,7 +13,7 @@ func TestProxyServerPublicSurfaceIsApplicationOnly(t *testing.T) {
 
 	allowedOptions := map[string]struct{}{
 		"Upstream": {}, "UpstreamOrigin": {}, "AllowedUpstreamHosts": {}, "AllowedOrigins": {},
-		"MaxConcurrentStreams": {}, "MaxJSONFrameBytes": {}, "MaxChunkBytes": {},
+		"MaxConcurrentStreams": {}, "MaxConcurrentHTTPStreams": {}, "MaxConcurrentEventStreams": {}, "EventStreamIdleTimeout": {}, "MaxJSONFrameBytes": {}, "MaxChunkBytes": {},
 		"MaxBodyBytes": {}, "MaxWebSocketFrameBytes": {}, "DefaultHTTPRequestTimeout": {},
 		"MaxHTTPRequestTimeout": {}, "ExtraRequestHeaders": {}, "ExtraResponseHeaders": {},
 		"BlockedResponseHeaders": {}, "ExtraWebSocketHeaders": {}, "ForbiddenCookieNames": {},

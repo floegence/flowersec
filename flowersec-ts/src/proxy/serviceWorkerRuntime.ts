@@ -15,8 +15,14 @@ type RuntimeRequestRecord = Readonly<{
   body?: unknown;
 }>;
 
-type ProxyRuntimeServiceWorkerBridgeHandle = Readonly<{ dispose(): void }>;
 const responseFlowControl = new WeakSet<ProxyFetchRequest>();
+
+export function enableResponseFlowControl(request: ProxyFetchRequest): ProxyFetchRequest {
+  responseFlowControl.add(request);
+  return request;
+}
+
+type ProxyRuntimeServiceWorkerBridgeHandle = Readonly<{ dispose(): void }>;
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -54,7 +60,7 @@ function parseRuntimeRequest(value: unknown): ProxyFetchRequest {
     ...(typeof raw.external_origin === "string" ? { externalOrigin: raw.external_origin } : {}),
     ...(raw.body instanceof ArrayBuffer ? { body: raw.body } : {}),
   });
-  if (raw.response_flow_control === "chunk_credit_v2") responseFlowControl.add(request);
+  if (raw.response_flow_control === "chunk_credit_v2") enableResponseFlowControl(request);
   return request;
 }
 

@@ -34,6 +34,9 @@ type ProxyServerOptions struct {
 	AllowedUpstreamHosts        []string
 	AllowedOrigins              []string
 	MaxConcurrentStreams        int
+	MaxConcurrentHTTPStreams    int
+	MaxConcurrentEventStreams   int
+	EventStreamIdleTimeout      time.Duration
 	MaxJSONFrameBytes           int
 	MaxChunkBytes               int
 	MaxBodyBytes                int64
@@ -52,16 +55,18 @@ type ProxyServerOptions struct {
 // ProxyServer owns the proxy application protocol and its upstream clients.
 // Carrier, session, stream framing, and proxy wire values remain private.
 type ProxyServer struct {
-	config      proxyServerConfig
-	permits     chan struct{}
-	httpClient  *http.Client
-	wsDialer    *websocket.Dialer
-	closeOnce   sync.Once
-	stateMu     sync.Mutex
-	closed      bool
-	closeCtx    context.Context
-	closeCancel context.CancelFunc
-	active      sync.WaitGroup
+	config       proxyServerConfig
+	permits      chan struct{}
+	httpPermits  chan struct{}
+	eventPermits chan struct{}
+	httpClient   *http.Client
+	wsDialer     *websocket.Dialer
+	closeOnce    sync.Once
+	stateMu      sync.Mutex
+	closed       bool
+	closeCtx     context.Context
+	closeCancel  context.CancelFunc
+	active       sync.WaitGroup
 }
 
 type proxyServerConfig struct {
@@ -74,6 +79,9 @@ type proxyServerConfig struct {
 	maxWSFrame        int
 	defaultTimeout    time.Duration
 	maxTimeout        time.Duration
+	eventIdleTimeout  time.Duration
+	maxHTTP           int
+	maxEvents         int
 	requestHeaders    map[string]struct{}
 	responseHeaders   map[string]struct{}
 	blockedResponses  map[string]struct{}
@@ -98,10 +106,12 @@ func NewProxyServer(options ProxyServerOptions) (*ProxyServer, error) {
 	}
 	closeCtx, closeCancel := context.WithCancel(context.Background())
 	return &ProxyServer{
-		config:      config,
-		permits:     make(chan struct{}, concurrent),
-		closeCtx:    closeCtx,
-		closeCancel: closeCancel,
+		config:       config,
+		permits:      make(chan struct{}, concurrent),
+		httpPermits:  make(chan struct{}, config.maxHTTP),
+		eventPermits: make(chan struct{}, config.maxEvents),
+		closeCtx:     closeCtx,
+		closeCancel:  closeCancel,
 		httpClient: &http.Client{
 			Transport:     transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
@@ -244,6 +254,15 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 		allowedOrigins[allowed] = struct{}{}
 	}
 	maxConcurrent := positiveProxyLimit(options.MaxConcurrentStreams, defaults.ProxyMaxConcurrentStreams)
+	maxHTTP := positiveProxyLimit(options.MaxConcurrentHTTPStreams, min(24, maxConcurrent))
+	maxEvents := positiveProxyLimit(options.MaxConcurrentEventStreams, max(1, min(16, maxHTTP*2/3)))
+	eventIdleTimeout := options.EventStreamIdleTimeout
+	if eventIdleTimeout == 0 {
+		eventIdleTimeout = 45 * time.Second
+	}
+	if maxHTTP < 1 || maxHTTP > maxConcurrent || maxEvents < 1 || maxEvents > maxHTTP || eventIdleTimeout < 0 {
+		return fail()
+	}
 	maxJSON := positiveProxyLimit(options.MaxJSONFrameBytes, internaljsonframe.DefaultMaxJSONFrameBytes)
 	maxChunk := positiveProxyLimit(options.MaxChunkBytes, defaults.ProxyMaxChunkBytes)
 	maxWS := positiveProxyLimit(options.MaxWebSocketFrameBytes, defaults.ProxyMaxWSFrameBytes)
@@ -299,6 +318,7 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 	}
 	return proxyServerConfig{
 		upstream: upstream, upstreamOrigin: origin, allowedOrigins: allowedOrigins, maxJSONFrame: maxJSON, maxChunk: maxChunk,
+		maxHTTP: maxHTTP, maxEvents: maxEvents, eventIdleTimeout: eventIdleTimeout,
 		maxBody: maxBody, maxWSFrame: maxWS, defaultTimeout: defaultTimeout, maxTimeout: maxTimeout,
 		requestHeaders: requestHeaders, responseHeaders: responseHeaders, blockedResponses: blockedResponses,
 		webSocketHeaders: webSocketHeaders, forbiddenCookies: forbiddenCookies, forbiddenPrefixes: forbiddenPrefixes,

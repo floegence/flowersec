@@ -1,3 +1,5 @@
+import { enableResponseFlowControl, usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
+import { fetchProxyPort, prepareProxyFetch } from "./fetch.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
 
@@ -210,6 +212,7 @@ function bridgeLimits(maxWsFrameBytes?: number, maxWsBufferedAmountBytes?: numbe
     maxWsFrameBytes: wsFrame,
     maxWsBufferedAmountBytes: buffered,
     maxConcurrentHttpStreams: 24,
+    maxConcurrentEventStreams: 16,
     maxQueuedHttpRequests: 128,
     maxQueuedHttpBodyBytes: 64 * 1024 * 1024,
   });
@@ -253,11 +256,19 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
       port.close();
       return;
     }
-    controller.postMessage({ type: FETCH_MESSAGE, version: 2, request, ...(nonce === undefined ? {} : { capabilityNonce: nonce }) }, origin, [port]);
+    controller.postMessage({ type: FETCH_MESSAGE, version: 2, request, responseFlowControl: usesServiceWorkerResponseFlowControl(request) ? "chunk_credit_v2" : undefined, ...(nonce === undefined ? {} : { capabilityNonce: nonce }) }, origin, [port]);
   };
 
+  const lifetime = new AbortController();
+  const dispose = () => { disposed = true; lifetime.abort(); };
   const runtime: ProxyRuntime = Object.freeze({
     limits,
+    fetch: async (input, init) => {
+      if (disposed) throw new SessionError("closed");
+      const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+      const prepared = await prepareProxyFetch(input, { ...init, signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]) }, target.location?.origin, limits.maxBodyBytes);
+      return fetchProxyPort(dispatchFetch, prepared.request, AbortSignal.any([prepared.signal, lifetime.signal]), limits.maxChunkBytes);
+    },
     dispatchFetch,
     openWebSocketStream: async (path, openOptions = {}) => {
       if (disposed) throw new SessionError("closed");
@@ -297,12 +308,12 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
       }, origin, [channel.port2]);
       return await response;
     },
-    dispose: () => { disposed = true; },
+    dispose,
   });
 
   return Object.freeze({
     runtime,
-    dispose: () => { disposed = true; },
+    dispose,
   });
 }
 
@@ -406,7 +417,9 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
     const port = event.ports?.[0];
     if (port === undefined) return;
     if (event.data?.type === FETCH_MESSAGE && event.data.version === 2) {
-      options.runtime.dispatchFetch(event.data.request as ProxyFetchRequest, port);
+      const request = event.data.request as ProxyFetchRequest;
+      if (event.data.responseFlowControl === "chunk_credit_v2") enableResponseFlowControl(request);
+      options.runtime.dispatchFetch(request, port);
       return;
     }
     if (event.data?.type === WEBSOCKET_OPEN_MESSAGE && event.data.version === 2) {

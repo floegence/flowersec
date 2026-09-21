@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -25,8 +26,12 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 		handlerContext = context.Background()
 	}
 	started := time.Now()
-	handlerContext, cancelIntake := context.WithTimeout(handlerContext, server.config.maxTimeout)
-	defer cancelIntake()
+	handlerContext, cancelCause := context.WithCancelCause(handlerContext)
+	cancelRequest := func() { cancelCause(context.Canceled) }
+	defer cancelRequest()
+	// A single timer bounds intake and finite responses, then tracks event activity.
+	timer := time.AfterFunc(server.config.maxTimeout, func() { cancelCause(context.DeadlineExceeded) })
+	defer timer.Stop()
 	resetStream := sync.OnceFunc(func() { _ = stream.Reset() })
 	outerResetDone := make(chan struct{})
 	stopOuterReset := context.AfterFunc(handlerContext, func() {
@@ -59,18 +64,43 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 		return
 	}
 	requestContext := handlerContext
-	var cancelRequest context.CancelFunc
-	if timeout > 0 {
-		requestContext, cancelRequest = context.WithDeadline(requestContext, started.Add(timeout))
+	remaining := time.Until(started.Add(timeout))
+	if remaining <= 0 {
+		cancelCause(context.DeadlineExceeded)
 	} else {
-		requestContext, cancelRequest = context.WithCancel(requestContext)
+		timer.Reset(remaining)
 	}
+	select {
+	case server.httpPermits <- struct{}{}:
+		defer func() { <-server.httpPermits }()
+	default:
+		if server.drainProxyBody(stream) == nil {
+			server.writeHTTPError(stream, requestMeta.RequestID, "resource_exhausted")
+		}
+		return
+	}
+	requestHeaders := proxyRequestHeaders(requestMeta.Headers, server.config)
+	eventRequested := acceptsProxyEventStream(requestHeaders.Get("Accept"))
+	eventPermit := false
+	releaseEvent := func() {
+		if eventPermit {
+			<-server.eventPermits
+			eventPermit = false
+		}
+	}
+	if eventRequested {
+		select {
+		case server.eventPermits <- struct{}{}:
+			eventPermit = true
+		default:
+			if server.drainProxyBody(stream) == nil {
+				server.writeHTTPError(stream, requestMeta.RequestID, "resource_exhausted")
+			}
+			return
+		}
+	}
+	defer releaseEvent()
 	var watchDone chan struct{}
-	resetDone := make(chan struct{})
-	stopReset := context.AfterFunc(requestContext, func() {
-		defer close(resetDone)
-		resetStream()
-	})
 	startWatcher := func(beforeWatch func() error) {
 		watchDone = make(chan struct{})
 		go func() {
@@ -84,9 +114,6 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	defer func() {
 		if watchDone != nil {
 			<-watchDone
-		}
-		if !stopReset() {
-			<-resetDone
 		}
 		cancelRequest()
 	}()
@@ -121,7 +148,7 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 		server.report(err)
 		return
 	}
-	request.Header = proxyRequestHeaders(requestMeta.Headers, server.config)
+	request.Header = requestHeaders
 	if err := applyProxyExternalOrigin(request, requestMeta.ExternalOrigin, server.config.allowedOrigins); err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
 		server.report(err)
@@ -138,12 +165,21 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 			default:
 			}
 		}
+		if cause := context.Cause(requestContext); cause != nil {
+			err = cause
+		}
 		server.writeHTTPError(stream, requestMeta.RequestID, classifyProxyHTTPError(err))
 		server.report(err)
 		return
 	}
 	defer response.Body.Close()
-	if response.ContentLength > server.config.maxBody {
+	persistent := eventRequested && proxyEventStreamType(response.Header.Get("Content-Type"))
+	if persistent {
+		timer.Reset(server.config.eventIdleTimeout)
+	} else {
+		releaseEvent()
+	}
+	if !persistent && response.ContentLength > server.config.maxBody {
 		server.writeHTTPError(stream, requestMeta.RequestID, "response_body_too_large")
 		server.report(ErrInvalidProxyServer)
 		return
@@ -164,7 +200,14 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	for {
 		count, readErr := response.Body.Read(buffer)
 		if count > 0 {
-			if err := writeProxyChunk(stream, buffer[:count], server.config.maxChunk, &total, server.config.maxBody); err != nil {
+			maximum := server.config.maxBody
+			if persistent {
+				timer.Reset(server.config.eventIdleTimeout)
+				// Bound each chunk without accumulating a lifetime byte counter.
+				total = 0
+				maximum = int64(server.config.maxChunk)
+			}
+			if err := writeProxyChunk(stream, buffer[:count], server.config.maxChunk, &total, maximum); err != nil {
 				resetStream()
 				server.report(err)
 				return
@@ -382,4 +425,22 @@ func classifyProxyHTTPError(err error) string {
 		}
 	}
 	return "upstream_request_failed"
+}
+
+func proxyEventStreamType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && strings.EqualFold(mediaType, "text/event-stream")
+}
+
+func acceptsProxyEventStream(value string) bool {
+	for _, part := range strings.Split(value, ",") {
+		mediaType, parameters, err := mime.ParseMediaType(strings.TrimSpace(part))
+		if err == nil && strings.EqualFold(mediaType, "text/event-stream") {
+			quality := parameters["q"]
+			if quality == "" || strings.Trim(quality, "0.") != "" {
+				return true
+			}
+		}
+	}
+	return false
 }

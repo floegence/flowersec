@@ -1,3 +1,4 @@
+import { usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
 import { describe, expect, it } from "vitest";
 
 import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
@@ -124,8 +125,9 @@ describe("proxy controller/app window bridge", () => {
       limits: {
         maxJsonFrameBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
         maxWsFrameBytes: 1024, maxWsBufferedAmountBytes: 4096,
-        maxConcurrentHttpStreams: 1, maxQueuedHttpRequests: 1, maxQueuedHttpBodyBytes: 1,
+        maxConcurrentHttpStreams: 1, maxConcurrentEventStreams: 1, maxQueuedHttpRequests: 1, maxQueuedHttpBodyBytes: 1,
       },
+      async fetch() { return new Response(); },
       dispatchFetch(request, port) {
         fetchRequest = request;
         port.postMessage({ type: "flowersec-proxy:response_end" });
@@ -312,7 +314,7 @@ class FailingDuplexStream implements ByteStream {
   async close(): Promise<void> {}
 }
 
-function bridgeHarness(stream: ByteStream): Readonly<{
+function bridgeHarness(stream: ByteStream, dispatchFetch: ProxyRuntime["dispatchFetch"] = () => undefined): Readonly<{
   app: ReturnType<typeof registerProxyAppWindow>;
   controller: ReturnType<typeof registerProxyControllerWindow>;
 }> {
@@ -324,9 +326,10 @@ function bridgeHarness(stream: ByteStream): Readonly<{
     limits: {
       maxJsonFrameBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
       maxWsFrameBytes: 1024, maxWsBufferedAmountBytes: 4096,
-      maxConcurrentHttpStreams: 1, maxQueuedHttpRequests: 1, maxQueuedHttpBodyBytes: 1,
+      maxConcurrentHttpStreams: 1, maxConcurrentEventStreams: 1, maxQueuedHttpRequests: 1, maxQueuedHttpBodyBytes: 1,
     },
-    dispatchFetch() {},
+    async fetch() { return new Response(); },
+    dispatchFetch,
     async openWebSocketStream() { return { stream, protocol: "" }; },
     dispose() {},
   } satisfies ProxyRuntime;
@@ -368,3 +371,34 @@ async function within<T>(promise: Promise<T>): Promise<T> {
     new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("operation remained pending")), 200)),
   ]);
 }
+
+
+it("keeps session fetch streaming and credited across the authenticated window bridge", async () => {
+  let credits = 0;
+  let abortReceived!: () => void;
+  const aborted = new Promise<void>(resolve => { abortReceived = resolve; });
+  const harness = bridgeHarness(new DuplexStream(), (request, port) => {
+    expect(usesServiceWorkerResponseFlowControl(request)).toBe(true);
+    port.onmessage = event => {
+      if (event.data.type === "flowersec-proxy:abort") { abortReceived(); port.close(); }
+      if (event.data.type === "flowersec-proxy:response_credit") {
+        credits++;
+        const data = Uint8Array.of(42).buffer;
+        port.postMessage({ type: "flowersec-proxy:response_chunk", data }, [data]);
+      }
+    };
+    port.postMessage({ type: "flowersec-proxy:response_meta", status: 200,
+      headers: [{ name: "content-type", value: "text/event-stream" }] });
+  });
+  try {
+    const response = await harness.app.runtime.fetch("/events", { headers: { accept: "text/event-stream" } });
+    expect(response).toBeInstanceOf(Response);
+    expect(credits).toBe(0);
+    const reader = response.body!.getReader();
+    await expect(reader.read()).resolves.toMatchObject({ value: Uint8Array.of(42) });
+    expect(credits).toBe(1);
+    harness.app.dispose();
+    await expect(reader.read()).rejects.toThrow();
+    await within(aborted);
+  } finally { harness.app.dispose(); harness.controller.dispose(); }
+});

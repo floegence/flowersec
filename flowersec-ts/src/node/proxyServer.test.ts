@@ -1,3 +1,5 @@
+import type { AddressInfo } from "node:net";
+import type { Session } from "../public/contract.js";
 import { expect, expectTypeOf, test } from "vitest";
 
 import {
@@ -96,3 +98,64 @@ test("rejects upstream and header policies that could escape the configured auth
     upstreamOrigin: "http://127.0.0.1:8080/path",
   })).toThrow(/invalid_options/u);
 });
+
+test("streams negotiated events beyond finite limits and cancels idle upstream work with the session", async () => {
+  const { createServer } = await import("node:http");
+  const { once } = await import("node:events");
+  const { createProxyRuntime } = await import("../proxy/runtime.js");
+  const upstream = createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.flushHeaders();
+    const timer = setInterval(() => response.write("data: alive\n\n"), 15);
+    response.on("close", () => clearInterval(timer));
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address() as AddressInfo;
+  const origin = `http://127.0.0.1:${address.port}`;
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxBodyBytes: 16,
+    defaultHTTPRequestTimeoutMs: 100, maxHTTPRequestTimeoutMs: 100 });
+  const handlers = new StreamHandlers(); server.register(handlers);
+  const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const operations: Promise<void>[] = [];
+  const session = {
+    async openStream() {
+      const up = new TransformStream<Uint8Array, Uint8Array>();
+      const down = new TransformStream<Uint8Array, Uint8Array>();
+      const controller = new AbortController();
+      const end = (readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array>): ByteStream => {
+        const reader = readable.getReader(); const writer = writable.getWriter();
+        return {
+          kind,
+          async read(options) {
+            const cancel = () => { void reader.cancel().catch(() => undefined); };
+            options?.signal?.addEventListener("abort", cancel, { once: true });
+            try { const result = await reader.read(); return result.done ? null : result.value; }
+            finally { options?.signal?.removeEventListener("abort", cancel); }
+          },
+          async write(bytes) { await writer.write(bytes.slice()); return bytes.length; },
+          async closeWrite() { await writer.close(); },
+          async reset() { controller.abort(); await Promise.allSettled([reader.cancel(), writer.abort()]); },
+          async close() { controller.abort(); await Promise.allSettled([reader.cancel(), writer.close()]); },
+        };
+      };
+      const peer = end(up.readable, down.writable);
+      operations.push(handler({ kind, stream: peer, metadata: createStreamMetadata({}) }, { signal: controller.signal }));
+      return end(down.readable, up.writable);
+    },
+  } as Session;
+  const runtime = createProxyRuntime({ session, maxBodyBytes: 16, timeoutMs: 100 });
+  try {
+    const response = await runtime.fetch("/events", { headers: { accept: "text/event-stream" } });
+    const reader = response.body!.getReader();
+    let bytes = 0;
+    for (let i = 0; i < 10; i++) { const chunk = await reader.read(); bytes += chunk.value?.length ?? 0; }
+    expect(bytes).toBeGreaterThan(16);
+    await reader.cancel();
+    await Promise.all(operations);
+    expect(server.activeCount).toBe(0);
+  } finally {
+    runtime.dispose(); await server.close();
+    upstream.closeAllConnections(); await new Promise<void>(done => upstream.close(() => done()));
+  }
+}, 3_000);

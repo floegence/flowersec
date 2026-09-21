@@ -359,6 +359,11 @@ class ControlledReadStream extends FakeStream {
     });
   }
 
+  override async reset(): Promise<void> {
+    await super.reset();
+    this.rejectRead?.(new Error("stream reset"));
+  }
+
   respond(value: Uint8Array | Error): void {
     if (value instanceof Error) this.rejectRead?.(value);
     else this.resolveRead?.(value);
@@ -384,3 +389,137 @@ async function nextPortMessage(port: MessagePort): Promise<Record<string, unknow
 async function eventLoopTurn(): Promise<void> {
   await new Promise<void>((resolve) => { setImmediate(resolve); });
 }
+
+class FetchResponseStream extends FakeStream {
+  private initialized = false;
+  constructor(private readonly contentType: string, private readonly chunks: Uint8Array[]) { super([], 65536); }
+  override async read(): Promise<Uint8Array | null> {
+    this.readCalls++;
+    if (!this.initialized) {
+      this.initialized = true;
+      return jsonFrame({ v: 1, request_id: firstWrittenJSON(this).request_id, ok: true, status: 200,
+        headers: [{ name: "content-type", value: this.contentType }] });
+    }
+    const chunk = this.chunks.shift();
+    return chunk === undefined ? u32be(0) : concat([u32be(chunk.length), chunk]);
+  }
+}
+
+describe("session fetch", () => {
+  it("returns a standard streaming Response and exempts confirmed events from the cumulative body limit", async () => {
+    const stream = new FetchResponseStream("text/event-stream; charset=utf-8", [new Uint8Array(8), new Uint8Array(8)]);
+    const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxBodyBytes: 8 });
+    try {
+      const response = await runtime.fetch("/events", { headers: { Accept: "text/event-stream" } });
+      expect(response).toBeInstanceOf(Response);
+      expect(stream.readCalls).toBe(1);
+      expect((await response.arrayBuffer()).byteLength).toBe(16);
+      expect(stream.closed).toBe(true);
+    } finally { runtime.dispose(); }
+  });
+
+  it("keeps finite response limits when either event negotiation header is absent", async () => {
+    for (const [accept, contentType] of [["text/event-stream", "text/plain"], ["text/plain", "text/event-stream"]]) {
+      const stream = new FetchResponseStream(contentType!, [new Uint8Array(8), new Uint8Array(8)]);
+      const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxBodyBytes: 8 });
+      try {
+        const response = await runtime.fetch("/events", { headers: { accept: accept! } });
+        await expect(response.arrayBuffer()).rejects.toThrow();
+        expect(stream.resetCalled).toBe(true);
+      } finally { runtime.dispose(); }
+    }
+  });
+
+  it("reserves finite-request slots and releases unread streams on disposal", async () => {
+    const streams = Array.from({ length: 17 }, () => new FetchResponseStream("text/event-stream", []));
+    const session = new FakeSession([...streams]);
+    const runtime = createProxyRuntime({ session });
+    const responses: Response[] = [];
+    try {
+      for (let i = 0; i < 16; i++) responses.push(await runtime.fetch("/events", { headers: { Accept: "text/event-stream" } }));
+      await expect(runtime.fetch("/events", { headers: { Accept: "text/event-stream" } })).rejects.toMatchObject({ code: "resource_exhausted" });
+      const finite = await runtime.fetch("/api");
+      await finite.text();
+      expect(session.opens).toHaveLength(17);
+      runtime.dispose();
+      for (const response of responses) await expect(response.text()).rejects.toThrow();
+      expect(streams.slice(0,16).every(stream => stream.resetCalled)).toBe(true);
+    } finally { runtime.dispose(); }
+  });
+});
+
+describe("event stream deadlines and cancellation", () => {
+  it("outlives the finite deadline while consuming events and times out an idle reader", async () => {
+    vi.useFakeTimers();
+    const stream = new FetchResponseStream("text/event-stream", Array.from({ length: 8 }, () => Uint8Array.of(1)));
+    const runtime = createProxyRuntime({ session: new FakeSession([stream]), timeoutMs: 10, eventStreamIdleTimeoutMs: 20 });
+    try {
+      const response = await runtime.fetch("/events", { headers: { Accept: "text/event-stream" } });
+      const reader = response.body!.getReader();
+      for (let i = 0; i < 8; i++) {
+        await vi.advanceTimersByTimeAsync(9);
+        expect(await reader.read()).toMatchObject({ done: false });
+      }
+      const closed = expect(reader.closed).rejects.toThrow();
+      await vi.advanceTimersByTimeAsync(21);
+      await closed;
+      expect(stream.resetCalled).toBe(true);
+    } finally { runtime.dispose(); vi.useRealTimers(); }
+  });
+
+  it("cancels before admission, during a read, and while a response is unread", async () => {
+    const first = new ControlledReadStream();
+    const unread = new FetchResponseStream("text/event-stream", []);
+    const session = new FakeSession([first, unread]);
+    const runtime = createProxyRuntime({ session });
+    try {
+      const aborted = new AbortController(); aborted.abort();
+      await expect(runtime.fetch("/events", { signal: aborted.signal })).rejects.toThrow();
+      expect(session.opens).toHaveLength(0);
+      const controller = new AbortController();
+      const pending = runtime.fetch("/events", { signal: controller.signal });
+      await vi.waitFor(() => expect(first.readCalls).toBeGreaterThan(0));
+      controller.abort();
+      await expect(pending).rejects.toThrow();
+      expect(first.resetCalled).toBe(true);
+      const response = await runtime.fetch("/events", { headers: { Accept: "text/event-stream" } });
+      await response.body!.cancel();
+      expect(unread.resetCalled).toBe(true);
+    } finally { runtime.dispose(); }
+  });
+});
+
+it("consumes more than 64 MiB of events without accumulating a lifetime response budget", async () => {
+  const chunk = new Uint8Array(64 * 1024);
+  const stream = new FetchResponseStream("text/event-stream", Array.from({ length: 1025 }, () => chunk));
+  const runtime = createProxyRuntime({ session: new FakeSession([stream]) });
+  try {
+    const response = await runtime.fetch("/events", { headers: { accept: "text/event-stream" } });
+    const reader = response.body!.getReader();
+    let received = 0;
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      received += next.value.byteLength;
+    }
+    expect(received).toBe(64 * 1024 * 1025);
+    expect(stream.closed).toBe(true);
+  } finally { runtime.dispose(); }
+});
+
+it("requires consumer credit for event dispatch and releases a stalled bridge on disposal", async () => {
+  const stream = new FetchResponseStream("text/event-stream", [Uint8Array.of(1)]);
+  const runtime = createProxyRuntime({ session: new FakeSession([stream]) });
+  const channel = new MessageChannel(); channel.port2.start();
+  try {
+    const metadata = nextPortMessage(channel.port2);
+    runtime.dispatchFetch({ id: "events", method: "GET", path: "/events", headers: [{ name: "accept", value: "text/event-stream" }] }, channel.port1);
+    await expect(metadata).resolves.toMatchObject({ type: "flowersec-proxy:response_meta" });
+    await eventLoopTurn();
+    expect(stream.readCalls).toBe(1);
+    const error = nextPortMessage(channel.port2);
+    runtime.dispose();
+    await expect(error).resolves.toMatchObject({ type: "flowersec-proxy:response_error" });
+    expect(stream.resetCalled).toBe(true);
+  } finally { runtime.dispose(); channel.port2.close(); }
+});

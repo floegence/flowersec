@@ -36,6 +36,9 @@ export type ProxyServerOptions = Readonly<{
   allowedUpstreamHosts?: readonly string[];
   allowedOrigins?: readonly string[];
   maxConcurrentStreams?: number;
+  maxConcurrentHTTPStreams?: number;
+  maxConcurrentEventStreams?: number;
+  eventStreamIdleTimeoutMs?: number;
   maxJsonFrameBytes?: number;
   maxChunkBytes?: number;
   maxBodyBytes?: number;
@@ -69,6 +72,9 @@ type Config = Readonly<{
   forbiddenCookies: ReadonlySet<string>;
   forbiddenCookiePrefixes: readonly string[];
   maxConcurrent: number;
+  maxHTTP: number;
+  maxEvents: number;
+  eventIdleTimeout: number;
   maxJSON: number;
   maxChunk: number;
   maxBody: number;
@@ -98,6 +104,8 @@ export class ProxyServer {
   readonly #completion: Promise<void>;
   #resolveCompletion!: () => void;
   #closed = false;
+  #httpCount = 0;
+  #eventCount = 0;
 
   constructor(options: ProxyServerOptions) {
     this.#config = compileConfig(options);
@@ -206,6 +214,11 @@ export class ProxyServer {
     const linked = linkSignals(parentSignal, timeoutController.signal);
     const signal = linked.signal;
     let reset: Promise<void> | undefined;
+    let peerWatch: Promise<void> | undefined;
+    let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let httpPermit = false;
+    let eventPermit = false;
+    const releaseEvent = () => { if (eventPermit) { eventPermit = false; this.#eventCount--; } };
     const abort = () => { reset ??= stream.reset().catch(() => undefined); };
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
@@ -227,6 +240,24 @@ export class ProxyServer {
       else timer = setTimeout(() => timeoutController.abort(), remaining);
       const body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody);
       if (body === undefined) { await writeHTTPError(stream, requestID, "request_body_invalid"); return; }
+      // A peer reset cancels the upstream even when it has no next event to write.
+      // A FIN only closes request writes and is valid during response streaming.
+      peerWatch = stream.read({ signal }).then((chunk) => {
+        if (chunk !== null) timeoutController.abort(new SessionError("canceled"));
+      }, () => { timeoutController.abort(new SessionError("canceled")); });
+      if (this.#httpCount >= this.#config.maxHTTP) {
+        await writeHTTPError(stream, requestID, "resource_exhausted"); return;
+      }
+      httpPermit = true;
+      this.#httpCount++;
+      const eventRequested = meta.headers.some(({ name, value }) => name.toLowerCase() === "accept" && value.split(",").some(acceptsEventStream));
+      if (eventRequested) {
+        if (this.#eventCount >= this.#config.maxEvents) {
+          await writeHTTPError(stream, requestID, "resource_exhausted"); return;
+        }
+        eventPermit = true;
+        this.#eventCount++;
+      }
       const externalOrigin = validateOrigin(meta.external_origin, this.#config.allowedOrigins);
       if (meta.external_origin !== undefined && externalOrigin === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
       const requestHeaders = filterRequestHeaders(meta.headers, this.#config);
@@ -246,8 +277,15 @@ export class ProxyServer {
       };
       try {
         const response = await fetch(target, requestInit);
+        const persistent = eventRequested && isEventStream(response.headers.get("content-type") ?? "");
+        const activity = () => {
+          if (!persistent) return;
+          clearTimeout(timer);
+          timer = setTimeout(() => timeoutController.abort(), this.#config.eventIdleTimeout);
+        };
+        if (persistent) activity(); else releaseEvent();
         const contentLength = response.headers.get("content-length");
-        if (contentLength !== null && Number(contentLength) > this.#config.maxBody) {
+        if (!persistent && contentLength !== null && Number(contentLength) > this.#config.maxBody) {
           await writeHTTPError(stream, requestID, "response_body_too_large"); return;
         }
         await writeFrame(stream, {
@@ -256,11 +294,13 @@ export class ProxyServer {
         }, signal);
         let total = 0;
         const reader = response.body?.getReader();
+        responseReader = reader;
         if (reader !== undefined) {
           while (true) {
             const result = await reader.read();
             if (result.done) break;
-            total += result.value.length;
+            activity();
+            if (!persistent) total += result.value.length;
             if (total > this.#config.maxBody) throw new Error("upstream response body exceeds limit");
             for (let offset = 0; offset < result.value.length; offset += this.#config.maxChunk) {
               await writeChunk(stream, result.value.subarray(offset, offset + this.#config.maxChunk), signal);
@@ -276,8 +316,14 @@ export class ProxyServer {
       }
     } finally {
       clearTimeout(timer);
+      releaseEvent();
+      if (httpPermit) this.#httpCount--;
       linked.dispose();
       signal.removeEventListener("abort", abort);
+      timeoutController.abort();
+      await responseReader?.cancel().catch(() => undefined);
+      responseReader?.releaseLock();
+      await peerWatch;
       await reset;
     }
   }
@@ -333,13 +379,17 @@ function compileConfig(options: ProxyServerOptions): Config {
   for (const allowed of allowedOrigins) { try { if (new URL(allowed).origin !== allowed) throw new Error(); } catch { throw new ProxyServerError("invalid_options"); } }
   const positive = (value: number | undefined, fallback: number) => value === undefined ? fallback : value;
   const maxConcurrent = positive(options.maxConcurrentStreams, 64);
+  const maxHTTP = positive(options.maxConcurrentHTTPStreams, Math.min(24, maxConcurrent));
+  const maxEvents = positive(options.maxConcurrentEventStreams, Math.max(1, Math.min(16, Math.floor(maxHTTP * 2 / 3))));
+  const eventIdleTimeout = positive(options.eventStreamIdleTimeoutMs, 45_000);
+  if (maxHTTP > maxConcurrent || maxEvents > maxHTTP) throw new ProxyServerError("invalid_options");
   const maxJSON = positive(options.maxJsonFrameBytes, DEFAULT_MAX_JSON);
   const maxChunk = positive(options.maxChunkBytes, DEFAULT_MAX_CHUNK);
   const maxBody = positive(options.maxBodyBytes, DEFAULT_MAX_BODY);
   const maxWS = positive(options.maxWebSocketFrameBytes, DEFAULT_MAX_WS);
   const defaultTimeout = positive(options.defaultHTTPRequestTimeoutMs, DEFAULT_TIMEOUT);
   const maxTimeout = positive(options.maxHTTPRequestTimeoutMs, MAX_TIMEOUT);
-  if ([maxConcurrent, maxJSON, maxChunk, maxBody, maxWS, defaultTimeout, maxTimeout].some((value) => !Number.isSafeInteger(value) || value < 1) || defaultTimeout > maxTimeout) throw new ProxyServerError("invalid_options");
+  if ([maxConcurrent, maxHTTP, maxEvents, eventIdleTimeout, maxJSON, maxChunk, maxBody, maxWS, defaultTimeout, maxTimeout].some((value) => !Number.isSafeInteger(value) || value < 1) || defaultTimeout > maxTimeout) throw new ProxyServerError("invalid_options");
   const normalizeHeaders = (values: readonly string[] | undefined) => new Set((values ?? []).map((name) => {
     const lower = name.trim().toLowerCase();
     if (!HEADER_NAME.test(lower) || FORBIDDEN_HEADERS.has(lower)) throw new ProxyServerError("invalid_options");
@@ -360,7 +410,7 @@ function compileConfig(options: ProxyServerOptions): Config {
     websocketHeaders: normalizeHeaders(options.extraWebSocketHeaders),
     forbiddenCookies: new Set(normalizeCookieValues(options.forbiddenCookieNames)),
     forbiddenCookiePrefixes: normalizeCookieValues(options.forbiddenCookieNamePrefixes),
-    maxConcurrent, maxJSON, maxChunk, maxBody, maxWS, defaultTimeout, maxTimeout,
+    maxConcurrent, maxHTTP, maxEvents, eventIdleTimeout, maxJSON, maxChunk, maxBody, maxWS, defaultTimeout, maxTimeout,
     ...(options.onError === undefined ? {} : { report: options.onError }),
   };
 }
@@ -545,4 +595,11 @@ function decodeWebSocketClose(payload: Uint8Array): Readonly<{ code?: number; re
   if (code === 1004 || code === 1005 || code === 1006) throw new Error("invalid websocket close code");
   const reason = new TextDecoder("utf-8", { fatal: true }).decode(payload.subarray(2));
   return { code, reason };
+}
+
+function isEventStream(value: string): boolean {
+  return value.split(";", 1)[0]?.trim().toLowerCase() === "text/event-stream";
+}
+function acceptsEventStream(value: string): boolean {
+  return isEventStream(value) && !/;\s*q=0(?:\.0*)?\s*(?:;|$)/iu.test(value);
 }

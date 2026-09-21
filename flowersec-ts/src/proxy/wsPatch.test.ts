@@ -104,6 +104,7 @@ const limits: ProxyRuntimeLimits = {
   maxWsFrameBytes: 1024,
   maxWsBufferedAmountBytes: 4096,
   maxConcurrentHttpStreams: 4,
+  maxConcurrentEventStreams: 2,
   maxQueuedHttpRequests: 8,
   maxQueuedHttpBodyBytes: 8192,
 };

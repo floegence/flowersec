@@ -103,3 +103,7 @@ minimum. Hosts may display a countdown without duplicating the retry policy. The
 field is absent outside `waiting`. `retryNow()` can skip backoff but cannot bypass
 a server minimum; `close()` cancels the wait. Wall-clock corrections can change
 the displayed estimate; the scheduler still enforces its monotonic backoff.
+
+## Session-bound HTTP events
+
+Use `createProxyRuntime({ session, externalOrigin }).fetch("/api/events", { headers: { Accept: "text/event-stream" }, signal })` to read a standard streaming `Response` over the existing session. Consume or cancel the body and dispose the runtime when its session is replaced. The runtime never retries requests. It shares policy, framing, cancellation and admission with the browser bridges. The Go and Node proxy servers support negotiated SSE with bounded backpressure and activity deadlines; ordinary requests retain finite response limits. Default HTTP admission is 24 requests, including at most 16 event streams. Rejected event subscriptions report `resource_exhausted` immediately.
