@@ -3,16 +3,18 @@
 This file is generated from the canonical Flowersec source dependency inventory for flowersec-ts.
 Do not edit it manually. License decisions are reviewed by the repository source license policy.
 
-- @floegence/flowersec-node-native 5.4.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-darwin-arm64 5.4.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-darwin-x64 5.4.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-linux-arm64-gnu 5.4.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
-- @floegence/flowersec-node-native-linux-x64-gnu 5.4.0 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native 5.4.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-darwin-arm64 5.4.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-darwin-x64 5.4.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-linux-arm64-gnu 5.4.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
+- @floegence/flowersec-node-native-linux-x64-gnu 5.4.1 (Declared: MIT; selected: MIT; source: https://github.com/floegence/flowersec.git)
 - @noble/ciphers 2.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.4.0.tgz)
 - @noble/curves 2.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/curves/-/curves-2.4.0.tgz)
 - @noble/hashes 2.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/hashes/-/hashes-2.4.0.tgz)
+- @types/node 26.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@types/node/-/node-26.4.0.tgz)
 - punycode 2.3.1 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz)
 - tr46 6.0.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz)
+- undici-types 8.3.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz)
 - ws 8.21.3 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/ws/-/ws-8.21.3.tgz)
 ## Distributed Dependency License Materials
 

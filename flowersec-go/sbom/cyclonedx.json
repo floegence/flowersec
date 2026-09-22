@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:202e41bc-b099-5a38-8df2-669f2ab20e74",
+  "serialNumber": "urn:uuid:05e6f946-1065-51ae-80aa-f4fc5b5b2902",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "github.com/floegence/flowersec/flowersec-go/v5",
-      "version": "v5.4.0",
-      "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v5@v5.4.0",
-      "bom-ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v5@v5.4.0"
+      "version": "v5.4.1",
+      "purl": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v5@v5.4.1",
+      "bom-ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v5@v5.4.1"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "58de38954f13d2f8c3fcc5566b7396674113601b714c8e07d49298c775a5fb77"
+        "value": "171659c729b6ec07181d040f7e5eba44912dd34804e8618cf20a7fb7af30041d"
       }
     ]
   },
@@ -330,7 +330,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v5@v5.4.0",
+      "ref": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v5@v5.4.1",
       "dependsOn": [
         "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
         "pkg:golang/github.com/gorilla/websocket@v1.5.3",

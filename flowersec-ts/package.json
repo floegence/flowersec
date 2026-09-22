@@ -1,6 +1,6 @@
 {
   "name": "@floegence/flowersec-core",
-  "version": "5.4.0",
+  "version": "5.4.1",
   "description": "Flowersec core TypeScript library for carrier-neutral encrypted sessions and multiplexed streams.",
   "license": "MIT",
   "repository": {
@@ -71,6 +71,7 @@
     "prepublishOnly": "npm run build && npm run verify:package"
   },
   "dependencies": {
+    "@types/node": "26.4.0",
     "@noble/ciphers": "2.4.0",
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
@@ -81,7 +82,6 @@
     "@playwright/test": "1.62.1",
     "@typescript/native": "npm:typescript@7.0.2",
     "typescript": "npm:@typescript/typescript6@6.0.2",
-    "@types/node": "26.4.0",
     "@types/ws": "8.18.1",
     "@typescript-eslint/eslint-plugin": "8.68.0",
     "@typescript-eslint/parser": "8.68.0",

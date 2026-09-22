@@ -294,6 +294,7 @@ function verifyArtifactOnlyConnectTypes() {
         noEmit: true,
         strict: true,
         target: 'ES2022',
+        types: ['node'],
       },
       include: ['*.ts'],
     }, null, 2)

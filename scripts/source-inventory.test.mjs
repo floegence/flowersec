@@ -635,6 +635,7 @@ test("native Node wrapper and platform archives carry licenses, notices, and exa
 test("npm, Rust, Go, and Swift source archives carry exact generated distribution outputs", async (t) => {
   const { generateSourceArtifacts } = await loadGenerator();
   const artifacts = generateSourceArtifacts(sourceRoot);
+  const packageVersion = JSON.parse(fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8")).version;
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-source-packages-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
@@ -675,7 +676,8 @@ test("npm, Rust, Go, and Swift source archives carry exact generated distributio
     "--target-dir", rustTarget,
     "--config", "patch.crates-io.flowersec-native-transport.path=\"flowersec-native-transport\"",
   ], { cwd: sourceRoot });
-  const rustArchive = findSingleFile(rustTarget, ".crate");
+  const rustArchive = path.join(rustTarget, "package", `flowersec-${packageVersion}.crate`);
+  assert.equal(fs.existsSync(rustArchive), true, `missing primary Rust crate ${rustArchive}`);
   const rustExtract = path.join(root, "rust-extract");
   fs.mkdirSync(rustExtract);
   run("tar", ["-xzf", rustArchive, "-C", rustExtract]);
@@ -1153,7 +1155,7 @@ test("source inventory generation and freshness are wired into local gates", asy
   assert.match(makefile, /^source-inventory:\n\tnode scripts\/generate-source-inventory\.mjs$/m);
   assert.match(
     makefile,
-    /^security-dependency-check:\n\tnode --test scripts\/security-dependencies\.test\.mjs scripts\/check-dependency-contracts\.test\.mjs scripts\/go-security\.test\.mjs scripts\/go-toolchain-policy\.test\.mjs scripts\/rust-security\.test\.mjs scripts\/swift-security\.test\.mjs scripts\/prepare-ts-package-cache\.test\.mjs scripts\/security-makefile\.test\.mjs scripts\/run-final-stage\.test\.mjs scripts\/run-final-lanes\.test\.mjs scripts\/run-precommit-wave\.test\.mjs scripts\/test-architecture-contract\.mjs\n\tnode scripts\/check-go-toolchain-policy\.mjs\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
+    /^security-dependency-check:\n\tnode --test scripts\/security-dependencies\.test\.mjs scripts\/check-dependency-contracts\.test\.mjs scripts\/go-security\.test\.mjs scripts\/go-toolchain-policy\.test\.mjs scripts\/container-release-policy\.test\.mjs scripts\/toolchains\.test\.mjs scripts\/rust-security\.test\.mjs scripts\/swift-security\.test\.mjs scripts\/prepare-ts-package-cache\.test\.mjs scripts\/security-makefile\.test\.mjs scripts\/run-final-stage\.test\.mjs scripts\/run-final-lanes\.test\.mjs scripts\/run-precommit-wave\.test\.mjs scripts\/test-architecture-contract\.mjs\n\tnode scripts\/check-go-toolchain-policy\.mjs\n\tnode scripts\/check-toolchain-policy\.mjs\n\tnode scripts\/generate-source-inventory\.mjs --check$/m,
   );
   assert.match(
     makefile,
