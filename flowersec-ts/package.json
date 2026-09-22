@@ -71,7 +71,7 @@
     "prepublishOnly": "npm run build && npm run verify:package"
   },
   "dependencies": {
-    "@types/node": "26.4.0",
+    "@types/node": "26.6.2",
     "@noble/ciphers": "2.4.0",
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
