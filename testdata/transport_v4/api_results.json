@@ -1,0 +1,5055 @@
+{
+  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+  "representation": "native_reference_json_tags_not_wire_encoding",
+  "coverage": "draft_native_io_results_only",
+  "vectors": [
+    {
+      "id": "api_read_failure_paused_eof",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "time_pending",
+        "cursor": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": false,
+          "delivered": false,
+          "closed": false
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": false,
+        "closed": false,
+        "reason": "time_pending",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_read_failure_already_delivered",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "already_delivered",
+        "cursor": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": false,
+          "delivered": true,
+          "closed": false
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": true,
+        "closed": false,
+        "reason": "already_delivered",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_read_failure_closed",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "closed",
+        "cursor": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": false,
+          "delivered": false,
+          "closed": true
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": false,
+        "closed": true,
+        "reason": "closed",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_read_failure_prefix_frozen",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "prefix_frozen",
+        "cursor": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": true,
+          "delivered": false,
+          "closed": false
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": true,
+        "delivered": false,
+        "closed": false,
+        "reason": "prefix_frozen",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_read_failure_authorization_denied",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "authorization_denied",
+        "cursor": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": false,
+          "delivered": false,
+          "closed": true
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": false,
+        "closed": true,
+        "reason": "authorization_denied",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_read_failure_read_in_progress",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "read_in_progress",
+        "cursor": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": false,
+          "delivered": false,
+          "closed": false
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": false,
+        "closed": false,
+        "reason": "read_in_progress",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": true
+      },
+      "accept": true
+    },
+    {
+      "id": "api_read_failure_wrong_offset",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "time_pending",
+        "cursor": {
+          "offset": {
+            "$bigint": "3"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": false,
+          "delivered": false,
+          "closed": false
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": false,
+        "closed": false,
+        "reason": "time_pending",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "expected_error": "read_failure_offset"
+    },
+    {
+      "id": "api_read_failure_wrong_target",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "time_pending",
+        "cursor": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "9"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": false,
+          "delivered": false,
+          "closed": false
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": false,
+        "closed": false,
+        "reason": "time_pending",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "expected_error": "read_failure_owner"
+    },
+    {
+      "id": "api_read_failure_payload_forbidden",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "time_pending",
+        "cursor": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": false,
+          "delivered": false,
+          "closed": false
+        },
+        "data": {
+          "$bytes": "61"
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": false,
+        "closed": false,
+        "reason": "time_pending",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "expected_error": "api_unknown_field"
+    },
+    {
+      "id": "api_read_failure_wrong_gate",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "already_delivered",
+        "cursor": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "transferred_bytes": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          },
+          "stream_status": "eof",
+          "target_cause": "unexpected_eof",
+          "complete": true,
+          "frozen": false,
+          "delivered": false,
+          "closed": false
+        }
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": false,
+        "closed": false,
+        "reason": "already_delivered",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "expected_error": "read_failure_gate"
+    },
+    {
+      "id": "api_read_failure_missing_cursor",
+      "type": "ReadMethodFailure",
+      "input": {
+        "reason": "time_pending"
+      },
+      "context": {
+        "transferred_bytes": {
+          "$bigint": "3"
+        },
+        "target": {
+          "$bigint": "8"
+        },
+        "stream_status": "eof",
+        "target_cause": "unexpected_eof",
+        "complete": true,
+        "frozen": false,
+        "delivered": false,
+        "closed": false,
+        "reason": "time_pending",
+        "cursor_exists": true,
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "waiting": false
+      },
+      "expected_error": "read_failure_owner"
+    },
+    {
+      "id": "api_publication_not_applicable",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "not_applicable"
+      },
+      "context": {
+        "applicable": false,
+        "original_selected": false,
+        "provider_handoff_complete": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_publication_pending_handler",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "pending"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_publication_pending_provider",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "pending"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": true,
+        "provider_handoff_complete": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_publication_flushed",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "flushed"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": true,
+        "provider_handoff_complete": true
+      },
+      "accept": true
+    },
+    {
+      "id": "api_publication_unknown_response_superseded",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "unknown",
+        "cause": "response_superseded"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false,
+        "failure_cause": "response_superseded"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_publication_unknown_response_aborted",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "unknown",
+        "cause": "response_aborted"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false,
+        "failure_cause": "response_aborted"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_publication_unknown_owner_unavailable",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "unknown",
+        "cause": "owner_unavailable"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false,
+        "failure_cause": "owner_unavailable"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_publication_unknown_deadline",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "unknown",
+        "cause": "deadline"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false,
+        "failure_cause": "deadline"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_publication_unknown_publish_failed",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "unknown",
+        "cause": "publish_failed"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false,
+        "failure_cause": "publish_failed"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_publication_internal_acceptance_is_not_flushed",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "flushed"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": true,
+        "provider_handoff_complete": false
+      },
+      "expected_error": "publication_state_fact"
+    },
+    {
+      "id": "api_publication_handoff_requires_selection",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "flushed"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": true
+      },
+      "expected_error": "publication_handoff_fact"
+    },
+    {
+      "id": "api_publication_failed_before_handoff",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "flushed"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": true,
+        "provider_handoff_complete": true,
+        "failure_cause": "deadline"
+      },
+      "expected_error": "publication_handoff_fact"
+    },
+    {
+      "id": "api_publication_unknown_requires_cause",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "unknown"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false,
+        "failure_cause": "response_aborted"
+      },
+      "expected_error": "publication_cause_fact"
+    },
+    {
+      "id": "api_publication_wrong_cause",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "unknown",
+        "cause": "publish_failed"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false,
+        "failure_cause": "deadline"
+      },
+      "expected_error": "publication_cause_fact"
+    },
+    {
+      "id": "api_publication_pending_has_no_cause",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "pending",
+        "cause": "deadline"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false
+      },
+      "expected_error": "publication_cause_fact"
+    },
+    {
+      "id": "api_publication_flushed_has_no_cause",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "flushed",
+        "cause": "deadline"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": true,
+        "provider_handoff_complete": true
+      },
+      "expected_error": "publication_cause_fact"
+    },
+    {
+      "id": "api_publication_not_applicable_has_no_owner",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "not_applicable"
+      },
+      "context": {
+        "applicable": false,
+        "original_selected": true,
+        "provider_handoff_complete": false
+      },
+      "expected_error": "publication_not_applicable"
+    },
+    {
+      "id": "api_publication_unknown_without_failure",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "unknown",
+        "cause": "deadline"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false
+      },
+      "expected_error": "publication_state_fact"
+    },
+    {
+      "id": "api_publication_unknown_state",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "delivered"
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false
+      },
+      "expected_error": "api_enum"
+    },
+    {
+      "id": "api_publication_raw_error",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "unknown",
+        "cause": {
+          "message": "private"
+        }
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false,
+        "failure_cause": "deadline"
+      },
+      "expected_error": "api_enum"
+    },
+    {
+      "id": "api_publication_raw_owner",
+      "type": "ResponsePublicationStatus",
+      "input": {
+        "state": "pending",
+        "owner": {
+          "channel": "private"
+        }
+      },
+      "context": {
+        "applicable": true,
+        "original_selected": false,
+        "provider_handoff_complete": false
+      },
+      "expected_error": "api_unknown_field"
+    },
+    {
+      "id": "api_publication_transfer_success",
+      "type": "PublicationTransferResult",
+      "input": "success",
+      "accept": true
+    },
+    {
+      "id": "api_publication_transfer_already_transferred",
+      "type": "PublicationTransferResult",
+      "input": "already_transferred",
+      "accept": true
+    },
+    {
+      "id": "api_publication_transfer_owner_unavailable",
+      "type": "PublicationTransferResult",
+      "input": "owner_unavailable",
+      "accept": true
+    },
+    {
+      "id": "api_publication_transfer_expired",
+      "type": "PublicationTransferResult",
+      "input": "expired",
+      "accept": true
+    },
+    {
+      "id": "api_publication_transfer_invalid",
+      "type": "PublicationTransferResult",
+      "input": "invalid",
+      "accept": true
+    },
+    {
+      "id": "api_publication_transfer_unknown",
+      "type": "PublicationTransferResult",
+      "input": "retry",
+      "expected_error": "api_enum"
+    },
+    {
+      "id": "api_duplex_normal_native",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_duplex_normal_flowersec",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_duplex_normal_reverse_native",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_duplex_normal_pending_cleanup",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_duplex_normal_incomplete_cleanup",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "cleanup_incomplete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "1"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_duplex_failed_partial",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "3"
+            },
+            "unaccepted_tail": {
+              "$bytes": "ff"
+            }
+          },
+          "source_status": "error",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": false
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "failed",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "first_error": {
+          "code": "stream_data_invalid",
+          "scope": "stream",
+          "retry_disposition": "preserve_facts"
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "3"
+          },
+          "source_status": "error",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": false
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "failed"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_duplex_aborted_source_tail",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "3"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "aborted",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": false
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "aborted",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": true,
+            "retained_tail_bytes": {
+              "$bigint": "1"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "3"
+          },
+          "source_status": "aborted",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": false
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "aborted"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_duplex_full_uint64_progress",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "18446744073709551615"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "18446744073709551615"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "18446744073709551615"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "18446744073709551615"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "18446744073709551615"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "18446744073709551615"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "18446744073709551615"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "18446744073709551615"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_duplex_native_authenticated_claim",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "send_drained": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_send_variant"
+    },
+    {
+      "id": "api_duplex_mixed_send_variants",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true,
+            "send_drained": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_send_variant"
+    },
+    {
+      "id": "api_duplex_missing_send_fact",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex"
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_send_variant"
+    },
+    {
+      "id": "api_duplex_endpoint_substitution",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_endpoint_binding"
+    },
+    {
+      "id": "api_duplex_send_fact_substitution",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": false
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_send_fact"
+    },
+    {
+      "id": "api_duplex_source_fact_substitution",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "open",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_source_fact"
+    },
+    {
+      "id": "api_duplex_progress_substitution",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "3"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "3"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_progress_fact"
+    },
+    {
+      "id": "api_duplex_normal_open_source",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "open",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "open",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_normal_incomplete"
+    },
+    {
+      "id": "api_duplex_normal_unfinished_send",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": false
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": false
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_normal_incomplete"
+    },
+    {
+      "id": "api_duplex_normal_partial_tail",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "3"
+            },
+            "unaccepted_tail": {
+              "$bytes": "ff"
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "3"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_normal_incomplete"
+    },
+    {
+      "id": "api_duplex_normal_first_error",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "first_error": {
+          "code": "stream_data_invalid",
+          "scope": "stream",
+          "retry_disposition": "preserve_facts"
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_normal_error"
+    },
+    {
+      "id": "api_duplex_two_native_endpoints",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_flowersec_endpoint"
+    },
+    {
+      "id": "api_duplex_outcome_substitution",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "aborted",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "duplex_outcome_fact"
+    },
+    {
+      "id": "api_duplex_unknown_outcome",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "succeeded",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "api_enum"
+    },
+    {
+      "id": "api_duplex_context_missing",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "expected_error": "api_object"
+    },
+    {
+      "id": "api_duplex_progress_overrun",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "5"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "5"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "transfer_progress_bounds"
+    },
+    {
+      "id": "api_duplex_lost_tail",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "3"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "3"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "transfer_tail_ownership"
+    },
+    {
+      "id": "api_duplex_false_cleanup",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "1"
+          }
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "cleanup_progress"
+    },
+    {
+      "id": "api_duplex_raw_endpoint",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "endpoint": {
+          "url": "private"
+        }
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "api_unknown_field"
+    },
+    {
+      "id": "api_duplex_false_success_field",
+      "type": "DuplexResult",
+      "input": {
+        "a_to_b": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "native_send_finished": true
+          }
+        },
+        "b_to_a": {
+          "progress": {
+            "source_read_bytes": {
+              "$bigint": "4"
+            },
+            "destination_accepted_bytes": {
+              "$bigint": "4"
+            },
+            "unaccepted_tail": {
+              "$bytes": ""
+            }
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "send_drained": true
+          }
+        },
+        "outcome": "normal",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "success": true
+      },
+      "context": {
+        "a_to_b": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "native_duplex",
+            "finished": true
+          }
+        },
+        "b_to_a": {
+          "transfer": {
+            "chunk_bytes": {
+              "$bigint": "8"
+            },
+            "tail_retained_by_source": false,
+            "retained_tail_bytes": {
+              "$bigint": "0"
+            }
+          },
+          "source_read_bytes": {
+            "$bigint": "4"
+          },
+          "destination_accepted_bytes": {
+            "$bigint": "4"
+          },
+          "source_status": "eof",
+          "send_result": {
+            "endpoint_kind": "flowersec_stream",
+            "finished": true
+          }
+        },
+        "outcome": "normal"
+      },
+      "expected_error": "api_unknown_field"
+    },
+    {
+      "id": "api_write_prepared",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "0"
+        },
+        "phase": "prepared",
+        "terminal_reason": "none",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_write_running_prefix",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "4096"
+        },
+        "phase": "running",
+        "terminal_reason": "none",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_write_canceled_prefix",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "4096"
+        },
+        "phase": "terminal",
+        "terminal_reason": "canceled",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_write_completed_pending_cleanup",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "8192"
+        },
+        "phase": "terminal",
+        "terminal_reason": "complete",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_write_completed_cleanup",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "8192"
+        },
+        "phase": "terminal",
+        "terminal_reason": "complete",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_write_queue_full",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "0"
+        },
+        "phase": "terminal",
+        "terminal_reason": "queue_full",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_write_expired_prefix",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "4096"
+        },
+        "phase": "terminal",
+        "terminal_reason": "deadline_exceeded",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_write_more_than_requested",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "8193"
+        },
+        "phase": "running",
+        "terminal_reason": "none",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "expected_error": "write_progress_bounds"
+    },
+    {
+      "id": "api_write_prepared_acceptance",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "1"
+        },
+        "phase": "prepared",
+        "terminal_reason": "none",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "expected_error": "write_preacceptance"
+    },
+    {
+      "id": "api_write_running_reason",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "1"
+        },
+        "phase": "running",
+        "terminal_reason": "canceled",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "expected_error": "write_terminal_reason"
+    },
+    {
+      "id": "api_write_terminal_without_reason",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "1"
+        },
+        "phase": "terminal",
+        "terminal_reason": "none",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "expected_error": "write_terminal_reason"
+    },
+    {
+      "id": "api_write_partial_completion",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "8191"
+        },
+        "phase": "terminal",
+        "terminal_reason": "complete",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "expected_error": "write_incomplete_acceptance"
+    },
+    {
+      "id": "api_write_queue_full_with_acceptance",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "1"
+        },
+        "phase": "terminal",
+        "terminal_reason": "queue_full",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "expected_error": "write_preacceptance"
+    },
+    {
+      "id": "api_write_live_cleanup_complete",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "0"
+        },
+        "phase": "prepared",
+        "terminal_reason": "none",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "expected_error": "write_live_cleanup"
+    },
+    {
+      "id": "api_write_false_delivery_field",
+      "type": "WriteProgress",
+      "input": {
+        "requested_bytes": {
+          "$bigint": "8192"
+        },
+        "accepted_bytes": {
+          "$bigint": "8192"
+        },
+        "phase": "terminal",
+        "terminal_reason": "complete",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "delivered": true
+      },
+      "expected_error": "api_unknown_field"
+    },
+    {
+      "id": "api_transfer_partial_tail",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "100"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "97"
+        },
+        "unaccepted_tail": {
+          "$bytes": "616263"
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "4"
+        },
+        "tail_retained_by_source": false,
+        "retained_tail_bytes": {
+          "$bigint": "0"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_transfer_source_retained",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "100"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "97"
+        },
+        "unaccepted_tail": {
+          "$bytes": ""
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "4"
+        },
+        "tail_retained_by_source": true,
+        "retained_tail_bytes": {
+          "$bigint": "3"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_transfer_uint64_boundary",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "18446744073709551615"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "18446744073709551615"
+        },
+        "unaccepted_tail": {
+          "$bytes": ""
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "4"
+        },
+        "tail_retained_by_source": false,
+        "retained_tail_bytes": {
+          "$bigint": "0"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_transfer_lost_tail",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "100"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "97"
+        },
+        "unaccepted_tail": {
+          "$bytes": ""
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "4"
+        },
+        "tail_retained_by_source": false,
+        "retained_tail_bytes": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "transfer_tail_ownership"
+    },
+    {
+      "id": "api_transfer_duplicate_tail",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "100"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "97"
+        },
+        "unaccepted_tail": {
+          "$bytes": "616263"
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "4"
+        },
+        "tail_retained_by_source": true,
+        "retained_tail_bytes": {
+          "$bigint": "3"
+        }
+      },
+      "expected_error": "transfer_tail_ownership"
+    },
+    {
+      "id": "api_transfer_wrong_retained_count",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "100"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "97"
+        },
+        "unaccepted_tail": {
+          "$bytes": ""
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "4"
+        },
+        "tail_retained_by_source": true,
+        "retained_tail_bytes": {
+          "$bigint": "2"
+        }
+      },
+      "expected_error": "transfer_tail_ownership"
+    },
+    {
+      "id": "api_transfer_destination_exceeds_source",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "100"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "101"
+        },
+        "unaccepted_tail": {
+          "$bytes": "616263"
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "4"
+        },
+        "tail_retained_by_source": false,
+        "retained_tail_bytes": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "transfer_progress_bounds"
+    },
+    {
+      "id": "api_transfer_two_chunks",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "102"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "97"
+        },
+        "unaccepted_tail": {
+          "$bytes": "616263"
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "4"
+        },
+        "tail_retained_by_source": false,
+        "retained_tail_bytes": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "transfer_chunk"
+    },
+    {
+      "id": "api_transfer_zero_chunk",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "100"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "97"
+        },
+        "unaccepted_tail": {
+          "$bytes": "616263"
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "0"
+        },
+        "tail_retained_by_source": false,
+        "retained_tail_bytes": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "transfer_chunk"
+    },
+    {
+      "id": "api_transfer_wrapped_counter",
+      "type": "TransferProgress",
+      "input": {
+        "source_read_bytes": {
+          "$bigint": "18446744073709551616"
+        },
+        "destination_accepted_bytes": {
+          "$bigint": "97"
+        },
+        "unaccepted_tail": {
+          "$bytes": "616263"
+        }
+      },
+      "context": {
+        "chunk_bytes": {
+          "$bigint": "4"
+        },
+        "tail_retained_by_source": false,
+        "retained_tail_bytes": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "api_uint64"
+    },
+    {
+      "id": "api_read_owned_prefix",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "6162"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "102"
+          },
+          "filled": {
+            "$bigint": "2"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "2"
+        },
+        "stream_status": "open",
+        "max_bytes": {
+          "$bigint": "32"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_read_data_with_eof",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "6162"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "102"
+          },
+          "filled": {
+            "$bigint": "2"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "eof"
+      },
+      "context": {
+        "method": "read",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "2"
+        },
+        "stream_status": "eof",
+        "max_bytes": {
+          "$bigint": "32"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_cursor_canceled_nonzero_frontier",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": ""
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "filled": {
+            "$bigint": "0"
+          },
+          "target": {
+            "$bigint": "8"
+          }
+        },
+        "wait_status": "wait_canceled",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read_exactly",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "3"
+        },
+        "stream_status": "open",
+        "cursor_kind": "exact",
+        "target": {
+          "$bigint": "8"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_cursor_take_retained_prefix",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "616263"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "103"
+          },
+          "filled": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "take_prefix",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "3"
+        },
+        "stream_status": "open",
+        "cursor_kind": "exact",
+        "target": {
+          "$bigint": "8"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_exact_zero_at_uint64_end",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": ""
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "18446744073709551615"
+          },
+          "filled": {
+            "$bigint": "0"
+          },
+          "target": {
+            "$bigint": "0"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read_exactly",
+        "start_offset": {
+          "$bigint": "18446744073709551615"
+        },
+        "transferred": {
+          "$bigint": "0"
+        },
+        "stream_status": "open",
+        "cursor_kind": "exact",
+        "target": {
+          "$bigint": "0"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_take_empty_until_prefix",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": ""
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "100"
+          },
+          "filled": {
+            "$bigint": "0"
+          },
+          "target": {
+            "$bigint": "8"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "take_prefix",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "0"
+        },
+        "stream_status": "open",
+        "cursor_kind": "until",
+        "target": {
+          "$bigint": "8"
+        },
+        "delimiter": {
+          "$bytes": "0a"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_until_delimiter_at_cap",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "6162630a"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "104"
+          },
+          "filled": {
+            "$bigint": "4"
+          },
+          "target": {
+            "$bigint": "4"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read_line",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "4"
+        },
+        "stream_status": "open",
+        "cursor_kind": "until",
+        "target": {
+          "$bigint": "4"
+        },
+        "delimiter": {
+          "$bytes": "0a"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_until_target_failure",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "61626364"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "104"
+          },
+          "filled": {
+            "$bigint": "4"
+          },
+          "target": {
+            "$bigint": "4"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open",
+        "cause": "delimiter_not_found"
+      },
+      "context": {
+        "method": "read_until",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "4"
+        },
+        "stream_status": "open",
+        "cursor_kind": "until",
+        "target": {
+          "$bigint": "4"
+        },
+        "delimiter": {
+          "$bytes": "0a"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_exact_partial_eof",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "6162"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "102"
+          },
+          "filled": {
+            "$bigint": "2"
+          },
+          "target": {
+            "$bigint": "8"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "eof",
+        "cause": "unexpected_eof"
+      },
+      "context": {
+        "method": "read_exactly",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "2"
+        },
+        "stream_status": "eof",
+        "cursor_kind": "exact",
+        "target": {
+          "$bigint": "8"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_until_partial_eof",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "6162"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "102"
+          },
+          "filled": {
+            "$bigint": "2"
+          },
+          "target": {
+            "$bigint": "8"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "eof",
+        "cause": "unexpected_eof"
+      },
+      "context": {
+        "method": "read_until",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "2"
+        },
+        "stream_status": "eof",
+        "cursor_kind": "until",
+        "target": {
+          "$bigint": "8"
+        },
+        "delimiter": {
+          "$bytes": "0a"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_close_send_drained_read_open",
+      "type": "CloseResult",
+      "input": {
+        "direction": "c2s",
+        "send_drained": true,
+        "read_terminal": "open",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_close_abandoned_cleanup_complete",
+      "type": "CloseResult",
+      "input": {
+        "direction": "c2s",
+        "send_drained": true,
+        "read_terminal": "abandoned",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_cleanup_pending_core",
+      "type": "CleanupStatus",
+      "input": {
+        "status": "cleanup_incomplete",
+        "core_cleanup": "pending",
+        "pending_callbacks": {
+          "$bigint": "0"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_cleanup_pending_callback",
+      "type": "CleanupStatus",
+      "input": {
+        "status": "cleanup_incomplete",
+        "core_cleanup": "complete",
+        "pending_callbacks": {
+          "$bigint": "1"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_cleanup_complete",
+      "type": "CleanupStatus",
+      "input": {
+        "status": "complete",
+        "core_cleanup": "complete",
+        "pending_callbacks": {
+          "$bigint": "0"
+        }
+      },
+      "accept": true
+    },
+    {
+      "id": "api_read_empty_without_contextual_goal",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": ""
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "100"
+          },
+          "filled": {
+            "$bigint": "0"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "0"
+        },
+        "stream_status": "open",
+        "max_bytes": {
+          "$bigint": "32"
+        }
+      },
+      "expected_error": "read_empty_ready"
+    },
+    {
+      "id": "api_read_exact_incomplete_success",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "6162"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "102"
+          },
+          "filled": {
+            "$bigint": "2"
+          },
+          "target": {
+            "$bigint": "8"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read_exactly",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "2"
+        },
+        "stream_status": "open",
+        "cursor_kind": "exact",
+        "target": {
+          "$bigint": "8"
+        }
+      },
+      "expected_error": "read_goal_incomplete"
+    },
+    {
+      "id": "api_read_missing_eof_target_cause",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "6162"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "102"
+          },
+          "filled": {
+            "$bigint": "2"
+          },
+          "target": {
+            "$bigint": "8"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "eof"
+      },
+      "context": {
+        "method": "read_exactly",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "2"
+        },
+        "stream_status": "eof",
+        "cursor_kind": "exact",
+        "target": {
+          "$bigint": "8"
+        }
+      },
+      "expected_error": "read_cause"
+    },
+    {
+      "id": "api_read_cancel_cannot_erase_eof",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": ""
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "100"
+          },
+          "filled": {
+            "$bigint": "0"
+          }
+        },
+        "wait_status": "wait_canceled",
+        "stream_status": "eof"
+      },
+      "context": {
+        "method": "read",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "0"
+        },
+        "stream_status": "eof",
+        "max_bytes": {
+          "$bigint": "32"
+        }
+      },
+      "expected_error": "read_wait_matrix"
+    },
+    {
+      "id": "api_read_filled_is_this_payload",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "6162"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "102"
+          },
+          "filled": {
+            "$bigint": "1"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "2"
+        },
+        "stream_status": "open",
+        "max_bytes": {
+          "$bigint": "32"
+        }
+      },
+      "expected_error": "read_filled"
+    },
+    {
+      "id": "api_read_cursor_cannot_refund_twice",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "616263"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "106"
+          },
+          "filled": {
+            "$bigint": "3"
+          },
+          "target": {
+            "$bigint": "8"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "take_prefix",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "3"
+        },
+        "stream_status": "open",
+        "cursor_kind": "exact",
+        "target": {
+          "$bigint": "8"
+        }
+      },
+      "expected_error": "read_offset"
+    },
+    {
+      "id": "api_read_cannot_change_target",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "6162"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "102"
+          },
+          "filled": {
+            "$bigint": "2"
+          },
+          "target": {
+            "$bigint": "2"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read_exactly",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "2"
+        },
+        "stream_status": "open",
+        "cursor_kind": "exact",
+        "target": {
+          "$bigint": "8"
+        }
+      },
+      "expected_error": "read_target"
+    },
+    {
+      "id": "api_read_zero_goal_requires_method",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": ""
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "100"
+          },
+          "filled": {
+            "$bigint": "0"
+          },
+          "target": {
+            "$bigint": "0"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "0"
+        },
+        "stream_status": "open",
+        "cursor_kind": "exact",
+        "target": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "read_parameters"
+    },
+    {
+      "id": "api_read_no_number_coercion",
+      "type": "ReadProgress",
+      "input": {
+        "offset": 100,
+        "filled": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "api_uint64"
+    },
+    {
+      "id": "api_read_negative_uint64",
+      "type": "ReadProgress",
+      "input": {
+        "offset": {
+          "$bigint": "-1"
+        },
+        "filled": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "api_uint64"
+    },
+    {
+      "id": "api_read_offset_checked_add",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "61"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "18446744073709551615"
+          },
+          "filled": {
+            "$bigint": "1"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read",
+        "start_offset": {
+          "$bigint": "18446744073709551615"
+        },
+        "transferred": {
+          "$bigint": "1"
+        },
+        "stream_status": "open",
+        "max_bytes": {
+          "$bigint": "32"
+        }
+      },
+      "expected_error": "read_offset_overflow"
+    },
+    {
+      "id": "api_until_does_not_take_suffix",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": "61620a63"
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "104"
+          },
+          "filled": {
+            "$bigint": "4"
+          },
+          "target": {
+            "$bigint": "8"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "open"
+      },
+      "context": {
+        "method": "read_until",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "4"
+        },
+        "stream_status": "open",
+        "cursor_kind": "until",
+        "target": {
+          "$bigint": "8"
+        },
+        "delimiter": {
+          "$bytes": "0a"
+        }
+      },
+      "expected_error": "read_delimiter_suffix"
+    },
+    {
+      "id": "api_read_error_required",
+      "type": "ReadResult",
+      "input": {
+        "data": {
+          "$bytes": ""
+        },
+        "progress": {
+          "offset": {
+            "$bigint": "100"
+          },
+          "filled": {
+            "$bigint": "0"
+          }
+        },
+        "wait_status": "ready",
+        "stream_status": "error"
+      },
+      "context": {
+        "method": "read",
+        "start_offset": {
+          "$bigint": "100"
+        },
+        "transferred": {
+          "$bigint": "0"
+        },
+        "stream_status": "error",
+        "max_bytes": {
+          "$bigint": "32"
+        },
+        "stream_error": {
+          "code": "stream_data_invalid",
+          "scope": "stream",
+          "retry_disposition": "preserve_facts"
+        }
+      },
+      "expected_error": "read_error_presence"
+    },
+    {
+      "id": "api_error_tuple_not_cartesian",
+      "type": "TypedError",
+      "input": {
+        "code": "protocol_violation",
+        "scope": "stream",
+        "retry_disposition": "preserve_facts"
+      },
+      "expected_error": "api_error_projection"
+    },
+    {
+      "id": "api_error_no_raw_chain",
+      "type": "TypedError",
+      "input": {
+        "code": "stream_sequence_error",
+        "scope": "stream",
+        "retry_disposition": "preserve_facts",
+        "cause": "private"
+      },
+      "expected_error": "api_unknown_field"
+    },
+    {
+      "id": "api_close_no_legacy_read_flag",
+      "type": "CloseResult",
+      "input": {
+        "direction": "c2s",
+        "send_drained": true,
+        "read_terminal": "open",
+        "cleanup_status": {
+          "status": "pending",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "read_eof_or_abandoned": true
+      },
+      "expected_error": "api_unknown_field"
+    },
+    {
+      "id": "api_cleanup_zero_callbacks_not_complete",
+      "type": "CleanupStatus",
+      "input": {
+        "status": "complete",
+        "core_cleanup": "pending",
+        "pending_callbacks": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "cleanup_progress"
+    },
+    {
+      "id": "api_cleanup_live_callback_not_complete",
+      "type": "CleanupStatus",
+      "input": {
+        "status": "complete",
+        "core_cleanup": "complete",
+        "pending_callbacks": {
+          "$bigint": "1"
+        }
+      },
+      "expected_error": "cleanup_progress"
+    },
+    {
+      "id": "api_cleanup_no_lifecycle_alias",
+      "type": "CleanupStatus",
+      "input": {
+        "status": "not_requested",
+        "core_cleanup": "pending",
+        "pending_callbacks": {
+          "$bigint": "0"
+        }
+      },
+      "expected_error": "api_enum"
+    }
+  ]
+}

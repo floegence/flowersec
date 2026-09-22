@@ -653,15 +653,21 @@ function remoteDeclarations(manifest) {
   for (const dependency of manifest?.dependencies ?? []) {
     for (const sourceControl of dependency.sourceControl ?? []) {
       const remote = sourceControl.location?.remote?.[0]?.urlString;
-      const range = sourceControl.requirement?.range?.[0];
-      if (!sourceControl.identity || !remote || !range?.lowerBound || !range?.upperBound) {
+      const requirement = sourceControl.requirement ?? {};
+      const range = requirement.range?.[0];
+      const exact = requirement.exact?.[0];
+      const isRange = Array.isArray(requirement.range) && requirement.range.length === 1
+        && typeof range?.lowerBound === "string" && typeof range?.upperBound === "string";
+      const isExact = Array.isArray(requirement.exact) && requirement.exact.length === 1
+        && typeof exact === "string";
+      if (!sourceControl.identity || !remote || Object.keys(requirement).length !== 1
+        || (!isRange && !isExact)) {
         throw new Error("Swift remote dependency has an unsupported declaration");
       }
       declarations.push({
         identity: sourceControl.identity,
         location: remote,
-        lowerBound: range.lowerBound,
-        upperBound: range.upperBound,
+        ...(isExact ? { exact } : { lowerBound: range.lowerBound, upperBound: range.upperBound }),
       });
     }
   }
@@ -752,6 +758,13 @@ export function verifySwiftSecurity({
       throw new Error(`Swift pin location mismatch: ${declaration.identity}`);
     }
     const selected = parseVersion(pin.state.version, declaration.identity);
+    if (declaration.exact !== undefined) {
+      const exact = parseVersion(declaration.exact, `${declaration.identity} exact version`);
+      if (compareVersions(selected, exact) !== 0) {
+        throw new Error(`Swift pin differs from its exact declared version: ${declaration.identity}`);
+      }
+      continue;
+    }
     const lower = parseVersion(declaration.lowerBound, `${declaration.identity} lower bound`);
     const upper = parseVersion(declaration.upperBound, `${declaration.identity} upper bound`);
     if (compareVersions(selected, lower) < 0 || compareVersions(selected, upper) >= 0) {

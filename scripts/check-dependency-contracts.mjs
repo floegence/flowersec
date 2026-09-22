@@ -28,11 +28,14 @@ const RETIRED_CAPABILITY_TEST_IDS = [
 ];
 const HIGH_IMPACT = {
   cargo: new Set([
+    "curve25519-dalek",
     "aes-gcm", "hkdf", "hmac", "idna", "idna_adapter", "idna_mapping", "p256", "quinn",
     "napi", "napi-build", "napi-derive", "ring", "rustls", "tokio-tungstenite", "unicode-normalization",
     "wtransport", "x25519-dalek", "yamux",
   ]),
   gomod: new Set([
+    "modernc.org/sqlite",
+    "filippo.io/edwards25519",
     "github.com/gorilla/websocket", "github.com/libp2p/go-yamux/v5", "github.com/quic-go/quic-go",
     "github.com/quic-go/webtransport-go", "golang.org/x/crypto", "golang.org/x/net", "golang.org/x/sys",
     "golang.org/x/text",
@@ -41,7 +44,7 @@ const HIGH_IMPACT = {
     "@fails-components/webtransport", "@fails-components/webtransport-transport-http3-quiche", "@matrixai/quic",
     "@floegence/flowersec-node-native", "@noble/ciphers", "@noble/curves", "@noble/hashes", "tr46", "ws",
   ]),
-  swiftpm: new Set(["async-http-client", "swift-crypto", "swift-nio", "swift-nio-ssl"]),
+  swiftpm: new Set(["async-http-client", "swift-crypto", "swift-nio", "swift-nio-ssl", "swift-sodium"]),
 };
 
 function fail(message) {

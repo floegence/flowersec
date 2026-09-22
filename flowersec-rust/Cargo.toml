@@ -18,6 +18,7 @@ aes-gcm = "0.11"
 async-trait = "0.1"
 base64 = "0.23"
 bytes = "1"
+curve25519-dalek = "=5.0.0"
 futures-util = { version = "0.3", features = ["io", "sink", "std"] }
 flowersec-native-transport = { version = "=5.4.1", path = "../flowersec-native-transport" }
 hkdf = "0.13"
@@ -32,7 +33,7 @@ idna_mapping = "=1.1.0"
 p256 = { version = "0.14", features = ["ecdh"] }
 rand = "0.10"
 ring = { version = "=0.17.14", default-features = false, features = ["alloc"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
 rustls-native-certs = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -53,7 +54,9 @@ time = { version = "0.3", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
 flowersec-native-transport = { version = "=5.4.1", path = "../flowersec-native-transport", features = ["__flowersec_internal_test_support"] }
+snow = { version = "=0.10.0", default-features = false, features = ["ring-resolver", "use-p256", "use-curve25519", "use-chacha20poly1305", "use-sha2", "risky-raw-split"] }
 proptest = "1"
+regex-lite = "0.1"
 tempfile = "3"
 cert_test_builder = { package = "rcgen", version = "0.14" }
 

@@ -1,0 +1,813 @@
+{
+  "status": "draft",
+  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+  "coverage": "rekey_full_session_service_and_credit_arithmetic_only",
+  "qualification": "Pure arithmetic only; no live owner, authenticated Artifact/TimeProfile, original causal clock anchor/incarnation, INIT ticket/deduction, ACK transition, pending-round exclusion, service/work/crypto/cleanup reservation, timer or provider/production qualification. Default zero additional authorized time tolerance; no implicit skew.",
+  "vectors": [
+    {
+      "id": "rekey_credit_0_service_reference",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "5000",
+        "issued_at_ms": "1000",
+        "session_not_after_ms": "86401000",
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "service_ms": "86400000",
+        "error_allowance_ms": "6",
+        "denominator_ms": "29988",
+        "capacity_credit": "60000",
+        "max_rounds": "5765",
+        "required_epochs": "5766"
+      }
+    },
+    {
+      "id": "rekey_credit_0_service_high_drift",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "request_start_budget_ms": "5",
+        "issued_at_ms": "100",
+        "session_not_after_ms": "120",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "service_ms": "20",
+        "error_allowance_ms": "9",
+        "denominator_ms": "12",
+        "capacity_credit": "60",
+        "max_rounds": "15",
+        "required_epochs": "16"
+      }
+    },
+    {
+      "id": "rekey_credit_0_service_epoch_boundary",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "1",
+        "refill_period_ms": "2",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "65533",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "service_ms": "65533",
+        "error_allowance_ms": "1",
+        "denominator_ms": "1",
+        "capacity_credit": "2",
+        "max_rounds": "65535",
+        "required_epochs": "65536"
+      }
+    },
+    {
+      "id": "rekey_credit_0_service_epoch_exhausted",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "1",
+        "refill_period_ms": "2",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "65534",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_service_full_timestamp",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "5000",
+        "issued_at_ms": "18446744073709551614",
+        "session_not_after_ms": "18446744073709551615",
+        "rate_numerator": "9223372036854775807",
+        "rate_denominator": "18446744073709551615",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "service_ms": "1",
+        "error_allowance_ms": "1",
+        "denominator_ms": "29998",
+        "capacity_credit": "60000",
+        "max_rounds": "2",
+        "required_epochs": "3"
+      }
+    },
+    {
+      "id": "rekey_credit_0_service_unstable",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "18",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "1",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_service_huge_error",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "1",
+        "refill_period_ms": "4294967295",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "1",
+        "rate_numerator": "0",
+        "rate_denominator": "18446744073709551615",
+        "quantization_ms": "18446744073709551615"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_service_huge_duration",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "1",
+        "refill_period_ms": "4294967295",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "18446744073709551615",
+        "rate_numerator": "9223372036854775807",
+        "rate_denominator": "18446744073709551615",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_service_zero_duration",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "5000",
+        "issued_at_ms": "100",
+        "session_not_after_ms": "100",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_service_zero_start_budget",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "0",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "1",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_service_invalid_rate",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "1",
+        "rate_numerator": "1",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_initial",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000"
+      },
+      "expected": {
+        "capacity_credit": "60000",
+        "available_credit": "60000",
+        "post_charge_credit": "30000"
+      }
+    },
+    {
+      "id": "rekey_credit_0_initial_zero",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "0",
+        "refill_period_ms": "30000"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_initial_burst_width",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "65536",
+        "refill_period_ms": "30000"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_initial_period_width",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "4294967296"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_client_partial",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "base_credit": "10000",
+        "delta_ms": "9999",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "capacity_credit": "60000",
+        "available_credit": "29998",
+        "post_charge_credit": null
+      }
+    },
+    {
+      "id": "rekey_credit_0_client_charge_boundary",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "base_credit": "10000",
+        "delta_ms": "10000",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "capacity_credit": "60000",
+        "available_credit": "30000",
+        "post_charge_credit": "0"
+      }
+    },
+    {
+      "id": "rekey_credit_0_client_high_drift",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "30",
+        "delta_ms": "10",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "capacity_credit": "60",
+        "available_credit": "40",
+        "post_charge_credit": "10"
+      }
+    },
+    {
+      "id": "rekey_credit_0_server_high_drift",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "server_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "30",
+        "delta_ms": "10",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "capacity_credit": "60",
+        "available_credit": "60",
+        "post_charge_credit": "30"
+      }
+    },
+    {
+      "id": "rekey_credit_0_client_clamp_zero",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "1",
+        "delta_ms": "1",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "capacity_credit": "60",
+        "available_credit": "1",
+        "post_charge_credit": null
+      }
+    },
+    {
+      "id": "rekey_credit_0_server_saturate_before_multiply",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "server_credit",
+      "input": {
+        "burst_rounds": "65535",
+        "refill_period_ms": "4294967295",
+        "base_credit": "0",
+        "delta_ms": "18446744073709551615",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "capacity_credit": "281470681677825",
+        "available_credit": "281470681677825",
+        "post_charge_credit": "281466386710530"
+      }
+    },
+    {
+      "id": "rekey_credit_0_client_base_above_cap",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "61",
+        "delta_ms": "0",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_0_client_time_overflow",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "0",
+        "delta_ms": "18446744073709551615",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "1"
+      },
+      "expected_error": "time_overflow"
+    },
+    {
+      "id": "rekey_credit_0_noncanonical_integer",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "02",
+        "refill_period_ms": "30"
+      },
+      "expected_error": "rekey_credit_integer"
+    },
+    {
+      "id": "rekey_credit_1_service_reference",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "5000",
+        "issued_at_ms": "1000",
+        "session_not_after_ms": "86401000",
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "service_ms": "86400000",
+        "error_allowance_ms": "6",
+        "denominator_ms": "29988",
+        "capacity_credit": "60000",
+        "max_rounds": "5765",
+        "required_epochs": "5766"
+      }
+    },
+    {
+      "id": "rekey_credit_1_service_high_drift",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "request_start_budget_ms": "5",
+        "issued_at_ms": "100",
+        "session_not_after_ms": "120",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "service_ms": "20",
+        "error_allowance_ms": "9",
+        "denominator_ms": "12",
+        "capacity_credit": "60",
+        "max_rounds": "15",
+        "required_epochs": "16"
+      }
+    },
+    {
+      "id": "rekey_credit_1_service_epoch_boundary",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "1",
+        "refill_period_ms": "2",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "65533",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "service_ms": "65533",
+        "error_allowance_ms": "1",
+        "denominator_ms": "1",
+        "capacity_credit": "2",
+        "max_rounds": "65535",
+        "required_epochs": "65536"
+      }
+    },
+    {
+      "id": "rekey_credit_1_service_epoch_exhausted",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "1",
+        "refill_period_ms": "2",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "65534",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_service_full_timestamp",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "5000",
+        "issued_at_ms": "18446744073709551614",
+        "session_not_after_ms": "18446744073709551615",
+        "rate_numerator": "9223372036854775807",
+        "rate_denominator": "18446744073709551615",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "service_ms": "1",
+        "error_allowance_ms": "1",
+        "denominator_ms": "29998",
+        "capacity_credit": "60000",
+        "max_rounds": "2",
+        "required_epochs": "3"
+      }
+    },
+    {
+      "id": "rekey_credit_1_service_unstable",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "18",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "1",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_service_huge_error",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "1",
+        "refill_period_ms": "4294967295",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "1",
+        "rate_numerator": "0",
+        "rate_denominator": "18446744073709551615",
+        "quantization_ms": "18446744073709551615"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_service_huge_duration",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "1",
+        "refill_period_ms": "4294967295",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "18446744073709551615",
+        "rate_numerator": "9223372036854775807",
+        "rate_denominator": "18446744073709551615",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_service_zero_duration",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "5000",
+        "issued_at_ms": "100",
+        "session_not_after_ms": "100",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_service_zero_start_budget",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "0",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "1",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_service_invalid_rate",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "service",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "request_start_budget_ms": "1",
+        "issued_at_ms": "0",
+        "session_not_after_ms": "1",
+        "rate_numerator": "1",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_initial",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000"
+      },
+      "expected": {
+        "capacity_credit": "60000",
+        "available_credit": "60000",
+        "post_charge_credit": "30000"
+      }
+    },
+    {
+      "id": "rekey_credit_1_initial_zero",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "0",
+        "refill_period_ms": "30000"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_initial_burst_width",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "65536",
+        "refill_period_ms": "30000"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_initial_period_width",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "4294967296"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_client_partial",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "base_credit": "10000",
+        "delta_ms": "9999",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "capacity_credit": "60000",
+        "available_credit": "29998",
+        "post_charge_credit": null
+      }
+    },
+    {
+      "id": "rekey_credit_1_client_charge_boundary",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30000",
+        "base_credit": "10000",
+        "delta_ms": "10000",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "capacity_credit": "60000",
+        "available_credit": "30000",
+        "post_charge_credit": "0"
+      }
+    },
+    {
+      "id": "rekey_credit_1_client_high_drift",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "30",
+        "delta_ms": "10",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "capacity_credit": "60",
+        "available_credit": "40",
+        "post_charge_credit": "10"
+      }
+    },
+    {
+      "id": "rekey_credit_1_server_high_drift",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "server_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "30",
+        "delta_ms": "10",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "capacity_credit": "60",
+        "available_credit": "60",
+        "post_charge_credit": "30"
+      }
+    },
+    {
+      "id": "rekey_credit_1_client_clamp_zero",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "1",
+        "delta_ms": "1",
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2"
+      },
+      "expected": {
+        "capacity_credit": "60",
+        "available_credit": "1",
+        "post_charge_credit": null
+      }
+    },
+    {
+      "id": "rekey_credit_1_server_saturate_before_multiply",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "server_credit",
+      "input": {
+        "burst_rounds": "65535",
+        "refill_period_ms": "4294967295",
+        "base_credit": "0",
+        "delta_ms": "18446744073709551615",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected": {
+        "capacity_credit": "281470681677825",
+        "available_credit": "281470681677825",
+        "post_charge_credit": "281466386710530"
+      }
+    },
+    {
+      "id": "rekey_credit_1_client_base_above_cap",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "61",
+        "delta_ms": "0",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0"
+      },
+      "expected_error": "configuration_capacity"
+    },
+    {
+      "id": "rekey_credit_1_client_time_overflow",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "client_credit",
+      "input": {
+        "burst_rounds": "2",
+        "refill_period_ms": "30",
+        "base_credit": "0",
+        "delta_ms": "18446744073709551615",
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "1"
+      },
+      "expected_error": "time_overflow"
+    },
+    {
+      "id": "rekey_credit_1_noncanonical_integer",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "operation": "initial_credit",
+      "input": {
+        "burst_rounds": "02",
+        "refill_period_ms": "30"
+      },
+      "expected_error": "rekey_credit_integer"
+    }
+  ]
+}

@@ -106,7 +106,12 @@ function installTarball(tarballPath) {
     path.join(consumerDir, 'package.json'),
     JSON.stringify({ name: 'flowersec-package-verify', private: true, type: 'module' }, null, 2)
   );
-  run('npm', ['install', '--ignore-scripts', '--no-package-lock', tarballPath], consumerDir);
+  // The Node entrypoint requires the same explicitly pinned ambient types as
+  // an ordinary Node consumer; compiler location must not supply them by chance.
+  const packageJSON = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'));
+  const nodeTypesVersion = packageJSON.devDependencies['@types/node'];
+  assert.match(nodeTypesVersion, /^\d+\.\d+\.\d+$/u);
+  run('npm', ['install', '--ignore-scripts', '--no-package-lock', tarballPath, `@types/node@${nodeTypesVersion}`], consumerDir);
 }
 
 function verifyBrowserDependencyGraph() {

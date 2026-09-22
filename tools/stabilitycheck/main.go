@@ -996,7 +996,7 @@ func verifyGo(repoRoot string, m *manifest) error {
 	var out bytes.Buffer
 	for attempt := 1; attempt <= 3; attempt++ {
 		out.Reset()
-		cmd := exec.Command("go", "test", "-mod=mod", "./...")
+		cmd := exec.Command("go", "test", "-mod=mod", "-modcacherw", "./...")
 		cmd.Dir = tmpDir
 		cmd.Env = commandEnvironment
 		cmd.Stdout = &out

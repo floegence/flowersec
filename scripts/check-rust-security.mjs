@@ -70,9 +70,10 @@ export function runRustSecurityChecks({ repoRoot, run = defaultRun, offline = fa
     run("cargo", auditArgs, { cwd: repoRoot });
     const denyArgs = [
       "deny", "--manifest-path", context.manifest, "--locked", "--all-features",
-      "check", "--config", denyConfig,
+      "--config", denyConfig,
     ];
-    if (offline) denyArgs.push("--disable-fetch");
+    if (offline) denyArgs.push("--offline");
+    denyArgs.push("check");
     run(
       "cargo",
       denyArgs,

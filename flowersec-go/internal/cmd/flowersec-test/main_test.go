@@ -106,6 +106,27 @@ func TestRegistryEntriesSatisfyRunnerBounds(t *testing.T) {
 	}
 }
 
+func TestCryptoReferenceAcceptancePreservesSwiftPlatformBoundary(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		entries := make(map[string]bool)
+		for _, entry := range registryForOS(goos) {
+			if entry.Suite == "acceptance" {
+				entries[entry.ID] = true
+			}
+		}
+		for _, id := range []string{"protocol/v4-rekey-swift", "protocol/v4-ready-swift", "protocol/v4-record-swift", "protocol/v4-strict-swift", "protocol/v4-dh-swift", "protocol/swift", "controller/swift"} {
+			if entries[id] != (goos == "darwin") {
+				t.Fatalf("%s: unexpected Swift acceptance entry %s", goos, id)
+			}
+		}
+		for _, id := range []string{"protocol/v4-rekey-go", "protocol/v4-rekey-rust", "protocol/v4-rekey-typescript", "protocol/v4-ready-go", "protocol/v4-ready-rust", "protocol/v4-ready-typescript", "protocol/v4-record-go", "protocol/v4-record-rust", "protocol/v4-record-typescript", "protocol/v4-strict-go", "protocol/v4-strict-rust", "protocol/v4-dh-go", "protocol/v4-dh-rust", "protocol/v4-dh-typescript"} {
+			if !entries[id] {
+				t.Fatalf("%s: missing crypto reference %s", goos, id)
+			}
+		}
+	}
+}
+
 func TestAcceptanceRegistryOwnsPrivateLoopbackInterop(t *testing.T) {
 	for _, entry := range registry() {
 		if entry.ID == "interop/typescript-go/private-loopback/direct" && entry.Suite == "acceptance" {

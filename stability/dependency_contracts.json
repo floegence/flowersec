@@ -2,6 +2,38 @@
   "version": 1,
   "dependencies": [
     {
+      "ecosystem": "gomod", "package": "modernc.org/sqlite",
+      "boundary": "go-durable-admission-ledger", "scope": "production",
+      "requiredCapabilities": ["wal-full-durability", "atomic-lease-cas", "exclusive-connection", "exact-uint64-blobs", "bounded-pages", "synchronous-cleanup"],
+      "protocol": "flowersec-v4-sqlite-storage-revision-1", "publicApiOnly": true,
+      "platforms": ["linux-amd64", "linux-arm64", "macos-arm64"],
+      "conformanceTests": ["protocol/v4-admission-sqlite-go"], "upgradeGroup": null
+    },
+    {
+      "ecosystem":"swiftpm","package":"swift-sodium",
+      "boundary":"swift-strict-ed25519-reference","scope":"tooling",
+      "requiredCapabilities":["canonical-nonidentity-prime-order-point","pure-ed25519-verification"],
+      "protocol":"flowersec-v4-strict-pure-ed25519","publicApiOnly":true,
+      "platforms":["macos-arm64"],
+      "conformanceTests":["protocol/v4-strict-swift"],"upgradeGroup":null
+    },
+    {
+      "ecosystem":"gomod","package":"filippo.io/edwards25519",
+      "boundary":"go-strict-ed25519-reference","scope":"tooling",
+      "requiredCapabilities":["point-decoding","canonical-reencoding","scalar-multiplication","point-addition"],
+      "protocol":"flowersec-v4-strict-pure-ed25519","publicApiOnly":true,
+      "platforms":["linux-amd64","linux-arm64","macos-arm64"],
+      "conformanceTests":["protocol/v4-strict-go"],"upgradeGroup":null
+    },
+    {
+      "ecosystem":"cargo","package":"curve25519-dalek",
+      "boundary":"rust-strict-ed25519-reference","scope":"tooling",
+      "requiredCapabilities":["point-decompression","canonical-recompression","prime-order-subgroup","canonical-scalar"],
+      "protocol":"flowersec-v4-strict-pure-ed25519","publicApiOnly":true,
+      "platforms":["linux-amd64","linux-arm64","macos-arm64"],
+      "conformanceTests":["protocol/v4-strict-rust"],"upgradeGroup":null
+    },
+    {
       "ecosystem": "gomod",
       "package": "github.com/gorilla/websocket",
       "boundary": "go-websocket",

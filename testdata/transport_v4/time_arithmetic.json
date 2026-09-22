@@ -1,0 +1,525 @@
+{
+  "status": "draft",
+  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+  "coverage": "trusted_time_arithmetic_only",
+  "qualification": "Exact conservative integer arithmetic only; no clock or source authentication, nonce matching, profile qualification, incarnation continuity, anchor installation, owner/timer state, gate reopening, resource reservations or production SDK/provider qualification",
+  "vectors": [
+    {
+      "id": "time_measurement_before_drift",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2",
+        "delta_ms": "10"
+      },
+      "expected": {
+        "elapsed_lower_ms": "5",
+        "elapsed_upper_ms": "24"
+      }
+    },
+    {
+      "id": "time_deadline_measurement",
+      "operation": "deadline_delta",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2",
+        "upper_ms": "100",
+        "deadline_ms": "120"
+      },
+      "expected": {
+        "delta_ms": "8"
+      }
+    },
+    {
+      "id": "time_prove_measurement",
+      "operation": "prove_delta",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2",
+        "lower_ms": "100",
+        "bound_ms": "120"
+      },
+      "expected": {
+        "delta_ms": "32"
+      }
+    },
+    {
+      "id": "time_deadline_measurement_unrepresentable",
+      "operation": "deadline_delta",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "2",
+        "upper_ms": "100",
+        "deadline_ms": "103"
+      },
+      "expected_error": "time_deadline_unrepresentable"
+    },
+    {
+      "id": "time_elapsed_zero",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "delta_ms": "0"
+      },
+      "expected": {
+        "elapsed_lower_ms": "0",
+        "elapsed_upper_ms": "0"
+      }
+    },
+    {
+      "id": "time_elapsed_quantized_zero",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "1",
+        "delta_ms": "0"
+      },
+      "expected": {
+        "elapsed_lower_ms": "0",
+        "elapsed_upper_ms": "1"
+      }
+    },
+    {
+      "id": "time_elapsed_drift",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "0",
+        "delta_ms": "1000"
+      },
+      "expected": {
+        "elapsed_lower_ms": "999",
+        "elapsed_upper_ms": "1001"
+      }
+    },
+    {
+      "id": "time_elapsed_quantized_drift",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "1",
+        "delta_ms": "1000"
+      },
+      "expected": {
+        "elapsed_lower_ms": "998",
+        "elapsed_upper_ms": "1002"
+      }
+    },
+    {
+      "id": "time_elapsed_day",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "0",
+        "delta_ms": "86400000"
+      },
+      "expected": {
+        "elapsed_lower_ms": "86391360",
+        "elapsed_upper_ms": "86408641"
+      }
+    },
+    {
+      "id": "time_elapsed_maximum",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "18446744073709551615",
+        "quantization_ms": "0",
+        "delta_ms": "18446744073709551615"
+      },
+      "expected": {
+        "elapsed_lower_ms": "18446744073709551615",
+        "elapsed_upper_ms": "18446744073709551615"
+      }
+    },
+    {
+      "id": "time_elapsed_overflow",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "1",
+        "delta_ms": "18446744073709551615"
+      },
+      "expected_error": "time_overflow"
+    },
+    {
+      "id": "time_rate_zero_denominator",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "0",
+        "quantization_ms": "0",
+        "delta_ms": "1"
+      },
+      "expected_error": "time_rate"
+    },
+    {
+      "id": "time_rate_one",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "delta_ms": "1"
+      },
+      "expected_error": "time_rate"
+    },
+    {
+      "id": "time_integer_leading_zero",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "delta_ms": "01"
+      },
+      "expected_error": "time_integer"
+    },
+    {
+      "id": "time_integer_overflow",
+      "operation": "elapsed",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "delta_ms": "18446744073709551616"
+      },
+      "expected_error": "time_integer"
+    },
+    {
+      "id": "time_network_full_rtt",
+      "operation": "network_anchor",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "sample_ms": "100000",
+        "source_error_ms": "100",
+        "delta_ms": "1000",
+        "max_round_trip_ms": "1000",
+        "max_width_ms": "1200"
+      },
+      "expected": {
+        "lower_ms": "99900",
+        "upper_ms": "101100"
+      }
+    },
+    {
+      "id": "time_network_quantized_drift",
+      "operation": "network_anchor",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "1",
+        "sample_ms": "100000",
+        "source_error_ms": "100",
+        "delta_ms": "1000",
+        "max_round_trip_ms": "1002",
+        "max_width_ms": "1202"
+      },
+      "expected": {
+        "lower_ms": "99900",
+        "upper_ms": "101102"
+      }
+    },
+    {
+      "id": "time_network_slow",
+      "operation": "network_anchor",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "sample_ms": "100000",
+        "source_error_ms": "100",
+        "delta_ms": "1001",
+        "max_round_trip_ms": "1000",
+        "max_width_ms": "1200"
+      },
+      "expected_error": "time_round_trip"
+    },
+    {
+      "id": "time_network_wide",
+      "operation": "network_anchor",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "sample_ms": "100000",
+        "source_error_ms": "100",
+        "delta_ms": "1000",
+        "max_round_trip_ms": "1000",
+        "max_width_ms": "1199"
+      },
+      "expected_error": "time_width"
+    },
+    {
+      "id": "time_network_underflow",
+      "operation": "network_anchor",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "sample_ms": "99",
+        "source_error_ms": "100",
+        "delta_ms": "1000",
+        "max_round_trip_ms": "1000",
+        "max_width_ms": "1200"
+      },
+      "expected_error": "time_overflow"
+    },
+    {
+      "id": "time_network_overflow",
+      "operation": "network_anchor",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "sample_ms": "18446744073709551615",
+        "source_error_ms": "100",
+        "delta_ms": "1000",
+        "max_round_trip_ms": "1000",
+        "max_width_ms": "1200"
+      },
+      "expected_error": "time_overflow"
+    },
+    {
+      "id": "time_advance_original",
+      "operation": "advance_anchor",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "lower_ms": "99900",
+        "upper_ms": "101100",
+        "delta_ms": "1000",
+        "max_age_ms": "1000",
+        "max_width_ms": "1200"
+      },
+      "expected": {
+        "lower_ms": "100900",
+        "upper_ms": "102100"
+      }
+    },
+    {
+      "id": "time_advance_too_old",
+      "operation": "advance_anchor",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "lower_ms": "99900",
+        "upper_ms": "101100",
+        "delta_ms": "1000",
+        "max_age_ms": "999",
+        "max_width_ms": "1200"
+      },
+      "expected_error": "time_anchor_age"
+    },
+    {
+      "id": "time_advance_drift_width",
+      "operation": "advance_anchor",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "0",
+        "lower_ms": "99900",
+        "upper_ms": "101100",
+        "delta_ms": "1000",
+        "max_age_ms": "1001",
+        "max_width_ms": "1202"
+      },
+      "expected": {
+        "lower_ms": "100899",
+        "upper_ms": "102101"
+      }
+    },
+    {
+      "id": "time_advance_invalid_interval",
+      "operation": "advance_anchor",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "lower_ms": "101101",
+        "upper_ms": "101100",
+        "delta_ms": "1000",
+        "max_age_ms": "1000",
+        "max_width_ms": "1200"
+      },
+      "expected_error": "time_interval"
+    },
+    {
+      "id": "time_advance_overflow",
+      "operation": "advance_anchor",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "lower_ms": "18446744073709551615",
+        "upper_ms": "18446744073709551615",
+        "delta_ms": "1000",
+        "max_age_ms": "1000",
+        "max_width_ms": "1200"
+      },
+      "expected_error": "time_overflow"
+    },
+    {
+      "id": "time_deadline_plain",
+      "operation": "deadline_delta",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "upper_ms": "100",
+        "deadline_ms": "2100"
+      },
+      "expected": {
+        "delta_ms": "2000"
+      }
+    },
+    {
+      "id": "time_deadline_drift",
+      "operation": "deadline_delta",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "0",
+        "upper_ms": "100",
+        "deadline_ms": "2100"
+      },
+      "expected": {
+        "delta_ms": "1999"
+      }
+    },
+    {
+      "id": "time_deadline_quantized_drift",
+      "operation": "deadline_delta",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "1",
+        "upper_ms": "100",
+        "deadline_ms": "2100"
+      },
+      "expected": {
+        "delta_ms": "1998"
+      }
+    },
+    {
+      "id": "time_deadline_exact_expiry",
+      "operation": "deadline_delta",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "0",
+        "upper_ms": "100",
+        "deadline_ms": "100"
+      },
+      "expected_error": "time_expired"
+    },
+    {
+      "id": "time_deadline_unrepresentable",
+      "operation": "deadline_delta",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "2",
+        "upper_ms": "100",
+        "deadline_ms": "101"
+      },
+      "expected_error": "time_deadline_unrepresentable"
+    },
+    {
+      "id": "time_deadline_immediate",
+      "operation": "deadline_delta",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "1",
+        "upper_ms": "100",
+        "deadline_ms": "101"
+      },
+      "expected": {
+        "delta_ms": "0"
+      }
+    },
+    {
+      "id": "time_prove_drift",
+      "operation": "prove_delta",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "0",
+        "lower_ms": "100",
+        "bound_ms": "2100"
+      },
+      "expected": {
+        "delta_ms": "2001"
+      }
+    },
+    {
+      "id": "time_prove_quantized_drift",
+      "operation": "prove_delta",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "10000",
+        "quantization_ms": "1",
+        "lower_ms": "100",
+        "bound_ms": "2100"
+      },
+      "expected": {
+        "delta_ms": "2002"
+      }
+    },
+    {
+      "id": "time_prove_already_satisfied",
+      "operation": "prove_delta",
+      "input": {
+        "rate_numerator": "0",
+        "rate_denominator": "1",
+        "quantization_ms": "1",
+        "lower_ms": "100",
+        "bound_ms": "100"
+      },
+      "expected": {
+        "delta_ms": "0"
+      }
+    },
+    {
+      "id": "time_prove_overflow",
+      "operation": "prove_delta",
+      "input": {
+        "rate_numerator": "1",
+        "rate_denominator": "2",
+        "quantization_ms": "0",
+        "lower_ms": "0",
+        "bound_ms": "18446744073709551615"
+      },
+      "expected_error": "time_overflow"
+    },
+    {
+      "id": "time_prove_wide_overflow",
+      "operation": "prove_delta",
+      "input": {
+        "rate_numerator": "18446744073709551614",
+        "rate_denominator": "18446744073709551615",
+        "quantization_ms": "0",
+        "lower_ms": "0",
+        "bound_ms": "18446744073709551615"
+      },
+      "expected_error": "time_overflow"
+    }
+  ]
+}

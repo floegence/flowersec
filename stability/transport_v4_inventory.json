@@ -1,0 +1,1123 @@
+{
+  "target_version": "6.0.0",
+  "target_wire": "flowersec/4",
+  "current_version": "5.4.1",
+  "scan_scope": "Tracked and unignored SDK source candidates; text hits require reachability review, not a runtime proof",
+  "release_coordinates": [
+    {
+      "label": "flowersec-go/go.mod",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-ts/package.json",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-ts/package-lock.json",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-rust/Cargo.toml",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-rust/Cargo.lock",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-rust/fuzz/Cargo.lock",
+      "version": "5.4.1"
+    },
+    {
+      "label": "examples/rust/Cargo.lock",
+      "version": "5.4.1"
+    },
+    {
+      "label": "Package.swift",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-native-transport/Cargo.toml",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-native-transport/Cargo.lock",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-node-native/Cargo.toml",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-node-native/Cargo.lock",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-node-native/package.json",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-node-native/npm/darwin-arm64/package.json",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-node-native/npm/darwin-x64/package.json",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-node-native/npm/linux-arm64-gnu/package.json",
+      "version": "5.4.1"
+    },
+    {
+      "label": "flowersec-node-native/npm/linux-x64-gnu/package.json",
+      "version": "5.4.1"
+    }
+  ],
+  "go_module": "github.com/floegence/flowersec/flowersec-go/v5",
+  "v3_source_candidates": [
+    {
+      "path": "flowersec-go/acceptor.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 19,
+      "matching_lines": 49
+    },
+    {
+      "path": "flowersec-go/acceptor_listener.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 13,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/artifact.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 6
+    },
+    {
+      "path": "flowersec-go/cmd/flowersec-runtime/authorization.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 19,
+      "matching_lines": 48
+    },
+    {
+      "path": "flowersec-go/cmd/flowersec-runtime/config.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 15,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-go/cmd/flowersec-runtime/runtime.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 15,
+      "matching_lines": 43
+    },
+    {
+      "path": "flowersec-go/connection_controller.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 11,
+      "matching_lines": 15
+    },
+    {
+      "path": "flowersec-go/connector.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 13,
+      "matching_lines": 80
+    },
+    {
+      "path": "flowersec-go/controlplane/authorization.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 16,
+      "matching_lines": 41
+    },
+    {
+      "path": "flowersec-go/controlplane/endpoint_set.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 21
+    },
+    {
+      "path": "flowersec-go/controlplane/http_direct.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 21,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/controlplane/issue.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 15,
+      "matching_lines": 29
+    },
+    {
+      "path": "flowersec-go/controlplane/issuer_vector.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 9,
+      "matching_lines": 9
+    },
+    {
+      "path": "flowersec-go/controlplane/private_loopback.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 21,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/internal/admissionv3/admission.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 35
+    },
+    {
+      "path": "flowersec-go/internal/admissionv3/websocket/adapter.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 12,
+      "matching_lines": 44
+    },
+    {
+      "path": "flowersec-go/internal/artifactv3/admission.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 54
+    },
+    {
+      "path": "flowersec-go/internal/artifactv3/artifact.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 4
+    },
+    {
+      "path": "flowersec-go/internal/artifactv3/canonical.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 7
+    },
+    {
+      "path": "flowersec-go/internal/artifactv3/json.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/artifactv3/security.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/internal/artifactv3/types.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 16
+    },
+    {
+      "path": "flowersec-go/internal/candidatev3/dialers.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 56
+    },
+    {
+      "path": "flowersec-go/internal/candidatev3/factory.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 38
+    },
+    {
+      "path": "flowersec-go/internal/carrier/rawquicv3/rawquic.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 7
+    },
+    {
+      "path": "flowersec-go/internal/carrier/websocketv3/pending.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/carrier/websocketv3/websocket.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 11
+    },
+    {
+      "path": "flowersec-go/internal/carrier/webtransportv3/webtransport.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 7
+    },
+    {
+      "path": "flowersec-go/internal/carrierv4/tlspolicy/policy.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 24,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/cmd/browser-webtransport-peer/main.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 16,
+      "matching_lines": 5
+    },
+    {
+      "path": "flowersec-go/internal/cmd/flowersec-test/registry.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 49,
+      "matching_lines": 48
+    },
+    {
+      "path": "flowersec-go/internal/cmd/invalid-proof-peer/main.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 40,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/cmd/issuer-admission-vectors/main.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 15,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/internal/cmd/rust-raw-quic-peer-v3/main.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 17,
+      "matching_lines": 56
+    },
+    {
+      "path": "flowersec-go/internal/cmd/server-parity-peer/main.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 220,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/internal/cmd/ts-session-peer-v3/main.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 19,
+      "matching_lines": 36
+    },
+    {
+      "path": "flowersec-go/internal/connectv3/connector.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 45
+    },
+    {
+      "path": "flowersec-go/internal/httpdirectv1/profile.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/internal/privateloopbackv1/profile.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 16,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/internal/protocolv3/crypto.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 17
+    },
+    {
+      "path": "flowersec-go/internal/protocolv3/handshake_crypto.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 8
+    },
+    {
+      "path": "flowersec-go/internal/protocolv3/handshake_wire.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 8
+    },
+    {
+      "path": "flowersec-go/internal/protocolv3/logical_stream.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/protocolv3/metadata.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/internal/protocolv3/open.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 8
+    },
+    {
+      "path": "flowersec-go/internal/protocolv3/state.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/protocolv3/unreliable.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 5
+    },
+    {
+      "path": "flowersec-go/internal/protocolv3/wire.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/internal/protocolv4/registry_generated.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 34,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/runtimev3/capability.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 4
+    },
+    {
+      "path": "flowersec-go/internal/sessionv3/control.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 60
+    },
+    {
+      "path": "flowersec-go/internal/sessionv3/engine.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 48
+    },
+    {
+      "path": "flowersec-go/internal/sessionv3/handshake.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 51
+    },
+    {
+      "path": "flowersec-go/internal/sessionv3/rpc_peer.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-go/internal/sessionv3/session.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-go/internal/sessionv3/stream.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 85
+    },
+    {
+      "path": "flowersec-go/internal/sessionv3/unreliable.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 18
+    },
+    {
+      "path": "flowersec-go/internal/transportsecurity/policy.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 20,
+      "matching_lines": 15
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/adaptive.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 13,
+      "matching_lines": 31
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/browser_workload.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 9,
+      "matching_lines": 5
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/common.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 20,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/controller_direct.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 16,
+      "matching_lines": 13
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/flowersecweaknet/weaknet_linux.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 17,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/performance/browser_capacity_endpoint.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 26,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/performance/browser_capacity_source.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 14,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/performance/soak_case.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 20,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/performance/throughput_case.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 14,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/performance/webtransport_budget.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 6,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/product_direct.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 25,
+      "matching_lines": 97
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/tunnelworkload/browser.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 25,
+      "matching_lines": 30
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/tunnelworkload/endpoint.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 94
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/tunnelworkload/workload.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 15,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-go/internal/transporttest/workload.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 18,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-go/internal/tunnelv3/broker.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 5
+    },
+    {
+      "path": "flowersec-go/internal/tunnelv3/coordinator.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 55
+    },
+    {
+      "path": "flowersec-go/internal/tunnelv3/native_leg.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 10
+    },
+    {
+      "path": "flowersec-go/internal/tunnelv3/websocket_leg.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 12
+    },
+    {
+      "path": "flowersec-go/metadata.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 9,
+      "matching_lines": 4
+    },
+    {
+      "path": "flowersec-go/stream_handlers.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 8,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-go/tunnel_runtime.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 15,
+      "matching_lines": 25
+    },
+    {
+      "path": "flowersec-go/websocket_server.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 44,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-native-transport/src/raw_quic.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 31,
+      "matching_lines": 16
+    },
+    {
+      "path": "flowersec-rust/src/acceptor_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 56
+    },
+    {
+      "path": "flowersec-rust/src/artifact_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 331
+    },
+    {
+      "path": "flowersec-rust/src/connection_controller.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 54
+    },
+    {
+      "path": "flowersec-rust/src/connection_controller_vectors.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 21,
+      "matching_lines": 102
+    },
+    {
+      "path": "flowersec-rust/src/connector_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 294
+    },
+    {
+      "path": "flowersec-rust/src/crypto_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": null,
+      "matching_lines": 0
+    },
+    {
+      "path": "flowersec-rust/src/defaults_contract.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 10,
+      "matching_lines": 7
+    },
+    {
+      "path": "flowersec-rust/src/idna_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 11
+    },
+    {
+      "path": "flowersec-rust/src/lib.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 5,
+      "matching_lines": 30
+    },
+    {
+      "path": "flowersec-rust/src/protocol_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 406
+    },
+    {
+      "path": "flowersec-rust/src/protocol_v4_registry_generated.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 31,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-rust/src/raw_quic_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 68
+    },
+    {
+      "path": "flowersec-rust/src/session_handlers.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 11,
+      "matching_lines": 11
+    },
+    {
+      "path": "flowersec-rust/src/session_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 974
+    },
+    {
+      "path": "flowersec-rust/src/tls_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 56
+    },
+    {
+      "path": "flowersec-rust/src/transport.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 50,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-rust/src/transport_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 174
+    },
+    {
+      "path": "flowersec-rust/src/tunnel_runtime_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 158
+    },
+    {
+      "path": "flowersec-rust/src/websocket_transport.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 38,
+      "matching_lines": 34
+    },
+    {
+      "path": "flowersec-rust/src/websocket_v3.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 17
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/AppleWebSocketRuntimeAdapterV3.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 6,
+      "matching_lines": 64
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/ArtifactAdmissionV3.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 5,
+      "matching_lines": 71
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/ArtifactV3.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 15,
+      "matching_lines": 90
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/ConnectionController.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 4,
+      "matching_lines": 70
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/Connector.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 19,
+      "matching_lines": 12
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/IDNAHostV3.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 9,
+      "matching_lines": 26
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/JSONPreflightV3.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/NativeTLSPolicyV3.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 7,
+      "matching_lines": 25
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/OpaqueSessionV3.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 26
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/ProxyNIOWebSocket.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 281,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/SessionConnectorV3.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 98
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/StreamHandlers.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 48,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/Transport.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 117,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/TransportV3.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 4,
+      "matching_lines": 136
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/TransportV3Crypto.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 4,
+      "matching_lines": 169
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/TransportV3Handshake.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 4,
+      "matching_lines": 79
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/TransportV3Open.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 5,
+      "matching_lines": 35
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/TransportV3Session.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 5,
+      "matching_lines": 356
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/TransportV4Registry.generated.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 43,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-ts/src/browser/connectSessionV3.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 4,
+      "matching_lines": 79
+    },
+    {
+      "path": "flowersec-ts/src/browser/directWebSocketProfileV1.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 13
+    },
+    {
+      "path": "flowersec-ts/src/browser/httpDirectV1.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-ts/src/browser/index.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 8
+    },
+    {
+      "path": "flowersec-ts/src/browser/privateLoopbackV1.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-ts/src/facade.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 28
+    },
+    {
+      "path": "flowersec-ts/src/generated/transportV4Registry.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 17,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-ts/src/interop/proxyServerPeer.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 72,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-ts/src/interop/serverParityPeer.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 9,
+      "matching_lines": 23
+    },
+    {
+      "path": "flowersec-ts/src/node/acceptor.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 48,
+      "matching_lines": 8
+    },
+    {
+      "path": "flowersec-ts/src/node/acceptorV3.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 87
+    },
+    {
+      "path": "flowersec-ts/src/node/connectSessionV3.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 45
+    },
+    {
+      "path": "flowersec-ts/src/node/index.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 31
+    },
+    {
+      "path": "flowersec-ts/src/node/nativeTransportAddon.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 9
+    },
+    {
+      "path": "flowersec-ts/src/node/proxyServer.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 13,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-ts/src/node/rawQuicAdapterV3.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 24
+    },
+    {
+      "path": "flowersec-ts/src/node/rawQuicServerV3.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 12
+    },
+    {
+      "path": "flowersec-ts/src/node/runtimeAuthorizationV3.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 4,
+      "matching_lines": 53
+    },
+    {
+      "path": "flowersec-ts/src/node/tunnelRuntimeV3.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 120
+    },
+    {
+      "path": "flowersec-ts/src/node/webSocketServerV3.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 6,
+      "matching_lines": 33
+    },
+    {
+      "path": "flowersec-ts/src/proxy/integration.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 6
+    },
+    {
+      "path": "flowersec-ts/src/public/streamHandlers.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 7,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-ts/src/public/streamMetadata.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-ts/src/v3/admissionError.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-ts/src/v3/artifact.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 7,
+      "matching_lines": 208
+    },
+    {
+      "path": "flowersec-ts/src/v3/artifactLease.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 32
+    },
+    {
+      "path": "flowersec-ts/src/v3/browserRuntime.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 60
+    },
+    {
+      "path": "flowersec-ts/src/v3/browserSessionRuntime.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-ts/src/v3/capability.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 5,
+      "matching_lines": 57
+    },
+    {
+      "path": "flowersec-ts/src/v3/carrier.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 38
+    },
+    {
+      "path": "flowersec-ts/src/v3/connectionController.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 228
+    },
+    {
+      "path": "flowersec-ts/src/v3/contract.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 27,
+      "matching_lines": 30
+    },
+    {
+      "path": "flowersec-ts/src/v3/controller.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 73
+    },
+    {
+      "path": "flowersec-ts/src/v3/handshake.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 9,
+      "matching_lines": 123
+    },
+    {
+      "path": "flowersec-ts/src/v3/jcs.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 5,
+      "matching_lines": 9
+    },
+    {
+      "path": "flowersec-ts/src/v3/jsonPreflight.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 9,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-ts/src/v3/nodeRuntime.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 11,
+      "matching_lines": 65
+    },
+    {
+      "path": "flowersec-ts/src/v3/nodeSessionRuntime.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 4,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-ts/src/v3/protocol.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 8,
+      "matching_lines": 159
+    },
+    {
+      "path": "flowersec-ts/src/v3/publicApi.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 27
+    },
+    {
+      "path": "flowersec-ts/src/v3/publicSession.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 37
+    },
+    {
+      "path": "flowersec-ts/src/v3/retryDisposition.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 2
+    },
+    {
+      "path": "flowersec-ts/src/v3/runtimeAdapters.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 28
+    },
+    {
+      "path": "flowersec-ts/src/v3/security.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 2,
+      "matching_lines": 43
+    },
+    {
+      "path": "flowersec-ts/src/v3/serverAdmission.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 80
+    },
+    {
+      "path": "flowersec-ts/src/v3/session.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 5,
+      "matching_lines": 334
+    },
+    {
+      "path": "flowersec-ts/src/v3/sessionConnector.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 6,
+      "matching_lines": 167
+    },
+    {
+      "path": "flowersec-ts/src/v3/streamLifetimeLedger.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 39
+    },
+    {
+      "path": "flowersec-ts/src/v3/streamMetadata.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 13,
+      "matching_lines": 3
+    },
+    {
+      "path": "flowersec-ts/src/v3/transportConstants.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 1,
+      "matching_lines": 48
+    },
+    {
+      "path": "flowersec-ts/src/v3/unreliableMessage.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 6,
+      "matching_lines": 57
+    },
+    {
+      "path": "flowersec-ts/src/v3/webSocketCarrier.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 40
+    },
+    {
+      "path": "flowersec-ts/src/v3/webTransportCarrier.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 31
+    }
+  ]
+}

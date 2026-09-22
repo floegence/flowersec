@@ -3,6 +3,7 @@
 This file is generated from the canonical Flowersec source dependency inventory for Flowersec source tree.
 Do not edit it manually. License decisions are reviewed by the repository source license policy.
 
+- aead 0.5.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - aead 0.6.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - aes 0.9.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/block-ciphers)
 - aes-gcm 0.11.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/AEADs)
@@ -13,6 +14,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - async-trait 0.1.92 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/async-trait)
 - atomic-waker 1.1.2 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/smol-rs/atomic-waker)
 - autocfg 1.5.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/cuviper/autocfg)
+- base16ct 0.2.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats/tree/master/base16ct)
 - base16ct 1.0.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats)
 - base64 0.23.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/marshallpierce/rust-base64)
 - base64ct 1.8.3 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats)
@@ -20,6 +22,8 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - bit-vec 0.8.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/contain-rs/bit-vec)
 - bit-vec 0.9.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/contain-rs/bit-vec)
 - bitflags 2.13.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/bitflags/bitflags)
+- blake2 0.10.6 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/hashes)
+- block-buffer 0.10.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/utils)
 - block-buffer 0.12.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/utils)
 - bumpalo 3.20.3 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/fitzgen/bumpalo)
 - bytes 1.12.1 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/bytes)
@@ -27,32 +31,46 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - cfg_aliases 0.2.2 (Declared: MIT; selected: MIT; source: https://github.com/katharostech/cfg_aliases)
 - cfg-if 1.0.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/cfg-if)
 - chacha20 0.10.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/stream-ciphers)
+- chacha20 0.9.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/stream-ciphers)
+- chacha20poly1305 0.10.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305)
+- cipher 0.4.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - cipher 0.5.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - cmov 0.5.4 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/utils)
 - const-oid 0.10.2 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats)
+- const-oid 0.9.6 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats/tree/master/const-oid)
 - convert_case 0.11.0 (Declared: MIT; selected: MIT; source: https://github.com/rutrum/convert-case)
 - core-foundation 0.10.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/servo/core-foundation-rs)
 - core-foundation-sys 0.8.7 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/servo/core-foundation-rs)
 - cpubits 0.1.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/utils)
+- cpufeatures 0.2.17 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/utils)
 - cpufeatures 0.3.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/utils)
+- crypto-bigint 0.5.5 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/crypto-bigint)
 - crypto-bigint 0.7.5 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/crypto-bigint)
+- crypto-common 0.1.6 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - crypto-common 0.2.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - ctor 1.0.13 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/mmastrac/linktime)
 - ctr 0.10.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/block-modes)
 - ctutils 0.4.2 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/utils)
+- curve25519-dalek 4.1.3 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek)
 - curve25519-dalek 5.0.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek)
 - curve25519-dalek-derive 0.1.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dalek-cryptography/curve25519-dalek)
 - data-encoding 2.11.1 (Declared: MIT; selected: MIT; source: https://github.com/ia0/data-encoding)
+- der 0.7.10 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats/tree/master/der)
 - der 0.8.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats)
 - der-parser 10.0.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/der-parser.git)
 - deranged 0.5.8 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/jhpratt/deranged)
+- digest 0.10.7 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - digest 0.11.3 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - displaydoc 0.2.7 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/yaahc/displaydoc)
+- ecdsa 0.16.9 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/signatures/tree/master/ecdsa)
 - ecdsa 0.17.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/signatures)
+- elliptic-curve 0.13.8 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/traits/tree/master/elliptic-curve)
 - elliptic-curve 0.14.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/traits)
 - errno 0.3.14 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/lambda-fairy/rust-errno)
 - fastrand 2.5.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/smol-rs/fastrand)
+- ff 0.13.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/zkcrypto/ff)
 - ff 0.14.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/zkcrypto/ff)
+- fiat-crypto 0.2.9 (Declared: MIT OR Apache-2.0 OR BSD-1-Clause; selected: MIT; source: https://github.com/mit-plv/fiat-crypto)
 - fiat-crypto 0.3.0 (Declared: MIT OR Apache-2.0 OR BSD-1-Clause; selected: MIT; source: https://github.com/mit-plv/fiat-crypto)
 - find-msvc-tools 0.1.11 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/cc-rs)
 - fnv 1.0.7 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/servo/rust-fnv)
@@ -66,12 +84,16 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - futures-sink 0.3.34 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/futures-rs)
 - futures-task 0.3.34 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/futures-rs)
 - futures-util 0.3.34 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/futures-rs)
+- generic-array 0.14.9 (Declared: MIT; selected: MIT; source: https://github.com/fizyk20/generic-array.git)
 - getrandom 0.2.17 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/getrandom)
 - getrandom 0.3.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/getrandom)
 - getrandom 0.4.3 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/getrandom)
 - ghash 0.6.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/universal-hashes)
+- group 0.13.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/zkcrypto/group)
 - group 0.14.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/zkcrypto/group)
+- hkdf 0.12.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/KDFs/)
 - hkdf 0.13.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/KDFs/)
+- hmac 0.12.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/MACs)
 - hmac 0.13.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/MACs)
 - http 1.5.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/hyperium/http)
 - http-body 1.1.0 (Declared: MIT; selected: MIT; source: https://github.com/hyperium/http-body)
@@ -90,6 +112,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - idna 1.1.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/servo/rust-url/)
 - idna_adapter 1.2.2 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/hsivonen/idna_adapter)
 - idna_mapping 1.1.0 (Declared: (Apache-2.0 OR MIT) AND Unicode-3.0; selected: MIT AND Unicode-3.0; source: https://github.com/hsivonen/idna_mapping)
+- inout 0.1.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/utils)
 - inout 0.2.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/utils)
 - itoa 1.0.18 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/itoa)
 - jobserver 0.1.35 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/jobserver-rs)
@@ -119,22 +142,28 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - num-traits 0.2.19 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-num/num-traits)
 - oid-registry 0.8.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/oid-registry.git)
 - once_cell 1.21.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/matklad/once_cell)
+- opaque-debug 0.3.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/utils)
 - openssl-probe 0.2.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rustls/openssl-probe)
+- p256 0.13.2 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/elliptic-curves/tree/master/p256)
 - p256 0.14.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/elliptic-curves)
 - parking_lot 0.12.5 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/Amanieu/parking_lot)
 - parking_lot_core 0.9.12 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/Amanieu/parking_lot)
 - pem 4.0.0 (Declared: MIT; selected: MIT; source: https://github.com/jcreekmore/pem-rs.git)
+- pem-rfc7468 0.7.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats/tree/master/pem-rfc7468)
 - pem-rfc7468 1.0.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats)
 - percent-encoding 2.3.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/servo/rust-url/)
 - pin-project 1.1.13 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/taiki-e/pin-project)
 - pin-project-internal 1.1.13 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/taiki-e/pin-project)
 - pin-project-lite 0.2.17 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/taiki-e/pin-project-lite)
+- pkcs8 0.10.2 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats/tree/master/pkcs8)
 - pkcs8 0.11.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats)
+- poly1305 0.8.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/universal-hashes)
 - polyval 0.7.3 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/universal-hashes)
 - potential_utf 0.1.6 (Declared: Unicode-3.0; selected: Unicode-3.0; source: https://github.com/unicode-org/icu4x)
 - powerfmt 0.2.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/jhpratt/powerfmt)
 - ppv-lite86 0.2.21 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/cryptocorrosion/cryptocorrosion)
 - primefield 0.14.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/elliptic-curves)
+- primeorder 0.13.6 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/elliptic-curves/tree/master/primeorder)
 - primeorder 0.14.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/elliptic-curves)
 - proc-macro2 1.0.107 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/proc-macro2)
 - proptest 1.11.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/proptest-rs/proptest)
@@ -149,19 +178,22 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - rand 0.9.5 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/rand)
 - rand_chacha 0.9.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/rand)
 - rand_core 0.10.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/rand_core)
+- rand_core 0.6.4 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/rand)
 - rand_core 0.9.5 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/rand)
 - rand_pcg 0.10.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/rngs)
 - rand_xorshift 0.4.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-random/rngs)
 - rcgen 0.14.10 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rustls/rcgen)
 - redox_syscall 0.5.18 (Declared: MIT; selected: MIT; source: https://gitlab.redox-os.org/redox-os/syscall)
+- regex-lite 0.1.9 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/regex)
 - regex-syntax 0.8.11 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/regex)
+- rfc6979 0.4.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/signatures/tree/master/rfc6979)
 - rfc6979 0.6.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/signatures)
 - ring 0.17.14 (Declared: Apache-2.0 AND ISC; selected: Apache-2.0 AND ISC; source: https://github.com/briansmith/ring)
 - rustc_version 0.4.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/djc/rustc-version-rs)
 - rustc-hash 2.1.3 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/rust-lang/rustc-hash)
 - rusticata-macros 4.1.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/rusticata-macros.git)
 - rustix 1.1.4 (Declared: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; selected: MIT; source: https://github.com/bytecodealliance/rustix)
-- rustls 0.23.43 (Declared: Apache-2.0 OR ISC OR MIT; selected: MIT; source: https://github.com/rustls/rustls)
+- rustls 0.23.45 (Declared: Apache-2.0 OR ISC OR MIT; selected: MIT; source: https://github.com/rustls/rustls)
 - rustls-native-certs 0.8.4 (Declared: Apache-2.0 OR ISC OR MIT; selected: MIT; source: https://github.com/rustls/rustls-native-certs)
 - rustls-pki-types 1.15.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rustls/pki-types)
 - rustls-webpki 0.103.15 (Declared: ISC; selected: ISC; source: https://github.com/rustls/webpki)
@@ -169,6 +201,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - rusty-fork 0.3.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/altsysrq/rusty-fork)
 - schannel 0.1.29 (Declared: MIT; selected: MIT; source: https://github.com/steffengy/schannel-rs)
 - scopeguard 1.2.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/bluss/scopeguard)
+- sec1 0.7.3 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats/tree/master/sec1)
 - sec1 0.8.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats)
 - security-framework 3.7.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/kornelski/rust-security-framework)
 - security-framework-sys 2.17.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/kornelski/rust-security-framework)
@@ -179,12 +212,16 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - serde_json 1.0.151 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/serde-rs/json)
 - serdect 0.4.3 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats)
 - sha1 0.11.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/hashes)
+- sha2 0.10.9 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/hashes)
 - sha2 0.11.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/hashes)
 - shlex 2.0.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/comex/rust-shlex)
+- signature 2.2.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/traits/tree/master/signature)
 - signature 3.0.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/traits)
 - slab 0.4.12 (Declared: MIT; selected: MIT; source: https://github.com/tokio-rs/slab)
 - smallvec 1.15.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/servo/rust-smallvec)
+- snow 0.10.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/mcginty/snow)
 - socket2 0.6.5 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rust-lang/socket2)
+- spki 0.7.3 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats/tree/master/spki)
 - spki 0.8.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/formats)
 - stable_deref_trait 1.2.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/storyyeller/stable_deref_trait)
 - static_assertions 1.1.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/nvzqz/static-assertions-rs)
@@ -216,10 +253,12 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - unicode-joining-type 1.0.0 (Declared: Apache-2.0; selected: Apache-2.0; source: https://github.com/yeslogic/unicode-joining-type)
 - unicode-normalization 0.1.25 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/unicode-rs/unicode-normalization)
 - unicode-segmentation 1.13.3 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/unicode-rs/unicode-segmentation)
+- universal-hash 0.5.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - universal-hash 0.6.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/RustCrypto/traits)
 - untrusted 0.9.0 (Declared: ISC; selected: ISC; source: https://github.com/briansmith/untrusted)
 - url 2.5.8 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/servo/rust-url)
 - utf8_iter 1.0.4 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/hsivonen/utf8_iter)
+- version_check 0.9.5 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/SergioBenitez/version_check)
 - wait-timeout 0.2.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/alexcrichton/wait-timeout)
 - want 0.3.1 (Declared: MIT; selected: MIT; source: https://github.com/seanmonstar/want)
 - wasi 0.11.1+wasi-snapshot-preview1 (Declared: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; selected: MIT; source: https://github.com/bytecodealliance/wasi)
@@ -242,7 +281,6 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - windows-sys 0.61.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/microsoft/windows-rs)
 - windows-targets 0.52.6 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/microsoft/windows-rs)
 - wit-bindgen 0.57.1 (Declared: Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT; selected: MIT; source: https://github.com/bytecodealliance/wit-bindgen)
-- wnaf 0.14.0 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/elliptic-curves)
 - wnaf 0.14.1 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/RustCrypto/elliptic-curves)
 - writeable 0.6.4 (Declared: Unicode-3.0; selected: Unicode-3.0; source: https://github.com/unicode-org/icu4x)
 - x25519-dalek 3.0.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/dalek-cryptography/curve25519-dalek/tree/main/x25519-dalek)
@@ -261,17 +299,29 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - zerovec 0.11.8 (Declared: Unicode-3.0; selected: Unicode-3.0; source: https://github.com/unicode-org/icu4x)
 - zerovec-derive 0.11.6 (Declared: Unicode-3.0; selected: Unicode-3.0; source: https://github.com/unicode-org/icu4x)
 - zmij 1.0.23 (Declared: MIT; selected: MIT; source: https://github.com/dtolnay/zmij)
+- Flowersec Noise public-length adapter 1.1.0-flowersec.1 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/flynn/noise/tree/4d9f71cd4ba1fe81415efac312664ccc4bc79b46)
+- filippo.io/edwards25519 v1.2.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://filippo.io/edwards25519)
 - github.com/dunglas/httpsfv v1.1.1 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/dunglas/httpsfv)
+- github.com/dustin/go-humanize v1.0.1 (Declared: MIT; selected: MIT; source: https://github.com/dustin/go-humanize)
+- github.com/flynn/noise v1.1.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/flynn/noise)
+- github.com/google/uuid v1.6.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/google/uuid)
 - github.com/gorilla/websocket v1.5.3 (Declared: BSD-2-Clause; selected: BSD-2-Clause; source: https://github.com/gorilla/websocket)
 - github.com/libp2p/go-buffer-pool v0.0.2 (Declared: MIT; selected: MIT; source: https://github.com/libp2p/go-buffer-pool)
 - github.com/libp2p/go-yamux/v5 v5.1.0 (Declared: MPL-2.0; selected: MPL-2.0; source: https://github.com/libp2p/go-yamux/v5)
+- github.com/mattn/go-isatty v0.0.24 (Declared: MIT; selected: MIT; source: https://github.com/mattn/go-isatty)
+- github.com/ncruces/go-strftime v1.0.0 (Declared: MIT; selected: MIT; source: https://github.com/ncruces/go-strftime)
 - github.com/quic-go/qpack v0.6.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/qpack)
 - github.com/quic-go/quic-go v0.62.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/quic-go)
 - github.com/quic-go/webtransport-go v0.13.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/webtransport-go)
+- github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/remyoudompheng/bigfft)
 - golang.org/x/crypto v0.55.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/crypto)
 - golang.org/x/net v0.58.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/net)
 - golang.org/x/sys v0.47.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/sys)
 - golang.org/x/text v0.41.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/text)
+- modernc.org/libc v1.75.7 (Declared: BSD-3-Clause AND MIT AND BSD-2-Clause; selected: BSD-3-Clause AND MIT AND BSD-2-Clause; source: https://modernc.org/libc)
+- modernc.org/mathutil v1.7.1 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://modernc.org/mathutil)
+- modernc.org/memory v1.12.1 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://modernc.org/memory)
+- modernc.org/sqlite v1.59.0 (Declared: BSD-3-Clause AND LicenseRef-SQLite-Public-Domain; selected: BSD-3-Clause AND LicenseRef-SQLite-Public-Domain; source: https://modernc.org/sqlite)
 - @babel/helper-string-parser 7.27.1 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-7.27.1.tgz)
 - @babel/helper-validator-identifier 7.28.5 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.28.5.tgz)
 - @babel/parser 7.29.2 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@babel/parser/-/parser-7.29.2.tgz)
@@ -530,11 +580,46 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - swift-crypto 4.5.1 (Declared: Apache-2.0; selected: Apache-2.0; source: https://github.com/apple/swift-crypto.git)
 - swift-nio 2.101.3 (Declared: Apache-2.0; selected: Apache-2.0; source: https://github.com/apple/swift-nio.git)
 - swift-nio-ssl 2.37.2 (Declared: Apache-2.0; selected: Apache-2.0; source: https://github.com/apple/swift-nio-ssl.git)
+- swift-sodium 0.11.0 (Declared: ISC; selected: ISC; source: https://github.com/jedisct1/swift-sodium.git)
 - swift-system 1.7.5 (Declared: Apache-2.0; selected: Apache-2.0; source: https://github.com/apple/swift-system.git)
 ## Distributed Dependency License Materials
 
 The following dependencies are incorporated into distributed Flowersec files or binaries.
 Their reviewed upstream license, notice, copyright, and patent materials are reproduced below.
+
+### Flowersec Noise public-length adapter 1.1.0-flowersec.1
+
+#### Reviewed bundled license text
+
+Flynn® is a trademark of Prime Directive, Inc.
+
+Copyright (c) 2015 Prime Directive, Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Prime Directive, Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### punycode 2.3.1
 

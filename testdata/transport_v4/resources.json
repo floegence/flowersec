@@ -1,0 +1,1070 @@
+{
+  "status": "draft",
+  "coverage": "synthetic_resource_owner_composition_only",
+  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+  "unverified": [
+    "Complete authenticated legal selections and actual component charges",
+    "Registered atomic transfers, reservations, owner lifetimes and cleanup",
+    "Physical memory, provider limits and production SDK integration"
+  ],
+  "vectors": [
+    {
+      "id": "resources_zero_plan",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_empty_feature_obligations",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {
+          "datagram": []
+        },
+        "legal_selections": [
+          [
+            "datagram"
+          ]
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_provider_controlled",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "provider_controlled",
+              "owner_instance_id": "provider-controlled",
+              "backing_id": "provider-controlled",
+              "charge_binding_id": "provider-controlled-charge",
+              "vector": {
+                "bytes": "40",
+                "work": "2",
+                "items": "3"
+              }
+            }
+          ]
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_controlled": {
+          "bytes": "40",
+          "work": "2",
+          "items": "3"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_provider_observable",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "provider_observable",
+              "owner_instance_id": "provider-observable",
+              "backing_id": "provider-observable",
+              "charge_binding_id": "provider-observable-charge",
+              "vector": {
+                "bytes": "50",
+                "work": "3",
+                "items": "4"
+              }
+            }
+          ]
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "50",
+          "work": "3",
+          "items": "4"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_empty_features",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "100",
+          "work": "10",
+          "items": "1"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_combined_features",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {
+          "datagram": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "datagram",
+              "backing_id": "datagram",
+              "charge_binding_id": "datagram-charge",
+              "vector": {
+                "bytes": "40",
+                "work": "2",
+                "items": "2"
+              }
+            }
+          ],
+          "application_progress_resume": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "resume",
+              "backing_id": "resume",
+              "charge_binding_id": "resume-charge",
+              "vector": {
+                "bytes": "60",
+                "work": "7",
+                "items": "1"
+              }
+            }
+          ]
+        },
+        "legal_selections": [
+          [],
+          [
+            "datagram"
+          ],
+          [
+            "application_progress_resume"
+          ],
+          [
+            "datagram",
+            "application_progress_resume"
+          ]
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "200",
+          "work": "19",
+          "items": "4"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_exclusive_features",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {
+          "datagram": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "datagram",
+              "backing_id": "datagram",
+              "charge_binding_id": "datagram-charge",
+              "vector": {
+                "bytes": "40",
+                "work": "2",
+                "items": "2"
+              }
+            }
+          ],
+          "application_progress_resume": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "resume",
+              "backing_id": "resume",
+              "charge_binding_id": "resume-charge",
+              "vector": {
+                "bytes": "60",
+                "work": "7",
+                "items": "1"
+              }
+            }
+          ]
+        },
+        "legal_selections": [
+          [
+            "datagram"
+          ],
+          [
+            "application_progress_resume"
+          ]
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "160",
+          "work": "17",
+          "items": "3"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_shared_owner",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "shared",
+              "backing_id": "shared",
+              "charge_binding_id": "shared-charge",
+              "vector": {
+                "bytes": "16",
+                "work": "1",
+                "items": "1"
+              }
+            }
+          ]
+        },
+        "features": {
+          "datagram": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "datagram",
+              "backing_id": "datagram",
+              "charge_binding_id": "datagram-charge",
+              "vector": {
+                "bytes": "40",
+                "work": "2",
+                "items": "2"
+              }
+            },
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "shared",
+              "backing_id": "shared",
+              "charge_binding_id": "shared-charge",
+              "vector": {
+                "bytes": "16",
+                "work": "1",
+                "items": "1"
+              }
+            }
+          ],
+          "application_progress_resume": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "resume",
+              "backing_id": "resume",
+              "charge_binding_id": "resume-charge",
+              "vector": {
+                "bytes": "60",
+                "work": "7",
+                "items": "1"
+              }
+            },
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "shared",
+              "backing_id": "shared",
+              "charge_binding_id": "shared-charge",
+              "vector": {
+                "bytes": "16",
+                "work": "1",
+                "items": "1"
+              }
+            },
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ]
+        },
+        "legal_selections": [
+          [
+            "datagram",
+            "application_progress_resume"
+          ]
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "216",
+          "work": "20",
+          "items": "5"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_distinct_owner",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "other",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ]
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "200",
+          "work": "20",
+          "items": "2"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_control_boundary",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "host_unobservable",
+              "owner_instance_id": "host",
+              "backing_id": "host",
+              "charge_binding_id": "host-charge",
+              "vector": {
+                "bytes": "200",
+                "work": "0",
+                "items": "1"
+              }
+            }
+          ]
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "100",
+          "work": "10",
+          "items": "1"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "200",
+          "work": "0",
+          "items": "1"
+        }
+      }
+    },
+    {
+      "id": "resources_uint64_maximum",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "maximum",
+              "backing_id": "maximum",
+              "charge_binding_id": "maximum-charge",
+              "vector": {
+                "bytes": "18446744073709551615",
+                "work": "0",
+                "items": "0"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_ready_min": {
+        "sdk_owned": {
+          "bytes": "18446744073709551615",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_controlled": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "provider_observable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        },
+        "host_unobservable": {
+          "bytes": "0",
+          "work": "0",
+          "items": "0"
+        }
+      }
+    },
+    {
+      "id": "resources_missing_feature",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {},
+        "legal_selections": [
+          [
+            "datagram"
+          ]
+        ]
+      },
+      "expected_error": "resource_feature_missing"
+    },
+    {
+      "id": "resources_unknown_feature",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {},
+        "legal_selections": [
+          [
+            "unknown"
+          ]
+        ]
+      },
+      "expected_error": "resource_feature_unknown"
+    },
+    {
+      "id": "resources_no_selections",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {},
+        "legal_selections": []
+      },
+      "expected_error": "resource_legal_selections_missing"
+    },
+    {
+      "id": "resources_duplicate_feature",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {
+          "datagram": []
+        },
+        "legal_selections": [
+          [
+            "datagram",
+            "datagram"
+          ]
+        ]
+      },
+      "expected_error": "resource_feature_duplicate"
+    },
+    {
+      "id": "resources_duplicate_selection",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {
+          "datagram": [],
+          "application_progress_resume": []
+        },
+        "legal_selections": [
+          [
+            "datagram",
+            "application_progress_resume"
+          ],
+          [
+            "application_progress_resume",
+            "datagram"
+          ]
+        ]
+      },
+      "expected_error": "resource_selection_duplicate"
+    },
+    {
+      "id": "resources_conflicting_owner",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "101",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ]
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_error": "resource_owner_conflict"
+    },
+    {
+      "id": "resources_overflow",
+      "input": {
+        "reference_limit": 64,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "maximum",
+              "backing_id": "maximum",
+              "charge_binding_id": "maximum-charge",
+              "vector": {
+                "bytes": "18446744073709551615",
+                "work": "0",
+                "items": "0"
+              }
+            },
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "one",
+              "backing_id": "one",
+              "charge_binding_id": "one-charge",
+              "vector": {
+                "bytes": "1",
+                "work": "0",
+                "items": "0"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": []
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_error": "resource_sum_overflow"
+    },
+    {
+      "id": "resources_reference_limit",
+      "input": {
+        "reference_limit": 1,
+        "base": {
+          "transport_core": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "core",
+              "backing_id": "core",
+              "charge_binding_id": "core-charge",
+              "vector": {
+                "bytes": "100",
+                "work": "10",
+                "items": "1"
+              }
+            }
+          ],
+          "reject_only": [],
+          "enabled": [],
+          "actual_shared_refs": [
+            {
+              "resource_profile_revision": "synthetic-r1",
+              "environment_id": "env-1",
+              "owner_kind": "reference",
+              "direction": "c2s",
+              "backing_lifetime_id": "life-1",
+              "control_boundary": "sdk_owned",
+              "owner_instance_id": "shared",
+              "backing_id": "shared",
+              "charge_binding_id": "shared-charge",
+              "vector": {
+                "bytes": "16",
+                "work": "1",
+                "items": "1"
+              }
+            }
+          ]
+        },
+        "features": {},
+        "legal_selections": [
+          []
+        ]
+      },
+      "expected_error": "resource_reference_limit"
+    }
+  ]
+}

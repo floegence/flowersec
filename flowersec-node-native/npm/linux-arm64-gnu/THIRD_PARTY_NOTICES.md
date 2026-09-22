@@ -73,7 +73,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - ring 0.17.14 (Declared: Apache-2.0 AND ISC; selected: Apache-2.0 AND ISC; source: https://github.com/briansmith/ring)
 - rustc-hash 2.1.3 (Declared: Apache-2.0 OR MIT; selected: MIT; source: https://github.com/rust-lang/rustc-hash)
 - rusticata-macros 4.1.0 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rusticata/rusticata-macros.git)
-- rustls 0.23.43 (Declared: Apache-2.0 OR ISC OR MIT; selected: MIT; source: https://github.com/rustls/rustls)
+- rustls 0.23.45 (Declared: Apache-2.0 OR ISC OR MIT; selected: MIT; source: https://github.com/rustls/rustls)
 - rustls-pki-types 1.15.1 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/rustls/pki-types)
 - rustls-webpki 0.103.15 (Declared: ISC; selected: ISC; source: https://github.com/rustls/webpki)
 - rustversion 1.0.23 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://github.com/dtolnay/rustversion)

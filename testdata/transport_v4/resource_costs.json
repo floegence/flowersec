@@ -1,0 +1,378 @@
+{
+  "status": "draft",
+  "coverage": "partial_known_resource_costs_only",
+  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+  "qualification": "Body buffers, permanent bitmap and enumerated application baseline only; no full ready_min, short-work floor, actual object charge, reservation or physical-memory qualification",
+  "vectors": [
+    {
+      "id": "resource_costs_transport_client",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 2,
+        "application_profile": "transport"
+      },
+      "expected": {
+        "codec_body_bytes": {
+          "full_slots": "524288",
+          "small_slots": "524288",
+          "total": "1048576"
+        },
+        "permanent_bitmap_bytes": "524292",
+        "application_counts": {
+          "internal_active": 0,
+          "management_active": 0,
+          "reply_slots": 0,
+          "fragment_associations": 0
+        },
+        "application_bytes": {
+          "reply_slots": "0",
+          "fragment_associations": "0",
+          "query_reserve": "0",
+          "rpc_error_output": "0",
+          "internal_receive": "0",
+          "internal_send": "0",
+          "total": "0"
+        }
+      }
+    },
+    {
+      "id": "resource_costs_services_client",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 2,
+        "application_profile": "services",
+        "rpc_max_general_outstanding": 1024
+      },
+      "expected": {
+        "codec_body_bytes": {
+          "full_slots": "524288",
+          "small_slots": "524288",
+          "total": "1048576"
+        },
+        "permanent_bitmap_bytes": "524292",
+        "application_counts": {
+          "internal_active": 10,
+          "management_active": 0,
+          "reply_slots": 1026,
+          "fragment_associations": 2048
+        },
+        "application_bytes": {
+          "reply_slots": "1050624",
+          "fragment_associations": "262144",
+          "query_reserve": "524288",
+          "rpc_error_output": "16384",
+          "internal_receive": "163840",
+          "internal_send": "163840",
+          "total": "2181120"
+        }
+      }
+    },
+    {
+      "id": "resource_costs_execution_server",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 4,
+        "application_profile": "execution",
+        "rpc_max_general_outstanding": 1024
+      },
+      "expected": {
+        "codec_body_bytes": {
+          "full_slots": "524288",
+          "small_slots": "1048576",
+          "total": "1572864"
+        },
+        "permanent_bitmap_bytes": "524292",
+        "application_counts": {
+          "internal_active": 10,
+          "management_active": 1,
+          "reply_slots": 1026,
+          "fragment_associations": 2048
+        },
+        "application_bytes": {
+          "reply_slots": "1050624",
+          "fragment_associations": "262144",
+          "query_reserve": "524288",
+          "rpc_error_output": "16384",
+          "internal_receive": "180224",
+          "internal_send": "180224",
+          "total": "2213888"
+        }
+      }
+    },
+    {
+      "id": "resource_costs_services_constrained",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 0,
+        "application_profile": "services",
+        "rpc_max_general_outstanding": 32
+      },
+      "expected": {
+        "codec_body_bytes": {
+          "full_slots": "524288",
+          "small_slots": "0",
+          "total": "524288"
+        },
+        "permanent_bitmap_bytes": "524292",
+        "application_counts": {
+          "internal_active": 10,
+          "management_active": 0,
+          "reply_slots": 34,
+          "fragment_associations": 64
+        },
+        "application_bytes": {
+          "reply_slots": "34816",
+          "fragment_associations": "8192",
+          "query_reserve": "524288",
+          "rpc_error_output": "16384",
+          "internal_receive": "163840",
+          "internal_send": "163840",
+          "total": "911360"
+        }
+      }
+    },
+    {
+      "id": "resource_costs_execution_constrained",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 0,
+        "application_profile": "execution",
+        "rpc_max_general_outstanding": 32
+      },
+      "expected": {
+        "codec_body_bytes": {
+          "full_slots": "524288",
+          "small_slots": "0",
+          "total": "524288"
+        },
+        "permanent_bitmap_bytes": "524292",
+        "application_counts": {
+          "internal_active": 10,
+          "management_active": 1,
+          "reply_slots": 34,
+          "fragment_associations": 64
+        },
+        "application_bytes": {
+          "reply_slots": "34816",
+          "fragment_associations": "8192",
+          "query_reserve": "524288",
+          "rpc_error_output": "16384",
+          "internal_receive": "180224",
+          "internal_send": "180224",
+          "total": "944128"
+        }
+      }
+    },
+    {
+      "id": "resource_costs_large_frame_client",
+      "input": {
+        "max_frame_bytes": 1048576,
+        "small_auth_slots": 2,
+        "application_profile": "services",
+        "rpc_max_general_outstanding": 1
+      },
+      "expected": {
+        "codec_body_bytes": {
+          "full_slots": "4194304",
+          "small_slots": "524288",
+          "total": "4718592"
+        },
+        "permanent_bitmap_bytes": "524292",
+        "application_counts": {
+          "internal_active": 10,
+          "management_active": 0,
+          "reply_slots": 3,
+          "fragment_associations": 2
+        },
+        "application_bytes": {
+          "reply_slots": "3072",
+          "fragment_associations": "256",
+          "query_reserve": "524288",
+          "rpc_error_output": "16384",
+          "internal_receive": "163840",
+          "internal_send": "163840",
+          "total": "871680"
+        }
+      }
+    },
+    {
+      "id": "resource_costs_large_frame_server",
+      "input": {
+        "max_frame_bytes": 1048576,
+        "small_auth_slots": 4,
+        "application_profile": "execution",
+        "rpc_max_general_outstanding": 1
+      },
+      "expected": {
+        "codec_body_bytes": {
+          "full_slots": "4194304",
+          "small_slots": "1048576",
+          "total": "5242880"
+        },
+        "permanent_bitmap_bytes": "524292",
+        "application_counts": {
+          "internal_active": 10,
+          "management_active": 1,
+          "reply_slots": 3,
+          "fragment_associations": 2
+        },
+        "application_bytes": {
+          "reply_slots": "3072",
+          "fragment_associations": "256",
+          "query_reserve": "524288",
+          "rpc_error_output": "16384",
+          "internal_receive": "180224",
+          "internal_send": "180224",
+          "total": "904448"
+        }
+      }
+    },
+    {
+      "id": "resource_costs_small_frame",
+      "input": {
+        "max_frame_bytes": 65536,
+        "small_auth_slots": 2,
+        "application_profile": "transport"
+      },
+      "expected": {
+        "codec_body_bytes": {
+          "full_slots": "262144",
+          "small_slots": "262144",
+          "total": "524288"
+        },
+        "permanent_bitmap_bytes": "524292",
+        "application_counts": {
+          "internal_active": 0,
+          "management_active": 0,
+          "reply_slots": 0,
+          "fragment_associations": 0
+        },
+        "application_bytes": {
+          "reply_slots": "0",
+          "fragment_associations": "0",
+          "query_reserve": "0",
+          "rpc_error_output": "0",
+          "internal_receive": "0",
+          "internal_send": "0",
+          "total": "0"
+        }
+      }
+    },
+    {
+      "id": "resource_costs_large_slot_count",
+      "input": {
+        "max_frame_bytes": 1048576,
+        "small_auth_slots": 4294967295,
+        "application_profile": "transport"
+      },
+      "expected": {
+        "codec_body_bytes": {
+          "full_slots": "4194304",
+          "small_slots": "1125899906580480",
+          "total": "1125899910774784"
+        },
+        "permanent_bitmap_bytes": "524292",
+        "application_counts": {
+          "internal_active": 0,
+          "management_active": 0,
+          "reply_slots": 0,
+          "fragment_associations": 0
+        },
+        "application_bytes": {
+          "reply_slots": "0",
+          "fragment_associations": "0",
+          "query_reserve": "0",
+          "rpc_error_output": "0",
+          "internal_receive": "0",
+          "internal_send": "0",
+          "total": "0"
+        }
+      }
+    },
+    {
+      "id": "resource_costs_transport_k_forbidden",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 2,
+        "application_profile": "transport",
+        "rpc_max_general_outstanding": 0
+      },
+      "expected_error": "resource_rpc_limit_presence"
+    },
+    {
+      "id": "resource_costs_services_k_missing",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 2,
+        "application_profile": "services"
+      },
+      "expected_error": "resource_rpc_limit_presence"
+    },
+    {
+      "id": "resource_costs_k_zero",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 2,
+        "application_profile": "execution",
+        "rpc_max_general_outstanding": 0
+      },
+      "expected_error": "resource_rpc_limit"
+    },
+    {
+      "id": "resource_costs_k_over_max",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 2,
+        "application_profile": "execution",
+        "rpc_max_general_outstanding": 1025
+      },
+      "expected_error": "resource_rpc_limit"
+    },
+    {
+      "id": "resource_costs_frame_zero",
+      "input": {
+        "max_frame_bytes": 0,
+        "small_auth_slots": 0,
+        "application_profile": "transport"
+      },
+      "expected_error": "resource_frame_limit"
+    },
+    {
+      "id": "resource_costs_frame_over_max",
+      "input": {
+        "max_frame_bytes": 1048577,
+        "small_auth_slots": 0,
+        "application_profile": "transport"
+      },
+      "expected_error": "resource_frame_limit"
+    },
+    {
+      "id": "resource_costs_negative_slots",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": -1,
+        "application_profile": "transport"
+      },
+      "expected_error": "resource_auth_slots"
+    },
+    {
+      "id": "resource_costs_slots_over_max",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 4294967296,
+        "application_profile": "transport"
+      },
+      "expected_error": "resource_auth_slots"
+    },
+    {
+      "id": "resource_costs_unknown_profile",
+      "input": {
+        "max_frame_bytes": 131072,
+        "small_auth_slots": 0,
+        "application_profile": "unknown"
+      },
+      "expected_error": "resource_application_profile"
+    }
+  ]
+}

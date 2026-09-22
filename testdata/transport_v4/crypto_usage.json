@@ -1,0 +1,361 @@
+{
+  "status": "draft",
+  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+  "coverage": "fixed_crypto_usage_limits_and_reference_record_charges_only",
+  "qualification": "Fixed operational limits and pure arithmetic only; no independent aggregate cryptographic proof, owner/atomic reservation, soft watermarks, maintenance reserve, actual provider/AEAD invocation, root age enforcement, key cleanup or production qualification",
+  "vectors": [
+    {
+      "id": "crypto_usage_0_seal_empty",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "0",
+        "input_bytes": "0"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "1",
+        "ciphertext_bytes": "16"
+      }
+    },
+    {
+      "id": "crypto_usage_0_open_empty",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "0",
+        "input_bytes": "16"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "1",
+        "ciphertext_bytes": "16"
+      }
+    },
+    {
+      "id": "crypto_usage_0_seal_blocks",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "16",
+        "input_bytes": "16"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "3",
+        "ciphertext_bytes": "32"
+      }
+    },
+    {
+      "id": "crypto_usage_0_open_blocks",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "16",
+        "input_bytes": "32"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "3",
+        "ciphertext_bytes": "32"
+      }
+    },
+    {
+      "id": "crypto_usage_0_seal_partial_blocks",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "17",
+        "input_bytes": "17"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "5",
+        "ciphertext_bytes": "33"
+      }
+    },
+    {
+      "id": "crypto_usage_0_open_partial_blocks",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "17",
+        "input_bytes": "33"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "5",
+        "ciphertext_bytes": "33"
+      }
+    },
+    {
+      "id": "crypto_usage_0_seal_frame_payload",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "99",
+        "input_bytes": "1048536"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "65542",
+        "ciphertext_bytes": "1048552"
+      }
+    },
+    {
+      "id": "crypto_usage_0_seal_maximum_input",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "18446744073709551615",
+        "input_bytes": "18446744073709551599"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "2305843009213693952",
+        "ciphertext_bytes": "18446744073709551615"
+      }
+    },
+    {
+      "id": "crypto_usage_0_open_maximum_input",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "18446744073709551615",
+        "input_bytes": "18446744073709551615"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "2305843009213693952",
+        "ciphertext_bytes": "18446744073709551615"
+      }
+    },
+    {
+      "id": "crypto_usage_0_open_short_tag",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "0",
+        "input_bytes": "15"
+      },
+      "expected_error": "crypto_usage_ciphertext"
+    },
+    {
+      "id": "crypto_usage_0_seal_overflow",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "0",
+        "input_bytes": "18446744073709551600"
+      },
+      "expected_error": "crypto_usage_overflow"
+    },
+    {
+      "id": "crypto_usage_0_bad_integer",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "01",
+        "input_bytes": "0"
+      },
+      "expected_error": "crypto_usage_integer"
+    },
+    {
+      "id": "crypto_usage_0_integer_overflow",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "18446744073709551616",
+        "input_bytes": "0"
+      },
+      "expected_error": "crypto_usage_integer"
+    },
+    {
+      "id": "crypto_usage_0_unknown_operation",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "input": {
+        "operation": "verify",
+        "aad_bytes": "0",
+        "input_bytes": "0"
+      },
+      "expected_error": "crypto_usage_operation"
+    },
+    {
+      "id": "crypto_usage_1_seal_empty",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "0",
+        "input_bytes": "0"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "1",
+        "ciphertext_bytes": "16"
+      }
+    },
+    {
+      "id": "crypto_usage_1_open_empty",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "0",
+        "input_bytes": "16"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "1",
+        "ciphertext_bytes": "16"
+      }
+    },
+    {
+      "id": "crypto_usage_1_seal_blocks",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "16",
+        "input_bytes": "16"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "3",
+        "ciphertext_bytes": "32"
+      }
+    },
+    {
+      "id": "crypto_usage_1_open_blocks",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "16",
+        "input_bytes": "32"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "3",
+        "ciphertext_bytes": "32"
+      }
+    },
+    {
+      "id": "crypto_usage_1_seal_partial_blocks",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "17",
+        "input_bytes": "17"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "5",
+        "ciphertext_bytes": "33"
+      }
+    },
+    {
+      "id": "crypto_usage_1_open_partial_blocks",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "17",
+        "input_bytes": "33"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "5",
+        "ciphertext_bytes": "33"
+      }
+    },
+    {
+      "id": "crypto_usage_1_seal_frame_payload",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "99",
+        "input_bytes": "1048536"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "65542",
+        "ciphertext_bytes": "1048552"
+      }
+    },
+    {
+      "id": "crypto_usage_1_seal_maximum_input",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "18446744073709551615",
+        "input_bytes": "18446744073709551599"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "2305843009213693952",
+        "ciphertext_bytes": "18446744073709551615"
+      }
+    },
+    {
+      "id": "crypto_usage_1_open_maximum_input",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "18446744073709551615",
+        "input_bytes": "18446744073709551615"
+      },
+      "expected": {
+        "calls": "1",
+        "authentication_blocks": "2305843009213693952",
+        "ciphertext_bytes": "18446744073709551615"
+      }
+    },
+    {
+      "id": "crypto_usage_1_open_short_tag",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "open",
+        "aad_bytes": "0",
+        "input_bytes": "15"
+      },
+      "expected_error": "crypto_usage_ciphertext"
+    },
+    {
+      "id": "crypto_usage_1_seal_overflow",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "0",
+        "input_bytes": "18446744073709551600"
+      },
+      "expected_error": "crypto_usage_overflow"
+    },
+    {
+      "id": "crypto_usage_1_bad_integer",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "01",
+        "input_bytes": "0"
+      },
+      "expected_error": "crypto_usage_integer"
+    },
+    {
+      "id": "crypto_usage_1_integer_overflow",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "seal",
+        "aad_bytes": "18446744073709551616",
+        "input_bytes": "0"
+      },
+      "expected_error": "crypto_usage_integer"
+    },
+    {
+      "id": "crypto_usage_1_unknown_operation",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "input": {
+        "operation": "verify",
+        "aad_bytes": "0",
+        "input_bytes": "0"
+      },
+      "expected_error": "crypto_usage_operation"
+    }
+  ]
+}

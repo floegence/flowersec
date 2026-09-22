@@ -1,0 +1,370 @@
+{
+  "coverage": "draft_fragment_live_association_transitions",
+  "header_fixture": "opaque_empty_map_not_an_application_header_qualification",
+  "vectors": [
+    {
+      "id": "state_stop_lifecycle",
+      "capacity": 1,
+      "steps": [
+        {
+          "op": "request",
+          "dir": 0,
+          "serial": "1",
+          "length": 0,
+          "owner": "a",
+          "status": "complete",
+          "hex": "0000001400000000000000000100000000000000000001a0"
+        },
+        {
+          "op": "stop",
+          "dir": 0,
+          "serial": "1",
+          "error": "stop_ineligible",
+          "hex": "00000009030000000000000001"
+        },
+        {
+          "op": "validate",
+          "dir": 0,
+          "serial": "1",
+          "owner": "a"
+        },
+        {
+          "op": "stop",
+          "dir": 0,
+          "serial": "1",
+          "status": "stop_requested",
+          "hex": "00000009030000000000000001"
+        },
+        {
+          "op": "stop",
+          "dir": 0,
+          "serial": "1",
+          "status": "coalesced",
+          "hex": "00000009030000000000000001"
+        },
+        {
+          "op": "response",
+          "dir": 1,
+          "serial": "1",
+          "reply": "1",
+          "length": 0,
+          "owner": "a",
+          "response_kind": "normal",
+          "status": "complete",
+          "hex": "0000001400000000000000000100000000000000010001a0"
+        },
+        {
+          "op": "stop",
+          "dir": 0,
+          "serial": "1",
+          "status": "ignored",
+          "hex": "00000009030000000000000001"
+        }
+      ],
+      "final": {
+        "highwater": [
+          "1",
+          "1"
+        ],
+        "requests": [
+          0,
+          0
+        ],
+        "indexed_messages": [
+          0,
+          0
+        ],
+        "closed": false
+      }
+    },
+    {
+      "id": "state_abort_confirmation",
+      "capacity": 1,
+      "steps": [
+        {
+          "op": "request",
+          "dir": 0,
+          "serial": "1",
+          "length": 3,
+          "owner": "a",
+          "status": "open",
+          "hex": "0000001400000000000000000100000000000000000001a0"
+        },
+        {
+          "op": "data",
+          "dir": 0,
+          "serial": "1",
+          "offset": 0,
+          "size": 2,
+          "status": "open",
+          "hex": "0000000f010000000000000001000000004141"
+        },
+        {
+          "op": "abort",
+          "dir": 0,
+          "serial": "1",
+          "offset": 1,
+          "error": "abort_offset",
+          "hex": "0000000d02000000000000000100000001"
+        },
+        {
+          "op": "abort",
+          "dir": 0,
+          "serial": "1",
+          "offset": 2,
+          "status": "aborted",
+          "hex": "0000000d02000000000000000100000002"
+        },
+        {
+          "op": "stop",
+          "dir": 0,
+          "serial": "1",
+          "error": "stop_ineligible",
+          "hex": "00000009030000000000000001"
+        },
+        {
+          "op": "request",
+          "dir": 0,
+          "serial": "2",
+          "length": 0,
+          "owner": "b",
+          "error": "state_capacity",
+          "hex": "0000001400000000000000000200000000000000000001a0"
+        },
+        {
+          "op": "response",
+          "dir": 1,
+          "serial": "1",
+          "reply": "1",
+          "length": 1,
+          "owner": "a",
+          "response_kind": "request_message_aborted",
+          "status": "open",
+          "hex": "0000001400000000000000000100000000000000010001a0"
+        },
+        {
+          "op": "data",
+          "dir": 1,
+          "serial": "1",
+          "offset": 0,
+          "size": 1,
+          "status": "complete",
+          "hex": "0000000e0100000000000000010000000041"
+        },
+        {
+          "op": "request",
+          "dir": 0,
+          "serial": "2",
+          "length": 0,
+          "owner": "b",
+          "status": "complete",
+          "hex": "0000001400000000000000000200000000000000000001a0"
+        }
+      ],
+      "final": {
+        "highwater": [
+          "2",
+          "1"
+        ],
+        "requests": [
+          1,
+          0
+        ],
+        "indexed_messages": [
+          1,
+          0
+        ],
+        "closed": false
+      }
+    },
+    {
+      "id": "state_mixed_directions",
+      "capacity": 1,
+      "steps": [
+        {
+          "op": "request",
+          "dir": 0,
+          "serial": "1",
+          "length": 0,
+          "owner": "a",
+          "status": "complete",
+          "hex": "0000001400000000000000000100000000000000000001a0"
+        },
+        {
+          "op": "request",
+          "dir": 1,
+          "serial": "1",
+          "length": 0,
+          "owner": "b",
+          "status": "complete",
+          "hex": "0000001400000000000000000100000000000000000001a0"
+        },
+        {
+          "op": "validate",
+          "dir": 0,
+          "serial": "1",
+          "owner": "a"
+        },
+        {
+          "op": "validate",
+          "dir": 1,
+          "serial": "1",
+          "owner": "b"
+        },
+        {
+          "op": "response",
+          "dir": 0,
+          "serial": "2",
+          "reply": "1",
+          "length": 1,
+          "owner": "a",
+          "response_kind": "normal",
+          "error": "response_binding",
+          "hex": "0000001400000000000000000200000000000000010001a0"
+        },
+        {
+          "op": "response",
+          "dir": 0,
+          "serial": "2",
+          "reply": "1",
+          "length": 1,
+          "owner": "b",
+          "response_kind": "normal",
+          "status": "open",
+          "hex": "0000001400000000000000000200000000000000010001a0"
+        },
+        {
+          "op": "stop",
+          "dir": 0,
+          "serial": "2",
+          "error": "stop_ineligible",
+          "hex": "00000009030000000000000002"
+        },
+        {
+          "op": "response",
+          "dir": 1,
+          "serial": "2",
+          "reply": "1",
+          "length": 0,
+          "owner": "a",
+          "response_kind": "normal",
+          "status": "complete",
+          "hex": "0000001400000000000000000200000000000000010001a0"
+        },
+        {
+          "op": "abort",
+          "dir": 0,
+          "serial": "2",
+          "offset": 0,
+          "status": "aborted",
+          "hex": "0000000d02000000000000000200000000"
+        }
+      ],
+      "final": {
+        "highwater": [
+          "2",
+          "2"
+        ],
+        "requests": [
+          0,
+          0
+        ],
+        "indexed_messages": [
+          0,
+          0
+        ],
+        "closed": false
+      }
+    },
+    {
+      "id": "state_invalid_order",
+      "capacity": 1,
+      "steps": [
+        {
+          "op": "request",
+          "dir": 0,
+          "serial": "2",
+          "length": 1,
+          "owner": "a",
+          "error": "serial_gap",
+          "hex": "0000001400000000000000000200000000000000000001a0"
+        },
+        {
+          "op": "request",
+          "dir": 0,
+          "serial": "1",
+          "length": 1,
+          "owner": "a",
+          "status": "open",
+          "hex": "0000001400000000000000000100000000000000000001a0"
+        },
+        {
+          "op": "request",
+          "dir": 0,
+          "serial": "1",
+          "length": 1,
+          "owner": "a",
+          "error": "serial_replay",
+          "hex": "0000001400000000000000000100000000000000000001a0"
+        },
+        {
+          "op": "data",
+          "dir": 0,
+          "serial": "1",
+          "offset": 1,
+          "size": 1,
+          "error": "offset_mismatch",
+          "hex": "0000000e0100000000000000010000000141"
+        },
+        {
+          "op": "data",
+          "dir": 0,
+          "serial": "1",
+          "offset": 0,
+          "size": 2,
+          "error": "payload_overrun",
+          "hex": "0000000f010000000000000001000000004141"
+        },
+        {
+          "op": "data",
+          "dir": 0,
+          "serial": "1",
+          "offset": 0,
+          "size": 1,
+          "status": "complete",
+          "hex": "0000000e0100000000000000010000000041"
+        },
+        {
+          "op": "abort",
+          "dir": 0,
+          "serial": "1",
+          "offset": 1,
+          "error": "message_not_open",
+          "hex": "0000000d02000000000000000100000001"
+        },
+        {
+          "op": "stop",
+          "dir": 0,
+          "serial": "2",
+          "error": "stop_future",
+          "hex": "00000009030000000000000002"
+        }
+      ],
+      "final": {
+        "highwater": [
+          "1",
+          "0"
+        ],
+        "requests": [
+          1,
+          0
+        ],
+        "indexed_messages": [
+          1,
+          0
+        ],
+        "closed": false
+      }
+    }
+  ]
+}

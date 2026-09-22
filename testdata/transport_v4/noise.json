@@ -1,0 +1,4247 @@
+{
+  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+  "coverage": "public_fixed_material_library_reference_only",
+  "source": {
+    "library": "snow@0.10.0",
+    "crate_sha256": "599b506ccc4aff8cf7844bc42cf783009a434c1e26c964432560fb6d6ad02d82",
+    "vcs_sha": "4bb43f50370bdb3e8b1b57814ac662864db2704f",
+    "capture_sha256": "fb7a80a36a2bf48a68050f8c9df8662724c7d47d4a6dff4c472156908b26273a"
+  },
+  "inputs": {
+    "client_static_private_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "server_static_private_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+    "client_ephemeral_private_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+    "server_ephemeral_private_hex": "4444444444444444444444444444444444444444444444444444444444444444",
+    "psk_hex": "5555555555555555555555555555555555555555555555555555555555555555",
+    "context_digest_hex": "6666666666666666666666666666666666666666666666666666666666666666",
+    "prologue_hex": "7075626c6963204e6f697365206c6962726172792066697874757265",
+    "payload_hex": ""
+  },
+  "transcripts": [
+    {
+      "id": "noise_x25519_public_fixture",
+      "profile": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+      "message1_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "message2_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "handshake_hash_hex": "b86fe078100dabd2d24271dd0f5f63277e68f20bdcb0e9673b14423b1331c2a2",
+      "split_i2r_hex": "ca39600035b06ddc89d6a0ddf20428adf7118354eb70d57454e7996ecea4765d",
+      "split_r2i_hex": "1b52e956abef6f09839713e88433982bd46afa092c807d2dc49b4a81c1099e06",
+      "initial_root_hex": "e5c1e464abadd5efdda9be8a845e08ef96a9a5edd0b3c906460cb588a1888220",
+      "initial_root_info_hex": "666c6f7765727365632f76342f696e697469616c2d726f6f74000000002d6673342d6b6b70736b302d7832353531392d636861636861706f6c792d656432353531392d7368613235362d3100000020b86fe078100dabd2d24271dd0f5f63277e68f20bdcb0e9673b14423b1331c2a2000000206666666666666666666666666666666666666666666666666666666666666666"
+    },
+    {
+      "id": "noise_p256_public_fixture",
+      "profile": "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1",
+      "message1_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "message2_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "handshake_hash_hex": "ce54cbdcf14d64e6130f57f945233393806786b0e3ad573ddd93415bee3dece2",
+      "split_i2r_hex": "280f8307a843ed4da95571f503a3eaf0fc7ad90bdbb6fc4ea072034c8a2403f5",
+      "split_r2i_hex": "58aa31dfdce501017ff5d204341f946e78e34569485b2630bd010bf178418bb1",
+      "initial_root_hex": "a39595f282fd28b4974cb8794218ce072f1e054ffa50695d45e44b199399ce03",
+      "initial_root_info_hex": "666c6f7765727365632f76342f696e697469616c2d726f6f74000000002a6673342d6b6b70736b302d703235362d61657332353667636d2d656432353531392d7368613235362d3100000020ce54cbdcf14d64e6130f57f945233393806786b0e3ad573ddd93415bee3dece2000000206666666666666666666666666666666666666666666666666666666666666666"
+    }
+  ],
+  "negatives": [
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_0",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "fb0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_0",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_1",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b8d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_1",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_2",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0dc7d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_2",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_3",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47593427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_3",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_4",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d9b427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_4",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d9",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_5",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d934a7f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_5",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d934",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_6",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d9342778311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_6",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_7",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8b11160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_7",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_8",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8319160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_8",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f831",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_9",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f83111e0781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_9",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f83111",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_10",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160f81c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_10",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_11",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160789c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_11",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f831116078",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_12",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781cfc733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_12",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_13",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7cf33fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_13",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_14",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c73bfd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_14",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c73",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_15",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733f589f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_15",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733f",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_16",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd81f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_16",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd8",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_17",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f08970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_17",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_18",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88170aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_18",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_19",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88978aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_19",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f8897",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_20",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970a6f490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_20",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_21",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aefc90d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_21",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_22",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef498d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_22",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef49",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_23",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d0aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_23",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_24",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8a20ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_24",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_25",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa06e19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_25",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_26",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee99a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_26",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_27",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee1924cb8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_27",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_28",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a44b8a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_28",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_29",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb0a1b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_29",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_30",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a9b1452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_30",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_31",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b9452711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_31",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_32",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14d2711ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_32",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_33",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452f11ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_33",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_34",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452719ce7eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_34",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b145271",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_35",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711c67eaaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_35",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_36",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce76aaa4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_36",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_37",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7ea2a4fca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_37",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7ea",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_38",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaacfca4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_38",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_39",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4f4a4b20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_39",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4f",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_40",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fcacb20baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_40",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_41",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4ba0baa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_41",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_42",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b203aa11070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_42",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_43",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20ba211070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_43",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20ba",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_44",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa19070dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_44",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_45",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa110f0dade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_45",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa110",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_46",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa110705ade",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_46",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_bit_47",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070da5e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_short_47",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070da",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_suffix_1",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "extended_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade00",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m1_suffix_2",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 1,
+      "reason": "extended_message",
+      "message_hex": "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1452711ce7eaaa4fca4b20baa11070dade0001",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_0",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "7f2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_0",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_1",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ffaee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_1",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_2",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2e645601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_2",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_3",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee4d601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_3",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee4",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_4",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45681ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_4",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee456",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_5",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee456016c1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_5",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_6",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec9b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_6",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_7",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1be7310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_7",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_8",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67b10c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_8",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_9",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67318c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_9",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b6731",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_10",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310cf790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_10",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_11",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7710404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_11",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c77",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_12",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790c04585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_12",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_13",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c779040c585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_13",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c779040",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_14",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404505ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_14",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c77904045",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_15",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c77904045852e697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_15",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_16",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585aee97331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_16",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_17",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae69f331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_17",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae69",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_18",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae6973b1eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_18",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae6973",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_19",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae6973316ee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_19",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_20",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331ee61c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_20",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331ee",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_21",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee141f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_21",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_22",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c178cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_22",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_23",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f84f2419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_23",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_24",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cfa419731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_24",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_25",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2499731c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_25",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf24",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_26",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419f31c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_26",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_27",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419739c1fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_27",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf241973",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_28",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c9fff3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_28",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_29",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1f7f3e6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_29",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1f",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_30",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fffbe6b2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_30",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_31",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3eeb2f695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_31",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_32",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6baf695072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_32",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_33",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2fe95072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_33",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_34",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f69d072d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_34",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f69",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_35",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f6950f2d244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_35",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f6950",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_36",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f6950725244e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_36",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_37",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d2c4e64c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_37",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d2",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_38",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244664c410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_38",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_39",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e6cc410eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_39",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e6",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_40",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64cc10eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_40",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_41",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c418eb21a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_41",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c41",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_42",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410e321a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_42",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_43",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb29a1558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_43",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb2",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_44",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a9558a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_44",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_45",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a15d8a335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_45",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a15",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_46",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a15582335",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_46",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_bit_47",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a3b5",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_short_47",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a3",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_suffix_1",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "extended_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a33500",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_x25519_public_fixture_m2_suffix_2",
+      "transcript": "noise_x25519_public_fixture",
+      "flight": 2,
+      "reason": "extended_message",
+      "message_hex": "ff2ee45601ec1b67310c7790404585ae697331eee1c1f8cf2419731c1fff3e6b2f695072d244e64c410eb21a1558a3350001",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_0",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "8451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_0",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_1",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "04d1a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_1",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "04",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_2",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045127580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_2",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_3",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7d80833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_3",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_4",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7588833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_4",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a758",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_5",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a75808b3898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_5",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a75808",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_6",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833098ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_6",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_7",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833890ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_7",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a758083389",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_8",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898e21b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_8",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_9",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea13183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_9",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_10",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b103cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_10",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_11",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b1834bd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_11",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_12",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cb57350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_12",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cb",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_13",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7b50a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_13",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_14",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7358a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_14",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd735",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_15",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350ac099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_15",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_16",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4019078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_16",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a40",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_17",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099878c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_17",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_18",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099070c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_18",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a409907",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_19",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078ceef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_19",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_20",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6e71c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_20",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_21",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef141e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_21",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_22",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1618e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_22",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_23",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e10e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_23",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_24",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e170cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_24",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_25",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e978cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_25",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e97",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_26",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970c57683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_26",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_27",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7e83035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_27",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_28",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd768b035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_28",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd768",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_29",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd76830b5f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_29",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd76830",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_30",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035725e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_30",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_31",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f2de7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_31",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f2",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_32",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25efd0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_32",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_33",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d8110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_33",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_34",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0190522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_34",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d01",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_35",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110d22712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_35",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_36",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d011052a712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_36",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d011052",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_37",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522792b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_37",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d01105227",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_38",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d011052271230b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_38",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_39",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b035a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_39",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_40",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b527cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_40",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_41",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a74ff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_41",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_42",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cf7081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_42",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cf",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_43",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff001685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_43",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff0",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_44",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081e85486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_44",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_45",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff08168d486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_45",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff08168",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_46",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685406984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_46",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff0816854",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_47",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486184a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_47",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_48",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff08168548698ca94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_48",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff08168548698",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_49",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a14e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_49",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_50",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a9466831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_50",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_51",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6031edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_51",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_52",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6839edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_52",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e683",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_53",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831e5ac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_53",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_54",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831eda446e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_54",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831eda",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_55",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac4ee7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_55",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac4",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_56",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46ef360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_56",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_57",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e73e0fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_57",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e73",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_58",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e73607a9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_58",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_59",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa1d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_59",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_60",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d034a7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_60",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_61",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d83ca7a81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_61",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d83",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_62",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834afa81a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_62",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_63",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a01a1e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_63",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_64",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a8121e8131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_64",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_65",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a168131724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_65",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_66",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8931724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_66",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_67",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8139724dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_67",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e813",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_68",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e81317a4dc6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_68",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e81317",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_69",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e81317245c6de39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_69",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_70",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dcede39ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_70",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_71",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6d639ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_71",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_72",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de31ec7db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_72",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de3",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_73",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39e47db73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_73",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_74",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec75b73a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_74",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_75",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7dbf3a39c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_75",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_76",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73239c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_76",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_77",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a31c0c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_77",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a3",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_78",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c8c5caa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_78",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_79",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0cdcaa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_79",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_bit_80",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5c2a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_short_80",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "truncated_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_suffix_1",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "extended_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa00",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m1_suffix_2",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 1,
+      "reason": "extended_message",
+      "message_hex": "0451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1e8131724dc6de39ec7db73a39c0c5caa0001",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_0",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "845b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_0",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_1",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "04db36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_1",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "04",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_2",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045bb6890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_2",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_3",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36090dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_3",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_4",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36898dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_4",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b3689",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_5",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890d2cbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_5",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_6",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dac3d7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_6",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dac",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_7",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbdfc9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_7",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_8",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c1a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_8",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_9",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a16bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_9",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_10",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a963b74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_10",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_11",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bbf4a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_11",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_12",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb7421ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_12",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_13",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a16e28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_13",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_14",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1eea8b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_14",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_15",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee2833d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_15",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_16",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b352d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_16",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_17",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2575b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_17",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_18",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d7db72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_18",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d7",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_19",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75bf2e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_19",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_20",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72609a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_20",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_21",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e01a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_21",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e0",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_22",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09aa0ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_22",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_23",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a206f25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_23",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_24",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20efa5cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_24",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_25",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef254f8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_25",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_26",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf0e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_26",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_27",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8eefd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_27",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_28",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6f58a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_28",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6f",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_29",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd829f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_29",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_30",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a970350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_30",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_31",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0b50d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_31",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_32",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0358d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_32",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f035",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_33",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d8e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_33",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_34",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e94bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_34",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_35",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e143ed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_35",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_36",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14be58d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_36",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14be",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_37",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed854682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_37",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_38",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4e82a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_38",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_39",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d468aa34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_39",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d468",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_40",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682ab4d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_40",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_41",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34583538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_41",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_42",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d8b538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_42",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d8",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_43",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d835b8bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_43",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d835",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_44",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d835383dff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_44",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_45",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bd7f5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_45",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bd",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_46",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdffdb96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_46",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_47",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b16e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_47",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_48",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96689a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_48",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_49",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e81a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_49",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e8",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_50",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89ae666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_50",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_51",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a66e6ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_51",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a66",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_52",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a66666c0db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_52",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_53",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec8db5745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_53",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_54",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0d35745d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_54",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_55",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5f45d02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_55",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_56",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db574dd02fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_56",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db574",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_57",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d82fa1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_57",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_58",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d027a1210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_58",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_59",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa9210072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_59",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_60",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1290072df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_60",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa12",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_61",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210872df75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_61",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_62",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa121007adf75a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_62",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa121007",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_63",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072d775a8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_63",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072d",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_64",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df7da8706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_64",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df7",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_65",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a0706b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_65",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_66",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8786b53940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_66",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a87",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_67",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706353940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_67",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_68",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b5b940da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_68",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b5",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_69",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b539c0da8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_69",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b539",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_70",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b539405a8800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_70",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_71",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da0800557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_71",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_72",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8880557c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_72",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da88",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_73",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800d57c613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_73",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_74",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da880055fc613e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_74",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da880055",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_75",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557ce13e74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_75",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_76",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c61be74c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_76",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c61",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_77",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613ef4c39136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_77",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_78",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74439136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_78",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_79",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c31136",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_79",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c3",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_bit_80",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "modified_message_with_original_tag",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c391b6",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_short_80",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "truncated_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c391",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_suffix_1",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "extended_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c3913600",
+      "expected_error": "noise_reference_failed"
+    },
+    {
+      "id": "noise_p256_public_fixture_m2_suffix_2",
+      "transcript": "noise_p256_public_fixture",
+      "flight": 2,
+      "reason": "extended_message",
+      "message_hex": "045b36890dacbd7c9a96bb74a1ee28b3d2d75b72e09a20ef25cf8e6fd8a9f0350d0e14bed8d4682a34d83538bdff5b96e89a6666ec0db5745d02fa1210072df75a8706b53940da8800557c613e74c391360001",
+      "expected_error": "noise_reference_failed"
+    }
+  ],
+  "unverified": [
+    "Authenticated Flowersec prologue/admission and certificate bindings",
+    "Signed dual READY, records and rekey",
+    "Four-library transcript agreement for both required profiles",
+    "Runtime entropy, key handles, ownership and cleanup",
+    "Independent cryptographic composition proof and provider qualification"
+  ],
+  "schema_sha256": "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959"
+}

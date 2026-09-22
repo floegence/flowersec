@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import { collectGoModuleDirectories } from "./check-go-security.mjs";
 import { readToolchains } from "./toolchains.mjs";
+import { verifyNoiseVendor } from "./transport-v4-noise-vendor.mjs";
 import {
   normalizeSwiftPins,
   swiftSecurityGitEnvironment,
@@ -590,10 +591,28 @@ function collectGoSumEvidence(moduleDirectories) {
   return evidence;
 }
 
+function noiseVendorComponent(repoRoot, policy) {
+  const source = verifyNoiseVendor(repoRoot);
+  if (!source) return null;
+  const { manifest, directory, licenseText } = source;
+  const purl = `pkg:generic/flowersec-noise@${manifest.version}`;
+  const component = makeComponent({
+    ecosystem: "generic", name: manifest.name, version: manifest.version,
+    license: manifest.license, source: manifest.upstream.source, purl,
+    sourceEvidence: { kind: "vendored-go-source-manifest", value: stableJson(manifest) },
+    policy: { ...policy, bundledNotices: { ...policy.bundledNotices, [purl]: {
+      license: manifest.license, copyright: manifest.copyright,
+      licenseTextLines: licenseText.split("\n").slice(0, -1), sha256: sha256(licenseText),
+    } } },
+  });
+  return { directory, component };
+}
+
 function collectGoContexts(repoRoot, policy, releaseVersion) {
   const licenseMap = readJson(path.join(repoRoot, "scripts/third-party-go-licenses.json"));
   const moduleDirectories = collectGoModuleDirectories(repoRoot);
   const sumEvidence = collectGoSumEvidence(moduleDirectories);
+  const vendored = noiseVendorComponent(repoRoot, policy);
   return moduleDirectories.map((moduleDir) => {
     const relative = path.relative(repoRoot, moduleDir);
     const metadataEntries = parseJsonSequence(run(
@@ -663,6 +682,17 @@ function collectGoContexts(repoRoot, policy, releaseVersion) {
       if (!from || !to) return [];
       return [{ from: from.purl, to: to.purl, kind: "runtime" }];
     });
+    const localVendor = vendored && packageEntries.find(pkg => pkg.Dir === vendored.directory);
+    if (localVendor) {
+      components.push(vendored.component);
+      edges.push({ from: root.purl, to: vendored.component.purl, kind: "runtime" });
+      const byImport = new Map(packageEntries.map(pkg => [pkg.ImportPath, pkg]));
+      for (const imported of localVendor.Imports ?? []) {
+        const metadata = byImport.get(imported)?.Module;
+        const dependency = byPath.get(metadata?.Replace?.Path ?? metadata?.Path);
+        if (dependency) edges.push({ from: vendored.component.purl, to: dependency.purl, kind: "runtime" });
+      }
+    }
     return {
       id: `go:${relative}`,
       ecosystem: "go",
@@ -731,7 +761,7 @@ function selectedGoPackageModule(module) {
   return typeof module.Version === "string" && module.Version !== "" ? module : undefined;
 }
 
-function readGoLicenseFiles(module, mapping) {
+export function readGoLicenseFiles(module, mapping) {
   if (typeof module.Dir !== "string" || module.Dir === "") {
     throw new Error(`Go module ${module.Path}@${module.Version} has no source directory`);
   }
@@ -742,7 +772,14 @@ function readGoLicenseFiles(module, mapping) {
   const supplemental = fs.readdirSync(module.Dir).filter((entry) => (
     /^(?:NOTICE|PATENTS)(?:\.|$)/i.test(entry)
   ));
-  const fileNames = [mapping.file, ...supplemental.filter((entry) => entry !== mapping.file)].sort((left, right) => (
+  const explicit = mapping.supplementalFiles ?? [];
+  if (!Array.isArray(explicit) || explicit.some((entry) => (
+    typeof entry !== "string" || entry === "" || entry === "." || entry === ".."
+    || path.basename(entry) !== entry || entry.includes("\\")
+  ))) {
+    throw new Error(`Go module ${module.Path} has invalid reviewed supplemental license files`);
+  }
+  const fileNames = [...new Set([mapping.file, ...supplemental, ...explicit])].sort((left, right) => (
     left === mapping.file ? -1 : right === mapping.file ? 1 : left.localeCompare(right)
   ));
   return fileNames.map((fileName) => {
@@ -804,6 +841,7 @@ function collectGoBinaryGraph(repoRoot, policy, releaseVersion, kind, definition
     `pkg:generic/flowersec-${kind}@${releaseVersion}`,
   );
   const licenseMap = readJson(path.join(repoRoot, "scripts/third-party-go-licenses.json"));
+  const vendored = noiseVendorComponent(repoRoot, policy);
   const moduleDirectories = [...new Set(definition.targets.map((target) => (
     path.join(repoRoot, target.module)
   )))];
@@ -835,6 +873,11 @@ function collectGoBinaryGraph(repoRoot, policy, releaseVersion, kind, definition
       ));
       const owners = new Map();
       for (const pkg of packages) {
+        if (vendored && pkg.Dir === vendored.directory) {
+          components.push(vendored.component);
+          owners.set(pkg.ImportPath, vendored.component.purl);
+          continue;
+        }
         const selected = selectedGoPackageModule(pkg.Module);
         if (!selected) {
           if (pkg.Module) owners.set(pkg.ImportPath, root.purl);

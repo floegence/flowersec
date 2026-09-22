@@ -206,6 +206,27 @@ test("Swift locks match independently resolved complete graphs", async () => {
     repoRoot: sourceRoot,
   }));
 
+  const verifyRequirement = (requirement) => {
+    const manifest = structuredClone(declarations);
+    manifest.dependencies[0].sourceControl[0].requirement = requirement;
+    return verifySwiftSecurity({
+      rootManifest: manifest, rootLock, rootGraph,
+      exampleLock: rootLock, exampleGraph, repoRoot: sourceRoot,
+    });
+  };
+  assert.doesNotThrow(() => verifyRequirement({ exact: ["4.5.0"] }));
+  for (const version of ["4.4.9", "4.5.1"]) {
+    assert.throws(() => verifyRequirement({ exact: [version] }), /exact declared version/);
+  }
+  assert.throws(() => verifyRequirement({ exact: ["4.5.0-dev"] }), /invalid version/);
+  for (const requirement of [
+    { exact: [] }, { exact: ["4.5.0", "4.5.1"] }, { exact: "4.5.0" },
+    { exact: ["4.5.0"], range: [{ lowerBound: "4.5.0", upperBound: "5.0.0" }] },
+    { branch: ["main"] }, { revision: ["direct-revision"] },
+  ]) {
+    assert.throws(() => verifyRequirement(requirement), /unsupported declaration/);
+  }
+
   const incompleteLock = { version: 3, originHash: "a".repeat(64), pins: [directPin] };
   assert.throws(() => verifySwiftSecurity({
     rootManifest: declarations,

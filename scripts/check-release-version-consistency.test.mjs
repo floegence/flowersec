@@ -160,8 +160,9 @@ test("rejects a requested release version that does not match the files", () => 
   );
 });
 
-test("collects npm JSON and all Cargo lock contexts", () => {
+test("collects npm JSON and all Cargo lock contexts", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-version-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "flowersec-ts"), { recursive: true });
   fs.mkdirSync(path.join(root, "flowersec-go"), { recursive: true });
   fs.writeFileSync(
@@ -200,8 +201,9 @@ test("collects npm JSON and all Cargo lock contexts", () => {
   assert.deepEqual(seen, manifests);
 });
 
-test("rejects inconsistent top-level and root package-lock versions", () => {
+test("rejects inconsistent top-level and root package-lock versions", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-lock-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "flowersec-ts"), { recursive: true });
   fs.mkdirSync(path.join(root, "flowersec-go"), { recursive: true });
   fs.writeFileSync(

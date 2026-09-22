@@ -1,0 +1,45 @@
+{
+  "schema": "flowersec.vendored-noise-source.v1",
+  "name": "Flowersec Noise public-length adapter",
+  "version": "1.1.0-flowersec.1",
+  "module": "flowersec-go",
+  "package": "internal/noisehandshake",
+  "upstream": {
+    "module": "github.com/flynn/noise",
+    "version": "v1.1.0",
+    "source": "https://github.com/flynn/noise/tree/4d9f71cd4ba1fe81415efac312664ccc4bc79b46",
+    "revision": "4d9f71cd4ba1fe81415efac312664ccc4bc79b46",
+    "module_sum": "h1:KjPQoQCEFdZDiP03phOvGi11+SVVhBG2wOWAorLsstg=",
+    "go_mod_sum": "h1:xbMo+0i6+IGbYdJhF31t2eR1BIU0CYc12+BNAKwUTag="
+  },
+  "license": "BSD-3-Clause",
+  "copyright": "Copyright (c) 2015 Prime Directive, Inc. All rights reserved.",
+  "change": "Add the mandatory public-key-length DH interface and use it at the four existing public-key parsing/allocation sites. Preserve all token, nonce, AD, PSK, Split and KDF processing. Formatting follows gofmt.",
+  "qualification": "Reference source only. Production linkage, runtime key/resource lifecycle, full Flowersec composition and independent cryptographic qualification remain outstanding.",
+  "patch": {
+    "path": "upstream.patch",
+    "sha256": "4554049d294313db42649ed6a13680df8f716f7da3121955d63e66d14384d18b"
+  },
+  "files": {
+    "LICENSE": {
+      "upstream_sha256": "42d4cb1b0c67fe32f716fca52b3d7148406b09c8024e3844ac0595707557da49",
+      "sha256": "42d4cb1b0c67fe32f716fca52b3d7148406b09c8024e3844ac0595707557da49"
+    },
+    "cipher_suite.go": {
+      "upstream_sha256": "3c0098a66edfdafd5f74295e993b4da235aa8b6f9c70f32c37d8dc7acb554bf3",
+      "sha256": "f84113522fe2862112190de4c2cf4c794cb8b9188efae6568c746fe60f513836"
+    },
+    "hkdf.go": {
+      "upstream_sha256": "3cec64f7d15a0d0219478d67138e514f13399e38cc93518cfda40ac5bffc4ce6",
+      "sha256": "3cec64f7d15a0d0219478d67138e514f13399e38cc93518cfda40ac5bffc4ce6"
+    },
+    "patterns.go": {
+      "upstream_sha256": "6e5ec0b36e9f3cc171b9580622957d32bbef0ee0b6c2b5fe5126881a5c801001",
+      "sha256": "6e5ec0b36e9f3cc171b9580622957d32bbef0ee0b6c2b5fe5126881a5c801001"
+    },
+    "state.go": {
+      "upstream_sha256": "d0c72081ef758739ffb714b0c0519bb1164bf84a3d945e8c063a54c1e46590bb",
+      "sha256": "128257e2dd7f2febc2db5261b6ad6ec34c8e32b622f57e1cc7f1dcd8e2e6d635"
+    }
+  }
+}

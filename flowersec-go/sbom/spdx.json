@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-go",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-go/171659c729b6ec07181d040f7e5eba44912dd34804e8618cf20a7fb7af30041d",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-go/39fe79506fd87ee11a9ee430433df90efd9a52bbc8e6e23805fc8f91300b5aa7",
   "creationInfo": {
     "created": "2026-09-17T15:04:20Z",
     "creators": [
@@ -20,12 +20,46 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 171659c729b6ec07181d040f7e5eba44912dd34804e8618cf20a7fb7af30041d",
+      "comment": "Flowersec source inventory SHA-256: 39fe79506fd87ee11a9ee430433df90efd9a52bbc8e6e23805fc8f91300b5aa7",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v5@v5.4.1"
+        }
+      ]
+    },
+    {
+      "name": "Flowersec Noise public-length adapter",
+      "SPDXID": "SPDXRef-Package-bd8840a8f3f1792c918a",
+      "versionInfo": "1.1.0-flowersec.1",
+      "downloadLocation": "https://github.com/flynn/noise/tree/4d9f71cd4ba1fe81415efac312664ccc4bc79b46",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:generic/flowersec-noise@1.1.0-flowersec.1"
+        }
+      ]
+    },
+    {
+      "name": "filippo.io/edwards25519",
+      "SPDXID": "SPDXRef-Package-3c99d8f0221ded28a652",
+      "versionInfo": "v1.2.0",
+      "downloadLocation": "https://filippo.io/edwards25519",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/filippo.io/edwards25519@v1.2.0"
         }
       ]
     },
@@ -43,6 +77,57 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:golang/github.com/dunglas/httpsfv@v1.1.1"
+        }
+      ]
+    },
+    {
+      "name": "github.com/dustin/go-humanize",
+      "SPDXID": "SPDXRef-Package-16f21a7d61fb49f7a2a9",
+      "versionInfo": "v1.0.1",
+      "downloadLocation": "https://github.com/dustin/go-humanize",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/github.com/dustin/go-humanize@v1.0.1"
+        }
+      ]
+    },
+    {
+      "name": "github.com/flynn/noise",
+      "SPDXID": "SPDXRef-Package-d7d200b56b0bf224a5c3",
+      "versionInfo": "v1.1.0",
+      "downloadLocation": "https://github.com/flynn/noise",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/github.com/flynn/noise@v1.1.0"
+        }
+      ]
+    },
+    {
+      "name": "github.com/google/uuid",
+      "SPDXID": "SPDXRef-Package-19945ed7503a65d06605",
+      "versionInfo": "v1.6.0",
+      "downloadLocation": "https://github.com/google/uuid",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/github.com/google/uuid@v1.6.0"
         }
       ]
     },
@@ -98,6 +183,40 @@
       ]
     },
     {
+      "name": "github.com/mattn/go-isatty",
+      "SPDXID": "SPDXRef-Package-979db256d5da3081c33c",
+      "versionInfo": "v0.0.24",
+      "downloadLocation": "https://github.com/mattn/go-isatty",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/github.com/mattn/go-isatty@v0.0.24"
+        }
+      ]
+    },
+    {
+      "name": "github.com/ncruces/go-strftime",
+      "SPDXID": "SPDXRef-Package-13ac747ef38a14470b5b",
+      "versionInfo": "v1.0.0",
+      "downloadLocation": "https://github.com/ncruces/go-strftime",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/github.com/ncruces/go-strftime@v1.0.0"
+        }
+      ]
+    },
+    {
       "name": "github.com/quic-go/qpack",
       "SPDXID": "SPDXRef-Package-27e2d4651628d1d8bff5",
       "versionInfo": "v0.6.0",
@@ -145,6 +264,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0"
+        }
+      ]
+    },
+    {
+      "name": "github.com/remyoudompheng/bigfft",
+      "SPDXID": "SPDXRef-Package-c7c1b4c6ebceafd3addc",
+      "versionInfo": "v0.0.0-20230129092748-24d4a6f8daec",
+      "downloadLocation": "https://github.com/remyoudompheng/bigfft",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec"
         }
       ]
     },
@@ -215,6 +351,74 @@
           "referenceLocator": "pkg:golang/golang.org/x/text@v0.41.0"
         }
       ]
+    },
+    {
+      "name": "modernc.org/libc",
+      "SPDXID": "SPDXRef-Package-d2117bf392ec8888e1b7",
+      "versionInfo": "v1.75.7",
+      "downloadLocation": "https://modernc.org/libc",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause AND MIT AND BSD-2-Clause",
+      "licenseDeclared": "BSD-3-Clause AND MIT AND BSD-2-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/modernc.org/libc@v1.75.7"
+        }
+      ]
+    },
+    {
+      "name": "modernc.org/mathutil",
+      "SPDXID": "SPDXRef-Package-e9dae6700938802175e4",
+      "versionInfo": "v1.7.1",
+      "downloadLocation": "https://modernc.org/mathutil",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/modernc.org/mathutil@v1.7.1"
+        }
+      ]
+    },
+    {
+      "name": "modernc.org/memory",
+      "SPDXID": "SPDXRef-Package-093ceeb28565fbe3268c",
+      "versionInfo": "v1.12.1",
+      "downloadLocation": "https://modernc.org/memory",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/modernc.org/memory@v1.12.1"
+        }
+      ]
+    },
+    {
+      "name": "modernc.org/sqlite",
+      "SPDXID": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "versionInfo": "v1.59.0",
+      "downloadLocation": "https://modernc.org/sqlite",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain",
+      "licenseDeclared": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:golang/modernc.org/sqlite@v1.59.0"
+        }
+      ]
     }
   ],
   "relationships": [
@@ -224,9 +428,39 @@
       "relatedSpdxElement": "SPDXRef-Package-2be62411292ecf532330"
     },
     {
+      "spdxElementId": "SPDXRef-Package-bd8840a8f3f1792c918a",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2d24524397d729b4463f"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-bd8840a8f3f1792c918a"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-3c99d8f0221ded28a652"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-2e8fc34d89c44d149591"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-16f21a7d61fb49f7a2a9"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-d7d200b56b0bf224a5c3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-19945ed7503a65d06605"
     },
     {
       "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
@@ -246,6 +480,16 @@
     {
       "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
       "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-979db256d5da3081c33c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-13ac747ef38a14470b5b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-27e2d4651628d1d8bff5"
     },
     {
@@ -257,6 +501,11 @@
       "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-5d9220225f5f24a45259"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c7c1b4c6ebceafd3addc"
     },
     {
       "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
@@ -279,9 +528,39 @@
       "relatedSpdxElement": "SPDXRef-Package-d90e8ecd277a7775c0bc"
     },
     {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-d2117bf392ec8888e1b7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-e9dae6700938802175e4"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-093ceeb28565fbe3268c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2be62411292ecf532330",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-50ca97c55861d19d0a84"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d7d200b56b0bf224a5c3",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2d24524397d729b4463f"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-fb0f88559a26b25e7611",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-17214501a636b91f79bd"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-979db256d5da3081c33c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a01a46cd0efdc2b02d99"
     },
     {
       "spdxElementId": "SPDXRef-Package-27e2d4651628d1d8bff5",
@@ -377,6 +656,111 @@
       "spdxElementId": "SPDXRef-Package-96ab411d914ca3bc871a",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-d90e8ecd277a7775c0bc"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-16f21a7d61fb49f7a2a9"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-19945ed7503a65d06605"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-979db256d5da3081c33c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-13ac747ef38a14470b5b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c7c1b4c6ebceafd3addc"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a01a46cd0efdc2b02d99"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-e9dae6700938802175e4"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-093ceeb28565fbe3268c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e9dae6700938802175e4",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c7c1b4c6ebceafd3addc"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-093ceeb28565fbe3268c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c7c1b4c6ebceafd3addc"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-093ceeb28565fbe3268c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a01a46cd0efdc2b02d99"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-093ceeb28565fbe3268c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-e9dae6700938802175e4"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-16f21a7d61fb49f7a2a9"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-19945ed7503a65d06605"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-979db256d5da3081c33c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-13ac747ef38a14470b5b"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c7c1b4c6ebceafd3addc"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a01a46cd0efdc2b02d99"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-d2117bf392ec8888e1b7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-e9dae6700938802175e4"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-093ceeb28565fbe3268c"
     }
   ]
 }

@@ -1,0 +1,64 @@
+{
+  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+  "coverage": "notify_framing_only",
+  "vectors": [
+    {
+      "id": "execution_notify_empty",
+      "hex": "0083a900181a015820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff021affffffff0300045820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff051bffffffffffffffff065820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff07010800"
+    },
+    {
+      "id": "execution_notify_payload",
+      "hex": "0083a900181a015820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff021affffffff030c045820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff051bffffffffffffffff065820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff070108006e6f74696669636174696f6e"
+    },
+    {
+      "id": "observation_notify_empty",
+      "hex": "0039a5001821021affffffff0300051bffffffffffffffff065820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    {
+      "id": "observation_notify_payload",
+      "hex": "0039a5001821021affffffff030c051bffffffffffffffff065820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff6e6f74696669636174696f6e"
+    },
+    {
+      "id": "notify_empty_prefix",
+      "hex": "",
+      "expected_error": "notify_truncated"
+    },
+    {
+      "id": "notify_split_prefix",
+      "hex": "00",
+      "expected_error": "notify_truncated"
+    },
+    {
+      "id": "notify_zero_header",
+      "hex": "0000",
+      "expected_error": "notify_header_length"
+    },
+    {
+      "id": "notify_large_header",
+      "hex": "0201",
+      "expected_error": "notify_header_length"
+    },
+    {
+      "id": "notify_short_header",
+      "hex": "0039a5001821",
+      "expected_error": "notify_truncated"
+    },
+    {
+      "id": "notify_short_payload",
+      "hex": "0039a5001821021affffffff0305051bffffffffffffffff065820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff6576656e",
+      "expected_error": "notify_truncated"
+    },
+    {
+      "id": "notify_extra_payload",
+      "hex": "0039a5001821021affffffff0305051bffffffffffffffff065820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff6576656e7400",
+      "expected_error": "notify_trailing"
+    },
+    {
+      "id": "notify_rpc_kind",
+      "hex": "0041a700181d021affffffff0300051bffffffffffffffff065820ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0701081a00100000",
+      "expected_error": "notify_kind"
+    }
+  ],
+  "schema_sha256": "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959"
+}

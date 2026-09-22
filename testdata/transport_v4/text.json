@@ -1,0 +1,652 @@
+{
+  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+  "schema_sha256": "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959",
+  "coverage": "reference_dns_host_and_origin_syntax",
+  "unverified": [
+    "custom Origin schemes and actual request admission",
+    "complete route validation",
+    "four-SDK algorithms and resource bounds"
+  ],
+  "vectors": [
+    {
+      "id": "origin_https",
+      "operation": "wire_origin",
+      "input": "https://example.com",
+      "output": "https://example.com",
+      "utf8_hex": "68747470733a2f2f6578616d706c652e636f6d"
+    },
+    {
+      "id": "origin_http_nondefault",
+      "operation": "wire_origin",
+      "input": "http://example.com:443",
+      "output": "http://example.com:443",
+      "utf8_hex": "687474703a2f2f6578616d706c652e636f6d3a343433"
+    },
+    {
+      "id": "origin_port_zero",
+      "operation": "wire_origin",
+      "input": "https://example.com:0",
+      "output": "https://example.com:0",
+      "utf8_hex": "68747470733a2f2f6578616d706c652e636f6d3a30"
+    },
+    {
+      "id": "origin_ipv6",
+      "operation": "wire_origin",
+      "input": "https://[::1]:8443",
+      "output": "https://[::1]:8443",
+      "utf8_hex": "68747470733a2f2f5b3a3a315d3a38343433"
+    },
+    {
+      "id": "origin_ipv6_mapped",
+      "operation": "wire_origin",
+      "input": "https://[::ffff:c000:201]",
+      "output": "https://[::ffff:c000:201]",
+      "utf8_hex": "68747470733a2f2f5b3a3a666666663a633030303a3230315d"
+    },
+    {
+      "id": "origin_alabel",
+      "operation": "wire_origin",
+      "input": "https://xn--bcher-kva.example",
+      "output": "https://xn--bcher-kva.example",
+      "utf8_hex": "68747470733a2f2f786e2d2d62636865722d6b76612e6578616d706c65"
+    },
+    {
+      "id": "origin_ws",
+      "operation": "wire_origin",
+      "input": "ws://example.com",
+      "output": "ws://example.com",
+      "utf8_hex": "77733a2f2f6578616d706c652e636f6d"
+    },
+    {
+      "id": "origin_wss",
+      "operation": "wire_origin",
+      "input": "wss://example.com",
+      "output": "wss://example.com",
+      "utf8_hex": "7773733a2f2f6578616d706c652e636f6d"
+    },
+    {
+      "id": "origin_ftp",
+      "operation": "wire_origin",
+      "input": "ftp://example.com",
+      "output": "ftp://example.com",
+      "utf8_hex": "6674703a2f2f6578616d706c652e636f6d"
+    },
+    {
+      "id": "origin_reject_null",
+      "operation": "wire_origin",
+      "input": "null",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_scheme_case",
+      "operation": "wire_origin",
+      "input": "HTTPS://example.com",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_host_case",
+      "operation": "wire_origin",
+      "input": "https://EXAMPLE.com",
+      "expected_error": "host_noncanonical"
+    },
+    {
+      "id": "origin_reject_default_port",
+      "operation": "wire_origin",
+      "input": "https://example.com:443",
+      "expected_error": "origin_default_port"
+    },
+    {
+      "id": "origin_reject_leading_zero_port",
+      "operation": "wire_origin",
+      "input": "https://example.com:08443",
+      "expected_error": "origin_port"
+    },
+    {
+      "id": "origin_reject_overflow_port",
+      "operation": "wire_origin",
+      "input": "https://example.com:65536",
+      "expected_error": "origin_port"
+    },
+    {
+      "id": "origin_reject_empty_port",
+      "operation": "wire_origin",
+      "input": "https://example.com:",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_path",
+      "operation": "wire_origin",
+      "input": "https://example.com/",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_query",
+      "operation": "wire_origin",
+      "input": "https://example.com?",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_fragment",
+      "operation": "wire_origin",
+      "input": "https://example.com#",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_userinfo",
+      "operation": "wire_origin",
+      "input": "https://user@example.com",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_backslash",
+      "operation": "wire_origin",
+      "input": "https://example.com\\path",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_wildcard",
+      "operation": "wire_origin",
+      "input": "https://*.example.com",
+      "expected_error": "idna_validity"
+    },
+    {
+      "id": "origin_reject_host_escape",
+      "operation": "wire_origin",
+      "input": "https://example%2ecom",
+      "expected_error": "host_syntax"
+    },
+    {
+      "id": "origin_reject_ipv4_alias",
+      "operation": "wire_origin",
+      "input": "https://127.1",
+      "expected_error": "host_ipv4"
+    },
+    {
+      "id": "origin_reject_numeric_dns",
+      "operation": "wire_origin",
+      "input": "https://example.0x",
+      "expected_error": "host_numeric_final_label"
+    },
+    {
+      "id": "origin_reject_dotted_ipv6",
+      "operation": "wire_origin",
+      "input": "https://[::ffff:192.0.2.1]",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_ipv6_zone",
+      "operation": "wire_origin",
+      "input": "https://[fe80::1%25en0]",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_bracketed_ipv4",
+      "operation": "wire_origin",
+      "input": "https://[127.0.0.1]",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_ipv6_bracket_missing",
+      "operation": "wire_origin",
+      "input": "https://::1",
+      "expected_error": "origin_syntax"
+    },
+    {
+      "id": "origin_reject_ulabel",
+      "operation": "wire_origin",
+      "input": "https://bücher.example",
+      "expected_error": "origin_ascii"
+    },
+    {
+      "id": "origin_reject_whitespace",
+      "operation": "wire_origin",
+      "input": " https://example.com",
+      "expected_error": "origin_ascii"
+    },
+    {
+      "id": "origin_reject_port_newline",
+      "operation": "wire_origin",
+      "input": "https://example.com:8443\n",
+      "expected_error": "origin_ascii"
+    },
+    {
+      "id": "origin_reject_port_crlf",
+      "operation": "wire_origin",
+      "input": "https://example.com:8443\r\n",
+      "expected_error": "origin_ascii"
+    },
+    {
+      "id": "origin_reject_multiple",
+      "operation": "wire_origin",
+      "input": "https://a https://b",
+      "expected_error": "origin_ascii"
+    },
+    {
+      "id": "origin_reject_custom_unregistered",
+      "operation": "wire_origin",
+      "input": "chrome-extension://example",
+      "expected_error": "origin_scheme_unregistered"
+    },
+    {
+      "id": "origin_reject_registry_prototype",
+      "operation": "wire_origin",
+      "input": "constructor://example",
+      "expected_error": "origin_scheme_unregistered"
+    },
+    {
+      "id": "host_ipv4",
+      "operation": "wire_host",
+      "input": "192.0.2.1",
+      "output": "192.0.2.1",
+      "utf8_hex": "3139322e302e322e31"
+    },
+    {
+      "id": "host_ipv6",
+      "operation": "issuer_host",
+      "input": "2001:0DB8:0000:0000:0001:0000:0000:0001",
+      "output": "2001:db8::1:0:0:1",
+      "utf8_hex": "323030313a6462383a3a313a303a303a31"
+    },
+    {
+      "id": "host_ipv6_wire",
+      "operation": "wire_host",
+      "input": "2001:db8::1:0:0:1",
+      "output": "2001:db8::1:0:0:1",
+      "utf8_hex": "323030313a6462383a3a313a303a303a31"
+    },
+    {
+      "id": "host_mapped_ipv6",
+      "operation": "issuer_host",
+      "input": "::ffff:192.0.2.1",
+      "output": "::ffff:c000:201",
+      "utf8_hex": "3a3a666666663a633030303a323031"
+    },
+    {
+      "id": "host_mapped_ipv6_wire",
+      "operation": "wire_host",
+      "input": "::ffff:c000:201",
+      "output": "::ffff:c000:201",
+      "utf8_hex": "3a3a666666663a633030303a323031"
+    },
+    {
+      "id": "host_ipv6_zero",
+      "operation": "issuer_host",
+      "input": "0:0:0:0:0:0:0:0",
+      "output": "::",
+      "utf8_hex": "3a3a"
+    },
+    {
+      "id": "host_ipv6_loopback",
+      "operation": "wire_host",
+      "input": "::1",
+      "output": "::1",
+      "utf8_hex": "3a3a31"
+    },
+    {
+      "id": "host_ipv6_single_zero",
+      "operation": "wire_host",
+      "input": "1:2:3:0:4:5:6:7",
+      "output": "1:2:3:0:4:5:6:7",
+      "utf8_hex": "313a323a333a303a343a353a363a37"
+    },
+    {
+      "id": "host_dns",
+      "operation": "issuer_host",
+      "input": "BÜCHER.example",
+      "output": "xn--bcher-kva.example",
+      "utf8_hex": "786e2d2d62636865722d6b76612e6578616d706c65"
+    },
+    {
+      "id": "host_dns_non_numeric_hex",
+      "operation": "wire_host",
+      "input": "example.0xg",
+      "output": "example.0xg",
+      "utf8_hex": "6578616d706c652e307867"
+    },
+    {
+      "id": "host_reject_short_ipv4",
+      "operation": "issuer_host",
+      "input": "127.1",
+      "expected_error": "host_ipv4"
+    },
+    {
+      "id": "host_reject_ipv4_leading_zero",
+      "operation": "wire_host",
+      "input": "127.0.0.01",
+      "expected_error": "host_ipv4"
+    },
+    {
+      "id": "host_reject_ipv4_overflow",
+      "operation": "wire_host",
+      "input": "256.0.0.1",
+      "expected_error": "host_ipv4"
+    },
+    {
+      "id": "host_reject_hex_ipv4",
+      "operation": "issuer_host",
+      "input": "0x7f000001",
+      "expected_error": "host_numeric_final_label"
+    },
+    {
+      "id": "host_reject_unicode_ipv4",
+      "operation": "issuer_host",
+      "input": "１２７.０.０.１",
+      "expected_error": "host_numeric_final_label"
+    },
+    {
+      "id": "host_reject_numeric_dns",
+      "operation": "issuer_host",
+      "input": "example.123",
+      "expected_error": "host_numeric_final_label"
+    },
+    {
+      "id": "host_reject_hex_dns",
+      "operation": "wire_host",
+      "input": "example.0x123",
+      "expected_error": "host_numeric_final_label"
+    },
+    {
+      "id": "host_reject_empty_hex_dns",
+      "operation": "wire_host",
+      "input": "example.0x",
+      "expected_error": "host_numeric_final_label"
+    },
+    {
+      "id": "host_reject_mapped_dotted_wire",
+      "operation": "wire_host",
+      "input": "::ffff:192.0.2.1",
+      "expected_error": "host_noncanonical"
+    },
+    {
+      "id": "host_reject_compressed_single_zero",
+      "operation": "wire_host",
+      "input": "1:2:3::4:5:6:7",
+      "expected_error": "host_noncanonical"
+    },
+    {
+      "id": "host_reject_ipv6_case",
+      "operation": "wire_host",
+      "input": "2001:DB8::1",
+      "expected_error": "host_noncanonical"
+    },
+    {
+      "id": "host_reject_multiple_compression",
+      "operation": "wire_host",
+      "input": "1::2::3",
+      "expected_error": "host_ipv6"
+    },
+    {
+      "id": "host_reject_zone",
+      "operation": "issuer_host",
+      "input": "fe80::1%en0",
+      "expected_error": "host_syntax"
+    },
+    {
+      "id": "host_reject_brackets",
+      "operation": "issuer_host",
+      "input": "[::1]",
+      "expected_error": "host_syntax"
+    },
+    {
+      "id": "host_reject_escape",
+      "operation": "wire_host",
+      "input": "example%2ecom",
+      "expected_error": "host_syntax"
+    },
+    {
+      "id": "host_reject_userinfo",
+      "operation": "wire_host",
+      "input": "user@example.com",
+      "expected_error": "host_syntax"
+    },
+    {
+      "id": "host_reject_path",
+      "operation": "wire_host",
+      "input": "example.com/",
+      "expected_error": "host_syntax"
+    },
+    {
+      "id": "host_reject_whitespace",
+      "operation": "wire_host",
+      "input": "example.com\n",
+      "expected_error": "host_syntax"
+    },
+    {
+      "id": "host_reject_case",
+      "operation": "wire_host",
+      "input": "EXAMPLE.com",
+      "expected_error": "host_noncanonical"
+    },
+    {
+      "id": "host_reject_ulabel",
+      "operation": "wire_host",
+      "input": "例子.测试",
+      "expected_error": "host_wire_ascii"
+    },
+    {
+      "id": "dns_ascii_case",
+      "operation": "issuer_dns",
+      "input": "EXAMPLE.com",
+      "output": "example.com",
+      "utf8_hex": "6578616d706c652e636f6d"
+    },
+    {
+      "id": "dns_ascii_case_wire",
+      "operation": "wire_dns",
+      "input": "example.com",
+      "output": "example.com",
+      "utf8_hex": "6578616d706c652e636f6d"
+    },
+    {
+      "id": "dns_deviation",
+      "operation": "issuer_dns",
+      "input": "faß.de",
+      "output": "xn--fa-hia.de",
+      "utf8_hex": "786e2d2d66612d6869612e6465"
+    },
+    {
+      "id": "dns_deviation_wire",
+      "operation": "wire_dns",
+      "input": "xn--fa-hia.de",
+      "output": "xn--fa-hia.de",
+      "utf8_hex": "786e2d2d66612d6869612e6465"
+    },
+    {
+      "id": "dns_ulabel",
+      "operation": "issuer_dns",
+      "input": "münich.example",
+      "output": "xn--mnich-kva.example",
+      "utf8_hex": "786e2d2d6d6e6963682d6b76612e6578616d706c65"
+    },
+    {
+      "id": "dns_ulabel_wire",
+      "operation": "wire_dns",
+      "input": "xn--mnich-kva.example",
+      "output": "xn--mnich-kva.example",
+      "utf8_hex": "786e2d2d6d6e6963682d6b76612e6578616d706c65"
+    },
+    {
+      "id": "dns_cjk",
+      "operation": "issuer_dns",
+      "input": "例子.测试",
+      "output": "xn--fsqu00a.xn--0zwm56d",
+      "utf8_hex": "786e2d2d667371753030612e786e2d2d307a776d353664"
+    },
+    {
+      "id": "dns_cjk_wire",
+      "operation": "wire_dns",
+      "input": "xn--fsqu00a.xn--0zwm56d",
+      "output": "xn--fsqu00a.xn--0zwm56d",
+      "utf8_hex": "786e2d2d667371753030612e786e2d2d307a776d353664"
+    },
+    {
+      "id": "dns_width",
+      "operation": "issuer_dns",
+      "input": "ＦＯＯ.example",
+      "output": "foo.example",
+      "utf8_hex": "666f6f2e6578616d706c65"
+    },
+    {
+      "id": "dns_width_wire",
+      "operation": "wire_dns",
+      "input": "foo.example",
+      "output": "foo.example",
+      "utf8_hex": "666f6f2e6578616d706c65"
+    },
+    {
+      "id": "dns_nfc",
+      "operation": "issuer_dns",
+      "input": "é.example",
+      "output": "xn--9ca.example",
+      "utf8_hex": "786e2d2d3963612e6578616d706c65"
+    },
+    {
+      "id": "dns_nfc_wire",
+      "operation": "wire_dns",
+      "input": "xn--9ca.example",
+      "output": "xn--9ca.example",
+      "utf8_hex": "786e2d2d3963612e6578616d706c65"
+    },
+    {
+      "id": "dns_extension_i",
+      "operation": "issuer_dns",
+      "input": "𮯰.example",
+      "output": "xn--8g0n.example",
+      "utf8_hex": "786e2d2d3867306e2e6578616d706c65"
+    },
+    {
+      "id": "dns_extension_i_wire",
+      "operation": "wire_dns",
+      "input": "xn--8g0n.example",
+      "output": "xn--8g0n.example",
+      "utf8_hex": "786e2d2d3867306e2e6578616d706c65"
+    },
+    {
+      "id": "dns_contexto",
+      "operation": "issuer_dns",
+      "input": "l·l.example",
+      "output": "xn--ll-0ea.example",
+      "utf8_hex": "786e2d2d6c6c2d3065612e6578616d706c65"
+    },
+    {
+      "id": "dns_contexto_wire",
+      "operation": "wire_dns",
+      "input": "xn--ll-0ea.example",
+      "output": "xn--ll-0ea.example",
+      "utf8_hex": "786e2d2d6c6c2d3065612e6578616d706c65"
+    },
+    {
+      "id": "dns_contextj",
+      "operation": "issuer_dns",
+      "input": "نامه‌ای.example",
+      "output": "xn--mgba3gch31f060k.example",
+      "utf8_hex": "786e2d2d6d676261336763683331663036306b2e6578616d706c65"
+    },
+    {
+      "id": "dns_contextj_wire",
+      "operation": "wire_dns",
+      "input": "xn--mgba3gch31f060k.example",
+      "output": "xn--mgba3gch31f060k.example",
+      "utf8_hex": "786e2d2d6d676261336763683331663036306b2e6578616d706c65"
+    },
+    {
+      "id": "dns_bidi",
+      "operation": "issuer_dns",
+      "input": "مثال.إختبار",
+      "output": "xn--mgbh0fb.xn--kgbechtv",
+      "utf8_hex": "786e2d2d6d6762683066622e786e2d2d6b67626563687476"
+    },
+    {
+      "id": "dns_bidi_wire",
+      "operation": "wire_dns",
+      "input": "xn--mgbh0fb.xn--kgbechtv",
+      "output": "xn--mgbh0fb.xn--kgbechtv",
+      "utf8_hex": "786e2d2d6d6762683066622e786e2d2d6b67626563687476"
+    },
+    {
+      "id": "dns_reject_contexto",
+      "operation": "issuer_dns",
+      "input": "a·b.example",
+      "expected_error": "idna2008_validity"
+    },
+    {
+      "id": "dns_reject_nv8",
+      "operation": "issuer_dns",
+      "input": "😀.example",
+      "expected_error": "idna2008_validity"
+    },
+    {
+      "id": "dns_reject_nv8_alabel",
+      "operation": "issuer_dns",
+      "input": "xn--e28h.example",
+      "expected_error": "idna2008_validity"
+    },
+    {
+      "id": "dns_reject_trailing_dot",
+      "operation": "issuer_dns",
+      "input": "example.com.",
+      "expected_error": "idna_trailing_dot"
+    },
+    {
+      "id": "dns_reject_empty_label",
+      "operation": "issuer_dns",
+      "input": "a..b",
+      "expected_error": "idna_empty_label"
+    },
+    {
+      "id": "dns_reject_hyphen",
+      "operation": "issuer_dns",
+      "input": "ab--x.example",
+      "expected_error": "idna_hyphen"
+    },
+    {
+      "id": "dns_reject_std3",
+      "operation": "issuer_dns",
+      "input": "a_b.example",
+      "expected_error": "idna_validity"
+    },
+    {
+      "id": "dns_reject_contextj",
+      "operation": "issuer_dns",
+      "input": "a‌b.example",
+      "expected_error": "idna_contextj"
+    },
+    {
+      "id": "dns_reject_domain_bidi",
+      "operation": "issuer_dns",
+      "input": "1.مثال",
+      "expected_error": "idna_bidi_start"
+    },
+    {
+      "id": "dns_reject_unassigned",
+      "operation": "issuer_dns",
+      "input": "𜰀.example",
+      "expected_error": "idna_unassigned"
+    },
+    {
+      "id": "dns_reject_invalid_punycode",
+      "operation": "issuer_dns",
+      "input": "xn--a!",
+      "expected_error": "punycode_digit"
+    },
+    {
+      "id": "dns_reject_fake_alabel",
+      "operation": "issuer_dns",
+      "input": "xn--abc-.example",
+      "expected_error": "idna_fake_alabel"
+    },
+    {
+      "id": "dns_wire_reject_uppercase",
+      "operation": "wire_dns",
+      "input": "EXAMPLE.com",
+      "expected_error": "idna_wire_noncanonical"
+    },
+    {
+      "id": "dns_wire_reject_ulabel",
+      "operation": "wire_dns",
+      "input": "faß.de",
+      "expected_error": "idna_wire_ascii"
+    }
+  ]
+}

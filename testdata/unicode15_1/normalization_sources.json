@@ -1,0 +1,10 @@
+{
+  "unicode_version": "15.1.0",
+  "normalization_algorithm": "UAX15 canonical decomposition, canonical ordering and canonical composition with Hangul",
+  "sources": {
+    "UnicodeData.txt": {"url":"https://www.unicode.org/Public/15.1.0/ucd/UnicodeData.txt","sha256":"2fc713e6a31a87c4850a37fe2caffa4218180fadb5de86b43a143ddb4581fb86"},
+    "DerivedNormalizationProps.txt": {"url":"https://www.unicode.org/Public/15.1.0/ucd/DerivedNormalizationProps.txt","sha256":"8875dccee2bc1a7c1fe568a3b502a9e78c9e0495afd96b6568b4294d0ed1f7e1"},
+    "NormalizationTest.txt": {"url":"https://www.unicode.org/Public/15.1.0/ucd/NormalizationTest.txt","sha256":"871238e37e3be0696ec2bd0891119a041b052da1a84485eda05a5438724b223e"},
+    "DerivedAge.txt": {"url":"https://www.unicode.org/Public/15.1.0/ucd/DerivedAge.txt","sha256":"04e16379344bdb9973cdb6f6bf0a5dd66f7cd41b014cd9f79d848768ae757256"}
+  }
+}

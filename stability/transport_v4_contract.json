@@ -1,0 +1,32 @@
+{
+  "version": 4,
+  "status": "draft",
+  "design": {
+    "product_version": "6.0.0",
+    "wire_profile": "flowersec/4",
+    "sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
+    "source_path": "../flowersec-v4-transport-security-design.zh-CN.md",
+    "review_evidence_path": "../flowersec-v6-artifacts/binding-r12-evidence.json",
+    "review_evidence_status": "pinned",
+    "review_evidence_sha256": "ada2ac7eca7655c61ad4e4699b77746e549be14a182ad55c342050a6f7f2a1ec"
+  },
+  "schema": {
+    "status": "not_frozen",
+    "revision": "flowersec-v4.0.0-draft.66",
+    "sha256": "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959",
+    "path": "stability/transport_v4_schema.json"
+  },
+  "vectors": {
+    "status": "draft_cbor_fields_only",
+    "manifest_sha256": "c0cbb08c6b467f78f607cd572a9f0452c3bbbd15fe302b9ff3ca797f9c8e377e",
+    "path": "testdata/transport_v4"
+  },
+  "traceability": {
+    "status": "implementation_in_progress",
+    "path": "stability/transport_v4_traceability.json"
+  },
+  "qualification": {
+    "provider_interoperability": "not_started",
+    "independent_cryptography": "not_started"
+  }
+}

@@ -67,7 +67,7 @@ test("every Rust lock is audited and denied without suppressions", async () => {
     assert.ok(calls.some((call) => call.command === "cargo"
       && JSON.stringify(call.args) === JSON.stringify([
         "deny", "--manifest-path", manifest, "--locked", "--all-features",
-        "check", "--config", path.join(sourceRoot, "flowersec-rust/deny.toml"),
+        "--config", path.join(sourceRoot, "flowersec-rust/deny.toml"), "check",
       ])));
   }
 });
@@ -88,7 +88,12 @@ test("final Rust security checks reuse the preflight database without network ac
   assert.equal(audits.length, 5);
   assert.equal(denies.length, 5);
   for (const call of audits) assert.ok(call.args.includes("--no-fetch"));
-  for (const call of denies) assert.ok(call.args.includes("--disable-fetch"));
+  for (const call of denies) {
+    assert.ok(call.args.indexOf("--offline") < call.args.indexOf("check"));
+    assert.ok(call.args.includes("--offline"));
+    assert.ok(call.args.indexOf("--config") < call.args.indexOf("check"));
+    assert.equal(call.args.includes("--disable-fetch"), false);
+  }
 });
 
 test("Rust security policy has no advisory suppression and is wired to release checks", async () => {

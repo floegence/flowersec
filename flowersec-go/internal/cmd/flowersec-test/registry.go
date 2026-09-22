@@ -20,7 +20,29 @@ import (
 const goAcceptorTestPattern = "^(TestAcceptor|TestRawQUICAcceptorListenerEstablishesApplicationSession$|TestRawQUICAcceptorServeCancellationWaitsForSessionCleanup$|TestWebTransportAcceptorListenerEstablishesApplicationSession$)"
 
 func registry() []registeredTest {
+	return registryForOS(runtime.GOOS)
+}
+
+func registryForOS(goos string) []registeredTest {
 	tests := []registeredTest{
+		commandEntry("protocol/v4-admission-sqlite-go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^Test(SQLite|AcceptedAdmission|AdmissionFacts)", "./internal/ledgerv4", "./internal/sessionv4", "./internal/protocolv4"),
+		commandEntry("protocol/v4-cbor-go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^(TestCBOR|FuzzCBORReference)", "./internal/protocolv4"),
+		commandEntry("protocol/v4-rekey-go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestV4Rekey", "./internal/protocolv4"),
+		commandEntry("protocol/v4-rekey-rust", "acceptance", 5*time.Minute, "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--locked", "--test", "transport_v4_rekey"),
+		vitestEntry("protocol/v4-rekey-typescript", "acceptance", "src/v4/rekeyReference.test.ts", ""),
+		commandEntry("protocol/v4-record-go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestV4Record", "./internal/protocolv4"),
+		commandEntry("protocol/v4-record-rust", "acceptance", 5*time.Minute, "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--locked", "--test", "transport_v4_records"),
+		vitestEntry("protocol/v4-record-typescript", "acceptance", "src/v4/recordReference.test.ts", ""),
+		commandEntry("protocol/v4-ready-go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestV4Ready", "./internal/protocolv4"),
+		commandEntry("protocol/v4-ready-rust", "acceptance", 5*time.Minute, "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--locked", "--test", "transport_v4_ready"),
+		vitestEntry("protocol/v4-ready-typescript", "acceptance", "src/v4/readyReference.test.ts", ""),
+		commandEntry("protocol/v4-noise-go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestV4Noise", "./internal/protocolv4"),
+		commandEntry("protocol/v4-noise-rust", "acceptance", 5*time.Minute, "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--locked", "--test", "transport_v4_noise"),
+		commandEntry("protocol/v4-dh-go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestV4ProfileDHReference$", "./internal/protocolv4"),
+		commandEntry("protocol/v4-dh-rust", "acceptance", 5*time.Minute, "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--locked", "--test", "transport_v4_profile_dh"),
+		vitestEntry("protocol/v4-dh-typescript", "acceptance", "src/v4/profileDHReference.test.ts", ""),
+		commandEntry("protocol/v4-strict-go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestV4StrictSignature", "./internal/protocolv4"),
+		commandEntry("protocol/v4-strict-rust", "acceptance", 5*time.Minute, "cargo", "test", "--manifest-path", "flowersec-rust/Cargo.toml", "--locked", "--test", "transport_v4_strict_signatures"),
 		commandEntry("controller/go", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestConnectionControllerSharedLifecycleVectors$", "."),
 		commandEntry("controller/go-real-network-restart", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestConnectionControllerRealNetworkRestartReconnect$", "."),
 		commandEntry("controller/go-websocket-handlers", "acceptance", 5*time.Minute, "go", "-C", "flowersec-go", "test", "-timeout=5m", "-count=1", "-run", "^TestConnectionControllerWebSocketHandlersSurviveTwoGenerations$", "."),
@@ -123,8 +145,13 @@ func registry() []registeredTest {
 		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/direct/reorder-duplicate", "raw-quic", "direct", "reorder-duplicate"),
 		flowersecWeaknetEntry("diagnostic/flowersec-weaknet/raw-quic/tunnel/representative", "raw-quic", "tunnel", "representative"),
 	)
-	if runtime.GOOS == "darwin" {
+	if goos == "darwin" {
 		tests = append(tests,
+			commandEntry("protocol/v4-record-swift", "acceptance", 5*time.Minute, "swift", "test", "--cache-path", ".flowersec/swiftpm-cache", "--skip-update", "--only-use-versions-from-resolved-file", "--filter", "TransportV4RecordTests"),
+			commandEntry("protocol/v4-ready-swift", "acceptance", 5*time.Minute, "swift", "test", "--cache-path", ".flowersec/swiftpm-cache", "--skip-update", "--only-use-versions-from-resolved-file", "--filter", "TransportV4ReadyTests"),
+			commandEntry("protocol/v4-rekey-swift", "acceptance", 5*time.Minute, "swift", "test", "--cache-path", ".flowersec/swiftpm-cache", "--skip-update", "--only-use-versions-from-resolved-file", "--filter", "TransportV4RekeyTests"),
+			commandEntry("protocol/v4-dh-swift", "acceptance", 5*time.Minute, "swift", "test", "--cache-path", ".flowersec/swiftpm-cache", "--skip-update", "--only-use-versions-from-resolved-file", "--filter", "TransportV4ProfileDHTests"),
+			commandEntry("protocol/v4-strict-swift", "acceptance", 5*time.Minute, "swift", "test", "--cache-path", ".flowersec/swiftpm-cache", "--skip-update", "--only-use-versions-from-resolved-file", "--filter", "TransportV4StrictSignatureTests"),
 			commandEntry("connector/swift-v3", "acceptance", 5*time.Minute, "swift", "test", "--package-path", "flowersec-swift", "--filter", "TransportV3Tests"),
 			commandEntry("connector/swift-v3/ios-simulator", "acceptance", 5*time.Minute, "node", "scripts/run-ios-simulator-test.mjs"),
 			commandEntryWithEnvironment("connector/swift-v3/interop/swift-go/wss/direct", "acceptance", 5*time.Minute, []string{"FLOWERSEC_PARITY_CLIENT_PROFILE=swift", "FLOWERSEC_PARITY_TEST_ID=interop/swift-go/wss/direct"}, "node", "scripts/test-server-parity-direct.mjs"),

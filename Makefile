@@ -1,6 +1,189 @@
-.PHONY: test test-resume coverage-race browser-smoke browser-compat precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check native-addon-test swift-package-check swift-security-check swift-source-guard swift-public-api-check swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-public-ca-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check
+.PHONY: test test-resume coverage-race browser-smoke browser-compat precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check native-addon-test swift-package-check swift-security-check swift-source-guard swift-public-api-check swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-public-ca-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check transport-v4-binding-check transport-v4-vectors transport-v4-schema-check
 
 export GOTOOLCHAIN := local
+
+.PHONY: transport-v4-signature-check transport-v4-dh-check transport-v4-noise-rust-check transport-v4-noise-check transport-v4-record-check transport-v4-ready-check transport-v4-rekey-check transport-v4-cbor-go-check transport-v4-cbor-rust-check
+.PHONY: transport-v4-cbor-swift-check transport-v4-cbor-ts-check
+
+transport-v4-binding-check:
+	node scripts/check-transport-v4-binding.mjs --require-external
+	node --test scripts/transport-v4-binding-dependencies.test.mjs
+
+transport-v4-vectors: ts-ensure-deps
+	node scripts/generate-transport-v4-vectors.mjs
+
+transport-v4-schema-check: ts-ensure-deps
+	node --test scripts/transport-v4-bytes.test.mjs
+	node testdata/unicode15_1/generate_normalization.mjs --check
+	node testdata/unicode15_1/generate_idna.mjs --check
+	node --test scripts/transport-v4-unicode.test.mjs scripts/transport-v4-idna.test.mjs scripts/transport-v4-host.test.mjs
+	node --test scripts/transport-v4-fragment-state.test.mjs
+	node --test scripts/transport-v4-unary-fragments.test.mjs
+	node --test scripts/transport-v4-streaming-messages.test.mjs
+	node --test scripts/transport-v4-stream-state.test.mjs
+	node --test scripts/transport-v4-api-results.test.mjs
+	node --test scripts/transport-v4-duplex-results.test.mjs
+	node --test scripts/transport-v4-publication-state.test.mjs
+	node --test scripts/transport-v4-resources.test.mjs
+	node --test scripts/transport-v4-resource-costs.test.mjs
+	node --test scripts/transport-v4-time.test.mjs
+	node --test scripts/transport-v4-crypto-usage.test.mjs
+	node --test scripts/transport-v4-rekey-credit.test.mjs
+	node --test scripts/transport-v4-rekey-capacity.test.mjs
+	node --test scripts/transport-v4-resume.test.mjs
+	node --test scripts/transport-v4-activation-delegation.test.mjs
+	node --test scripts/transport-v4-write-state.test.mjs
+	node --test scripts/transport-v4-application-headers.test.mjs
+	node --test scripts/transport-v4-application-errors.test.mjs
+	node --test scripts/transport-v4-application-sdk-errors.test.mjs
+	node --test scripts/transport-v4-revocation.test.mjs
+	node --test scripts/transport-v4-namespace-closure.test.mjs
+	node --test scripts/transport-v4-credential-policies.test.mjs
+	node --test scripts/transport-v4-hello-context.test.mjs
+	node --test scripts/transport-v4-admission-context.test.mjs
+	node --test scripts/transport-v4-revocation-records.test.mjs
+	node --test scripts/transport-v4-capacity.test.mjs
+	node --test scripts/transport-v4-revocation-state.test.mjs
+	node scripts/check-transport-v4-schema.mjs
+	$(MAKE) transport-v4-cbor-go-check
+	$(MAKE) transport-v4-cbor-rust-check
+	$(MAKE) transport-v4-cbor-swift-check
+	$(MAKE) transport-v4-cbor-ts-check
+	$(MAKE) transport-v4-signature-check
+	$(MAKE) transport-v4-dh-check
+	$(MAKE) transport-v4-noise-check
+	$(MAKE) transport-v4-record-check
+	$(MAKE) transport-v4-ready-check
+	$(MAKE) transport-v4-rekey-check
+	$(MAKE) transport-v4-resources-check
+	$(MAKE) transport-v4-time-check
+	$(MAKE) transport-v4-crypto-usage-check
+	$(MAKE) transport-v4-rekey-credit-check
+
+.PHONY: transport-v4-rekey-credit-check
+transport-v4-rekey-credit-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-rekey-credit.test.mjs scripts/transport-v4-rekey-capacity.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4RekeyCredit'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_rekey_credit
+	cd flowersec-ts && node ./node_modules/@typescript/native/bin/tsc -p tsconfig.v4-reference.json
+	cd flowersec-ts && ./node_modules/.bin/vitest run src/v4/rekeyCreditReference.test.ts
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter TransportV4RekeyCreditTests
+
+.PHONY: transport-v4-crypto-usage-check
+transport-v4-crypto-usage-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-crypto-usage.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4CryptoUsage'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_crypto_usage
+	cd flowersec-ts && node ./node_modules/@typescript/native/bin/tsc -p tsconfig.v4-reference.json
+	cd flowersec-ts && ./node_modules/.bin/vitest run src/v4/cryptoUsageReference.test.ts
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter TransportV4CryptoUsageTests
+
+.PHONY: transport-v4-time-check
+transport-v4-time-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-time.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4Time'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_time
+	cd flowersec-ts && node ./node_modules/@typescript/native/bin/tsc -p tsconfig.v4-reference.json
+	cd flowersec-ts && ./node_modules/.bin/vitest run src/v4/timeReference.test.ts
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter TransportV4TimeTests
+
+.PHONY: transport-v4-resources-check
+transport-v4-resources-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-resources.test.mjs scripts/transport-v4-resource-costs.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4Resource'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_resources
+	cd flowersec-ts && node ./node_modules/@typescript/native/bin/tsc -p tsconfig.v4-reference.json
+	cd flowersec-ts && ./node_modules/.bin/vitest run src/v4/resourceReference.test.ts
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter TransportV4ResourceTests
+
+transport-v4-cbor-go-check:
+	node scripts/toolchains.mjs --check-runtime go
+	go -C flowersec-go test ./internal/protocolv4 -run '^(TestCBOR|FuzzCBORReference)'
+
+transport-v4-cbor-rust-check:
+	node scripts/toolchains.mjs --check-runtime rust
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_cbor
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_cbor_shape
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_cbor_variants
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_cbor_relations
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_idna --test transport_v4_cbor_text
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_cbor_oracles
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_domains --test transport_v4_application
+
+transport-v4-cbor-swift-check:
+	node scripts/toolchains.mjs --check-runtime swift
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter 'TransportV4(CBOR|Shape|Rules|IDNA|Text|Oracle|Composition|Domain|Application)Tests'
+
+transport-v4-cbor-ts-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime node
+	cd flowersec-ts && node ./node_modules/@typescript/native/bin/tsc -p tsconfig.v4-reference.json
+	cd flowersec-ts && ./node_modules/.bin/vitest run src/v4/cborReference.test.ts src/v4/cborShapeReference.test.ts src/v4/cborRulesReference.test.ts src/v4/idnaReference.test.ts src/v4/cborTextReference.test.ts src/v4/cborOracleReference.test.ts src/v4/cborCompositionReference.test.ts src/v4/domainReference.test.ts src/v4/applicationReference.test.ts
+
+transport-v4-rekey-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-rekey.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4Rekey'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_rekey
+	cd flowersec-ts && npx vitest run src/v4/rekeyReference.test.ts
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter TransportV4RekeyTests
+
+transport-v4-ready-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-ready.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4Ready'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_ready
+	cd flowersec-ts && npx vitest run src/v4/readyReference.test.ts
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter TransportV4ReadyTests
+
+transport-v4-record-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-records.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4Record'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_records
+	cd flowersec-ts && npx vitest run src/v4/recordReference.test.ts
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter TransportV4RecordTests
+
+transport-v4-noise-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-noise.test.mjs scripts/transport-v4-noise-vendor.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4Noise'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_noise
+
+transport-v4-noise-rust-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime node rust
+	node scripts/generate-transport-v4-vectors.mjs --check
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_noise
+
+transport-v4-dh-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-dh.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4ProfileDHReference$$'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_profile_dh
+	cd flowersec-ts && npx vitest run src/v4/profileDHReference.test.ts
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter TransportV4ProfileDHTests
+
+transport-v4-signature-check: ts-ensure-deps
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	node scripts/generate-transport-v4-vectors.mjs --check
+	node --test scripts/transport-v4-signatures.test.mjs
+	node --test scripts/transport-v4-strict-ed25519.test.mjs
+	go -C flowersec-go test ./internal/protocolv4 -run '^TestV4(SignatureVectors|StrictSignature.*)$$'
+	cargo test --manifest-path flowersec-rust/Cargo.toml --locked --test transport_v4_signatures --test transport_v4_strict_signatures
+	cd flowersec-ts && npx vitest run src/v4/signatureVectors.test.ts src/v4/strictEd25519Reference.test.ts
+	swift test --cache-path "$(SWIFTPM_CACHE_PATH)" --skip-update --only-use-versions-from-resolved-file --filter 'TransportV4(Strict)?SignatureTests'
 
 FLOWERSEC_TEST_HOST ?= ./scripts/test-host.sh
 PERFORMANCE_BUDGET ?= 10m

@@ -1,0 +1,53 @@
+diff --git a/state.go b/state.go
+index 00d6b966..78c7b54b 100644
+--- a/state.go
++++ b/state.go
+@@ -515,7 +515,7 @@ func (s *HandshakeState) ReadMessage(out, message []byte) ([]byte, *CipherState,
+ 	for _, msg := range s.messagePatterns[s.msgIdx] {
+ 		switch msg {
+ 		case MessagePatternE, MessagePatternS:
+-			expected := s.ss.cs.DHLen()
++			expected := s.ss.cs.DHPublicLen()
+ 			if msg == MessagePatternS && s.ss.hasK {
+ 				expected += 16
+ 			}
+@@ -524,10 +524,10 @@ func (s *HandshakeState) ReadMessage(out, message []byte) ([]byte, *CipherState,
+ 			}
+ 			switch msg {
+ 			case MessagePatternE:
+-				if cap(s.re) < s.ss.cs.DHLen() {
+-					s.re = make([]byte, s.ss.cs.DHLen())
++				if cap(s.re) < s.ss.cs.DHPublicLen() {
++					s.re = make([]byte, s.ss.cs.DHPublicLen())
+ 				}
+-				s.re = s.re[:s.ss.cs.DHLen()]
++				s.re = s.re[:s.ss.cs.DHPublicLen()]
+ 				copy(s.re, message)
+ 				s.ss.MixHash(s.re)
+ 				if s.willPsk {
+diff --git a/cipher_suite.go b/cipher_suite.go
+index 753e011f..81a14f6f 100644
+--- a/cipher_suite.go
++++ b/cipher_suite.go
+@@ -35,6 +35,9 @@ type DHFunc interface {
+ 	// DHLen is the number of bytes returned by DH.
+ 	DHLen() int
+ 
++	// DHPublicLen is the encoded public-key length, independent of DH output.
++	DHPublicLen() int
++
+ 	// DHName is the name of the DH function.
+ 	DHName() string
+ }
+@@ -123,8 +126,9 @@ func (dh25519) DH(privkey, pubkey []byte) ([]byte, error) {
+ 	return curve25519.X25519(privkey, pubkey)
+ }
+ 
+-func (dh25519) DHLen() int     { return 32 }
+-func (dh25519) DHName() string { return "25519" }
++func (dh25519) DHLen() int       { return 32 }
++func (dh25519) DHPublicLen() int { return 32 }
++func (dh25519) DHName() string   { return "25519" }
+ 
+ type cipherFn struct {
+ 	fn   func([32]byte) Cipher

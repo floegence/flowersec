@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:b38738b7-900b-5c38-88fb-c15cb4487d73",
+  "serialNumber": "urn:uuid:39334d98-1d78-59e6-8c41-9a717d275617",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "171659c729b6ec07181d040f7e5eba44912dd34804e8618cf20a7fb7af30041d"
+        "value": "39fe79506fd87ee11a9ee430433df90efd9a52bbc8e6e23805fc8f91300b5aa7"
       }
     ]
   },
@@ -189,6 +189,34 @@
     },
     {
       "type": "library",
+      "name": "swift-sodium",
+      "version": "0.11.0",
+      "purl": "pkg:swift/swift-sodium@0.11.0",
+      "bom-ref": "pkg:swift/swift-sodium@0.11.0",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/jedisct1/swift-sodium.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "ISC"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "swift-system",
       "version": "1.7.5",
       "purl": "pkg:swift/swift-system@1.7.5",
@@ -222,7 +250,8 @@
       "dependsOn": [
         "pkg:swift/swift-crypto@4.5.1",
         "pkg:swift/swift-nio-ssl@2.37.2",
-        "pkg:swift/swift-nio@2.101.3"
+        "pkg:swift/swift-nio@2.101.3",
+        "pkg:swift/swift-sodium@0.11.0"
       ]
     },
     {
@@ -256,6 +285,10 @@
       "dependsOn": [
         "pkg:swift/swift-nio@2.101.3"
       ]
+    },
+    {
+      "ref": "pkg:swift/swift-sodium@0.11.0",
+      "dependsOn": []
     },
     {
       "ref": "pkg:swift/swift-system@1.7.5",
