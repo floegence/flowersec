@@ -19,8 +19,18 @@ export async function prepareProxyFetch(input: RequestInfo | URL, init?: Request
   const request = new Request(input instanceof Request ? input : `https://flowersec.invalid${path}`, init);
   request.signal.throwIfAborted();
   let body: ArrayBuffer | undefined;
-  if (request.body !== null) {
-    const reader = request.body.getReader();
+  let source = request.body as ReadableStream<Uint8Array> | null | undefined;
+  if (source === undefined) {
+    // Some current browser engines implement Body consumption without exposing
+    // Request.body. Blob size is checked before copying bytes into the carrier;
+    // the ordinary streaming path retains its incremental budget enforcement.
+    const blob = await request.blob();
+    request.signal.throwIfAborted();
+    if (blob.size > maxBodyBytes) throw new SessionError("resource_exhausted");
+    source = blob.size ? blob.stream() : null;
+  }
+  if (source !== null) {
+    const reader = source.getReader();
     const abort = () => { void reader.cancel().catch(() => undefined); };
     request.signal.addEventListener("abort", abort, { once: true });
     const chunks: Uint8Array[] = [];

@@ -106,4 +106,6 @@ the displayed estimate; the scheduler still enforces its monotonic backoff.
 
 ## Session-bound HTTP events
 
+Request preparation supports browsers that expose `Body.blob()` without a `Request.body` stream. Both paths preserve the request bytes, headers, body limit and cancellation boundary before opening a carrier stream.
+
 Use `createProxyRuntime({ session, externalOrigin }).fetch("/api/events", { headers: { Accept: "text/event-stream" }, signal })` to read a standard streaming `Response` over the existing session. Consume or cancel the body and dispose the runtime when its session is replaced. The runtime never retries requests. It shares policy, framing, cancellation and admission with the browser bridges. The Go and Node proxy servers support negotiated SSE with bounded backpressure and activity deadlines; ordinary requests retain finite response limits. Default HTTP admission is 24 requests, including at most 16 event streams. Rejected event subscriptions report `resource_exhausted` immediately.
