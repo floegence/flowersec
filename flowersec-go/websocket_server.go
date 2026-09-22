@@ -26,6 +26,12 @@ const defaultWebSocketReadHeaderTimeout = 10 * time.Second
 // of TLSConfig and never exposes it for post-construction mutation.
 type WebSocketHTTPServerOptions struct {
 	Handler http.Handler
+	// AuthorizeWebSocketRequest optionally restricts requests to the direct and
+	// tunnel protocol paths before upgrade or session authorization. Returning
+	// false rejects the request with 403. It does not replace TLS, Origin, or
+	// session authorization checks and does not apply to ApplicationHandler.
+	// A nil callback preserves the handler's existing admission policy.
+	AuthorizeWebSocketRequest func(*http.Request) bool
 	// ApplicationHandler serves non-Flowersec paths on the same listener.
 	ApplicationHandler http.Handler
 	TLSConfig          *tls.Config
@@ -97,13 +103,21 @@ func NewHTTPDirectServer(options HTTPDirectServerOptions) (*WebSocketHTTPServer,
 
 func newWebSocketHTTPServer(options WebSocketHTTPServerOptions, transport http.Handler, tlsConfig *tls.Config, plaintext bool) *WebSocketHTTPServer {
 	handler := transport
-	if options.ApplicationHandler != nil {
+	if options.ApplicationHandler != nil || options.AuthorizeWebSocketRequest != nil {
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == WebSocketDirectPath || r.URL.Path == WebSocketTunnelPath {
+				if options.AuthorizeWebSocketRequest != nil && !options.AuthorizeWebSocketRequest(r) {
+					http.Error(w, "request rejected", http.StatusForbidden)
+					return
+				}
 				transport.ServeHTTP(w, r)
 				return
 			}
-			options.ApplicationHandler.ServeHTTP(w, r)
+			if options.ApplicationHandler != nil {
+				options.ApplicationHandler.ServeHTTP(w, r)
+				return
+			}
+			transport.ServeHTTP(w, r)
 		})
 	}
 	readHeaderTimeout := options.ReadHeaderTimeout

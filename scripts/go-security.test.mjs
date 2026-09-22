@@ -22,6 +22,9 @@ test("manifest and maintained-tree Go module inventories are identical", async (
     fs.writeFileSync(path.join(repoRoot, module, "go.mod"), `module example.com/${module}\n`);
   }
   const manifest = { modules: ["flowersec-go"] };
+  const cachedModule = path.join(repoRoot, ".flowersec/swiftpm-cache/repositories/dependency");
+  fs.mkdirSync(cachedModule, { recursive: true });
+  fs.writeFileSync(path.join(cachedModule, "go.mod"), "module example.com/cached\n");
   const modules = collectGoModuleDirectories(repoRoot, manifest);
   assert.deepEqual(modules, [path.join(repoRoot, "flowersec-go")]);
   fs.mkdirSync(path.join(repoRoot, "tools/unregistered"), { recursive: true });

@@ -39,6 +39,7 @@ function readRegularFileNoFollow(filePath, label) {
 
 const ignoredModuleSearchDirectories = new Set([
   ".build",
+  ".flowersec",
   ".git",
   ".swiftpm",
   "coverage",

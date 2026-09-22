@@ -114,7 +114,7 @@ export function verifyGoToolchainPolicy(repoRoot) {
     throw new Error("test host bootstrap must derive downloads and validation from go_version");
   }
   const banned = [];
-  const ignored = new Set([".build", ".git", ".swiftpm", "coverage", "dist", "node_modules", "target", "test-results"]);
+  const ignored = new Set([".build", ".flowersec", ".git", ".swiftpm", "coverage", "dist", "node_modules", "target", "test-results"]);
   const pending = [repoRoot];
   while (pending.length > 0) {
     const directory = pending.pop();

@@ -135,6 +135,13 @@ profile remains loopback-only and application-token admitted.
 `flowersec.HTTPDirectServerOptions` and `flowersec.NewHTTPDirectServer(...)`
 compose this explicit handler with an `ApplicationHandler` on one HTTP port.
 The existing TLS server also accepts an `ApplicationHandler` on its TLS port.
+Its optional `WebSocketHTTPServerOptions.AuthorizeWebSocketRequest` callback
+adds application-owned request admission for the direct and tunnel paths before
+upgrade or session authorization. A rejection returns HTTP 403; application
+routes are unaffected. A nil callback preserves existing admission behavior.
+The callback can only restrict admission: TLS policy, configured allowed
+Origins, and session authorization remain independently required. It does not
+change the transport protocol or the carrier-neutral Acceptor interface.
 Both reserve the direct and tunnel protocol paths and preserve server-owned
 connection shutdown. See `docs/HTTP_DIRECT_V1.md` for the admission and security
 contract. Standard v3 connectors remain TLS-only.

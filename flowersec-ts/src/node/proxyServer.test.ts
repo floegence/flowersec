@@ -113,8 +113,11 @@ test("streams negotiated events beyond finite limits and cancels idle upstream w
   await once(upstream, "listening");
   const address = upstream.address() as AddressInfo;
   const origin = `http://127.0.0.1:${address.port}`;
+  // Leave enough time for the initial HTTP response under parallel test load;
+  // then explicitly keep the event stream alive beyond that finite deadline.
+  const finiteTimeoutMs = 1_000;
   const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxBodyBytes: 16,
-    defaultHTTPRequestTimeoutMs: 100, maxHTTPRequestTimeoutMs: 100 });
+    defaultHTTPRequestTimeoutMs: finiteTimeoutMs, maxHTTPRequestTimeoutMs: finiteTimeoutMs });
   const handlers = new StreamHandlers(); server.register(handlers);
   const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
   const operations: Promise<void>[] = [];
@@ -144,10 +147,11 @@ test("streams negotiated events beyond finite limits and cancels idle upstream w
       return end(down.readable, up.writable);
     },
   } as Session;
-  const runtime = createProxyRuntime({ session, maxBodyBytes: 16, timeoutMs: 100 });
+  const runtime = createProxyRuntime({ session, maxBodyBytes: 16, timeoutMs: finiteTimeoutMs });
   try {
     const response = await runtime.fetch("/events", { headers: { accept: "text/event-stream" } });
     const reader = response.body!.getReader();
+    await new Promise<void>(resolve => setTimeout(resolve, finiteTimeoutMs + 100));
     let bytes = 0;
     for (let i = 0; i < 10; i++) { const chunk = await reader.read(); bytes += chunk.value?.length ?? 0; }
     expect(bytes).toBeGreaterThan(16);
@@ -158,4 +162,4 @@ test("streams negotiated events beyond finite limits and cancels idle upstream w
     runtime.dispose(); await server.close();
     upstream.closeAllConnections(); await new Promise<void>(done => upstream.close(() => done()));
   }
-}, 3_000);
+}, 5_000);
