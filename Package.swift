@@ -14,7 +14,7 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/jedisct1/swift-sodium.git", exact: "0.11.0"),
-    .package(url: "https://github.com/apple/swift-crypto.git", from: "4.5.0"),
+    .package(url: "https://github.com/apple/swift-crypto.git", from: "5.0.0"),
     .package(url: "https://github.com/apple/swift-nio.git", from: "2.82.0"),
     .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.30.0"),
   ],
