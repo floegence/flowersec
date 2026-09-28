@@ -10,6 +10,12 @@ import Foundation
   }
 
   struct AppleWebSocketRuntimeAdapterV3: RuntimeCarrierAdapterV3 {
+    let httpDirectEndpoint: String?
+
+    init(httpDirectEndpoint: String? = nil) {
+      self.httpDirectEndpoint = httpDirectEndpoint
+    }
+
     #if os(iOS)
       let capabilities = RuntimeCapabilitiesV3.iOS
     #else
@@ -19,6 +25,11 @@ import Foundation
     func validate(options: ConnectorOptions) throws {
       guard validOrigin(options.origin) else {
         throw SwiftRuntimeErrorV3.invalidConfiguration
+      }
+      if let endpoint = httpDirectEndpoint {
+        guard try HTTPDirectEndpointV1(endpoint).origin == options.origin,
+          options.trustRootsPEM.isEmpty
+        else { throw SwiftRuntimeErrorV3.invalidConfiguration }
       }
       for pem in options.trustRootsPEM {
         guard !pem.isEmpty, !(try NIOSSLCertificate.fromPEMBytes(Array(pem))).isEmpty else {
@@ -45,6 +56,14 @@ import Foundation
         url.query == nil, url.fragment == nil, url.user == nil, url.password == nil,
         let host = url.host
       else { throw ConnectorBoundaryErrorV3.runtimeUnsupported }
+      if let endpoint = httpDirectEndpoint {
+        let binding = try HTTPDirectEndpointV1(endpoint)
+        guard path == .direct, candidate.id == "http-direct", candidate.tls.mode == "ca",
+          activePinHashes == nil, candidate.normalizedURL == binding.tlsBinding,
+          options.origin == binding.origin
+        else { throw ConnectorBoundaryErrorV3.artifactInvalid }
+        return try await prepareHTTPDirect(url: binding.url, options: options, role: role)
+      }
       let subprotocol =
         path == .direct
         ? TransportV3Contract.directWebSocketSubprotocol
@@ -97,6 +116,26 @@ import Foundation
         path: path,
         role: role
       )
+    }
+
+    private func prepareHTTPDirect(
+      url: URL, options: ConnectorOptions, role: SessionRoleV3
+    ) async throws -> any PreparedCarrierConnectionV3 {
+      let subprotocol = TransportV3Contract.directWebSocketSubprotocol
+      let socket = try await ProxyNIOWebSocketConnector.connect(
+        url: url,
+        headers: [
+          ProxyHeader(name: "Sec-WebSocket-Protocol", value: subprotocol),
+          ProxyHeader(name: "Origin", value: options.origin),
+        ],
+        maxFrameBytes: FlowersecSDKDefaults.Yamux.maxFrameBytes + 12,
+        timeout: options.connectTimeout)
+      guard socket.selectedProtocol == subprotocol else {
+        await socket.close()
+        throw SwiftRuntimeErrorV3.protocolNegotiationFailed
+      }
+      return PreparedWebSocketConnectionV3(
+        transport: NIOWebSocketBinaryTransportV3(socket: socket), path: .direct, role: role)
     }
 
     private func validOrigin(_ origin: String) -> Bool {

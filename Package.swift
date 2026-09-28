@@ -30,7 +30,10 @@ let package = Package(
         .product(name: "NIOWebSocket", package: "swift-nio"),
         .product(name: "NIOSSL", package: "swift-nio-ssl"),
       ],
-      path: "flowersec-swift/Sources/Flowersec"
+      path: "flowersec-swift/Sources/Flowersec",
+      // Xcode may promote the SDK to a dynamic product for app-hosted tests.
+      // Link the binary C dependency here so its unused shim cannot strip it.
+      linkerSettings: [.linkedLibrary("sodium", .when(platforms: [.macOS, .iOS]))]
     ),
     .testTarget(
       name: "FlowersecTests",

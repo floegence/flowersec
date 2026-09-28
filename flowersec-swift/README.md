@@ -41,6 +41,18 @@ artifact-bound active pin set and never falls back to CA. Raw QUIC,
 WebTransport, unreliable messages, server acceptance, tunnel relay, and
 ProxyServer are not part of the Apple SDK profile.
 
+## Explicit HTTP Direct
+
+`parseHTTPDirectArtifactV1(...)` and `HTTPDirectArtifactLeaseV1` consume an
+explicit `flowersec-http-direct/1` envelope. `connectHTTPDirectV1(lease:options:)`
+connects to its exact HTTP origin over WS and returns the same opaque `Session`.
+The origin must equal the envelope's origin; only canonical IP addresses and
+localhost are accepted. The ordinary `parseArtifact` / `connect` path remains
+TLS-only and rejects HTTP envelopes. HTTP has no transport confidentiality
+before the authenticated Flowersec session is established; applications must
+select it explicitly and authorize their public HTTP endpoint independently.
+The lease retains the ordinary atomic spend and retirement semantics.
+
 ## Cookbook
 
 The [Swift cookbook](../examples/swift/README.md) establishes a WSS session,

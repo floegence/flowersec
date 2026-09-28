@@ -691,7 +691,7 @@
       "path": "flowersec-swift/Sources/Flowersec/AppleWebSocketRuntimeAdapterV3.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 6,
-      "matching_lines": 64
+      "matching_lines": 72
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/ArtifactAdmissionV3.swift",
@@ -716,6 +716,12 @@
       "action": "replace_before_v4_runtime",
       "first_matching_line": 19,
       "matching_lines": 12
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/HTTPDirectV1.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 48,
+      "matching_lines": 10
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/IDNAHostV3.swift",
