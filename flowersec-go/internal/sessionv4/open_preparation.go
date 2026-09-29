@@ -3,7 +3,7 @@ package sessionv4
 import (
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 )
 
 // OpenPreparation is the original peer OPEN's once-only application metadata
@@ -34,15 +34,16 @@ func (a *OpenAdmission) PreparePeerOpen(h OpenHandle) (OpenPreparation, error) {
 	if s.preparationTarget != 0 {
 		return OpenPreparation{}, ErrOpenAssociation
 	}
+	_, proofs, _, byOpener, _ := a.protectedUsage(-1)
 	var protected uint32
 	for role, classes := range a.limits.Protected {
 		for class, capacity := range classes {
-			if used := a.byOpener[role][class]; used < capacity {
+			if used := byOpener[role][class]; used < capacity {
 				protected += capacity - used
 			}
 		}
 	}
-	if a.positiveProofs+protected >= a.limits.Terminal-a.limits.RejectionReserve {
+	if proofs+protected >= a.limits.Terminal-a.limits.RejectionReserve {
 		return OpenPreparation{}, ErrOpenPending
 	}
 	target := a.freeSlot(false, false)

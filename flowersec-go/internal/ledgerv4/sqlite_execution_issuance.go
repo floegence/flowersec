@@ -3,8 +3,8 @@ package ledgerv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // RecoveryGeneration is an authorized, read-only snapshot for an explicit

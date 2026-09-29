@@ -8,8 +8,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrSourceCleanup = errors.New("sessionv4: event source cleanup unconfirmed")
@@ -55,9 +56,10 @@ type streamSourceCleanup struct {
 	setupContext                            context.Context
 	context                                 streamHandlerContext
 	cancel                                  context.CancelFunc
+	clock                                   *timev4.Clock
+	window                                  *timev4.Window
 	release                                 func(context.Context) error
-	closeDuration                           time.Duration
-	deadline                                time.Time
+	closeDuration                           uint64
 	failure                                 error
 	setupLive, setupDone, registered        bool
 	requested, submitted, entered, returned bool
@@ -68,12 +70,15 @@ func streamSourceCleanupCharge(runtimeBytes, closeMS uint64) (resourcev4.Vector,
 	if runtimeBytes == 0 || closeMS == 0 || closeMS > uint64(math.MaxInt64/int64(time.Millisecond)) {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
-	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(streamSourceCleanup{})) + uint64(unsafe.Sizeof(time.Timer{})) + uint64(unsafe.Sizeof(ordinaryCleanupContext{})), resourcev4.Items: 3, resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
+	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(streamSourceCleanup{})) + uint64(unsafe.Sizeof(timev4.Window{})) + uint64(unsafe.Sizeof(ordinaryCleanupContext{})), resourcev4.Items: 3, resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
 }
 
 // This runs before setup or any subscription side effect. The future consumes
 // an actual existing ordinary ready position, but no application running slot.
-func prepareStreamSourceCleanup(executor *ApplicationExecutor, group *applicationGroup, class ApplicationWorkClass, publisher EventPublisher, runtimeBytes, closeMS uint64, metadata, task resourcev4.Reference) (*streamSourceCleanup, error) {
+func prepareStreamSourceCleanup(executor *ApplicationExecutor, group *applicationGroup, class ApplicationWorkClass, publisher EventPublisher, clock *timev4.Clock, runtimeBytes, closeMS uint64, metadata, task resourcev4.Reference) (*streamSourceCleanup, error) {
+	if clock == nil {
+		return nil, cryptov4.ErrConfiguration
+	}
 	charge, err := streamSourceCleanupCharge(runtimeBytes, closeMS)
 	if err != nil {
 		return nil, err
@@ -87,7 +92,7 @@ func prepareStreamSourceCleanup(executor *ApplicationExecutor, group *applicatio
 		owned.Release()
 		return nil, err
 	}
-	o := &streamSourceCleanup{publisher: publisher, reservation: owned, future: future, closeDuration: time.Duration(closeMS) * time.Millisecond}
+	o := &streamSourceCleanup{publisher: publisher, reservation: owned, future: future, clock: clock, closeDuration: closeMS}
 	o.subscription.owner = o
 	return o, nil
 }
@@ -120,34 +125,51 @@ func (o *streamSourceCleanup) setupExited() {
 	}
 }
 
-// request fixes one cleanup deadline at the first logical end. Repeated close,
-// a late setup return or a later executor opportunity cannot restart its clock.
-func (o *streamSourceCleanup) request() {
+// request fixes one trusted monotonic cleanup window at the first logical end.
+// Repeated close, a late setup return or a later executor opportunity cannot
+// restart its clock. A failed clock sample closes the cleanup owner instead of
+// falling back to the host wall clock.
+func (o *streamSourceCleanup) request() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.requested {
-		return
+		return o.failure
 	}
 	o.requested = true
-	o.deadline = time.Now().Add(o.closeDuration)
+	start, err := o.clock.Monotonic()
+	if err == nil {
+		o.window, err = timev4.NewWindowAt(o.clock, start, o.closeDuration)
+	}
 	o.context.Context, o.cancel = context.WithCancel(context.Background())
-	o.context.deadline = o.deadline
+	if err != nil {
+		o.expired, o.failure = true, err
+		o.cancel()
+	}
+	return err
 }
 
 // advance is finite SDK state work on the original pump. The pump owns the
 // already charged timer; there is no disposer watcher or deadline goroutine.
-func (o *streamSourceCleanup) advance() (remaining time.Duration, err error) {
+func (o *streamSourceCleanup) advance() (remaining uint64, err error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if !o.requested {
 		return 0, nil
 	}
-	remaining = time.Until(o.deadline)
-	if remaining <= 0 && !o.confirmed {
+	if o.window == nil {
+		o.expired = true
+		if o.failure == nil {
+			o.failure = timev4.ErrUnavailable
+		}
+		o.cancel()
+		return 0, o.failure
+	}
+	remaining, err = o.window.RemainingMS()
+	if err != nil && !o.confirmed {
 		o.expired = true
 		o.cancel()
 		if o.failure == nil {
-			o.failure = context.DeadlineExceeded
+			o.failure = err
 		}
 	}
 	if o.ready && o.setupDone && o.registered && !o.submitted && !o.expired {
@@ -155,17 +177,17 @@ func (o *streamSourceCleanup) advance() (remaining time.Duration, err error) {
 		// still runs at the original ordinary class and global running cap.
 		if err := o.future.startPrepared(o.invoke); err != nil {
 			o.failure = ErrSourceCleanup
-			return max(remaining, 0), o.failure
+			return remaining, o.failure
 		}
 		o.submitted = true
 	}
-	return max(remaining, 0), o.failure
+	return remaining, o.failure
 }
 
 func (o *streamSourceCleanup) invoke() {
 	o.mu.Lock()
-	if !o.setupDone || !o.requested || !o.registered || o.entered || o.expired || !time.Now().Before(o.deadline) {
-		o.expired, o.failure = true, context.DeadlineExceeded
+	if !o.setupDone || !o.requested || !o.registered || o.entered || o.expired || o.window == nil || o.window.Check() != nil {
+		o.expired, o.failure = true, timev4.ErrExpired
 		if o.cancel != nil {
 			o.cancel()
 		}
@@ -241,9 +263,8 @@ func (m *StreamMessages) advanceSourceCleanupLocked(remaining uint64) uint64 {
 		m.signalLocked()
 	}
 	if wait > 0 {
-		milliseconds := uint64((wait + time.Millisecond - 1) / time.Millisecond)
-		if remaining == 0 || milliseconds < remaining {
-			return milliseconds
+		if remaining == 0 || wait < remaining {
+			return wait
 		}
 	}
 	return remaining

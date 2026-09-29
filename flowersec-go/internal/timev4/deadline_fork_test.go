@@ -33,6 +33,30 @@ func TestDeadlineForkPreservesOriginalProjectionAndIndependentClose(t *testing.T
 	}
 }
 
+func TestDeadlineAtUsesCapturedSampleForIndependentReceiveGrace(t *testing.T) {
+	clock, source := testClock(t, &Interval{1000, 1100})
+	start, err := clock.Sample()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installTest(t, clock, Interval{1000, 1000})
+	deadline, err := NewDeadlineAt(clock, start, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remaining, err := deadline.RemainingMS(); err != nil || remaining != 900 {
+		t.Fatal("new owner discarded original sample", remaining, err)
+	}
+	source.set(900, 1, nil)
+	if err := deadline.Check(); !errors.Is(err, ErrExpired) {
+		t.Fatal(err)
+	}
+	foreign, _ := testClock(t, &Interval{1000, 1100})
+	if _, err := NewDeadlineAt(foreign, start, 2000); !errors.Is(err, ErrOwner) {
+		t.Fatal("foreign clock sample accepted", err)
+	}
+}
+
 func TestDeadlineForkAgePreservesPrepareSampleAndParentProjection(t *testing.T) {
 	for _, parentCap := range []uint64{1300, 5000} {
 		clock, source := testClock(t, &Interval{1000, 1100})

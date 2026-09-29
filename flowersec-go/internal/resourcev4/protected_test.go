@@ -275,7 +275,7 @@ func TestProtectedReservationDoesNotLendAliasAcrossTransferredScopes(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if borrow.index == p.borrowIndex {
+	if borrow.index == p.borrowIndices[0] {
 		t.Fatal("changed original protected scopes")
 	}
 	if _, err := transferred.Borrow(); !errors.Is(err, ErrCapacity) {
@@ -329,5 +329,113 @@ func TestProtectedBatchIsAtomicAcrossActualTails(t *testing.T) {
 	}
 	for _, ref := range output {
 		ref.Release()
+	}
+}
+
+func TestProtectedReservationFourAliasesRetainOriginalCapacity(t *testing.T) {
+	minimum := Vector{SDKBytes: 1024, Tasks: 4}
+	charge, _ := ProtectedCharge(minimum)
+	r := testRoot(t, charge, 1, 5)
+	tenant := account(t, r, TenantAccount, 1, charge)
+	ref, err := r.Reserve(owner(1), charge, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var aliases [4]Reference
+	for i := range aliases {
+		aliases[i], err = ref.Borrow()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := r.Snapshot()
+	p, err := NewProtectedReservation(ref, minimum, aliases[:]...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	for round := range 2 {
+		live, err := p.Checkout()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range aliases {
+			aliases[i], err = live.Borrow()
+			if err != nil {
+				t.Fatal("preadmitted alias needed new capacity", i, err)
+			}
+		}
+		if _, err := live.Borrow(); !errors.Is(err, ErrCapacity) {
+			t.Fatal("unbounded alias", err)
+		}
+		live.Release()
+		for i, alias := range aliases {
+			if _, err := p.Checkout(); !errors.Is(err, ErrCapacity) {
+				t.Fatal("reused before actual tail", i, err)
+			}
+			if round == 1 && i == len(aliases)-1 {
+				p.CloseAfterUse()
+				if p.CleanupComplete() || alias.CheckRetained() != nil {
+					t.Fatal("late actual tail lost backing")
+				}
+			}
+			alias.Release()
+		}
+		if round == 0 && r.Snapshot() != before {
+			t.Fatal("idle floor became available to unrelated work")
+		}
+	}
+	if !p.CleanupComplete() {
+		t.Fatal("actual final tail did not retire")
+	}
+}
+
+func TestProtectedReservationValidatesEntireAliasSetBeforeMutation(t *testing.T) {
+	for _, invalid := range []string{"duplicate", "foreign", "primary"} {
+		t.Run(invalid, func(t *testing.T) {
+			minimum := Vector{SDKBytes: 64}
+			charge, _ := ProtectedCharge(minimum)
+			total, _ := charge.Add(charge)
+			r := testRoot(t, total, 2, 6)
+			ref, err := r.Reserve(owner(1), charge)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ref.Release()
+			foreign, err := r.Reserve(owner(2), charge)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer foreign.Release()
+			var aliases [4]Reference
+			for i := range aliases {
+				aliases[i], err = ref.Borrow()
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer aliases[i].Release()
+			}
+			bad := aliases
+			switch invalid {
+			case "duplicate":
+				bad[3] = aliases[0]
+			case "foreign":
+				bad[3] = foreign
+			case "primary":
+				bad[3] = ref
+			}
+			before := r.Snapshot()
+			if p, err := NewProtectedReservation(ref, minimum, bad[:]...); p != nil || !errors.Is(err, ErrOwner) {
+				t.Fatal(p, err)
+			}
+			if r.Snapshot() != before || ref.Check() != nil {
+				t.Fatal("failed protection changed caller ownership")
+			}
+			for _, alias := range aliases {
+				if err := alias.Check(); err != nil {
+					t.Fatal("partly consumed original aliases", err)
+				}
+			}
+		})
 	}
 }

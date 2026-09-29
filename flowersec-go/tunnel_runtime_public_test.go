@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
-	"github.com/floegence/flowersec/flowersec-go/v5/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
+	"github.com/floegence/flowersec/flowersec-go/v6/controlplane"
 )
 
 func TestTunnelRuntimeHandlerRejectsResumedTLSBeforeAuthorization(t *testing.T) {

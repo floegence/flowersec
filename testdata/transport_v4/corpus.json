@@ -1,7 +1,7 @@
 {
-  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "schema_revision": "flowersec-v4.0.0-draft.74",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
-  "schema_sha256": "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959",
+  "schema_sha256": "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af",
   "coverage": "draft_cbor_fields_only",
   "unverified": [
     "Four-SDK NFC/IDNA/host/Origin consumption and actual signed-route provider/deployment validation",
@@ -2313,6 +2313,90 @@
       "kind": "cbor_fields",
       "schema": "OperationReference",
       "hex": "a70001016b6170702f7072696d61727902a8006674656e616e74016773657276696365026773657276696365036773657276696365045820010101010101010101010101010101010101010101010101010101010101010105582000000000000013880202020202020202020202020202020202020202020202020658200303030303030303030303030303030303030303030303030303030303030303075820040404040404040404040404040404040404040404040404040404040404040403000401051927100601"
+    },
+    {
+      "id": "spend_receipt_spending",
+      "kind": "cbor_fields",
+      "schema": "SpendReceipt",
+      "hex": "a600500101010101010101010101010101010101500202020202020202020202020202020202000300041903e8051903e8"
+    },
+    {
+      "id": "spend_receipt_unknown",
+      "kind": "cbor_fields",
+      "schema": "SpendReceipt",
+      "hex": "a600500101010101010101010101010101010101500202020202020202020202020202020202010300041903e80500"
+    },
+    {
+      "id": "spend_receipt_denied",
+      "kind": "cbor_fields",
+      "schema": "SpendReceipt",
+      "hex": "a600500101010101010101010101010101010101500202020202020202020202020202020202010301041903e80500"
+    },
+    {
+      "id": "spend_receipt_authorized",
+      "kind": "cbor_fields",
+      "schema": "SpendReceipt",
+      "hex": "a600500101010101010101010101010101010101500202020202020202020202020202020202010302041903e80500"
+    },
+    {
+      "id": "spend_receipt_not_started",
+      "kind": "cbor_fields",
+      "schema": "SpendReceipt",
+      "hex": "a600500101010101010101010101010101010101500202020202020202020202020202020202010303041903e80500"
+    },
+    {
+      "id": "proxy_request_octets",
+      "kind": "cbor_fields",
+      "schema": "ProxyHTTPRequest",
+      "limits": {
+        "max_proxy_fields": 65535
+      },
+      "hex": "a500020143722d3102457041744368034f2f612f2f623f783d25666626783d2b0482a20048782d7265706561740141e9a20048782d7265706561740141ff"
+    },
+    {
+      "id": "proxy_response_octets",
+      "kind": "cbor_fields",
+      "schema": "ProxyHTTPResponse",
+      "limits": {
+        "max_proxy_fields": 65535
+      },
+      "hex": "a500020143722d3102f50318c80483a2004a7365742d636f6f6b6965014b613d313b20536563757265a2004a7365742d636f6f6b6965014d623d323b20487474704f6e6c79a20046782d6279746501430980ff"
+    },
+    {
+      "id": "proxy_response_failure",
+      "kind": "cbor_fields",
+      "schema": "ProxyHTTPResponse",
+      "limits": {
+        "max_proxy_fields": 65535
+      },
+      "hex": "a400020143722d3102f405a20057757073747265616d5f726571756573745f6661696c6564015670726f7879206f7065726174696f6e206661696c6564"
+    },
+    {
+      "id": "proxy_websocket_open",
+      "kind": "cbor_fields",
+      "schema": "ProxyWebSocketOpen",
+      "limits": {
+        "max_proxy_fields": 65535
+      },
+      "hex": "a400020143632d3102482f736f636b65743f0381a200567365632d776562736f636b65742d70726f746f636f6c014463686174"
+    },
+    {
+      "id": "proxy_websocket_response",
+      "kind": "cbor_fields",
+      "schema": "ProxyWebSocketResponse",
+      "limits": {
+        "max_proxy_fields": 65535
+      },
+      "hex": "a400020143632d3102f5034463686174"
+    },
+    {
+      "id": "proxy_body_end",
+      "kind": "cbor_fields",
+      "schema": "ProxyBodyEnd",
+      "limits": {
+        "max_proxy_fields": 65535
+      },
+      "hex": "a200020181a2004a782d636865636b73756d01426f6b"
     },
     {
       "id": "error_session_protocol_violation",
@@ -8380,6 +8464,47 @@
       "schema": "OperationReference",
       "hex": "a70001016b6170702f7072696d61727902a8006674656e616e74016773657276696365026773657276696365036773657276696365045820010101010101010101010101010101010101010101010101010101010101010105582000000000000013880202020202020202020202020202020202020202020202020658200303030303030303030303030303030303030303030303030303030303030303075820040404040404040404040404040404040404040404040404040404040404040403030401051927100601",
       "expected_error": "enum_value"
+    },
+    {
+      "id": "spend_receipt_spending_authorized",
+      "kind": "malformed_cbor_fields",
+      "schema": "SpendReceipt",
+      "hex": "a600500101010101010101010101010101010101500202020202020202020202020202020202000302041903e8051903e8",
+      "expected_error": "variant_constant"
+    },
+    {
+      "id": "spend_receipt_unknown_state",
+      "kind": "malformed_cbor_fields",
+      "schema": "SpendReceipt",
+      "hex": "a600500101010101010101010101010101010101500202020202020202020202020202020202020300041903e8051903e8",
+      "expected_error": "enum_value"
+    },
+    {
+      "id": "spend_receipt_unknown_outcome",
+      "kind": "malformed_cbor_fields",
+      "schema": "SpendReceipt",
+      "hex": "a600500101010101010101010101010101010101500202020202020202020202020202020202010304041903e80500",
+      "expected_error": "enum_value"
+    },
+    {
+      "id": "proxy_request_append_zero",
+      "kind": "malformed_cbor_fields",
+      "schema": "ProxyHTTPRequest",
+      "limits": {
+        "max_proxy_fields": 65535
+      },
+      "hex": "a500020143722d3102457041744368034f2f612f2f623f783d25666626783d2b0482a20048782d7265706561740141e9a20048782d7265706561740141ff00",
+      "expected_error": "trailing_bytes"
+    },
+    {
+      "id": "proxy_request_duplicate_first_pair",
+      "kind": "malformed_cbor_fields",
+      "schema": "ProxyHTTPRequest",
+      "limits": {
+        "max_proxy_fields": 65535
+      },
+      "hex": "a6000200020143722d3102457041744368034f2f612f2f623f783d25666626783d2b0482a20048782d7265706561740141e9a20048782d7265706561740141ff",
+      "expected_error": "duplicate_key"
     }
   ]
 }

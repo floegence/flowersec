@@ -6,8 +6,8 @@ import (
 	"math"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 // BootstrapReservation supplies the original fixed channel's actual backing
@@ -15,7 +15,8 @@ import (
 // owner's responsibility; a logical writer is bound only to its real result.
 type BootstrapReservation struct {
 	StreamReservation
-	Receiver *RecordReceiver
+	Receiver         *RecordReceiver
+	reusableReceiver bool
 }
 
 type bootstrapWriter struct {
@@ -103,7 +104,7 @@ func (a *OpenAdmission) prepareBootstrap(reservation BootstrapReservation, share
 		return nil, err
 	}
 	b := &Bootstrap{admission: a, spec: spec, handle: OpenHandle{a, spec.Scope}, reader: reservation.Receiver, provider: provider, prefixMax: len(wire), shared: shared, output: output, carrier: CarrierAssociation{shared: shared}}
-	if shared != nil {
+	if shared != nil || reservation.reusableReceiver {
 		b.reader = nil // The shared ingress retains its sole reader ownership.
 	}
 	clear(wire)

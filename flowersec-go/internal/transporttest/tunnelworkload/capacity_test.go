@@ -3,8 +3,8 @@ package tunnelworkload
 import (
 	"testing"
 
-	carrierws "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/websocketv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/tunnelv3"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/websocketv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/tunnelv3"
 )
 
 func TestCapacityCoordinatorConfigHoldsExactReleaseSessionCount(t *testing.T) {

@@ -1,6 +1,6 @@
 package rpcv4
 
-import "github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+import "github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 
 // BeginResumePreparation uses the original request identity, route, deadline
 // and digest engine. Its caller must already hold the exact accepted target's

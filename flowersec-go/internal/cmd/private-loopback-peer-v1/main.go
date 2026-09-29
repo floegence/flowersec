@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
-	"github.com/floegence/flowersec/flowersec-go/v5/controlplane"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
+	"github.com/floegence/flowersec/flowersec-go/v6/controlplane"
 )
 
 const bridgeToken = "private-loopback-integration-token"

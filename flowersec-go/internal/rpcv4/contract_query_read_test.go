@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func queryTargets(t *testing.T, target protocolv4.ContractQueryTarget, known *protocolv4.ServiceContract) protocolv4.ContractQueryTargets {
@@ -15,7 +15,11 @@ func queryTargets(t *testing.T, target protocolv4.ContractQueryTarget, known *pr
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, targets, err := c.EncodeTargets(make([]byte, 2048), []protocolv4.ContractQueryTarget{target}, []*protocolv4.ServiceContract{known})
+	var bodies [1]protocolv4.ContractQueryKnown
+	if known != nil {
+		bodies[0] = known
+	}
+	_, targets, err := c.EncodeTargets(make([]byte, 2048), []protocolv4.ContractQueryTarget{target}, bodies[:])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +52,11 @@ func snapshotRead(t *testing.T, read *ContractQueryRead, targets protocolv4.Cont
 		t.Fatal(err)
 	}
 	body := make([]byte, 8192)
-	set, err := codec.Decode(targets, wire[:n], []*protocolv4.ServiceContract{known}, []uint64{1000}, [][]byte{body})
+	var bodies [1]protocolv4.ContractQueryKnown
+	if known != nil {
+		bodies[0] = known
+	}
+	set, err := codec.Decode(targets, wire[:n], bodies[:], []uint64{1000}, [][]byte{body})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +257,7 @@ func TestContractQueryReadNoPartialSnapshotOrDuplicateTargetStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, targets, err := codec.EncodeTargets(make([]byte, 2048), []protocolv4.ContractQueryTarget{{Namespace: "acme/files", Type: 1}, {Namespace: "acme/other", Type: 1}}, []*protocolv4.ServiceContract{nil, nil})
+	_, targets, err := codec.EncodeTargets(make([]byte, 2048), []protocolv4.ContractQueryTarget{{Namespace: "acme/files", Type: 1}, {Namespace: "acme/other", Type: 1}}, []protocolv4.ContractQueryKnown{nil, nil})
 	if err != nil {
 		t.Fatal(err)
 	}

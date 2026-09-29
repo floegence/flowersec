@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type notifyTestGuard struct {
@@ -86,7 +86,7 @@ func newNotifyPublisherFixture(t *testing.T, pending uint32) *notifyPublisherFix
 	return f
 }
 
-func (f *notifyPublisherFixture) submit(ctx context.Context, payload []byte, cap uint64, guard NotifyPublicationGuard) (*NotifySubmission, error) {
+func (f *notifyPublisherFixture) submit(ctx context.Context, payload []byte, cap uint64, guard NotifyPublicationGuard, protections ...NotifyProtection) (*NotifySubmission, error) {
 	if g, ok := guard.(*notifyTestGuard); ok {
 		if g.ref == (resourcev4.Reference{}) {
 			g.ref = f.p.reservation
@@ -106,7 +106,12 @@ func (f *notifyPublisherFixture) submit(ctx context.Context, payload []byte, cap
 	source, status := f.f.reserve(a), f.f.reserve(b)
 	defer source.Release()
 	defer status.Release()
-	s, err := f.p.Submit(ctx, header[:n], payload, deadline, guard, source, status, 4096)
+	var s *NotifySubmission
+	if len(protections) == 1 {
+		s, err = protections[0].Submit(ctx, header[:n], payload, deadline, guard, source, status, 4096)
+	} else {
+		s, err = f.p.Submit(ctx, header[:n], payload, deadline, guard, source, status, 4096)
+	}
 	if err == nil {
 		f.submissions = append(f.submissions, s)
 	}

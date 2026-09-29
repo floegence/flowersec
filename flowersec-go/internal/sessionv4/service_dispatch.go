@@ -8,13 +8,14 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // UnaryRegistration is trusted local application code and scheduling policy.
@@ -23,6 +24,8 @@ import (
 // Handler decodes, executes and encodes under one original ordinary permit.
 // Its returned nonzero code must belong to the exact contract's error catalog.
 type UnaryRegistration struct {
+	Dependencies []ServiceDependency
+	services     *invocationServices
 	// Resume selects the SDK's target-bound recovery exchange. It has no
 	// ordinary RPC callback and requires a matching raw kind registration.
 	Resume    bool
@@ -34,10 +37,17 @@ type UnaryRegistration struct {
 }
 
 type UnaryRequest struct {
+	publication        *ResponsePublication
 	Binding            ApplicationBinding
 	ApplicationContext any
 	Input              rpcv4.InputBorrow
 	OutputInterest     rpcv4.OutputInterest
+}
+
+// RequestContext is an immutable view of the authenticated local binding. It
+// carries no AuthorizeApplication invocation or lease-reservation capability.
+func (r UnaryRequest) RequestContext() AuthenticatedRequestContext {
+	return AuthenticatedRequestContext{binding: r.Binding}
 }
 
 // UnaryResponse exposes bounded writes only. The SDK finalizes after the real
@@ -82,8 +92,10 @@ func (*UnaryResponse) GoString() string             { return "Flowersec.UnaryRes
 func (*UnaryResponse) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 
 type ServiceDispatchConfig struct {
-	Streams     []StreamRegistration
-	StreamSlots uint32
+	dependencyPreparation *rpcDependencyPreparation
+	executionPreparation  *serviceExecutionPreparation
+	Streams               []StreamRegistration
+	StreamSlots           uint32
 	// Zero disables durable provider work. Nonzero charges one original
 	// Session worker stack; callbacks still use the root application executor.
 	DurableProviderRuntimeBytes          uint64
@@ -151,10 +163,12 @@ type ServiceDispatch struct {
 	runtimeBytes                          uint64
 	reservation, planBorrow               resourcev4.Reference
 	closed, advancing, admitting, cleaned bool
+	draining                              atomic.Bool
 	done                                  chan struct{}
 }
 
 type serviceInvocation struct {
+	publication               *ResponsePublication
 	durableRead               *serviceDurableRead
 	execution                 *serviceExecution
 	mu                        sync.Mutex
@@ -198,6 +212,14 @@ func ServiceDispatchCharge(c ServiceDispatchConfig) (resourcev4.Vector, error) {
 		n += codecBytes
 	}
 	for index, m := range c.Methods {
+		dependencyCharge, err := serviceDependenciesCharge(m.Dependencies)
+		if err != nil {
+			return resourcev4.Vector{}, err
+		}
+		streamCharge, err = streamCharge.Add(dependencyCharge)
+		if err != nil {
+			return resourcev4.Vector{}, err
+		}
 		if (m.Handler == nil) != m.Resume || m.Resume && m.WorkClass != ApplicationShort || m.Type == 0 || m.WorkClass > ApplicationResident || m.WorkClass == ApplicationResident && c.ResidentSlots == 0 {
 			return resourcev4.Vector{}, cryptov4.ErrConfiguration
 		}
@@ -229,14 +251,18 @@ func ServiceDispatchCharge(c ServiceDispatchConfig) (resourcev4.Vector, error) {
 	return charge, nil
 }
 func serviceInvocationCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
-	n := uint64(unsafe.Sizeof(serviceInvocation{})) + 2*uint64(unsafe.Sizeof(timev4.Deadline{})) + applicationContextBytes()
-	return (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: 3}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
+	n := responsePublicationBytes() + uint64(unsafe.Sizeof(serviceInvocation{})) + 2*uint64(unsafe.Sizeof(timev4.Deadline{})) + applicationContextBytes()
+	return (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: 6}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
 }
 
 // InstallServices is once-only and precedes Session adoption. This component
 // admits transient unary callbacks; execution methods require their original
 // execution registration owner before they can use the same dispatch service.
 func (p *SessionPlan) InstallServices(c ServiceDispatchConfig, n *rpcv4.Network, metadata resourcev4.Reference) (*ServiceDispatch, error) {
+	return p.installServices(c, n, metadata, resourcev4.Reference{}, resourcev4.Reference{})
+}
+
+func (p *SessionPlan) installServices(c ServiceDispatchConfig, n *rpcv4.Network, metadata, planBorrow, registryBorrow resourcev4.Reference) (*ServiceDispatch, error) {
 	if p == nil || n == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -246,7 +272,7 @@ func (p *SessionPlan) InstallServices(c ServiceDispatchConfig, n *rpcv4.Network,
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || p.claimed || p.services != nil || !p.config.Services {
+	if p.closed || p.claimed || p.registrationPreparing || p.services != nil || !p.config.Services {
 		return nil, cryptov4.ErrTransition
 	}
 	if err := metadata.CheckSameEnvironment(p.reservation); err != nil {
@@ -264,6 +290,15 @@ func (p *SessionPlan) InstallServices(c ServiceDispatchConfig, n *rpcv4.Network,
 	for _, m := range c.Methods {
 		if err := n.CheckUnaryBinding(m.Method, m.Namespace, m.Type); err != nil {
 			return nil, err
+		}
+		restart, err := n.UnaryPublicationRequired(m.Method, m.Namespace, m.Type)
+		if err != nil {
+			return nil, err
+		}
+		if restart {
+			if err := p.config.MaintenanceOwner.check(metadata); err != nil {
+				return nil, cryptov4.ErrConfiguration
+			}
 		}
 	}
 	if err := validateResumeRegistrations(p.config.Handlers, n, c); err != nil {
@@ -310,7 +345,12 @@ func (p *SessionPlan) InstallServices(c ServiceDispatchConfig, n *rpcv4.Network,
 			return nil, err
 		}
 	}
-	borrow, err := p.reservation.Borrow()
+	var borrow resourcev4.Reference
+	if planBorrow == (resourcev4.Reference{}) {
+		borrow, err = p.reservation.Borrow()
+	} else {
+		borrow, err = planBorrow.TakeBorrow()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +426,11 @@ func (p *SessionPlan) InstallServices(c ServiceDispatchConfig, n *rpcv4.Network,
 	}
 	d.consumer = consumer
 	if c.ExecutionRegistry != nil {
-		d.registryBorrow, err = c.ExecutionRegistry.Borrow(owned)
+		if registryBorrow == (resourcev4.Reference{}) {
+			d.registryBorrow, err = c.ExecutionRegistry.Borrow(owned)
+		} else {
+			d.registryBorrow, err = registryBorrow.TakeBorrow()
+		}
 		if err != nil {
 			consumer.Stop()
 			for _, r := range d.short {
@@ -410,6 +454,28 @@ func (p *SessionPlan) InstallServices(c ServiceDispatchConfig, n *rpcv4.Network,
 	}
 	if c.DurableProviderRuntimeBytes != 0 {
 		d.durableWake = make(chan struct{}, 1)
+	}
+	// Keep the original plan and dispatcher reservations while borrowing
+	// clients outside the plan gate. Client updates may visit this plan.
+	p.registrationPreparing = true
+	p.mu.Unlock()
+	err = d.installDependencies(c)
+	p.mu.Lock()
+	p.registrationPreparing = false
+	if err == nil && (p.closed || p.claimed || p.services != nil) {
+		err = cryptov4.ErrTransition
+	}
+	if err != nil {
+		d.closeDependencies()
+		d.closeExecutionFloors()
+		d.registryBorrow.Release()
+		consumer.Stop()
+		for _, r := range d.short {
+			r.Close()
+		}
+		owned.Release()
+		borrow.Release()
+		return nil, err
 	}
 	p.services = d
 	p.lease.mu.Lock()
@@ -454,8 +520,12 @@ func (l *ApplicationLease) SetServiceAccess(namespace string, typeID uint32, all
 }
 
 func (i *serviceInvocation) withAuthority(action func() error) error {
+	return i.withAuthoritySample(func(timev4.Sample) error { return action() })
+}
+
+func (i *serviceInvocation) withAuthoritySample(action func(timev4.Sample) error) error {
 	i.mu.Lock()
-	p, d, deadline, runDeadline, ctx := i.plan, i.dispatcher, i.deadline, i.runDeadline, i.ctx
+	p, d, ctx := i.plan, i.dispatcher, i.ctx
 	closed := i.closed
 	method := i.method.Method
 	i.mu.Unlock()
@@ -465,19 +535,11 @@ func (i *serviceInvocation) withAuthority(action func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := deadline.Check(); err != nil {
-		return err
-	}
-	if runDeadline != nil {
-		if err := runDeadline.Check(); err != nil {
-			return err
-		}
-	}
 	l, a, err := p.queryAuthorization()
 	if err != nil {
 		return err
 	}
-	return a.WithCurrentAuthorization(func() error {
+	return a.WithCurrentAuthorizationSample(func(sample timev4.Sample) error {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		if l.revoked || l.authorization != a {
@@ -490,18 +552,24 @@ func (i *serviceInvocation) withAuthority(action func() error) error {
 		}
 		for _, m := range d.methods {
 			if m.registration.Method == method && m.allowed {
+				i.mu.Lock()
+				deadline, runDeadline, closed := i.deadline, i.runDeadline, i.closed
+				i.mu.Unlock()
+				if closed || deadline == nil {
+					return rpcv4.ErrClosed
+				}
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				if err := deadline.Check(); err != nil {
+				if err := deadline.CheckAt(sample); err != nil {
 					return err
 				}
 				if runDeadline != nil {
-					if err := runDeadline.Check(); err != nil {
+					if err := runDeadline.CheckAt(sample); err != nil {
 						return err
 					}
 				}
-				return action()
+				return action(sample)
 			}
 		}
 		return ErrApplicationAuthorization
@@ -516,7 +584,7 @@ func (d *ServiceDispatch) Admit(receiver *rpcv4.Receiver, publisher *rpcv4.Publi
 		return cryptov4.ErrConfiguration
 	}
 	d.mu.Lock()
-	if d.closed || d.cleaned || !d.activated {
+	if d.closed || d.cleaned || !d.activated || d.draining.Load() {
 		d.mu.Unlock()
 		return cryptov4.ErrClosed
 	}
@@ -663,6 +731,9 @@ func (d *ServiceDispatch) Admit(receiver *rpcv4.Receiver, publisher *rpcv4.Publi
 		return refuse("deadline_exceeded", timev4.ErrExpired)
 	}
 	i.deadline = deadline
+	if err := registration.services.requiredReady(ctx); err != nil {
+		return refuse("service_unavailable", err)
+	}
 	charges, err := serviceCallCharges(d.runtimeBytes, header.Fields().ResponseLimitBytes, d.plan.executor.TaskCharge())
 	if err != nil {
 		return refuse("resource_exhausted", err)
@@ -705,6 +776,9 @@ func (d *ServiceDispatch) Admit(receiver *rpcv4.Receiver, publisher *rpcv4.Publi
 	i.result, err = publisher.NewAcceptedResult(ticket, verified, refs[2], refs[3], d.runtimeBytes)
 	if err != nil {
 		return refuse("resource_exhausted", err)
+	}
+	if err = i.prepareResponsePublication(); err != nil {
+		return refuse("service_unavailable", err)
 	}
 	i.writer, err = i.result.Writer()
 	if err != nil {
@@ -901,6 +975,7 @@ func (i *serviceInvocation) run(duration uint64) {
 		if recover() != nil || !returned {
 			failure = ErrCompletionCallbackExit
 		}
+		i.publication.endHandler()
 		if failure == nil {
 			failure = i.withAuthority(func() error {
 				i.mu.Lock()
@@ -929,12 +1004,8 @@ func (i *serviceInvocation) run(duration uint64) {
 		i.result.Close()
 		i.mu.Unlock()
 	}()
-	failure = i.withAuthority(func() error {
-		sample, err := i.deadline.Sample()
-		if err != nil {
-			return err
-		}
-		run, err := i.deadline.ForkAgeAt(sample, duration)
+	failure = i.withAuthoritySample(func(sample timev4.Sample) error {
+		run, err := i.deadline.ForkAgeUsingSample(sample, duration)
 		if err != nil {
 			return err
 		}
@@ -951,7 +1022,7 @@ func (i *serviceInvocation) run(duration uint64) {
 		return
 	}
 	i.plan.lease.mu.Lock()
-	request := UnaryRequest{Binding: i.plan.lease.binding, ApplicationContext: i.plan.lease.context, Input: i.borrow, OutputInterest: i.observation.View()}
+	request := UnaryRequest{publication: i.publication, Binding: i.plan.lease.binding, ApplicationContext: i.plan.lease.context, Input: i.borrow, OutputInterest: i.observation.View()}
 	i.plan.lease.mu.Unlock()
 	callCtx, exit, err := enterApplicationContext(i.ctx, i.plan.executor, ordinaryApplicationLane, i.method.WorkClass, i.reservation, nil)
 	if err != nil {
@@ -959,7 +1030,12 @@ func (i *serviceInvocation) run(duration uint64) {
 		return
 	}
 	defer exit()
+	if err := attachInvocationServices(callCtx, i.method.services); err != nil {
+		failure, returned = err, true
+		return
+	}
 	code, failure = i.method.Handler(callCtx, request, &i.response)
+	i.publication.endHandler()
 	returned = true
 }
 
@@ -971,6 +1047,7 @@ func (d *ServiceDispatch) rollback(index int, i *serviceInvocation) {
 	if i.result != nil {
 		i.result.Close()
 	}
+	i.publication.releasePhysical()
 	i.reservation.Release()
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1037,9 +1114,16 @@ func (d *ServiceDispatch) Advance() {
 		}
 		i.mu.Lock()
 		started := i.started
+		publication := i.publication
 		i.mu.Unlock()
 		if !started {
 			continue
+		}
+		if publication != nil {
+			publication.Progress()
+			if closed {
+				publication.publisherClosed()
+			}
 		}
 		if i.durableRead != nil {
 			d.advanceDurableRead(index, i, closed)
@@ -1086,6 +1170,11 @@ func (d *ServiceDispatch) Advance() {
 			i.mu.Unlock()
 			continue
 		}
+		i.publication.releasePhysical()
+		if !i.publication.cleanupComplete() {
+			i.mu.Unlock()
+			continue
+		}
 		i.reservation.Release()
 		i.reservation = resourcev4.Reference{}
 		class := i.method.WorkClass
@@ -1124,6 +1213,12 @@ func (d *ServiceDispatch) Close() {
 		return
 	}
 	d.closed = true
+	for _, method := range d.methods {
+		method.registration.services.close()
+	}
+	for _, method := range d.streamMethods {
+		method.registration.services.close()
+	}
 	for _, job := range d.streamSlots {
 		if job != nil {
 			job.cancel()
@@ -1156,6 +1251,7 @@ func (d *ServiceDispatch) cleanupLocked() {
 	d.network = nil
 	d.root = nil
 	d.clock = nil
+	d.closeDependencies()
 	clear(d.methods)
 	d.methods = nil
 	clear(d.streamMethods)

@@ -38,14 +38,14 @@ func TestProxyEventStreamOutlivesFiniteResponseLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
-	if err := writeProxyJSON(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "events", Method: "GET", Path: "/", Headers: []proxyHeader{{Name: "accept", Value: "text/event-stream"}}}); err != nil {
+	if err := writeProxyMetadata(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "events", Method: "GET", Path: "/", Headers: []proxyHeader{{Name: "accept", Value: "text/event-stream"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeProxyTerminator(client); err != nil {
 		t.Fatal(err)
 	}
 	var response proxyHTTPResponse
-	if err := readProxyJSON(client, 1<<20, &response); err != nil {
+	if err := readProxyMetadata(client, 1<<20, &response); err != nil {
 		t.Fatal(err)
 	}
 	if !response.OK {
@@ -100,14 +100,14 @@ func TestProxyEventCapacityPreservesFiniteRequestsAndReleasesCanceledObservers(t
 		if path == "/events" {
 			headers = []proxyHeader{{Name: "accept", Value: "text/event-stream"}}
 		}
-		if err := writeProxyJSON(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "capacity", Method: "GET", Path: path, Headers: headers}); err != nil {
+		if err := writeProxyMetadata(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "capacity", Method: "GET", Path: path, Headers: headers}); err != nil {
 			t.Fatal(err)
 		}
 		if err := writeProxyTerminator(client); err != nil {
 			t.Fatal(err)
 		}
 		var response proxyHTTPResponse
-		if err := readProxyJSON(client, 1<<20, &response); err != nil {
+		if err := readProxyMetadata(client, 1<<20, &response); err != nil {
 			t.Fatal(err)
 		}
 		return client, response

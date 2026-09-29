@@ -7,8 +7,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 func ioEngine(t *testing.T, direction protocolv4.Direction) *cryptov4.Engine {

@@ -26,12 +26,14 @@ public final class StreamHandlers: @unchecked Sendable {
   private struct Snapshot: Sendable {
     let maxConcurrentStreams: Int
     let handlers: [String: StreamHandler]
+    let metadataContracts: [String: RawStreamMetadataContract]
     let onError: (@Sendable (SessionError) -> Void)?
   }
 
   private let lock = NSLock()
   private let options: StreamHandlerOptions
   private var handlers: [String: StreamHandler] = [:]
+  private var metadataContracts: [String: RawStreamMetadataContract] = [:]
   private var snapshot: Snapshot?
 
   public init(options: StreamHandlerOptions = StreamHandlerOptions()) throws {
@@ -43,6 +45,7 @@ public final class StreamHandlers: @unchecked Sendable {
 
   public func handleStream(
     kind: String,
+    metadataContract: RawStreamMetadataContract? = nil,
     handler: @escaping StreamHandler
   ) throws {
     guard OpenPayloadV3.validKind(kind),
@@ -54,6 +57,7 @@ public final class StreamHandlers: @unchecked Sendable {
       guard snapshot == nil else { throw HandlerRegistrationError.frozen }
       guard handlers[kind] == nil else { throw HandlerRegistrationError.alreadyRegistered }
       handlers[kind] = handler
+      if let metadataContract { metadataContracts[kind] = metadataContract }
     }
   }
 
@@ -65,6 +69,7 @@ public final class StreamHandlers: @unchecked Sendable {
       let snapshot = Snapshot(
         maxConcurrentStreams: options.maxConcurrentStreams,
         handlers: handlers,
+        metadataContracts: metadataContracts,
         onError: options.onError
       )
       self.snapshot = snapshot
@@ -78,18 +83,28 @@ public final class StreamHandlers: @unchecked Sendable {
       do {
         while true {
           try Task.checkCancellation()
-          let incoming = try await session.acceptStream()
+          var incoming = try await session.acceptStream()
           guard let handler = frozen.handlers[incoming.kind] else {
             try? await incoming.stream.reset()
             frozen.onError?(.streamRejected)
             continue
           }
-          let started = await active.start {
+          if let contract = frozen.metadataContracts[incoming.kind] {
             do {
-              try await handler(incoming)
-              try await incoming.stream.closeWrite()
+              incoming = IncomingStream(kind: incoming.kind, metadata: try incoming.metadata.applyingRawMetadataContract(contract), stream: incoming.stream)
             } catch {
               try? await incoming.stream.reset()
+              frozen.onError?(.streamRejected)
+              continue
+            }
+          }
+          let acceptedIncoming = incoming
+          let started = await active.start {
+            do {
+              try await handler(acceptedIncoming)
+              try await acceptedIncoming.stream.closeWrite()
+            } catch {
+              try? await acceptedIncoming.stream.reset()
               frozen.onError?(.operationFailed)
             }
           }

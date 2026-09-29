@@ -43,7 +43,7 @@ type Root struct {
 	drainingWaiters            bool
 	mu                         sync.Mutex
 	profile                    [32]byte
-	limit, used                Vector
+	limit, used, peak          Vector
 	accounts                   []accountSlot
 	charges                    []chargeSlot
 	refs                       []referenceSlot
@@ -63,16 +63,17 @@ type accountSlot struct {
 }
 
 type chargeSlot struct {
-	resultOwner     bool
-	protected       *ProtectedReservation
-	protectedClosed bool
-	generation      uint64
-	value           Vector
-	accounts        [MaxAccountsPerCharge]Account
-	accountRefs     [MaxAccountsPerCharge]uint32
-	count           int
-	refs            uint32
-	active, sealed  bool
+	verificationEnvironment [16]byte
+	resultOwner             bool
+	protected               *ProtectedReservation
+	protectedClosed         bool
+	generation              uint64
+	value                   Vector
+	accounts                [MaxAccountsPerCharge]Account
+	accountRefs             [MaxAccountsPerCharge]uint32
+	count                   int
+	refs                    uint32
+	active, sealed          bool
 }
 
 // Handles may be copied, but copying does not acquire another reference.
@@ -116,7 +117,7 @@ func NewRoot(config Config) (*Root, error) {
 	if err != nil || backing > config.Limit[SDKBytes] {
 		return nil, ErrConfiguration
 	}
-	return &Root{profile: config.ProfileRevision, limit: config.Limit, used: Vector{SDKBytes: backing},
+	return &Root{profile: config.ProfileRevision, limit: config.Limit, used: Vector{SDKBytes: backing}, peak: Vector{SDKBytes: backing},
 		accounts: make([]accountSlot, int(config.AccountSlots)), charges: make([]chargeSlot, int(config.ReservationSlots)), refs: make([]referenceSlot, int(config.ReferenceSlots))}, nil
 }
 

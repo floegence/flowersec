@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpc"
 )
 
 var (

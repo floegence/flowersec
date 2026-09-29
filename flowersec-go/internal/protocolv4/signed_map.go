@@ -1,6 +1,7 @@
 package protocolv4
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
@@ -338,6 +339,26 @@ func (m *SignedMap) Field(name string) Value {
 		return Value{}
 	}
 	return m.document.Root().Named(m.codec.schema, name)
+}
+
+// MatchUnsignedProjection checks the stored original TxA projection against
+// this verified map using its preadmitted codec scratch. It does not sign,
+// repair or return a re-encoded credential.
+func (m *SignedMap) MatchUnsignedProjection(original []byte) error {
+	m.codec.mu.Lock()
+	defer m.codec.mu.Unlock()
+	if m.codec.current != m {
+		return CBORFailure("document_released")
+	}
+	projection, err := m.document.copyWithout(m.codec.encoded, m.codec.signatureID)
+	if err != nil {
+		return err
+	}
+	defer clear(m.codec.encoded)
+	if !bytes.Equal(original, projection) {
+		return CBORFailure("activation_parent_binding")
+	}
+	return nil
 }
 
 // Digest uses the registered projection of the original map. The only omitted

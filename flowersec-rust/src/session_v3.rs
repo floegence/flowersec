@@ -29,7 +29,11 @@ use tokio_util::task::TaskTracker;
 #[cfg(test)]
 use crate::transport_v3::CarrierKind;
 use crate::{
+    api_v4::{
+        ReadStreamStatus, ReaderCursor, StreamReadOwner, StreamReadPermit, WriteStagingOwner,
+    },
     crypto_v3::{Suite, generate_ephemeral_keypair},
+    environment_v4::ResourceAccount,
     protocol_v3::{
         AEAD_TAG_V3_SIZE, CipherSuiteV3, DirectionV3, EpochRootsV3, INNER_HEADER_V3_SIZE,
         InnerRecordTypeV3, MAX_DATA_V3_BYTES, MAX_UNRELIABLE_PLAINTEXT_V3_BYTES,
@@ -483,6 +487,8 @@ pub struct EncryptedSessionV3 {
     inbound_permits: Arc<Semaphore>,
     inbound_rpc_opened: AtomicBool,
     streams: StdMutex<HashMap<u64, Weak<EncryptedStreamV3>>>,
+    write_staging: Arc<WriteStagingOwner>,
+    resource_account: Option<ResourceAccount>,
     pings: Arc<PendingPingsV3>,
     rekeys: Mutex<HashMap<u64, PendingSessionRekeyV3>>,
     last_session_rekey_ack: Mutex<Option<[u8; 20]>>,
@@ -532,6 +538,9 @@ impl EncryptedSessionV3 {
     }
 
     fn begin_closing(&self) -> bool {
+        // Revoke new prepared writes and unaccepted suffixes using the same
+        // owner checked by their original application admission gate.
+        self.write_staging.close();
         self.lifecycle
             .compare_exchange(
                 SessionLifecycleV3::Open as u8,
@@ -599,6 +608,23 @@ async fn establish_session_v3_inner(
     carrier: Arc<dyn CarrierSessionV3>,
     config: SessionConfigV3,
 ) -> io::Result<Arc<SelfSession>> {
+    establish_session_v3_with_resources(carrier, config, None).await
+}
+
+async fn establish_session_v3_with_resources(
+    carrier: Arc<dyn CarrierSessionV3>,
+    config: SessionConfigV3,
+    resource_account: Option<ResourceAccount>,
+) -> io::Result<Arc<SelfSession>> {
+    if let Some(account) = &resource_account {
+        account.check().map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "session authorization unavailable",
+            )
+        })?;
+    }
+
     let locally_supported_features = if carrier
         .unreliable_message_max_size()
         .is_some_and(|maximum| maximum >= MAX_UNRELIABLE_WIRE_V3_BYTES)
@@ -690,6 +716,12 @@ async fn establish_session_v3_inner(
         inbound_permits: Arc::new(Semaphore::new(usize::from(local_max_inbound_streams))),
         inbound_rpc_opened: AtomicBool::new(false),
         streams: StdMutex::new(HashMap::new()),
+        write_staging: Arc::new(
+            resource_account
+                .clone()
+                .map_or_else(WriteStagingOwner::new, WriteStagingOwner::from_account),
+        ),
+        resource_account,
         pings: Arc::new(PendingPingsV3::default()),
         rekeys: Mutex::new(HashMap::new()),
         last_session_rekey_ack: Mutex::new(None),
@@ -735,9 +767,21 @@ async fn establish_session_v3_inner(
         .session
         .set(Arc::downgrade(&session))
         .expect("unreliable message session reference is initialized once");
-    session
-        .lifecycle
-        .store(SessionLifecycleV3::Open as u8, Ordering::Release);
+    let publish = || {
+        session
+            .lifecycle
+            .store(SessionLifecycleV3::Open as u8, Ordering::Release)
+    };
+    if let Some(account) = &session.resource_account {
+        account.with_security(publish).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "session authorization unavailable",
+            )
+        })?;
+    } else {
+        publish();
+    }
     let accept_session = session.clone();
     tokio::spawn(async move { accept_carrier_loop_v3(accept_session).await });
     let control_session = session.clone();
@@ -2874,6 +2918,9 @@ struct EncryptedStreamV3 {
     send_update_ack: Mutex<Option<(u64, u32)>>,
     send_update_changed: Notify,
     buffered_reads: BoundedReadQueueV3,
+    read_owner: Arc<StreamReadOwner>,
+    read_pump_active: AtomicBool,
+    read_pump_changed: Notify,
     send_lock: Mutex<()>,
     read_lock: Mutex<()>,
     local_fin: AtomicBool,
@@ -2916,25 +2963,57 @@ enum BufferedReadPopV3 {
 }
 
 impl BoundedReadQueueV3 {
-    fn pop(&self) -> BufferedReadPopV3 {
+    fn available(&self) -> bool {
+        let state = self.state.lock().expect("buffered read queue poisoned");
+        state.terminal || !state.items.is_empty()
+    }
+
+    fn pop(&self, permit: &StreamReadPermit) -> Result<BufferedReadPopV3, SessionError> {
         let mut state = self.state.lock().expect("buffered read queue poisoned");
         if state.terminal {
-            return BufferedReadPopV3::Terminal;
+            return Ok(BufferedReadPopV3::Terminal);
         }
-        let Some(item) = state.items.pop_front() else {
-            return BufferedReadPopV3::Empty;
+        let Some(front) = state.items.front() else {
+            return Ok(BufferedReadPopV3::Empty);
         };
-        let released_capacity = if let Some(data) = &item {
-            state.bytes -= data.len();
-            true
-        } else {
-            false
-        };
+        let released = front.as_ref().map_or(0, Bytes::len);
+        permit.advance(released)?;
+        let item = state.items.pop_front().expect("observed queue head");
+        state.bytes -= released;
         drop(state);
-        if released_capacity {
+        if released != 0 {
             self.capacity_changed.notify_one();
         }
-        BufferedReadPopV3::Item(item)
+        Ok(BufferedReadPopV3::Item(item))
+    }
+
+    fn transfer_cursor(&self, cursor: &ReaderCursor) -> Result<bool, SessionError> {
+        let mut state = self.state.lock().expect("buffered read queue poisoned");
+        if state.terminal {
+            return Err(SessionError::StreamReset);
+        }
+        let Some(front) = state.items.front_mut() else {
+            return Ok(false);
+        };
+        let Some(data) = front else {
+            cursor.terminate_input(ReadStreamStatus::Eof, None);
+            state.items.pop_front();
+            return Ok(true);
+        };
+        // Copy only the selected prefix into the pre-reserved cursor backing.
+        // Queue bytes, cursor progress and the absolute offset commit while the
+        // source queue is still locked; the suffix never leaves this queue.
+        let transferred = cursor.transfer_from(data)?;
+        *data = data.slice(transferred..);
+        if data.is_empty() {
+            state.items.pop_front();
+        }
+        state.bytes -= transferred;
+        drop(state);
+        if transferred != 0 {
+            self.capacity_changed.notify_one();
+        }
+        Ok(true)
     }
 
     fn try_push_data(&self, data: Bytes) -> BufferedReadPushV3 {
@@ -3216,6 +3295,12 @@ async fn open_stream_with_capacity_v3(
         send_update_ack: Mutex::new(None),
         send_update_changed: Notify::new(),
         buffered_reads: BoundedReadQueueV3::default(),
+        read_owner: Arc::new(session.resource_account.clone().map_or_else(
+            || StreamReadOwner::new(MAX_BUFFERED_STREAM_BYTES_V3),
+            |account| StreamReadOwner::from_account(MAX_BUFFERED_STREAM_BYTES_V3, account),
+        )),
+        read_pump_active: AtomicBool::new(false),
+        read_pump_changed: Notify::new(),
         send_lock: Mutex::new(()),
         read_lock: Mutex::new(()),
         local_fin: AtomicBool::new(false),
@@ -3313,14 +3398,85 @@ impl ByteStream for StreamHandleV3 {
     fn terminal_error(&self) -> Option<SessionError> {
         self.0.terminal_error()
     }
-    async fn read(&self) -> Result<Option<Bytes>, SessionError> {
-        match self.0.read_next().await {
-            Ok(payload) => Ok(payload),
-            Err(error) => {
-                self.0.record_terminal(&error);
-                self.0.begin_reset();
-                Err(SessionError::from_io(&error))
+    fn read_state(&self) -> (ReadStreamStatus, Option<crate::api_v4::ReadError>) {
+        let state = self
+            .0
+            .buffered_reads
+            .state
+            .lock()
+            .expect("buffered read queue poisoned");
+        if state.terminal || self.0.terminal_error().is_some() {
+            return (ReadStreamStatus::Aborted, None);
+        }
+        let eof = state.bytes == 0
+            && (self.0.remote_fin.load(Ordering::Acquire)
+                || state.items.front().is_some_and(Option::is_none));
+        (
+            if eof {
+                ReadStreamStatus::Eof
+            } else {
+                ReadStreamStatus::Open
+            },
+            None,
+        )
+    }
+    fn read_owner(&self) -> Option<Arc<StreamReadOwner>> {
+        Some(self.0.read_owner.clone())
+    }
+    fn read_delivery_owner(&self) -> Option<Arc<crate::api_v4::ReadDeliveryAuthorization>> {
+        Some(self.0.read_owner.delivery_authorization())
+    }
+    async fn read_cursor_piece(&self, cursor: &ReaderCursor) -> Result<(), SessionError> {
+        if !cursor.belongs_to(&self.0.read_owner) {
+            return Err(SessionError::OperationFailed);
+        }
+        loop {
+            if let Some(error) = self.0.terminal_error() {
+                return Err(error);
             }
+            match self.0.buffered_reads.transfer_cursor(cursor) {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(error) => {
+                    self.0.record_terminal(&io::Error::from(error));
+                    self.0.begin_reset();
+                    return Err(error);
+                }
+            }
+            if self.0.remote_fin.load(Ordering::Acquire) {
+                cursor.terminate_input(ReadStreamStatus::Eof, None);
+                return Ok(());
+            }
+            self.0
+                .ensure_read_queue()
+                .await
+                .map_err(|error| SessionError::from_io(&error))?;
+        }
+    }
+    async fn read(&self) -> Result<Option<Bytes>, SessionError> {
+        let permit = self.0.read_owner.acquire()?;
+        loop {
+            if let Some(error) = self.0.terminal_error() {
+                return Err(error);
+            }
+            match self.0.buffered_reads.pop(&permit) {
+                Ok(BufferedReadPopV3::Item(item)) => return Ok(item),
+                Ok(BufferedReadPopV3::Terminal) => {
+                    return Err(self.0.terminal_error().unwrap_or(SessionError::StreamReset));
+                }
+                Ok(BufferedReadPopV3::Empty) => {}
+                Err(error) => {
+                    self.0.begin_reset();
+                    return Err(error);
+                }
+            }
+            if self.0.remote_fin.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            self.0
+                .ensure_read_queue()
+                .await
+                .map_err(|error| SessionError::from_io(&error))?;
         }
     }
     async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
@@ -3332,6 +3488,43 @@ impl ByteStream for StreamHandleV3 {
                 Err(SessionError::from_io(&error))
             }
         }
+    }
+    fn write_staging_owner(&self) -> Option<Arc<WriteStagingOwner>> {
+        self.0
+            .session
+            .upgrade()
+            .map(|session| session.write_staging.clone())
+    }
+    async fn write_prepared(
+        &self,
+        payload: Bytes,
+        admission: &crate::api_v4::WriteRequestAdmission,
+    ) -> Result<(), SessionError> {
+        // Waiting for the stream's original writer does not accept any bytes.
+        let _lock = tokio::select! {
+            biased;
+            _ = admission.canceled() => return Err(SessionError::Canceled),
+            guard = self.0.send_lock.lock() => guard,
+        };
+        for chunk in payload.chunks(MAX_DATA_V3_BYTES) {
+            if self.0.local_fin.load(Ordering::Acquire) || self.0.reset.load(Ordering::Acquire) {
+                return Err(SessionError::StreamReset);
+            }
+            // The request owns immutable input and this ordered native writer.
+            // Cancel and acceptance linearize in its gate. An accepted record
+            // keeps publication responsibility even if Cancel arrives afterward.
+            admission.accept(chunk.len())?;
+            if let Err(error) = self
+                .0
+                .write_record_locked_cancelable(InnerRecordTypeV3::Data, chunk)
+                .await
+            {
+                self.0.record_terminal(&error);
+                self.0.begin_reset();
+                return Err(SessionError::from_io(&error));
+            }
+        }
+        Ok(())
     }
     async fn close_write(&self) -> Result<(), SessionError> {
         match self.0.close_write_inner().await {
@@ -3442,16 +3635,30 @@ impl EncryptedStreamV3 {
         Ok(())
     }
     async fn reset_inner(self: &Arc<Self>) -> io::Result<()> {
-        self.begin_reset();
+        let first = self
+            .read_owner
+            .delivery_authorization()
+            .revoke_with(|| self.mark_reset());
+        if first {
+            self.start_reset_cleanup();
+        }
         self.wait_reset_cleanup().await
     }
-    fn begin_reset(self: &Arc<Self>) {
+    fn mark_reset(&self) -> bool {
         let _ = self.terminal.set(SessionError::StreamReset);
-        if !self.reset.swap(true, Ordering::AcqRel) {
-            self.application_reset_changed.notify_waiters();
-            let stream = self.clone();
-            tokio::spawn(async move { stream.finish_reset().await });
+        !self.reset.swap(true, Ordering::AcqRel)
+    }
+    fn begin_reset(self: &Arc<Self>) {
+        // An I/O failure is not an authorization revocation for an already
+        // complete private candidate. Explicit Reset uses the handoff gate above.
+        if self.mark_reset() {
+            self.start_reset_cleanup();
         }
+    }
+    fn start_reset_cleanup(self: &Arc<Self>) {
+        self.application_reset_changed.notify_waiters();
+        let stream = self.clone();
+        tokio::spawn(async move { stream.finish_reset().await });
     }
     async fn wait_reset_cleanup(&self) -> io::Result<()> {
         loop {
@@ -3504,6 +3711,15 @@ impl EncryptedStreamV3 {
                 .reset_cleanup_error
                 .lock()
                 .expect("reset cleanup error lock poisoned") = Some(error.kind());
+        }
+        loop {
+            let changed = self.read_pump_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if !self.read_pump_active.load(Ordering::Acquire) {
+                break;
+            }
+            changed.await;
         }
         self.reset_cleanup_done.store(true, Ordering::Release);
         self.reset_cleanup_changed.notify_waiters();
@@ -3567,7 +3783,38 @@ impl EncryptedStreamV3 {
         )
         .await
     }
-    async fn read_next(&self) -> io::Result<Option<Bytes>> {
+    async fn ensure_read_queue(self: &Arc<Self>) -> io::Result<()> {
+        loop {
+            let changed = self.read_pump_changed.notified();
+            let published = self.buffered_reads.state_changed.notified();
+            tokio::pin!(changed, published);
+            changed.as_mut().enable();
+            published.as_mut().enable();
+            if let Some(error) = self.terminal_error() {
+                return Err(error.into());
+            }
+            if self.buffered_reads.available() || self.remote_fin.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            if !self.read_pump_active.swap(true, Ordering::AcqRel) {
+                let stream = self.clone();
+                // One original-stream task retains partial carrier record state.
+                // It publishes only into the existing bounded receive queue;
+                // dropping a public read wait cannot drop the source read.
+                tokio::spawn(async move {
+                    if let Err(error) = stream.fill_read_queue().await {
+                        stream.record_terminal(&error);
+                        stream.begin_reset();
+                    }
+                    stream.read_pump_active.store(false, Ordering::Release);
+                    stream.read_pump_changed.notify_waiters();
+                });
+            }
+            tokio::select! { _ = &mut changed => {}, _ = &mut published => {} }
+        }
+    }
+
+    async fn fill_read_queue(&self) -> io::Result<()> {
         let session = self.session.upgrade().ok_or_else(closed)?;
         loop {
             let state_changed = self.buffered_reads.state_changed.notified();
@@ -3585,13 +3832,11 @@ impl EncryptedStreamV3 {
             if session.canceled.is_cancelled() {
                 return Err(terminal_error_v3(&session));
             }
-            match self.buffered_reads.pop() {
-                BufferedReadPopV3::Item(item) => return Ok(item),
-                BufferedReadPopV3::Terminal => return Err(terminal_error_v3(&session)),
-                BufferedReadPopV3::Empty => {}
+            if self.buffered_reads.available() {
+                return Ok(());
             }
             if self.remote_fin.load(Ordering::Acquire) {
-                return Ok(None);
+                return Ok(());
             }
             let _read_lock = tokio::select! {
                 biased;
@@ -3612,13 +3857,11 @@ impl EncryptedStreamV3 {
             if session.canceled.is_cancelled() {
                 return Err(terminal_error_v3(&session));
             }
-            match self.buffered_reads.pop() {
-                BufferedReadPopV3::Item(item) => return Ok(item),
-                BufferedReadPopV3::Terminal => return Err(terminal_error_v3(&session)),
-                BufferedReadPopV3::Empty => {}
+            if self.buffered_reads.available() {
+                return Ok(());
             }
             if self.remote_fin.load(Ordering::Acquire) {
-                return Ok(None);
+                return Ok(());
             }
             let (kind, payload, epoch, sequence) = tokio::select! {
                 biased;
@@ -3636,10 +3879,17 @@ impl EncryptedStreamV3 {
                 self.accept_normal_header(epoch, sequence)?;
             }
             match kind {
-                InnerRecordTypeV3::Data => return Ok(Some(Bytes::from(payload))),
+                InnerRecordTypeV3::Data => {
+                    self.buffer_read_data(&session, Bytes::from(payload))
+                        .await?;
+                    return Ok(());
+                }
                 InnerRecordTypeV3::Fin => {
                     self.accept_remote_fin(&session).await?;
-                    return Ok(None);
+                    if !self.buffered_reads.push_fin() {
+                        return Err(closed());
+                    }
+                    return Ok(());
                 }
                 InnerRecordTypeV3::StreamKeyUpdate => {
                     self.handle_stream_update_locked(&session, &payload).await?;
@@ -4235,6 +4485,12 @@ async fn accept_one_stream_v3(
         send_update_ack: Mutex::new(None),
         send_update_changed: Notify::new(),
         buffered_reads: BoundedReadQueueV3::default(),
+        read_owner: Arc::new(session.resource_account.clone().map_or_else(
+            || StreamReadOwner::new(MAX_BUFFERED_STREAM_BYTES_V3),
+            |account| StreamReadOwner::from_account(MAX_BUFFERED_STREAM_BYTES_V3, account),
+        )),
+        read_pump_active: AtomicBool::new(false),
+        read_pump_changed: Notify::new(),
         send_lock: Mutex::new(()),
         read_lock: Mutex::new(()),
         local_fin: AtomicBool::new(false),
@@ -5154,6 +5410,7 @@ mod tests {
     const STREAM_FAULT_TRUNCATE_OPEN: u8 = 6;
     const STREAM_FAULT_FAIL_WRITE: u8 = 7;
     const STREAM_FAULT_BLOCK_WRITE: u8 = 8;
+    const STREAM_FAULT_SPLIT_HEADER: u8 = 9;
 
     struct ObservedCarrierSessionV3 {
         inner: Arc<dyn CarrierSessionV3>,
@@ -5307,6 +5564,23 @@ mod tests {
                     io::ErrorKind::BrokenPipe,
                     "injected control write failure",
                 ));
+            }
+            if self
+                .fault
+                .compare_exchange(
+                    STREAM_FAULT_SPLIT_HEADER,
+                    STREAM_FAULT_NONE,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                // Expose part of one carrier record before blocking its tail.
+                let head = self.inner.write(&payload[..1]).await?;
+                self.close_entered.add_permits(1);
+                self.close_release.acquire().await.unwrap().forget();
+                let tail = self.inner.write(&payload[head..]).await?;
+                return Ok(head + tail);
             }
             if self
                 .fault
@@ -5595,6 +5869,169 @@ mod tests {
         assert!(server.inbound_rpc_opened.load(Ordering::Acquire));
         stream.reset().await.expect("reset RPC stream");
         let _ = tokio::join!(client.close(), server.close());
+    }
+
+    #[tokio::test]
+    async fn read_owner_native_prepared_write_uses_the_send_gate_and_all_records() {
+        use crate::api_v4::{ReaderCursorOptions, WriteOperation};
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let (client, server, streams) =
+                observed_inner_session_pair_v3(stream_lifecycle_config(SessionRole::Client)).await;
+            let public_client: Arc<dyn Session> = client.clone();
+            let public_server: Arc<dyn Session> = server.clone();
+            let (outgoing, incoming, carrier) =
+                open_observed_stream_v3(&public_client, &public_server, &streams).await;
+            let native = client
+                .streams
+                .lock()
+                .unwrap()
+                .get(&outgoing.internal_test_id())
+                .unwrap()
+                .upgrade()
+                .unwrap();
+            let outgoing: Arc<dyn ByteStream> = Arc::from(outgoing);
+            let held = native.send_lock.lock().await;
+            let before = carrier.write_calls.load(Ordering::Acquire);
+            let canceled = WriteOperation::prepare(outgoing.clone(), Bytes::from_static(b"unsent"));
+            canceled.start().await.unwrap();
+            tokio::task::yield_now().await;
+            canceled.cancel();
+            drop(held);
+            let result = canceled.wait().await.unwrap();
+            assert_eq!(result.accepted_bytes, 0);
+            assert_eq!(result.terminal_reason.as_deref(), Some("canceled"));
+            assert_eq!(carrier.write_calls.load(Ordering::Acquire), before);
+
+            let payload = Bytes::from(vec![0x5a; MAX_DATA_V3_BYTES * 2]);
+            let incoming: Arc<dyn ByteStream> = Arc::from(incoming.into_stream());
+            let cursor = ReaderCursor::new(
+                incoming,
+                ReaderCursorOptions {
+                    exact: Some(payload.len() as u64),
+                    delimiter: None,
+                    max_bytes: 0,
+                },
+            )
+            .unwrap();
+            let operation = WriteOperation::prepare(outgoing, payload.clone());
+            operation.start().await.unwrap();
+            let (written, read) = tokio::join!(operation.wait(), cursor.read_exactly());
+            let written = written.unwrap();
+            assert_eq!(written.terminal_reason.as_deref(), Some("complete"));
+            assert_eq!(written.accepted_bytes, payload.len() as u64);
+            assert_eq!(read.unwrap().data, payload);
+            let _ = tokio::join!(client.close(), server.close());
+        })
+        .await
+        .expect("native prepared write timed out");
+    }
+
+    #[tokio::test]
+    async fn read_owner_native_cursor_preserves_suffix_and_shared_absolute_offset() {
+        use crate::api_v4::{ReadMethodFailureReason, ReaderCursorOptions};
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (client, server, streams, _) = observed_session_pair_v3().await;
+            let (outgoing, incoming, _) = open_observed_stream_v3(&client, &server, &streams).await;
+            let incoming: Arc<dyn ByteStream> = Arc::from(incoming.into_stream());
+            outgoing
+                .write(Bytes::from_static(b"ab\nTAIL"))
+                .await
+                .unwrap();
+            let cursor = ReaderCursor::new(
+                incoming.clone(),
+                ReaderCursorOptions {
+                    exact: None,
+                    delimiter: Some(Bytes::from_static(b"\n")),
+                    max_bytes: 5,
+                },
+            )
+            .unwrap();
+            assert_eq!(incoming.read().await, Err(SessionError::ReadInProgress));
+            let first = cursor.read_line().await.unwrap();
+            assert_eq!(first.data, b"ab\n"[..]);
+            assert_eq!(first.progress.offset, 3);
+            assert_eq!(
+                cursor.read_line().await.unwrap_err().reason,
+                ReadMethodFailureReason::AlreadyDelivered
+            );
+            let next = ReaderCursor::new(
+                incoming.clone(),
+                ReaderCursorOptions {
+                    exact: Some(2),
+                    delimiter: None,
+                    max_bytes: 0,
+                },
+            )
+            .unwrap()
+            .read_exactly()
+            .await
+            .unwrap();
+            assert_eq!(next.data, b"TA"[..]);
+            assert_eq!(next.progress.offset, 5);
+            assert_eq!(incoming.read().await.unwrap().unwrap(), b"IL"[..]);
+            let empty = ReaderCursor::new(
+                incoming.clone(),
+                ReaderCursorOptions {
+                    exact: Some(0),
+                    delimiter: None,
+                    max_bytes: 0,
+                },
+            )
+            .unwrap()
+            .read_exactly()
+            .await
+            .unwrap();
+            assert_eq!(empty.progress.offset, 7);
+            assert!(empty.data.is_empty());
+            let _ = tokio::join!(outgoing.reset(), incoming.reset());
+            let _ = tokio::join!(client.close(), server.close());
+        })
+        .await
+        .expect("native read owner test timed out");
+    }
+
+    #[tokio::test]
+    async fn read_owner_native_canceled_wait_retains_partial_carrier_record() {
+        use crate::api_v4::ReaderCursorOptions;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (client, server, streams, _) = observed_session_pair_v3().await;
+            let (outgoing, incoming, carrier) =
+                open_observed_stream_v3(&client, &server, &streams).await;
+            let incoming: Arc<dyn ByteStream> = Arc::from(incoming.into_stream());
+            let outgoing: Arc<dyn ByteStream> = Arc::from(outgoing);
+            carrier
+                .fault
+                .store(STREAM_FAULT_SPLIT_HEADER, Ordering::Release);
+            let sender = outgoing.clone();
+            let writing =
+                tokio::spawn(async move { sender.write(Bytes::from_static(b"abcTAIL")).await });
+            carrier.close_entered.acquire().await.unwrap().forget();
+            let cursor = ReaderCursor::new(
+                incoming.clone(),
+                ReaderCursorOptions {
+                    exact: Some(3),
+                    delimiter: None,
+                    max_bytes: 0,
+                },
+            )
+            .unwrap();
+            let mut wait = Box::pin(cursor.read_exactly());
+            assert!(futures_util::poll!(wait.as_mut()).is_pending());
+            // Let the one stream pump consume the exposed header prefix.
+            tokio::task::yield_now().await;
+            drop(wait);
+            assert_eq!(incoming.read().await, Err(SessionError::ReadInProgress));
+            let prefix = cursor.take_prefix().await.unwrap();
+            assert!(prefix.data.is_empty());
+            assert_eq!(prefix.progress.offset, 0);
+            carrier.close_release.add_permits(1);
+            assert_eq!(writing.await.unwrap().unwrap(), 7);
+            assert_eq!(incoming.read().await.unwrap().unwrap(), b"abcTAIL"[..]);
+            let _ = tokio::join!(outgoing.reset(), incoming.reset());
+            let _ = tokio::join!(client.close(), server.close());
+        })
+        .await
+        .expect("partial record continuation test timed out");
     }
 
     #[tokio::test]

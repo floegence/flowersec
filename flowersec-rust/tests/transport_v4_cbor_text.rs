@@ -141,7 +141,7 @@ fn shared_wire_map_corpus_except_external_composition() {
         }
         assert_eq!(input, bytes(vector));
     }
-    assert_eq!(counts, [337, 826, 2]);
+    assert_eq!(counts, [348, 831, 2]);
     println!(
         "{} positives, {} negatives, {} external-composition cases",
         counts[0], counts[1], counts[2]

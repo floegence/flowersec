@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // ActivationTrustBinding identifies one immutable independent-trust entry and
@@ -132,6 +132,12 @@ func (r *NamespaceRules) BindActivationAuthority(binding *ActivationBinding, art
 		return nil, err
 	}
 	issuer, _ := entry.Named("ConnectionActivationDelegation", "issuer_key_id").ByteString()
+	// The activation delegation has its own revocation identity.  Reusing the
+	// parent Artifact issuer would merge independent certificate and connection
+	// revocation histories and defeats the deferred schema constraint.
+	if len(issuer) != 16 || bytes.Equal(issuer, binding.issuer[:]) {
+		return nil, CBORFailure("activation_delegation_authority")
+	}
 	a.trust = ActivationTrustBinding{Tenant: r.tenant, AuthorityNamespace: r.authority, SigningKeyID: signingKey, SpendAuthority: spend, WinnerAuthority: winner, CapacityDigest: r.capacityDigest, DelegationDigest: delegationDigest, Key: binding.proofKey, ParentIssuer: binding.issuer, Issuer: [16]byte(issuer), Generation: generation}
 	a.delegation, a.authority = bytes.Clone(d.Bytes()), bytes.Clone(o.Bytes())
 	return a, nil

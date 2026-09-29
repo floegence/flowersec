@@ -7,9 +7,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var ErrStreamInputDelivered = errors.New("sessionv4: stream item already entered application decoding")
@@ -19,15 +19,21 @@ var ErrStreamDecodeFailed = errors.New("sessionv4: stream item decode failed")
 // position before OPEN. The same position is reused only after actual callback
 // exit. Reading status and receiving a header never invoke this callback.
 type StreamResultConfig struct {
+	dependencyFloor       *resourcev4.BorrowPool
+	resumeResult          bool
+	completionFloor       *CompletionFloor
 	Executor              *ApplicationExecutor
 	Decode                UnaryResultDecoder
 	CompletionReservation resourcev4.Reference
 }
 
 type streamResult struct {
+	dependencyFloor                    *resourcev4.BorrowPool
 	executor                           *ApplicationExecutor
 	decode                             UnaryResultDecoder
 	floor                              *CompletionFloor
+	floorUse                           *completionFloorUse
+	borrowedFloor                      bool
 	future                             *CompletionReservation
 	task                               *CompletionTask
 	dependencies                       applicationDependencies
@@ -52,21 +58,38 @@ func (m *StreamMessages) prepareResultReader(config *StreamResultConfig) error {
 	if m.server || config.Executor == nil || config.Decode == nil {
 		return cryptov4.ErrConfiguration
 	}
-	floor, err := config.Executor.NewCompletionFloor(config.CompletionReservation, m.reservation)
+	floor := config.completionFloor
+	borrowed := floor != nil
+	var err error
+	if borrowed {
+		if floor.executor.Load() != config.Executor || config.CompletionReservation != (resourcev4.Reference{}) {
+			return cryptov4.ErrConfiguration
+		}
+	} else {
+		floor, err = config.Executor.NewCompletionFloor(config.CompletionReservation, m.reservation)
+	}
 	if err != nil {
 		return err
 	}
-	future, err := floor.Checkout()
+	use, err := floor.borrowStream(m.reservation)
+	var future *CompletionReservation
 	if err == nil {
-		err = future.rebindResultBacking(m.reservation)
+		future, err = use.checkout()
 	}
 	if err != nil {
 		future.Close()
-		floor.Close()
+		use.close()
+		if !borrowed {
+			floor.Close()
+		}
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m.result = &streamResult{executor: config.Executor, decode: config.Decode, floor: floor, future: future, context: ctx, cancel: cancel}
+	decode := config.Decode
+	if config.resumeResult {
+		decode = m.decodeResumeResult
+	}
+	m.result = &streamResult{executor: config.Executor, decode: decode, floor: floor, floorUse: use, borrowedFloor: borrowed, future: future, context: ctx, cancel: cancel, dependencyFloor: config.dependencyFloor}
 	return nil
 }
 
@@ -97,6 +120,11 @@ func (m *StreamMessages) checkReadDependency(ctx context.Context) error {
 // after an interrupted wait join that same invocation; only one receives its
 // value. The current cursor never advances while that item remains unconsumed.
 func (m *StreamMessages) ReadNext(ctx context.Context) (any, StreamMessageStatus, error) {
+	if m != nil && m.resumeExchange && !m.server {
+		if status, err := m.WaitStatus(ctx); err != nil {
+			return nil, status, err
+		}
+	}
 	return m.readNext(ctx, false)
 }
 
@@ -107,7 +135,13 @@ func (m *StreamMessages) readNext(ctx context.Context, iterator bool) (any, Stre
 	if err := m.checkReadDependency(ctx); err != nil {
 		return nil, m.Status(), err
 	}
-	dependencies, err := captureApplicationDependencies(ctx)
+	m.mu.Lock()
+	var referenceFloor *resourcev4.BorrowPool
+	if d := m.result; d != nil {
+		referenceFloor = d.dependencyFloor
+	}
+	m.mu.Unlock()
+	dependencies, err := captureApplicationDependenciesWithFloor(ctx, referenceFloor)
 	if err != nil {
 		return nil, m.Status(), err
 	}
@@ -118,6 +152,11 @@ func (m *StreamMessages) readNext(ctx context.Context, iterator bool) (any, Stre
 		s := m.statusLocked()
 		m.mu.Unlock()
 		return nil, s, ErrStreamResultDelivered
+	}
+	if m.resumeExchange && !m.server && (m.closed || m.abandoned) {
+		s, err := m.statusLocked(), m.closedErrorLocked()
+		m.mu.Unlock()
+		return nil, s, err
 	}
 	if m.server || d == nil {
 		m.mu.Unlock()
@@ -155,8 +194,9 @@ func (m *StreamMessages) readNext(ctx context.Context, iterator bool) (any, Stre
 		}
 		if d.abandoned {
 			s := m.statusLocked()
+			err := m.closedErrorLocked()
 			m.mu.Unlock()
-			return nil, s, cryptov4.ErrClosed
+			return nil, s, err
 		}
 		if d.decoded && !d.consumed {
 			value, failure, h := d.value, d.failure, m.candidate
@@ -413,7 +453,9 @@ func (m *StreamMessages) abandonStreamResultLocked() {
 		d.cancel()
 		d.value = nil
 		d.future.Close()
-		d.floor.Close()
+		if !d.borrowedFloor {
+			d.floor.Close()
+		}
 	}
 }
 
@@ -424,9 +466,13 @@ func (m *StreamMessages) streamResultPendingLocked() bool {
 
 func (m *StreamMessages) cleanupStreamResultLocked() {
 	if d := m.result; d != nil {
+		m.resultInputDelivered, m.resultDecoded = d.inputDelivered, d.decoded
 		d.cancel()
 		d.future.Close()
-		d.floor.Close()
+		d.floorUse.close()
+		if !d.borrowedFloor {
+			d.floor.Close()
+		}
 		d.dependencies.release()
 		m.result = nil
 	}
@@ -437,12 +483,8 @@ func (m *StreamMessages) ensureStreamFutureLocked() error {
 	if d == nil || d.future != nil {
 		return nil
 	}
-	future, err := d.floor.Checkout()
+	future, err := d.floorUse.checkout()
 	if err != nil {
-		return err
-	}
-	if err := future.rebindResultBacking(m.reservation); err != nil {
-		future.Close()
 		return err
 	}
 	d.future = future
@@ -491,7 +533,11 @@ func (m *StreamMessages) prepareEncodedRead(ctx context.Context) error {
 // can take an accepted Stream. No dependency failure may be discovered only
 // after the initial request has escaped into transport.
 func (m *StreamMessages) prepareStartDependencies(ctx context.Context, prepared *applicationDependencies) error {
-	dependencies, err := captureApplicationDependencies(ctx)
+	var referenceFloor *resourcev4.BorrowPool
+	if m.result != nil {
+		referenceFloor = m.result.dependencyFloor
+	}
+	dependencies, err := captureApplicationDependenciesWithFloor(ctx, referenceFloor)
 	if err != nil {
 		return err
 	}

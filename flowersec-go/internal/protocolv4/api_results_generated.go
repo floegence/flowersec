@@ -1,7 +1,7 @@
 // Generated draft native API types; DO NOT EDIT. Not a qualified SDK runtime.
 package protocolv4
 
-const APIResultsSchemaSHA256 = "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959"
+const APIResultsSchemaSHA256 = "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af"
 
 type V4ApplicationProfile string
 
@@ -276,6 +276,186 @@ type V4ResponsePublicationStatus struct {
 	Cause *V4ResponsePublicationCause
 }
 
+type V4TopUpWireResult string
+
+const V4TopUpWireResultSuccess V4TopUpWireResult = "success"
+const V4TopUpWireResultReplay V4TopUpWireResult = "replay"
+const V4TopUpWireResultSourceExhausted V4TopUpWireResult = "source_exhausted"
+const V4TopUpWireResultSourceUnavailable V4TopUpWireResult = "source_unavailable"
+const V4TopUpWireResultSourceContractInvalid V4TopUpWireResult = "source_contract_invalid"
+const V4TopUpWireResultSourceStateUnknown V4TopUpWireResult = "source_state_unknown"
+const V4TopUpWireResultOperationConflict V4TopUpWireResult = "operation_conflict"
+const V4TopUpWireResultStaleGeneration V4TopUpWireResult = "stale_generation"
+const V4TopUpWireResultFutureGeneration V4TopUpWireResult = "future_generation"
+const V4TopUpWireResultStaleOperation V4TopUpWireResult = "stale_operation"
+const V4TopUpWireResultFutureOperation V4TopUpWireResult = "future_operation"
+const V4TopUpWireResultSequenceGap V4TopUpWireResult = "sequence_gap"
+const V4TopUpWireResultConfigurationCapacity V4TopUpWireResult = "configuration_capacity"
+const V4TopUpWireResultCapacityExhausted V4TopUpWireResult = "capacity_exhausted"
+const V4TopUpWireResultRelinkRequired V4TopUpWireResult = "relink_required"
+const V4TopUpWireResultSpentUnknown V4TopUpWireResult = "spent_unknown"
+const V4TopUpWireResultTopUpRequestExpired V4TopUpWireResult = "top_up_request_expired"
+const V4TopUpWireResultSourceResetRequired V4TopUpWireResult = "source_reset_required"
+const V4TopUpWireResultPermissionDenied V4TopUpWireResult = "permission_denied"
+
+type V4TopUpErrorCode string
+
+const V4TopUpErrorCodeSourceExhausted V4TopUpErrorCode = "source_exhausted"
+const V4TopUpErrorCodeSourceUnavailable V4TopUpErrorCode = "source_unavailable"
+const V4TopUpErrorCodeSourceContractInvalid V4TopUpErrorCode = "source_contract_invalid"
+const V4TopUpErrorCodeSourceStateUnknown V4TopUpErrorCode = "source_state_unknown"
+const V4TopUpErrorCodeOperationConflict V4TopUpErrorCode = "operation_conflict"
+const V4TopUpErrorCodeStaleGeneration V4TopUpErrorCode = "stale_generation"
+const V4TopUpErrorCodeFutureGeneration V4TopUpErrorCode = "future_generation"
+const V4TopUpErrorCodeStaleOperation V4TopUpErrorCode = "stale_operation"
+const V4TopUpErrorCodeFutureOperation V4TopUpErrorCode = "future_operation"
+const V4TopUpErrorCodeSequenceGap V4TopUpErrorCode = "sequence_gap"
+const V4TopUpErrorCodeConfigurationCapacity V4TopUpErrorCode = "configuration_capacity"
+const V4TopUpErrorCodeCapacityExhausted V4TopUpErrorCode = "capacity_exhausted"
+const V4TopUpErrorCodeRelinkRequired V4TopUpErrorCode = "relink_required"
+const V4TopUpErrorCodeSpentUnknown V4TopUpErrorCode = "spent_unknown"
+const V4TopUpErrorCodeTopUpRequestExpired V4TopUpErrorCode = "top_up_request_expired"
+const V4TopUpErrorCodeSourceResetRequired V4TopUpErrorCode = "source_reset_required"
+const V4TopUpErrorCodePermissionDenied V4TopUpErrorCode = "permission_denied"
+
+type V4TopUpErrorScope string
+
+const V4TopUpErrorScopeSource V4TopUpErrorScope = "source"
+const V4TopUpErrorScopeOperation V4TopUpErrorScope = "operation"
+const V4TopUpErrorScopeRequest V4TopUpErrorScope = "request"
+
+type V4TopUpWriteAction string
+
+const V4TopUpWriteActionNone V4TopUpWriteAction = "none"
+const V4TopUpWriteActionTerminal V4TopUpWriteAction = "terminal"
+
+type V4TopUpError struct {
+	Code        V4TopUpErrorCode
+	Scope       V4TopUpErrorScope
+	WriteAction V4TopUpWriteAction
+}
+
+type V4LifecycleObjectKind string
+
+const V4LifecycleObjectKindSession V4LifecycleObjectKind = "session"
+const V4LifecycleObjectKindEnvironment V4LifecycleObjectKind = "environment"
+const V4LifecycleObjectKindOperation V4LifecycleObjectKind = "operation"
+const V4LifecycleObjectKindSubscription V4LifecycleObjectKind = "subscription"
+const V4LifecycleObjectKindBridge V4LifecycleObjectKind = "bridge"
+const V4LifecycleObjectKindAdapter V4LifecycleObjectKind = "adapter"
+const V4LifecycleObjectKindStream V4LifecycleObjectKind = "stream"
+const V4LifecycleObjectKindMaterial V4LifecycleObjectKind = "material"
+const V4LifecycleObjectKindSource V4LifecycleObjectKind = "source"
+const V4LifecycleObjectKindRegistration V4LifecycleObjectKind = "registration"
+
+type V4LifecycleState string
+
+const V4LifecycleStateActive V4LifecycleState = "active"
+const V4LifecycleStateClosing V4LifecycleState = "closing"
+const V4LifecycleStateClosed V4LifecycleState = "closed"
+const V4LifecycleStateSessionAborted V4LifecycleState = "session_aborted"
+
+type V4LifecycleReason string
+
+const V4LifecycleReasonNone V4LifecycleReason = "none"
+const V4LifecycleReasonCanceled V4LifecycleReason = "canceled"
+const V4LifecycleReasonDeadlineExceeded V4LifecycleReason = "deadline_exceeded"
+const V4LifecycleReasonDependencyUnavailable V4LifecycleReason = "dependency_unavailable"
+const V4LifecycleReasonCoreCleanupFailed V4LifecycleReason = "core_cleanup_failed"
+
+type V4LifecycleResult struct {
+	ObjectKind     V4LifecycleObjectKind
+	LifecycleState V4LifecycleState
+	CleanupStatus  V4CleanupStatus
+	Reason         V4LifecycleReason
+}
+
+func TopUpErrorProjection(code V4TopUpErrorCode, action V4TopUpWriteAction) (V4TopUpError, bool) {
+	switch code {
+	case V4TopUpErrorCodeSourceExhausted:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeSource, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeSourceUnavailable:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeSource, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeSourceContractInvalid:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeSource, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeSourceStateUnknown:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeSource, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeOperationConflict:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeOperation, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeStaleGeneration:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeRequest, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeFutureGeneration:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeRequest, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeStaleOperation:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeOperation, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeFutureOperation:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeOperation, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeSequenceGap:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeOperation, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeConfigurationCapacity:
+		if action == V4TopUpWriteActionNone || action == V4TopUpWriteActionTerminal {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeRequest, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeCapacityExhausted:
+		if action == V4TopUpWriteActionNone || action == V4TopUpWriteActionTerminal {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeOperation, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeRelinkRequired:
+		if action == V4TopUpWriteActionNone || action == V4TopUpWriteActionTerminal {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeSource, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeSpentUnknown:
+		if action == V4TopUpWriteActionNone || action == V4TopUpWriteActionTerminal {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeSource, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeTopUpRequestExpired:
+		if action == V4TopUpWriteActionNone || action == V4TopUpWriteActionTerminal {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeOperation, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodeSourceResetRequired:
+		if action == V4TopUpWriteActionNone || action == V4TopUpWriteActionTerminal {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeSource, WriteAction: action}, true
+		}
+	case V4TopUpErrorCodePermissionDenied:
+		if action == V4TopUpWriteActionNone {
+			return V4TopUpError{Code: code, Scope: V4TopUpErrorScopeSource, WriteAction: action}, true
+		}
+	}
+	return V4TopUpError{}, false
+}
+
+func ValidLifecycleResult(value V4LifecycleResult) bool {
+	cleanup := value.CleanupStatus
+	return (value.ObjectKind == V4LifecycleObjectKindSession || value.ObjectKind == V4LifecycleObjectKindEnvironment || value.ObjectKind == V4LifecycleObjectKindOperation || value.ObjectKind == V4LifecycleObjectKindSubscription || value.ObjectKind == V4LifecycleObjectKindBridge || value.ObjectKind == V4LifecycleObjectKindAdapter || value.ObjectKind == V4LifecycleObjectKindStream || value.ObjectKind == V4LifecycleObjectKindMaterial || value.ObjectKind == V4LifecycleObjectKindSource || value.ObjectKind == V4LifecycleObjectKindRegistration) &&
+		(value.LifecycleState == V4LifecycleStateActive || value.LifecycleState == V4LifecycleStateClosing || value.LifecycleState == V4LifecycleStateClosed || value.LifecycleState == V4LifecycleStateSessionAborted) &&
+		(value.Reason == V4LifecycleReasonNone || value.Reason == V4LifecycleReasonCanceled || value.Reason == V4LifecycleReasonDeadlineExceeded || value.Reason == V4LifecycleReasonDependencyUnavailable || value.Reason == V4LifecycleReasonCoreCleanupFailed) &&
+		(cleanup.Status == V4CleanupStatePending || cleanup.Status == V4CleanupStateComplete || cleanup.Status == V4CleanupStateCleanupIncomplete) &&
+		(cleanup.CoreCleanup == V4CoreCleanupPending || cleanup.CoreCleanup == V4CoreCleanupComplete) &&
+		(cleanup.Status == V4CleanupStateComplete) == (cleanup.CoreCleanup == V4CoreCleanupComplete && cleanup.PendingCallbacks == 0) &&
+		(value.LifecycleState != V4LifecycleStateSessionAborted || value.ObjectKind == V4LifecycleObjectKindSession) &&
+		(cleanup.Status != V4CleanupStateComplete || value.LifecycleState == V4LifecycleStateClosed || value.LifecycleState == V4LifecycleStateSessionAborted)
+}
+
 func ConnectionAssurance(class string) (V4ConnectionGuarantees, bool) {
 	switch class {
 	case "native_websocket_tls13":
@@ -286,6 +466,22 @@ func ConnectionAssurance(class string) (V4ConnectionGuarantees, bool) {
 		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressSharedOrdered, BoundStreamInputIsolation: V4BoundStreamInputIsolationSharedFailureScope, Datagram: false, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationNotApplicable, Scope: V4ConnectionGuaranteeScopeCompleteDirectPath, Assumptions: V4ConnectionGuaranteeAssumptionsAuthenticatedPeerWithinTransportProfile}, true
 	case "browser_websocket_terminator":
 		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressSharedOrdered, BoundStreamInputIsolation: V4BoundStreamInputIsolationSharedFailureScope, Datagram: false, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationControlledTerminator, Scope: V4ConnectionGuaranteeScopeCompleteDirectPath, Assumptions: V4ConnectionGuaranteeAssumptionsAuthenticatedPeerWithinTransportProfile}, true
+	case "native_quic_tls13":
+		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressIndependentWithinProfile, BoundStreamInputIsolation: V4BoundStreamInputIsolationBoundStreamWithinProfile, Datagram: true, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationConsumerEnforced, Scope: V4ConnectionGuaranteeScopeCompleteDirectPath, Assumptions: V4ConnectionGuaranteeAssumptionsAuthenticatedPeerWithinTransportProfile}, true
+	case "accepted_quic":
+		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressIndependentWithinProfile, BoundStreamInputIsolation: V4BoundStreamInputIsolationBoundStreamWithinProfile, Datagram: true, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationNotApplicable, Scope: V4ConnectionGuaranteeScopeCompleteDirectPath, Assumptions: V4ConnectionGuaranteeAssumptionsAuthenticatedPeerWithinTransportProfile}, true
+	case "native_webtransport_tls13":
+		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressIndependentWithinProfile, BoundStreamInputIsolation: V4BoundStreamInputIsolationBoundStreamWithinProfile, Datagram: true, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationConsumerEnforced, Scope: V4ConnectionGuaranteeScopeCompleteDirectPath, Assumptions: V4ConnectionGuaranteeAssumptionsAuthenticatedPeerWithinTransportProfile}, true
+	case "accepted_webtransport":
+		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressIndependentWithinProfile, BoundStreamInputIsolation: V4BoundStreamInputIsolationBoundStreamWithinProfile, Datagram: true, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationNotApplicable, Scope: V4ConnectionGuaranteeScopeCompleteDirectPath, Assumptions: V4ConnectionGuaranteeAssumptionsAuthenticatedPeerWithinTransportProfile}, true
+	case "go_relay_native_consumer":
+		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressIndependentWithinProfile, BoundStreamInputIsolation: V4BoundStreamInputIsolationBoundStreamWithinProfile, Datagram: true, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationConsumerEnforced, Scope: V4ConnectionGuaranteeScopeCompleteRelayPath, Assumptions: V4ConnectionGuaranteeAssumptionsTrustedRelayAndPeersWithinTransportProfile}, true
+	case "go_relay_native_observer":
+		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressIndependentWithinProfile, BoundStreamInputIsolation: V4BoundStreamInputIsolationBoundStreamWithinProfile, Datagram: true, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationNotApplicable, Scope: V4ConnectionGuaranteeScopeCompleteRelayPath, Assumptions: V4ConnectionGuaranteeAssumptionsTrustedRelayAndPeersWithinTransportProfile}, true
+	case "go_relay_shared_consumer":
+		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressSharedOrdered, BoundStreamInputIsolation: V4BoundStreamInputIsolationSharedFailureScope, Datagram: false, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationConsumerEnforced, Scope: V4ConnectionGuaranteeScopeCompleteRelayPath, Assumptions: V4ConnectionGuaranteeAssumptionsTrustedRelayAndPeersWithinTransportProfile}, true
+	case "go_relay_shared_observer":
+		return V4ConnectionGuarantees{ReliableProgress: V4ReliableProgressSharedOrdered, BoundStreamInputIsolation: V4BoundStreamInputIsolationSharedFailureScope, Datagram: false, LocalConsumerTls13Verification: V4ConsumerTLS13VerificationNotApplicable, Scope: V4ConnectionGuaranteeScopeCompleteRelayPath, Assumptions: V4ConnectionGuaranteeAssumptionsTrustedRelayAndPeersWithinTransportProfile}, true
 	default:
 		return V4ConnectionGuarantees{}, false
 	}

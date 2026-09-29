@@ -5,11 +5,11 @@ import (
 	"errors"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var (
@@ -25,8 +25,9 @@ var (
 type UnaryResultDecoder func(context.Context, []byte) (any, error)
 
 type unaryResultPlan struct {
-	environment *Environment
-	decode      UnaryResultDecoder
+	environment  *Environment
+	decode       UnaryResultDecoder
+	resumeResult bool
 }
 
 // All fields are guarded by UnaryCall.mu. This is the original local result
@@ -37,6 +38,7 @@ type unaryResultWaiter struct {
 }
 
 type unaryResultState struct {
+	dependencyFloor                                      *resourcev4.BorrowPool
 	observers                                            [4]unaryResultWaiter
 	metadata                                             resourcev4.Reference
 	authorization                                        *protocolv4.DeliveryAuthorization
@@ -63,6 +65,7 @@ type unaryResultState struct {
 }
 
 type UnaryResultStatus struct {
+	Reference                                                       protocolv4.OperationReference
 	Request                                                         protocolv4.ApplicationHeader
 	Submission                                                      rpcv4.PublicationProgress
 	Abandoned, CleanupComplete                                      bool
@@ -82,6 +85,10 @@ func (c *UnaryCall) ResultStatus() UnaryResultStatus {
 		return UnaryResultStatus{Closed: true}
 	}
 	c.mu.Lock()
+	if next := c.next; next != nil {
+		c.mu.Unlock()
+		return next.ResultStatus()
+	}
 	defer c.mu.Unlock()
 	return c.resultStatusLocked()
 }
@@ -96,7 +103,10 @@ func (c *UnaryCall) resultStatusLocked() UnaryResultStatus {
 		s.DecoderRunning = d.inputDelivered && !d.decoded
 		s.Available = !d.closed && !d.consumed && d.failure == nil && (d.input != nil || d.decoded)
 		s.Outcome.ApplicationInputDelivered = d.inputDelivered
-		if d.failure != nil {
+		// Losing private payload authority cannot replace an already observed
+		// transport/deadline failure. Decoder failures still describe the
+		// application computation after its input was actually handed over.
+		if d.failure != nil && (s.Outcome.Error == nil || d.inputDelivered) {
 			s.Outcome.Error = d.failure
 		}
 		if d.abandoned {
@@ -113,19 +123,32 @@ func (c *UnaryCall) WaitStatus(ctx context.Context) (UnaryResultStatus, error) {
 	if c == nil || ctx == nil {
 		return UnaryResultStatus{}, cryptov4.ErrConfiguration
 	}
+	if next := c.redirected(); next != nil {
+		return next.WaitStatus(ctx)
+	}
 	c.mu.Lock()
 	if c.finished || c.deferred != nil && c.deferred.closed {
 		status := c.resultStatusLocked()
 		c.mu.Unlock()
+		if next := c.redirected(); next != nil {
+			return next.WaitStatus(ctx)
+		}
 		return status, nil
 	}
 	c.mu.Unlock()
 	index, err := c.enterResultWait(ctx, false)
 	if err != nil {
+		if next := c.redirected(); next != nil {
+			return next.WaitStatus(ctx)
+		}
 		return UnaryResultStatus{}, err
 	}
 	defer c.leaveResultWait(index)
-	return c.waitResultStatus(ctx, nil)
+	status, err := c.waitResultStatus(ctx, nil)
+	if next := c.redirected(); next != nil {
+		return next.WaitStatus(ctx)
+	}
+	return status, err
 }
 
 func (c *UnaryCall) waitResultStatus(ctx context.Context, dependencyFailure <-chan struct{}) (UnaryResultStatus, error) {
@@ -154,6 +177,10 @@ func (c *UnaryCall) waitResultStatus(ctx context.Context, dependencyFailure <-ch
 
 func (c *UnaryCall) enterResultWait(ctx context.Context, typed bool) (int, error) {
 	c.mu.Lock()
+	var referenceFloor *resourcev4.BorrowPool
+	if d := c.deferred; d != nil {
+		referenceFloor = d.dependencyFloor
+	}
 	if d := c.deferred; d != nil && d.abandoned {
 		c.mu.Unlock()
 		return 0, ErrUnaryResultAbandoned
@@ -162,7 +189,7 @@ func (c *UnaryCall) enterResultWait(ctx context.Context, typed bool) (int, error
 	if err := c.checkResultDependency(ctx); err != nil {
 		return 0, err
 	}
-	dependencies, err := captureApplicationDependencies(ctx)
+	dependencies, err := captureApplicationDependenciesWithFloor(ctx, referenceFloor)
 	if err != nil {
 		return 0, err
 	}
@@ -257,8 +284,14 @@ func (c *UnaryCall) TakeResult(ctx context.Context) (any, UnaryResultStatus, err
 	if c == nil || ctx == nil {
 		return nil, UnaryResultStatus{}, cryptov4.ErrConfiguration
 	}
+	if next := c.redirected(); next != nil {
+		return next.TakeResult(ctx)
+	}
 	index, err := c.enterResultWait(ctx, true)
 	if err != nil {
+		if next := c.redirected(); next != nil {
+			return next.TakeResult(ctx)
+		}
 		return nil, c.ResultStatus(), err
 	}
 	defer c.leaveResultWait(index)
@@ -268,7 +301,11 @@ func (c *UnaryCall) TakeResult(ctx context.Context) (any, UnaryResultStatus, err
 		dependencyFailure = d.dependency.expired
 	}
 	c.mu.Unlock()
-	if _, err := c.waitResultStatus(ctx, dependencyFailure); err != nil {
+	_, waitErr := c.waitResultStatus(ctx, dependencyFailure)
+	if next := c.redirected(); next != nil {
+		return next.TakeResult(ctx)
+	}
+	if err := waitErr; err != nil {
 		return nil, c.ResultStatus(), err
 	}
 	for {
@@ -364,12 +401,22 @@ func (c *UnaryCall) TakeEncodedResult(ctx context.Context) ([]byte, UnaryResultS
 	if c == nil || ctx == nil {
 		return nil, UnaryResultStatus{}, cryptov4.ErrConfiguration
 	}
+	if next := c.redirected(); next != nil {
+		return next.TakeEncodedResult(ctx)
+	}
 	index, err := c.enterResultWait(ctx, false)
 	if err != nil {
+		if next := c.redirected(); next != nil {
+			return next.TakeEncodedResult(ctx)
+		}
 		return nil, c.ResultStatus(), err
 	}
 	defer c.leaveResultWait(index)
-	if _, err := c.waitResultStatus(ctx, nil); err != nil {
+	_, waitErr := c.waitResultStatus(ctx, nil)
+	if next := c.redirected(); next != nil {
+		return next.TakeEncodedResult(ctx)
+	}
+	if err := waitErr; err != nil {
 		return nil, c.ResultStatus(), err
 	}
 	c.mu.Lock()
@@ -528,6 +575,16 @@ func (c *UnaryCall) failResultDecode(cause error) error {
 }
 
 func (c *UnaryCall) Close() {
+	for c != nil {
+		c.mu.Lock()
+		c.forwardingClosed = true
+		c.mu.Unlock()
+		c.closeLocalResult()
+		c = c.redirected()
+	}
+}
+
+func (c *UnaryCall) closeLocalResult() {
 	if c == nil {
 		return
 	}
@@ -604,13 +661,16 @@ func (c *UnaryCall) advanceResult() bool {
 		close(d.changed)
 		d.changed = make(chan struct{})
 	}
-	cleaned := d.closed && d.networkSettled && d.waiters == 0 && d.visits == 0 && d.task == nil
+	// A returned original call still reaches its bounded successor chain.
+	// Retain this backing until that original observation owner closes too.
+	cleaned := d.closed && d.networkSettled && d.waiters == 0 && d.visits == 0 && d.task == nil && (c.next == nil || c.forwardingClosed)
 	if cleaned {
 		d.dependencies.release()
 		d.metadata.Release()
 		d.metadata = resourcev4.Reference{}
 		d.future, d.context, d.cancel, d.inputCancel, d.executor = nil, nil, nil, nil, nil
 		d.environment, d.clock, d.dependency = nil, nil, nil
+		d.dependencyFloor = nil
 		d.cleaned = true
 	}
 	c.mu.Unlock()

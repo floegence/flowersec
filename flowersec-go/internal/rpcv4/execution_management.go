@@ -7,8 +7,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // ManagementRequest is the fixed, narrow control operation carried by the

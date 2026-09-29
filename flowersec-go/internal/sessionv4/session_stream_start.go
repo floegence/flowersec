@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // BeginStreamMessages commits one queued or preaccepted Start transaction. Complete request,
@@ -37,10 +37,16 @@ func (c *SessionCore) BeginStreamMessages(ctx context.Context, kind string, meta
 		return nil, cryptov4.ErrConfiguration
 	}
 	p := c.plan
-	if config.Request.Fields().AdmissionMode == 1 {
+	preaccepted := config.Request.Fields().AdmissionMode == 1
+	if f := config.transportFloor; !preaccepted && f != nil {
+		p.mu.Lock()
+		preaccepted = f.plan == p && f.preaccepted != nil
+		p.mu.Unlock()
+	}
+	if preaccepted {
 		return p.beginPreacceptedMessages(ctx, kind, metadata, payload, contract, config, reservation, authorization)
 	}
-	allocation, admission, err := p.prepareStream(ctx, len(kind)+len(metadata))
+	allocation, admission, err := p.prepareStreamInvocation(ctx, len(kind)+len(metadata), nil, false, config.transportFloor)
 	if err != nil {
 		return nil, err
 	}
@@ -54,6 +60,7 @@ func (c *SessionCore) BeginStreamMessages(ctx context.Context, kind string, meta
 	if err != nil {
 		return nil, err
 	}
+	defer m.finishEnvironmentPreparation()
 	defer func() {
 		if !committed {
 			m.mu.Lock()
@@ -93,10 +100,18 @@ func (c *SessionCore) BeginStreamMessages(ctx context.Context, kind string, meta
 		p.mu.Unlock()
 		return nil, err
 	}
-	work, cancel := context.WithCancel(parent)
-	m.openingCancel, m.startCommitted, m.workerStarted = cancel, true, true
-	committed = true
+	var work context.Context
+	err = m.withCurrentAuthorization(func() error {
+		var cancel context.CancelFunc
+		work, cancel = context.WithCancel(parent)
+		m.openingCancel, m.startCommitted, m.workerStarted = cancel, true, true
+		committed = true
+		return nil
+	})
 	p.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	go m.runInitialPublication(work, p, admission, allocation)
 	return m, nil
 }
@@ -107,7 +122,7 @@ func (m *StreamMessages) runInitialPublication(ctx context.Context, plan *Sessio
 			plan.finishStream(allocation)
 		}
 	}()
-	h, _, err := admission.OpenLocal(ctx, BusinessStream, m.openingKind, m.openingMetadata[:m.openingMetadataBytes], &CarrierAssociation{shared: admission.sharedIngress}, allocation.reservation, m.deadline)
+	h, _, err := plan.openBusinessStream(ctx, allocation, m.openingKind, m.openingMetadata[:m.openingMetadataBytes], m.deadline)
 	if err == nil {
 		err = admission.WaitOutcome(ctx, h)
 	}

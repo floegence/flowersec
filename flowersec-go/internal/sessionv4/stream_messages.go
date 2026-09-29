@@ -3,11 +3,11 @@ package sessionv4
 import (
 	"context"
 	"errors"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -23,6 +23,10 @@ var ErrStreamMessagePending = errors.New("sessionv4: complete stream message is 
 // The enclosing service reserves its application executor, history, general
 // operation position and complete transport vectors before accepting OPEN.
 type StreamMessagesConfig struct {
+	transportFloor                       *streamCallerFloor
+	environment                          *Environment
+	resultPosition                       environmentResultProtection
+	networkPosition                      rpcv4.OutgoingProtection
 	resume                               bool
 	dependencies                         *applicationDependencies
 	Result                               *StreamResultConfig
@@ -50,8 +54,11 @@ type StreamMessageStatus struct {
 // application callback. Wait cancellation preserves original assembly/send
 // progress. Close revokes new work and retains all buffers until real I/O exits.
 type StreamMessages struct {
+	environment                                                      *Environment
+	environmentReady                                                 atomic.Bool
 	resume                                                           *resumeTarget
 	resumeExchange                                                   bool
+	resumeValidated, resultInputDelivered, resultDecoded             bool
 	resumeCodec                                                      *protocolv4.ResumeCodec
 	outputStarted                                                    atomic.Bool
 	sourceCleanupReported                                            bool
@@ -78,6 +85,8 @@ type StreamMessages struct {
 	outputApplicationCode                                            uint32
 	network                                                          *rpcv4.Network
 	networkHold                                                      resourcev4.Reference
+	networkProtection                                                rpcv4.OutgoingProtection
+	protectedTicket                                                  rpcv4.Ticket
 	ticket                                                           rpcv4.Ticket
 	positionHeld, outboundBound                                      bool
 	deadline                                                         *timev4.Deadline
@@ -111,6 +120,25 @@ func StreamMessagesCharge(policy protocolv4.ServiceContractPolicy, config Stream
 	if policy.Semantics == 1 && config.HashRuntimeBytes == 0 {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
+	inputBytes, outputBytes, err := streamMessageBufferSizes(policy, config)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	return streamMessagesEnvelopeCharge(policy, config, inputBytes, outputBytes)
+}
+
+// The caller supplies already validated immutable buffer bounds. Factory
+// workload admission and actual construction share this exact owner charge.
+func streamMessagesEnvelopeCharge(policy protocolv4.ServiceContractPolicy, config StreamMessagesConfig, inputBytes, outputBytes uint32) (resourcev4.Vector, error) {
+	if config.Result != nil && (config.Server || config.Result.Executor == nil || config.Result.Decode == nil) {
+		return resourcev4.Vector{}, cryptov4.ErrConfiguration
+	}
+	return streamMessagesBackingCharge(config, inputBytes, outputBytes, config.Result != nil)
+}
+
+// The same physical layout is used by original admission before a live RPC
+// service exists and by construction with its verified executor/decoder.
+func streamMessagesBackingCharge(config StreamMessagesConfig, inputBytes, outputBytes uint32, typed bool) (resourcev4.Vector, error) {
 	hashBytes := config.HashRuntimeBytes
 	if config.Server {
 		hashBytes = 0
@@ -127,13 +155,13 @@ func StreamMessagesCharge(policy protocolv4.ServiceContractPolicy, config Stream
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	fixed := uint64(kindBytes) + uint64(unsafe.Sizeof(StreamMessages{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + parser + codec + uint64(policy.RequestMaxBytes) + uint64(max(policy.MaxResponseBytes, 256))
+	fixed := uint64(kindBytes) + uint64(unsafe.Sizeof(StreamMessages{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + parser + codec + uint64(inputBytes) + uint64(outputBytes)
 	if config.Server {
-		fixed -= uint64(policy.RequestMaxBytes)
+		fixed -= uint64(inputBytes)
 		fixed += uint64(unsafe.Sizeof(streamInvocation{})) + applicationContextBytes()
 	}
-	if config.Result != nil {
-		if config.Server || config.Result.Executor == nil || config.Result.Decode == nil {
+	if typed {
+		if config.Server {
 			return resourcev4.Vector{}, cryptov4.ErrConfiguration
 		}
 		fixed += streamResultBytes()
@@ -155,7 +183,7 @@ func StreamMessagesCharge(policy protocolv4.ServiceContractPolicy, config Stream
 		fixed += uint64(unsafe.Sizeof(time.Timer{})) + 512
 		timers++
 	}
-	if config.Result != nil {
+	if typed {
 		items += 4
 		timers++
 	}
@@ -163,6 +191,26 @@ func StreamMessagesCharge(policy protocolv4.ServiceContractPolicy, config Stream
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
 	return resourcev4.Vector{resourcev4.SDKBytes: fixed + config.RuntimeBytes, resourcev4.Items: items, resourcev4.WorkSlots: 3, resourcev4.Tasks: 1, resourcev4.Timers: timers}, nil
+}
+
+// The caller has already fixed its complete request and selected item limit.
+// Its source and current-item backing cover exactly those immutable values,
+// including the independent fixed SDK error envelope. The server has not seen
+// the request yet, so its original admission still covers the contract maxima.
+// Charge, construction and replenishment must use the same envelope.
+func streamMessageBufferSizes(policy protocolv4.ServiceContractPolicy, config StreamMessagesConfig) (input, output uint32, err error) {
+	if config.Server {
+		return policy.RequestMaxBytes, max(policy.MaxResponseBytes, 256), nil
+	}
+	h := config.Request
+	f := h.Fields()
+	if !config.resume && !h.StreamRequest() || config.resume && h.Kind() != "resume_request" ||
+		f.Type != policy.Type || f.ServiceContractDigest != policy.Digest ||
+		f.PayloadBytes > policy.RequestMaxBytes || f.ResponseLimitBytes < policy.MinResponseBytes || f.ResponseLimitBytes > policy.MaxResponseBytes ||
+		h.HasExecutionIdentity() != (policy.Semantics == 1) {
+		return 0, 0, cryptov4.ErrConfiguration
+	}
+	return max(f.ResponseLimitBytes, 256), f.PayloadBytes, nil
 }
 
 // Preparation transfers the independently admitted delivery gate and
@@ -227,10 +275,7 @@ func prepareStreamMessages(contract *protocolv4.ServiceContract, config StreamMe
 		owned.Release()
 		return nil, err
 	}
-	in, out := policy.RequestMaxBytes, max(policy.MaxResponseBytes, 256)
-	if !config.Server {
-		in, out = out, in
-	}
+	in, out, _ := streamMessageBufferSizes(policy, config) // Checked by the original charge above.
 	var inputOwner, inputAnchor resourcev4.Reference
 	inputConfig := rpcv4.InputConfig{Capture: true, RuntimeBytes: config.InputRuntimeBytes, HashRuntimeBytes: config.HashRuntimeBytes}
 	if config.Server {
@@ -273,10 +318,20 @@ func StreamMessagesInputCharge(policy protocolv4.ServiceContractPolicy, config S
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
 	input := rpcv4.InputConfig{Capture: true, RuntimeBytes: config.InputRuntimeBytes, HashRuntimeBytes: config.HashRuntimeBytes}
+	var charge resourcev4.Vector
+	var err error
 	if config.resume {
-		return rpcv4.ResumeInputEnvelopeCharge(policy, input)
+		charge, err = rpcv4.ResumeInputEnvelopeCharge(policy, input)
+	} else {
+		charge, err = rpcv4.StreamInputEnvelopeCharge(policy, input)
 	}
-	return rpcv4.StreamInputEnvelopeCharge(policy, input)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	// The Session clock is attached after this preacceptance reservation.
+	// RequestInput still forks its original deadline on the first header, so
+	// admit that exact retained projection before accepting the Stream.
+	return charge.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(timev4.Deadline{}))})
 }
 
 // bindPreparedMessages attaches only preallocated resources to the original
@@ -451,7 +506,7 @@ func (m *StreamMessages) captureNextOwned(ctx context.Context, cursor, resumeWor
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.readBusy = false; m.signalLocked(); m.cleanupLocked(); m.mu.Unlock() }()
 	if needBuffer {
-		buffer := make([]byte, max(m.policy.MaxResponseBytes, 256))
+		buffer := make([]byte, max(m.original.Fields().ResponseLimitBytes, 256))
 		m.mu.Lock()
 		m.input = buffer
 		m.mu.Unlock()
@@ -683,7 +738,9 @@ func (m *StreamMessages) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.resumeExchange && m.startCommitted && !m.transportCleaned && m.failure == nil {
-		m.abandoned = true
+		if !m.terminalDelivered {
+			m.abandoned = true
+		}
 		m.abandonStreamResultLocked()
 		m.signalLocked()
 		return
@@ -706,7 +763,7 @@ func (m *StreamMessages) closeLocked() {
 		m.closed = true
 		if m.owner != nil {
 			m.owner.Revoke()
-			if !m.inputEOF || !m.outputClosed {
+			if m.resumeExchange || !m.inputEOF || !m.outputClosed {
 				_ = m.owner.Cancel()
 			}
 		}
@@ -767,6 +824,9 @@ func (m *StreamMessages) cleanupLocked() {
 	}
 	m.reservation.Release()
 	m.reservation = resourcev4.Reference{}
-	m.networkHold.Release()
-	m.networkHold = resourcev4.Reference{}
+	m.releaseNetworkHoldLocked()
+	if m.networkProtection != (rpcv4.OutgoingProtection{}) && m.protectedTicket != (rpcv4.Ticket{}) {
+		_ = m.networkProtection.ReleaseUse(m.protectedTicket)
+		m.networkProtection, m.protectedTicket = rpcv4.OutgoingProtection{}, rpcv4.Ticket{}
+	}
 }

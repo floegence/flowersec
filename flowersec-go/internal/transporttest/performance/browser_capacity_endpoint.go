@@ -23,10 +23,10 @@ import (
 	"syscall"
 	"time"
 
-	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest/linuxnetlab"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest/tunnelworkload"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/tunnelworkload"
 )
 
 type browserCapacityEndpointConfig struct {

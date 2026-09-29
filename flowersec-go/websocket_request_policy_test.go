@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
-	"github.com/floegence/flowersec/flowersec-go/v5/controlplane"
-	carrierws "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/websocketv3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
+	"github.com/floegence/flowersec/flowersec-go/v6/controlplane"
+	carrierws "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/websocketv3"
 	gorillaws "github.com/gorilla/websocket"
 )
 

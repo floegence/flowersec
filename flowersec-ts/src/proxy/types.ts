@@ -1,4 +1,5 @@
-import type { ByteStream, Session } from "../public/contract.js";
+import type { V4Session } from "../v4/public.js";
+import type { ProxyStream } from "./stream.js";
 
 export type ProxyHeader = Readonly<{ name: string; value: string }>;
 
@@ -22,7 +23,7 @@ export type ProxyRuntimePathPolicy = Readonly<{
 }>;
 
 export type ProxyRuntimeOptions = Readonly<{
-  session: Session;
+  session: V4Session;
   maxJsonFrameBytes?: number;
   maxChunkBytes?: number;
   maxBodyBytes?: number;
@@ -58,7 +59,7 @@ export type ProxyRuntime = Readonly<{
   openWebSocketStream(
     path: string,
     options?: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }>,
-  ): Promise<Readonly<{ stream: ByteStream; protocol: string }>>;
+  ): Promise<Readonly<{ stream: ProxyStream; protocol: string }>>;
   dispose(): void;
 }>;
 

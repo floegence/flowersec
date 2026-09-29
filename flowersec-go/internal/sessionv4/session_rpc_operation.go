@@ -8,13 +8,12 @@ import (
 	"math"
 	"strings"
 	"sync"
-	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // UnaryOperation is the original local prepared/started call owner. It keeps
@@ -22,6 +21,12 @@ import (
 // never makes a
 // second physical request, including after an accurately unsubmitted failure.
 type UnaryOperation struct {
+	workload                             *unaryWorkloadSlot
+	controllerManaged                    bool
+	controllerSlot                       int
+	reselections                         uint8
+	startContext                         context.Context
+	controller                           controllerDispatch
 	notify                               *notifyOperationState
 	reference                            protocolv4.OperationReference
 	stream                               *streamOperationState
@@ -87,6 +92,10 @@ func (r *RPCServices) prepareUnary(ctx context.Context, route rpcv4.ContractRout
 }
 
 func (r *RPCServices) prepareUnaryEncoding(ctx context.Context, route rpcv4.ContractRoute, payload []byte, options rpcv4.UnaryPreparation, class ApplicationWorkClass, protected bool, decode UnaryDecoder, resultPlan *unaryResultPlan, codec *SynchronousUnaryCodec, streamPlans ...*streamPreparationPlan) (_ *UnaryOperation, err error) {
+	return r.prepareUnaryEncodingWithWorkload(ctx, route, payload, options, class, protected, decode, resultPlan, codec, nil, streamPlans...)
+}
+
+func (r *RPCServices) prepareUnaryEncodingWithWorkload(ctx context.Context, route rpcv4.ContractRoute, payload []byte, options rpcv4.UnaryPreparation, class ApplicationWorkClass, protected bool, decode UnaryDecoder, resultPlan *unaryResultPlan, codec *SynchronousUnaryCodec, workload *unaryWorkloadSlot, streamPlans ...*streamPreparationPlan) (_ *UnaryOperation, err error) {
 	referenceCtx := ctx
 	if len(streamPlans) > 1 {
 		return nil, cryptov4.ErrConfiguration
@@ -107,7 +116,14 @@ func (r *RPCServices) prepareUnaryEncoding(ctx context.Context, route rpcv4.Cont
 	if options.AdmissionMode > 1 || codec != nil && (codec.Encode == nil || codec.MaxEncodedBytes > 1048576 || codec.ScratchBytes > 1048576) {
 		return nil, cryptov4.ErrConfiguration
 	}
-	dependencies, err := captureApplicationDependencies(ctx)
+	var referenceFloor *resourcev4.BorrowPool
+	if workload != nil {
+		referenceFloor = workload.references
+		if referenceFloor == nil {
+			return nil, resourcev4.ErrOwner
+		}
+	}
+	dependencies, err := captureApplicationDependenciesWithFloor(ctx, referenceFloor)
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +137,9 @@ func (r *RPCServices) prepareUnaryEncoding(ctx context.Context, route rpcv4.Cont
 			return nil, ErrApplicationDependency
 		}
 		options.AdmissionMode = 1
+		if err := r.checkInvocationReadiness(ctx, route, stream); err != nil {
+			return nil, err
+		}
 	}
 	r.mu.Lock()
 	if r.closed || r.retired {
@@ -133,16 +152,27 @@ func (r *RPCServices) prepareUnaryEncoding(ctx context.Context, route rpcv4.Cont
 	}
 	index := -1
 	for j, o := range r.operations {
-		if o == nil {
+		if o == nil && (j >= len(r.workloadSlots) || r.workloadSlots[j] == nil) {
 			index = j
 			break
 		}
 	}
-	if index < 0 || r.callSerial == math.MaxUint64 {
+	if workload != nil {
+		if workload.workload.services != r || !workload.claiming || workload.closed || workload.index >= len(r.operations) || r.operations[workload.index] != nil || r.workloadSlots[workload.index] != workload {
+			r.mu.Unlock()
+			return nil, cryptov4.ErrClosed
+		}
+		index = workload.index
+	}
+	if index < 0 || workload == nil && r.callSerial == math.MaxUint64 {
 		r.mu.Unlock()
 		return nil, cryptov4.ErrCapacity
 	}
 	options.Clock, options.RuntimeBytes = r.clock, r.runtimeBytes
+	options.CompletionGraceMS = 0
+	if !streaming && !notify && !resume {
+		options.CompletionGraceMS = r.completionGraceMS
+	}
 	payloadLimit := uint32(len(payload))
 	if resume {
 		payloadLimit = 9345
@@ -163,68 +193,47 @@ func (r *RPCServices) prepareUnaryEncoding(ctx context.Context, route rpcv4.Cont
 		}
 		payloadLimit = codec.MaxEncodedBytes
 	}
-	var charges [5]resourcev4.Vector
-	count := 3
-	charges[0], err = rpcv4.PreparedRequestCharge(payloadLimit, r.runtimeBytes)
-	if err == nil {
-		charges[1], err = rpcv4.ContractRouteCharge(r.runtimeBytes)
+	charges, count, err := preparedOperationCharges(r.runtimeBytes, payloadLimit, uint32(len(payload)), codec, stream, executor, origin == nil)
+	if err != nil {
+		r.mu.Unlock()
+		return nil, err
 	}
-	if err == nil {
-		charges[2], err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(UnaryOperation{})), resourcev4.Items: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: r.runtimeBytes})
-	}
-	if err == nil && streaming {
-		charges[2], err = charges[2].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(streamOperationState{})) + uint64(unsafe.Sizeof(StreamOperation{})) + uint64(len(stream.kind)+len(stream.metadata)), resourcev4.Items: 2})
-	}
-	if err == nil && notify {
-		charges[2], err = charges[2].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(notifyOperationState{})) + uint64(unsafe.Sizeof(NotifyOperation{})) + 4*r.runtimeBytes, resourcev4.Items: 6})
-	}
-	if err == nil && resume {
-		charges[2], err = charges[2].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(resumeTarget{}))})
-		if err == nil {
-			charges[3], err = resumePreparationCharge(r.runtimeBytes)
+	var refs [5]resourcev4.Reference
+	if workload != nil {
+		err = resourcev4.CheckoutProtectedBatch(workload.owners[workloadPreparation:workloadPreparation+count], refs[:count])
+	} else {
+		r.callSerial++
+		var seed [56]byte
+		copy(seed[:16], "rpc-prepared/v4")
+		copy(seed[16:32], r.owner.Instance[:])
+		copy(seed[32:48], r.owner.Backing[:])
+		binary.BigEndian.PutUint64(seed[48:], r.callSerial)
+		hash := sha256.Sum256(seed[:])
+		var requests [5]resourcev4.Request
+		for j, c := range charges[:count] {
+			owner := r.owner
+			copy(owner.Instance[:], hash[:16])
+			copy(owner.Backing[:], hash[16:])
+			owner.Backing[0] ^= byte(j)
+			requests[j] = resourcev4.Request{Owner: owner, Charge: c, Accounts: r.accounts[:r.accountCount]}
 		}
-		count = 4
-	}
-	if err == nil && codec != nil {
-		charges[3], err = synchronousUnaryCharge(uint32(len(payload)), *codec, r.runtimeBytes)
-		count = 4
-		if origin == nil {
-			charges[4] = executor.TaskCharge()
-			count = 5
-		}
+		err = r.root.ReserveBatch(requests[:count], refs[:count])
 	}
 	if err != nil {
 		r.mu.Unlock()
 		return nil, err
 	}
-	r.callSerial++
-	var seed [56]byte
-	copy(seed[:16], "rpc-prepared/v4")
-	copy(seed[16:32], r.owner.Instance[:])
-	copy(seed[32:48], r.owner.Backing[:])
-	binary.BigEndian.PutUint64(seed[48:], r.callSerial)
-	hash := sha256.Sum256(seed[:])
-	var requests [5]resourcev4.Request
-	var refs [5]resourcev4.Reference
-	for j, c := range charges[:count] {
-		owner := r.owner
-		copy(owner.Instance[:], hash[:16])
-		copy(owner.Backing[:], hash[16:])
-		owner.Backing[0] ^= byte(j)
-		requests[j] = resourcev4.Request{Owner: owner, Charge: c, Accounts: r.accounts[:r.accountCount]}
-	}
-	if err = r.root.ReserveBatch(requests[:count], refs[:count]); err != nil {
-		r.mu.Unlock()
-		return nil, err
-	}
-	o := &UnaryOperation{dependencies: dependencies, services: r, index: index, metadata: refs[2], class: class, protected: protected, decode: decode, resultPlan: resultPlan, preparing: true}
+	o := &UnaryOperation{workload: workload, dependencies: dependencies, services: r, index: index, metadata: refs[2], class: class, protected: protected, decode: decode, resultPlan: resultPlan, preparing: true}
 	if notify {
 		o.notify = &notifyOperationState{tryNow: options.AdmissionMode == 1}
 	}
 	if streaming {
-		o.stream = &streamOperationState{core: stream.core, kind: strings.Clone(stream.kind), metadata: append([]byte(nil), stream.metadata...)}
+		o.stream = &streamOperationState{workload: workload, core: stream.core, kind: strings.Clone(stream.kind), metadata: append([]byte(nil), stream.metadata...)}
 	}
 	r.operations[index] = o
+	if workload != nil {
+		workload.operation = o
+	}
 	dependencies = applicationDependencies{}
 	r.mu.Unlock()
 	var p *rpcv4.PreparedRequest
@@ -256,16 +265,24 @@ func (r *RPCServices) prepareUnaryEncoding(ctx context.Context, route rpcv4.Cont
 	if resume {
 		_, policy, policyErr := route.Policy()
 		err = policyErr
+		var target *resumeTarget
 		if err == nil {
-			o.stream.resume, err = claimResumeTarget(ctx, stream.core, stream.resume.target, stream.resume.binding, policy, o.metadata, stream.resume.token.EncodedBytes())
+			target, err = claimResumeTarget(ctx, stream.core, stream.resume.target, stream.resume.binding, policy, o.metadata, stream.resume.token.EncodedBytes())
+			o.mu.Lock()
+			o.stream.resume = target
+			o.mu.Unlock()
 		}
 		if err == nil {
-			p, err = prepareResumeRequest(route, options, stream.resume.token, o.stream.resume, refs[0], refs[1])
+			p, err = prepareResumeRequest(route, options, stream.resume.token, target, refs[0], refs[1])
 		}
 	} else if notify {
-		p, err = rpcv4.PrepareNotify(route, payload, rpcv4.NotifyPreparation{UnaryPreparation: options}, refs[0], refs[1])
+		if codec == nil {
+			p, err = rpcv4.PrepareNotify(route, payload, rpcv4.NotifyPreparation{UnaryPreparation: options}, refs[0], refs[1])
+		} else {
+			p, err = rpcv4.BeginNotifyPreparation(route, payloadLimit, rpcv4.NotifyPreparation{UnaryPreparation: options}, refs[0], refs[1])
+		}
 	} else if streaming {
-		streamOptions := rpcv4.StreamPreparation{Clock: options.Clock, DeadlineAtMS: options.DeadlineAtMS, DefaultLifetimeMS: options.DefaultLifetimeMS, AdmissionNotAfterMS: options.AdmissionNotAfterMS, MaxItemBytes: options.ResponseLimitBytes, AdmissionMode: options.AdmissionMode, ExplicitAdmissionMode: options.ExplicitAdmissionMode, RequireExecution: options.RequireExecution, RequireDurable: options.RequireDurable, Offer: options.Offer, RuntimeBytes: options.RuntimeBytes}
+		streamOptions := rpcv4.StreamPreparation{Clock: options.Clock, ParentDeadline: options.ParentDeadline, DeadlineAtMS: options.DeadlineAtMS, DefaultLifetimeMS: options.DefaultLifetimeMS, AdmissionNotAfterMS: options.AdmissionNotAfterMS, MaxItemBytes: options.ResponseLimitBytes, AdmissionMode: options.AdmissionMode, ExplicitAdmissionMode: options.ExplicitAdmissionMode, RequireExecution: options.RequireExecution, RequireDurable: options.RequireDurable, Offer: options.Offer, RuntimeBytes: options.RuntimeBytes}
 		if codec == nil {
 			p, err = rpcv4.PrepareStream(route, payload, streamOptions, refs[0], refs[1])
 		} else {
@@ -340,6 +357,11 @@ func (o *UnaryOperation) Start(ctx context.Context) UnaryStartResult {
 	}
 	_, contextErr := checkApplicationContext(ctx)
 	o.mu.Lock()
+	if o.stream != nil && o.stream.resume != nil {
+		o.mu.Unlock()
+		started := (&StreamOperation{owner: o}).Start(ctx)
+		return UnaryStartResult{NotAdmitted: started.NotAdmitted, Error: started.Error}
+	}
 	defer o.mu.Unlock()
 	if o.started {
 		return UnaryStartResult{Call: o.call, Error: o.failure}
@@ -360,10 +382,18 @@ func (o *UnaryOperation) Start(ctx context.Context) UnaryStartResult {
 		return UnaryStartResult{NotAdmitted: true, Error: err}
 	}
 	callCtx, cancel := context.WithCancel(ctx)
+	o.startContext = callCtx
 	var call *UnaryCall
 	err := o.request.WithStart(ctx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte) error {
 		var e error
-		call, e = o.services.beginUnary(callCtx, route, h, header, payload, o.class, o.protected, true, &o.dependencies, o.resultPlan, o.decode)
+		r := o.services
+		if o.canReselectLocked() {
+			r, e = o.selectControllerRouteLocked()
+			if e != nil {
+				return e
+			}
+		}
+		call, e = o.beginControllerUnaryLocked(callCtx, r, route, h, header, payload)
 		return e
 	})
 	if err != nil {
@@ -387,9 +417,9 @@ func (o *UnaryOperation) Start(ctx context.Context) UnaryStartResult {
 	}
 	o.started, o.call, o.cancel = true, call, cancel
 	o.dependencies.release()
-	o.request.Close()
-	o.request = nil
-	o.decode, o.resultPlan = nil, nil
+	if !o.canReselectLocked() {
+		o.releasePreparedLocked()
+	}
 	return UnaryStartResult{Call: call}
 }
 
@@ -425,6 +455,7 @@ func (o *UnaryOperation) Close() {
 		o.stream.messages.Close()
 	}
 	if o.call != nil {
+		o.call.fencePublication()
 		o.call.Close()
 	}
 	if o.preparing {
@@ -452,12 +483,25 @@ func (o *UnaryOperation) Close() {
 		o.metadata.Release()
 		o.metadata = resourcev4.Reference{}
 	}
+	if !o.controllerManaged {
+		o.controller.close()
+	}
 }
 
 func (o *UnaryOperation) detachLocked() {
 	if o.detached {
 		return
 	}
+	if o.controllerManaged && o.controller.controller != nil {
+		c := o.controller.controller
+		c.mu.Lock()
+		if c.operations[o.controllerSlot] == o {
+			c.operations[o.controllerSlot] = nil
+		}
+		c.mu.Unlock()
+		o.controllerManaged = false
+	}
+	o.controller.release()
 	o.dependencies.release()
 	if s := o.notify; s != nil && s.submission == nil {
 		s.mu.Lock()
@@ -477,12 +521,16 @@ func (o *UnaryOperation) detachLocked() {
 	r := o.services
 	if r != nil {
 		r.mu.Lock()
+		if o.workload != nil && o.workload.operation == o {
+			o.workload.operation = nil
+		}
 		if o.index < len(r.operations) && r.operations[o.index] == o {
 			r.operations[o.index] = nil
 		}
 		r.mu.Unlock()
 	}
 	o.services = nil
+	o.workload = nil
 	o.detached = true
 }
 
@@ -525,13 +573,27 @@ func (o *UnaryOperation) advance(closed bool) {
 		return
 	}
 	if o.call != nil {
-		o.call.mu.Lock()
-		done := o.call.finished
-		o.call.mu.Unlock()
+		call := o.call.currentCall()
+		call.mu.Lock()
+		done, invocation, publication := call.finished, call.invocation, call.publication
+		call.mu.Unlock()
+		if !done && invocation != nil && o.canReselectLocked() {
+			o.reselectLocked(invocation)
+			call = o.call.currentCall()
+			call.mu.Lock()
+			done, publication = call.finished, call.publication
+			call.mu.Unlock()
+		}
+		if done || publication != nil && publication.Progress().HeaderAccepted {
+			o.releasePreparedLocked()
+		}
 		if done {
 			if o.cancel != nil {
 				o.cancel()
 				o.cancel = nil
+			}
+			if o.controllerManaged && !o.call.routesInputCleaned() {
+				return
 			}
 			o.detachLocked()
 			if o.closed {
@@ -556,6 +618,15 @@ func (o *UnaryOperation) advance(closed bool) {
 	o.request = nil
 	o.decode, o.resultPlan = nil, nil
 	o.detachLocked()
+}
+
+func (o *UnaryOperation) releasePreparedLocked() {
+	if o.request != nil {
+		o.request.Close()
+		o.request = nil
+	}
+	o.decode, o.resultPlan = nil, nil
+	o.startContext = nil
 }
 
 func (r *RPCServices) advanceOperations() {

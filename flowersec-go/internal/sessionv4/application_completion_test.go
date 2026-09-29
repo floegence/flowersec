@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func TestCompletionKeepsReservedCleanupUnderOrdinarySaturationAndClose(t *testing.T) {
@@ -91,8 +91,8 @@ func TestDormantCompletionDescriptorsShareOnlyActualRunningStackCapacity(t *test
 	e := f.executor
 	backing := f.reserve(t, 1, resourcev4.Vector{resourcev4.SDKBytes: 128, resourcev4.Items: 1})
 	before := f.root.Snapshot()
-	if before.Charged[resourcev4.Tasks] != 2 || before.Charged[resourcev4.WorkSlots] != 2 {
-		t.Fatal("root did not preadmit actual Completion service", before)
+	if before.Charged[resourcev4.Tasks] != 4 || before.Charged[resourcev4.WorkSlots] != 4 {
+		t.Fatal("root did not preadmit Completion and protected management services", before)
 	}
 	var reservations [16]*CompletionReservation
 	for j := range reservations {

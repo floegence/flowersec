@@ -5,10 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 func (m *StreamMessages) signalLocked() {
@@ -148,7 +147,9 @@ func (m *StreamMessages) supervise() {
 		if m.closed && !m.ioEnded {
 			m.ioEnded = true
 			m.owner.Revoke()
-			if !m.inputEOF || !m.outputClosed {
+			// A Resume message boundary is not a transport FIN. Failed recovery
+			// must stop the original target even when both messages are complete.
+			if m.resumeExchange || !m.inputEOF || !m.outputClosed {
 				_ = m.owner.Cancel()
 			}
 		}
@@ -230,8 +231,7 @@ func (m *StreamMessages) supervise() {
 			}
 			m.owner = nil
 			m.transportCleaned = true
-			m.networkHold.Release()
-			m.networkHold = resourcev4.Reference{}
+			m.releaseNetworkHoldLocked()
 			m.network = nil
 			m.contract = nil
 			m.route.Release()
@@ -239,8 +239,11 @@ func (m *StreamMessages) supervise() {
 			if d := m.result; d != nil {
 				// Only actual I/O retirement sheds Session accounting. A late
 				// decoder and its already disclosed input remain fully charged.
-				if err := d.floor.DetachSessionScope(); err != nil && m.failure == nil {
+				if err := d.floorUse.detachSession(); err != nil && m.failure == nil {
 					m.failure = err
+				}
+				if !d.borrowedFloor {
+					d.floor.Close()
 				}
 				if err := m.reservation.DetachSessionScope(); err != nil && m.failure == nil {
 					m.failure = err

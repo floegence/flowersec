@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var (
@@ -262,7 +262,7 @@ func openBusinessExecutions(ctx context.Context, backing *SQLiteBacking, identit
 	if err := reservation.CheckAllocationScope(c.Root, c.Owner, c.Accounts); err != nil {
 		return nil, err
 	}
-	s, err := openSQLitePurpose(ctx, backing, identity, sqliteExecutionContinuity{proof, c.Service}, reservation, environment, create, &c, nil)
+	s, err := openSQLitePurpose(ctx, backing, identity, sqliteExecutionContinuity{proof, c.Service}, reservation, environment, create, &c, nil, nil, nil, nil, nil)
 	if s == nil {
 		return nil, err
 	}

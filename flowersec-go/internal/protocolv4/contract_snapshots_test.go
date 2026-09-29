@@ -53,7 +53,7 @@ func TestContractSnapshotsRuntimeSharedQueryCorpus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			known := make([]*ServiceContract, len(v.Inputs.Known))
+			known := make([]ContractQueryKnown, len(v.Inputs.Known))
 			for i, body := range v.Inputs.Known {
 				if body == nil {
 					continue
@@ -66,7 +66,7 @@ func TestContractSnapshotsRuntimeSharedQueryCorpus(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer known[i].Release()
+				defer known[i].(*ServiceContract).Release()
 			}
 			if v.Inputs.Response == "" {
 				if err := request.CheckKnown(known); err != nil {
@@ -137,7 +137,12 @@ func TestContractSnapshotsRuntimeSharedQueryCorpus(t *testing.T) {
 					choices[i].Offer, choices[i].MaxOfferWindowMS = offer, windows[i]
 				}
 				if info.Status == "available_unchanged" {
-					choices[i].Contract = known[i]
+					choices[i].Contract = known[i].(*ServiceContract)
+					canonical := make([]byte, 8192)
+					n, err := known[i].CopyCanonicalRange(canonical, 0)
+					if err != nil || !bytes.Equal(output[i][:n], canonical[:n]) || !bytes.Equal(output[i][n:], bytes.Repeat([]byte{0xee}, 8192-n)) {
+						t.Fatal("unchanged snapshot did not own the exact baseline", err)
+					}
 				}
 				if info.Status == "available_full" {
 					codec, err := NewServiceContractCodec(768)
@@ -154,8 +159,8 @@ func TestContractSnapshotsRuntimeSharedQueryCorpus(t *testing.T) {
 					if err != nil || digest != info.Policy.Digest {
 						t.Fatal("copied body differs", err)
 					}
-				} else if !bytes.Equal(output[i], bytes.Repeat([]byte{0xee}, 8192)) {
-					t.Fatal("non-full status wrote a replacement body")
+				} else if info.Status != "available_unchanged" && !bytes.Equal(output[i], bytes.Repeat([]byte{0xee}, 8192)) {
+					t.Fatal("refusal wrote a replacement body")
 				}
 			}
 			encoded := make([]byte, request.ResponseBytes())
@@ -214,7 +219,7 @@ func TestContractSnapshotsRuntimeMaximumAndNoPartialOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	var requestWire [2048]byte
-	_, request, err := codec.EncodeTargets(requestWire[:], targets, make([]*ServiceContract, 8))
+	_, request, err := codec.EncodeTargets(requestWire[:], targets, make([]ContractQueryKnown, 8))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +238,7 @@ func TestContractSnapshotsRuntimeMaximumAndNoPartialOutput(t *testing.T) {
 	windows := []uint64{1, 1, 1, 1, 1, 1, 1, 1}
 	// The last local target capacity fails after seven complete validations.
 	output[7] = output[7][:1]
-	if _, err = decodeSnapshotsBoth(t, snapshots, request, response, make([]*ServiceContract, 8), windows, output); !errors.Is(err, CBORFailure("encoder_capacity")) {
+	if _, err = decodeSnapshotsBoth(t, snapshots, request, response, make([]ContractQueryKnown, 8), windows, output); !errors.Is(err, CBORFailure("encoder_capacity")) {
 		t.Fatal(err)
 	}
 	for _, dst := range output {
@@ -242,7 +247,7 @@ func TestContractSnapshotsRuntimeMaximumAndNoPartialOutput(t *testing.T) {
 		}
 	}
 	output[7] = output[7][:8192]
-	result, err := decodeSnapshotsBoth(t, snapshots, request, response, make([]*ServiceContract, 8), windows, output)
+	result, err := decodeSnapshotsBoth(t, snapshots, request, response, make([]ContractQueryKnown, 8), windows, output)
 	if err != nil || result.Count() != 8 {
 		t.Fatal(result, err)
 	}
@@ -253,7 +258,7 @@ func TestContractSnapshotsRuntimeMaximumAndNoPartialOutput(t *testing.T) {
 		}
 	}
 	output[1] = output[0]
-	if _, err = decodeSnapshotsBoth(t, snapshots, request, response, make([]*ServiceContract, 8), windows, output); !errors.Is(err, CBORFailure("query_output_alias")) {
+	if _, err = decodeSnapshotsBoth(t, snapshots, request, response, make([]ContractQueryKnown, 8), windows, output); !errors.Is(err, CBORFailure("query_output_alias")) {
 		t.Fatal("overlapping destinations", err)
 	}
 	if _, err = snapshots.envelope.DecodeMap(contractWire, "ServiceContract", DecodeContext{}); !errors.Is(err, CBORFailure("configuration_capacity")) {
@@ -286,7 +291,7 @@ func TestContractSnapshotsRuntimeRejectsMalformedNestedBodyBeforeDelivery(t *tes
 			t.Fatal(err)
 		}
 		output := bytes.Repeat([]byte{0xfe}, 8192)
-		if _, err = decodeSnapshotsBoth(t, snapshots, request, response, []*ServiceContract{nil}, []uint64{0}, [][]byte{output}); err == nil {
+		if _, err = decodeSnapshotsBoth(t, snapshots, request, response, []ContractQueryKnown{nil}, []uint64{0}, [][]byte{output}); err == nil {
 			t.Fatal("outer envelope bypassed complete contract validation")
 		}
 		if !bytes.Equal(output, bytes.Repeat([]byte{0xfe}, 8192)) {

@@ -1419,16 +1419,18 @@ fn connect_disposition(error: ConnectError) -> RetryDisposition {
 
 fn session_disposition(error: SessionError) -> RetryDisposition {
     match error {
-        SessionError::Canceled | SessionError::StreamRejected | SessionError::OperationFailed => {
-            RetryDisposition::Terminal
-        }
+        SessionError::ReadInProgress
+        | SessionError::Canceled
+        | SessionError::StreamRejected
+        | SessionError::OperationFailed => RetryDisposition::Terminal,
         SessionError::Timeout
         | SessionError::Closed
         | SessionError::GoingAway
         | SessionError::ResourceExhausted
         | SessionError::StreamReset
         | SessionError::RekeyFailed
-        | SessionError::LivenessFailed => RetryDisposition::Retryable,
+        | SessionError::LivenessFailed
+        | SessionError::LivenessPathUnresponsive => RetryDisposition::Retryable,
     }
 }
 

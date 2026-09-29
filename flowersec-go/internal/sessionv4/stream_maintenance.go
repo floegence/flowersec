@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // ApplyMaintenance consumes the original authenticated control record before
@@ -51,6 +51,9 @@ func (a *OpenAdmission) ApplyMaintenance(record *ReceivedRecord) (err error) {
 	s, err := a.slot(OpenHandle{a, scope})
 	if err != nil {
 		return err
+	}
+	if s.compactRecent() {
+		return a.applyCompactRecent(s, f)
 	}
 	if !s.accepted || s.flow == nil {
 		return ErrOpenAssociation
@@ -118,6 +121,21 @@ func (g streamTerminalTicket) LockTicket() error {
 	// Engine already owns its ticket gate. Never acquire admission here:
 	// OPEN/cleanup/deadline owners acquire admission before Engine.
 	d := g.direction
+	if d == nil {
+		// A compact recent proof has already completed both direction
+		// deadlines. Repeated evidence still uses the original Session and
+		// maintenance reservation; it cannot reopen a direction deadline.
+		if err := g.ctx.Err(); err != nil {
+			return err
+		}
+		if g.service != nil {
+			if g.service.sealed.Load() {
+				return cryptov4.ErrClosed
+			}
+			return g.service.reservation.Check()
+		}
+		return nil
+	}
 	d.mu.Lock()
 	err := g.ctx.Err()
 	if err == nil && g.service != nil && g.service.sealed.Load() {
@@ -141,7 +159,11 @@ func (g streamTerminalTicket) LockTicket() error {
 	return err
 }
 
-func (g streamTerminalTicket) UnlockTicket(bool) { g.direction.mu.Unlock() }
+func (g streamTerminalTicket) UnlockTicket(bool) {
+	if g.direction != nil {
+		g.direction.mu.Unlock()
+	}
+}
 
 func (a *OpenAdmission) publishTerminalMessage(ctx context.Context, h OpenHandle, maintenance *RecordWriter, kind terminalMessage) (result RecordWriteResult, err error) {
 	if maintenance == nil || maintenance.engine != a.engine || maintenance.scope != 0 {
@@ -159,7 +181,8 @@ func (a *OpenAdmission) publishTerminalMessage(ctx context.Context, h OpenHandle
 		a.mu.Unlock()
 		return result, cryptov4.ErrClosed
 	}
-	if !s.accepted || s.flow == nil || s.phase != openLive && s.phase != openRecent {
+	compact := s.compactRecent()
+	if !s.accepted || s.flow == nil && !compact || s.phase != openLive && s.phase != openRecent {
 		a.mu.Unlock()
 		return result, ErrOpenPending
 	}
@@ -170,7 +193,12 @@ func (a *OpenAdmission) publishTerminalMessage(ctx context.Context, h OpenHandle
 		a.mu.Unlock()
 		return result, ErrOpenPending
 	}
-	if kind == terminalDrained {
+	if compact {
+		if kind != terminalDrained && kind != terminalStopped {
+			a.mu.Unlock()
+			return result, ErrOpenPending
+		}
+	} else if kind == terminalDrained {
 		if _, ok := s.flow.receive.DrainProof(); !ok && !s.coreCleaned {
 			a.mu.Unlock()
 			return result, ErrOpenPending
@@ -203,9 +231,12 @@ func (a *OpenAdmission) publishTerminalMessage(ctx context.Context, h OpenHandle
 	defer a.endTail()
 	s.retirementReferences++
 	s.terminalPublishing = true
-	direction := &s.flow.receive.termination
-	if kind == terminalStopped {
-		direction = &s.flow.send.termination
+	var direction *directionTermination
+	if !compact {
+		direction = &s.flow.receive.termination
+		if kind == terminalStopped {
+			direction = &s.flow.send.termination
+		}
 	}
 	guard := streamTerminalTicket{direction, a.termination, ctx}
 	a.mu.Unlock()
@@ -221,7 +252,9 @@ func (a *OpenAdmission) publishTerminalMessage(ctx context.Context, h OpenHandle
 		}
 		var wire []byte
 		if kind == terminalDrained {
-			if s.coreCleaned {
+			if s.flow == nil {
+				wire, err = encodeDrainProof(dst, s.scope, 1-a.direction, s.terminal[1-a.direction])
+			} else if s.coreCleaned {
 				wire, err = s.flow.encodeDrainProof(dst, s.terminal[1-a.direction])
 			} else {
 				wire, err = s.flow.EncodeDrained(dst)
@@ -231,7 +264,11 @@ func (a *OpenAdmission) publishTerminalMessage(ctx context.Context, h OpenHandle
 				a.maybeRecent(s)
 			}
 		} else if kind == terminalStopped {
-			wire, err = s.flow.EncodeStopped(dst)
+			if s.flow == nil {
+				wire, err = encodeStoppedProof(dst, s.scope, a.direction, s.terminal[a.direction].Terminal)
+			} else {
+				wire, err = s.flow.EncodeStopped(dst)
+			}
 			if err == nil {
 				s.stoppedSubmitted, s.stoppedDirty = true, false
 			}
@@ -252,7 +289,9 @@ func (a *OpenAdmission) publishTerminalMessage(ctx context.Context, h OpenHandle
 			a.termination.notify()
 		}
 		if kind == terminalDrained && err == nil && result.Complete {
-			err = s.flow.receive.termination.complete()
+			if s.flow != nil {
+				err = s.flow.receive.termination.complete()
+			}
 			s.drainComplete = err == nil
 		}
 		s.owner.notify()

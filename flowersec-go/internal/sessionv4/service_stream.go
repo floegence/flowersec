@@ -7,17 +7,19 @@ import (
 	"errors"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // StreamRegistration fixes the local OPEN binding and exact method before
 // Session adoption. The initial request must independently match that contract.
 // Arbitrary generators retain one resident application permit until real exit.
 type StreamRegistration struct {
+	Dependencies   []ServiceDependency
+	services       *invocationServices
 	EventSource    *StreamEventSourceDefinition
 	Method         uint32
 	Namespace      string
@@ -32,6 +34,10 @@ type StreamRequest struct {
 	Binding            ApplicationBinding
 	ApplicationContext any
 	Input              rpcv4.InputBorrow
+}
+
+func (r StreamRequest) RequestContext() AuthenticatedRequestContext {
+	return AuthenticatedRequestContext{binding: r.Binding}
 }
 
 type serviceStreamMethod struct {
@@ -55,6 +61,7 @@ type serviceStreamCall struct {
 	cancel                      context.CancelFunc
 	refs                        [10]resourcev4.Reference
 	messageHold, dispatcherHold resourcev4.Reference
+	dependencyFloor             *resourcev4.BorrowPool
 }
 
 func streamRegistrationsCharge(c ServiceDispatchConfig) (resourcev4.Vector, error) {
@@ -81,6 +88,14 @@ func streamRegistrationsCharge(c ServiceDispatchConfig) (resourcev4.Vector, erro
 	}
 	charge := resourcev4.Vector{resourcev4.SDKBytes: uint64(c.StreamSlots) * (uint64(unsafe.Sizeof((*serviceStreamCall)(nil))) + uint64(unsafe.Sizeof(serviceStreamCall{})) + c.InvocationRuntimeBytes), resourcev4.Items: uint64(c.StreamSlots) + uint64(len(c.Streams))}
 	for index, m := range c.Streams {
+		dependencyCharge, err := serviceDependenciesCharge(m.Dependencies)
+		if err != nil {
+			return resourcev4.Vector{}, err
+		}
+		charge, err = charge.Add(dependencyCharge)
+		if err != nil {
+			return resourcev4.Vector{}, err
+		}
 		if m.Kind == bootstrap.Kind || m.Kind == notify.Kind || m.Kind == management.Kind {
 			return resourcev4.Vector{}, cryptov4.ErrConfiguration
 		}
@@ -230,6 +245,13 @@ func (j *serviceStreamCall) prepare() (err error) {
 	}
 	charges[4] = d.plan.executor.TaskCharge()
 	charges[5], err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(serviceExecutionAccess{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + 3*128, resourcev4.Items: 2}).Add(resourcev4.Vector{resourcev4.SDKBytes: d.runtimeBytes})
+	if err == nil {
+		var dependencyCharge resourcev4.Vector
+		dependencyCharge, err = resourcev4.BorrowPoolCharge(dependencyFloorCapacity)
+		if err == nil {
+			charges[5], err = charges[5].Add(dependencyCharge)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -262,6 +284,11 @@ func (j *serviceStreamCall) prepare() (err error) {
 	if err := d.root.ReserveBatch(requests[:count], j.refs[:count]); err != nil {
 		return err
 	}
+	j.dependencyFloor, err = resourcev4.NewBorrowPoolForSources(j.refs[5], dependencyFloorCapacity)
+	if err != nil {
+		return err
+	}
+	j.refs[5] = j.dependencyFloor.Metadata()
 	_, authorization, err := d.plan.queryAuthorization()
 	if err != nil {
 		return err
@@ -316,16 +343,20 @@ func (j *serviceStreamCall) run() {
 	if _, err = m.CaptureNext(j.context); err != nil {
 		return
 	}
+	if err = j.registration.services.requiredReady(j.context); err != nil {
+		_ = m.SendSDKError(j.context, "service_unavailable")
+		return
+	}
 	if m.policy.Semantics == 1 {
 		binding, access, e := j.dispatcher.executionBindingAuthority(j.registration.Method, j.registration.Namespace)
 		if e != nil {
 			err = e
 		} else {
-			dispatch := ExecutionDispatch{group: j.dispatcher.plan.applicationGroup, History: binding.History, DurableHistory: binding.DurableHistory, Routes: j.transport.core.plan.rpc.routes, Executor: j.dispatcher.plan.executor, Caller: access.caller, Access: access, Class: ApplicationResident}
+			dispatch := ExecutionDispatch{group: j.dispatcher.plan.applicationGroup, History: binding.History, DurableHistory: binding.DurableHistory, DependencyFloor: j.dependencyFloor, Routes: j.transport.core.plan.rpc.routes, Executor: j.dispatcher.plan.executor, Caller: access.caller, Access: access, Class: ApplicationResident}
 			_, err = dispatch.DispatchStream(j.context, m, j.handleRequest)
 		}
 	} else {
-		err = (TransientStreamDispatch{group: j.dispatcher.plan.applicationGroup, Executor: j.dispatcher.plan.executor, Class: ApplicationResident, TaskReservation: j.refs[4]}).Dispatch(j.context, m, j.handleRequest)
+		err = (TransientStreamDispatch{group: j.dispatcher.plan.applicationGroup, Executor: j.dispatcher.plan.executor, Class: ApplicationResident, TaskReservation: j.refs[4], DependencyFloor: j.dependencyFloor}).Dispatch(j.context, m, j.handleRequest)
 	}
 	if err != nil {
 		_ = m.SendSDKError(j.context, serviceRefusal(err))
@@ -370,6 +401,9 @@ func (j *serviceStreamCall) run() {
 }
 
 func (j *serviceStreamCall) handleRequest(ctx context.Context, input rpcv4.InputBorrow, m *StreamMessages) (uint32, error) {
+	if err := attachInvocationServices(ctx, j.registration.services); err != nil {
+		return 0, err
+	}
 	lease := j.dispatcher.plan.lease
 	lease.mu.Lock()
 	request := StreamRequest{Binding: lease.binding, ApplicationContext: lease.context, Input: input}
@@ -390,6 +424,10 @@ func (j *serviceStreamCall) handleRequest(ctx context.Context, input rpcv4.Input
 func (j *serviceStreamCall) release() {
 	j.source.abortBeforeStart()
 	j.cancel()
+	if j.dependencyFloor != nil {
+		j.dependencyFloor.Close()
+		j.dependencyFloor = nil
+	}
 	if m := j.messages; m != nil {
 		m.mu.Lock()
 		if !m.workerStarted {
@@ -447,6 +485,12 @@ func (j *serviceStreamCall) withPermission(action func() error) error {
 }
 
 func (m *StreamMessages) withCurrentAuthorization(action func() error) error {
+	if m.environment != nil {
+		if err := m.environment.streamDelivery.LockTicket(); err != nil {
+			return err
+		}
+		defer m.environment.streamDelivery.UnlockTicket(false)
+	}
 	return m.authorization.WithCurrentAuthorization(func() error {
 		if m.service != nil {
 			return m.service.withPermission(action)

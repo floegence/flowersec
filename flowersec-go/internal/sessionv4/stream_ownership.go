@@ -8,10 +8,10 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrStreamOwned = errors.New("sessionv4: stream has another or revoked owner")
@@ -34,6 +34,9 @@ type StreamOwnership struct {
 	handoffClean               bool
 	revoked                    atomic.Bool
 	sealed                     atomic.Bool
+	closeRequested             atomic.Bool
+	closeAdmission             atomic.Pointer[OpenAdmission]
+	detachedClose              protocolv4.V4CloseResult
 	accepted                   atomic.Uint64
 	deadline                   *timev4.Deadline
 	operationContext           context.Context
@@ -42,6 +45,9 @@ type StreamOwnership struct {
 	changed                    chan struct{}
 	messages                   *StreamMessages
 	typed                      *TypedMessageStream
+	conn                       *StreamConn
+	connAbort                  <-chan struct{}
+	connSignal                 atomic.Pointer[streamConnSignal]
 	resume                     *resumeTarget
 	recoveryProgress           *streamRecoveryProgress
 	rawUsed                    bool
@@ -49,6 +55,8 @@ type StreamOwnership struct {
 	allocationOwner            resourcev4.OwnerKey
 	allocationScopes           [resourcev4.MaxAccountsPerCharge]resourcev4.Account
 	allocationCount            int
+	allocationRuntimeBytes     uint64
+	cursorSerial               uint64
 	allocationExecutor         *ApplicationExecutor
 	allocationGroup            *applicationGroup
 	allocationExecutionBacking resourcev4.Reference
@@ -152,6 +160,7 @@ func (a *OpenAdmission) bindStreamOwnership(h OpenHandle, reservation resourcev4
 		return nil, err
 	}
 	o.admission, o.handle, o.flow, o.queue = a, h, f, q
+	o.closeAdmission.Store(a)
 	o.cap, o.deadline, o.operationContext = uint64(len(q.slots))+1, deadline, operationContext
 	s.owner, q.writeOwner, f.receive.readOwner = o, o, o
 	s.retirementReferences++
@@ -213,6 +222,14 @@ func (o *StreamOwnership) checkLifetime() error {
 			return err
 		}
 	}
+	if o.conn != nil {
+		if err := o.conn.parent.Err(); err != nil {
+			return err
+		}
+		if err := o.conn.deadline.Check(); err != nil {
+			return err
+		}
+	}
 	if o.deadline != nil {
 		if err := o.deadline.Check(); err != nil {
 			return err
@@ -226,6 +243,23 @@ func (o *StreamOwnership) checkLifetime() error {
 func (o *StreamOwnership) enterCallback() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	return o.enterCallbackLocked()
+}
+
+// A native connection owns normal sealing and transport retirement. The raw
+// invocation still supervises its original deadline and dispatcher lifetime,
+// but must not turn that connection's normal Close into parent cancellation.
+// Keep only the detached abort signal after retirement, never the connection.
+func (o *StreamOwnership) handlerSupervision() (<-chan struct{}, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.connAbort != nil {
+		return o.connAbort, nil
+	}
+	return nil, o.enterCallbackLocked()
+}
+
+func (o *StreamOwnership) enterCallbackLocked() error {
 	if o.admission == nil || o.sealed.Load() || o.revoked.Load() {
 		return ErrStreamOwned
 	}
@@ -249,6 +283,17 @@ func (o *StreamOwnership) enterCallback() error {
 // callback, allocation or polling task is needed to wake late cleanup.
 func (o *StreamOwnership) notify() {
 	if o != nil {
+		if o.closeRequested.Load() {
+			if a := o.closeAdmission.Load(); a != nil {
+				a.notifyCleanup()
+				if a.termination != nil {
+					a.termination.notify()
+				}
+			}
+		}
+		if signal := o.connSignal.Load(); signal != nil {
+			connNotify(signal.wake)
+		}
 		select {
 		case o.changed <- struct{}{}:
 		default:
@@ -273,7 +318,7 @@ func (o *StreamOwnership) beginMessagesMethod(messages *StreamMessages, ending b
 func (o *StreamOwnership) beginCapabilityMethod(messages *StreamMessages, ending, raw bool) (*OpenAdmission, OpenHandle, *StreamFlow, *SendQueue, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if !ending && (o.messages != messages || o.typed != nil || o.resume != nil && messages == nil) {
+	if !ending && (o.messages != messages || o.typed != nil || o.conn != nil || o.resume != nil && messages == nil) {
 		return nil, OpenHandle{}, nil, nil, ErrStreamOwned
 	}
 	if o.admission == nil || !ending && o.revoked.Load() {
@@ -287,6 +332,27 @@ func (o *StreamOwnership) beginCapabilityMethod(messages *StreamMessages, ending
 	} else {
 		if o.users == o.cap {
 			return nil, OpenHandle{}, nil, nil, ErrStreamOwnershipBusy
+		}
+		if raw && !o.rawUsed && o.allocationRoot != nil {
+			// Public raw I/O continuously reuses the originally admitted receive
+			// window, just as the native Conn and typed-message projections do.
+			// Freeze its already owned promise before releasing any bytes; this
+			// neither enlarges the shared pool nor grants peer-selected credit.
+			f := o.flow.receive
+			f.pool.mu.Lock()
+			if f.minimumPromise == 0 && f.termination.service != nil && !f.cleaned && !f.pool.closed && !f.abandoned && !f.hasTerminal {
+				minimum := f.limit - f.released
+				if minimum != 0 {
+					f.minimumPromise = minimum
+					if err := f.protectCurrentCreditLocked(); err != nil {
+						f.minimumPromise = 0
+						f.pool.mu.Unlock()
+						return nil, OpenHandle{}, nil, nil, err
+					}
+					f.creditAck, f.creditLimit = f.released, f.limit
+				}
+			}
+			f.pool.mu.Unlock()
 		}
 		o.users++
 		if raw {
@@ -362,11 +428,22 @@ func (o *StreamOwnership) CopyTo(ctx context.Context, destination *StreamOwnersh
 }
 
 func (o *StreamOwnership) PrepareWrite(input []byte, options WriteOptions) (*WriteOperation, error) {
-	_, _, _, q, err := o.begin()
+	a, _, _, q, err := o.begin()
 	if err != nil {
 		return nil, err
 	}
 	defer o.end()
+	if options.HardDeadline == nil {
+		options.HardDeadline, err = timev4.NewDeadline(a.engine.Clock(), a.engine.SessionParameters().SessionNotAfterMS)
+		if err != nil {
+			return nil, err
+		}
+		if o.deadline != nil {
+			if err = options.HardDeadline.TightenFrom(o.deadline); err != nil {
+				return nil, err
+			}
+		}
+	}
 	return q.prepareWriteOwned(input, options, o)
 }
 
@@ -431,6 +508,9 @@ func (o *StreamOwnership) CloseResult() (protocolv4.V4CloseResult, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.admission == nil {
+		if o.closeRequested.Load() {
+			return o.detachedClose, nil
+		}
 		return protocolv4.V4CloseResult{}, ErrStreamOwned
 	}
 	return o.flow.CloseResult(), nil
@@ -493,7 +573,9 @@ func (o *StreamOwnership) revokeLocked() {
 // read/write owners have actually exited. A busy refusal keeps the same owner;
 // no hidden cleanup worker or new quota is created. Detached handles retain only
 // their finite accepted counter and closed notification.
-func (o *StreamOwnership) Release() error {
+func (o *StreamOwnership) Release() error { return o.releaseConn(nil) }
+
+func (o *StreamOwnership) releaseConn(conn *StreamConn) error {
 	var tail *OpenAdmission
 	defer func() {
 		if tail != nil {
@@ -505,10 +587,11 @@ func (o *StreamOwnership) Release() error {
 	if o.admission == nil {
 		return nil
 	}
-	if o.users != 0 || o.cleaning || o.messages != nil || o.typed != nil || o.resume != nil {
+	if o.users != 0 || o.cleaning || o.messages != nil || o.typed != nil || o.conn != conn || o.resume != nil {
 		return ErrStreamOwnershipBusy
 	}
 	a, q, f := o.admission, o.queue, o.flow
+	closeResult := f.CloseResult()
 	a.mu.Lock()
 	s, err := a.slot(o.handle)
 	if err != nil {
@@ -534,6 +617,10 @@ func (o *StreamOwnership) Release() error {
 	a.collect(s)
 	a.mu.Unlock()
 	o.admission, o.flow, o.queue = nil, nil, nil
+	o.detachedClose = closeResult
+	o.closeAdmission.Store(nil)
+	o.conn = nil
+	o.connSignal.Store(nil)
 	o.deadline = nil
 	o.operationContext = nil
 	o.allocationRoot = nil

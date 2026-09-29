@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type carrierFactoryFunc func(context.Context, CarrierPreparationRequest) (*PreparedCarrier, error)
@@ -54,7 +54,7 @@ func sourceConnectTestConfig(t *testing.T, f *admissionIntegrationFixture, ident
 	charge, err = EstablishmentCharge(c.Limits)
 	c.Establishment = reserve(304, charge, err)
 	c.Subscriptions = reserve(305, protocolv4.CredentialSubscriptionsCharge(), nil)
-	charge, err = PreparedCarrierCharge(c.CarrierRuntimeBytes)
+	charge, err = SourceCarrierCharge(c.CarrierRuntimeBytes)
 	c.CarrierReservation = reserve(306, charge, err)
 	return c
 }
@@ -98,11 +98,17 @@ func TestEnvironmentSourceBlockedAcquisitionRetainsPosition(t *testing.T) {
 				unavailable := c
 				unavailable.Requirements = MaterialRequirements{ApplicationProfile: "services", RPCMaxGeneralOutstanding: 32}
 				initial := f.root.Snapshot()
-				if _, err := host.ConnectSourcePool(ctx, unavailable, input); !errors.Is(err, ErrConnectionRequirementUnavailable) || provider.calls.Load() != 0 || f.root.Snapshot() != initial {
+				if _, admitted, err := host.ConnectPrepared(ctx, unavailable, nil, &input, nil); admitted || !errors.Is(err, ErrConnectionRequirementUnavailable) || provider.calls.Load() != 0 || f.root.Snapshot() != initial {
 					t.Fatal("known unavailable profile contacted issuer or consumed inputs", err)
 				}
 				result := make(chan error, 1)
-				go func() { _, err := host.ConnectSourcePool(ctx, c, input); result <- err }()
+				go func() {
+					_, admitted, err := host.ConnectPrepared(ctx, c, nil, &input, nil)
+					if !admitted {
+						t.Error("canceled delivery lost original ownership transfer")
+					}
+					result <- err
+				}()
 				select {
 				case <-provider.entered:
 				case err := <-result:

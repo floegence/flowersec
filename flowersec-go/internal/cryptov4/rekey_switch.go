@@ -3,7 +3,7 @@ package cryptov4
 import (
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 var ErrInputPending = errors.New("cryptov4: original application epoch pending")
@@ -66,6 +66,15 @@ func (e *Engine) sendEpoch(scope uint64) *epochState {
 }
 
 func (e *Engine) receiveEpoch(frame protocolv4.FrameType, header protocolv4.RecordHeader, marker *RekeyRound) (*epochState, error) {
+	// Unreliable input never waits for a candidate epoch. Only local completion
+	// changes its receive key and replay window; a private staged key grants no
+	// admission or authentication attempt before that point.
+	if frame == protocolv4.FrameDatagram {
+		if marker != nil || header.Epoch != e.current.number {
+			return nil, ErrEpoch
+		}
+		return e.current, nil
+	}
 	s := e.switching
 	if header.Epoch == e.current.number {
 		if marker != nil || s != nil && s.received {

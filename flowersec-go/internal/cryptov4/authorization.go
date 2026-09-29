@@ -1,8 +1,8 @@
 package cryptov4
 
 import (
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // ForkApplicationDelivery captures the exact original authenticated endpoint.
@@ -50,7 +50,11 @@ func (e *Engine) OrdinaryWorkSlots() uint32 {
 	if e.sharedInputReserved {
 		return e.config.WorkSlots - 1
 	}
-	return e.config.WorkSlots
+	reserved := e.nativeInputCount
+	if e.datagrams != nil {
+		reserved += 2
+	}
+	return e.config.WorkSlots - reserved
 }
 
 func (e *Engine) signalSend() {

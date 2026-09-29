@@ -1,79 +1,79 @@
 {
   "target_version": "6.0.0",
   "target_wire": "flowersec/4",
-  "current_version": "5.5.0",
+  "current_version": "6.0.0",
   "scan_scope": "Tracked and unignored SDK source candidates; text hits require reachability review, not a runtime proof",
   "release_coordinates": [
     {
       "label": "flowersec-go/go.mod",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-ts/package.json",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-ts/package-lock.json",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-rust/Cargo.toml",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-rust/Cargo.lock",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-rust/fuzz/Cargo.lock",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "examples/rust/Cargo.lock",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "Package.swift",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-native-transport/Cargo.toml",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-native-transport/Cargo.lock",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-node-native/Cargo.toml",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-node-native/Cargo.lock",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-node-native/package.json",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-node-native/npm/darwin-arm64/package.json",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-node-native/npm/darwin-x64/package.json",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-node-native/npm/linux-arm64-gnu/package.json",
-      "version": "5.5.0"
+      "version": "6.0.0"
     },
     {
       "label": "flowersec-node-native/npm/linux-x64-gnu/package.json",
-      "version": "5.5.0"
+      "version": "6.0.0"
     }
   ],
-  "go_module": "github.com/floegence/flowersec/flowersec-go/v5",
+  "go_module": "github.com/floegence/flowersec/flowersec-go/v6",
   "v3_source_candidates": [
     {
       "path": "flowersec-go/acceptor.go",
@@ -244,9 +244,15 @@
       "matching_lines": 7
     },
     {
+      "path": "flowersec-go/internal/carrierv4/rawquic/rawquic.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 346,
+      "matching_lines": 1
+    },
+    {
       "path": "flowersec-go/internal/carrierv4/tlspolicy/policy.go",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 24,
+      "first_matching_line": 25,
       "matching_lines": 1
     },
     {
@@ -364,9 +370,15 @@
       "matching_lines": 2
     },
     {
+      "path": "flowersec-go/internal/protocolv4/direct_issuer.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 65,
+      "matching_lines": 1
+    },
+    {
       "path": "flowersec-go/internal/protocolv4/registry_generated.go",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 34,
+      "first_matching_line": 40,
       "matching_lines": 1
     },
     {
@@ -416,6 +428,12 @@
       "action": "replace_before_v4_runtime",
       "first_matching_line": 1,
       "matching_lines": 18
+    },
+    {
+      "path": "flowersec-go/internal/sessionv4/http_stream.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 80,
+      "matching_lines": 1
     },
     {
       "path": "flowersec-go/internal/transportsecurity/policy.go",
@@ -538,12 +556,6 @@
       "matching_lines": 12
     },
     {
-      "path": "flowersec-go/metadata.go",
-      "action": "replace_before_v4_runtime",
-      "first_matching_line": 9,
-      "matching_lines": 4
-    },
-    {
       "path": "flowersec-go/stream_handlers.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 8,
@@ -554,6 +566,12 @@
       "action": "replace_before_v4_runtime",
       "first_matching_line": 15,
       "matching_lines": 25
+    },
+    {
+      "path": "flowersec-go/v4_production.go",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 49,
+      "matching_lines": 1
     },
     {
       "path": "flowersec-go/websocket_server.go",
@@ -578,6 +596,12 @@
       "action": "replace_before_v4_runtime",
       "first_matching_line": 1,
       "matching_lines": 331
+    },
+    {
+      "path": "flowersec-rust/src/codec_v4.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 646,
+      "matching_lines": 1
     },
     {
       "path": "flowersec-rust/src/connection_controller.rs",
@@ -618,8 +642,8 @@
     {
       "path": "flowersec-rust/src/lib.rs",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 5,
-      "matching_lines": 30
+      "first_matching_line": 52,
+      "matching_lines": 29
     },
     {
       "path": "flowersec-rust/src/protocol_v3.rs",
@@ -630,7 +654,7 @@
     {
       "path": "flowersec-rust/src/protocol_v4_registry_generated.rs",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 31,
+      "first_matching_line": 35,
       "matching_lines": 1
     },
     {
@@ -649,7 +673,7 @@
       "path": "flowersec-rust/src/session_v3.rs",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 1,
-      "matching_lines": 974
+      "matching_lines": 988
     },
     {
       "path": "flowersec-rust/src/tls_v3.rs",
@@ -688,6 +712,12 @@
       "matching_lines": 17
     },
     {
+      "path": "flowersec-rust/src/wss_v4.rs",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 241,
+      "matching_lines": 1
+    },
+    {
       "path": "flowersec-swift/Sources/Flowersec/AppleWebSocketRuntimeAdapterV3.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 6,
@@ -715,7 +745,7 @@
       "path": "flowersec-swift/Sources/Flowersec/Connector.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 19,
-      "matching_lines": 12
+      "matching_lines": 11
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/HTTPDirectV1.swift",
@@ -762,13 +792,7 @@
     {
       "path": "flowersec-swift/Sources/Flowersec/StreamHandlers.swift",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 48,
-      "matching_lines": 2
-    },
-    {
-      "path": "flowersec-swift/Sources/Flowersec/Transport.swift",
-      "action": "replace_before_v4_runtime",
-      "first_matching_line": 117,
+      "first_matching_line": 51,
       "matching_lines": 2
     },
     {
@@ -802,9 +826,21 @@
       "matching_lines": 356
     },
     {
+      "path": "flowersec-swift/Sources/Flowersec/TransportV4CredentialText.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 75,
+      "matching_lines": 1
+    },
+    {
       "path": "flowersec-swift/Sources/Flowersec/TransportV4Registry.generated.swift",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 43,
+      "first_matching_line": 47,
+      "matching_lines": 1
+    },
+    {
+      "path": "flowersec-swift/Sources/Flowersec/TransportV4WebSocket.swift",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 486,
       "matching_lines": 1
     },
     {
@@ -828,7 +864,7 @@
     {
       "path": "flowersec-ts/src/browser/index.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 3,
+      "first_matching_line": 10,
       "matching_lines": 8
     },
     {
@@ -838,15 +874,27 @@
       "matching_lines": 3
     },
     {
+      "path": "flowersec-ts/src/browser/webTransportV4.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 368,
+      "matching_lines": 1
+    },
+    {
       "path": "flowersec-ts/src/facade.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 3,
+      "first_matching_line": 5,
       "matching_lines": 28
+    },
+    {
+      "path": "flowersec-ts/src/generated/brotliWorker.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 1
     },
     {
       "path": "flowersec-ts/src/generated/transportV4Registry.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 17,
+      "first_matching_line": 22,
       "matching_lines": 1
     },
     {
@@ -894,7 +942,7 @@
     {
       "path": "flowersec-ts/src/node/proxyServer.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 13,
+      "first_matching_line": 19,
       "matching_lines": 3
     },
     {
@@ -928,21 +976,9 @@
       "matching_lines": 33
     },
     {
-      "path": "flowersec-ts/src/proxy/integration.ts",
-      "action": "replace_before_v4_runtime",
-      "first_matching_line": 1,
-      "matching_lines": 6
-    },
-    {
       "path": "flowersec-ts/src/public/streamHandlers.ts",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 7,
-      "matching_lines": 2
-    },
-    {
-      "path": "flowersec-ts/src/public/streamMetadata.ts",
-      "action": "replace_before_v4_runtime",
-      "first_matching_line": 1,
       "matching_lines": 2
     },
     {
@@ -1051,7 +1087,7 @@
       "path": "flowersec-ts/src/v3/publicSession.ts",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 2,
-      "matching_lines": 37
+      "matching_lines": 38
     },
     {
       "path": "flowersec-ts/src/v3/retryDisposition.ts",
@@ -1124,6 +1160,12 @@
       "action": "replace_before_v4_runtime",
       "first_matching_line": 3,
       "matching_lines": 31
+    },
+    {
+      "path": "flowersec-ts/src/v4/runtime/noiseWasmBinary.ts",
+      "action": "replace_before_v4_runtime",
+      "first_matching_line": 3,
+      "matching_lines": 1
     }
   ]
 }

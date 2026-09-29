@@ -3,7 +3,7 @@ package sessionv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 )
 
 // Install the sole close owner while the original Initial carrier is still

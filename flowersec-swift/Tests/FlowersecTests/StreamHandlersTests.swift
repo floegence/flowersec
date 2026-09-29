@@ -106,6 +106,31 @@ func streamHandlersIsolateFailuresAndContinueDispatch() async throws {
 }
 
 @Test
+func streamHandlersApplyRawMetadataContractBeforeHandler() async throws {
+  let signal = StreamHandlerSignal()
+  let stream = StreamHandlerTestByteStream(kind: "files/read")
+  let metadata = try StreamMetadata(["message": .string("hello")])
+  let session = StreamHandlerTestSession(stream: stream, metadata: metadata)
+  let contract = try RawStreamMetadataContract(
+    contractID: "code.raw.v1", namespace: "application/json", version: 1,
+    fields: [RawStreamMetadataField(name: "message", type: .string, required: true)])
+  let handlers = try StreamHandlers()
+  try handlers.handleStream(kind: "files/read", metadataContract: contract) { incoming in
+    do {
+      #expect(try incoming.metadata.descriptorValues()["message"] == .string("hello"))
+    } catch {
+      Issue.record("metadata projection missing")
+    }
+    await signal.fire()
+  }
+  let serving = Task { try await handlers.serve(session: session) }
+  await signal.wait()
+  serving.cancel()
+  _ = await serving.result
+  #expect(await stream.resetCount == 0)
+}
+
+@Test
 func streamHandlersEnforceConcurrencyAndCloseBeforeWaitingForCancellation() async throws {
   let events = StreamHandlerEventRecorder()
   let active = StreamHandlerTestByteStream(kind: "held")
@@ -219,9 +244,9 @@ private actor StreamHandlerTestSession: Session {
   private var waiter: CheckedContinuation<IncomingStream, Error>?
   private(set) var closeCount = 0
 
-  init(stream: StreamHandlerTestByteStream) {
+  init(stream: StreamHandlerTestByteStream, metadata: StreamMetadata = .empty) {
     self.outboundStream = stream
-    self.incoming = [IncomingStream(kind: stream.kind, metadata: .empty, stream: stream)]
+    self.incoming = [IncomingStream(kind: stream.kind, metadata: metadata, stream: stream)]
     self.terminalError = nil
     self.events = nil
   }

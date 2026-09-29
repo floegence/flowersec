@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/unicode151"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/unicode151"
 )
 
 // CBORFailure identifies a rejected wire shape. Authentication, cross-field

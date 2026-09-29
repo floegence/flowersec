@@ -8,10 +8,13 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/rawquic"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/webtransport"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // PreparedCarrierBinding is detached selection data, never activation authority.
@@ -23,12 +26,16 @@ type PreparedCarrierBinding struct {
 	Session        protocolv4.ArtifactSessionParameters
 	Role           protocolv4.Direction
 	MessageCarrier bool
+	Native         bool
 }
 
 // PreparedCarrierConfig is fixed by trusted local preparation. Endpoint/TLS
 // eligibility and bounded DNS/address attempts belong to that original caller.
 // No activation credentials or post-spend authorization are required here.
 type PreparedCarrierConfig struct {
+	relay                    bool
+	originalParent           *preparedCarrierReference
+	originalAlias            resourcev4.Reference
 	Candidate                protocolv4.PoolMember
 	Attempt                  [16]byte
 	Session                  protocolv4.ArtifactSessionParameters
@@ -53,6 +60,42 @@ type preparedProviderLifecycle interface {
 	Retire() error
 }
 
+// Only an SDK native provider can supply this concrete same-root connection.
+// The maintenance stream and data stream graph retain the same connection.
+func originalNativeConnection(connection native.Connection) bool {
+	switch p := connection.(type) {
+	case *rawquic.OwnedConnection:
+		return p != nil
+	case *webtransport.OwnedConnection:
+		return p != nil
+	default:
+		return false
+	}
+}
+
+func preparedNativeConnection(provider preparedProviderLifecycle, stream io.ReadWriteCloser, environment resourcev4.Reference) (native.Connection, error) {
+	var connection native.Connection
+	switch p := provider.(type) {
+	case interface {
+		NativeConnection() *rawquic.OwnedConnection
+	}:
+		connection = p.NativeConnection()
+	case interface {
+		NativeConnection() *webtransport.OwnedConnection
+	}:
+		connection = p.NativeConnection()
+	default:
+		return nil, nil
+	}
+	if stream == nil || !originalNativeConnection(connection) {
+		return nil, cryptov4.ErrConfiguration
+	}
+	if err := connection.CheckEnvironment(environment); err != nil {
+		return nil, err
+	}
+	return connection, nil
+}
+
 // PreparedCarrier is a copyable opaque handle. It exposes no unactivated I/O
 // and starts no goroutine, timer, callback or cancellation observer. The existing
 // Connect owner drives Check/Close and bounded cleanup until activation; the
@@ -60,15 +103,25 @@ type preparedProviderLifecycle interface {
 type PreparedCarrier struct{ *preparedCarrier }
 
 type preparedCarrier struct {
+	relay                            bool
+	relayBudget                      *relayByteBudget
+	originalParent                   *preparedCarrierReference
+	originalReservation              resourcev4.Reference
 	mu                               sync.Mutex
 	incarnation                      [16]byte
+	hopChallenge                     [32]byte
+	allowRecipient                   *TunnelServerAllowRecipient
+	allowRegistered, allowGranted    bool
 	binding                          PreparedCarrierBinding
 	guarantees                       protocolv4.V4ConnectionGuarantees
+	exporterArtifact, exporterValue  [32]byte
+	exporterReady                    bool
 	parent                           context.Context
 	deadline                         *timev4.Deadline
 	reservation, environment, shared resourcev4.Reference
 	admission                        *SessionAdmissionReservation
 	provider                         preparedProviderLifecycle
+	native                           native.Connection
 	stream                           io.ReadWriteCloser
 	messages                         InitialMessages
 	streamAdapter                    preparedStream
@@ -139,6 +192,10 @@ func newPreparedCarrier(ctx context.Context, c PreparedCarrierConfig, provider p
 	if err := provider.CheckEnvironment(c.Environment); err != nil {
 		return nil, err
 	}
+	native, err := preparedNativeConnection(provider, stream, c.Environment)
+	if err != nil {
+		return nil, err
+	}
 	guarantees, err := provider.ConnectionGuarantees()
 	if err != nil {
 		return nil, err
@@ -149,20 +206,47 @@ func newPreparedCarrier(ctx context.Context, c PreparedCarrierConfig, provider p
 	if c.Role == protocolv4.ServerToClient {
 		guarantees.LocalConsumerTls13Verification = protocolv4.V4ConsumerTLS13VerificationNotApplicable
 	}
-	shared, err := c.Environment.Borrow()
+	var shared resourcev4.Reference
+	if c.originalParent == nil {
+		shared, err = c.Environment.Borrow()
+	} else {
+		shared, err = c.originalParent.take(c.Environment, c.originalAlias)
+	}
 	if err != nil {
 		return nil, err
 	}
 	owned, err := c.Reservation.Take(charge)
 	if err != nil {
-		shared.Release()
+		c.originalParent.giveBack(shared)
 		return nil, err
 	}
-	p := &preparedCarrier{incarnation: incarnation, binding: PreparedCarrierBinding{c.Candidate, c.Attempt, c.Session, c.Role, messages != nil}, guarantees: guarantees,
-		parent: ctx, deadline: c.Deadline, reservation: owned, environment: c.Environment, shared: shared,
-		provider: provider, stream: stream, messages: messages}
+	var challenge [32]byte
+	if _, err = rand.Read(challenge[:]); err != nil || challenge == ([32]byte{}) {
+		owned.Release()
+		c.originalParent.giveBack(shared)
+		return nil, cryptov4.ErrConfiguration
+	}
+	p := &preparedCarrier{relay: c.relay, incarnation: incarnation, hopChallenge: challenge, binding: PreparedCarrierBinding{Candidate: c.Candidate, Attempt: c.Attempt, Session: c.Session, Role: c.Role, MessageCarrier: messages != nil, Native: native != nil}, guarantees: guarantees,
+		parent: ctx, deadline: c.Deadline, reservation: owned, environment: c.Environment, shared: shared, originalParent: c.originalParent, originalReservation: c.Reservation,
+		provider: provider, native: native, stream: stream, messages: messages}
 	p.streamAdapter.owner, p.messageAdapter.owner = p, p
 	return &PreparedCarrier{p}, nil
+}
+
+// A factory must return the original method's newly constructed carrier. Equal
+// signed tuples do not authorize substituting an independently owned handle or
+// reviving a result from an earlier use of the same candidate position.
+func (p *PreparedCarrier) checkPreparation(c PreparedCarrierConfig) error {
+	if p == nil || p.preparedCarrier == nil {
+		return resourcev4.ErrOwner
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.relay != c.relay || p.originalReservation != c.Reservation || p.originalParent != c.originalParent ||
+		p.environment != c.Environment || p.deadline != c.Deadline || p.admission != nil || p.activated {
+		return resourcev4.ErrOwner
+	}
+	return p.checkLocked()
 }
 
 func (p *PreparedCarrier) AdmissionBinding() PreparedCarrierBinding {
@@ -192,6 +276,9 @@ func (p *preparedCarrier) sealLocked(cause error) error {
 			cause = cryptov4.ErrClosed
 		}
 		p.closed, p.cause = true, cause
+		if p.relayBudget != nil {
+			p.relayBudget.close()
+		}
 		p.reservation.Seal()
 	}
 	return p.cause
@@ -251,7 +338,7 @@ func (p *PreparedCarrier) bindAdmission(admission *SessionAdmissionReservation) 
 	if err := p.checkLocked(); err != nil {
 		return err
 	}
-	if p.admission != nil {
+	if p.admission != nil || p.relay {
 		return cryptov4.ErrTransition
 	}
 	p.admission = admission
@@ -269,6 +356,9 @@ func (p *PreparedCarrier) activate(admission *SessionAdmissionReservation) (io.R
 	}
 	if err := p.checkLocked(); err != nil {
 		return nil, nil, err
+	}
+	if p.binding.Role == protocolv4.ServerToClient && p.guarantees.Scope == protocolv4.V4ConnectionGuaranteeScopeCompleteRelayPath && (!p.allowRegistered || !p.allowGranted) {
+		return nil, nil, protocolv4.ErrHopAuthStage
 	}
 	p.activated = true
 	// Connect cancellation no longer owns I/O after this handoff. Initial and
@@ -373,6 +463,8 @@ func (p *PreparedCarrier) WaitCleanup(ctx context.Context) error {
 			err = cryptov4.ErrCapacity
 		} else {
 			p.complete = true
+			clear(p.exporterValue[:])
+			p.exporterArtifact, p.exporterReady = [32]byte{}, false
 			p.parent, p.deadline = nil, nil
 		}
 	}
@@ -405,8 +497,13 @@ func (p *PreparedCarrier) Retire() error {
 	if err == nil {
 		p.retired = true
 		p.provider, p.stream, p.messages, p.admission = nil, nil, nil, nil
+		if p.relayBudget != nil {
+			p.relayBudget.close()
+		}
 		p.reservation.Release()
-		p.shared.Release()
+		p.originalParent.giveBack(p.shared)
+		p.shared, p.originalParent = resourcev4.Reference{}, nil
+		p.originalReservation = resourcev4.Reference{}
 	}
 	p.mu.Unlock()
 	return err
@@ -456,14 +553,14 @@ func (s *preparedStream) Read(dst []byte) (int, error) {
 		return 0, err
 	}
 	defer s.owner.endIO(false)
-	return s.owner.stream.Read(dst)
+	return s.owner.meteredRead(dst)
 }
 func (s *preparedStream) Write(src []byte) (int, error) {
 	if err := s.owner.beginIO(true); err != nil {
 		return 0, err
 	}
 	defer s.owner.endIO(true)
-	return s.owner.stream.Write(src)
+	return s.owner.meteredWrite(src)
 }
 func (s *preparedStream) Close() error { return s.owner.closeProvider() }
 
@@ -475,7 +572,7 @@ func (m *preparedMessages) ReadMessage(ctx context.Context, dst []byte) (int, er
 		return 0, err
 	}
 	defer m.owner.endIO(false)
-	return m.owner.messages.ReadMessage(ctx, dst)
+	return m.owner.meteredReadMessage(ctx, dst)
 }
 func (m *preparedMessages) WriteMessage(ctx context.Context, src []byte) error {
 	if ctx == nil {
@@ -485,6 +582,6 @@ func (m *preparedMessages) WriteMessage(ctx context.Context, src []byte) error {
 		return err
 	}
 	defer m.owner.endIO(true)
-	return m.owner.messages.WriteMessage(ctx, src)
+	return m.owner.meteredWriteMessage(ctx, src)
 }
 func (m *preparedMessages) Close() error { return m.owner.closeProvider() }

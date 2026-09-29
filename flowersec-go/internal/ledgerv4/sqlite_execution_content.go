@@ -8,8 +8,8 @@ import (
 	"io"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 const executionContentHeadsSQL = `CREATE TABLE content_heads (key BLOB PRIMARY KEY CHECK(length(key)=193), admitted BLOB NOT NULL CHECK(length(admitted)=8), items INTEGER NOT NULL CHECK(items>=0), bytes INTEGER NOT NULL CHECK(bytes>=0)) STRICT, WITHOUT ROWID`

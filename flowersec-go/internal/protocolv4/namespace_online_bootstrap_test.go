@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type bootstrapTestProvider struct {
@@ -35,7 +35,9 @@ type onlineBootstrapFixture struct {
 	alter     func(*cborRefValue)
 }
 
-func onlineBootstrap(t *testing.T) *onlineBootstrapFixture {
+func onlineBootstrap(t *testing.T) *onlineBootstrapFixture { return onlineBootstrapConfigured(t, nil) }
+
+func onlineBootstrapConfigured(t *testing.T, durable func(*onlineBootstrapFixture, NamespaceBootstrapLimits) NamespaceDurabilityConfig, prepare ...func(*onlineBootstrapFixture)) *onlineBootstrapFixture {
 	t.Helper()
 	n := newNamespaceFixture(t)
 	f := &onlineBootstrapFixture{independentTrustFixture: &independentTrustFixture{namespace: n, config: n.seed(t, "trust_config_fields"), seed: [32]byte{71, 23, 4}}}
@@ -86,12 +88,19 @@ func onlineBootstrap(t *testing.T) *onlineBootstrapFixture {
 			t.Error(err)
 		}
 	})
+	for _, setup := range prepare {
+		setup(f)
+	}
 	bl := NamespaceBootstrapLimits{ResponseBytes: 32768, ResponseNodes: 8192, StateBytes: 4096, DurationMS: 4000, FetchDurationMS: 4000, FetchAttempts: 2, Subscribers: 8, RuntimeBytes: 65536}
 	cost, err := NamespaceBootstrapCharge(bl)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.operation, err = NewNamespaceOnlineBootstrap(context.Background(), f.owner, bl, n.namespaceAllocation(t), n.reserve(t, cost))
+	if durable == nil {
+		f.operation, err = NewNamespaceOnlineBootstrap(context.Background(), f.owner, bl, n.namespaceAllocation(t), n.reserve(t, cost))
+	} else {
+		f.operation, err = NewNamespaceDurableBootstrap(context.Background(), f.owner, bl, n.namespaceAllocation(t), n.reserve(t, cost), durable(f, bl))
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

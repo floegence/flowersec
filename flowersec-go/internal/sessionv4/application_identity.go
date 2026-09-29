@@ -7,9 +7,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // ApplicationIdentityConfig captures one complete immutable certificate and
@@ -224,10 +224,57 @@ func (u *identityUse) release() {
 	i := u.identity
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	if u.ref.CheckRetained() != nil {
+		*u = identityUse{}
+		return
+	}
 	u.ref.Release()
 	*u = identityUse{}
 	i.uses--
 	i.cleanupLocked()
+}
+
+// take moves an existing pin, including after advertisement retirement. The
+// identity's use count follows the same physical reference exactly once.
+func (u *identityUse) take(environment resourcev4.Reference) (identityUse, error) {
+	if u.identity == nil {
+		return identityUse{}, cryptov4.ErrConfiguration
+	}
+	i := u.identity
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if err := u.ref.CheckSameEnvironment(environment); err != nil {
+		return identityUse{}, err
+	}
+	ref, err := u.ref.TakeBorrow()
+	if err != nil {
+		return identityUse{}, err
+	}
+	*u = identityUse{}
+	return identityUse{i, ref}, nil
+}
+
+// borrow duplicates an existing original use, including after advertisement
+// retirement. It never reacquires the source's current identity.
+func (u identityUse) borrow(environment resourcev4.Reference) (identityUse, error) {
+	if u.identity == nil {
+		return identityUse{}, cryptov4.ErrConfiguration
+	}
+	i := u.identity
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.cleaned || i.uses == math.MaxUint32 {
+		return identityUse{}, cryptov4.ErrCapacity
+	}
+	if err := u.ref.CheckSameEnvironment(environment); err != nil {
+		return identityUse{}, err
+	}
+	ref, err := i.reservation.Borrow()
+	if err != nil {
+		return identityUse{}, err
+	}
+	i.uses++
+	return identityUse{i, ref}, nil
 }
 
 func (i *ApplicationIdentity) Close() {

@@ -16,7 +16,7 @@ type AdmissionFields struct {
 	Issuer, Lease, Attempt, Candidate                                              [16]byte
 	Artifact, Proof, SessionNonce, ClientIdentity, ServerIdentity                  [32]byte
 	AdmissionBinding, HelloTranscript, TransportContext, AdmissionNonce            [32]byte
-	Route                                                                          [32]byte
+	Route, CandidateSet                                                            [32]byte
 	CandidateIndex, IssuedAt, ActivationEnd, SessionEnd, Features, BindingMode     uint64
 }
 
@@ -43,7 +43,7 @@ func (h *HelloBinding) AdmissionFacts(activation *ActivationBinding, fsb, certif
 		Artifact: b.artifactDigest, Proof: b.proofDigest, SessionNonce: b.sessionNonce,
 		ClientIdentity: b.clientDigest, ServerIdentity: b.serverDigest,
 		AdmissionBinding: digest, HelloTranscript: h.transcript, TransportContext: h.transport,
-		AdmissionNonce: [32]byte(nonce), Route: b.winner.RouteDigest,
+		AdmissionNonce: [32]byte(nonce), Route: b.winner.RouteDigest, CandidateSet: b.candidateSetDigest,
 		CandidateIndex: b.winner.Index, IssuedAt: b.issuedAt, ActivationEnd: b.activationEnd,
 		SessionEnd: b.sessionEnd, Features: h.features, BindingMode: h.mode,
 	}}, nil

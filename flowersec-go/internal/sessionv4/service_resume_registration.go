@@ -1,8 +1,8 @@
 package sessionv4
 
 import (
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // Registration validation precedes application authorization and READY. A

@@ -8,9 +8,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // ServiceInputsConfig fixes one Session's SDK input admission. The protected
@@ -107,6 +107,36 @@ func (n *Network) checkUnaryBinding(method uint32, namespace string, typeID uint
 		}
 	}
 	return ErrMethod
+}
+
+// UnaryPublicationRequired reads the original frozen method shape for local
+// registration. It does not derive authority from a request or a type alone.
+func (n *Network) UnaryPublicationRequired(method uint32, namespace string, typeID uint32) (bool, error) {
+	if n == nil {
+		return false, ErrOwner
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if err := n.liveLocked(); err != nil {
+		return false, err
+	}
+	if n.inputs == nil {
+		return false, ErrOwner
+	}
+	a := n.inputs
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed || a.routes == nil {
+		return false, ErrClosed
+	}
+	policy, err := a.routes.RegisteredMethodPolicy(method)
+	if err != nil {
+		return false, err
+	}
+	if policy.Namespace != namespace || policy.Type != typeID || policy.Shape != 0 {
+		return false, ErrMethod
+	}
+	return policy.RestartFlush, nil
 }
 
 func ServiceInputsCharge(c ServiceInputsConfig) (resourcev4.Vector, error) {

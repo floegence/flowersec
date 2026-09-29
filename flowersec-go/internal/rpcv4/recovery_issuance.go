@@ -5,9 +5,9 @@ import (
 	"crypto/rand"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // RecoveryIssuance is trusted service policy for one explicit issuance. The
@@ -32,7 +32,7 @@ func (w *DurableExecutionWork) IssueRecoveryToken(ctx context.Context, verifier 
 		return err
 	}
 	defer w.endIO()
-	if !w.entered || w.reported || w.writeFailed || w.outputBytes != 0 || w.policy.Shape != 0 || w.header.Kind() != "rpc_request" {
+	if !w.entered || w.reported || w.writeFailed || w.outputBytes != 0 || w.policy.Shape != 0 || w.header.Kind() != "execution_unary_request" {
 		return ErrOwner
 	}
 	if !verifier.mu.TryLock() {

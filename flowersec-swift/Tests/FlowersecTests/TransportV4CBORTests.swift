@@ -51,7 +51,7 @@ final class TransportV4CBORTests: XCTestCase {
         }
       }
     }
-    XCTAssertEqual(positive, 337)
+    XCTAssertEqual(positive, 348)
     XCTAssertGreaterThan(negative, 0)
     print("Swift syntax: \(positive) positive / \(negative) syntax-negative cases")
   }

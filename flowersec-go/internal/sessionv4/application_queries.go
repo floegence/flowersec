@@ -6,8 +6,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // sdkQueryWork is sealed to this package. Only original fixed SDK query owners
@@ -29,6 +29,7 @@ type sdkQueryGroup struct {
 
 type sdkQuerySlot struct {
 	registration                    *sdkQueryRegistration
+	protection                      *sdkQueryProtection
 	group                           *sdkQueryGroup
 	work                            sdkQueryWork
 	backing                         resourcev4.Reference
@@ -101,7 +102,7 @@ func (e *ApplicationExecutor) registerSDKQuery(group *sdkQueryGroup, direction u
 		return nil, err
 	}
 	index := 0
-	for q.slots[index].registration != nil {
+	for q.slots[index].registration != nil || q.slots[index].protection != nil {
 		index++
 	}
 	r := &sdkQueryRegistration{index: index, done: make(chan struct{})}
@@ -196,7 +197,7 @@ func (q *sdkQueryLane) choose() int {
 			for offset := 1; offset <= len(q.slots); offset++ {
 				index := (group.cursor[direction] + offset) % len(q.slots)
 				s := &q.slots[index]
-				if s.group == group && s.direction == direction && !s.ready && !s.active && (s.pending || s.closing) {
+				if s.registration != nil && s.group == group && s.direction == direction && !s.ready && !s.active && (s.pending || s.closing) {
 					group.direction, group.cursor[direction] = direction, index
 					q.lastGroup = anchor
 					return index
@@ -325,9 +326,18 @@ func (e *ApplicationExecutor) releaseSDKQueryLocked(index int) {
 	r.mu.Lock()
 	r.err = s.err
 	r.executor.Store(nil)
-	s.backing.Release()
-	*s = sdkQuerySlot{}
-	q.count--
+	if p := s.protection; p != nil && !p.closed && !e.closed && !q.failed {
+		*s = sdkQuerySlot{group: s.group, direction: s.direction, backing: s.backing, protection: p}
+	} else {
+		if p != nil {
+			p.closed = true
+			p.backing.Release()
+			p.backing = resourcev4.Reference{}
+		}
+		s.backing.Release()
+		*s = sdkQuerySlot{}
+		q.count--
+	}
 	close(r.done)
 	r.mu.Unlock()
 }
@@ -352,6 +362,7 @@ func (e *ApplicationExecutor) exitSDKQueryWorker() {
 	for i := range q.slots {
 		s := &q.slots[i]
 		if s.registration == nil {
+			e.releaseIdleSDKQueryProtectionLocked(i)
 			continue
 		}
 		s.ready = false

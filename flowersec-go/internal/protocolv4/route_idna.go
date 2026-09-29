@@ -7,7 +7,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/unicode151"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/unicode151"
 	"golang.org/x/net/idna"
 )
 

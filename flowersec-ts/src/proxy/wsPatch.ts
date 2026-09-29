@@ -1,5 +1,5 @@
 import { readU32be, u16be, u32be } from "../utils/bin.js";
-import type { ByteStream } from "../public/contract.js";
+import type { ProxyStream } from "./stream.js";
 
 import { ProxyByteReader, writeAll } from "./stream.js";
 import type { ProxyRuntime, ProxyRuntimeLimits } from "./types.js";
@@ -17,7 +17,7 @@ function readU16(input: Uint8Array): number {
   return ((input[0]! << 8) | input[1]!) >>> 0;
 }
 
-async function writeFrame(stream: ByteStream, opcode: number, payload: Uint8Array, maximum: number): Promise<void> {
+async function writeFrame(stream: ProxyStream, opcode: number, payload: Uint8Array, maximum: number): Promise<void> {
   if (payload.length > maximum) throw new Error("WebSocket frame exceeds the proxy limit");
   const header = new Uint8Array(5);
   header[0] = opcode;
@@ -108,7 +108,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
 
     private readonly listeners = new EventListeners();
     private readonly abort = new AbortController();
-    private stream: ByteStream | undefined;
+    private stream: ProxyStream | undefined;
     private writes: Promise<void> = Promise.resolve();
     private closeTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -188,7 +188,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       }
     }
 
-    private async readLoop(stream: ByteStream): Promise<void> {
+    private async readLoop(stream: ProxyStream): Promise<void> {
       const reader = new ProxyByteReader(stream, { signal: this.abort.signal });
       while (this.readyState !== ProxyWebSocket.CLOSED) {
         const frame = await readFrame(reader, maxFrameBytes);
@@ -200,12 +200,18 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
           const reason = frame.payload.length > 2 ? decoder.decode(frame.payload.subarray(2)) : "";
           const peerInitiated = this.readyState === ProxyWebSocket.OPEN;
           this.readyState = ProxyWebSocket.CLOSING;
-          if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
+          this.closeTimer ??= setTimeout(() => this.fail(), closeHandshakeTimeoutMs);
           if (peerInitiated) {
             this.writes = this.writes.then(async () => await writeFrame(stream, 8, frame.payload, maxFrameBytes));
           }
           await this.writes;
-          this.completeClose(code, reason);
+          if (stream.finish !== undefined) {
+            await stream.closeWrite({ signal: this.abort.signal });
+            await stream.finish({ signal: this.abort.signal });
+            if (reader.bufferedBytes !== 0 || await stream.read({ signal: this.abort.signal }) !== null) throw new Error("WebSocket close has trailing data");
+            stream.dispose?.();
+          }
+          this.completeClose(code, reason, stream.finish !== undefined);
           return;
         } else if (frame.opcode === 1) {
           this.emit("message", new MessageEvent("message", { data: decoder.decode(frame.payload) }));
@@ -234,10 +240,10 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       const stream = this.stream;
       this.stream = undefined;
       this.abort.abort();
-      void stream?.reset().catch(() => undefined);
+      void stream?.reset().catch(() => undefined).finally(() => stream?.dispose?.());
     }
 
-    private completeClose(code: number, reason: string): void {
+    private completeClose(code: number, reason: string, drained = false): void {
       if (this.readyState === ProxyWebSocket.CLOSED) return;
       if (this.closeTimer !== undefined) clearTimeout(this.closeTimer);
       this.readyState = ProxyWebSocket.CLOSED;
@@ -246,7 +252,7 @@ export function installWebSocketPatch(options: WebSocketPatchOptions): Readonly<
       const stream = this.stream;
       this.stream = undefined;
       this.abort.abort();
-      void stream?.close().catch(() => stream.reset().catch(() => undefined));
+      if (!drained) void stream?.close().catch(() => stream.reset().catch(() => undefined)).finally(() => stream?.dispose?.());
     }
   }
 

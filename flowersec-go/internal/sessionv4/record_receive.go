@@ -9,9 +9,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // RecordReceiver owns one reserved read/decode slot. It makes no unbounded
@@ -251,13 +251,19 @@ func (r *RecordReceiver) readShared(ctx context.Context, reader io.Reader, gate 
 	if err = r.begin(ctx); err != nil {
 		return nil, err
 	}
+	gate.input.reader = reader
 	defer func() {
+		gate.input = connectionInputReader{}
 		if err != nil {
 			r.finish()
 		}
 	}()
-	prefix, err := ReadRecordPrefix(reader, r.maxFrame)
+	input := &gate.input
+	prefix, err := ReadRecordPrefix(input, r.maxFrame)
 	if err != nil {
+		if input.failed(err) {
+			gate.admission.closeWithTransportCause(err)
+		}
 		return nil, err
 	}
 	r.mu.Lock()
@@ -266,8 +272,11 @@ func (r *RecordReceiver) readShared(ctx context.Context, reader io.Reader, gate 
 	if err != nil {
 		return nil, err
 	}
-	wire, err := prefix.ReadBody(reader, r.storage)
+	wire, err := prefix.ReadBody(input, r.storage)
 	if err != nil {
+		if input.failed(err) {
+			gate.admission.closeWithTransportCause(err)
+		}
 		return nil, err
 	}
 	frame, header, _, err := protocolv4.ParseRecord(wire, r.context.Selectors["crypto_profile_id"], r.maxFrame)

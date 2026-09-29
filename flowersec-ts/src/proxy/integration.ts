@@ -1,6 +1,6 @@
-import { connectV3, type SessionOptionsV3 } from "../browser/connectSessionV3.js";
-import type { ArtifactLeaseV3 } from "../v3/artifactLease.js";
-import type { Session } from "../public/contract.js";
+import type { OperationOptions } from "../public/contract.js";
+import type { V4ConnectionMaterialSource, V4Session, V4TransportEnvironment } from "../v4/public.js";
+import type { V4ConnectionRequirements } from "../generated/transportV4APIResults.js";
 
 import { createProxyRuntime } from "./runtime.js";
 import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
@@ -12,7 +12,8 @@ import {
 } from "./windowBridge.js";
 
 export type ProxyBrowserConnectOptions = Readonly<{
-  connect?: SessionOptionsV3;
+  connect?: OperationOptions;
+  requirements?: Partial<V4ConnectionRequirements>;
   runtime?: Omit<ProxyRuntimeOptions, "session">;
   serviceWorker?: Readonly<{
     scriptUrl: string;
@@ -24,20 +25,21 @@ export type ProxyBrowserConnectOptions = Readonly<{
 }>;
 
 export type ProxyBrowserHandle = Readonly<{
-  session: Session;
+  session: V4Session;
   runtime: ProxyRuntime;
   dispose(): Promise<void>;
 }>;
 
 export async function connectProxyBrowser(
-  lease: ArtifactLeaseV3,
+  environment: V4TransportEnvironment,
+  source: V4ConnectionMaterialSource,
   options: ProxyBrowserConnectOptions = {},
 ): Promise<ProxyBrowserHandle> {
-  const session = await connectV3(lease, options.connect);
+  const session = await environment.connect(source, options.requirements, options.connect);
   let runtime: ProxyRuntime | undefined;
   try {
     if (options.serviceWorker !== undefined) await registerServiceWorkerAndEnsureControl(options.serviceWorker);
-    runtime = createProxyRuntime({ session, ...options.runtime });
+    runtime = createProxyRuntime({ ...options.runtime, session });
     return Object.freeze({
       session,
       runtime,
@@ -61,10 +63,11 @@ export type ProxyControllerBrowserHandle = ProxyBrowserHandle & Readonly<{
 }>;
 
 export async function connectProxyControllerBrowser(
-  lease: ArtifactLeaseV3,
+  environment: V4TransportEnvironment,
+  source: V4ConnectionMaterialSource,
   options: ProxyControllerBrowserConnectOptions,
 ): Promise<ProxyControllerBrowserHandle> {
-  const base = await connectProxyBrowser(lease, options);
+  const base = await connectProxyBrowser(environment, source, options);
   let controller: ProxyControllerWindowHandle | undefined;
   try {
     controller = registerProxyControllerWindow({ runtime: base.runtime, ...options.controller });

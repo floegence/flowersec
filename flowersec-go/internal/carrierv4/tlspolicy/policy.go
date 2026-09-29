@@ -11,11 +11,12 @@ import (
 	"crypto/x509"
 	"errors"
 	"math"
+	"net/netip"
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrPolicy = errors.New("tlspolicy: invalid original TLS policy")
@@ -241,6 +242,9 @@ func (p *Prepared) Verify(state tls.ConnectionState, host string, roots *x509.Ce
 	if p.policy.mode != 0 || roots == nil || host == "" {
 		return Verification{}, ErrPolicy
 	}
+	if err := CheckExactIPIdentity(state.PeerCertificates[0], host); err != nil {
+		return Verification{}, err
+	}
 	intermediates := x509.NewCertPool()
 	for _, certificate := range state.PeerCertificates[1:] {
 		if certificate == nil {
@@ -267,4 +271,26 @@ func (p *Prepared) Verify(state tls.ConnectionState, host string, roots *x509.Ce
 		}
 	}
 	return Verification{}, ErrCertificate
+}
+
+// CheckExactIPIdentity supplements ordinary CA hostname verification for numeric
+// targets. Go's IP.Equal deliberately aliases IPv4 with mapped IPv6; an exact
+// authorized target retains the SAN address family and all original bits. DNS
+// targets still require the caller's normal SAN/chain checks. This check alone
+// proves neither certificate trust nor validity.
+func CheckExactIPIdentity(certificate *x509.Certificate, host string) error {
+	if certificate == nil {
+		return ErrCertificate
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return nil
+	}
+	for _, san := range certificate.IPAddresses {
+		address, valid := netip.AddrFromSlice(san)
+		if valid && address == ip {
+			return nil
+		}
+	}
+	return ErrCertificate
 }

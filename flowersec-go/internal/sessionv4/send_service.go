@@ -8,8 +8,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type sendServiceSignal struct {
@@ -58,7 +59,8 @@ type SendService struct {
 
 func SendServiceCharge(streams uint32, workers [3]uint32) (resourcev4.Vector, error) {
 	count := uint64(workers[0]) + uint64(workers[1]) + uint64(workers[2])
-	if streams == 0 || uint64(streams) > uint64(math.MaxInt) || count == 0 || count > 128 {
+	maximum, err := protocolv4.SessionMaxStreams()
+	if err != nil || streams == 0 || streams > maximum || uint64(streams) > uint64(math.MaxInt) || count == 0 || count > min(uint64(streams), 4096) {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
 	bytes := uint64(unsafe.Sizeof(SendService{})) + uint64(streams)*uint64(unsafe.Sizeof(sendServiceSlot{}))
@@ -78,15 +80,10 @@ func NewSendService(a *OpenAdmission, workers [3]uint32, reservation resourcev4.
 	if a.closed || a.runtime != nil || a.sendService != nil || a.active != 0 || a.pending != 0 || a.positiveProofs != 0 || a.rejectionProofs != 0 || a.bootstrap != nil {
 		return nil, cryptov4.ErrConfiguration
 	}
-	count := uint64(0)
 	for class, cap := range a.limits.PerClass {
 		if cap != 0 && workers[class] == 0 || cap == 0 && workers[class] != 0 {
 			return nil, cryptov4.ErrConfiguration
 		}
-		count += uint64(workers[class])
-	}
-	if count > uint64(a.engine.OrdinaryWorkSlots()) {
-		return nil, cryptov4.ErrConfiguration
 	}
 	charge, err := SendServiceCharge(a.limits.Active, workers)
 	if err != nil {

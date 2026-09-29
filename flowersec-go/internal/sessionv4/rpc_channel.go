@@ -5,13 +5,22 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
+
+// ErrRPCFragmentProgress is returned when an already started application
+// fragment receives no further bytes for the fixed progress allowance. The
+// allowance applies only after a fragment byte has arrived; an idle channel
+// remains governed by its Session lifetime/idle owners.
+var ErrRPCFragmentProgress = errors.New("sessionv4: rpc fragment made no progress")
+
+const rpcFragmentProgressAllowance = 5 * time.Second
 
 // RPCChannel attaches the sole ordinary RPC engine to an accepted original
 // Stream. Its reader and publisher are protected SDK services, independent of
@@ -30,6 +39,7 @@ type RPCChannel struct {
 	done                                        chan struct{}
 	closeDone                                   chan struct{}
 	writerDone                                  chan error
+	failure                                     error
 	started, running, closed, cleaned, cleaning bool
 }
 
@@ -153,13 +163,25 @@ func (c *RPCChannel) Run(ctx context.Context) (err error) {
 		}
 		c.Close()
 		c.mu.Lock()
+		c.failure = err
 		c.running = false
 		c.cancel = nil
 		close(c.done)
 		c.mu.Unlock()
 	}()
 	for {
-		result, readErr := owner.ReadInto(runCtx, c.buffer[:])
+		readCtx := runCtx
+		var cancelRead context.CancelFunc
+		if receiver.Partial() {
+			readCtx, cancelRead = context.WithTimeout(runCtx, rpcFragmentProgressAllowance)
+		}
+		result, readErr := owner.ReadInto(readCtx, c.buffer[:])
+		if cancelRead != nil {
+			cancelRead()
+		}
+		if errors.Is(readErr, context.DeadlineExceeded) && receiver.Partial() {
+			return ErrRPCFragmentProgress
+		}
 		if result.Progress.Filled > 0 {
 			if _, err := receiver.Feed(c.buffer[:result.Progress.Filled]); err != nil {
 				return err

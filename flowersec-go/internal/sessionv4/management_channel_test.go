@@ -6,10 +6,10 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type managementRuntimeAccess struct{ ref resourcev4.Reference }
@@ -171,8 +171,10 @@ func TestManagementLifetimeLimitLeavesBusinessHealthy(t *testing.T) {
 	ctx, services, fixtures, endpoints, channels, identities := rpcChannelRuntimeProfile(t, "execution", nil)
 	r := services[0]
 	var previous *ManagementChannel
+	var previousPeer *ManagementChannel
 	for generation := uint64(1); generation <= 16; generation++ {
 		channel := awaitManagementChannel(t, ctx, r, previous)
+		peerChannel := awaitManagementChannel(t, ctx, services[1], previousPeer)
 		a := endpoints[0].admission
 		a.mu.Lock()
 		count := a.lifetime[0][ManagementStream]
@@ -185,20 +187,59 @@ func TestManagementLifetimeLimitLeavesBusinessHealthy(t *testing.T) {
 				t.Fatal("exhaustion closed healthy Session", err)
 			}
 		}
+		channel.owner.queue.mu.Lock()
+		alias, err := channel.owner.queue.reservation.Borrow()
+		channel.owner.queue.mu.Unlock()
+		if err != nil {
+			t.Fatal(err)
+		}
+		peerChannel.owner.queue.mu.Lock()
+		peerAlias, err := peerChannel.owner.queue.reservation.Borrow()
+		peerChannel.owner.queue.mu.Unlock()
+		if err != nil {
+			alias.Release()
+			t.Fatal(err)
+		}
+		r.mu.Lock()
+		job := r.management
+		r.mu.Unlock()
+		services[1].mu.Lock()
+		peerJob := services[1].management
+		services[1].mu.Unlock()
 		previous = channel
+		previousPeer = peerChannel
 		channel.Close()
+		peerChannel.Close()
+		select {
+		case <-job.done:
+		case <-ctx.Done():
+			peerAlias.Release()
+			alias.Release()
+			t.Fatal(ctx.Err())
+		}
+		select {
+		case <-peerJob.done:
+		case <-ctx.Done():
+			peerAlias.Release()
+			alias.Release()
+			t.Fatal(ctx.Err())
+		}
+		alias.Release()
+		peerAlias.Release()
 	}
 	for {
 		r.mu.Lock()
 		stopped := r.managementStopped
+		changed := r.managementChanged
 		r.mu.Unlock()
 		if stopped {
 			break
 		}
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			t.Fatal(ctx.Err())
+		case <-changed:
 		}
-		runtime.Gosched()
 	}
 	a := endpoints[0].admission
 	a.mu.Lock()
@@ -206,6 +247,9 @@ func TestManagementLifetimeLimitLeavesBusinessHealthy(t *testing.T) {
 	a.mu.Unlock()
 	if count != 16 {
 		t.Fatal("seventeenth allocation", count)
+	}
+	if err := endpoints[0].engine.ApplicationReady(); err != nil {
+		t.Fatal("exhaustion closed healthy Session", err)
 	}
 	assertRPCChannelRefusal(t, ctx, r, fixtures[0], channels[0], identities[0])
 }

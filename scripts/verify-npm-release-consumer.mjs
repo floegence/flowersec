@@ -31,7 +31,7 @@ try {
     "",
     `go ${goVersion}`,
     "",
-    `require github.com/floegence/flowersec/flowersec-go/v5 v${version}`,
+    `require github.com/floegence/flowersec/flowersec-go/v6 v${version}`,
     "",
   ].join("\n"));
 

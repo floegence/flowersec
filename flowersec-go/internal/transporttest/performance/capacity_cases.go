@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest/tunnelworkload"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/tunnelworkload"
 )
 
 var (

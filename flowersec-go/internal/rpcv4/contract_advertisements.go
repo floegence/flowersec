@@ -3,7 +3,7 @@ package rpcv4
 import (
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // Advertise selects one already registered exact contract for its immutable

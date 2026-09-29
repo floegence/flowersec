@@ -60,7 +60,7 @@ final class TransportV4TextTests: XCTestCase {
       XCTAssertEqual(ctx, before)
       if vector["expected_error"].text == nil { positive += 1 } else { negative += 1 }
     }
-    XCTAssertEqual(positive, 337); XCTAssertEqual(negative, 826); XCTAssertEqual(separate, 2)
+    XCTAssertEqual(positive, 348); XCTAssertEqual(negative, 831); XCTAssertEqual(separate, 2)
     print("Swift text maps: \(positive) positive / \(negative) negative / \(separate) external composition cases")
   }
 

@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type poolSQLiteAuthority struct {
@@ -40,6 +40,7 @@ func consumeSessionPool(t *testing.T, f *admissionIntegrationFixture, a *Session
 	authority := poolSQLiteAuthority{acceptedSQLiteAuthority: acceptedSQLiteAuthority{identity: ledgerv4.SQLiteIdentity{Authority: "local.consumer", StoreID: [32]byte{2}, Generation: 1}}, original: fields}
 	var result *InitialExchange
 	err = withSessionSQLite(t, f, a, authority.identity, authority, 4096, func(store *ledgerv4.SQLiteStore, reserve func(uint32, resourcev4.Vector) resourcev4.Reference) error {
+		authority.parent = store
 		charge, _ := ledgerv4.SQLitePoolSpendCharge(4096)
 		work := reserve(242, charge)
 		var callErr error

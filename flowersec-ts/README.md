@@ -15,18 +15,23 @@ Node.js 24.20.0 or newer is required.
 ## Entrypoints
 
 - `@floegence/flowersec-core` exports the portable artifact, lease, Session,
-  RPC, stream, metadata, error, and connection-controller contracts.
+  RPC, stream, metadata, error, and connection-controller contracts, plus the
+  explicit v4 Environment, resource and result contracts.
 - `@floegence/flowersec-core/browser` adds browser `connect(...)`,
   `createConnectionController(...)`, WSS, optional WebTransport, and the
-  isolated private-loopback profile.
+  isolated private-loopback profile. `configureV4BrowserWSS(...)` adds the
+  explicit v4 direct WSS client with a host-supplied IndexedDB pool adapter.
 - `@floegence/flowersec-core/node` adds Node `connect(...)`,
   `createConnectionController(...)`, `createAcceptor(...)`,
   `createTunnelRuntime(...)`, `ProxyServer`, `SessionHandlers`, and
-  `RPCHandlers`.
+  `RPCHandlers`. `configureV4NodeWSS(...)` adds the explicit v4 direct WSS
+  client with a durable SQLite pool adapter. The Node entrypoint also exposes
+  `openV4SQLiteExecutionStore` for durable execution history and unary results;
+  explicit reopen requires an independent host continuity proof.
 - `@floegence/flowersec-core/proxy` provides the browser HTTP/WebSocket proxy
   runtime, Service Worker integration, and exact-origin window bridges.
 
-## Client Sessions
+## Transport v3 Client Sessions
 
 Parse an opaque artifact, bind its durable spend callback, and connect:
 
@@ -62,7 +67,17 @@ origins, header and cookie policy, body/frame limits, timeouts, cancellation,
 and a close barrier. The `/proxy` browser runtime uses the same application
 wire through a Service Worker or exact-origin window bridge.
 
+HTTP proxy responses preserve coded bytes and origin `Content-Encoding`.
+The Service Worker decodes gzip, zlib deflate, and Brotli once for its synthetic
+Fetch response; encoding chains are limited to four layers. Brotli uses the
+bundled streaming WASM decoder. `maxDecodedBodyBytes` defaults to 64 MiB and
+limits each decoding layer and the presented body. Origin representation
+headers remain visible unless an explicit HTML transformation rewrites the
+representation. The decoded byte limit does not bound all browser memory or CPU.
+
 ## Supported Connections
+
+### Transport v3
 
 Browsers support WSS and optional browser-owned WebTransport. Node.js supports
 WSS and raw QUIC client, direct-server, and tunnel-runtime roles. Raw QUIC uses
@@ -73,6 +88,42 @@ control plane such as the Go control-plane package.
 CA candidates use platform or configured private roots. Pin candidates verify
 only the complete artifact-bound active pin set and never fall back to CA.
 Public errors remain closed and redacted.
+
+## Environment WSS connections and serving
+
+Create an Environment with `createV4TransportEnvironment(...)`, install either
+`configureV4NodeWSS(...)` or asynchronous `configureV4BrowserWSS(...)`, bootstrap
+its credential namespace, then call `environment.connect(...)` with a registered
+pool source or `environment.connectMaterial(...)` with verified pool material.
+The client publishes a Session only after the actual durable once transaction,
+authenticated HELLO/FSB/FSA exchange, Noise handshake and both READY messages.
+
+Both clients implement direct WSS, explicit pool or live-authority activation,
+transport/services/execution profiles, reliable streams, rekey and liveness
+with X25519/ChaCha20 or P-256/AES-GCM. Node verifies TLS 1.3 and the signed CA or leaf-DER pin policy.
+Browser WSS is CA-only and requires a trusted immutable deployment binding for
+TLS 1.3, early-data refusal, HTTP/1.1 and exact Origin enforcement; it reports
+`controlled_terminator`, never independent JavaScript TLS verification.
+
+The optional browser IndexedDB adapter is an explicit host integration. It
+requires actual strict-durability transactions and independent continuity
+evidence outside the database/origin. Browser users are not asked to provision a
+database. This SDK currently has no remote pool-consume service adapter. Both
+local stores reject missing continuity and retain consumed leases across reopen;
+uncertain commits cannot activate a connection through later readback.
+
+Node servers use `createNodeWSSListener(...)`, `createHandlerPlan(...)`, and
+`environment.serve(...)` from the normal Node entry. The listener owns bounded
+TCP/TLS/HTTP admission. Serve captures five application callbacks, verifies
+FSB before application authorization, reserves the Session graph before the
+durable admission CAS, and publishes only after dual READY. Its
+`drain`/`waitDrain`/`close`/`waitCleanup` lifecycle retains real native, Session,
+lease and callback cleanup while borrowing the Environment.
+
+See [TypeScript transport runtime](../docs/TYPESCRIPT_TRANSPORT_V4.md) for
+configuration, supported providers and storage continuity. Schema and provider
+qualification are tracked by the
+[implementation binding](../docs/TRANSPORT_V4_BINDING.md).
 
 ## CLI
 
@@ -90,6 +141,7 @@ npm run verify:package
 
 See the [TypeScript cookbook](../examples/ts/README.md),
 [API contract](../docs/API_CONTRACT.md),
+[TypeScript Transport v4](../docs/TYPESCRIPT_TRANSPORT_V4.md),
 [Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md),
 [wire contract](../docs/TRANSPORT_V3_WIRE.md), and
 [error model](../docs/ERROR_MODEL.md).

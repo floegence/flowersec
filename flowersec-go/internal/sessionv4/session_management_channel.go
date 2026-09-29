@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type managementChannelOpening struct {
@@ -217,7 +217,7 @@ func (r *RPCServices) runManagement(ctx context.Context) {
 		}
 		openCtx, stopOpen := context.WithTimeout(job.context, time.Duration(remaining)*time.Millisecond)
 		for {
-			job.handle, _, err = a.OpenLocal(openCtx, ManagementStream, spec.Kind, nil, &CarrierAssociation{shared: a.sharedIngress}, job.allocation.stream.reservation, deadline)
+			job.handle, _, err = r.openInternal(openCtx, ManagementStream, spec.Kind, job.allocation, deadline)
 			// A handle means the actual allocation has already spent its lifetime
 			// count. Finish that owner before considering another generation.
 			if err == nil || job.handle.owner != nil {
@@ -331,7 +331,7 @@ func (job *managementChannelOpening) bind() (*ManagementChannel, error) {
 		return nil, err
 	}
 	job.stream = owner
-	channel, err := NewManagementChannel(owner, r.clock, r.managementResolver, job.allocation.management, r.runtimeBytes)
+	channel, err := NewManagementChannel(owner, r.clock, r.plan.executor, r.managementResolver, job.allocation.management, r.runtimeBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +387,7 @@ func (job *managementChannelOpening) cleanup() error {
 		} else {
 			err = a.CleanupStream(context.Background(), job.handle)
 		}
-		if err == nil {
+		if err == nil && job.services.native == nil {
 			err = a.CarrierClosed(job.handle)
 		}
 		if !errors.Is(err, ErrOpenPending) && !errors.Is(err, ErrTerminal) {

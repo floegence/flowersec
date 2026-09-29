@@ -13,13 +13,45 @@ import (
 )
 
 func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming IncomingStream) error {
-	if incoming.Stream == nil {
+	return server.serveWebSocketStream(ctx, incoming.Stream)
+}
+
+func (server *ProxyServer) serveWebSocketStream(ctx context.Context, stream proxyStream) error {
+	if stream == nil {
 		server.report(ErrInvalidProxyServer)
 		return ErrInvalidProxyServer
 	}
-	stream := incoming.Stream
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	resetStream := sync.OnceFunc(func() { _ = stream.Reset() })
+	ownerStopped := make(chan struct{})
+	stopOwner := context.AfterFunc(ctx, func() {
+		defer close(ownerStopped)
+		resetStream()
+	})
+	defer func() {
+		if !stopOwner() {
+			<-ownerStopped
+		}
+	}()
+	// Intake belongs to the same bounded handshake as the upstream dial. Close
+	// must also interrupt a peer that has not sent its metadata prefix yet.
+	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, server.config.defaultTimeout)
+	defer cancelHandshake()
+	intakeStopped := make(chan struct{})
+	stopIntake := context.AfterFunc(handshakeCtx, func() {
+		defer close(intakeStopped)
+		resetStream()
+	})
+	joinIntake := sync.OnceFunc(func() {
+		if !stopIntake() {
+			<-intakeStopped
+		}
+	})
+	defer joinIntake()
 	open := proxyWebSocketOpen{}
-	if err := readProxyJSON(stream, server.config.maxJSONFrame, &open); err != nil {
+	if err := readProxyMetadata(stream, server.config.maxJSONFrame, &open); err != nil {
 		server.writeWebSocketError(stream, "unknown", "invalid_ws_open_meta")
 		server.report(err)
 		return nil
@@ -38,9 +70,14 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		target.Scheme = "wss"
 	}
 	target.Path, target.RawPath, target.RawQuery, target.Fragment = path.Path, path.RawPath, path.RawQuery, ""
-	headers := proxyWebSocketHeaders(open.Headers, server.config)
+	target.ForceQuery = path.ForceQuery
+	headers, err := proxyWebSocketHeaders(open.Headers, server.config)
+	if err != nil {
+		server.writeWebSocketError(stream, open.ConnID, "invalid_ws_open_meta")
+		return err
+	}
 	headers.Set("Origin", server.config.upstreamOrigin)
-	connection, response, err := server.wsDialer.DialContext(ctx, target.String(), headers)
+	connection, response, err := server.wsDialer.DialContext(handshakeCtx, target.String(), headers)
 	if err != nil {
 		code := "upstream_ws_dial_failed"
 		if response != nil {
@@ -57,8 +94,13 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		return nil
 	}
 	defer connection.Close()
+	joinIntake()
+	if handshakeCtx.Err() != nil {
+		return handshakeCtx.Err()
+	}
+	cancelHandshake()
 	connection.SetReadLimit(int64(server.config.maxWSFrame))
-	if err := writeProxyJSON(stream, proxyWebSocketResponse{
+	if err := writeProxyMetadata(stream, proxyWebSocketResponse{
 		Version: proxyWireVersion, ConnID: open.ConnID, OK: true, Protocol: connection.Subprotocol(),
 	}); err != nil {
 		server.report(err)
@@ -77,7 +119,7 @@ func (server *ProxyServer) serveWebSocket(ctx context.Context, incoming Incoming
 		closeOnce.Do(func() {
 			cancel()
 			_ = connection.Close()
-			_ = stream.Reset()
+			resetStream()
 		})
 	}
 	go func() {
@@ -192,7 +234,7 @@ func (server *ProxyServer) writeWebSocketError(stream io.Writer, connectionID, c
 	if connectionID == "" {
 		connectionID = "unknown"
 	}
-	_ = writeProxyJSON(stream, proxyWebSocketResponse{
+	_ = writeProxyMetadata(stream, proxyWebSocketResponse{
 		Version: proxyWireVersion, ConnID: connectionID, OK: false, Error: proxyStableError(code),
 	})
 }

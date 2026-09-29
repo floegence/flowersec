@@ -1,8 +1,8 @@
 package sessionv4
 
 import (
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type rpcExecutionScope struct {
@@ -16,6 +16,9 @@ func executionChargeStart(c RPCServicesConfig) (int, error) {
 		return 0, err
 	}
 	position := rpcServicesOwners
+	if c.Native {
+		position++
+	}
 	for channel := uint32(1); channel < geometry.RPC+geometry.Notify+geometry.Management; channel++ {
 		_, count, err := futureChannelCharges(c, channel)
 		if err != nil {
@@ -90,16 +93,27 @@ func (b *rpcServicesBatch) accountsFor(index int) []resourcev4.Account {
 	return b.config.Accounts
 }
 
-func (b *rpcServicesBatch) installExecutionReferences(c *ServiceDispatchConfig, r *RPCServices) {
+func (b *rpcServicesBatch) reserveExecution(refs []resourcev4.Reference) error {
 	if len(b.config.ExecutionServices) == 0 {
-		return
+		return nil
 	}
-	position := b.executionStart
-	copy(c.ShortExecutionReservations[:], r.refs[position:position+5])
-	position += 5
-	c.ShortExecutionAdmissions = make([][4]resourcev4.Reference, len(b.config.ExecutionServices))
-	for i := range c.ShortExecutionAdmissions {
-		copy(c.ShortExecutionAdmissions[i][:], r.refs[position:position+4])
-		position += 4
+	c := b.config.dispatchConfig()
+	if b.execution.floors != nil {
+		return b.execution.checkConfig(c)
+	}
+	end := b.executionStart + 5 + 4*len(b.config.ExecutionServices)
+	if !b.prepared || b.used || len(refs) != b.count || b.executionStart < rpcServicesOwners || end > len(refs) {
+		return resourcev4.ErrOwner
+	}
+	return b.execution.reserve(c, refs[rpcServicesDispatch], refs[b.executionStart:end])
+}
+
+func (b *rpcServicesBatch) ownsExecution(index int) bool {
+	return index >= b.executionStart && index < b.executionStart+b.execution.count()
+}
+
+func (b *rpcServicesBatch) installExecutionReferences(c *ServiceDispatchConfig) {
+	if b.execution.floors != nil {
+		c.executionPreparation = &b.execution
 	}
 }

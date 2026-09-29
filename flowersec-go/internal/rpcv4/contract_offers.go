@@ -3,8 +3,8 @@ package rpcv4
 import (
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // offerSample invokes the original bounded clock adapter outside the registry
@@ -147,6 +147,57 @@ func (r *ContractRoutes) OfferForAdmission(digest [32]byte, cutoffMS uint64) (pr
 func (r *ContractRoutes) OfferForQuery(digest [32]byte) (protocolv4.AdmissionOfferBounds, error) {
 	return r.selectOffer(digest, 0, true)
 }
+
+// CapturePreparationOffer reads an installed exact snapshot. A caller-proposed
+// window must match a real entry; matching digest and plausible timestamps do
+// not authenticate it. A future installed window may be captured, but Start
+// retains its original not_before and cutoff gates. No renewal is performed.
+func (r *ContractRoutes) CapturePreparationOffer(digest [32]byte, proposed protocolv4.AdmissionOfferBounds) (protocolv4.AdmissionOfferBounds, error) {
+	now, err := r.offerSample()
+	if err != nil {
+		return protocolv4.AdmissionOfferBounds{}, err
+	}
+	return r.CapturePreparationOfferAt(digest, proposed, now)
+}
+
+// CapturePreparationOfferAt uses a sample obtained outside the install gate.
+// Only the registry's admitted clock may supply that sample.
+func (r *ContractRoutes) CapturePreparationOfferAt(digest [32]byte, proposed protocolv4.AdmissionOfferBounds, now timev4.Sample) (protocolv4.AdmissionOfferBounds, error) {
+	if r == nil || !now.BelongsTo(r.clock) {
+		return protocolv4.AdmissionOfferBounds{}, timev4.ErrOwner
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, err := r.offerEntryLocked(digest)
+	if err != nil {
+		return protocolv4.AdmissionOfferBounds{}, err
+	}
+	if !entry.registered || entry.policy.Semantics != 1 {
+		return protocolv4.AdmissionOfferBounds{}, ErrMethod
+	}
+	if proposed != (protocolv4.AdmissionOfferBounds{}) {
+		for _, offer := range entry.offers[:entry.offerCount] {
+			if offer == proposed && now.UpperMS < offer.NotAfterMS {
+				return offer, nil
+			}
+		}
+		return protocolv4.AdmissionOfferBounds{}, ErrAdmissionOfferUnavailable
+	}
+	if offer, ok := usableOffer(entry, now, 0, true); ok {
+		return offer, nil
+	}
+	var future protocolv4.AdmissionOfferBounds
+	for _, offer := range entry.offers[:entry.offerCount] {
+		if now.UpperMS < offer.NotAfterMS && (future == (protocolv4.AdmissionOfferBounds{}) || offer.NotBeforeMS < future.NotBeforeMS || offer.NotBeforeMS == future.NotBeforeMS && offer.NotAfterMS > future.NotAfterMS) {
+			future = offer
+		}
+	}
+	if future == (protocolv4.AdmissionOfferBounds{}) {
+		return future, ErrAdmissionOfferUnavailable
+	}
+	return future, nil
+}
+
 func (r *ContractRoutes) selectOffer(digest [32]byte, cutoffMS uint64, query bool) (protocolv4.AdmissionOfferBounds, error) {
 	now, err := r.offerSample()
 	if err != nil {

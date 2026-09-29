@@ -7,19 +7,22 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // ArtifactLeaseConfig is a signature-verified material bundle plus independent
 // original issuer/activation trust. It has no local private key or callback
 // that claims durable consumption. The SQLite ledger remains the once authority.
 type ArtifactLeaseConfig struct {
+	Tunnels                                               []ArtifactLeaseTunnel
 	Artifact, Proof, ClientCertificate, ServerCertificate *protocolv4.SignedMap
+	Grant, RelayCertificate                               *protocolv4.SignedMap
 	Source                                                string
 	Verification                                          LiveProofVerification
 	Validation                                            [3]protocolv4.CredentialValidation
+	GrantValidation, RelayValidation                      protocolv4.CredentialValidation
 	MapBytes, MapNodes                                    int
 	RuntimeBytes                                          uint64
 }
@@ -30,14 +33,21 @@ type ArtifactLeaseConfig struct {
 // durable spent assertion, and Close never changes a durable ledger.
 type ArtifactLease struct {
 	mu                       sync.Mutex
-	maps                     [4]*protocolv4.SignedMap
-	codecs                   [4]*protocolv4.SignedMapCodec
+	tunnels                  [MaxLeaseTunnelMaterials]leaseTunnelMaterial
+	tunnelCount              int
+	allBindings              [protocolv4.MaxSourceCredentials]protocolv4.CredentialValidation
+	allMaterialCredentials   [protocolv4.MaxSourceCredentials]*protocolv4.Credential
+	maps                     [6]*protocolv4.SignedMap
+	codecs                   [6]*protocolv4.SignedMapCodec
 	credentials              [3]*protocolv4.Credential
 	validation               [3]protocolv4.CredentialValidation
+	tunnelValidation         [2]protocolv4.CredentialValidation
+	tunnelCredentials        [2]*protocolv4.Credential
 	verification             LiveProofVerification
 	selection                *protocolv4.PoolSelectionWorkspace
 	session                  protocolv4.ArtifactSessionParameters
 	reservation, shared      resourcev4.Reference
+	firstMaterial            resourcev4.Reference
 	source                   string
 	uses                     uint32
 	preparing                *ConnectionMaterial
@@ -49,9 +59,19 @@ func (*ArtifactLease) String() string               { return "Flowersec.Artifact
 func (*ArtifactLease) GoString() string             { return "Flowersec.ArtifactLease" }
 func (*ArtifactLease) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 
-var leaseSchemas = [...]string{"Artifact", "ActivationAuthorization", "IdentityCertificate", "IdentityCertificate"}
+var leaseSchemas = [...]string{"Artifact", "ActivationAuthorization", "IdentityCertificate", "IdentityCertificate", "Grant", "IdentityCertificate"}
 
-func ArtifactLeaseCharge(mapBytes, nodes int, runtimeBytes uint64) (resourcev4.Vector, error) {
+func ArtifactLeaseCharge(mapBytes, nodes int, runtimeBytes uint64, tunnelCounts ...int) (resourcev4.Vector, error) {
+	count := 1
+	if len(tunnelCounts) > 1 {
+		return resourcev4.Vector{}, cryptov4.ErrConfiguration
+	}
+	if len(tunnelCounts) == 1 {
+		count = tunnelCounts[0]
+	}
+	if count < 0 || count > MaxLeaseTunnelMaterials {
+		return resourcev4.Vector{}, cryptov4.ErrConfiguration
+	}
 	if mapBytes < 1024 || mapBytes > 1<<20 || nodes <= 0 || nodes > 1<<20 || runtimeBytes == 0 {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
@@ -83,6 +103,36 @@ func ArtifactLeaseCharge(mapBytes, nodes int, runtimeBytes uint64) (resourcev4.V
 			}
 		}
 	}
+	for extra := 1; extra < count; extra++ {
+		for _, schema := range []string{"Grant", "IdentityCertificate"} {
+			limit, err := protocolv4.SchemaByteLimit(schema)
+			if err != nil {
+				return resourcev4.Vector{}, err
+			}
+			n, err := protocolv4.SignedMapBackingBytes(schema, min(limit, mapBytes), nodes)
+			if err != nil {
+				return resourcev4.Vector{}, err
+			}
+			if err = add(n); err != nil {
+				return resourcev4.Vector{}, err
+			}
+			n, err = protocolv4.CredentialBackingBytes(schema)
+			if err != nil {
+				return resourcev4.Vector{}, err
+			}
+			if err = add(n); err != nil {
+				return resourcev4.Vector{}, err
+			}
+		}
+	}
+	// One closure is constructed at a time while validating the immutable set.
+	closureBytes, err := protocolv4.EndpointCredentialsBackingBytes()
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	if err = add(closureBytes); err != nil {
+		return resourcev4.Vector{}, err
+	}
 	for _, cost := range []func() (uint64, error){protocolv4.ActivationAuthorityBackingBytes, protocolv4.ActivationBindingBackingBytes, func() (uint64, error) { return protocolv4.PoolSelectionBackingBytes(mapBytes, mapBytes) }} {
 		n, err := cost()
 		if err != nil {
@@ -111,14 +161,28 @@ func ArtifactLeaseCharge(mapBytes, nodes int, runtimeBytes uint64) (resourcev4.V
 // the Artifact and the two complete certificates. ActivationSigningKeyID is
 // the original source's selected independent delegation, never a fallback key.
 type ArtifactLeaseBytesConfig struct {
+	Tunnels                                               []ArtifactLeaseTunnelBytes
 	Artifact, Proof, ClientCertificate, ServerCertificate []byte
+	Grant, RelayCertificate                               []byte
 	Source, ActivationSigningKeyID                        string
 	Trust                                                 [3]*protocolv4.NamespaceTrustStore
+	GrantTrust, RelayTrust                                *protocolv4.NamespaceTrustStore
 	MapBytes, MapNodes                                    int
 	RuntimeBytes                                          uint64
 }
 
 func NewArtifactLeaseFromBytes(c ArtifactLeaseBytesConfig, reservation, dependencies resourcev4.Reference) (*ArtifactLease, error) {
+	return newArtifactLeaseFromBytes(c, reservation, dependencies, nil)
+}
+
+func NewPreparedArtifactLeaseFromBytes(c ArtifactLeaseBytesConfig, reservation, dependencies resourcev4.Reference, references *ArtifactLeaseReferences) (*ArtifactLease, error) {
+	if references == nil {
+		return nil, resourcev4.ErrOwner
+	}
+	return newArtifactLeaseFromBytes(c, reservation, dependencies, references)
+}
+
+func newArtifactLeaseFromBytes(c ArtifactLeaseBytesConfig, reservation, dependencies resourcev4.Reference, references *ArtifactLeaseReferences) (*ArtifactLease, error) {
 	for _, trust := range c.Trust {
 		if trust == nil {
 			return nil, cryptov4.ErrConfiguration
@@ -127,8 +191,11 @@ func NewArtifactLeaseFromBytes(c ArtifactLeaseBytesConfig, reservation, dependen
 	if c.ActivationSigningKeyID == "" {
 		return nil, cryptov4.ErrConfiguration
 	}
+	if len(c.Grant) != 0 && (c.GrantTrust == nil || c.RelayTrust == nil) {
+		return nil, cryptov4.ErrConfiguration
+	}
 	config := ArtifactLeaseConfig{Source: c.Source, MapBytes: c.MapBytes, MapNodes: c.MapNodes, RuntimeBytes: c.RuntimeBytes}
-	return newArtifactLease(config, [4][]byte{c.Artifact, c.Proof, c.ClientCertificate, c.ServerCertificate}, &c, reservation, dependencies)
+	return newArtifactLease(config, [6][]byte{c.Artifact, c.Proof, c.ClientCertificate, c.ServerCertificate, c.Grant, c.RelayCertificate}, [6][32]byte{}, &c, reservation, dependencies, references)
 }
 
 func NewArtifactLease(c ArtifactLeaseConfig, reservation, dependencies resourcev4.Reference) (*ArtifactLease, error) {
@@ -144,8 +211,8 @@ func NewArtifactLease(c ArtifactLeaseConfig, reservation, dependencies resourcev
 			return nil, cryptov4.ErrConfiguration
 		}
 	}
-	var wire [4][]byte
-	for i, original := range []*protocolv4.SignedMap{c.Artifact, c.Proof, c.ClientCertificate, c.ServerCertificate} {
+	var wire [6][]byte
+	for i, original := range []*protocolv4.SignedMap{c.Artifact, c.Proof, c.ClientCertificate, c.ServerCertificate, c.Grant, c.RelayCertificate} {
 		if original == nil {
 			continue
 		}
@@ -155,31 +222,61 @@ func NewArtifactLease(c ArtifactLeaseConfig, reservation, dependencies resourcev
 			return nil, err
 		}
 	}
-	return newArtifactLease(c, wire, nil, reservation, dependencies)
+	var keys [6][32]byte
+	for i, original := range []*protocolv4.SignedMap{c.Artifact, c.Proof, c.ClientCertificate, c.ServerCertificate, c.Grant, c.RelayCertificate} {
+		if original != nil {
+			keys[i] = original.Key()
+		}
+	}
+	return newArtifactLease(c, wire, keys, nil, reservation, dependencies, nil)
 }
 
-func newArtifactLease(c ArtifactLeaseConfig, wire [4][]byte, trusted *ArtifactLeaseBytesConfig, reservation, dependencies resourcev4.Reference) (_ *ArtifactLease, err error) {
+func newArtifactLease(c ArtifactLeaseConfig, wire [6][]byte, keys [6][32]byte, trusted *ArtifactLeaseBytesConfig, reservation, dependencies resourcev4.Reference, references *ArtifactLeaseReferences) (_ *ArtifactLease, err error) {
 	if len(wire[0]) == 0 || len(wire[2]) == 0 || len(wire[3]) == 0 || reservation == dependencies ||
 		c.Source != "preauthorized_pool" && c.Source != "live_authority" || (c.Source == "preauthorized_pool") != (len(wire[1]) != 0) {
 		return nil, cryptov4.ErrConfiguration
 	}
-	charge, err := ArtifactLeaseCharge(c.MapBytes, c.MapNodes, c.RuntimeBytes)
+	if (len(wire[4]) == 0) != (len(wire[5]) == 0) {
+		return nil, cryptov4.ErrConfiguration
+	}
+	count := len(c.Tunnels)
+	if trusted != nil {
+		count = len(trusted.Tunnels)
+	}
+	if count != 0 && len(wire[4]) != 0 {
+		return nil, cryptov4.ErrConfiguration
+	}
+	charge, err := ArtifactLeaseCharge(c.MapBytes, c.MapNodes, c.RuntimeBytes, max(1, count))
 	if err != nil {
 		return nil, err
 	}
 	if err = reservation.CheckSameEnvironment(dependencies); err != nil {
 		return nil, err
 	}
-	shared, err := dependencies.Borrow()
+	var shared, first resourcev4.Reference
+	if references == nil {
+		shared, err = dependencies.Borrow()
+	} else {
+		shared, first, err = references.take(reservation, dependencies)
+	}
 	if err != nil {
 		return nil, err
 	}
 	owned, err := reservation.Take(charge)
 	if err != nil {
 		shared.Release()
+		first.Release()
 		return nil, err
 	}
-	l := &ArtifactLease{source: c.Source, reservation: owned, shared: shared, validation: c.Validation, verification: c.Verification, done: make(chan struct{})}
+	if references == nil {
+		first, err = owned.Borrow()
+		if err != nil {
+			owned.Release()
+			shared.Release()
+			return nil, err
+		}
+	}
+	l := &ArtifactLease{source: c.Source, reservation: owned, shared: shared, firstMaterial: first, validation: c.Validation, verification: c.Verification, done: make(chan struct{})}
 	l.verification.Delegation, l.verification.Once = bytes.Clone(c.Verification.Delegation), bytes.Clone(c.Verification.Once)
 	adopted := false
 	defer func() {
@@ -213,6 +310,51 @@ func newArtifactLease(c ArtifactLeaseConfig, wire [4][]byte, trusted *ArtifactLe
 		}
 		if trusted != nil {
 			l.validation[credentialIndex], err = trusted.Trust[credentialIndex].ResolveCredential(l.credentials[credentialIndex])
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if len(wire[4]) != 0 {
+		// Grant issuer trust and relay identity trust are independent. Relay
+		// possession never grants permission to issue its own hop authority.
+		if trusted != nil {
+			l.maps[5], err = l.codecs[5].VerifyCredential(wire[5], trusted.RelayTrust)
+		} else {
+			if keys[5] == ([32]byte{}) {
+				return nil, cryptov4.ErrConfiguration
+			}
+			l.maps[5], err = l.codecs[5].Verify(wire[5], keys[5], protocolv4.DecodeContext{})
+		}
+		if err != nil {
+			return nil, err
+		}
+		l.tunnelCredentials[1], err = l.maps[5].DetachCredential()
+		if err != nil {
+			return nil, err
+		}
+		l.tunnelValidation[1] = c.RelayValidation
+		if trusted != nil {
+			l.tunnelValidation[1], err = trusted.RelayTrust.ResolveCredential(l.tunnelCredentials[1])
+			if err != nil {
+				return nil, err
+			}
+		}
+		if trusted != nil {
+			l.maps[4], err = l.codecs[4].VerifyCredential(wire[4], trusted.GrantTrust)
+		} else {
+			l.maps[4], err = l.codecs[4].Verify(wire[4], keys[4], protocolv4.DecodeContext{})
+		}
+		if err != nil {
+			return nil, err
+		}
+		l.tunnelCredentials[0], err = l.maps[4].DetachCredential()
+		if err != nil {
+			return nil, err
+		}
+		l.tunnelValidation[0] = c.GrantValidation
+		if trusted != nil {
+			l.tunnelValidation[0], err = trusted.GrantTrust.ResolveCredential(l.tunnelCredentials[0])
 			if err != nil {
 				return nil, err
 			}
@@ -261,6 +403,9 @@ func newArtifactLease(c ArtifactLeaseConfig, wire [4][]byte, trusted *ArtifactLe
 	if err != nil {
 		return nil, err
 	}
+	if err = l.installTunnelMaterials(c, trusted); err != nil {
+		return nil, err
+	}
 	if err = l.check(); err != nil {
 		return nil, err
 	}
@@ -294,6 +439,20 @@ func (l *ArtifactLease) checkForUse(issuing bool) error {
 			return err
 		}
 	}
+	for i := 0; i < l.tunnelCount; i++ {
+		entry := &l.tunnels[i]
+		for j, credential := range entry.credentials {
+			if j == 0 && entry.pendingGrant {
+				if _, err := entry.liveGrant.Check(l.session.SessionNotAfterMS, l.reservation); err != nil {
+					return err
+				}
+				continue
+			}
+			if _, err := entry.validation[j].CheckMaterialCredential(credential, l.session.SessionNotAfterMS, l.reservation); err != nil {
+				return err
+			}
+		}
+	}
 	if l.source == "live_authority" {
 		check := l.validation[0].CheckLiveActivationConfiguration
 		if issuing {
@@ -302,6 +461,49 @@ func (l *ArtifactLease) checkForUse(issuing bool) error {
 		return check(l.verification.Rules, l.credentials[0], l.verification.Delegation, l.verification.Once, l.verification.Key, l.reservation)
 	}
 	return nil
+}
+
+func (l *ArtifactLease) credentialBindings(index uint64, role protocolv4.Direction, tunnel bool) []protocolv4.CredentialValidation {
+	if !tunnel {
+		return l.validation[:]
+	}
+	if entry := l.tunnelMaterial(index, role); entry != nil {
+		return entry.bindings[:]
+	}
+	return nil
+}
+
+// Source admission captures every applicable candidate namespace before racing.
+// These arrays are charged once and never rebuilt during readiness polling.
+func (l *ArtifactLease) allCredentialBindings() []protocolv4.CredentialValidation {
+	if l == nil {
+		return nil
+	}
+	return l.allBindings[:3+2*l.tunnelCount]
+}
+func (l *ArtifactLease) allCredentials() []*protocolv4.Credential {
+	if l == nil {
+		return nil
+	}
+	return l.allMaterialCredentials[:3+2*l.tunnelCount]
+}
+
+func (l *ArtifactLease) endpointCredentialMaps(index uint64, role protocolv4.Direction) (grant, relay *protocolv4.SignedMap, tunnel bool, err error) {
+	if l == nil || l.maps[0] == nil || role > protocolv4.ServerToClient {
+		return nil, nil, false, cryptov4.ErrConfiguration
+	}
+	if err = l.maps[0].CheckCandidate(index); err != nil {
+		return nil, nil, false, err
+	}
+	path, _ := l.maps[0].Field("candidates").Index(int(index)).Named("Candidate", "path_kind").Uint()
+	if path == 0 {
+		return nil, nil, false, nil
+	}
+	entry := l.tunnelMaterial(index, role)
+	if entry == nil {
+		return nil, nil, true, cryptov4.ErrConfiguration
+	}
+	return entry.maps[0], entry.maps[1], true, nil
 }
 
 func (l *ArtifactLease) activation(index uint64) (*protocolv4.ActivationBinding, *protocolv4.ActivationAuthority, error) {
@@ -319,6 +521,13 @@ func (l *ArtifactLease) activation(index uint64) (*protocolv4.ActivationBinding,
 		stale = min(stale, requirement.StalenessMS)
 		lifetime = min(lifetime, requirement.SignerLifetimeMS)
 	}
+	for _, v := range l.allBindings[3 : 3+2*l.tunnelCount] {
+		if v.Policy != nil {
+			requirement := v.Policy.Requirements()
+			stale = min(stale, requirement.StalenessMS)
+			lifetime = min(lifetime, requirement.SignerLifetimeMS)
+		}
+	}
 	_, err = l.validation[0].Namespace.CheckDetachedActivation(a, l.credentials[0], l.validation[0].Issuer, stale, lifetime, l.session.SessionNotAfterMS)
 	return b, a, err
 }
@@ -326,6 +535,49 @@ func (l *ArtifactLease) activation(index uint64) (*protocolv4.ActivationBinding,
 type artifactLeaseUse struct {
 	lease *ArtifactLease
 	ref   resourcev4.Reference
+}
+
+// take transfers a retained original lease pin without reopening advertisement
+// or changing the number of real users of its immutable credential graph.
+func (u *artifactLeaseUse) take(environment resourcev4.Reference) (artifactLeaseUse, error) {
+	if u.lease == nil {
+		return artifactLeaseUse{}, cryptov4.ErrConfiguration
+	}
+	l := u.lease
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := u.ref.CheckSameEnvironment(environment); err != nil {
+		return artifactLeaseUse{}, err
+	}
+	ref, err := u.ref.TakeBorrow()
+	if err != nil {
+		return artifactLeaseUse{}, err
+	}
+	*u = artifactLeaseUse{}
+	return artifactLeaseUse{l, ref}, nil
+}
+
+// borrow pins an existing captured lease without reopening advertisement.
+// Its immutable credential graph stays owned through a local readiness check.
+func (u artifactLeaseUse) borrow(environment resourcev4.Reference) (artifactLeaseUse, error) {
+	if u.lease == nil {
+		return artifactLeaseUse{}, cryptov4.ErrConfiguration
+	}
+	l := u.lease
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.cleaned || l.uses == math.MaxUint32 {
+		return artifactLeaseUse{}, cryptov4.ErrCapacity
+	}
+	if err := u.ref.CheckSameEnvironment(environment); err != nil {
+		return artifactLeaseUse{}, err
+	}
+	ref, err := l.reservation.Borrow()
+	if err != nil {
+		return artifactLeaseUse{}, err
+	}
+	l.uses++
+	return artifactLeaseUse{l, ref}, nil
 }
 
 func (l *ArtifactLease) capture(environment resourcev4.Reference) (artifactLeaseUse, error) {
@@ -343,7 +595,18 @@ func (l *ArtifactLease) capture(environment resourcev4.Reference) (artifactLease
 	if err := l.reservation.CheckSameEnvironment(environment); err != nil {
 		return artifactLeaseUse{}, err
 	}
-	ref, err := l.reservation.Borrow()
+	// Source construction reserves the first material's actual alias. Static
+	// callers may create more wrappers, but each extra use admits its own pin.
+	var ref resourcev4.Reference
+	var err error
+	if l.firstMaterial != (resourcev4.Reference{}) {
+		ref, err = l.firstMaterial.TakeBorrow()
+		if err == nil {
+			l.firstMaterial = resourcev4.Reference{}
+		}
+	} else {
+		ref, err = l.reservation.Borrow()
+	}
 	if err != nil {
 		return artifactLeaseUse{}, err
 	}
@@ -358,6 +621,10 @@ func (u *artifactLeaseUse) release() {
 	l := u.lease
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if u.ref.CheckRetained() != nil {
+		*u = artifactLeaseUse{}
+		return
+	}
 	u.ref.Release()
 	*u = artifactLeaseUse{}
 	l.uses--
@@ -385,13 +652,27 @@ func (l *ArtifactLease) cleanupLocked() {
 	}
 	clear(l.verification.Delegation)
 	clear(l.verification.Once)
-	l.maps, l.codecs, l.credentials = [4]*protocolv4.SignedMap{}, [4]*protocolv4.SignedMapCodec{}, [3]*protocolv4.Credential{}
+	l.maps, l.codecs, l.credentials = [6]*protocolv4.SignedMap{}, [6]*protocolv4.SignedMapCodec{}, [3]*protocolv4.Credential{}
+	for i := 1; i < l.tunnelCount; i++ {
+		for _, material := range l.tunnels[i].maps {
+			if material != nil {
+				material.Release()
+			}
+		}
+	}
+	clear(l.tunnels[:])
+	l.tunnelCount = 0
+	clear(l.allBindings[:])
+	clear(l.allMaterialCredentials[:])
+	l.tunnelCredentials = [2]*protocolv4.Credential{}
 	l.verification = LiveProofVerification{}
 	l.validation = [3]protocolv4.CredentialValidation{}
+	l.tunnelValidation = [2]protocolv4.CredentialValidation{}
 	l.selection = nil
+	l.firstMaterial.Release()
 	l.shared.Release()
 	l.reservation.Release()
-	l.shared, l.reservation = resourcev4.Reference{}, resourcev4.Reference{}
+	l.shared, l.reservation, l.firstMaterial = resourcev4.Reference{}, resourcev4.Reference{}, resourcev4.Reference{}
 	l.cleaned = true
 	close(l.done)
 }

@@ -9,9 +9,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var (
@@ -172,6 +172,7 @@ func newReaderCursorLocked(f *ReceiveFlow, target cursorTarget, owned resourcev4
 	c := &ReaderCursor{flow: f, target: target, start: f.delivered, storage: make([]byte, int(target.limit)), reservation: owned, authorization: guard, changed: make(chan struct{}), timer: time.NewTimer(time.Hour), status: protocolv4.V4StreamStatusOpen}
 	c.timer.Stop()
 	f.readPending = true
+	f.readerCursor = c
 	return c
 }
 
@@ -412,6 +413,7 @@ func (c *ReaderCursor) finishSourceLocked(f *ReceiveFlow, err error) {
 	}
 	c.complete, c.failure = true, boundedReadCause(err)
 	f.readPending = false
+	f.readerCursor = nil
 	f.notifyCleanupLocked()
 	c.flow = nil
 	c.owner.notify()
@@ -430,6 +432,7 @@ func (c *ReaderCursor) detachLocked() {
 	if f := c.flow; f != nil {
 		f.pool.mu.Lock()
 		f.readPending = false
+		f.readerCursor = nil
 		f.notifyCleanupLocked()
 		c.flow = nil
 		f.pool.mu.Unlock()

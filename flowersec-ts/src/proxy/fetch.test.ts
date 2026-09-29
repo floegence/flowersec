@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { StreamAdmission } from "./admission.js";
 import { prepareProxyFetch } from "./fetch.js";
 
 const NativeRequest = globalThis.Request;
@@ -40,5 +41,46 @@ describe("portable proxy request bodies", () => {
     bodyWithoutStreams();
     const abort = new AbortController(); abort.abort();
     await expect(prepareProxyFetch("/api", { method: "POST", body: "value", signal: abort.signal })).rejects.toBeDefined();
+  });
+});
+
+
+describe("proxy body admission", () => {
+  it("charges actual small uploads across one shared bounded owner", async () => {
+    const admission = new StreamAdmission(2, 1, 8);
+    const first = await admission.acquire(0, undefined, true);
+    const second = await admission.acquire(0, undefined, true);
+    try {
+      const prepared = await prepareProxyFetch("/api", { method: "POST", body: "a" }, undefined, 64 * 1024 * 1024, first);
+      expect(new TextDecoder().decode(prepared.request.body)).toBe("a");
+      // A one-byte upload did not reserve the 64 MiB per-request ceiling.
+      second.resizeBody(7);
+      expect(() => second.resizeBody(8)).toThrow(/resource_exhausted/);
+      first();
+      expect(() => second.resizeBody(8)).not.toThrow();
+    } finally { first(); second(); admission.close(); }
+  });
+
+  it("retains a canceled producer's slot until actual host cancellation settles", async () => {
+    const admission = new StreamAdmission(1, 1, 8);
+    const permit = await admission.acquire(0, undefined, true);
+    let finishCancel!: () => void;
+    let readStarted!: () => void;
+    const reading = new Promise<void>(resolve => { readStarted = resolve; });
+    const source = new ReadableStream<Uint8Array>({
+      pull() { readStarted(); },
+      cancel() { return new Promise<void>(resolve => { finishCancel = resolve; }); },
+    }, { highWaterMark: 0 });
+    const abort = new AbortController();
+    const pending = prepareProxyFetch("/api", { method: "POST", body: source, signal: abort.signal, duplex: "half" } as RequestInit, undefined, 8, permit);
+    await reading;
+    abort.abort();
+    await expect(pending).rejects.toMatchObject({ code: "canceled" });
+    permit();
+    await expect(admission.acquire(0, undefined, true)).rejects.toMatchObject({ code: "resource_exhausted" });
+    finishCancel();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    const next = await admission.acquire(0, undefined, true);
+    next(); admission.close();
   });
 });

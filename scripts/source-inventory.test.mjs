@@ -494,6 +494,13 @@ test("source and package graphs preserve real dependency edges and npm runtime c
   assert.ok(npmSource.components.some((component) => component.name === "typescript"));
   assert.ok(npmSource.components.some((component) => component.name === "vitest"));
   assert.ok(npmSource.edges.length > npmSource.components.length / 2);
+  assert.ok(npmSource.edges.some(edge => edge.from === "pkg:npm/brotli-dec-wasm@2.3.2" && edge.to === "pkg:cargo/brotli-decompressor@5.0.0"));
+  assert.ok(npmSource.edges.some(edge => edge.from === "pkg:cargo/brotli-decompressor@5.0.0" && edge.to === "pkg:cargo/alloc-stdlib@0.2.2"));
+  const wasmNotice = artifacts.get("flowersec-ts/THIRD_PARTY_NOTICES.md");
+  for (const name of ["brotli-dec-wasm", "brotli-decompressor", "alloc-stdlib", "wasm-bindgen"]) {
+    assert.ok(wasmNotice.includes(name), `${name} must retain its embedded source notice`);
+    assert.ok(npmSource.components.find(component => component.name === name)?.bundledNotice);
+  }
   for (const context of inventory.contexts) {
     assert.doesNotThrow(
       () => validateDependencyGraph(context),

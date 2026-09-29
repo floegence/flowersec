@@ -9,10 +9,10 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // DurableExecutionConfig admits the finite live adapter, not another business
@@ -213,6 +213,15 @@ func (s *DurableExecutions) admit(ctx context.Context, routes *ContractRoutes, i
 		if err := s.reservation.CheckSameEnvironment(input.reservation); err != nil {
 			return err
 		}
+		// A direct admission has no reusable short floor carrying its future
+		// position. Reserve the shared active/history slot before invoking the
+		// executor callback so Acquire cannot succeed without the matching
+		// durable execution responsibility already being held. The slot is
+		// committed with the local work below and returned on every failure path.
+		if admission == nil {
+			s.reserved++
+			defer func() { s.reserved-- }()
+		}
 		var refs [3]resourcev4.Reference
 		var err error
 		if admission == nil {
@@ -236,7 +245,9 @@ func (s *DurableExecutions) admit(ctx context.Context, routes *ContractRoutes, i
 			}
 			return err
 		}
-		fixed, err := input.deadline.Fork(q.DeadlineAtMS)
+		// Preserve an earlier Stream/Session cap while retaining the immutable
+		// wire deadline for operation identity and durable history.
+		fixed, err := input.deadline.Fork(min(input.deadline.Cap(), q.DeadlineAtMS))
 		if err != nil {
 			if admission == nil {
 				authorityPin.Release()

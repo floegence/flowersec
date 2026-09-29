@@ -1,5 +1,5 @@
 {
-  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "schema_revision": "flowersec-v4.0.0-draft.74",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
   "coverage": "draft_business_and_rpc_stop_error_header_variants",
   "vectors": [

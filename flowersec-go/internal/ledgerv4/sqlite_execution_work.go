@@ -5,8 +5,8 @@ import (
 	"crypto/sha256"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func (w *SQLiteExecutionWork) acquire(ctx context.Context, retained bool) error {

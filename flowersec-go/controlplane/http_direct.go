@@ -3,7 +3,7 @@ package controlplane
 import (
 	"slices"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/httpdirectv1"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/httpdirectv1"
 )
 
 const HTTPDirectProfile = httpdirectv1.Profile

@@ -1,7 +1,9 @@
+import type { ProxyStream } from "./stream.js";
+import { StreamAdmission } from "./admission.js";
 import { enableResponseFlowControl, usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
 import { fetchProxyPort, prepareProxyFetch } from "./fetch.js";
 import { SDK_DEFAULTS } from "../defaults.js";
-import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
+import { SessionError, type OperationOptions } from "../public/contract.js";
 
 import {
   createServiceWorkerControllerGuard,
@@ -26,7 +28,7 @@ type BridgeMessage = Readonly<{
   data?: ArrayBuffer;
 }>;
 
-export class MessagePortByteStream implements ByteStream {
+export class MessagePortByteStream implements ProxyStream {
   readonly kind = "flowersec.proxy.window.v2";
   terminalError: SessionError | undefined;
   private readonly reads: Uint8Array[] = [];
@@ -112,6 +114,13 @@ export class MessagePortByteStream implements ByteStream {
     this.port.postMessage({ type: "end" } satisfies BridgeMessage);
   }
 
+  async finish(options: OperationOptions = {}): Promise<void> {
+    if (options.signal?.aborted) throw new SessionError("canceled");
+    // Port messages preserve order. The host retains the original Stream's
+    // authenticated drain and cleanup responsibility after this local FIN.
+    await this.closeWrite();
+  }
+
   async reset(): Promise<void> {
     if (this.closed) return;
     this.port.postMessage({ type: "reset" } satisfies BridgeMessage);
@@ -121,7 +130,7 @@ export class MessagePortByteStream implements ByteStream {
   async close(): Promise<void> {
     if (this.closed) return;
     this.port.postMessage({ type: "close" } satisfies BridgeMessage);
-    this.finish();
+    this.closeLocal();
   }
 
   private handle(value: BridgeMessage | unknown): void {
@@ -163,10 +172,10 @@ export class MessagePortByteStream implements ByteStream {
       return;
     }
     if (message.type === "reset") this.fail(new SessionError("stream_reset"));
-    else if (message.type === "close") this.finish();
+    else if (message.type === "close") this.closeLocal();
   }
 
-  private finish(): void {
+  private closeLocal(): void {
     if (this.closed) return;
     this.closed = true;
     this.ended = true;
@@ -260,23 +269,28 @@ export function registerProxyAppWindow(options: RegisterProxyAppWindowOptions): 
   };
 
   const lifetime = new AbortController();
-  const dispose = () => { disposed = true; lifetime.abort(); };
+  const admission = new StreamAdmission(limits.maxConcurrentHttpStreams, limits.maxQueuedHttpRequests, limits.maxQueuedHttpBodyBytes);
+  const dispose = () => { disposed = true; lifetime.abort(); admission.close(); };
   const runtime: ProxyRuntime = Object.freeze({
     limits,
     fetch: async (input, init) => {
       if (disposed) throw new SessionError("closed");
       const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
-      const prepared = await prepareProxyFetch(input, { ...init, signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]) }, target.location?.origin, limits.maxBodyBytes);
-      return fetchProxyPort(dispatchFetch, prepared.request, AbortSignal.any([prepared.signal, lifetime.signal]), limits.maxChunkBytes);
+      const requestSignal = AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]);
+      const permit = await admission.acquire(0, requestSignal, true);
+      try {
+        const prepared = await prepareProxyFetch(input, { ...init, signal: requestSignal }, target.location?.origin, limits.maxBodyBytes, permit);
+        return await fetchProxyPort(dispatchFetch, prepared.request, prepared.signal, limits.maxChunkBytes, permit);
+      } catch (error) { permit(); throw error; }
     },
     dispatchFetch,
     openWebSocketStream: async (path, openOptions = {}) => {
       if (disposed) throw new SessionError("closed");
       if (openOptions.signal?.aborted === true) throw new SessionError("canceled");
       const channel = new MessageChannel();
-      const response = new Promise<Readonly<{ stream: ByteStream; protocol: string }>>((resolve, reject) => {
+      const response = new Promise<Readonly<{ stream: ProxyStream; protocol: string }>>((resolve, reject) => {
         let settled = false;
-        const finish = (error?: SessionError, opened?: Readonly<{ stream: ByteStream; protocol: string }>) => {
+        const finish = (error?: SessionError, opened?: Readonly<{ stream: ProxyStream; protocol: string }>) => {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
@@ -352,7 +366,7 @@ export type RegisterProxyControllerWindowOptions = Readonly<{
 
 export type ProxyControllerWindowHandle = Readonly<{ dispose(): void }>;
 
-async function bridgeStreams(runtimeStream: ByteStream, port: MessagePort, signal?: AbortSignal): Promise<void> {
+async function bridgeStreams(runtimeStream: ProxyStream, port: MessagePort, signal?: AbortSignal): Promise<void> {
   const bridge = new MessagePortByteStream(port);
   const controller = new AbortController();
   let resetTask: Promise<unknown> | undefined;
@@ -392,12 +406,16 @@ async function bridgeStreams(runtimeStream: ByteStream, port: MessagePort, signa
       throw failure.reason;
     }
     try {
-      await Promise.all([runtimeStream.close(), bridge.close()]);
+      if (runtimeStream.finish !== undefined) await runtimeStream.finish({ signal: controller.signal });
+      else await runtimeStream.close();
+      await bridge.close();
     } catch (error) {
       await resetBoth();
       throw error;
     }
   } finally {
+    await resetTask;
+    runtimeStream.dispose?.();
     signal?.removeEventListener("abort", abort);
   }
 }

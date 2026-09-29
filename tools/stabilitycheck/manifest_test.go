@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -8,6 +9,43 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestSwiftModulePathsUseOnlyBuildSelectedDependencySlices(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "debug")
+	if err := os.MkdirAll(filepath.Join(bin, "Modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chosen := filepath.Join(root, "Clibsodium.xcframework", "macos", "Headers")
+	foreign := filepath.Join(root, "Clibsodium.xcframework", "ios", "Headers")
+	shim := filepath.Join(root, "Shims", "include")
+	description := map[string]any{"swiftCommands": map[string]any{
+		"Flowersec": map[string]any{"moduleName": "Flowersec", "otherArguments": []string{
+			"-I", chosen, "-Xcc", "-I", "-Xcc", chosen,
+			"-Xcc", "-fmodule-map-file=" + filepath.Join(shim, "module.modulemap"),
+		}},
+		"Other": map[string]any{"moduleName": "Other", "otherArguments": []string{"-I", foreign}},
+	}}
+	data, err := json.Marshal(description)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "description.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := swiftBuildModulePaths(bin, "Flowersec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{bin, filepath.Join(bin, "Modules"), chosen, shim}
+	slices.Sort(want)
+	if !slices.Equal(paths, want) {
+		t.Fatalf("got paths %q, want only build-selected paths %q", paths, want)
+	}
+	if _, err := swiftBuildModulePaths(bin, "Missing"); err == nil {
+		t.Fatal("missing module unexpectedly selected dependency paths")
+	}
+}
 
 func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 	root := t.TempDir()
@@ -33,11 +71,11 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 			TransportV3Tokens: []string{"flowersec/3"},
 		},
 		Go: goManifest{
-			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v5",
-			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v5/legacy"},
+			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v6",
+			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v6/legacy"},
 			CompileTargets: []goCompileTarget{
 				{
-					Package:         "github.com/floegence/flowersec/flowersec-go/v5/client",
+					Package:         "github.com/floegence/flowersec/flowersec-go/v6/client",
 					Alias:           "client",
 					DocPackageToken: "`client`",
 					Entries: []goCompileExpr{
@@ -53,7 +91,7 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 			},
 		},
 		Coverage: coverageManifest{
-			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v5/client", MinStatementsPct: 1}},
+			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v6/client", MinStatementsPct: 1}},
 			TS: tsCoverageTarget{Lines: 1, Functions: 1, Statements: 1, Branches: 1},
 		},
 	}
@@ -191,10 +229,10 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 			TransportV3Tokens: []string{"flowersec/3"},
 		},
 		Go: goManifest{
-			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v5",
-			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v5/legacy"},
+			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v6",
+			ForbiddenPackages: []string{"github.com/floegence/flowersec/flowersec-go/v6/legacy"},
 			CompileTargets: []goCompileTarget{{
-				Package:         "github.com/floegence/flowersec/flowersec-go/v5/client",
+				Package:         "github.com/floegence/flowersec/flowersec-go/v6/client",
 				Alias:           "client",
 				DocPackageToken: "`client`",
 				Entries: []goCompileExpr{{
@@ -232,7 +270,7 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 			RuntimeExports:  []string{"bindRawQuic", "connectRawQuic", "contractVersion"},
 		},
 		Coverage: coverageManifest{
-			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v5/client", MinStatementsPct: 1}},
+			Go: []goCoverageTarget{{Package: "github.com/floegence/flowersec/flowersec-go/v6/client", MinStatementsPct: 1}},
 			TS: tsCoverageTarget{Lines: 1, Functions: 1, Statements: 1, Branches: 1},
 		},
 	}, root
@@ -241,10 +279,10 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 	m := &manifest{
 		Go: goManifest{
-			ModulePath: "github.com/floegence/flowersec/flowersec-go/v5",
+			ModulePath: "github.com/floegence/flowersec/flowersec-go/v6",
 			CompileTargets: []goCompileTarget{
 				{
-					Package:         "github.com/floegence/flowersec/flowersec-go/v5/endpoint",
+					Package:         "github.com/floegence/flowersec/flowersec-go/v6/endpoint",
 					Alias:           "endpoint",
 					DocPackageToken: "`endpoint`",
 					Entries: []goCompileExpr{
@@ -277,9 +315,9 @@ func TestRenderGoVerifierIncludesTypeChecks(t *testing.T) {
 
 func TestRenderGoVerifierIncludesTypedFieldChecks(t *testing.T) {
 	m := &manifest{Go: goManifest{
-		ModulePath: "github.com/floegence/flowersec/flowersec-go/v5",
+		ModulePath: "github.com/floegence/flowersec/flowersec-go/v6",
 		CompileTargets: []goCompileTarget{{
-			Package: "github.com/floegence/flowersec/flowersec-go/v5/fserrors",
+			Package: "github.com/floegence/flowersec/flowersec-go/v6/fserrors",
 			Alias:   "fserrors",
 			Entries: []goCompileExpr{{
 				Kind:      "field",
@@ -408,6 +446,21 @@ func TestSwiftSignatureDigestIncludesNormalizedDeclarations(t *testing.T) {
 	}
 }
 
+func TestSwiftSymbolsCoalesceIdenticalProtocolDefaultDeclaration(t *testing.T) {
+	requirement := dumpedSwiftSymbol{
+		Kind: "swift.method", Name: "ByteStream.finish()", Declaration: "func finish() async throws",
+	}
+	symbols, err := normalizeSwiftSymbols([]dumpedSwiftSymbol{requirement, requirement})
+	if err != nil || len(symbols) != 1 || symbols[0] != requirement {
+		t.Fatalf("identical requirement/default declarations must register once: %v, %v", symbols, err)
+	}
+	different := requirement
+	different.Declaration = "func finish() async"
+	if _, err := normalizeSwiftSymbols([]dumpedSwiftSymbol{requirement, different}); err == nil {
+		t.Fatal("distinct public declarations silently coalesced")
+	}
+}
+
 func TestSwiftBuildArgumentsRequireResolvedVersions(t *testing.T) {
 	for _, base := range [][]string{{"--target", "Flowersec"}, {"--show-bin-path"}} {
 		arguments := swiftBuildArguments("/repo", base...)
@@ -467,7 +520,18 @@ func TestSwiftBuildModulePathsIncludesDependencyModuleMaps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	paths, err := swiftBuildModulePaths(repoRoot, binPath)
+	description, err := json.Marshal(map[string]any{"swiftCommands": map[string]any{
+		"Flowersec": map[string]any{"moduleName": "Flowersec", "otherArguments": []string{
+			"-Xcc", "-fmodule-map-file=" + filepath.Join(shimDir, "module.modulemap"),
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binPath, "description.json"), description, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := swiftBuildModulePaths(binPath, "Flowersec")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -623,6 +687,33 @@ func TestGoVerifierProxyChainHonorsRunnerConfiguration(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := goVerifierProxyChain(proxyRoot, test.configured, test.cache); got != test.want {
 				t.Fatalf("go verifier proxy chain = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateManifestTypeArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		arguments map[string][]string
+		valid     bool
+	}{
+		{"exported", map[string][]string{"Generic": {"string"}}, true},
+		{"unknown", map[string][]string{"Missing": {"string"}}, false},
+		{"empty list", map[string][]string{"Generic": {}}, false},
+		{"empty argument", map[string][]string{"Generic": {" "}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, root := validTestManifest(t)
+			m.TS.Subpaths[0].TypeExports = []string{"Generic"}
+			m.TS.Subpaths[0].TypeArguments = tc.arguments
+			err := validateManifest(root, m)
+			if tc.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "ts.type_arguments") {
+				t.Fatalf("expected type argument validation failure, got %v", err)
 			}
 		})
 	}

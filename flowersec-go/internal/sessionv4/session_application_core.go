@@ -1,7 +1,7 @@
 package sessionv4
 
 import (
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 )
 
 // admissionCoreConfig is the single projection used by both the pre-spend
@@ -25,7 +25,7 @@ func admissionCoreConfig(c SessionAdmissionConfig) (SessionCoreConfig, error) {
 		return core, cryptov4.ErrConfiguration
 	}
 	rpc := c.RPC
-	if rpc.Session != core.Session.Contract || rpc.Clock != core.Clock || rpc.CryptoProfile != core.Session.Profile || rpc.MaxDataPayloadBytes != core.MaxDataPayloadBytes || core.Native || core.Datagrams || core.Streams.ReceivePoolBytes == 0 || rpc.Bootstrap.ReceivePoolBytes != core.Streams.ReceivePoolBytes {
+	if rpc.Session != core.Session.Contract || rpc.Clock != core.Clock || rpc.CryptoProfile != core.Session.Profile || rpc.MaxDataPayloadBytes != core.MaxDataPayloadBytes || rpc.Native != core.Native || core.Streams.ReceivePoolBytes == 0 || rpc.Bootstrap.ReceivePoolBytes != core.Streams.ReceivePoolBytes {
 		return core, cryptov4.ErrConfiguration
 	}
 	geometry, minimum, err := internalChannelGeometry(profile)

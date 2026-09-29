@@ -46,7 +46,7 @@ describe("v4.ts_shape", () => {
       else { positive += 1; expect(encode(decode()), vector.id).toEqual(input); }
       expect(ctx, vector.id).toEqual(before);
     }
-    expect(positive).toBe(337); expect(negative).toBe(324);
+    expect(positive).toBe(348); expect(negative).toBe(326);
   });
 
   // v4.ts_shape.required_unknown
@@ -67,7 +67,7 @@ describe("v4.ts_shape", () => {
       const changed: Value = { kind: "map", value: [...decoded.value, [uint(65535n), uint(0n)]] };
       failure(() => reference.checkMap(name, changed, ctx), "unknown_field");
     }
-    expect(seen.size).toBe(93);
+    expect(seen.size).toBe(99);
   });
 
   // v4.ts_shape.context_boundaries

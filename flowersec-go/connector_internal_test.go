@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
-	session "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v6/internal/rpc"
+	session "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
 )
 
 func mustParseInternalFixtureArtifact(t *testing.T) Artifact {

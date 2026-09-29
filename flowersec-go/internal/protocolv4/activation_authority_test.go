@@ -3,7 +3,7 @@ package protocolv4
 import (
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func namespaceText(value string) *cborRefValue { return &cborRefValue{major: 3, data: []byte(value)} }

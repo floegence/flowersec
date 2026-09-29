@@ -7,14 +7,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
-func materialEnvironment(t *testing.T, f *materialBytesFixture) *Environment {
+func materialEnvironment(t *testing.T, f *materialBytesFixture, registry ...*protocolv4.NamespaceRegistry) *Environment {
 	t.Helper()
 	config := EnvironmentConfig{Positions: 2, Materials: 1, MaterialCreateMS: 100, Clock: f.admissionIntegrationFixture.trust.clock, RuntimeBytes: 65536}
+	if len(registry) != 0 {
+		config.Verification = registry[0]
+	}
 	cost, err := EnvironmentCharge(config)
 	if err != nil {
 		t.Fatal(err)

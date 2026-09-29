@@ -17,8 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/numeric"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func testHTTPSBootstrap(t *testing.T, handler http.Handler, customize func(*HTTPSBootstrapConfig)) (*HTTPSBootstrapProvider, *resourcev4.Root) {
@@ -241,5 +243,28 @@ func TestHTTPSBootstrapFetchRequiresExactOriginalLength(t *testing.T) {
 	}), nil)
 	if n, err := p.Fetch(context.Background(), protocolv4.NamespaceContent{EncodedBytes: 4}, make([]byte, 4)); err == nil || n != 0 {
 		t.Fatal("truncated original content accepted", n, err)
+	}
+}
+
+func TestHTTPSBootstrapRejectsMappedNumericAliasBeforeResourceOwnership(t *testing.T) {
+	cfg := HTTPSBootstrapConfig{BaseURL: "https://[::ffff:7f00:1]:8443/revocation", RemoteAddress: netip.MustParseAddrPort("127.0.0.1:8443"), HeaderBytes: 1024, Timeout: time.Second, RuntimeBytes: 65536, ProviderRuntimeBytes: 1 << 20}
+	// Empty reservations are intentional: the mismatched configured endpoint
+	// must be rejected before touching any resource or opening a socket.
+	p, err := NewHTTPSBootstrapProvider(cfg, resourcev4.Reference{}, resourcev4.Reference{})
+	if p != nil || !errors.Is(err, numeric.ErrEndpoint) {
+		t.Fatal("mapped endpoint alias survived preparation", err)
+	}
+}
+
+func TestHTTPSBootstrapRejectsIPv4SANForMappedTarget(t *testing.T) {
+	var requests atomic.Uint32
+	p, _ := testHTTPSBootstrap(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { requests.Add(1) }), func(c *HTTPSBootstrapConfig) {
+		mapped := netip.AddrFrom16(c.RemoteAddress.Addr().As16())
+		c.RemoteAddress = netip.AddrPortFrom(mapped, c.RemoteAddress.Port())
+		c.BaseURL = "https://" + c.RemoteAddress.String() + "/revocation"
+	})
+	n, err := p.Query(context.Background(), bootstrapRequest(), make([]byte, 128))
+	if n != 0 || !errors.Is(err, tlspolicy.ErrCertificate) || requests.Load() != 0 {
+		t.Fatal("IPv4 certificate authorized mapped control target", n, err, requests.Load())
 	}
 }

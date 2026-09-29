@@ -1,9 +1,10 @@
+import type { StreamPermit } from "./admission.js";
 import { enableResponseFlowControl } from "./serviceWorkerRuntime.js";
 import { SessionError } from "../public/contract.js";
 import { InvalidProxyPathError, normalizePath } from "./policy.js";
 import type { ProxyFetchRequest, ProxyRuntime } from "./types.js";
 
-export async function prepareProxyFetch(input: RequestInfo | URL, init?: RequestInit, externalOrigin?: string, maxBodyBytes = 64 * 1024 * 1024): Promise<{
+export async function prepareProxyFetch(input: RequestInfo | URL, init?: RequestInit, externalOrigin?: string, maxBodyBytes = 64 * 1024 * 1024, permit?: StreamPermit): Promise<{
   request: ProxyFetchRequest; signal: AbortSignal;
 }> {
   const raw = input instanceof Request ? input.url : String(input);
@@ -13,57 +14,108 @@ export async function prepareProxyFetch(input: RequestInfo | URL, init?: Request
     if (externalOrigin === undefined || url.origin !== externalOrigin || url.username || url.password || url.hash) {
       throw new InvalidProxyPathError("proxy fetch requires a path or the configured external origin");
     }
-    path = url.pathname + url.search;
+    path = url.href.slice(url.origin.length);
   }
   path = normalizePath(path);
   const request = new Request(input instanceof Request ? input : `https://flowersec.invalid${path}`, init);
   request.signal.throwIfAborted();
+  // Request applies the browser URL algorithm. Use its final observable target,
+  // including an empty query, for the later subtree authorization decision.
+  const requestURL = new URL(request.url);
+  path = normalizePath(requestURL.href.slice(requestURL.origin.length));
   let body: ArrayBuffer | undefined;
   let source = request.body as ReadableStream<Uint8Array> | null | undefined;
   if (source === undefined) {
-    // Some current browser engines implement Body consumption without exposing
-    // Request.body. Blob size is checked before copying bytes into the carrier;
-    // the ordinary streaming path retains its incremental budget enforcement.
-    const blob = await request.blob();
-    request.signal.throwIfAborted();
-    if (blob.size > maxBodyBytes) throw new SessionError("resource_exhausted");
-    source = blob.size ? blob.stream() : null;
+    // Some browsers expose Body.blob() without Request.body. The Blob is a
+    // host-owned representation; inspect its size before creating SDK bytes.
+    // This bounds our copy, not the browser's native Body materialization.
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      const blob = await observeBody(request.blob(), request.signal, permit);
+      if (blob.size > maxBodyBytes) throw new SessionError("resource_exhausted");
+      permit?.resizeBody(blob.size);
+      body = await observeBody(blob.arrayBuffer(), request.signal, permit);
+    }
+    source = null;
   }
   if (source !== null) {
     const reader = source.getReader();
-    const abort = () => { void reader.cancel().catch(() => undefined); };
-    request.signal.addEventListener("abort", abort, { once: true });
-    const chunks: Uint8Array[] = [];
+    let bytes = new Uint8Array(0);
     let total = 0;
+    let ended = false;
     try {
       for (;;) {
         request.signal.throwIfAborted();
-        const next = await reader.read();
+        const next = await observeBody(reader.read(), request.signal, permit);
         request.signal.throwIfAborted();
-        if (next.done) break;
-        total += next.value.byteLength;
-        if (total > maxBodyBytes) throw new SessionError("resource_exhausted");
-        chunks.push(next.value);
+        if (next.done) { ended = true; break; }
+        const chunk = next.value;
+        if (!(chunk instanceof Uint8Array) || chunk.byteLength > maxBodyBytes - total) throw new SessionError("resource_exhausted");
+        const needed = total + chunk.byteLength;
+        if (needed > bytes.length) {
+          const capacity = Math.min(maxBodyBytes, Math.max(needed, bytes.length * 2));
+          // Charge both the old slab and the replacement while copying. The
+          // workspace envelope is shared across this admission owner.
+          const releaseWorkspace = permit?.workspace(bytes.length);
+          try {
+            permit?.resizeBody(capacity);
+            const nextBytes = new Uint8Array(capacity);
+            nextBytes.set(bytes.subarray(0, total));
+            bytes = nextBytes;
+          } finally { releaseWorkspace?.(); }
+        }
+        bytes.set(chunk, total);
+        total = needed;
       }
-      const bytes = new Uint8Array(total);
-      let offset = 0;
-      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-      body = bytes.buffer;
+      if (total === bytes.length) body = bytes.buffer;
+      else {
+        const releaseWorkspace = permit?.workspace(bytes.length);
+        try {
+          permit?.resizeBody(total);
+          body = bytes.slice(0, total).buffer;
+        } finally { releaseWorkspace?.(); }
+      }
     } finally {
-      request.signal.removeEventListener("abort", abort);
-      await reader.cancel().catch(() => undefined);
-      reader.releaseLock();
+      if (ended) reader.releaseLock();
+      else {
+        // Logical cancellation may finish immediately, but the actual reader
+        // cancellation retains its original admission until the host settles.
+        const releaseTail = permit?.retain();
+        void reader.cancel().catch(() => undefined).finally(() => {
+          reader.releaseLock();
+          releaseTail?.();
+        });
+      }
     }
   }
+
   return { request: enableResponseFlowControl({ id: "", method: request.method, path,
-    headers: Array.from(request.headers, ([name, value]) => ({ name, value })),
+    headers: headersOf(request.headers),
     ...(body === undefined ? {} : { body }),
   }), signal: request.signal };
 }
 
+// Cancel only the observer; native Body work owns any remaining host tail.
+async function observeBody<T>(work: Promise<T>, signal: AbortSignal, permit?: StreamPermit): Promise<T> {
+  const releaseTail = permit?.retain();
+  if (releaseTail !== undefined) void work.then(releaseTail, releaseTail);
+  signal.throwIfAborted();
+  let abort: (() => void) | undefined;
+  try {
+    const result = await Promise.race([work, new Promise<never>((_, reject) => {
+      abort = () => reject(new SessionError("canceled"));
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    })]);
+    signal.throwIfAborted();
+    return result;
+  } finally {
+    if (abort !== undefined) signal.removeEventListener("abort", abort);
+  }
+}
+
 // Window applications use the same controller-owned transaction through a
 // credited port. At most one body chunk may be in flight across the bridge.
-export function fetchProxyPort(dispatch: ProxyRuntime["dispatchFetch"], request: ProxyFetchRequest, signal: AbortSignal, maxChunkBytes = 256 * 1024): Promise<Response> {
+export function fetchProxyPort(dispatch: ProxyRuntime["dispatchFetch"], request: ProxyFetchRequest, signal: AbortSignal, maxChunkBytes = 256 * 1024, releaseRequest?: () => void): Promise<Response> {
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
     const port = channel.port1;
@@ -76,6 +128,7 @@ export function fetchProxyPort(dispatch: ProxyRuntime["dispatchFetch"], request:
       finished = true;
       signal.removeEventListener("abort", abort);
       port.close();
+      releaseRequest?.();
       pending?.();
       if (error) { output?.error(error); reject(error); }
       else output?.close();
@@ -121,4 +174,10 @@ export function fetchProxyPort(dispatch: ProxyRuntime["dispatchFetch"], request:
     try { dispatch(request, channel.port2); } catch { abort(); }
     if (signal.aborted) abort();
   });
+}
+
+function headersOf(headers: Headers): Array<{ name: string; value: string }> {
+  const result: Array<{ name: string; value: string }> = [];
+  headers.forEach((value, name) => result.push({ name, value }));
+  return result;
 }

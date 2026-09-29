@@ -7,7 +7,7 @@
   "github.com/davecgh/go-spew": { "license": "ISC", "file": "LICENSE" },
   "github.com/dunglas/httpsfv": { "license": "BSD-3-Clause", "file": "LICENSE" },
   "github.com/dustin/go-humanize": { "license": "MIT", "file": "LICENSE" },
-  "github.com/floegence/flowersec/flowersec-go/v5": { "license": "MIT", "file": "LICENSE" },
+  "github.com/floegence/flowersec/flowersec-go/v6": { "license": "MIT", "file": "LICENSE" },
   "github.com/flynn/noise": { "license": "BSD-3-Clause", "file": "LICENSE" },
   "github.com/go-kit/log": { "license": "MIT", "file": "LICENSE" },
   "github.com/go-logfmt/logfmt": { "license": "MIT", "file": "LICENSE" },

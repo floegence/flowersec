@@ -1,5 +1,5 @@
 // Generated draft native API types; DO NOT EDIT. Not a qualified SDK runtime.
-export const transportV4APIResultsSchemaSHA256 = "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959" as const;
+export const transportV4APIResultsSchemaSHA256 = "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af" as const;
 
 export type V4ApplicationProfile = "transport" | "services" | "execution";
 
@@ -164,12 +164,82 @@ export interface V4ResponsePublicationStatus {
   readonly cause?: V4ResponsePublicationCause;
 }
 
+export type V4TopUpWireResult = "success" | "replay" | "source_exhausted" | "source_unavailable" | "source_contract_invalid" | "source_state_unknown" | "operation_conflict" | "stale_generation" | "future_generation" | "stale_operation" | "future_operation" | "sequence_gap" | "configuration_capacity" | "capacity_exhausted" | "relink_required" | "spent_unknown" | "top_up_request_expired" | "source_reset_required" | "permission_denied";
+
+export type V4TopUpErrorCode = "source_exhausted" | "source_unavailable" | "source_contract_invalid" | "source_state_unknown" | "operation_conflict" | "stale_generation" | "future_generation" | "stale_operation" | "future_operation" | "sequence_gap" | "configuration_capacity" | "capacity_exhausted" | "relink_required" | "spent_unknown" | "top_up_request_expired" | "source_reset_required" | "permission_denied";
+
+export type V4TopUpErrorScope = "source" | "operation" | "request";
+
+export type V4TopUpWriteAction = "none" | "terminal";
+
+export interface V4TopUpError {
+  readonly code: V4TopUpErrorCode;
+  readonly scope: V4TopUpErrorScope;
+  readonly write_action: V4TopUpWriteAction;
+}
+
+export type V4LifecycleObjectKind = "session" | "environment" | "operation" | "subscription" | "bridge" | "adapter" | "stream" | "material" | "source" | "registration";
+
+export type V4LifecycleState = "active" | "closing" | "closed" | "session_aborted";
+
+export type V4LifecycleReason = "none" | "canceled" | "deadline_exceeded" | "dependency_unavailable" | "core_cleanup_failed";
+
+export interface V4LifecycleResult {
+  readonly object_kind: V4LifecycleObjectKind;
+  readonly lifecycle_state: V4LifecycleState;
+  readonly cleanup_status: V4CleanupStatus;
+  readonly reason: V4LifecycleReason;
+}
+
+export function topUpErrorProjection(code: V4TopUpErrorCode, action: V4TopUpWriteAction): V4TopUpError | undefined {
+  switch (code) {
+    case "source_exhausted": return (action === "none") ? Object.freeze({code, scope: "source", write_action: action}) : undefined;
+    case "source_unavailable": return (action === "none") ? Object.freeze({code, scope: "source", write_action: action}) : undefined;
+    case "source_contract_invalid": return (action === "none") ? Object.freeze({code, scope: "source", write_action: action}) : undefined;
+    case "source_state_unknown": return (action === "none") ? Object.freeze({code, scope: "source", write_action: action}) : undefined;
+    case "operation_conflict": return (action === "none") ? Object.freeze({code, scope: "operation", write_action: action}) : undefined;
+    case "stale_generation": return (action === "none") ? Object.freeze({code, scope: "request", write_action: action}) : undefined;
+    case "future_generation": return (action === "none") ? Object.freeze({code, scope: "request", write_action: action}) : undefined;
+    case "stale_operation": return (action === "none") ? Object.freeze({code, scope: "operation", write_action: action}) : undefined;
+    case "future_operation": return (action === "none") ? Object.freeze({code, scope: "operation", write_action: action}) : undefined;
+    case "sequence_gap": return (action === "none") ? Object.freeze({code, scope: "operation", write_action: action}) : undefined;
+    case "configuration_capacity": return (action === "none" || action === "terminal") ? Object.freeze({code, scope: "request", write_action: action}) : undefined;
+    case "capacity_exhausted": return (action === "none" || action === "terminal") ? Object.freeze({code, scope: "operation", write_action: action}) : undefined;
+    case "relink_required": return (action === "none" || action === "terminal") ? Object.freeze({code, scope: "source", write_action: action}) : undefined;
+    case "spent_unknown": return (action === "none" || action === "terminal") ? Object.freeze({code, scope: "source", write_action: action}) : undefined;
+    case "top_up_request_expired": return (action === "none" || action === "terminal") ? Object.freeze({code, scope: "operation", write_action: action}) : undefined;
+    case "source_reset_required": return (action === "none" || action === "terminal") ? Object.freeze({code, scope: "source", write_action: action}) : undefined;
+    case "permission_denied": return (action === "none") ? Object.freeze({code, scope: "source", write_action: action}) : undefined;
+  }
+}
+
+export function validLifecycleResult(value: V4LifecycleResult): boolean {
+  const cleanup = value.cleanup_status;
+  return (value.object_kind === "session" || value.object_kind === "environment" || value.object_kind === "operation" || value.object_kind === "subscription" || value.object_kind === "bridge" || value.object_kind === "adapter" || value.object_kind === "stream" || value.object_kind === "material" || value.object_kind === "source" || value.object_kind === "registration") &&
+    (value.lifecycle_state === "active" || value.lifecycle_state === "closing" || value.lifecycle_state === "closed" || value.lifecycle_state === "session_aborted") &&
+    (value.reason === "none" || value.reason === "canceled" || value.reason === "deadline_exceeded" || value.reason === "dependency_unavailable" || value.reason === "core_cleanup_failed") &&
+    (cleanup.status === "pending" || cleanup.status === "complete" || cleanup.status === "cleanup_incomplete") &&
+    (cleanup.core_cleanup === "pending" || cleanup.core_cleanup === "complete") &&
+    typeof cleanup.pending_callbacks === "bigint" && cleanup.pending_callbacks >= 0n && cleanup.pending_callbacks <= 0xffffffffffffffffn &&
+    (cleanup.status === "complete") === (cleanup.core_cleanup === "complete" && cleanup.pending_callbacks === 0n) &&
+    (value.lifecycle_state !== "session_aborted" || value.object_kind === "session") &&
+    (cleanup.status !== "complete" || value.lifecycle_state === "closed" || value.lifecycle_state === "session_aborted");
+}
+
 export function connectionAssurance(value: string): V4ConnectionGuarantees | undefined {
   switch (value) {
     case "native_websocket_tls13": return Object.freeze({"reliable_progress":"shared_ordered","bound_stream_input_isolation":"shared_failure_scope","datagram":false,"local_consumer_tls13_verification":"consumer_enforced","scope":"complete_direct_path","assumptions":"authenticated_peer_within_transport_profile"});
     case "native_websocket_loopback": return Object.freeze({"reliable_progress":"shared_ordered","bound_stream_input_isolation":"shared_failure_scope","datagram":false,"local_consumer_tls13_verification":"not_applicable","scope":"complete_direct_path","assumptions":"authenticated_peer_within_transport_profile"});
     case "accepted_websocket": return Object.freeze({"reliable_progress":"shared_ordered","bound_stream_input_isolation":"shared_failure_scope","datagram":false,"local_consumer_tls13_verification":"not_applicable","scope":"complete_direct_path","assumptions":"authenticated_peer_within_transport_profile"});
     case "browser_websocket_terminator": return Object.freeze({"reliable_progress":"shared_ordered","bound_stream_input_isolation":"shared_failure_scope","datagram":false,"local_consumer_tls13_verification":"controlled_terminator","scope":"complete_direct_path","assumptions":"authenticated_peer_within_transport_profile"});
+    case "native_quic_tls13": return Object.freeze({"reliable_progress":"independent_within_profile","bound_stream_input_isolation":"bound_stream_within_profile","datagram":true,"local_consumer_tls13_verification":"consumer_enforced","scope":"complete_direct_path","assumptions":"authenticated_peer_within_transport_profile"});
+    case "accepted_quic": return Object.freeze({"reliable_progress":"independent_within_profile","bound_stream_input_isolation":"bound_stream_within_profile","datagram":true,"local_consumer_tls13_verification":"not_applicable","scope":"complete_direct_path","assumptions":"authenticated_peer_within_transport_profile"});
+    case "native_webtransport_tls13": return Object.freeze({"reliable_progress":"independent_within_profile","bound_stream_input_isolation":"bound_stream_within_profile","datagram":true,"local_consumer_tls13_verification":"consumer_enforced","scope":"complete_direct_path","assumptions":"authenticated_peer_within_transport_profile"});
+    case "accepted_webtransport": return Object.freeze({"reliable_progress":"independent_within_profile","bound_stream_input_isolation":"bound_stream_within_profile","datagram":true,"local_consumer_tls13_verification":"not_applicable","scope":"complete_direct_path","assumptions":"authenticated_peer_within_transport_profile"});
+    case "go_relay_native_consumer": return Object.freeze({"reliable_progress":"independent_within_profile","bound_stream_input_isolation":"bound_stream_within_profile","datagram":true,"local_consumer_tls13_verification":"consumer_enforced","scope":"complete_relay_path","assumptions":"trusted_relay_and_peers_within_transport_profile"});
+    case "go_relay_native_observer": return Object.freeze({"reliable_progress":"independent_within_profile","bound_stream_input_isolation":"bound_stream_within_profile","datagram":true,"local_consumer_tls13_verification":"not_applicable","scope":"complete_relay_path","assumptions":"trusted_relay_and_peers_within_transport_profile"});
+    case "go_relay_shared_consumer": return Object.freeze({"reliable_progress":"shared_ordered","bound_stream_input_isolation":"shared_failure_scope","datagram":false,"local_consumer_tls13_verification":"consumer_enforced","scope":"complete_relay_path","assumptions":"trusted_relay_and_peers_within_transport_profile"});
+    case "go_relay_shared_observer": return Object.freeze({"reliable_progress":"shared_ordered","bound_stream_input_isolation":"shared_failure_scope","datagram":false,"local_consumer_tls13_verification":"not_applicable","scope":"complete_relay_path","assumptions":"trusted_relay_and_peers_within_transport_profile"});
     default: return undefined;
   }
 }

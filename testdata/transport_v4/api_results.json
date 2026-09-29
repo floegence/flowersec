@@ -1,5 +1,5 @@
 {
-  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "schema_revision": "flowersec-v4.0.0-draft.74",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
   "representation": "native_reference_json_tags_not_wire_encoding",
   "coverage": "draft_native_io_results_only",
@@ -5050,6 +5050,542 @@
         }
       },
       "expected_error": "api_enum"
+    },
+    {
+      "id": "top_up_error_source_exhausted_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_exhausted",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_unavailable_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_unavailable",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_contract_invalid_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_contract_invalid",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_state_unknown_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_state_unknown",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_operation_conflict_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "operation_conflict",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_stale_generation_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "stale_generation",
+        "scope": "request",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_future_generation_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "future_generation",
+        "scope": "request",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_stale_operation_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "stale_operation",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_future_operation_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "future_operation",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_sequence_gap_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "sequence_gap",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_configuration_capacity_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "configuration_capacity",
+        "scope": "request",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_configuration_capacity_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "configuration_capacity",
+        "scope": "request",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_capacity_exhausted_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "capacity_exhausted",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_capacity_exhausted_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "capacity_exhausted",
+        "scope": "operation",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_relink_required_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "relink_required",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_relink_required_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "relink_required",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_spent_unknown_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "spent_unknown",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_spent_unknown_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "spent_unknown",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_top_up_request_expired_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "top_up_request_expired",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_top_up_request_expired_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "top_up_request_expired",
+        "scope": "operation",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_reset_required_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_reset_required",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_reset_required_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_reset_required",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_permission_denied_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "permission_denied",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_permission_denied_cannot_write_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "permission_denied",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_source_contract_invalid_cannot_write_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_contract_invalid",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_source_exhausted_cannot_write_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_exhausted",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_source_unavailable_cannot_write_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_unavailable",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_wrong_scope",
+      "type": "TopUpError",
+      "input": {
+        "code": "permission_denied",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_wire_result_success",
+      "type": "TopUpWireResult",
+      "input": "success",
+      "context": {
+        "server_committed": true
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_replay",
+      "type": "TopUpWireResult",
+      "input": "replay",
+      "context": {
+        "server_committed": true
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_exhausted",
+      "type": "TopUpWireResult",
+      "input": "source_exhausted",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_unavailable",
+      "type": "TopUpWireResult",
+      "input": "source_unavailable",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_contract_invalid",
+      "type": "TopUpWireResult",
+      "input": "source_contract_invalid",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_state_unknown",
+      "type": "TopUpWireResult",
+      "input": "source_state_unknown",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_operation_conflict",
+      "type": "TopUpWireResult",
+      "input": "operation_conflict",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_stale_generation",
+      "type": "TopUpWireResult",
+      "input": "stale_generation",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_future_generation",
+      "type": "TopUpWireResult",
+      "input": "future_generation",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_stale_operation",
+      "type": "TopUpWireResult",
+      "input": "stale_operation",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_future_operation",
+      "type": "TopUpWireResult",
+      "input": "future_operation",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_sequence_gap",
+      "type": "TopUpWireResult",
+      "input": "sequence_gap",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_configuration_capacity",
+      "type": "TopUpWireResult",
+      "input": "configuration_capacity",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_capacity_exhausted",
+      "type": "TopUpWireResult",
+      "input": "capacity_exhausted",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_relink_required",
+      "type": "TopUpWireResult",
+      "input": "relink_required",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_spent_unknown",
+      "type": "TopUpWireResult",
+      "input": "spent_unknown",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_top_up_request_expired",
+      "type": "TopUpWireResult",
+      "input": "top_up_request_expired",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_reset_required",
+      "type": "TopUpWireResult",
+      "input": "source_reset_required",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_permission_denied",
+      "type": "TopUpWireResult",
+      "input": "permission_denied",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_lifecycle_active_wait",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "subscription",
+        "lifecycle_state": "active",
+        "cleanup_status": {
+          "status": "cleanup_incomplete",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "1"
+          }
+        },
+        "reason": "deadline_exceeded"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_lifecycle_aborted_pending",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "session",
+        "lifecycle_state": "session_aborted",
+        "cleanup_status": {
+          "status": "cleanup_incomplete",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "1"
+          }
+        },
+        "reason": "deadline_exceeded"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_lifecycle_environment_complete",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "environment",
+        "lifecycle_state": "closed",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "reason": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_lifecycle_child_cannot_abort_session",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "adapter",
+        "lifecycle_state": "session_aborted",
+        "cleanup_status": {
+          "status": "cleanup_incomplete",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "1"
+          }
+        },
+        "reason": "none"
+      },
+      "expected_error": "cleanup_lifecycle"
+    },
+    {
+      "id": "api_lifecycle_active_cannot_be_released",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "subscription",
+        "lifecycle_state": "active",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "reason": "none"
+      },
+      "expected_error": "cleanup_lifecycle"
     }
   ]
 }

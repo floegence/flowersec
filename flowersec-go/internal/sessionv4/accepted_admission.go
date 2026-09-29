@@ -4,10 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // AcceptedAdmissionMaterial is independently verified local material. The
@@ -58,8 +58,11 @@ func newAcceptedSessionAdmissionReservation(ctx context.Context, c SessionAdmiss
 	if err = preauth.CheckSameEnvironment(environment); err != nil {
 		return nil, err
 	}
-	binding := PreparedCarrierBinding{Session: c.Core.Session, Role: protocolv4.ServerToClient, Candidate: material.Activation.Winner(), Attempt: material.Attempt, MessageCarrier: e.carrier.binding.MessageCarrier}
-	if c.Core.MessageCarrier != binding.MessageCarrier {
+	binding := PreparedCarrierBinding{Session: c.Core.Session, Role: protocolv4.ServerToClient, Candidate: material.Activation.Winner(), Attempt: material.Attempt, MessageCarrier: e.carrier.binding.MessageCarrier, Native: e.carrier.binding.Native}
+	if e.tunnel != nil && binding != e.carrier.binding {
+		return nil, protocolv4.ErrHopAuthContext
+	}
+	if c.Core.MessageCarrier != binding.MessageCarrier || c.Core.Native != binding.Native {
 		return nil, cryptov4.ErrConfiguration
 	}
 	if err = material.Authority.MatchOriginal(binding.Session, binding.Attempt, binding.Candidate); err != nil {
@@ -164,7 +167,7 @@ func newAcceptedSessionAdmissionReservation(ctx context.Context, c SessionAdmiss
 	if err = batch.reserveDeliveryFloor(material.Subscriptions, refs[:n]); err != nil {
 		return nil, err
 	}
-	p := &SessionAdmissionReservation{ctx: ctx, prepared: e.carrier, guarantees: e.carrier.guarantees, accepted: e, initial: x, config: c, binding: binding, scope: scope, owner: metadata, initialReservation: initial, preauth: held, environment: environment, sessionSlot: slot, wake: make(chan struct{}, 1), done: make(chan struct{}), acceptedBinding: admissionBinding, acceptedFacts: facts, acceptedFSB: append([]byte(nil), wire...)}
+	p := &SessionAdmissionReservation{host: host, ctx: ctx, prepared: e.carrier, guarantees: e.carrier.guarantees, accepted: e, initial: x, config: c, binding: binding, scope: scope, owner: metadata, initialReservation: initial, preauth: held, environment: environment, sessionSlot: slot, wake: make(chan struct{}, 1), done: make(chan struct{}), acceptedBinding: admissionBinding, acceptedFacts: facts, acceptedFSB: append([]byte(nil), wire...)}
 	p.claim.owner = p
 	e.mu.Lock()
 	if e.closed || e.admission != nil {

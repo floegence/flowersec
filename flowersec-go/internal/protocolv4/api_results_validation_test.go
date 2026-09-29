@@ -186,6 +186,8 @@ func TestNativeReadWriteAPIResultsCorpus(t *testing.T) {
 			result = new(V4CloseResult)
 		case "CleanupStatus":
 			result = new(V4CleanupStatus)
+		case "LifecycleResult":
+			result = new(V4LifecycleResult)
 		case "TypedError":
 			result = new(V4TypedError)
 		default:

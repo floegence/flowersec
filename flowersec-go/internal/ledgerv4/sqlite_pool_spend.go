@@ -5,9 +5,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // SQLitePoolAuthority is the immutable trusted mapping from parent issuer and
@@ -210,7 +210,7 @@ func (p *SQLitePoolSpend) Consume(action func() error) (err error) {
 		if present != int64(0) {
 			return ErrConflict
 		}
-		value, err := s.scalar("SELECT admission_rows+spend_rows FROM manifest WHERE id=1")
+		value, err := s.scalar("SELECT admission_rows+spend_rows+winner_rows+issuance_rows+relay_rows FROM manifest WHERE id=1")
 		if err != nil {
 			return err
 		}

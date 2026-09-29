@@ -1,5 +1,12 @@
 # Flowersec Transport v4 implementation binding
 
+The explicit Rust direct WSS/pool client and its current implementation limits
+are documented in [RUST_TRANSPORT_V4.md](RUST_TRANSPORT_V4.md). Its real
+TLS/SQLite/Noise/READY/Session path is distinct from the stateless reference
+consumers described below. The current Rust ledger implements all eleven local
+resource dimensions with separate SDK, provider and disk backing lifetimes.
+Full provider/deployment qualification remains unfinished.
+
 This repository is preparing the Flowersec 6.0.0 / wire v4 implementation.
 The normative architecture is maintained outside this repository and is bound
 by the immutable SHA below. This file intentionally does not reproduce that
@@ -15,7 +22,7 @@ design.
 | Review evidence SHA-256 | `ada2ac7eca7655c61ad4e4699b77746e549be14a182ad55c342050a6f7f2a1ec` |
 | Implementation binding | `stability/transport_v4_contract.json` |
 | Schema reference | `stability/transport_v4_schema.json` |
-| Schema revision | `flowersec-v4.0.0-draft.66` |
+| Schema revision | `flowersec-v4.0.0-draft.74` |
 | Schema gate | `not_frozen` |
 
 The v4 schema, registry, vectors, provider qualifications and independent
@@ -42,8 +49,9 @@ responses distinguish operation conflicts and expired results; expired initial
 admission reports the deadline failure without creating history. Retained-result
 readers stop copying at expiry and retain backing through actual release.
 Execution notifications use the same service history and real ordinary executor,
-with no response or result reservation. Execution streaming, durable storage,
-public operation APIs and cross-SDK runtime qualification remain unfinished.
+with no response or result reservation. Public Go Environment, unary operation and publication assembly is documented in
+[GO_TRANSPORT_V4.md](GO_TRANSPORT_V4.md). Cross-SDK runtime and provider
+qualification remain separate implementation gates.
 
 The volatile execution owner can accept a preadmitted ExecutionAdmission with
 real original history and active positions, complete work/result backing,
@@ -82,6 +90,120 @@ by four concurrent observers. Typed input enters the original decoder once and
 becomes application-owned; later waits join that computation. A canceled waiter
 does not close the result or restart decoding. Application error, panic and
 Goexit become one normalized decode failure.
+
+The internal unary workload composition reserves future positions in the
+original operation, general-call, Network, Environment-result and Completion
+tables, plus one actual service call scope per declared opportunity. Prepare consumes protected route, payload and codec references; Start
+consumes the separate complete caller and delivery-authority references. The
+synchronous encoder's backing alias and both result metadata aliases are
+preadmitted. Completed undelivered results and running decoders retain their
+original target even after network retirement. Closing the declaration seals
+new preparation while returned operations retain Start capacity. Session
+retirement detaches completed independent results and retires idle protection.
+Larger legal calls use ordinary spare capacity with their selected limit.
+Notification targets protect original prepared-operation and call-scope
+positions, immutable source/status backing, and positions in both existing
+opener queues. Each declared call uses only one queue and one source vector.
+The publication guard and four concurrent waiters have preadmitted metadata
+aliases; notification targets claim no Network K, result or Completion position.
+Explicit channel creation installs its queue promises before making the channel
+available. Rebuilding a channel preserves dormant promises without replaying
+an old message. Provider tails and retained submission handles keep their real
+backing until cleanup and Close, preventing early target reuse. Ordinary sends
+cannot consume a protected queue position. Queue order follows successful local
+admission, including when protected and ordinary positions are interspersed.
+Streaming caller buffer charges, initial construction and item replenishment
+use the same original request size and selected item limit, with a 256-byte
+minimum for fixed SDK errors. Server admission retains its contract envelope
+until the authenticated request arrives. A smaller caller default does not
+reduce the contract's supported request or response maxima.
+Prepared streaming and Resume results occupy the same finite Environment result
+table as unary results before Start. Environment closure seals their delivery
+gate immediately and joins unpublished constructors before cleaning their state.
+Registered results retain their table position through actual decoder, I/O and
+observer cleanup. A protected result's original metadata alias keeps the position
+charged until the existing coordinator removes it.
+One accepted stream holds its original Completion descriptor across all items,
+including gaps between reads and encoded handoffs. Each actual item checkout
+assigns a fresh scheduling order without borrowing another root reference. Closing
+a declaration or executor preserves that accepted stream's remaining Completion
+responsibility; a running decoder keeps the same charge through physical exit.
+After transport retirement, only the result's Session scopes detach. A reusable
+workload floor retains its original anchor until its declaration closes.
+Internal OPEN protection reserves actual ordinary proof positions and future
+active/opening capacity in the original admission table. Static internal class
+floors, peer preparation, rejection reserve and dynamic local protection share
+the existing totals. Authenticated retirement and actual carrier cleanup return
+the protocol proof; the composing workload separately joins its remaining use
+before reuse. These primitives do not create a native carrier or authorize OPEN.
+The internal streaming workload composes these protections with original
+receive backing/credit, transport metadata, send flow/queue, native DATA assembly,
+actual provider handle positions, result/delivery owners and Completion. Ordinary
+native creation and peer acceptance cannot occupy its protected slots. Start moves
+the preadmitted Network aggregate alias instead of borrowing another root reference.
+Actual provider retirement, authenticated proof retirement, result aliases and
+callback exit all precede target reuse. These targets stay on their preparation
+Session. Internal method recipes accept unary, streaming and notify targets.
+Explicit or required preacceptance consumes the matching streaming target's
+original transport floor and its protected pool metadata/route references. Queued
+OPEN and try-now checkout share that responsibility. A pool miss cannot create
+OPEN or replenishment demand, and an ordinary caller cannot take a declared
+method's preaccepted Stream. The original checkout alias moves at claim and
+returns on an uncommitted attempt without a new root reference.
+The original service binding consumes an internal finite method recipe. Static
+Bind admits every declared target before handoff; remote Bind first obtains its
+exact snapshots and then admits the target. Failed multi-method admission
+releases earlier unpublished targets. Compatible same-method envelopes reuse
+existing protection across contract updates, while a larger envelope acquires
+separate capacity before installation and retains old prepared/result tails.
+Explicit method defaults remain validated independently of recipe overrides.
+Controller candidates stage their own real targets in the same root, and the
+original dependency revision gate fences publication against new bindings or
+contract changes. Current keeps its old targets until publication wins; failed
+candidates seal only their unpublished targets. Closing a binding seals future
+claims without closing its borrowed Session or revoking returned operations.
+Service call scopes retain their original backing through caller/codec exit
+and operation cleanup, including old generations after a current switch.
+Ordinary and larger-envelope calls use the binding's separate finite positions;
+they cannot consume declared call opportunities. Controller targets also reserve
+actual operation-table positions and the original operation plus three bounded
+invocation aliases. These aliases preserve tenant and Environment accounting
+through Session retirement, and consume no new reference slots at Prepare/Start.
+A failed multi-position admission restores all earlier positions and aliases.
+Private Session factory recipes qualify exact namespace, method, contract,
+acceptance and finite unary/streaming/notification envelopes before admission.
+The consumer and accepted paths construct the original RPC graph and reserve actual workload references,
+namespace delivery floors, result positions and Completion descriptors before
+credential adoption and the irreversible transaction. Requirements share the
+constructor arithmetic. Asynchronous source/intake configuration freezes the
+recipe, exact streaming kind/metadata and acceptance strings. Standalone RPC
+installation rejects these
+recipes because it has no original hosted credential admission.
+Controller headroom reserves the workload backing, reusable aliases, Environment
+result positions and Completion descriptors before source Acquire. It constructs
+the original Session receive pool and protects streaming receive credit there.
+Session requirements include the transport vector and validate its coexistence
+with the fixed internal channels and declared service floors. Admission checks
+the same finite recipe and exact transport geometry, then transfers those owners
+into the original RPC positions. Verified material supplies the namespace
+references, and the actual prepared native connection supplies provider positions
+before credential adoption/TxA. Session installation attaches the original floors
+to its OPEN and native association tables before bootstrap/publication. Closing unused headroom refunds its own reservations. Failed unpublished
+Bind or candidate handoff returns an unused factory target to its Session.
+Controller queued unary reselection consumes an available complete caller/result
+target of the same installed binding in the selected Session. A local identity
+links candidate targets to their original binding; equal method contracts do
+not authorize borrowing another binding's target. Uninstalled candidates cannot
+supply dispatch capacity. The original operation keeps its preparation and
+encoded request; each tentative route holds its own Network, result, Completion
+and delivery references through physical cleanup. Old forwarding results remain
+charged until their observers and handles exit. Selection uses the existing
+finite tables and admitted aliases without an additional root reservation.
+Busy targets and legal envelopes outside the declaration use ordinary spare
+capacity and fail locally when the complete vector is unavailable.
+Public recipes, complete factory binding-metadata protection, complete streaming
+targets, shared dependency/initializer vectors, and supported-profile
+qualification remain unexposed by this internal composition.
 
 The internal prepared operation and deferred call expose AbandonResult through
 the original result handoff gate. An unpublished request reports not_started
@@ -1224,6 +1346,20 @@ before beginning a durable claim; a plan for another route cannot first consume
 the lease and fail only after signing. The complete adoption-to-claim replacement
 policy and remote authority transport remain separate assembly obligations.
 
+The general Artifact issuer checks direct and tunnel candidates against their
+complete independent namespace/role closure. Its authenticated `/issue/artifact`
+source derives pending Grant scopes from the verified parent's original
+issue/session bounds. The matching bounded `LiveArtifactHost` reserves original
+material and plan capacity before issuance, retains the full signed Artifact
+only after the durable issuance commit, and constructs one exact live plan from
+the first authenticated attempt/winner. Its trusted server resolver receives
+the original server material before TxA, while actual activation and server
+allow remain restricted to original confirmed TxB. Duplicate requests borrow
+the retained plan for read-only material delivery. Idle local expiry and process
+loss never refund durable history or reconstruct signing/publication rights.
+See [Go transport v4 assembly](GO_TRANSPORT_V4.md#retained-original-live-artifact-material)
+for resource ownership and the authenticated server resolver contract.
+
 The concrete numeric WebSocket adapter borrows immutable deployment policy and
 reserves the actual provider charge in the same root before dialing. Its trusted
 route check receives only the public route; preparation receives no PSK, proof,
@@ -1249,6 +1385,23 @@ the persisted uint64 epoch without narrowing or wraparound. A prewrite checkpoin
 bounds WAL accumulation across normal writes and crash recovery. Every cursor is
 closed exactly once; cancellation never detaches a provider call.
 
+SQLite format refusals from these internal Go store constructors support
+`errors.As` to `ledgerv4.StorageFormatError` and retain
+`errors.Is(err, ledgerv4.ErrStorageFormat)`. Its copied `Projection()` has code
+`storage_format_incompatible`, the requested transaction-group identifier and
+current wire profile, observed and required revisions, a finite reason and
+`exact_conversion_available`. An observation is explicitly unknown unless the
+bounded fixed manifest header, configured identity, epoch, declared revision,
+stored revision and `user_version` hint agree. Known header metadata does not
+validate the records or authorize access: Open still requires the exact current
+schema and complete normal state validation. Older and newer headers are refused
+before record decoding. The error and projection contain no stored authority,
+database contents, provider messages, filesystem paths, commands or executable
+URLs. No trusted exact revision-pair converter is shipped, so conversion
+availability is always false; the host must keep the affected store unavailable
+for explicit maintenance. This projection does not provide migration, automatic
+repair, an old-record reader or a public SDK storage factory.
+
 The signed original FSB/activation/Hello supplies immutable admission facts. The
 only lease key is tenant, Artifact issuer and lease. The reserved projection fixes
 the original Acceptor invocation/carrier incarnation, authority, owner, full FSB
@@ -1259,6 +1412,14 @@ permit bounded read-only confirmation of the exact projection. Reserve uncertain
 conflicting attempts, cancellation and restart never recover a dispatch guard.
 The accepted aggregate retains complete FSB and Hello bytes through actual cleanup.
 Finite history capacity refuses new leases; no automatic deletion refunds history.
+
+Pool admission first claims or matches the complete parent selection in a
+shared SQLite ParentWinner authority. Trusted configuration must map every
+candidate's admission service to that same authority; missing mappings reject
+preparation. A different winner cannot create a local admission row. Matching
+an existing winner establishes only a fact and never recovers dispatch rights.
+The base SQLite format is revision 4 and accounts winner rows within the same
+finite history capacity. Relay runtime composition remains separate.
 
 The same bounded SQLite transaction domain has a separate SpendLedger table;
 its primary key remains tenant, Artifact issuer and lease across both sources.
@@ -1645,14 +1806,131 @@ Current maximal structural vectors pin the derived 9302-byte Grant bound and
 These are encoding bounds. Original issuance/proof membership, trust, expected
 audiences, two-sided owner/challenge and claim-time capacity remain open.
 
+The Go live authority accepts `LiveGrantIssuance` for each leg. It builds the
+complete unsigned Grant from the verified parent, selected signed route,
+endpoint and relay certificates, and the exact `LiveGrantPreparation` scope.
+The authority retains independent Grant issuer, namespace and relay limits;
+the envelope limit is derived from the signed SessionContract. Random Grant,
+replay and pairing identities are fixed before TxA. `SourceLiveIssuance.Tunnels`
+selects independent relay policy by original candidate index, and direct
+candidates use the direct projection. The original local pending Grant scope
+must match before TxA. Only the original complete TxB publishes signed material.
+
+The Go SQLite relay authority retains public original issuance registrations
+in its revision-7 main transaction group. Installation requires both committed
+leg receipts and an independent parent/activation/Grant issuer mapping. Each
+row retains exact public proof and Grant bytes, source store identities and
+checked public facts; it contains no Artifact, PSK or Session nonce. Registration
+storage is independent of the issuer's material outbox and counts against the
+store's aggregate row, byte, page and WAL limits. `MaxParents` preallocates the
+runtime index and its single installation method; `Install` confirms identical
+duplicates and refuses replacement. `RestoreKey` reads an existing registration,
+verifies original signatures and bindings, and reapplies current trust and
+revocation checks. It cannot restore signing, server publication, winner or hop
+claim rights. Missing issuance history remains unavailable.
+
+For configured in-process live distribution, `LiveServerAllowConfig.Relay`
+reserves the destination index position and a complete 64 KiB public-record row
+before TxA. Only the attached original confirmed TxB can fill that row. The
+configured order is original TxB, public relay registration, original server
+allow, then client material. Client history reads cannot dispatch registration
+or server allow. This registration is a separate relay distribution transaction;
+it does not add a delivery mask, ACK, or third transaction to the live spend
+state machine. Closing an original publisher first revokes publication and
+waits for its actual work to return. It can then remove only its exact unused
+reservation; complete registrations and all consumption/claim history remain.
+Cleanup failure leaves a non-authorizing reserved row, with no recovery of a
+publication permit. The default cleanup attempt has a finite two-second budget.
+
+The Go deferred `TunnelServerAllowRegistration` admits a single original
+material/candidate/attempt and fresh recipient incarnation before carrier I/O.
+The first valid allow atomically owns the only Prepare dispatch under the
+existing server Runtime and original bounded deadline. One duplicate joins the
+same execution; request cancellation, preparation failure and terminal results
+cannot recreate dispatch rights. The authenticated allow service accepts this
+registration or a preprepared recipient through the same endpoint interface.
+Separate registration, recipient, subscription and carrier reservations precede
+publication. `TakePrepared` transfers the original recipient/deadline once;
+physical cleanup and retained result backing remain charged through actual
+retirement. Closing or replacing a registration never imports its incarnation.
+
+The Go pool service accepts `PoolRelayPublicationFactory` for complete paired
+issuance sets. `SQLitePoolRelayPublication` preadmits up to four artifacts and
+sixteen tunnel candidates per artifact into one independently configured relay
+authority table. Every selected candidate must include both original public
+leg Grants; missing, extra, duplicate, and differently bound parents fail before
+outbox commit. Direct entries require no relay registration. Each new parent
+reserves a complete record and runtime index position before `CommitWithRelay`.
+The publisher verifies the exact complete durable outbox before installing any
+public registration; the service returns initial or replay material only after
+all configured registrations succeed. Identical retained registrations use a
+read-only confirmation on replay. Partial distribution keeps already committed
+public rows, releases only unused reservations, and never reissues material.
+The retained original outbox may supply a new public registration owner on an
+explicit pool replay; it never restores a Connect/server-allow/activation owner.
+Separately issued endpoint outboxes compose their two committed leg receipts
+through `CaptureRelayLeg` and `Install`. Issuer material construction, remote
+distribution, and provider qualification require their own implementation and
+acceptance evidence.
+
 The TopUp reference covers the fixed request, owner-fence proof, entry,
 response and Ack maps. Request digests exclude binding generation and proof;
 response digests exclude the response digest field without a zero placeholder;
 material digests hash raw material bytes. `server_committed` and `applied` are
 structurally true-only, gap authorization controls retirement-field presence,
-and owner-fence proof time is ordered. Pending/Applied recovery, same-key
-identity possession, durable CAS and request-dependent material limits remain
-runtime qualifications.
+and owner-fence proof time is ordered. Same-key identity possession and the
+complete source/control composition remain runtime qualifications.
+
+The internal Go TopUp codec verifies the actual owner-fence signature, exact
+intent binding and trusted time interval. It checks raw request/response digests
+against the shared registry, material and identity hashes, original generation
+consistency, full bstr and decoded item bounds, contiguous entries, authorized
+forward gaps, and every original Ack field. Its bounded builders derive the
+intent digest before requesting a proof, encode complete responses and build
+history-only Acks. Both pending recovery and replay retain the original request
+generation. A current owner can acknowledge that original response. These detached facts and
+borrowed bytes do not install material or authorize Acquire. Current
+source permissions, identity provider recovery and control transport composition
+are still required.
+
+The internal Go SQLite TopUp client journal separately persists one source's
+pending intent and original identity locator before sending. Pool material,
+Applied entry facts and the artifact frontier commit in one transaction. Its
+read-only recovery preserves the original operation and response generation;
+authorized owner replacement advances only the local owner fence. Already-Applied
+history can be acknowledged after material expiry or key unavailability, without
+reinstallation. An authenticated terminal receipt is stored separately from
+Applied facts: it cannot install material or advance the local material frontier.
+An unretired server terminal retains the occupied sequence; permanent source
+fencing prevents further Begin calls. Focused tests cover second-item rollback,
+lost commit confirmation, replay, restart, owner fencing and pending/installed
+terminal recovery. The journal uses its own exact revision-3 SQLite schema. A separate independently
+authenticated permanent source fence can close an operation that never reached
+the server, without fabricating response, expiry or artifact-frontier facts;
+previously installed and acknowledged facts stay intact.
+
+The internal Go SQLite TopUp server holds one stable source, one unresolved
+operation and at most one recent retired summary in an exact revision-1 schema.
+Its current-owner proof and original intent checks precede sequence occupation.
+Pending takeover preserves original request/response generations; complete
+outbox bytes and the global artifact frontier commit together. Replay returns
+the original canonical bytes. Ack verifies all original fields with the current
+owner proof and retires only that operation. Deadline/material retirement and
+permanent source fencing retain authenticated rejection frontiers without an
+unbounded deny set. The independent source authority must supply a nonblocking
+commit permit that keeps its fence stable through the actual SQLite provider
+return. Qualified authority/credential adapters are required; a snapshot-only
+fence check or the material digest is not sufficient. Tests use real SQLite and
+owner-proof signatures, including lost COMMIT confirmation, proof/permission/
+fence changes at the commit boundary, live provider tails, original-generation
+replay, expired historical Ack, bounded retirement and authorized forward gaps.
+Material issuer and terminal-receipt adapters in these tests are trusted fixtures,
+not complete identity/provider qualification. Source worker/Acquire assembly,
+41006/41007 transport composition and public SDK surfaces remain required.
+
+TopUp error types and scope/write-action projections are generated for all four
+languages from the common API schema. A valid projection is not evidence that
+a terminal transaction occurred.
 
 The domain registry supplies exact label bytes, typed ordered inputs and
 signature/MAC projections to all four generated SDK registries. Its separate

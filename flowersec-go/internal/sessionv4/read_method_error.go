@@ -5,10 +5,10 @@ import (
 	"errors"
 	"io"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrReadAuthorizationDenied = errors.New("sessionv4: read delivery authorization denied")
@@ -24,6 +24,7 @@ var readMethodIdentities = [...]error{
 	timev4.ErrPending, timev4.ErrUnavailable, timev4.ErrExpired, timev4.ErrContinuity,
 	cryptov4.ErrClosed, cryptov4.ErrExpired, cryptov4.ErrNotReady, cryptov4.ErrTransition,
 	ErrAbandoned, ErrStreamData, ErrCredit, ErrTerminal,
+	ErrRPCFragmentProgress,
 	cryptov4.ErrAuthentication, cryptov4.ErrSequence, cryptov4.ErrEpoch,
 	cryptov4.ErrScope, cryptov4.ErrUsage, cryptov4.ErrCapacity, cryptov4.ErrConfiguration,
 	cryptov4.ErrRekey, cryptov4.ErrIdle, cryptov4.ErrInputPending,

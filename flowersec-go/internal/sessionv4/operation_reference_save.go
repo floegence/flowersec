@@ -7,12 +7,13 @@ import (
 	"errors"
 	"math"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 var ErrReferenceSaveUnknown = errors.New("sessionv4: reference persistence unconfirmed")
@@ -39,6 +40,15 @@ type ReferenceStoreBinding struct {
 	Backing resourcev4.Reference
 }
 
+// ReferenceSaveResult records local persistence only. A confirmed save does
+// not imply submission or reconstruct Start authority. Reference is a bounded
+// query locator; no field retains the operation, store or Session graph.
+type ReferenceSaveResult struct {
+	Reference protocolv4.OperationReference
+	Attempted bool
+	Outcome   ReferenceSaveOutcome
+}
+
 type operationReferenceSave struct {
 	once          sync.Once
 	operation     *UnaryOperation
@@ -50,6 +60,7 @@ type operationReferenceSave struct {
 	delegate      resourcev4.Reference
 	operationHold resourcev4.Reference
 	outcome       ReferenceSaveOutcome
+	progress      atomic.Uint32
 	failure       error
 }
 
@@ -61,6 +72,9 @@ func (o *UnaryOperation) captureReferenceLocked(ctx context.Context, domain stri
 		return protocolv4.OperationReference{}, err
 	}
 	if err := o.metadata.Check(); err != nil {
+		return protocolv4.OperationReference{}, err
+	}
+	if err := o.request.CheckPreparedLifetime(); err != nil {
 		return protocolv4.OperationReference{}, err
 	}
 	if x := o.stream; x != nil && x.resume != nil {
@@ -99,27 +113,39 @@ func (o *UnaryOperation) captureReferenceLocked(ctx context.Context, domain stri
 // candidate remains private until exact durable confirmation and the final
 // target/authorization/deadline handoff gate both succeed.
 func (o *UnaryOperation) saveReference(ctx context.Context, binding ReferenceStoreBinding) (ref protocolv4.OperationReference, err error) {
-	if o == nil || ctx == nil || binding.Store == nil || !executionIdentityText(binding.Domain) {
-		return ref, cryptov4.ErrConfiguration
+	result, err := o.saveReferenceResult(ctx, binding)
+	return result.Reference, err
+}
+
+// SavePreparedReference is an assembly entry, not a public handle capability.
+// The caller keeps this candidate private until persistence and handoff finish.
+func SavePreparedReference(ctx context.Context, o *UnaryOperation, binding ReferenceStoreBinding) (ReferenceSaveResult, error) {
+	return o.saveReferenceResult(ctx, binding)
+}
+
+func (o *UnaryOperation) saveReferenceResult(ctx context.Context, binding ReferenceStoreBinding) (result ReferenceSaveResult, err error) {
+	var ref protocolv4.OperationReference
+	defer func() { result.Reference = ref }()
+	if o == nil {
+		return result, cryptov4.ErrConfiguration
 	}
-	application, err := checkApplicationContext(ctx)
-	if err != nil {
-		return ref, err
-	}
-	if application {
-		return ref, ErrApplicationDependency
+	o.mu.Lock()
+	ref = o.reference
+	o.mu.Unlock()
+	if err := CheckReferenceStoreBinding(ctx, binding); err != nil {
+		return result, err
 	}
 	o.mu.Lock()
 	if o.preparing || o.started || o.closed || o.detached || o.services == nil {
 		o.mu.Unlock()
-		return ref, rpcv4.ErrOwner
+		return result, rpcv4.ErrOwner
 	}
 	r := o.services
 	r.mu.Lock()
 	if r.closed || r.retired || r.plan == nil || r.plan.executor == nil || r.callSerial == math.MaxUint64 {
 		r.mu.Unlock()
 		o.mu.Unlock()
-		return ref, cryptov4.ErrClosed
+		return result, cryptov4.ErrClosed
 	}
 	plan, executor := r.plan, r.plan.executor
 	if !o.reference.Valid() || binding.Domain != r.referenceDomain || r.referenceCodec == nil {
@@ -127,7 +153,7 @@ func (o *UnaryOperation) saveReference(ctx context.Context, binding ReferenceSto
 
 		r.mu.Unlock()
 		o.mu.Unlock()
-		return ref, err
+		return result, err
 	}
 	charge := resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(operationReferenceSave{})) + uint64(unsafe.Sizeof(protocolv4.OperationReference{})) + r.runtimeBytes, resourcev4.Items: 2}
 	charges := [2]resourcev4.Vector{charge, executor.TaskCharge()}
@@ -151,7 +177,7 @@ func (o *UnaryOperation) saveReference(ctx context.Context, binding ReferenceSto
 	r.mu.Unlock()
 	if err != nil {
 		o.mu.Unlock()
-		return ref, err
+		return result, err
 	}
 	failed := true
 	defer func() {
@@ -164,43 +190,50 @@ func (o *UnaryOperation) saveReference(ctx context.Context, binding ReferenceSto
 	handoffHold, err := refs[0].Borrow()
 	if err != nil {
 		o.mu.Unlock()
-		return ref, err
+		return result, err
 	}
 	defer handoffHold.Release()
 	if err = o.metadata.CheckSameEnvironment(binding.Backing); err != nil {
 		o.mu.Unlock()
-		return ref, err
+		return result, err
 	}
 	delegate, err := binding.Backing.Borrow()
 	if err != nil {
 		o.mu.Unlock()
-		return ref, err
+		return result, err
 	}
 	codec := r.referenceCodec
-	ref, err = o.captureReferenceLocked(ctx, binding.Domain, codec)
-	if err == nil && ref != o.reference {
+	checked, err := o.captureReferenceLocked(ctx, binding.Domain, codec)
+	if err == nil && checked != ref {
 		err = rpcv4.ErrAssociation
 	}
 	if err != nil {
 		delegate.Release()
 		o.mu.Unlock()
-		return ref, err
+		return result, err
 	}
 	operationHold, err := o.metadata.Borrow()
 	if err != nil {
 		delegate.Release()
 		o.mu.Unlock()
-		return ref, err
+		return result, err
 	}
 	saveCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s := &operationReferenceSave{operation: o, ctx: saveCtx, cancel: cancel, store: binding.Store, ref: ref, refs: refs, delegate: delegate, operationHold: operationHold, failure: ErrReferenceSaveUnknown}
+	defer func() {
+		progress := s.progress.Load()
+		result.Attempted = progress != 0
+		if progress == 2 {
+			result.Outcome = ReferenceSaveConfirmed
+		}
+	}()
 	o.preparing, o.cancel = true, cancel
 	queued, err := executor.queueApplication(plan.applicationGroup, ApplicationShort, refs[1], refs[0], func() { s.run(executor) })
 	o.mu.Unlock()
 	if err != nil {
 		s.finish()
-		return ref, err
+		return result, err
 	}
 	failed = false
 	select {
@@ -213,10 +246,10 @@ func (o *UnaryOperation) saveReference(ctx context.Context, binding ReferenceSto
 		if queued.Cancel() {
 			s.finish()
 		}
-		return ref, saveCtx.Err()
+		return result, saveCtx.Err()
 	}
 	if s.failure != nil {
-		return ref, s.failure
+		return result, s.failure
 	}
 	// This is the only handle delivery gate. The request/target may have ended
 	// after the store's successful callback and before its actual task exit.
@@ -225,9 +258,9 @@ func (o *UnaryOperation) saveReference(ctx context.Context, binding ReferenceSto
 	o.mu.Unlock()
 	if err != nil {
 		o.Close()
-		return ref, err
+		return result, err
 	}
-	return ref, nil
+	return result, nil
 }
 
 func (s *operationReferenceSave) run(executor *ApplicationExecutor) {
@@ -249,10 +282,14 @@ func (s *operationReferenceSave) run(executor *ApplicationExecutor) {
 		return
 	}
 	defer exit()
+	s.progress.Store(1)
 	s.outcome, err = s.store.SaveOperationReference(ctx, s.ref)
 	returned = true
 	if err == nil && s.outcome == ReferenceSaveConfirmed {
+		s.progress.Store(2)
 		s.failure = s.ctx.Err()
+	} else if err != nil {
+		s.failure = err
 	}
 }
 

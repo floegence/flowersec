@@ -3,7 +3,7 @@ package protocolv4
 import (
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // CredentialScope is detached original issuance context for an independent
@@ -71,18 +71,25 @@ func (m *SignedMap) DetachCredential() (*Credential, error) {
 	if c.current != m {
 		return nil, CBORFailure("document_released")
 	}
-	class, domain, expiry, err := credentialSchema(c.schema)
+	return detachCredentialDocument(m.document, c.schema, m.key, c.signatureID, c.encoded)
+}
+
+// Issuance planning also reads schema-checked fields before a signature exists.
+// Such private candidates never leave their plan or enter endpoint admission;
+// only DetachCredential exposes facts from a verified SignedMap.
+func detachCredentialDocument(document *Document, schema string, key [32]byte, signatureID uint64, scratch []byte) (*Credential, error) {
+	class, domain, expiry, err := credentialSchema(schema)
 	if err != nil {
 		return nil, err
 	}
-	if err := m.document.ValidateRules(DecodeContext{}); err != nil {
+	if err := document.ValidateRules(DecodeContext{}); err != nil {
 		return nil, err
 	}
-	digest, err := m.digestLocked(domain)
+	digest, err := credentialDocumentDigest(domain, schema, document, signatureID, scratch)
 	if err != nil {
 		return nil, err
 	}
-	root, schema := m.document.Root(), c.schema
+	root := document.Root()
 	text := func(v Value, s, field string) string { result, _ := v.Named(s, field).Text(); return result }
 	issuer, _ := root.Named(schema, "issuer_key_id").ByteString()
 	ns, nsSchema, generation := root, schema, "revocation_authority_generation"
@@ -90,7 +97,7 @@ func (m *SignedMap) DetachCredential() (*Credential, error) {
 		ns, nsSchema, generation = root.Named(schema, "namespace"), "GrantNamespace", "generation"
 	}
 	capacity, _ := ns.Named(nsSchema, "namespace_capacity_digest").ByteString()
-	credential := &Credential{key: m.key, scope: CredentialScope{
+	credential := &Credential{key: key, scope: CredentialScope{
 		Schema: schema, Tenant: text(root, schema, "tenant_id"), Audience: text(root, schema, "audience"),
 		Authority: text(ns, nsSchema, "revocation_authority_id"), CapacityDigest: [32]byte(capacity), Issuer: [16]byte(issuer),
 		Generation: valueUint(ns, nsSchema, generation), Cohort: valueUint(ns, nsSchema, "revocation_epoch"),
@@ -124,6 +131,57 @@ func (m *SignedMap) DetachCredential() (*Credential, error) {
 		credential.scope.ParentCohort = valueUint(parent, "GrantParentRef", "revocation_epoch")
 	}
 	return credential, nil
+}
+
+// credentialDocumentDigest applies the registry's exact credential digest
+// projection. Grant digests intentionally omit the signature field, while
+// Artifact and IdentityCertificate digests cover the complete map.
+func credentialDocumentDigest(name, schema string, document *Document, signatureID uint64, scratch []byte) ([32]byte, error) {
+	if document == nil {
+		return [32]byte{}, CBORFailure("credential_owner")
+	}
+	r, err := runtimeSignedMaps()
+	if err != nil {
+		return [32]byte{}, err
+	}
+	domain, ok := r.digests[name]
+	if !ok || len(domain.Input.Parts) != 1 || domain.Input.Parts[0].Schema != schema {
+		return [32]byte{}, CBORFailure("digest_schema")
+	}
+	wire := document.Bytes()
+	if domain.Input.Parts[0].Projection == "without_signature" {
+		if len(scratch) < len(wire) {
+			return [32]byte{}, CBORFailure("configuration_capacity")
+		}
+		wire, err = document.copyWithout(scratch, signatureID)
+		if err != nil {
+			return [32]byte{}, err
+		}
+		defer clear(scratch[:len(wire)])
+	} else if domain.Input.Parts[0].Projection != "full" {
+		return [32]byte{}, CBORFailure("digest_schema")
+	}
+	return hashMapDomain(domain, wire)
+}
+
+// credentialWireDigest verifies an already-owned signed credential wire and
+// applies its registered digest projection. It is used when a relay matcher
+// has only the original detached credential key plus the received bytes.
+func credentialWireDigest(name, schema string, wire []byte, key [32]byte) ([32]byte, error) {
+	limit, err := SchemaByteLimit(schema)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	codec, err := NewSignedMapCodec(schema, limit, limit)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	signed, err := codec.Verify(wire, key, DecodeContext{})
+	if err != nil {
+		return [32]byte{}, err
+	}
+	defer signed.Release()
+	return signed.Digest(name)
 }
 
 func (c *Credential) Scope() CredentialScope      { return c.scope }

@@ -13,9 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/numeric"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/numeric"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	ws "github.com/gorilla/websocket"
 )
 
@@ -99,7 +100,7 @@ func checkEndpoint(u *url.URL, address netip.AddrPort) error {
 	if port != uint64(address.Port()) {
 		return ErrEndpoint
 	}
-	if numeric, err := netip.ParseAddr(u.Hostname()); err == nil && numeric.Unmap() != address.Addr().Unmap() {
+	if numeric, err := netip.ParseAddr(u.Hostname()); err == nil && numeric != address.Addr() {
 		return ErrEndpoint
 	}
 	return nil
@@ -110,7 +111,7 @@ func checkEndpoint(u *url.URL, address netip.AddrPort) error {
 func (m *owner) dialEndpoint(ctx context.Context, address netip.AddrPort) (net.Conn, error) {
 	conn, err := connectNumeric(ctx, address, operationDeadline(ctx, m.options.HandshakeTimeout))
 	if err != nil {
-		return nil, err
+		return nil, native.NetworkFailure(preferContext(ctx, err))
 	}
 	return m.attach(conn)
 }
@@ -148,8 +149,9 @@ func headerSize(h http.Header, limit uint32, outbound bool) (uint64, error) {
 
 // Dial performs only credential-free carrier preparation. The supplied context
 // belongs to this call, not the returned connection lifetime. Errors from
-// policy, dialing, TLS and HTTP upgrade retain their original identity.
-func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, environment resourcev4.Reference) (*Messages, error) {
+// policy, TLS and HTTP upgrade retain their original identity; actual network
+// interruptions are projected at their original provider boundary.
+func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, environment resourcev4.Reference, admitted ...*native.EnvironmentBorrow) (*Messages, error) {
 	if ctx == nil || cfg.CheckPolicy == nil || !validSubprotocol(cfg.Subprotocol) {
 		return nil, resourcev4.ErrConfiguration
 	}
@@ -172,7 +174,7 @@ func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, env
 	if uint64(len(cfg.URL))+n+512 > uint64(options.HandshakeBytes) {
 		return nil, ErrHeaderLimit
 	}
-	m, err := newOwner(ctx, options, reservation, environment)
+	m, err := newOwner(ctx, options, reservation, environment, admitted...)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +218,7 @@ func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, env
 		}
 		tlsConfig := cfg.TLSConfig.Clone()
 		tlsConfig.MinVersion, tlsConfig.MaxVersion = tls.VersionTLS13, tls.VersionTLS13
+		tlsConfig.SessionTicketsDisabled, tlsConfig.ClientSessionCache = true, nil
 		tlsConfig.NextProtos = []string{"http/1.1"}
 		if tlsConfig.ServerName == "" {
 			tlsConfig.ServerName = u.Hostname()
@@ -232,6 +235,9 @@ func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, env
 			// and lifecycle worker enforce timeout/cancellation without TLS
 			// scheduling an unjoined context.AfterFunc observer.
 			if err := conn.Handshake(); err != nil {
+				if m.isPrepareInterruption(err) {
+					return nil, err
+				}
 				return nil, errors.Join(ErrTLSHandshake, err)
 			}
 			state := conn.ConnectionState()
@@ -240,6 +246,7 @@ func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, env
 			}
 			m.mu.Lock()
 			m.consumerTLS13 = true
+			m.tlsConnection = conn
 			m.mu.Unlock()
 			return m.httpTransport(conn)
 		}
@@ -249,6 +256,9 @@ func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, env
 	// deadline bounds numeric connect, TLS and HTTP through this same socket.
 	conn, response, err := dialer.DialContext(&callContext{Context: ctx, lifetime: m.lifetime, deadline: operationDeadline(ctx, options.HandshakeTimeout)}, cfg.URL, cfg.Header)
 	if err != nil {
+		if m.isPrepareInterruption(err) {
+			err = native.ErrConnectionLost
+		}
 		return nil, preferContext(ctx, err)
 	}
 	if response.ProtoMajor != 1 || response.ProtoMinor != 1 {
@@ -408,7 +418,12 @@ func readError(err error) error {
 	if errors.Is(err, ws.ErrReadLimit) {
 		return protocolv4.ErrPayloadTooLarge
 	}
-	return err
+	if closed, ok := err.(*ws.CloseError); ok && closed != nil && closed.Code == ws.CloseAbnormalClosure {
+		// Gorilla uses this local code for transport EOF without a close
+		// frame. Valid peer application/protocol close codes stay terminal.
+		return native.ErrConnectionLost
+	}
+	return native.NetworkFailure(err)
 }
 
 // WriteMessage publishes the original complete message without another
@@ -432,5 +447,5 @@ func (m *Messages) WriteMessage(ctx context.Context, wire []byte) (err error) {
 	if err := conn.SetWriteDeadline(operationDeadline(ctx, m.options.MessageTimeout)); err != nil {
 		return err
 	}
-	return conn.WriteMessage(ws.BinaryMessage, wire)
+	return native.NetworkFailure(conn.WriteMessage(ws.BinaryMessage, wire))
 }

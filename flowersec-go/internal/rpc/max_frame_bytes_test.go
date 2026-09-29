@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/framing/jsonframe"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpc"
 )
 
 type memRWC struct {

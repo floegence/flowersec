@@ -7,10 +7,11 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
 // WebSocketConsumerFactory is the numeric endpoint adapter used by the
@@ -77,6 +78,9 @@ func (f WebSocketConsumerFactory) PrepareCarrier(ctx context.Context, request se
 	}
 	if dial.PrepareBytes == 0 || dial.PrepareBytes > request.Budget.PreauthBytes {
 		dial.PrepareBytes = request.Budget.PreauthBytes
+	}
+	if uint64(f.Options.MaxMessageBytes) < uint64(request.Config.Session.Contract.Limits().MaxFrame)+protocolv4.EnvelopePrefixSize {
+		return nil, resourcev4.ErrCapacity
 	}
 	charge, err := websocket.Charge(f.Options)
 	if err != nil {

@@ -8,9 +8,10 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type nativeAuthSlot struct {
@@ -84,6 +85,9 @@ func NewNativeAuthService(a *OpenAdmission, nodes int, decode protocolv4.DecodeC
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err = a.engine.ReserveNativeInput(uint32(len(receivers))); err != nil {
+		return nil, err
 	}
 	a.nativeAuth = s
 	return s, nil
@@ -402,7 +406,15 @@ func (a *OpenAdmission) ReadNativeData(ctx context.Context, h OpenHandle, carrie
 		if err != nil {
 			if errors.Is(err, cryptov4.ErrUsage) || a.engine.CheckApplicationAuthorization() != nil || s.reservation.Check() != nil {
 				a.closeWithCause(err)
+			} else if err == native.ErrDirectionReset || err == native.ErrNormalDrained {
+				// The original receive assembly has fenced this damaged direction and
+				// retained its authenticated terminal deadline. Preserve the reverse
+				// direction while STOPPED/DRAINED settle the actual peer frontier.
 			} else {
+				// A malformed accepted native input resets its whole Stream.
+				// This trusted transport path cannot be suppressed by an
+				// application capability. Other scopes retain their own keys,
+				// credit and independent progress.
 				_ = a.cancelStream(h)
 			}
 		}

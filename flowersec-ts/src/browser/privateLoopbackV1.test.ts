@@ -10,6 +10,7 @@ import {
   parseArtifact,
   parsePrivateLoopbackArtifactV1,
   type ConnectError,
+  type PrivateLoopbackArtifactSourceResultV1,
 } from "./index.js";
 import { base64urlDecode, base64urlEncode } from "../utils/base64url.js";
 import { canonicalizeJCSV3, type JCSValue } from "../v3/jcs.js";
@@ -352,10 +353,10 @@ describe("private loopback transport profile v1", () => {
   });
 
   test("retires a late private lease when controller cancellation wins acquisition", async () => {
-    let deliver!: (value: unknown) => void;
+    let deliver!: (value: PrivateLoopbackArtifactSourceResultV1) => void;
     let retirements = 0;
     const controller = await createPrivateLoopbackConnectionControllerV1({
-      acquire: async () => await new Promise((resolve) => { deliver = resolve; }) as never,
+      acquire: async () => await new Promise<PrivateLoopbackArtifactSourceResultV1>((resolve) => { deliver = resolve; }),
     }, { origin: "http://127.0.0.1:23998" });
     controller.start();
     const closed = controller.close();

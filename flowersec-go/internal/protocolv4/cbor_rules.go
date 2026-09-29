@@ -496,6 +496,11 @@ func (d *Decoder) checkRule(root int, field *wireField, context *wireContext, ru
 			if !ok || target == 0 || s != target {
 				return CBORFailure("error_scope")
 			}
+		case "none":
+			// The normal/non-error registry entry is not legal in an
+			// ERROR frame. Keep map and record decoders on the same
+			// fail-closed error category.
+			return CBORFailure("error_scope")
 		default:
 			return CBORFailure("registry_unresolved")
 		}

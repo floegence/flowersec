@@ -3,7 +3,7 @@ package sessionv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 )
 
 // MaterialConnectConfig is the private static-input projection of the common
@@ -43,7 +43,7 @@ func (e *Environment) ConnectMaterialPool(ctx context.Context, material *Connect
 // Pool input never enters this variant and errors never switch source profile.
 func (e *Environment) ConnectMaterialLiveSQLite(ctx context.Context, material *ConnectionMaterial, options MaterialConnectConfig, spend LiveSessionInput) (*EnvironmentSession, error) {
 	c := SourceConnectConfig(options)
-	if material == nil || spend.Store == nil || spend.Authority == nil || (spend.Issuance == nil) == (c.LiveIssuance.Signer == nil) || spend.Guard == nil || spend.Policy == nil || spend.Establishment != nil || spend.Admission != nil {
+	if material == nil || !spend.validAuthority(c.LiveIssuance.Signer != nil) || spend.Control.Provider != nil || spend.Establishment != nil || spend.Admission != nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	return e.startSource(ctx, c, environmentEstablishment{kind: 2, live: spend}, material)

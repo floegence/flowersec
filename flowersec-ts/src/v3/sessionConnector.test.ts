@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi, type MockInstance } from "vitest";
 
 import { base64urlDecode } from "../utils/base64url.js";
 import { SDK_DEFAULTS } from "../defaults.js";
@@ -10,7 +10,9 @@ import {
   decodeArtifactV3JSON,
   decodeFSB3RequestV3,
   encodeFSA3ResponseV3,
+  type ArtifactCandidateV3,
   type ArtifactV3,
+  type CanonicalArtifactCandidateV3,
 } from "./artifact.js";
 import {
   artifactLeaseStateV3,
@@ -42,6 +44,8 @@ const connectorArtifact = {
     candidates: artifact.path.candidates.filter(({ id }) => id === "w-ca"),
   },
 } as ArtifactV3;
+const connectorCandidate = connectorArtifact.path.candidates[0];
+assertCanonicalFixtureCandidate(connectorCandidate);
 const raceArtifact = {
   ...artifact,
   path: {
@@ -155,7 +159,7 @@ describe("transport v3 session connector", () => {
       expect(dialSignal?.aborted).toBe(true);
 
       resolveDial({
-        candidate: connectorArtifact.path.candidates[0]!,
+        candidate: connectorCandidate,
         openAdmissionChannel: async () => { throw new Error("late dial must not open admission"); },
         finalize: () => { throw new Error("late dial must not finalize"); },
         close: lateClose,
@@ -211,7 +215,7 @@ describe("transport v3 session connector", () => {
       expect(artifactLeaseStateV3(lease)).toBe("retired");
 
       const loserCandidate = raceArtifact.path.candidates.find(({ id }) => id === "w-pin");
-      if (loserCandidate === undefined) throw new Error("loser fixture is missing");
+      assertCanonicalFixtureCandidate(loserCandidate);
       resolveLoser({
         candidate: loserCandidate,
         openAdmissionChannel: async () => { throw new Error("late loser must not open admission"); },
@@ -234,8 +238,8 @@ describe("transport v3 session connector", () => {
       const channelAbort = vi.fn();
       const close = vi.fn(async () => await new Promise<void>(() => undefined));
       const transportAbort = vi.fn();
-      let addEventListener: ReturnType<typeof vi.spyOn> | undefined;
-      let removeEventListener: ReturnType<typeof vi.spyOn> | undefined;
+      let addEventListener: MockInstance<AbortSignal["addEventListener"]> | undefined;
+      let removeEventListener: MockInstance<AbortSignal["removeEventListener"]> | undefined;
       const lease = createArtifactLeaseV3Internal(connectorArtifact, spend, retire);
       const connecting = connectArtifactLeaseV3(lease, {
         capabilitySnapshot: detectNodeRuntimeCapabilityV3,
@@ -360,7 +364,7 @@ describe("transport v3 session connector", () => {
     }
 
     resolveDial({
-      candidate: connectorArtifact.path.candidates[0]!,
+      candidate: connectorCandidate,
       openAdmissionChannel: async () => { throw new Error("late dial must not open admission"); },
       finalize: () => { throw new Error("late dial must not finalize"); },
       close: lateClose,
@@ -583,6 +587,14 @@ describe("transport v3 session connector", () => {
     expect(artifactLeaseStateV3(lease)).toBe("retired");
   });
 });
+
+function assertCanonicalFixtureCandidate(
+  candidate: ArtifactCandidateV3 | undefined,
+): asserts candidate is ArtifactCandidateV3 & CanonicalArtifactCandidateV3 {
+  if (candidate === undefined || candidate.normalized_url === undefined) {
+    throw new Error("canonical fixture candidate is missing");
+  }
+}
 
 function serverConfig(value: ArtifactV3, rawFSB3: Uint8Array): SessionConfigV3 {
   const binding = admissionBindingV3(rawFSB3);

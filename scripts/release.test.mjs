@@ -1602,7 +1602,7 @@ process.exit(73);
       } else {
         assert.match(result.stderr, /stopped before registry access/);
         const consumer = JSON.parse(fs.readFileSync(capture, "utf8"));
-        assert.equal(consumer.goModule, `module flowersec_release_consumer\n\ngo ${fixture.expected}\n\nrequire github.com/floegence/flowersec/flowersec-go/v5 v0.26.0\n`);
+        assert.equal(consumer.goModule, `module flowersec_release_consumer\n\ngo ${fixture.expected}\n\nrequire github.com/floegence/flowersec/flowersec-go/v6 v0.26.0\n`);
         assert.equal(fs.existsSync(consumer.root), false, "failed readback must clean its scratch directory");
       }
     });

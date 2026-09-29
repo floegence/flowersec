@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 func roundDecoder(t *testing.T, e *Engine) func(protocolv4.FrameType, protocolv4.RecordHeader, []byte) (*protocolv4.Frame, error) {
@@ -97,9 +98,12 @@ func TestRekeyUnattemptedExitCompletesConcurrentClose(t *testing.T) {
 	}
 }
 
-func preparedRound(t *testing.T, profile string) roundPair {
+func preparedRound(t *testing.T, profile string, beforeRekey ...func(*Engine, *Engine)) roundPair {
 	t.Helper()
 	client, server, now := enginePair(t, profile)
+	for _, before := range beforeRekey {
+		before(client, server)
+	}
 	c, err := client.BeginRekey(uint64(now.Add(time.Minute).UnixMilli()))
 	if err != nil {
 		t.Fatal(err)
@@ -185,7 +189,12 @@ func roundMarker(t *testing.T, from *RekeyRound, to *Engine) []byte {
 func TestRekeyRealDirectionalMarkers(t *testing.T) {
 	for _, profile := range []string{protocolv4.DHProfileX25519, protocolv4.DHProfileP256} {
 		t.Run(profile, func(t *testing.T) {
-			p := preparedRound(t, profile)
+			var oldDatagram []byte
+			p := preparedRound(t, profile, func(_, server *Engine) {
+				oldDatagram = sealed(t, server, protocolv4.FrameDatagram, protocolv4.DatagramScope(), []byte("old datagram"))
+			})
+			var diagnostics diagnosticv4.Counters
+			p.client.config.Diagnostics = &diagnostics
 			oldServer := sealed(t, p.server, protocolv4.FramePing, 0, []byte("old tail"))
 			commit := roundMarker(t, p.c, p.server)
 			_, header, _, err := protocolv4.ParseRecord(commit, profile, p.client.config.MaxFrame)
@@ -222,7 +231,25 @@ func TestRekeyRealDirectionalMarkers(t *testing.T) {
 			}
 			ackWire = bytes.Clone(ackWire)
 			ack.Release()
-			// The server may publish new application input before ACK reaches client.
+			// New unreliable input cannot use staged keys before local completion.
+			datagram := sealed(t, p.server, protocolv4.FrameDatagram, protocolv4.DatagramScope(), []byte("after ACK only"))
+			badDatagram := bytes.Clone(datagram)
+			badDatagram[len(badDatagram)-1] ^= 1
+			beforeCounts, beforeInvalid := p.client.counts, p.client.invalidTotal
+			key := p.client.staged.keys.get(protocolv4.DatagramScope()).keys[protocolv4.ServerToClient]
+			beforeUsage, beforeGood, beforeReplay := key.usage, key.good, key.replay
+			for _, wire := range [][]byte{datagram, badDatagram} {
+				if _, _, _, err = p.client.Open(wire, acceptRecord); !errors.Is(err, ErrEpoch) {
+					t.Fatal("staged datagram reached authentication", err)
+				}
+			}
+			if p.client.counts != beforeCounts || p.client.invalidTotal != beforeInvalid || key.usage != beforeUsage || key.good != beforeGood || key.replay != beforeReplay {
+				t.Fatal("early datagram changed authentication or replay accounting")
+			}
+			if diagnostics.Snapshot(diagnosticv4.MetricFutureDatagramDrop).Total != 2 || diagnostics.Snapshot(diagnosticv4.MetricCurrentDatagramDrop).Total != 0 || diagnostics.Snapshot(diagnosticv4.MetricOldDatagramDrop).Total != 0 {
+				t.Fatal("future datagrams counted as current or old")
+			}
+			// Reliable input retains the private staged-key behavior.
 			early := sealed(t, p.server, protocolv4.FrameStreamData, 1, []byte("private until ACK"))
 			packet, _, _, err = p.client.Open(early, acceptRecord)
 			if err != nil {
@@ -243,6 +270,19 @@ func TestRekeyRealDirectionalMarkers(t *testing.T) {
 			}
 			if err = p.cf.Resume(); err != nil {
 				t.Fatal(err)
+			}
+			packet, _, _, err = p.client.Open(datagram, acceptRecord)
+			if err != nil {
+				t.Fatal("early drop consumed the new epoch sequence", err)
+			}
+			packet.Release()
+			for _, wire := range [][]byte{datagram, badDatagram, oldDatagram} {
+				if _, _, _, err := p.client.Open(wire, acceptRecord); err == nil {
+					t.Fatal("duplicate or old datagram delivered")
+				}
+			}
+			if diagnostics.Snapshot(diagnosticv4.MetricFutureDatagramDrop).Total != 2 || diagnostics.Snapshot(diagnosticv4.MetricCurrentDatagramDrop).Total != 2 || diagnostics.Snapshot(diagnosticv4.MetricOldDatagramDrop).Total != 1 {
+				t.Fatal("original receive rejection not counted exactly once")
 			}
 			if _, _, _, err = p.client.Open(oldServer, acceptRecord); !errors.Is(err, ErrEpoch) {
 				t.Fatal("old gate reopened", err)

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type acceptedPipe struct {
@@ -157,7 +157,11 @@ func TestAcceptedEntranceRefusalPreservesProvider(t *testing.T) {
 
 func acceptedVerifiedFlight(t *testing.T, prepare ...func(*sessionAdmissionTrustFixture)) (*admissionIntegrationFixture, *AcceptedEntrance, *InitialExchange, *protocolv4.SignedMap) {
 	t.Helper()
-	f := admissionIntegration(t, context.Background())
+	return acceptedVerifiedFlightFrom(t, admissionIntegration(t, context.Background()), prepare...)
+}
+
+func acceptedVerifiedFlightFrom(t *testing.T, f *admissionIntegrationFixture, prepare ...func(*sessionAdmissionTrustFixture)) (*admissionIntegrationFixture, *AcceptedEntrance, *InitialExchange, *protocolv4.SignedMap) {
+	t.Helper()
 	for _, mutate := range prepare {
 		mutate(f.trust)
 	}

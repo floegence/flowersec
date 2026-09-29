@@ -68,11 +68,11 @@ const capabilities = JSON.parse(read("stability/language_capabilities.json"));
 const apiManifest = JSON.parse(read("stability/api_contract_manifest.json"));
 const packageJSON = JSON.parse(read("flowersec-ts/package.json"));
 
-assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v5");
-assert.equal(packageJSON.version, "5.5.0");
+assert.equal(read("flowersec-go/go.mod").match(/^module (.+)$/m)?.[1], "github.com/floegence/flowersec/flowersec-go/v6");
+assert.equal(packageJSON.version, "6.0.0");
 assert.equal(packageJSON.engines.node, `>=${readToolchains(root).node.minimum}`);
 assert.deepEqual(packageJSON.bin, { "flowersec-ts-cli": "./dist/cli.js" });
-assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "5");
+assert.equal(read("Package.swift").match(/^\/\/ Flowersec release major: (\d+)$/m)?.[1], "6");
 assert.equal(read("flowersec-rust/Cargo.toml").match(/^version = "([^"]+)"$/m)?.[1], packageJSON.version);
 
 const rustlsFeatures = run("cargo", [
@@ -117,7 +117,7 @@ assert.equal(capabilities.portable_capabilities.some(({ id }) => id.includes("v2
 const controlPlane = capabilities.portable_capabilities.find(({ id }) => id === "controlplane_issue_authorize");
 assert.ok(controlPlane);
 assert.equal(controlPlane.implementations.go.status, "supported");
-assert.equal(controlPlane.implementations.go.entrypoint, "flowersec-go/v5/controlplane");
+assert.equal(controlPlane.implementations.go.entrypoint, "flowersec-go/v6/controlplane");
 assert.doesNotMatch(JSON.stringify(capabilities), /flowersec-go\/(?:v[1-4]\/)?controlplane/u);
 const proxy = capabilities.portable_capabilities.find(({ id }) => id === "browser_proxy_runtime");
 assert.ok(proxy);

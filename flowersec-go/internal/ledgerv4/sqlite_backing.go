@@ -9,7 +9,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var (
@@ -53,6 +53,14 @@ func SQLiteBackingCharge(l SQLiteLimits) (resourcev4.Vector, error) {
 // ReleaseRemoved never deletes data; the trusted host must first discharge all
 // history obligations and remove the complete database through its own policy.
 type SQLiteBacking struct{ *sqliteBacking }
+
+// Limits returns the immutable physical limits fixed at backing construction.
+func (b *SQLiteBacking) Limits() SQLiteLimits {
+	if b == nil || b.sqliteBacking == nil {
+		return SQLiteLimits{}
+	}
+	return b.limits
+}
 
 type sqliteBacking struct {
 	mu                       sync.Mutex

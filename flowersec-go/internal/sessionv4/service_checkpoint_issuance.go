@@ -3,8 +3,8 @@ package sessionv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // CheckpointIssuanceOptions is the trusted method's explicit application

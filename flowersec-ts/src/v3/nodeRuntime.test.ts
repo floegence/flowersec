@@ -498,7 +498,7 @@ function generateCertificates(target: string): void {
   for (const [name, start, end] of [
     ["expired", "20000101000000Z", "20000102000000Z"],
     ["future", "20400101000000Z", "20400102000000Z"],
-  ]) {
+  ] as const) {
     runOpenSSL([
       "ca", "-batch", "-config", join(target, "ca.cnf"), "-in", join(target, "leaf.csr"),
       "-startdate", start, "-enddate", end, "-out", join(target, `leaf-${name}.pem`),

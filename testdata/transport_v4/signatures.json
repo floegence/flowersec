@@ -1,5 +1,5 @@
 {
-  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "schema_revision": "flowersec-v4.0.0-draft.74",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
   "qualification": "actual_public_fixture_signatures_only",
   "signing_seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
@@ -1436,5 +1436,5 @@
       "mutation": "long_key"
     }
   ],
-  "schema_sha256": "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959"
+  "schema_sha256": "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af"
 }

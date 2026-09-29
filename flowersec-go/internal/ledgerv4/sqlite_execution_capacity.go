@@ -4,7 +4,7 @@ import (
 	"database/sql/driver"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // Capacity is an original live admission promise, not persisted history or a
@@ -14,6 +14,7 @@ type sqliteExecutionCapacity struct {
 	store                                    *SQLiteExecutions
 	metadata, backing                        resourcev4.Reference
 	claimed, using, working, closed, cleaned bool
+	started                                  bool
 }
 
 func SQLiteExecutionCapacityCharge() resourcev4.Vector {
@@ -97,6 +98,24 @@ func (c *SQLiteExecutionCapacity) CheckReady() error {
 	return c.backing.Check()
 }
 
+// CheckOriginalAdmission observes the same unused record/active promise and
+// its actual metadata allocation. It never refreshes or reacquires capacity.
+func (c *SQLiteExecutionCapacity) CheckOriginalAdmission(request resourcev4.Request) error {
+	if c == nil || c.sqliteExecutionCapacity == nil {
+		return ErrOwner
+	}
+	s := c.store.store.sqliteStore
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c.closed || s.closed || c.cleaned || c.started || c.using || c.working || !c.claimed {
+		return ErrOwner
+	}
+	if err := c.backing.Check(); err != nil {
+		return err
+	}
+	return c.metadata.CheckRequest(request)
+}
+
 func (c *SQLiteExecutionCapacity) begin(e *SQLiteExecutions) error {
 	if c == nil || c.sqliteExecutionCapacity == nil || c.store != e {
 		return ErrOwner
@@ -108,6 +127,7 @@ func (c *SQLiteExecutionCapacity) begin(e *SQLiteExecutions) error {
 		return ErrCapacity
 	}
 	c.using = true
+	c.started = true
 	return nil
 }
 func (c *SQLiteExecutionCapacity) finish() {

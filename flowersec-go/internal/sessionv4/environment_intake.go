@@ -4,9 +4,9 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // AcceptedMaterialResolver is the trusted, bounded material lookup provider.
@@ -109,6 +109,7 @@ func (e *Environment) admitIntakeAt(ctx context.Context, c AcceptedIntakeConfig,
 		}
 	}
 	if slot < 0 {
+		e.observePositionRejection()
 		e.mu.Unlock()
 		return nil, cryptov4.ErrCapacity
 	}
@@ -179,6 +180,7 @@ func (e *Environment) admitIntakeAt(ctx context.Context, c AcceptedIntakeConfig,
 	intake := &acceptedIntake{config: c, reservation: owned, shared: shared}
 	if existing == nil {
 		e.positions[slot], e.active = s, e.active+1
+		s.beginDiagnostics()
 	}
 	s.intake, s.entrance = intake, entrance
 	s.preparationDeadline = entrance.config.Initial.Deadline
@@ -234,6 +236,9 @@ func (p *acceptedIntake) prepare(s *EnvironmentSession) (input environmentEstabl
 	p.material.mu.Unlock()
 	if !valid {
 		return input, cryptov4.ErrConfiguration
+	}
+	if err = s.environment.checkMaterialVerification(p.material); err != nil {
+		return input, err
 	}
 	p.establishment, i.Subscriptions, err = p.material.Establishment(hello, c.Limits, generation, c.Establishment, c.Subscriptions)
 	if err != nil {

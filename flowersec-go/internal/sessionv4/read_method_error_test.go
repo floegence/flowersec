@@ -3,13 +3,13 @@ package sessionv4
 import (
 	"context"
 	"errors"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"io"
 	"reflect"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func validateCursorFailure(t *testing.T, c *ReaderCursor, result protocolv4.V4ReadResult, err error, reason protocolv4.V4ReadMethodFailureReason) protocolv4.V4ReadMethodFailure {

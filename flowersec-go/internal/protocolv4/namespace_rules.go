@@ -7,7 +7,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // NamespaceRules fixes the complete original capacity and publication mapping.
@@ -162,6 +162,7 @@ func (r *NamespaceRules) matchesPublication(root Value, schema string) bool {
 // A pending lower-bound result may occupy only the original namespace pin; it
 // cannot advance observed or authorize a Session until CheckTime succeeds.
 type NamespaceHead struct {
+	authorityStateOnly      bool
 	rules                   *NamespaceRules
 	schema                  string
 	bytes, delegation       []byte
@@ -174,6 +175,7 @@ type NamespaceHead struct {
 	issued, next, signerEnd uint64
 	trustIssued, trustEnd   uint64
 	delegationIssued        uint64
+	trustRevision           uint64
 }
 
 // NamespaceHeadBackingBytes includes both original maps, the detached object
@@ -267,6 +269,9 @@ func (r *NamespaceRules) BindHead(head *SignedMap, delegation []byte, generation
 }
 
 func (h *NamespaceHead) CheckTime(now timev4.Interval) error {
+	if h != nil && h.authorityStateOnly {
+		return CBORFailure("revocation_publication_snapshot")
+	}
 	if h == nil || !now.ValidBefore(min(h.next, h.signerEnd, h.trustEnd)) {
 		return timev4.ErrExpired
 	}

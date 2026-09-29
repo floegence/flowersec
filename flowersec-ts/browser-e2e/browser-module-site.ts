@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,13 +14,14 @@ export type BrowserModuleSite = Readonly<{
 export type BrowserModuleSiteOptions = Readonly<{
   port?: number;
   serviceWorkerScript?: string;
+  tls?: Readonly<{ cert: Buffer; key: Buffer }>;
 }>;
 
 export async function startBrowserModuleSite(input?: number | BrowserModuleSiteOptions): Promise<BrowserModuleSite> {
   const options = typeof input === "number" ? { port: input } : input ?? {};
   const distRoot = path.join(packageRoot, "dist");
   const nobleModulesRoot = path.join(packageRoot, "node_modules", "@noble");
-  const server = http.createServer(async (request, response) => {
+  const handler: http.RequestListener = async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (url.pathname === "/") {
@@ -82,7 +84,10 @@ export async function startBrowserModuleSite(input?: number | BrowserModuleSiteO
     } catch {
       response.writeHead(404).end();
     }
-  });
+  };
+  const server = options.tls === undefined ? http.createServer(handler) : https.createServer({
+    ...options.tls, minVersion: "TLSv1.3", maxVersion: "TLSv1.3", ALPNProtocols: ["http/1.1"],
+  }, handler);
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -96,7 +101,7 @@ export async function startBrowserModuleSite(input?: number | BrowserModuleSiteO
 
   let closePromise: Promise<void> | undefined;
   return {
-    origin: `http://127.0.0.1:${address.port}`,
+    origin: `${options.tls === undefined ? "http" : "https"}://127.0.0.1:${address.port}`,
     close: () => {
       closePromise ??= new Promise<void>((resolve, reject) => {
         server.close((error) => error == null ? resolve() : reject(error));

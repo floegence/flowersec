@@ -20,15 +20,20 @@ test("Chromium runs the WebSocket client profile", async ({ page, browserName })
       const session = await sdk.connect(
         sdk.createArtifactLease(sdk.parseArtifact(artifactJSON), async () => undefined),
       );
-      const echo = await session.rpc.call(7001, { value: "ping" }, (payload) => payload);
+      const decodeValue = (payload: unknown): { value: string } => {
+        if (payload === null || typeof payload !== "object" || !("value" in payload) || typeof payload.value !== "string") throw new Error("invalid RPC value");
+        return { value: payload.value };
+      };
+      const echo = await session.rpc.call(7001, { value: "ping" }, decodeValue);
       if (!echo.ok || echo.payload.value !== "ping") throw new Error("RPC echo failed");
       await session.rpc.notify(7002, { value: "notify" });
       const stream = await session.openStream("parity.echo", { metadata: sdk.createStreamMetadata({ cell: path }) });
       await stream.write(new TextEncoder().encode("hello"));
       await stream.closeWrite();
-      if (new TextDecoder().decode(await stream.read()) !== "world") throw new Error("stream FIN failed");
+      const response = await stream.read();
+      if (response === null || new TextDecoder().decode(response) !== "world") throw new Error("stream FIN failed");
       if (await stream.read() !== null) throw new Error("stream FIN did not reach EOF");
-      const streamCleanup = await session.rpc.call(7001, { value: "ping" }, (payload) => payload);
+      const streamCleanup = await session.rpc.call(7001, { value: "ping" }, decodeValue);
       if (!streamCleanup.ok || streamCleanup.payload.value !== "ping") throw new Error("stream cleanup barrier failed");
       const reset = await session.openStream("parity.reset");
       await reset.write(new TextEncoder().encode("reset"));
@@ -37,11 +42,11 @@ test("Chromium runs the WebSocket client profile", async ({ page, browserName })
       try { await reset.read(); } catch { resetObserved = true; }
       finally { await reset.close().catch(() => undefined); }
       if (!resetObserved) throw new Error("stream reset failed");
-      const resetCleanup = await session.rpc.call(7001, { value: "ping" }, (payload) => payload);
+      const resetCleanup = await session.rpc.call(7001, { value: "ping" }, decodeValue);
       if (!resetCleanup.ok || resetCleanup.payload.value !== "ping") throw new Error("reset cleanup barrier failed");
       await session.rekey();
       await session.probeLiveness();
-      const completion = await session.rpc.call(7003, { value: "complete" }, (payload) => payload);
+      const completion = await session.rpc.call(7003, { value: "complete" }, decodeValue);
       if (!completion.ok || completion.payload.value !== "complete") throw new Error("completion barrier failed");
       await session.close();
       return true;

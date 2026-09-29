@@ -2,7 +2,7 @@
 
 import PackageDescription
 
-// Flowersec release major: 5
+// Flowersec release major: 6
 let package = Package(
   name: "Flowersec",
   platforms: [

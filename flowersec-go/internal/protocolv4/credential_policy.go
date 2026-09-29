@@ -62,8 +62,17 @@ func (e *EndpointCredentials) ResolvePolicies(policies []*CredentialPolicy) (Cre
 		return result, CBORFailure("credential_policy_count")
 	}
 	for i, policy := range policies {
-		credential := e.credentials[i]
-		if policy == nil || policy.staleness == 0 || policy.signerLifetime == 0 || policy.id != credential.facts.PolicyID || policy.revision != credential.facts.PolicyRevision {
+		var id string
+		var revision uint64
+		if i == 3 && e.pendingGrant != nil {
+			if e.pendingGrant.Validation.Policy == nil {
+				return result, CBORFailure("credential_policy_reference")
+			}
+			id, revision = e.pendingGrant.Validation.Policy.Reference()
+		} else {
+			id, revision = e.credentials[i].facts.PolicyID, e.credentials[i].facts.PolicyRevision
+		}
+		if policy == nil || policy.staleness == 0 || policy.signerLifetime == 0 || policy.id != id || policy.revision != revision {
 			return result, CBORFailure("credential_policy_reference")
 		}
 		for _, earlier := range policies[:i] {

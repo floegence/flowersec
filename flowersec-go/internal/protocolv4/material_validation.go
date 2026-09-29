@@ -3,9 +3,93 @@ package protocolv4
 import (
 	"bytes"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
+
+// CheckMaterialPreparation distinguishes a refreshable verification gap from
+// a permanently expired original credential. It grants no admission: callers
+// retain the same preparation and deadline, then repeat the complete check.
+// Only the already installed namespace worker receives a coalesced hint.
+func CheckMaterialPreparation(v CredentialValidation, c *Credential, hardEnd uint64, environment resourcev4.Reference) (pending bool, err error) {
+	n := v.Namespace
+	if n == nil || v.Policy == nil || c == nil {
+		return false, CBORFailure("credential_validation_count")
+	}
+	if err := n.reservation.CheckSameEnvironment(environment); err != nil {
+		return false, err
+	}
+	// Sample outside the namespace gate. A clock/provider error is never a
+	// freshness hint, even if it happens to equal a protocol time sentinel.
+	now, err := n.sampleCurrent()
+	if err != nil {
+		return false, err
+	}
+	n.mu.Lock()
+	var refresh *NamespaceRefresh
+	defer func() {
+		n.mu.Unlock()
+		// The refresh owner can inspect this namespace under its own gate.
+		if pending && err == nil && refresh != nil {
+			refresh.Request()
+		}
+	}()
+	if n.destroyed || n.active == nil {
+		return false, CBORFailure("revocation_namespace_owner")
+	}
+	if err := n.checkAvailable(); err != nil {
+		return false, err
+	}
+	if err := n.continuityAvailable(); err != nil {
+		return false, err
+	}
+	p := v.Policy
+	if p.id != c.facts.PolicyID || p.revision != c.facts.PolicyRevision {
+		return false, CBORFailure("credential_policy_reference")
+	}
+	if err := n.rules.CheckPublication(p.Requirements()); err != nil {
+		return false, err
+	}
+	if err := n.checkPolicyAt(p, now); err != nil {
+		return false, err
+	}
+	if err := c.checkPermission(v.Issuer); err != nil {
+		return false, err
+	}
+	if err := n.checkHeadTrustAt(n.active.head, now); err != nil {
+		return false, err
+	}
+	if err := n.checkIssuerAt(v.Issuer, c.scope, now); err != nil {
+		return false, err
+	}
+	if c.facts.Cohort < n.observed.floors[c.facts.class] {
+		return false, CBORFailure("revocation_floor_rejected")
+	}
+	// Known revocations and binding failures remain definitive while the Head
+	// is stale. Only the SDK's own temporal checks below may suspend admission.
+	if _, err := n.active.checkDetachedCredential(c, v.Issuer, now.Interval, false); err != nil {
+		if err != timev4.ErrPending {
+			return false, err
+		}
+		pending = true
+	}
+	end := min(hardEnd, c.scope.ExpiresMS, c.facts.HardDeadlineMS)
+	if c.scope.Schema == "Artifact" {
+		end = min(end, c.admissionEnd)
+	}
+	if !now.ValidBefore(end) {
+		return false, timev4.ErrExpired
+	}
+	_, err = n.active.head.Deadline(p.staleness, p.signerLifetime, end, now.Interval)
+	if err != nil {
+		if err != timev4.ErrExpired && err != timev4.ErrPending {
+			return false, err
+		}
+		pending = true
+	}
+	refresh = n.refresh
+	return pending, nil
+}
 
 // CheckMaterialCredential validates one original credential before material
 // capture, against its independently resolved policy and live namespace. The
@@ -89,7 +173,7 @@ func (v CredentialValidation) checkLiveActivationConfiguration(r *NamespaceRules
 	signingKey, _ := entry.Named("ConnectionActivationDelegation", "signing_key_id").Text()
 	public, _ := entry.Named("ConnectionActivationDelegation", "signer_public_key").ByteString()
 	issuer, _ := entry.Named("ConnectionActivationDelegation", "issuer_key_id").ByteString()
-	if spend != declared || !bytes.Equal(public, key[:]) {
+	if spend != declared || !bytes.Equal(public, key[:]) || len(issuer) != 16 || bytes.Equal(issuer, parent.scope.Issuer[:]) {
 		return CBORFailure("activation_delegation_authority")
 	}
 	if parent.scope.Cohort < get("first_parent_cohort") || parent.scope.Cohort > get("last_parent_cohort") {
@@ -101,16 +185,20 @@ func (v CredentialValidation) checkLiveActivationConfiguration(r *NamespaceRules
 	}
 	binding := ActivationTrustBinding{Tenant: r.tenant, AuthorityNamespace: r.authority, SigningKeyID: signingKey, SpendAuthority: spend, WinnerAuthority: winner, CapacityDigest: r.capacityDigest, DelegationDigest: digest, Key: key, ParentIssuer: parent.scope.Issuer, Issuer: [16]byte(issuer), Generation: parent.scope.Generation}
 	n := v.Namespace
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	now, err := n.check()
+	now, err := n.sampleCurrent()
 	if err != nil {
 		return err
 	}
-	if err = n.checkHead(n.active.head, now.Interval); err != nil {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	err = n.checkAvailable()
+	if err != nil {
 		return err
 	}
-	if err = n.trust.Activation(binding); err != nil {
+	if err = n.checkHeadAt(n.active.head, now); err != nil {
+		return err
+	}
+	if err = n.checkActivationTrustAt(binding, now); err != nil {
 		return err
 	}
 	end := min(get("max_activation_not_after_ms"), get("max_session_not_after_ms"), parent.admissionEnd, parent.scope.ExpiresMS)

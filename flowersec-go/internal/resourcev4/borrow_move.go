@@ -2,6 +2,28 @@ package resourcev4
 
 import "math"
 
+// CheckBorrowedFrom proves that this original alias still belongs to the
+// supplied primary's exact backing, owner and account set. Equal Environment
+// IDs or matching charges alone do not establish this relationship. Take may
+// advance the primary handle without changing the alias's original backing.
+func (ref Reference) CheckBorrowedFrom(primary Reference) error {
+	if ref.root == nil || ref.root != primary.root {
+		return ErrOwner
+	}
+	r := ref.root
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, c := ref.slotsLocked()
+	p, pc := primary.slotsLocked()
+	if s == nil || p == nil || s.primary || !p.primary || c != pc || s.owner != p.owner || s.transferID != ([16]byte{}) || p.transferID != ([16]byte{}) || !sameProtectedScopes(s, p) {
+		return ErrOwner
+	}
+	if err := r.checkCharge(s, c); err != nil {
+		return err
+	}
+	return r.checkCharge(p, pc)
+}
+
 // TakeBorrow moves one already admitted Borrow reference into its final owner
 // without acquiring another reference slot or changing any charge/account.
 // Only ordinary non-primary borrows can move: primary owners and predecessors

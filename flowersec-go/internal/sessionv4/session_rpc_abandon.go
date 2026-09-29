@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 var (
@@ -21,6 +21,10 @@ var (
 func (o *UnaryOperation) AbandonResult() (UnaryResultStatus, error) {
 	if o == nil {
 		return UnaryResultStatus{}, cryptov4.ErrConfiguration
+	}
+	if m := o.resumeMessages(); m != nil {
+		_, err := m.AbandonResult()
+		return o.resumeStatus(m), resumeResultError(err)
 	}
 	o.mu.Lock()
 	call, header := o.call, o.header
@@ -39,10 +43,17 @@ func (c *UnaryCall) AbandonResult() (UnaryResultStatus, error) {
 	if c == nil {
 		return UnaryResultStatus{}, cryptov4.ErrConfiguration
 	}
+	if next := c.redirected(); next != nil {
+		return next.AbandonResult()
+	}
 	// The sole invocation can detach once. A stale snapshot therefore needs at
 	// most one retry; no polling, coordinator task or new reference is created.
 	for range 2 {
 		c.mu.Lock()
+		if next := c.next; next != nil {
+			c.mu.Unlock()
+			return next.AbandonResult()
+		}
 		if err, terminal := c.abandonResultStateLocked(); terminal {
 			status := c.resultStatusLocked()
 			c.mu.Unlock()

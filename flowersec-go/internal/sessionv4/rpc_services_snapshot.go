@@ -5,9 +5,10 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // An asynchronous source holds a frozen local recipe before material Acquire.
@@ -21,6 +22,9 @@ func rpcServicesSnapshotCharge(c *RPCServicesConfig) (resourcev4.Vector, error) 
 	if len(c.Routes.Methods) > 1024 || len(c.Methods)+len(c.StreamMethods) > 128 || len(c.NotificationMethods) > 128 || len(c.ExecutionServices) > 1024 || len(c.Accounts) > resourcev4.MaxAccountsPerCharge || len(c.ReferenceDomain) > 128 || len(c.CryptoProfile) > 128 {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
+	if err := checkSessionWorkloadRecipes(*c); err != nil {
+		return resourcev4.Vector{}, err
+	}
 	n := uint64(unsafe.Sizeof(RPCServicesConfig{})) + uint64(len(c.ReferenceDomain)+len(c.CryptoProfile))
 	n += uint64(len(c.Routes.Methods)) * uint64(unsafe.Sizeof(rpcv4.MethodRoutes{}))
 	n += uint64(len(c.Methods)) * uint64(unsafe.Sizeof(UnaryRegistration{}))
@@ -28,11 +32,19 @@ func rpcServicesSnapshotCharge(c *RPCServicesConfig) (resourcev4.Vector, error) 
 	n += uint64(len(c.NotificationMethods)) * uint64(unsafe.Sizeof(NotificationMethod{}))
 	n += uint64(len(c.ExecutionServices)) * uint64(unsafe.Sizeof(rpcv4.ServiceBinding{}))
 	n += uint64(len(c.Accounts)) * uint64(unsafe.Sizeof(resourcev4.Account{}))
+	n += uint64(len(c.Workloads)) * uint64(unsafe.Sizeof(SessionMethodWorkload{}))
+	for _, target := range c.Workloads {
+		n += uint64(len(target.Namespace) + len(target.Method.StreamKind) + len(target.Method.StreamMetadata))
+		for _, bound := range target.Method.Acceptance.Ranges {
+			n += uint64(len(bound.Field))
+		}
+	}
 	for _, method := range c.Routes.Methods {
-		if len(method.Contracts) == 0 || len(method.Contracts) > 8 {
+		if len(method.Contracts) == 0 || len(method.Contracts) > 8 || len(method.InitialOffers) > 8*len(method.Contracts) {
 			return resourcev4.Vector{}, cryptov4.ErrConfiguration
 		}
 		n += uint64(len(method.Contracts)) * uint64(unsafe.Sizeof([]byte{}))
+		n += uint64(len(method.InitialOffers)) * uint64(unsafe.Sizeof(protocolv4.AdmissionOfferBounds{}))
 		for _, wire := range method.Contracts {
 			if len(wire) == 0 || len(wire) > 8192 {
 				return resourcev4.Vector{}, cryptov4.ErrConfiguration
@@ -78,9 +90,20 @@ func captureRPCServicesConfig(c *RPCServicesConfig) *RPCServicesConfig {
 	out.ReferenceDomain = strings.Clone(c.ReferenceDomain)
 	out.CryptoProfile = strings.Clone(c.CryptoProfile)
 	out.Accounts = append([]resourcev4.Account(nil), c.Accounts...)
+	out.Workloads = append([]SessionMethodWorkload(nil), c.Workloads...)
+	for i := range out.Workloads {
+		target := &out.Workloads[i]
+		target.Namespace = strings.Clone(target.Namespace)
+		target.Method.StreamKind = strings.Clone(target.Method.StreamKind)
+		target.Method.StreamMetadata = bytes.Clone(target.Method.StreamMetadata)
+		for j := range target.Method.Acceptance.Ranges {
+			target.Method.Acceptance.Ranges[j].Field = strings.Clone(target.Method.Acceptance.Ranges[j].Field)
+		}
+	}
 	out.Routes.Methods = append([]rpcv4.MethodRoutes(nil), c.Routes.Methods...)
 	for i := range out.Routes.Methods {
 		method := &out.Routes.Methods[i]
+		method.InitialOffers = append([]protocolv4.AdmissionOfferBounds(nil), method.InitialOffers...)
 		method.Contracts = append([][]byte(nil), method.Contracts...)
 		for j := range method.Contracts {
 			method.Contracts[j] = bytes.Clone(method.Contracts[j])

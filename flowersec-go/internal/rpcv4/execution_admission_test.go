@@ -7,9 +7,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type executionAdmissionFixture struct {
@@ -248,6 +248,81 @@ func TestExecutionAdmissionProtectsCapacityAndDuplicateDoesNotDispatch(t *testin
 	}
 	if err = work.Release(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestExecutionAdmissionReservesHistoryBeforeExecutorAcquire(t *testing.T) {
+	f := newExecutionAdmissionFixture(t, 2, 2)
+	input := f.input(t, 1)
+	observed := false
+	_, work, err := f.history.AdmitForDispatch(context.Background(), f.registry, input, f.caller, managementAccess{f.authority}, func(resourcev4.Reference, resourcev4.Reference) error {
+		observed = true
+		if f.history.reserved != 1 || f.history.used != 0 || f.history.active != 0 {
+			return errors.New("execution history was not reserved before executor acquire")
+		}
+		return nil
+	})
+	if err != nil || work == nil || !observed {
+		t.Fatal("direct execution admission did not reach the pre-acquire reservation", err, work, observed)
+	}
+	if f.history.reserved != 0 || f.history.used != 1 || f.history.active != 1 {
+		t.Fatal("execution history reservation was not committed", f.history.reserved, f.history.used, f.history.active)
+	}
+	if err := work.Exit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := work.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExecutionAdmissionDirectFailureReturnsCapacity(t *testing.T) {
+	for _, cause := range []string{"executor", "resources"} {
+		t.Run(cause, func(t *testing.T) {
+			f := newExecutionAdmissionFixture(t, 1, 1)
+			input := f.input(t, 1)
+			want := errors.New("executor unavailable")
+			var hold resourcev4.Reference
+			if cause == "resources" {
+				snapshot := f.rpc.root.Snapshot()
+				hold = f.rpc.reserve(resourcev4.Vector{resourcev4.SDKBytes: snapshot.Limit[resourcev4.SDKBytes] - snapshot.Charged[resourcev4.SDKBytes]})
+				t.Cleanup(hold.Release)
+				want = resourcev4.ErrCapacity
+			}
+			before := f.rpc.root.Snapshot()
+			captures := f.registry.captures
+			called := false
+			observation, work, err := f.history.AdmitForDispatch(context.Background(), f.registry, input, f.caller, managementAccess{f.authority}, func(resourcev4.Reference, resourcev4.Reference) error {
+				called = true
+				if f.history.reserved != 1 || f.history.used != 0 || f.history.active != 0 {
+					t.Error("missing pre-acquire execution reservation", f.history.reserved, f.history.used, f.history.active)
+				}
+				return want
+			})
+			if !errors.Is(err, want) || work != nil || observation.Found || called != (cause == "executor") {
+				t.Fatal("unexpected failed admission", observation, work, err, called)
+			}
+			if f.history.reserved != 0 || f.history.active != 0 || f.history.used != 0 || f.registry.captures != captures || input.borrowed {
+				t.Fatal("failed admission retained capacity or input", f.history.reserved, f.history.active, f.history.used, f.registry.captures, input.borrowed)
+			}
+			if after := f.rpc.root.Snapshot(); after != before {
+				t.Fatal("failed admission retained resources", before, after)
+			}
+			hold.Release()
+			_, work, err = f.history.AdmitForDispatch(context.Background(), f.registry, input, f.caller, managementAccess{f.authority}, func(resourcev4.Reference, resourcev4.Reference) error { return nil })
+			if err != nil || work == nil {
+				t.Fatal("failed attempt prevented reuse", err)
+			}
+			if f.history.reserved != 0 || f.history.active != 1 || f.history.used != 1 {
+				t.Error("retry did not transfer the execution reservation", f.history.reserved, f.history.active, f.history.used)
+			}
+			if err = work.Exit(); err != nil {
+				t.Fatal(err)
+			}
+			if err = work.Release(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 

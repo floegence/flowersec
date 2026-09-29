@@ -10,15 +10,15 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/candidatev3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/defaults"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/fserrors"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
-	sessionv3 "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/admissionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/candidatev3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/fserrors"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v6/internal/rpc"
+	sessionv3 "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
 )
 
 var (
@@ -111,7 +111,8 @@ func (err *UnreliableMessageError) Code() UnreliableMessageErrorCode {
 	}
 	switch err.code {
 	case UnreliableMessageUnavailable, UnreliableMessageInvalid, UnreliableMessageTooLarge,
-		UnreliableMessageCanceled, UnreliableMessageClosed, UnreliableMessageOperationFailed:
+		UnreliableMessageCanceled, UnreliableMessageClosed, UnreliableMessageOperationFailed,
+		UnreliableMessageTemporarilyBlocked, UnreliableMessageReceiveDisabled:
 		return err.code
 	default:
 		return UnreliableMessageOperationFailed
@@ -457,8 +458,13 @@ func (current *opaqueSessionV3) AcceptStream(ctx context.Context) (IncomingStrea
 	if err != nil {
 		return IncomingStream{}, redactSessionError(err)
 	}
+	metadata, err := NewStreamMetadata(map[string]any(incoming.Metadata))
+	if err != nil {
+		_ = incoming.Stream.Close()
+		return IncomingStream{}, err
+	}
 	return IncomingStream{
-		Kind: incoming.Kind, Metadata: StreamMetadata{values: map[string]any(incoming.Metadata)},
+		Kind: incoming.Kind, Metadata: metadata,
 		Stream: &opaqueByteStreamV3{inner: incoming.Stream},
 	}, nil
 }

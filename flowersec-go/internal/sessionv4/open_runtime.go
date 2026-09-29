@@ -3,13 +3,15 @@ package sessionv4
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
 	"io"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // StreamReservation transfers actual storage, receive promise capacity and the
@@ -17,6 +19,10 @@ import (
 // belongs to the Session reservation; successful construction is not provider
 // qualification. OpenStorage covers the initiator's immutable OPEN snapshot.
 type StreamReservation struct {
+	openProtection localOpenProtection
+	// NormalTerminationMS is a local preset fixed before OPEN publication.
+	// Zero inherits the original Session termination policy.
+	NormalTerminationMS uint64
 	Pool                *ReceivePool
 	ReceiveProtection   *ReceiveProtection
 	OpenStorage         []byte
@@ -42,6 +48,9 @@ type SendQueueReservation struct {
 }
 
 func (a *OpenAdmission) newFlow(scope, peerLimit uint64, class StreamClass, reservation StreamReservation) (*StreamFlow, error) {
+	if reservation.NormalTerminationMS > 60000 {
+		return nil, cryptov4.ErrConfiguration
+	}
 	if a.receivePool != nil && reservation.Pool != a.receivePool {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -86,6 +95,11 @@ func (a *OpenAdmission) newFlow(scope, peerLimit uint64, class StreamClass, rese
 	if err != nil {
 		return nil, err
 	}
+	// Native DATA errors belong to one association; shared carrier errors
+	// terminate the physical Session and carry their original transport fact.
+	if reservation.NativeReceive == (resourcev4.Reference{}) {
+		writer.failureOwner = a
+	}
 	send, err := NewSendFlow(writer, a.direction, peerLimit, TerminalTuple{Epoch: tx.Epoch, NextSequence: tx.Sequence}, reservation.SendCapacity, reservation.MaxPlaintext, reservation.SendReservation)
 	if err != nil {
 		return nil, err
@@ -108,6 +122,9 @@ func (a *OpenAdmission) newFlow(scope, peerLimit uint64, class StreamClass, rese
 		return nil, err
 	}
 	flow, err := NewStreamFlow(send, receive)
+	if err == nil && reservation.NormalTerminationMS != 0 {
+		err = selectConnTermination(&send.termination, &receive.termination, reservation.NormalTerminationMS)
+	}
 	if err == nil && reservation.NativeReceive != (resourcev4.Reference{}) {
 		flow.nativeReceive, err = newNativeDataAssembly(receive, reservation.NativeReceive)
 	}
@@ -188,13 +205,21 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 		a.mu.Unlock()
 		return h, result, err
 	}
-	if !a.positiveAvailable(a.direction, class) || a.opening >= a.limits.Opening || a.nextOrdinal > a.roleOrdinals[a.direction] {
+	protected := -1
+	if reservation.openProtection != (localOpenProtection{}) {
+		protected, err = reservation.openProtection.availableLocked(a, class)
+		if err != nil {
+			a.mu.Unlock()
+			return h, result, err
+		}
+	}
+	if !a.positiveAvailableProtected(a.direction, class, false, protected) || !a.localOpeningAvailable(protected) || a.nextOrdinal > a.roleOrdinals[a.direction] {
 		a.mu.Unlock()
 		return h, result, cryptov4.ErrCapacity
 	}
 	// A server gives already authenticated client business contenders the
 	// next real capacity opportunity. No local submitted OPEN is cancelled.
-	if class == BusinessStream && a.direction == protocolv4.ServerToClient {
+	if protected < 0 && class == BusinessStream && a.direction == protocolv4.ServerToClient {
 		for i := int(a.limits.Terminal); i < len(a.slots); i++ {
 			if a.slots[i].phase == openPending && a.slots[i].contender {
 				a.mu.Unlock()
@@ -226,6 +251,9 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 		return h, result, ErrOpenAssociation
 	}
 	i := a.freeSlot(false, false)
+	if protected >= 0 {
+		i = protected
+	}
 	if i < 0 {
 		carrier.mu.Unlock()
 		a.mu.Unlock()
@@ -242,7 +270,13 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 	defer clear(snapshot)
 	carrier.bound, carrier.scope = a, scope
 	carrier.mu.Unlock()
-	a.slots[i] = openSlot{scope: scope, phase: openReserved, class: class, local: true, activeCharged: true, carrier: carrier, deadline: deadline, localLimit: reservation.InitialReceiveLimit}
+	s := &a.slots[i]
+	s.scope, s.phase, s.class, s.local, s.activeCharged = scope, openReserved, class, true, true
+	s.carrier, s.deadline, s.localLimit = carrier, deadline, reservation.InitialReceiveLimit
+	if protected >= 0 {
+		s.protectionInUse, s.protectionScope = true, scope
+	}
+	a.slots[i].kindDigest = sha256.Sum256(snapshot[:len(kind)])
 	a.insert(scope, i)
 	a.active++
 	a.opening++
@@ -303,7 +337,9 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 		return len(wire), nil
 	}, nil, &a.openGate)
 	if err != nil {
-		if result.Submitted {
+		if result.Submitted && a.nativeWriteFailure(h.scope, err) {
+			return h, result, nil
+		} else if result.Submitted {
 			a.closeWithCause(err)
 		} else {
 			a.discardLocalPreparation(h, true)
@@ -332,7 +368,7 @@ func (a *OpenAdmission) discardLocalPreparation(h OpenHandle, keysPrepared bool)
 	a.positiveProofs--
 	a.byOpener[a.direction][s.class]--
 	a.remove(s.scope)
-	*s = openSlot{}
+	a.resetSlotLocked(s)
 	a.notifyDecisionOpportunityLocked()
 }
 
@@ -425,6 +461,9 @@ func (a *OpenAdmission) decideWithGate(ctx context.Context, h OpenHandle, class 
 	defer maintenance.releasePublication(publication)
 	var flow *StreamFlow
 	if accepted {
+		if s.carrier != nil && s.carrier.native != nil {
+			reservation.Writer = s.carrier.native
+		}
 		flow, err = a.newFlow(s.scope, s.peerLimit, class, reservation)
 		if err != nil {
 			a.mu.Unlock()
@@ -572,6 +611,14 @@ func (a *OpenAdmission) decideWithGate(ctx context.Context, h OpenHandle, class 
 			a.mu.Unlock()
 		}
 	}
+	if err == nil && result.Complete {
+		a.mu.Lock()
+		if original, lookup := a.slot(h); lookup == nil {
+			original.outcomeComplete = true
+			a.notifyOutcomeLocked(original)
+		}
+		a.mu.Unlock()
+	}
 	return result, err
 }
 
@@ -701,6 +748,10 @@ func (a *OpenAdmission) ApplyOutcome(record *ReceivedRecord) (err error) {
 			s.activeCharged = false
 		}
 	}
+	s.outcomeComplete = true
+	if accepted && s.nativeSendStopped {
+		s.flow.send.nativeStopped(native.ErrNormalDrained)
+	}
 	s.accepted, s.peerLimit, s.reason = accepted, limit, reason
 	a.notifyOutcomeLocked(s)
 	a.opening--
@@ -768,6 +819,9 @@ func (a *OpenAdmission) Flow(h OpenHandle) (*StreamFlow, error) {
 	if s.phase != openLive && s.phase != openRecent && s.phase != openHeld {
 		return nil, ErrFlowClosed
 	}
+	if s.flow == nil {
+		return nil, ErrFlowClosed
+	}
 	return s.flow, nil
 }
 
@@ -806,7 +860,7 @@ func (a *OpenAdmission) cancelStreamLocked(s *openSlot) {
 	s.cancelled = true
 	a.notifyOutcomeLocked(s)
 	a.notifyPendingLocked()
-	if s.phase == openLive || s.bootstrap {
+	if s.flow != nil && (s.phase == openLive || s.bootstrap) {
 		s.flow.send.Stop()
 		s.flow.receive.Abandon()
 	}
@@ -840,6 +894,14 @@ func (a *OpenAdmission) Close() { a.closeWithCause(nil) }
 // closeWithCause seals the first known failure before waking peer services.
 // Cleanup-induced errors cannot replace that original fact.
 func (a *OpenAdmission) closeWithCause(cause error) {
+	a.closeWithSource(cause, false)
+}
+
+func (a *OpenAdmission) closeWithTransportCause(cause error) {
+	a.closeWithSource(cause, true)
+}
+
+func (a *OpenAdmission) closeWithSource(cause error, transport bool) {
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
@@ -847,6 +909,7 @@ func (a *OpenAdmission) closeWithCause(cause error) {
 	}
 	if cause != nil && !errors.Is(cause, context.Canceled) && !errors.Is(cause, cryptov4.ErrClosed) {
 		a.failure = cause
+		a.transportFailure = transport && controllerNetworkRetry(cause)
 	}
 	a.closed = true
 	a.openGate.close()

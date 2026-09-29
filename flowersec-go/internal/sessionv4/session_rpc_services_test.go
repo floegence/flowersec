@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func rpcServicesPlanFixture(t *testing.T, scoped ...bool) (*executorFixture, *SessionPlan, RPCServicesConfig) {
@@ -53,11 +54,16 @@ func rpcServicesPlanFixture(t *testing.T, scoped ...bool) (*executorFixture, *Se
 		return AuthorizeApplicationResult{}, ErrApplicationAuthorization
 	}}, accounts...)
 	clock := sessionTestClock(t)
-	config := RPCServicesConfig{NotifyReceivePending: 16, NotifyPublishPending: 16, NotificationWaitMS: 10000, NotificationCleanupMS: 10000, CompletionGraceMS: 5000, ShortRequestBytes: 8192, ShortResponseBytes: 8192, ShortTaskCharge: f.executor.TaskCharge(), ShortCompletionCharge: f.executor.CompletionFloorCharge(), CryptoProfile: protocolv4.DHProfileX25519, Bootstrap: SessionStreamConfig{ReceivePoolBytes: 360448, ReceiveBytes: 32768, InitialReceiveLimit: 16384, SendBytes: 1024, QueueBytes: 16384, RuntimeBytes: 4096, WriteWaiters: 2, MaxPlaintext: 1152, Chunk: 1024}, MaxDataPayloadBytes: 1024, Root: root, Owner: resourcev4.OwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Instance: [16]byte{81}, Backing: [16]byte{81}, Kind: 81},
-		Session: testSessionContract(t, protocolv4.DHProfileX25519, "services", 65536, 16, 0, 5000, 1<<20).Contract, Clock: clock, Query: rpcv4.QueryBinding{Type: 7, Contract: [32]byte{9}},
-		Routes: rpcv4.ContractRoutesConfig{ContractNodes: 256, RuntimeBytes: 4096, Clock: clock}, Slots: 4, ResidentSlots: 2, MaxCaptureBytes: 1048576, RuntimeBytes: 4096, InputRuntimeBytes: 4096, HashRuntimeBytes: 512, InvocationRuntimeBytes: 4096}
+	config := rpcServicesTestConfig(f, clock, testSessionContract(t, protocolv4.DHProfileX25519, "services", 65536, 16, 0, 5000, 1<<20).Contract)
 	config.Accounts = accounts
 	return f, plan, config
+}
+
+func rpcServicesTestConfig(f *executorFixture, clock *timev4.Clock, session protocolv4.SessionContract) RPCServicesConfig {
+	config := RPCServicesConfig{NotifyReceivePending: 16, NotifyPublishPending: 16, NotificationWaitMS: 10000, NotificationCleanupMS: 10000, CompletionGraceMS: 5000, ShortRequestBytes: 8192, ShortResponseBytes: 8192, ShortTaskCharge: f.executor.TaskCharge(), ShortCompletionCharge: f.executor.CompletionFloorCharge(), CryptoProfile: protocolv4.DHProfileX25519, Bootstrap: SessionStreamConfig{ReceivePoolBytes: 360448, ReceiveBytes: 32768, InitialReceiveLimit: 16384, SendBytes: 1024, QueueBytes: 16384, RuntimeBytes: 4096, WriteWaiters: 2, MaxPlaintext: 1152, Chunk: 1024}, MaxDataPayloadBytes: 1024, Root: f.root, Owner: resourcev4.OwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Instance: [16]byte{81}, Backing: [16]byte{81}, Kind: 81},
+		Session: session, Clock: clock, Query: rpcv4.QueryBinding{Type: 7, Contract: [32]byte{9}},
+		Routes: rpcv4.ContractRoutesConfig{ContractNodes: 256, RuntimeBytes: 4096, Clock: clock}, Slots: 4, ResidentSlots: 2, MaxCaptureBytes: 1048576, RuntimeBytes: 4096, InputRuntimeBytes: 4096, HashRuntimeBytes: 512, InvocationRuntimeBytes: 4096}
+	return config
 }
 
 func TestRPCServicesAtomicReservationAndFixedOwners(t *testing.T) {

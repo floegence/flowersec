@@ -5,7 +5,7 @@ import (
 	"crypto/ed25519"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // Tests use independent fixture signing keys to exercise the production root

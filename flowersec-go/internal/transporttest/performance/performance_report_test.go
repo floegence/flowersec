@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/perfreport"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/perfreport"
 )
 
 func writeFocusedPerformanceResult(result perfreport.CaseResult) error {

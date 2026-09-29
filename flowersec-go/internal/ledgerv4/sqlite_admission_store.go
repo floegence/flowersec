@@ -7,7 +7,7 @@ import (
 	"errors"
 	"io"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type storedAdmission struct {
@@ -83,6 +83,12 @@ func (s *sqliteStore) writeTransaction(ctx context.Context, guard func() error, 
 // Retained mode is restricted to ending an already owned business work tail.
 // It cannot register, dispatch, publish a result or create a new obligation.
 func (s *sqliteStore) writeTransactionMode(ctx context.Context, guard func() error, write func() error, retained bool) (err error) {
+	return s.writeTransactionCommit(ctx, guard, write, retained, func() error { return s.exec("COMMIT") })
+}
+
+// commit is an internal final publication gate. All callbacks, encoding and
+// signing finish before it; only the original bounded driver COMMIT runs there.
+func (s *sqliteStore) writeTransactionCommit(ctx context.Context, guard func() error, write func() error, retained bool, commit func() error) (err error) {
 	if err = s.checkpoint(); err != nil {
 		return err
 	}
@@ -135,7 +141,7 @@ func (s *sqliteStore) writeTransactionMode(ctx context.Context, guard func() err
 	if err = guard(); err != nil {
 		return err
 	}
-	if err = s.exec("COMMIT"); err != nil {
+	if err = commit(); err != nil {
 		return errors.Join(ErrUnknown, err)
 	}
 	committed = true
@@ -172,7 +178,7 @@ func (a *sqliteAdmission) reserve(ctx context.Context) error {
 		if existing.found {
 			return ErrConflict
 		}
-		count, err := s.scalar("SELECT admission_rows+spend_rows FROM manifest WHERE id=1")
+		count, err := s.scalar("SELECT admission_rows+spend_rows+winner_rows+issuance_rows+relay_rows FROM manifest WHERE id=1")
 		if err != nil {
 			return err
 		}

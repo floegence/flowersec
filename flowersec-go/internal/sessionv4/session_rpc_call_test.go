@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func shortCallerFixture(t *testing.T, completionCapacity ...uint32) (*serviceDispatchFixture, *RPCServices, rpcv4.ContractRoute) {
@@ -29,6 +29,7 @@ func callerForServiceFixture(t *testing.T, f *serviceDispatchFixture) (*serviceD
 	r.owner = resourcev4.OwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Instance: [16]byte{119}, Backing: [16]byte{119}, Kind: 119}
 	r.generalCalls = make([]*unaryInvocation, 32)
 	r.operations = make([]*UnaryOperation, 32)
+	r.workloadSlots = make([]*unaryWorkloadSlot, 32)
 	charges, err := shortCallerCharges(4096, 8192, 8192)
 	if err != nil {
 		t.Fatal(err)
@@ -46,11 +47,13 @@ func callerForServiceFixture(t *testing.T, f *serviceDispatchFixture) (*serviceD
 			}
 			var aliases []resourcev4.Reference
 			if index == 4 {
-				alias, e := ref.Borrow()
-				if e != nil {
-					t.Fatal(e)
+				for range 2 {
+					alias, e := ref.Borrow()
+					if e != nil {
+						t.Fatal(e)
+					}
+					aliases = append(aliases, alias)
 				}
-				aliases = []resourcev4.Reference{alias}
 			}
 			r.shortCaller[index], err = resourcev4.NewProtectedResultReservation(ref, minimum, anchor, aliases...)
 			anchor.Release()

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/framing/jsonframe"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v5/internal/rpcwire"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v6/internal/rpcwire"
 )
 
 type notificationVectors struct {

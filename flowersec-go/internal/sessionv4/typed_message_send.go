@@ -8,9 +8,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrMessageWouldBlock = errors.New("sessionv4: message send would block")
@@ -71,7 +71,7 @@ func (m *TypedMessageStream) Send(ctx context.Context, value any, options Messag
 	if m == nil || ctx == nil || options.Admission > MessageSendTryNow {
 		return result, cryptov4.ErrConfiguration
 	}
-	dependencies, err := captureApplicationDependencies(ctx)
+	dependencies, err := captureApplicationDependenciesWithFloor(ctx, m.dependencyFloor)
 	if err != nil {
 		return result, err
 	}

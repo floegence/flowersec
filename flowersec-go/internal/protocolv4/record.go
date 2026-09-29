@@ -74,6 +74,7 @@ type recordWireRegistry struct {
 		Datagram         string `json:"datagram_scope"`
 		ReplayBits       uint64 `json:"record_replay_window_bits"`
 		DatagramEnvelope uint64 `json:"max_datagram_envelope"`
+		DatagramPending  uint64 `json:"max_pending_datagrams"`
 	} `json:"resource_caps"`
 	domains            map[string]recordDomainSpec
 	headerBytes        int

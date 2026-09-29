@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 )
 
 type payloadThroughputContract struct {

@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // Start borrows only the existing accepted target. The same complete vector
@@ -25,6 +25,7 @@ func (c *SessionCore) beginResumeMessages(ctx context.Context, target *resumeTar
 	if err != nil {
 		return nil, err
 	}
+	defer m.finishEnvironmentPreparation()
 	committed := false
 	defer func() {
 		if !committed {
@@ -104,7 +105,7 @@ func (x *resumeTarget) transfer(ctx context.Context, core *SessionCore, m *Strea
 			return err
 		}
 	}
-	return m.authorization.WithCurrentAuthorization(func() error {
+	return m.withCurrentAuthorization(func() error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -133,6 +134,8 @@ func (m *StreamMessages) runResumeExchange(ctx context.Context) {
 	if err != nil {
 		m.failure = err
 		m.closeLocked()
+	} else {
+		m.resumeValidated = true
 	}
 	if m.openingCancel != nil {
 		m.openingCancel()
@@ -189,17 +192,18 @@ func (m *StreamMessages) releaseResumeBoundaryLocked() error {
 	}
 	m.resume, m.owner = nil, nil
 	m.releasePositionLocked()
-	m.networkHold.Release()
-	m.networkHold = resourcev4.Reference{}
+	m.releaseNetworkHoldLocked()
 	m.network = nil
 	m.contract = nil
 	m.route.Release()
 	m.route = rpcv4.ContractRoute{}
-	m.resumeCodec = nil
 	m.transportCleaned = true
 	if m.result != nil {
-		if err := m.result.floor.DetachSessionScope(); err != nil {
+		if err := m.result.floorUse.detachSession(); err != nil {
 			m.failure = err
+		}
+		if !m.result.borrowedFloor {
+			m.result.floor.Close()
 		}
 	}
 	if m.abandoned {

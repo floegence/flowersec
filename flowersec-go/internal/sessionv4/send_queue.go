@@ -9,9 +9,10 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type sendWaitSlot struct {
@@ -42,6 +43,8 @@ type SendQueue struct {
 	writeOwner            *StreamOwnership
 	rawUsed               bool
 	rpcBatch              *RPCBatchWriter
+	responsePublication   *rpcv4.Publication
+	responseTail          uint64
 	methodTails           int
 	methodWaiters         int
 	storage               []byte
@@ -478,8 +481,15 @@ func (q *SendQueue) pump(ctx context.Context, service *SendService) (RecordWrite
 	}
 	q.pumping = true
 	input := q.storage[q.head : q.head+n]
+	// Capture the original final-response responsibility before provider I/O.
+	// Its bounded accounting must not wait on the queue's publication-return
+	// gate. pumping retains the ring and this reference until that tail exits.
+	var publishedResponse func()
+	if q.responsePublication != nil && q.published+uint64(n) >= q.responseTail {
+		publishedResponse = q.responsePublication.ObserveResponseHandoff
+	}
 	q.mu.Unlock()
-	result, err := flow.write(ctx, input, fin, q)
+	result, err := flow.write(ctx, input, fin, q, publishedResponse)
 	q.mu.Lock()
 	if q.closed {
 		err = q.failure
@@ -491,6 +501,10 @@ func (q *SendQueue) pump(ctx context.Context, service *SendService) (RecordWrite
 		q.head = (q.head + n) % len(q.storage)
 		q.size -= n
 		q.published += uint64(n)
+		if publishedResponse != nil {
+			q.responsePublication = nil
+			q.responseTail = 0
+		}
 		published = n
 		q.finComplete = fin && err == nil
 		q.wakeWriterLocked()
@@ -542,6 +556,8 @@ func (q *SendQueue) stopFromFlow(cause error) {
 }
 
 func (q *SendQueue) closeLocked(cause error) {
+	q.responsePublication = nil
+	q.responseTail = 0
 	q.completion.stop(cause)
 	if q.finComplete {
 		// A later cleanup/Stop cannot turn an already completed FIN and its

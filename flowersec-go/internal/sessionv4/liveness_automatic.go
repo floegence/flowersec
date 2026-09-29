@@ -6,9 +6,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // AutomaticLivenessPolicy is an explicit immutable deployment choice. There
@@ -115,7 +115,9 @@ func (o *Probe) published() {
 	p := o.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	o.result.Complete = true
+	if !o.terminal {
+		o.result.Complete = true
+	}
 	if !o.automatic || o.terminal || p.closed || p.intent != nil || p.exchange != nil || p.stalled() {
 		return
 	}

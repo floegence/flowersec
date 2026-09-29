@@ -7,9 +7,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrWriteOperationInput = errors.New("sessionv4: write operation input exceeds capacity")
@@ -292,7 +292,7 @@ func (q *SendQueue) acceptanceErrorLocked() error {
 	if q.closed {
 		return q.failure
 	}
-	if q.sealed {
+	if q.sealed || q.flow == nil || q.flow.reset.Load() {
 		return ErrFlowClosed
 	}
 	if err := q.reservation.Check(); err != nil {

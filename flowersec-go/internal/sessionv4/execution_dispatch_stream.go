@@ -6,10 +6,10 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // StreamExecutionHandler runs once on the operation's original ordinary task.
@@ -82,7 +82,7 @@ func (d ExecutionDispatch) dispatchApplicationStream(ctx context.Context, stream
 			i.release()
 		}
 	}()
-	i.dependencies, err = captureApplicationDependencies(ctx)
+	i.dependencies, err = captureApplicationDependenciesWithFloor(ctx, d.DependencyFloor)
 	if err != nil {
 		return observation, err
 	}

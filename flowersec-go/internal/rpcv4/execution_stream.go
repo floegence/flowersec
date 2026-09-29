@@ -2,8 +2,8 @@ package rpcv4
 
 import (
 	"context"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func executionRunLimit(policy protocolv4.ServiceContractPolicy) uint64 {

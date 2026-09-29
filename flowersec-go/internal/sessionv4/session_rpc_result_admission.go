@@ -3,10 +3,10 @@ package sessionv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // BeginDeferredUnary admits the original independent local result before any
@@ -21,8 +21,9 @@ func (r *RPCServices) BeginDeferredUnary(ctx context.Context, route rpcv4.Contra
 	return r.beginUnary(ctx, route, h, header, payload, class, false, false, nil, plan, nil)
 }
 
-// BeginDeferredShortUnary uses the exact short vector promised by this Session.
-// A live old result or callback tail cannot manufacture a second floor use.
+// BeginDeferredShortUnary first uses the exact short vector promised by this
+// Session, including its original Environment result position. A live result
+// or callback tail requires a separate complete general vector for overlap.
 func (r *RPCServices) BeginDeferredShortUnary(ctx context.Context, route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte, decode UnaryResultDecoder) (*UnaryCall, error) {
 	plan, err := r.resultPlan(decode)
 	if err != nil {
@@ -33,6 +34,18 @@ func (r *RPCServices) BeginDeferredShortUnary(ctx context.Context, route rpcv4.C
 
 func (r *RPCServices) resultPlan(decode UnaryResultDecoder) (*unaryResultPlan, error) {
 	if r == nil || decode == nil {
+		return nil, cryptov4.ErrConfiguration
+	}
+	e, err := r.bindingEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	return &unaryResultPlan{environment: e, decode: decode}, nil
+}
+
+// Notify-only bindings need the Environment without inventing a result owner.
+func (r *RPCServices) bindingEnvironment() (*Environment, error) {
+	if r == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	r.mu.Lock()
@@ -57,10 +70,10 @@ func (r *RPCServices) resultPlan(decode UnaryResultDecoder) (*unaryResultPlan, e
 	if e == nil {
 		return nil, cryptov4.ErrClosed
 	}
-	return &unaryResultPlan{environment: e, decode: decode}, nil
+	return e, nil
 }
 
-func (c *UnaryCall) prepareResult(plan *unaryResultPlan, executor *ApplicationExecutor, metadata, subscriptions resourcev4.Reference, future *CompletionReservation, authority *protocolv4.EndpointAuthorization, runtimeBytes uint64, inputCancel context.CancelFunc, dependencies *applicationDependencies, dependency *completionDependency, subscriptionFloor *protocolv4.DeliverySubscriptionFloor) error {
+func (c *UnaryCall) prepareResult(plan *unaryResultPlan, executor *ApplicationExecutor, metadata, subscriptions resourcev4.Reference, future *CompletionReservation, authority *protocolv4.EndpointAuthorization, runtimeBytes uint64, inputCancel context.CancelFunc, dependencies *applicationDependencies, dependency *completionDependency, subscriptionFloor *protocolv4.DeliverySubscriptionFloor, resultPosition environmentResultProtection) error {
 	minimum, err := unaryResultCharge(runtimeBytes)
 	if err != nil {
 		return err
@@ -71,6 +84,9 @@ func (c *UnaryCall) prepareResult(plan *unaryResultPlan, executor *ApplicationEx
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	d := &unaryResultState{metadata: metadata, executor: executor, future: future, decode: plan.decode, context: ctx, cancel: cancel, inputCancel: inputCancel, decodedDone: make(chan struct{}), closing: make(chan struct{}), changed: make(chan struct{}), preparing: true, clock: plan.environment.materialClock, dependency: dependency}
+	if dependencies != nil {
+		d.dependencyFloor = dependencies.floor
+	}
 	c.mu.Lock()
 	c.deferred = d
 	c.mu.Unlock()
@@ -89,7 +105,7 @@ func (c *UnaryCall) prepareResult(plan *unaryResultPlan, executor *ApplicationEx
 		authorization.Close(err)
 		return err
 	}
-	return plan.environment.admitResult(c)
+	return plan.environment.admitResult(c, resultPosition)
 }
 
 // Called under the finite original invocation gate. Full authenticated input
@@ -119,6 +135,9 @@ func (i *unaryInvocation) advanceDeferredLocked(closed bool) {
 		return
 	}
 	outcome := UnaryCallOutcome{Header: progress.Header, Reason: progress.Reason, SDKErrorCode: progress.SDKErrorCode, Error: progress.Error}
+	if i.publicationFailure != nil && !i.publication.Progress().HeaderAccepted {
+		outcome.Reason, outcome.Error = "not_submitted", i.publicationFailure
+	}
 	var input *rpcv4.VerifiedInput
 	if progress.Reason == "" && progress.SDKErrorCode == 0 && progress.Error == nil {
 		var err error

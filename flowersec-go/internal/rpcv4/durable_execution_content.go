@@ -3,7 +3,7 @@ package rpcv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
 )
 
 // SaveContent runs inside the original streaming callback and original store

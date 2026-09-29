@@ -3,8 +3,8 @@ package sessionv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // SaveContent explicitly saves application-selected bytes. The trusted local
@@ -61,7 +61,10 @@ func (w *UnaryResponse) ReadRetainedContent(ctx context.Context, target rpcv4.Ex
 		return ledgerv4.SQLiteContentObservation{}, 0, err
 	}
 
-	if err = i.withAuthority(func() error { return ctx.Err() }); err != nil {
+	if err := ctx.Err(); err != nil {
+		return ledgerv4.SQLiteContentObservation{}, 0, err
+	}
+	if err = i.withAuthority(func() error { return nil }); err != nil {
 		return ledgerv4.SQLiteContentObservation{}, 0, err
 	}
 	if binding.DurableHistory != nil {

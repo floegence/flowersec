@@ -1,14 +1,17 @@
 package sessionv4
 
 import (
+	"crypto/sha256"
 	"errors"
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var (
@@ -68,12 +71,18 @@ type CarrierAssociation struct {
 	// shared identifies the original SDK-owned logical association. Native
 	// providers report their own actual CarrierClosed separately.
 	shared *SharedIngress
+	native native.Stream
 	mu     sync.Mutex
 	bound  *OpenAdmission
 	scope  uint64
 }
 
 type openSlot struct {
+	outcomeComplete, nativeSendStopped                                                          bool
+	protectionGeneration, protectionScope                                                       uint64
+	protectionClass                                                                             StreamClass
+	protectionInUse, protectionClosed                                                           bool
+	recentAck, recentLimit                                                                      uint64 // Compact late-credit knowledge after real flow retirement.
 	bootstrap                                                                                   bool
 	rejectionOrdinary                                                                           bool
 	scope                                                                                       uint64
@@ -84,6 +93,7 @@ type openSlot struct {
 	incoming                                                                                    *cryptov4.IncomingScope
 	header                                                                                      protocolv4.RecordHeader
 	digest                                                                                      [32]byte
+	kindDigest                                                                                  [32]byte
 	deadline                                                                                    *timev4.Deadline
 	peerLimit, localLimit                                                                       uint64
 	reason                                                                                      uint64
@@ -109,6 +119,7 @@ type openSlot struct {
 // proof slots. There is no allocation per rejected ID and no pending waiter
 // queue. The same owner gate orders resource transfer and outcome selection.
 type OpenAdmission struct {
+	diagnostics                                               *diagnosticv4.Counters
 	mu                                                        sync.Mutex
 	engine                                                    *cryptov4.Engine
 	direction                                                 protocolv4.Direction
@@ -121,6 +132,7 @@ type OpenAdmission struct {
 	byOpener                                                  [2][3]uint32
 	lifetime                                                  [2][3]uint64
 	nextOrdinal                                               uint64
+	protectionGeneration                                      uint64
 	roleOrdinals                                              [2]uint64
 	stable                                                    [2][]uint64
 	closed, draining                                          bool
@@ -128,6 +140,7 @@ type OpenAdmission struct {
 	highestAccepted                                           [2]uint64
 	peerGoAway                                                goAwayBoundary
 	lifecycle                                                 *SessionLifecycle
+	application                                               *SessionPlan
 	decoder                                                   *protocolv4.Decoder
 	encode                                                    []byte
 	retirement                                                *Retirement
@@ -148,6 +161,7 @@ type OpenAdmission struct {
 	exchange                                                  *RekeyExchange
 	runtime                                                   *SessionRuntime
 	failure                                                   error
+	transportFailure                                          bool
 	methodTails                                               uint64
 	cleaning, cleaned, retired                                bool
 	receivePool                                               *ReceivePool
@@ -323,47 +337,18 @@ func (a *OpenAdmission) freeSlot(ingress bool, rejection bool) int {
 		start, end = end, int(a.limits.Terminal)
 	}
 	for i := start; i < end; i++ {
-		if a.slots[i].phase == openFree {
+		if a.slots[i].phase == openFree && a.slots[i].protectionGeneration == 0 {
 			return i
 		}
 	}
 	return -1
-}
-func (a *OpenAdmission) unusedProtection(role protocolv4.Direction, class StreamClass) uint32 {
-	var reserved uint32
-	for r := range 2 {
-		for c := range 3 {
-			used := a.byOpener[r][c]
-			if r == int(role) && c == int(class) {
-				used++
-			}
-			if used < a.limits.Protected[r][c] {
-				reserved += a.limits.Protected[r][c] - used
-			}
-		}
-	}
-	return reserved
 }
 func (a *OpenAdmission) positiveAvailable(role protocolv4.Direction, class StreamClass) bool {
 	return a.positiveAvailableWithProof(role, class, false)
 }
 
 func (a *OpenAdmission) positiveAvailableWithProof(role protocolv4.Direction, class StreamClass, ownsProof bool) bool {
-	if class > ManagementStream {
-		return false
-	}
-	proofs := a.positiveProofs
-	if ownsProof {
-		if proofs == 0 {
-			return false
-		}
-		proofs-- // Transfer this OPEN's original proof without reserving another.
-	}
-	reserved := a.unusedProtection(role, class)
-	return a.active < a.limits.Active && reserved <= a.limits.Active-a.active-1 &&
-		a.byOpener[role][class] < a.limits.PerOpener[role][class] && a.byOpener[0][class]+a.byOpener[1][class] < a.limits.PerClass[class] &&
-		a.lifetime[role][class] < a.limits.Lifetime[role][class] &&
-		proofs+reserved < a.limits.Terminal-a.limits.RejectionReserve
+	return a.positiveAvailableProtected(role, class, ownsProof, -1)
 }
 
 func (a *OpenAdmission) businessConflict() bool {
@@ -424,6 +409,7 @@ func (a *OpenAdmission) Hold(record *ReceivedRecord, carrier *CarrierAssociation
 	}
 	s := &a.slots[i]
 	*s = openSlot{scope: frame.Header.Scope, phase: openPending, carrier: carrier, incoming: record.incoming, header: frame.Header, deadline: deadline, peerLimit: limit, metadataStart: start, metadataSize: len(kind) + len(metadata), kindSize: len(kind)}
+	s.kindDigest = sha256.Sum256([]byte(kind))
 	copy(s.digest[:], digest)
 	carrier.bound, carrier.scope = a, s.scope
 	a.insert(s.scope, i)
@@ -477,6 +463,14 @@ func (a *OpenAdmission) CarrierClosed(h OpenHandle) error {
 	defer a.mu.Unlock()
 	s, err := a.slot(h)
 	if err != nil {
+		// A shared flow can finish its original logical association during
+		// the last owner's Release, after RETIRE_ACK. Collection removes its
+		// detail only after carrier closure and every actual tail complete.
+		// The original stable bit plus an absent slot therefore proves this
+		// repeated report is complete; foreign or unretired handles do not.
+		if !a.closed && h.owner == a && a.isStable(h.scope) {
+			return nil
+		}
 		return err
 	}
 	if s.carrierDone {
@@ -514,6 +508,7 @@ func (a *OpenAdmission) collect(s *openSlot) {
 		a.notifyCleanup()
 		return
 	}
+	a.compactRecentFlow(s)
 	if s.phase != openHeld || !s.carrierDone || s.activeCharged || s.barrierReferences != 0 || s.retirementReferences != 0 {
 		return
 	}
@@ -540,7 +535,7 @@ func (a *OpenAdmission) collect(s *openSlot) {
 		a.positiveProofs--
 	}
 	a.remove(s.scope)
-	*s = openSlot{}
+	a.resetSlotLocked(s)
 	a.notifyDecisionOpportunityLocked()
 }
 

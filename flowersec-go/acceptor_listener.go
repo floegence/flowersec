@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/quicbase"
-	rawquic "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/rawquicv3"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/webtransportv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/quicbase"
+	rawquic "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/rawquicv3"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/webtransportv3"
 )
 
 type listenerLifecycle interface {
@@ -192,12 +192,13 @@ func (listener *webTransportAcceptorListener) serve(ctx context.Context, accept 
 	packet := listener.packet
 	listener.mu.Unlock()
 	listener.server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodConnect || request.URL.Path != pathForAcceptorWebTransport(listener.path) || !listener.checkOrigin(request) {
+		if request.Method != http.MethodConnect || !webTransportAcceptorPath(listener.path, request.URL.Path) || !listener.checkOrigin(request) {
 			http.Error(writer, "request rejected", http.StatusForbidden)
 			return
 		}
 		native, upgradeErr := listener.server.Upgrade(writer, request)
 		if upgradeErr != nil {
+			http.Error(writer, "native carrier rejected", http.StatusBadRequest)
 			return
 		}
 		_ = accept(ctx, native)
@@ -283,4 +284,8 @@ func pathForAcceptorWebTransport(path carrier.Path) string {
 		return carrierwt.PathTunnel
 	}
 	return carrierwt.PathDirect
+}
+
+func webTransportAcceptorPath(path carrier.Path, actual string) bool {
+	return actual == pathForAcceptorWebTransport(path)
 }

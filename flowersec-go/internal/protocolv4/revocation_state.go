@@ -6,8 +6,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // RevocationWorkspace owns one complete State, its decoder and two bounded
@@ -309,6 +309,13 @@ func (s *NamespaceState) CheckCredential(credential *SignedMap, permission Issue
 }
 
 func (s *NamespaceState) CheckDetachedCredential(credential *Credential, permission IssuerPermission, now timev4.Interval) (facts CredentialStateFacts, err error) {
+	return s.checkDetachedCredential(credential, permission, now, true)
+}
+
+// A preparation may inspect known denials under a stale Head. Passing false
+// cannot authorize a credential; the caller must independently prove freshness
+// before any acquisition, spend or publication.
+func (s *NamespaceState) checkDetachedCredential(credential *Credential, permission IssuerPermission, now timev4.Interval, headTime bool) (facts CredentialStateFacts, err error) {
 	if err := credential.checkPermission(permission); err != nil {
 		return facts, err
 	}
@@ -319,9 +326,6 @@ func (s *NamespaceState) CheckDetachedCredential(credential *Credential, permiss
 		return facts, CBORFailure("revocation_state_owner")
 	}
 	if err := w.reservation.Check(); err != nil {
-		return facts, err
-	}
-	if err := s.head.CheckTime(now); err != nil {
 		return facts, err
 	}
 	scope := credential.scope
@@ -337,12 +341,6 @@ func (s *NamespaceState) CheckDetachedCredential(credential *Credential, permiss
 	if issued < cohort.start || issued >= cohort.end || facts.HardDeadlineMS <= issued || facts.HardDeadlineMS > cohort.impact {
 		return facts, CBORFailure("revocation_credential_impact")
 	}
-	if !now.ValidBefore(facts.HardDeadlineMS) {
-		return facts, timev4.ErrExpired
-	}
-	if err := now.LowerBound(issued, true); err != nil {
-		return facts, err
-	}
 	state := s.document.Root()
 	if searchRevocation(state.Named("RevocationState", "revoked_issuers"), "RevokedIssuerEntry", []string{"issuer_key_id"}, scope.Issuer[:]).valid() {
 		return facts, CBORFailure("revocation_issuer_rejected")
@@ -355,6 +353,17 @@ func (s *NamespaceState) CheckDetachedCredential(credential *Credential, permiss
 			return facts, CBORFailure("revocation_lease_rejected")
 		}
 	}
+	if headTime {
+		if err := s.head.CheckTime(now); err != nil {
+			return facts, err
+		}
+	}
+	if !now.ValidBefore(facts.HardDeadlineMS) {
+		return facts, timev4.ErrExpired
+	}
+	if err := now.LowerBound(issued, true); err != nil {
+		return facts, err
+	}
 	return facts, nil
 }
 
@@ -363,6 +372,14 @@ func (s *NamespaceState) CheckDetachedCredential(credential *Credential, permiss
 // a Head signer cannot supply it. This checks content, not atomic installation.
 // Callers must release all real old references before reclaiming old backing.
 func (s *NamespaceState) CheckSuccessor(next *NamespaceState, retired [][16]byte) error {
+	return s.checkSuccessor(next, retired, false)
+}
+
+func (s *NamespaceState) checkReplacementSuccessor(next *NamespaceState, retired [][16]byte) error {
+	return s.checkSuccessor(next, retired, true)
+}
+
+func (s *NamespaceState) checkSuccessor(next *NamespaceState, retired [][16]byte, replacement bool) error {
 	if next == nil || next == s || next.workspace == s.workspace {
 		return CBORFailure("revocation_state_owner")
 	}
@@ -380,8 +397,18 @@ func (s *NamespaceState) CheckSuccessor(next *NamespaceState, retired [][16]byte
 	if err := w.reservation.CheckSameEnvironment(nw.reservation); err != nil {
 		return err
 	}
-	if w.current != s || nw.current != next || w.rules != nw.rules || s.head.schema != next.head.schema || s.head.generation != next.head.generation || next.head.sequence <= s.head.sequence || len(retired) > int(w.rules.limits["max_revoked_issuers"]) {
+	sameMapping := w.rules == nw.rules
+	if replacement {
+		sameMapping = nw.rules.Matches(w.rules.capacity, w.rules.publication)
+	}
+	if w.current != s || nw.current != next || !sameMapping || s.head.schema != next.head.schema || s.head.generation != next.head.generation || next.head.sequence < s.head.sequence || !replacement && next.head.sequence == s.head.sequence || len(retired) > int(w.rules.limits["max_revoked_issuers"]) {
 		return CBORFailure("revocation_state_owner")
+	}
+	if next.head.sequence == s.head.sequence {
+		if !bytes.Equal(s.head.bytes, next.head.bytes) || !bytes.Equal(s.document.Bytes(), next.document.Bytes()) {
+			return CBORFailure("revocation_head_equivocation")
+		}
+		return nil
 	}
 	for i := 1; i < len(retired); i++ {
 		if bytes.Compare(retired[i-1][:], retired[i][:]) >= 0 {

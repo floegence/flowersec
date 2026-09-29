@@ -59,6 +59,7 @@ describe("transport v3 server admission", () => {
   });
 
   test("resolves application handlers only after artifact binding and expiry validation", async () => {
+    if (directArtifact.path.kind !== "direct") throw new Error("direct artifact required");
     const resolveRPCRouter = vi.fn(() => {
       throw new Error("handler resolver must not run");
     });
@@ -149,9 +150,9 @@ describe("transport v3 server admission", () => {
   });
 
   test.each([
-    ["invalid magic[0]", (header: Uint8Array) => { header[0] ^= 0xff; }],
-    ["invalid magic[1]", (header: Uint8Array) => { header[1] ^= 0xff; }],
-    ["invalid magic[2]", (header: Uint8Array) => { header[2] ^= 0xff; }],
+    ["invalid magic[0]", (header: Uint8Array) => { flipHeaderByte(header, 0); }],
+    ["invalid magic[1]", (header: Uint8Array) => { flipHeaderByte(header, 1); }],
+    ["invalid magic[2]", (header: Uint8Array) => { flipHeaderByte(header, 2); }],
     ["v2 magic", (header: Uint8Array) => { header[3] = 0x32; }],
     ["v2 version", (header: Uint8Array) => { header[4] = 2; }],
     ["invalid path", (header: Uint8Array) => { header[5] = 0; }],
@@ -278,6 +279,12 @@ describe("transport v3 server admission", () => {
     await expect(accepting).rejects.toThrow("accept canceled");
   });
 });
+
+function flipHeaderByte(header: Uint8Array, index: number): void {
+  const value = header[index];
+  if (value === undefined) throw new Error("admission header fixture is too short");
+  header[index] = value ^ 0xff;
+}
 
 function validReceived(artifact: ArtifactV3): ReceivedSessionAdmissionV3 {
   const chosen = artifact.path.candidates.find(({ carrier }) => carrier === "websocket");

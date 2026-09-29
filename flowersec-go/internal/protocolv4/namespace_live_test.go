@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type testNamespaceTrust struct {
@@ -59,11 +59,15 @@ func namespaceClockFixture(t *testing.T, f *namespaceFixture, realClock bool) (*
 }
 
 func liveNamespaceFixture(t *testing.T, f *namespaceFixture, duration uint64, realClock bool) (*LiveNamespace, *atomic.Uint64, *testNamespaceTrust) {
+	return liveNamespaceContextFixture(t, f, duration, realClock, context.Background())
+}
+
+func liveNamespaceContextFixture(t *testing.T, f *namespaceFixture, duration uint64, realClock bool, ctx context.Context) (*LiveNamespace, *atomic.Uint64, *testNamespaceTrust) {
 	t.Helper()
 	clock, tick := namespaceClockFixture(t, f, realClock)
 	head, content := f.bindHead(t, 1, [2]uint64{})
 	trust := &testNamespaceTrust{}
-	n, err := NewBootstrappedNamespace(context.Background(), clock, trust, NamespaceBootstrap{Rules: f.rules, Head: head, State: content}, duration, 2, 8, f.namespaceAllocation(t))
+	n, err := NewBootstrappedNamespace(ctx, clock, trust, NamespaceBootstrap{Rules: f.rules, Head: head, State: content}, duration, 2, 8, f.namespaceAllocation(t))
 	if err != nil {
 		t.Fatal(err)
 	}

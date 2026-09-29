@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 )
 
 var errInvalidTunnelColdWorkload = errors.New("invalid tunnel cold-connect workload")

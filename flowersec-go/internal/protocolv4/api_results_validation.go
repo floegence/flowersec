@@ -203,6 +203,14 @@ func (status V4CleanupStatus) Validate() error {
 	return nil
 }
 
+// Validate preserves the object's lifecycle independently of its cleanup wait.
+func (result V4LifecycleResult) Validate() error {
+	if !ValidLifecycleResult(result) {
+		return ErrInvalidAPIResult
+	}
+	return nil
+}
+
 // Validate checks the bounded write progress projection independently from the
 // actual provider tail. Accepted bytes may never exceed the request, and a
 // terminal reason is only present after the operation reaches terminal phase.

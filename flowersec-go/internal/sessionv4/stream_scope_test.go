@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type scopeFixture struct {
@@ -36,10 +36,10 @@ func newScopeFixtureResources(t *testing.T, timeout uint64, extra ...resourcev4.
 	e := &ApplicationExecutor{config: config}
 	scopeCharge, _ := StreamScopeCharge(f.options)
 	executorCharge, _ := ApplicationExecutorCharge(config)
-	// One additional reference position admits the executor's input borrow;
-	// the existing reservation is charged only once.
+	// The scope owns its fixed dependency aliases in addition to the
+	// executor's input borrow; those aliases consume no new reservations.
 	extra = append(extra, scopeCharge, executorCharge, StreamOwnershipCharge(), e.TaskCharge(), resourcev4.Vector{}, resourcev4.Vector{})
-	f.serviceFixture = newServiceFixtureResources(t, 1, [3]uint32{1}, 8, 2, testAuthorization{}, true, extra)
+	f.serviceFixture = newServiceFixtureResources(t, 1, [3]uint32{1}, 8, 2, testAuthorization{}, true, extra, dependencyFloorCapacity)
 	var err error
 	f.executor, err = NewApplicationExecutor(config, f.reserve(t, executorCharge))
 	if err != nil {

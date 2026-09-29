@@ -6,11 +6,11 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // RPCChannelClass is local scheduling policy. It is never supplied by a peer
@@ -56,7 +56,7 @@ func (r *RPCServices) rpcPublisherLocked() *rpcv4.Publisher {
 }
 
 func (r *RPCServices) reserveChannelLocked(parent context.Context, opener protocolv4.Direction, class RPCChannelClass, local bool) (*rpcChannelOpening, error) {
-	if r.closed || r.retired {
+	if r.closed || r.retired || r.draining.Load() {
 		return nil, cryptov4.ErrClosed
 	}
 	if r.runtimeContext == nil || r.bootstrap == nil || r.dispatch == nil {
@@ -133,7 +133,7 @@ func (r *RPCServices) OpenChannel(ctx context.Context, class RPCChannelClass, de
 		return nil, err
 	}
 	defer func() { go job.run() }()
-	job.handle, _, err = a.OpenLocal(job.context, InternalStream, r.bootstrap.spec.Kind, nil, &CarrierAssociation{shared: a.sharedIngress}, job.allocation.stream.reservation, deadline)
+	job.handle, _, err = r.openInternal(job.context, InternalStream, r.bootstrap.spec.Kind, job.allocation, deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +290,7 @@ func (job *rpcChannelOpening) cleanup() error {
 		} else {
 			err = a.CleanupStream(context.Background(), job.handle)
 		}
-		if err == nil {
+		if err == nil && job.services.native == nil {
 			err = a.CarrierClosed(job.handle)
 		}
 		if !errors.Is(err, ErrOpenPending) && !errors.Is(err, ErrTerminal) {

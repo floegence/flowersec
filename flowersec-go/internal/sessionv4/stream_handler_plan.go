@@ -6,11 +6,13 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/unicode151"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/unicode151"
 )
 
 var (
@@ -24,13 +26,23 @@ var (
 // Metadata is the authenticated preparation's borrowed immutable byte snapshot;
 // only Handler receives the original accepted Stream capability.
 type RawStreamHandlerConfig struct {
-	Resume        *ResumeStreamBinding
-	Messages      *MessageStreamHandlerConfig
-	Kind          string
-	Slots         uint32
-	WorkClass     ApplicationWorkClass
-	AuthorizeOpen func(context.Context, any, []byte) error
-	Handler       func(context.Context, any, []byte, *StreamOwnership) error
+	ControlledHTTP      *ControlledHTTPService
+	Delegated           *DelegatedStreamService
+	HTTP                *DelegatedHTTPService
+	Resume              *ResumeStreamBinding
+	Messages            *MessageStreamHandlerConfig
+	Kind                string
+	Slots               uint32
+	NormalTerminationMS uint64
+	WorkClass           ApplicationWorkClass
+	AuthorizeOpen       func(context.Context, any, []byte) error
+	// MetadataContract enables the fixed pre-accepted JSON projection. The
+	// original metadata bytes remain the only handler input and are never
+	// re-decoded after acceptance.
+	MetadataContract    *protocolv4.RawStreamMetadataContract
+	AuthorizeProjection func(context.Context, any, map[string]any) error
+	HandlerProjection   func(context.Context, any, map[string]any, *StreamOwnership) error
+	Handler             func(context.Context, any, []byte, *StreamOwnership) error
 }
 
 // StreamHandlerPlanConfig freezes the complete raw registration set before
@@ -53,8 +65,9 @@ type streamHandlerCaptureSlot struct {
 	generation                                             uint64
 	registration                                           int
 	used, busy, releasing, authorized, authorizationCalled bool
-	accepted, handlerCalled                                bool
+	accepted, handlerCalled, setupCalled                   bool
 	failure                                                error
+	projection                                             map[string]any
 }
 
 // StreamHandlerPlan owns one immutable registration generation. It adds no
@@ -116,8 +129,64 @@ func StreamHandlerPlanCharge(config StreamHandlerPlanConfig) (resourcev4.Vector,
 	}
 	var slots uint64
 	for i, handler := range config.Handlers {
-		if handler.Slots == 0 || handler.WorkClass > ApplicationResident || !canonicalStreamHandlerKind(handler.Kind) {
+		if handler.Slots == 0 || handler.NormalTerminationMS > 60000 || handler.WorkClass > ApplicationResident || !canonicalStreamHandlerKind(handler.Kind) {
 			return resourcev4.Vector{}, cryptov4.ErrConfiguration
+		}
+		if (handler.AuthorizeProjection != nil || handler.HandlerProjection != nil) && handler.MetadataContract == nil {
+			return resourcev4.Vector{}, cryptov4.ErrConfiguration
+		}
+		if handler.MetadataContract != nil {
+			contract, err := handler.MetadataContract.Capture()
+			if err != nil {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
+			if !add(uint64(len(contract.ContractID) + len(contract.Namespace) + len(contract.Codec))) {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
+			for _, field := range contract.Fields {
+				if !add(uint64(len(field.Name))) {
+					return resourcev4.Vector{}, cryptov4.ErrConfiguration
+				}
+			}
+			if !add(uint64(contract.MaxDecodedBytes)) {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
+		}
+		if handler.HTTP != nil {
+			if handler.NormalTerminationMS != 0 && handler.NormalTerminationMS != handler.HTTP.Options.Connection.FinishTimeoutMS {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
+			if handler.ControlledHTTP != nil || handler.Delegated != nil || handler.Handler != nil || handler.Messages != nil || handler.Resume != nil || handler.HTTP.Setup == nil || handler.HTTP.Options.Connection.HardDeadline != nil {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
+			if _, err := HTTPStreamCharge(handler.HTTP.Options); err != nil {
+				return resourcev4.Vector{}, err
+			}
+			if !add(uint64(unsafe.Sizeof(DelegatedHTTPService{}))) {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
+		}
+		if service := handler.ControlledHTTP; service != nil {
+			if handler.HTTP != nil || handler.Delegated != nil || handler.Handler != nil || handler.Messages != nil || handler.Resume != nil || service.Setup == nil || service.Options.Connection.HardDeadline != nil || service.RequestTimeoutMS == 0 || service.RequestTimeoutMS > uint64(math.MaxInt64/time.Millisecond) || service.RequestClass > ApplicationResident || handler.NormalTerminationMS != 0 && handler.NormalTerminationMS != service.Options.Connection.FinishTimeoutMS {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
+			if _, err := controlledHTTPStreamCharge(service.Options, service.Upgrade); err != nil {
+				return resourcev4.Vector{}, err
+			}
+			if !add(uint64(unsafe.Sizeof(ControlledHTTPService{})) + uint64(unsafe.Sizeof(ControlledHTTPUpgradeConfig{}))) {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
+		}
+		if handler.Delegated != nil {
+			if handler.Handler != nil || handler.Messages != nil || handler.Resume != nil || handler.Delegated.Setup == nil || handler.Delegated.Options.Connection.HardDeadline != nil || handler.NormalTerminationMS != 0 && handler.NormalTerminationMS != handler.Delegated.Options.Connection.FinishTimeoutMS {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
+			if _, err := DelegatedStreamCharge(handler.Delegated.Options); err != nil {
+				return resourcev4.Vector{}, err
+			}
+			if !add(uint64(unsafe.Sizeof(DelegatedStreamService{}))) {
+				return resourcev4.Vector{}, cryptov4.ErrConfiguration
+			}
 		}
 		if binding := handler.Resume; binding != nil {
 			if handler.Messages != nil || binding.Kind != handler.Kind || !executionIdentityText(binding.Namespace) || binding.Type == 0 || binding.ContractDigest == ([32]byte{}) {
@@ -128,7 +197,7 @@ func StreamHandlerPlanCharge(config StreamHandlerPlanConfig) (resourcev4.Vector,
 			}
 		}
 		if handler.Messages == nil {
-			if handler.Handler == nil {
+			if handler.Handler == nil && handler.HandlerProjection == nil && handler.HTTP == nil && handler.Delegated == nil && handler.ControlledHTTP == nil {
 				return resourcev4.Vector{}, cryptov4.ErrConfiguration
 			}
 		} else {
@@ -199,6 +268,27 @@ func NewStreamHandlerPlan(config StreamHandlerPlanConfig, executor *ApplicationE
 	start := 0
 	for i, handler := range config.Handlers {
 		handler.Kind = strings.Clone(handler.Kind)
+		if handler.MetadataContract != nil {
+			contract := *handler.MetadataContract
+			contract.Fields = append([]protocolv4.RawStreamMetadataField(nil), contract.Fields...)
+			handler.MetadataContract = &contract
+		}
+		if handler.ControlledHTTP != nil {
+			copy := *handler.ControlledHTTP
+			if copy.Upgrade != nil {
+				upgrade := *copy.Upgrade
+				copy.Upgrade = &upgrade
+			}
+			handler.ControlledHTTP = &copy
+		}
+		if handler.Delegated != nil {
+			copy := *handler.Delegated
+			handler.Delegated = &copy
+		}
+		if handler.HTTP != nil {
+			copy := *handler.HTTP
+			handler.HTTP = &copy
+		}
 		if handler.Resume != nil {
 			binding := *handler.Resume
 			binding.Kind, binding.Namespace = strings.Clone(binding.Kind), strings.Clone(binding.Namespace)
@@ -283,7 +373,7 @@ func (p *StreamHandlerPlan) Capture(kind string) (StreamHandlerCapture, error) {
 			s := &p.slots[i]
 			if !s.used && s.generation != math.MaxUint64 {
 				s.generation++
-				s.used, s.authorized = true, registration.config.AuthorizeOpen == nil
+				s.used, s.authorized = true, registration.config.AuthorizeOpen == nil && registration.config.AuthorizeProjection == nil && registration.config.MetadataContract == nil
 				p.active++
 				return StreamHandlerCapture{p, i, s.generation}, nil
 			}
@@ -395,10 +485,27 @@ func (c StreamHandlerCapture) Authorize(ctx context.Context, metadata []byte) (e
 		binding = nil
 		c.finish(false, &err)
 	}()
-	if registration.AuthorizeOpen != nil {
+	var projection map[string]any
+	if registration.MetadataContract != nil {
+		projection, err = registration.MetadataContract.Project(metadata)
+		if err != nil {
+			return err
+		}
+	}
+	if registration.AuthorizeProjection != nil {
+		err = registration.AuthorizeProjection(ctx, binding, projection)
+	} else if registration.AuthorizeOpen != nil {
 		err = registration.AuthorizeOpen(ctx, binding, metadata)
 	} else {
 		err = nil
+	}
+	if err == nil && registration.MetadataContract != nil {
+		p := c.plan
+		p.mu.Lock()
+		if s, slotErr := c.slotLocked(); slotErr == nil {
+			s.projection = cloneRawMetadataProjection(projection)
+		}
+		p.mu.Unlock()
 	}
 	if err == nil {
 		err = ctx.Err()
@@ -427,6 +534,10 @@ func (c StreamHandlerCapture) Accept() error {
 		return s.failure
 	}
 	if s.busy || !s.authorized || s.accepted {
+		return cryptov4.ErrTransition
+	}
+	registration := p.registrations[s.registration].config
+	if (registration.HTTP != nil || registration.Delegated != nil) && !s.setupCalled {
 		return cryptov4.ErrTransition
 	}
 	if err := p.checkResourcesLocked(); err != nil {
@@ -458,6 +569,7 @@ func (c StreamHandlerCapture) Handle(ctx context.Context, metadata []byte, strea
 	if err = stream.enterCallback(); err != nil {
 		return err
 	}
+	projection := c.projectionValues()
 	if err = ctx.Err(); err != nil {
 		return err
 	}
@@ -471,10 +583,34 @@ func (c StreamHandlerCapture) Handle(ctx context.Context, metadata []byte, strea
 			return ErrStreamOwned
 		}
 		err = registration.Messages.Handler(ctx, binding, metadata, messages)
+	} else if registration.HandlerProjection != nil {
+		err = registration.HandlerProjection(ctx, binding, projection, stream)
 	} else {
 		err = registration.Handler(ctx, binding, metadata, stream)
 	}
 	return err
+}
+
+func cloneRawMetadataProjection(values map[string]any) map[string]any {
+	if values == nil {
+		return nil
+	}
+	copy := make(map[string]any, len(values))
+	for key, value := range values {
+		copy[key] = value
+	}
+	return copy
+}
+
+func (c StreamHandlerCapture) projectionValues() map[string]any {
+	p := c.plan
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s, err := c.slotLocked()
+	if err != nil {
+		return nil
+	}
+	return cloneRawMetadataProjection(s.projection)
 }
 
 func (c StreamHandlerCapture) finish(handling bool, err *error) {
@@ -488,6 +624,9 @@ func (c StreamHandlerCapture) finish(handling bool, err *error) {
 			*err = resourcev4.ErrClosed
 		}
 		s.authorized = *err == nil
+		if *err != nil {
+			s.projection = nil
+		}
 	}
 	if s.failure == nil {
 		s.failure = *err

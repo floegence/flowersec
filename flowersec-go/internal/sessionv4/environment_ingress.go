@@ -4,9 +4,9 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // AcceptedIngressFactory is the trusted original listener/upgrade adapter.
@@ -89,6 +89,7 @@ func (e *Environment) acceptIngressOwned(ctx context.Context, c AcceptedIngressC
 		}
 	}
 	if slot < 0 {
+		e.observePositionRejection()
 		e.mu.Unlock()
 		return nil, cryptov4.ErrCapacity
 	}
@@ -134,6 +135,7 @@ func (e *Environment) acceptIngressOwned(ctx context.Context, c AcceptedIngressC
 	s.preparationOwner, s.preparationDependencies = owned, shared
 	s.preparationDeadline = i.Config.Initial.Deadline
 	e.positions[slot], e.active = s, e.active+1
+	s.beginDiagnostics()
 	if ingress.group != nil {
 		attached, attachErr := ingress.attach(s)
 		if attached {

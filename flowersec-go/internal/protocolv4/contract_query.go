@@ -15,6 +15,31 @@ type ContractQueryTarget struct {
 	HasWanted, HasKnown bool
 }
 
+// ContractQueryKnown is sealed to validated canonical owners in this package.
+// Its lifetime is held by the enclosing query owner, not by a peer digest or
+// an application assertion. Implementations expose copies, never mutable bytes.
+type ContractQueryKnown interface {
+	Policy() (ServiceContractPolicy, error)
+	CanonicalSize() (int, error)
+	CopyCanonicalRange([]byte, int) (int, error)
+	checkQueryDestination([]byte) error
+}
+
+func (c *ServiceContract) checkQueryDestination(dst []byte) error {
+	if c == nil || c.codec == nil {
+		return CBORFailure("document_released")
+	}
+	c.codec.mu.Lock()
+	defer c.codec.mu.Unlock()
+	if c.codec.current != c {
+		return CBORFailure("document_released")
+	}
+	if queryBuffersOverlap(c.document.Bytes(), dst) {
+		return CBORFailure("query_output_alias")
+	}
+	return nil
+}
+
 // ContractQueryTargets is a detached fixed-size request projection. It proves
 // canonical byte structure and explicit target membership only, not caller
 // authorization, a source identity, a known-body lease or admission rights.
@@ -92,7 +117,7 @@ func (c *ContractQueryCodec) decodeTargetsLocked(wire []byte) (ContractQueryTarg
 // CheckKnown requires actual still-owned immutable canonical bodies for every
 // known selector. The original query owner must keep those exact bodies alive
 // until completion; a successful check is not a replacement ownership token.
-func (q ContractQueryTargets) CheckKnown(known []*ServiceContract) error {
+func (q ContractQueryTargets) CheckKnown(known []ContractQueryKnown) error {
 	if q.count == 0 || len(known) != int(q.count) {
 		return CBORFailure("query_known_count")
 	}
@@ -127,7 +152,7 @@ func (q ContractQueryTargets) CheckKnown(known []*ServiceContract) error {
 // EncodeTargets validates the local fixed target list and original known bodies
 // before returning canonical bytes in caller-owned admitted storage. Digests
 // and names are captured by value; fields/IDs use the same shared registry.
-func (c *ContractQueryCodec) EncodeTargets(dst []byte, targets []ContractQueryTarget, known []*ServiceContract) (int, ContractQueryTargets, error) {
+func (c *ContractQueryCodec) EncodeTargets(dst []byte, targets []ContractQueryTarget, known []ContractQueryKnown) (int, ContractQueryTargets, error) {
 	if c == nil || len(targets) < 1 || len(targets) > 8 {
 		return 0, ContractQueryTargets{}, CBORFailure("query_target_count")
 	}
@@ -187,6 +212,13 @@ func (c *ServiceContract) CheckOffer(d *Decoder, wire []byte, maxWindowMS uint64
 	policy, err := c.Policy()
 	if err != nil {
 		return AdmissionOfferBounds{}, err
+	}
+	return checkContractOffer(policy, d, wire, maxWindowMS)
+}
+
+func checkContractOffer(policy ServiceContractPolicy, d *Decoder, wire []byte, maxWindowMS uint64) (AdmissionOfferBounds, error) {
+	if d == nil || maxWindowMS == 0 {
+		return AdmissionOfferBounds{}, CBORFailure("offer_window")
 	}
 	if policy.Semantics != 1 {
 		return AdmissionOfferBounds{}, CBORFailure("offer_presence")

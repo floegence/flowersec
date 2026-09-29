@@ -3,8 +3,8 @@ package rpcv4
 import (
 	"encoding/binary"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // NotifyPreparation shares the original request engine without any response
@@ -15,7 +15,7 @@ func PrepareNotify(route ContractRoute, payload []byte, options NotifyPreparatio
 	if len(payload) > 1048576 || options.ResponseLimitBytes != 0 {
 		return nil, ErrConfiguration
 	}
-	p, err := beginRequestPreparation(route, uint32(len(payload)), options.UnaryPreparation, 2, reservation, routeReservation)
+	p, err := BeginNotifyPreparation(route, uint32(len(payload)), options, reservation, routeReservation)
 	if err != nil {
 		return nil, err
 	}
@@ -24,6 +24,15 @@ func PrepareNotify(route ContractRoute, payload []byte, options NotifyPreparatio
 		return nil, err
 	}
 	return p, nil
+}
+
+// BeginNotifyPreparation fixes the shape, offer and execution identity before
+// the original encoder. FinalizePayload installs its actual output once.
+func BeginNotifyPreparation(route ContractRoute, payloadLimit uint32, options NotifyPreparation, reservation, routeReservation resourcev4.Reference) (*PreparedRequest, error) {
+	if payloadLimit > 1048576 || options.ResponseLimitBytes != 0 {
+		return nil, ErrConfiguration
+	}
+	return beginRequestPreparation(route, payloadLimit, options.UnaryPreparation, 2, reservation, routeReservation)
 }
 
 // WithNotifyPublication validates the original fixed request before each

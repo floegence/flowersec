@@ -8,11 +8,11 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/tlspolicy"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // WebSocketAcceptedPolicy is the direct network policy for an original native

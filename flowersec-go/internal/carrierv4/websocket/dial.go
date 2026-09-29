@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/numeric"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/numeric"
 )
 
 func checkDialPlatform(address netip.AddrPort) error { return numeric.CheckPlatform(address) }

@@ -1,6 +1,9 @@
 package protocolv4
 
-import "bytes"
+import (
+	"bytes"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
+)
 
 // lockForPublication returns with the original namespace (when installed) and
 // trust gates held in that order. Namespace attachment can change nil to one
@@ -71,9 +74,17 @@ func (t *NamespaceTrustStore) checkPermissionExtensions(next *trustConfiguration
 // present, including permissions omitted from a newer trust configuration.
 // Neither Head assertions nor shorter current permissions can replace them.
 func (t *NamespaceTrustStore) StateHistory(state *NamespaceState) error {
+	sample, err := t.sampleCurrent()
+	if err != nil {
+		return err
+	}
+	return t.stateHistoryAt(state, sample)
+}
+
+func (t *NamespaceTrustStore) stateHistoryAt(state *NamespaceState, sample timev4.Sample) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if err := t.checkCurrentLocked(); err != nil {
+	if err := t.checkCurrentLockedAt(sample); err != nil {
 		return err
 	}
 	return t.stateHistoryLocked(state)

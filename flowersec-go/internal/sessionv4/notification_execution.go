@@ -4,10 +4,10 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // NotificationRequest carries the original authenticated context and one
@@ -26,18 +26,25 @@ type notificationExecutionAccess struct {
 }
 
 func (a *notificationExecutionAccess) WithExecutionAccess(target rpcv4.ExecutionTarget, action func(resourcev4.Reference) error) error {
+	if action == nil {
+		return ErrApplicationAuthorization
+	}
+	return a.withExecutionAccessSample(target, func(ref resourcev4.Reference, _ timev4.Sample) error { return action(ref) })
+}
+
+func (a *notificationExecutionAccess) withExecutionAccessSample(target rpcv4.ExecutionTarget, action func(resourcev4.Reference, timev4.Sample) error) error {
 	if a == nil || a.dispatcher == nil || action == nil || target.Service != a.service || target.Caller != a.caller {
 		return ErrApplicationAuthorization
 	}
 	d := a.dispatcher
-	return d.withAuthority(a.method, func(m notificationMethod) error {
+	return d.withAuthoritySample(a.method, func(m notificationMethod, sample timev4.Sample) error {
 		// withAuthority holds the original lease and dispatcher gates throughout
 		// this finite action; revocation and close cannot overtake registration.
 		identity, err := d.plan.lease.executionIdentityLocked()
 		if err != nil || identity.Tenant != a.service.Tenant || identity.Audience != a.service.Audience || identity.Caller != a.caller || m.policy.Namespace != a.service.Namespace || m.method.ExecutionHandler == nil {
 			return ErrApplicationAuthorization
 		}
-		return action(d.reservation)
+		return action(d.reservation, sample)
 	})
 }
 
@@ -81,6 +88,9 @@ func (d *NotificationDispatch) admitExecution(message *rpcv4.NotifyMessage, meth
 		return nil
 	})
 	if err != nil {
+		return false, err
+	}
+	if err := registration.services.requiredReady(context.Background()); err != nil {
 		return false, err
 	}
 	binding, err := registry.Lookup(rpcv4.ServiceAuthority{Tenant: access.service.Tenant, Audience: access.service.Audience, Namespace: access.service.Namespace})
@@ -185,18 +195,18 @@ func (i *notificationExecution) run() {
 	}
 	var request NotificationRequest
 	d := i.dispatch
-	err = d.withAuthority(i.method.Method, func(notificationMethod) error {
+	err = d.withAuthoritySample(i.method.Method, func(_ notificationMethod, sample timev4.Sample) error {
 		if i.ctx.Err() != nil {
 			return rpcv4.ErrClosed
 		}
-		if err := i.deadline.Check(); err != nil {
+		if err := i.deadline.CheckAt(sample); err != nil {
 			return err
 		}
 		// Capture each eligible observer's isolated bytes before the business
 		// handler can mutate its input. A later subscription gets no old event.
 		for _, token := range d.tokens {
 			if token != nil && !token.closed && token.method.method.Method == i.method.Method && token.subscription.identity <= i.subscriberBoundary {
-				if err := token.enqueueLocked(i.deadline, payload); err != nil {
+				if err := token.enqueueLocked(i.deadline, payload, sample); err != nil {
 					token.gapLocked("dropped_budget")
 				}
 			}
@@ -212,6 +222,9 @@ func (i *notificationExecution) run() {
 		return
 	}
 	defer exit()
+	if attachInvocationServices(callCtx, i.method.services) != nil {
+		return
+	}
 	if i.method.ExecutionHandler(callCtx, request) == nil {
 		_ = i.work.Finish(0, nil)
 	}

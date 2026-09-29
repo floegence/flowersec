@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // ObserveAcceptedEndpoint reads only original HTTP/TLS and socket facts. Its
@@ -134,6 +134,16 @@ func (m *Messages) CheckAcceptedRoute(artifact *protocolv4.SignedMap, index uint
 	}
 	if err = artifact.CheckAcceptedWebSocket(index, endpoint, policy); err != nil {
 		return err
+	}
+	if policy.BindingMode == 0 {
+		actual, err := m.ExportBinding(session.ArtifactDigest)
+		defer clear(actual[:])
+		if err != nil {
+			return err
+		}
+		if err = protocolv4.CheckCarrierExporter(policy, actual); err != nil {
+			return err
+		}
 	}
 	return check(endpoint, artifact, index, policy)
 }

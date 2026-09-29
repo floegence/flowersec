@@ -1,6 +1,6 @@
 package protocolv4
 
-import "github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+import "github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 
 // MatchOriginal compares the retained original Artifact, profile, attempt and
 // complete selected route. The Artifact digest covers the original signed
@@ -61,6 +61,12 @@ func (s *CredentialSubscriptions) CheckPreparationFor(environment resourcev4.Ref
 		return CredentialValidity{}, err
 	}
 	result, err := s.checkPreparationLocked()
+	if s.used || s.prepared {
+		return CredentialValidity{}, CBORFailure("credential_authorization_owner")
+	}
+	if err == nil {
+		err = s.reservation.CheckSameEnvironment(environment)
+	}
 	if err != nil {
 		s.closeLocked()
 	}
@@ -87,6 +93,11 @@ func (s *CredentialSubscriptions) checkOriginalLocked(environment resourcev4.Ref
 	if s.used || s.closed || s.closure == nil {
 		return CredentialValidity{}, CBORFailure("credential_authorization_owner")
 	}
+	prepared := s.prepared
+	samples, sampleErr := s.sampleLocked()
+	if s.used || s.closed || s.closure == nil || s.prepared != prepared {
+		return CredentialValidity{}, CBORFailure("credential_authorization_owner")
+	}
 	e := s.closure
 	parent := e.credentials[0]
 	if !session.Contract.Valid() || role > ServerToClient || e.role != role || e.selection != winner || parent == nil || parent.facts.Digest != session.ArtifactDigest || parent.scope.Profile != session.Profile {
@@ -95,13 +106,9 @@ func (s *CredentialSubscriptions) checkOriginalLocked(environment resourcev4.Ref
 	if err := s.reservation.CheckSameEnvironment(environment); err != nil {
 		return CredentialValidity{}, err
 	}
-	result, err := s.checkPreparationLocked()
+	result, err := s.checkPreparationLockedAt(samples, sampleErr)
 	if err == nil {
-		sample, sampleErr := s.bindings[0].Namespace.clock.Sample()
-		err = sampleErr
-		if err == nil {
-			err = parent.CheckAdmission(sample.Interval)
-		}
+		err = parent.CheckAdmission(samples[0].Interval)
 	}
 	if err != nil {
 		s.closeLocked()

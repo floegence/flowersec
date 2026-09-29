@@ -5,9 +5,9 @@ import (
 	"errors"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 var ErrSynchronousEncoderExit = errors.New("sessionv4: synchronous encoder exited abnormally")
@@ -33,8 +33,8 @@ func synchronousUnaryCharge(inputBytes uint32, codec SynchronousUnaryCodec, runt
 // returning the immutable prepared operation. A live ordinary invocation uses
 // its original serial stage and work class. Every other caller must immediately
 // acquire an actual ordinary slot; neither path adds a ready job or goroutine.
-// Preparation opens no channel and has no publisher dependency. Start retains
-// the existing complete request/publication/result admission boundary.
+// Preparation opens no channel. Invocation-origin preparation first observes
+// its existing shape-specific path; Start retains the complete admission gate.
 func (r *RPCServices) PrepareEncodedUnaryResult(ctx context.Context, route rpcv4.ContractRoute, input []byte, options rpcv4.UnaryPreparation, class ApplicationWorkClass, codec SynchronousUnaryCodec, decode UnaryResultDecoder) (*UnaryOperation, error) {
 	plan, err := r.resultPlan(decode)
 	if err != nil {

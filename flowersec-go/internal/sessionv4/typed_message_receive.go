@@ -6,10 +6,10 @@ import (
 	"io"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // ReceiveEncoded transfers the current original bytes exactly once. It uses
@@ -27,7 +27,7 @@ func (m *TypedMessageStream) receiveMessage(ctx context.Context, typed bool) (an
 	if m == nil || ctx == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
-	dependencies, err := captureApplicationDependencies(ctx)
+	dependencies, err := captureApplicationDependenciesWithFloor(ctx, m.dependencyFloor)
 	if err != nil {
 		return nil, err
 	}

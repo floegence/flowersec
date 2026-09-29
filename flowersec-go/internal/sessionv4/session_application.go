@@ -6,9 +6,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var (
@@ -139,6 +139,7 @@ type AuthorizeApplicationResult struct {
 // before consumer spend or accepted admission. Services/execution declarations
 // are validated by their own profile assembly; this component grants none.
 type SessionPlanConfig struct {
+	MaintenanceOwner           *MaintenanceOwner
 	Services                   bool
 	Handlers                   *StreamHandlerPlan
 	AuthorizeApplication       func(context.Context, AuthenticatedRequestContext) (AuthorizeApplicationResult, error)
@@ -152,14 +153,17 @@ type SessionPlan struct {
 	notifications                                          *NotificationDispatch
 	rpc                                                    *RPCServices
 	rpcPreparing                                           bool
+	registrationPreparing                                  bool
 	services                                               *ServiceDispatch
 	queries                                                *sessionContractQueries
+	queryPreparation                                       *sessionContractQueries
 	applicationGroup                                       *applicationGroup
 	host                                                   *EnvironmentSession
 	mu                                                     sync.Mutex
 	config                                                 SessionPlanConfig
 	executor                                               *ApplicationExecutor
 	reservation, taskReservation, dependencies             resourcev4.Reference
+	dependencyFloor                                        *resourcev4.BorrowPool
 	completion                                             *CompletionReservation
 	releaseTask                                            *CompletionTask
 	invocation                                             *applicationInvocation
@@ -167,6 +171,24 @@ type SessionPlan struct {
 	cancel                                                 context.CancelFunc
 	claimed, started, running, authorized, closed, retired bool
 	callbackDone                                           chan struct{}
+}
+
+func (p *SessionPlan) sealBusiness() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	rpc, services, notifications := p.rpc, p.services, p.notifications
+	p.mu.Unlock()
+	if rpc != nil {
+		rpc.sealBusiness()
+	}
+	if services != nil {
+		services.draining.Store(true)
+	}
+	if notifications != nil {
+		notifications.draining.Store(true)
+	}
 }
 
 func SessionPlanCharge(c SessionPlanConfig) (resourcev4.Vector, error) {
@@ -189,6 +211,14 @@ func SessionPlanCharge(c SessionPlanConfig) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
+	dependencyCharge, err := resourcev4.BorrowPoolCharge(dependencyFloorCapacity)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	charge, err = charge.Add(dependencyCharge)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
 	return charge.Add(query)
 }
 
@@ -202,6 +232,11 @@ func NewSessionPlan(c SessionPlanConfig, executor *ApplicationExecutor, metadata
 	}
 	for _, ref := range []resourcev4.Reference{task, completion, dependenciesBorrow} {
 		if err := metadata.CheckSameEnvironment(ref); err != nil {
+			return nil, err
+		}
+	}
+	if c.MaintenanceOwner != nil {
+		if err := c.MaintenanceOwner.check(metadata); err != nil {
 			return nil, err
 		}
 	}
@@ -224,7 +259,14 @@ func NewSessionPlan(c SessionPlanConfig, executor *ApplicationExecutor, metadata
 		dependencies.Release()
 		return nil, err
 	}
-	p := &SessionPlan{config: c, executor: executor, applicationGroup: group, reservation: owned, dependencies: dependencies, lease: &ApplicationLease{}, invocation: &applicationInvocation{}, callbackDone: make(chan struct{})}
+	dependencyFloor, err := resourcev4.NewBorrowPoolForSources(owned, dependencyFloorCapacity)
+	if err != nil {
+		owned.Release()
+		dependencies.Release()
+		return nil, err
+	}
+	owned = dependencyFloor.Metadata()
+	p := &SessionPlan{config: c, executor: executor, applicationGroup: group, reservation: owned, dependencies: dependencies, dependencyFloor: dependencyFloor, lease: &ApplicationLease{}, invocation: &applicationInvocation{}, callbackDone: make(chan struct{})}
 	p.initializeContractQueryMethods(c.ContractQueryMethods)
 	p.initializeExecutionHistory(c.ExecutionHistoryNamespaces)
 	defer func() {
@@ -234,6 +276,10 @@ func NewSessionPlan(c SessionPlanConfig, executor *ApplicationExecutor, metadata
 				p.completion.Close()
 			}
 			p.taskReservation.Release()
+			if p.dependencyFloor != nil {
+				p.dependencyFloor.Close()
+				p.dependencyFloor = nil
+			}
 			p.reservation.Release()
 			p.dependencies.Release()
 		}
@@ -261,7 +307,7 @@ func (a *SessionAdmissionReservation) adoptApplicationCore(batch *sessionCoreBat
 	if p != nil {
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if p.closed || p.claimed || p.rpcPreparing || p.config.Handlers != a.config.Core.Handlers.Plan || p.host != a.config.applicationHost {
+		if p.closed || p.claimed || p.rpcPreparing || p.registrationPreparing || p.config.Handlers != a.config.Core.Handlers.Plan || p.host != a.config.applicationHost {
 			return cryptov4.ErrTransition
 		}
 		if p.config.Services && p.services == nil {
@@ -290,7 +336,10 @@ func (a *SessionAdmissionReservation) adoptApplicationCore(batch *sessionCoreBat
 // Its original Environment watcher still reports cancellation promptly; no
 // canceled waiter can refund a blocked callback or manufacture a second call.
 func (p *SessionPlan) authorize(ctx context.Context, binding ApplicationBinding, guard func() error) error {
-	dependencies, dependencyErr := captureApplicationDependencies(ctx)
+	p.mu.Lock()
+	dependencyFloor := p.dependencyFloor
+	p.mu.Unlock()
+	dependencies, dependencyErr := captureApplicationDependenciesWithFloor(ctx, dependencyFloor)
 	if dependencyErr != nil {
 		return dependencyErr
 	}
@@ -404,7 +453,7 @@ func (p *SessionPlan) checkPreparation() error {
 	if p.closed {
 		return cryptov4.ErrClosed
 	}
-	if p.rpcPreparing {
+	if p.rpcPreparing || p.registrationPreparing {
 		return cryptov4.ErrTransition
 	}
 	if p.config.Services && p.services == nil {
@@ -440,6 +489,7 @@ func (p *SessionPlan) Close() {
 	p.closed = true
 	cancel := p.cancel
 	queries := p.queries
+	queryPreparation := p.queryPreparation
 	services := p.services
 	notifications := p.notifications
 	rpc := p.rpc
@@ -449,6 +499,7 @@ func (p *SessionPlan) Close() {
 	authorization := p.lease.authorization
 	p.lease.mu.Unlock()
 	p.mu.Unlock()
+	queryPreparation.releasePreparation()
 	if rpc != nil {
 		rpc.Close()
 	}
@@ -487,7 +538,7 @@ func (p *SessionPlan) releaseAfterCleanup(ctx context.Context) error {
 	services := p.services
 	notifications := p.notifications
 	rpc := p.rpc
-	preparing := p.rpcPreparing
+	preparing := p.rpcPreparing || p.registrationPreparing
 	p.mu.Unlock()
 	if preparing {
 		return cryptov4.ErrCapacity
@@ -575,7 +626,7 @@ func (p *SessionPlan) Retire() error {
 	if p.retired {
 		return nil
 	}
-	if !p.closed || p.running || p.rpcPreparing {
+	if !p.closed || p.running || p.rpcPreparing || p.registrationPreparing {
 		return cryptov4.ErrCapacity
 	}
 	if p.applicationGroup != nil {
@@ -642,6 +693,10 @@ func (p *SessionPlan) Retire() error {
 	}
 	p.config, p.executor, p.host = SessionPlanConfig{}, nil, nil
 	p.applicationGroup = nil
+	if p.dependencyFloor != nil {
+		p.dependencyFloor.Close()
+		p.dependencyFloor = nil
+	}
 	p.reservation.Release()
 	p.taskReservation.Release()
 	p.dependencies.Release()
@@ -742,13 +797,13 @@ func (p *SessionPlan) claimPreparation(s *EnvironmentSession) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.config.Services && (!s.environment.services || p.services == nil || p.services.clock != s.environment.materialClock || p.services.executionRegistry != nil && p.services.executionRegistry != s.environment.serviceRegistry) {
+	if p.config.Services && (!s.environment.services || p.services != nil && (p.services.clock != s.environment.materialClock || p.services.executionRegistry != nil && p.services.executionRegistry != s.environment.serviceRegistry)) {
 		return cryptov4.ErrConfiguration
 	}
 	if p.notifications != nil && p.notifications.executionRegistry != nil && p.notifications.executionRegistry != s.environment.serviceRegistry {
 		return cryptov4.ErrConfiguration
 	}
-	if p.closed || p.claimed || p.rpcPreparing || p.host != nil && p.host != s {
+	if p.closed || p.claimed || p.rpcPreparing || p.registrationPreparing || p.host != nil && p.host != s {
 		return cryptov4.ErrTransition
 	}
 	if err := p.reservation.CheckSameEnvironment(s.environment.reservation); err != nil {

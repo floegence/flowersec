@@ -3,6 +3,7 @@ package controlv4
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
@@ -18,9 +19,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/numeric"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/numeric"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var (
@@ -63,7 +65,7 @@ func HTTPSBootstrapCharge(c HTTPSBootstrapConfig) (resourcev4.Vector, error) {
 	if len(c.BaseURL) == 0 || len(c.BaseURL) > 2048 || c.HeaderBytes < 1024 || c.HeaderBytes > 65536 || c.Timeout <= 0 || c.Timeout > 90*time.Second || c.RuntimeBytes == 0 || c.ProviderRuntimeBytes == 0 {
 		return resourcev4.Vector{}, resourcev4.ErrConfiguration
 	}
-	charge := resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(HTTPSBootstrapProvider{})) + 8*uint64(len(c.BaseURL)) + 8192,
+	charge := resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(HTTPSBootstrapProvider{})) + controlCallContextBytes + 8*uint64(len(c.BaseURL)) + 8192,
 		resourcev4.ProviderBytes: 64*uint64(c.HeaderBytes) + uint64(unsafe.Sizeof(tls.Config{})) + uint64(unsafe.Sizeof(tls.Conn{})) + uint64(unsafe.Sizeof(bufio.Reader{})) + 4096,
 		resourcev4.Items:         1, resourcev4.WorkSlots: 1, resourcev4.Tasks: 2, resourcev4.Timers: 2, resourcev4.Connections: 1, resourcev4.NativeHandles: 2, resourcev4.TLSHandshakes: 1}
 	return charge.Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes, resourcev4.ProviderBytes: c.ProviderRuntimeBytes})
@@ -92,7 +94,7 @@ func NewHTTPSBootstrapProvider(c HTTPSBootstrapConfig, reservation, dependencies
 	if err != nil || port != uint64(c.RemoteAddress.Port()) {
 		return nil, numeric.ErrEndpoint
 	}
-	if ip, err := netip.ParseAddr(u.Hostname()); err == nil && ip.Unmap() != c.RemoteAddress.Addr().Unmap() {
+	if ip, err := netip.ParseAddr(u.Hostname()); err == nil && ip != c.RemoteAddress.Addr() {
 		return nil, numeric.ErrEndpoint
 	}
 	if c.TLS != nil && (c.TLS.InsecureSkipVerify || c.TLS.ServerName != "" && c.TLS.ServerName != u.Hostname() || c.TLS.MaxVersion != 0 && c.TLS.MaxVersion < tls.VersionTLS13 || c.TLS.KeyLogWriter != nil) {
@@ -116,6 +118,22 @@ func NewHTTPSBootstrapProvider(c HTTPSBootstrapConfig, reservation, dependencies
 	}
 	config.MinVersion, config.ServerName, config.NextProtos = tls.VersionTLS13, u.Hostname(), []string{"http/1.1"}
 	config.ClientSessionCache = nil
+	if _, err := netip.ParseAddr(u.Hostname()); err == nil {
+		verify := config.VerifyConnection
+		host := u.Hostname()
+		config.VerifyConnection = func(state tls.ConnectionState) error {
+			if len(state.PeerCertificates) == 0 {
+				return tlspolicy.ErrCertificate
+			}
+			if err := tlspolicy.CheckExactIPIdentity(state.PeerCertificates[0], host); err != nil {
+				return err
+			}
+			if verify != nil {
+				return verify(state)
+			}
+			return nil
+		}
+	}
 	c.TLS = nil
 	c.BaseURL = strings.Clone(c.BaseURL)
 	u.Path = strings.TrimSuffix(u.Path, "/")
@@ -155,69 +173,64 @@ func (p *HTTPSBootstrapProvider) refresh(ctx context.Context, path, schema strin
 }
 
 func (p *HTTPSBootstrapProvider) read(ctx context.Context, path string, bootstrap protocolv4.NamespaceBootstrapRequest, content protocolv4.NamespaceContent, out []byte, exact bool) (n int, err error) {
-	if ctx == nil {
-		return 0, resourcev4.ErrConfiguration
+	var query url.Values
+	if exact {
+		query = url.Values{"digest": {hex.EncodeToString(content.Digest[:])}, "encoded_bytes": {strconv.FormatUint(content.EncodedBytes, 10)}}
+	} else {
+		query = url.Values{"tenant_id": {bootstrap.Tenant}, "revocation_authority_id": {bootstrap.Authority}}
+		if path == "/bootstrap" {
+			query.Set("nonce", hex.EncodeToString(bootstrap.Nonce[:]))
+		}
+	}
+	n, _, err = p.exchange(ctx, http.MethodGet, path, query, nil, out, exact, false)
+	return n, err
+}
+
+// exchange owns one finite HTTP/1.1 request with no redirects, retries or
+// ambient credentials. Pool application errors use HTTP 409 with the same
+// explicit CBOR content contract; a status alone never proves a terminal.
+func (p *HTTPSBootstrapProvider) exchange(ctx context.Context, method, path string, query url.Values, body, out []byte, exact, poolResult bool) (n int, applicationError bool, err error) {
+	if p == nil || ctx == nil {
+		return 0, false, resourcev4.ErrConfiguration
 	}
 	p.mu.Lock()
 	if p.closed || p.retired {
 		p.mu.Unlock()
-		return 0, net.ErrClosed
+		return 0, false, net.ErrClosed
 	}
 	if p.busy {
 		p.mu.Unlock()
-		return 0, ErrBusy
+		return 0, false, ErrBusy
 	}
 	if err = p.reservation.Check(); err == nil {
 		err = p.dependencies.Check()
 	}
-	if err == nil {
-		err = ctx.Err()
-	}
 	if err != nil {
 		p.mu.Unlock()
-		return 0, err
+		return 0, false, err
 	}
 	p.busy = true
 	cfg, endpoint, tlsConfig := p.config, p.base, p.tls
+	call, inherited := ctx.(*controlCallContext)
+	inherited = inherited && call.provider == p && call.started
+	if !inherited {
+		call = newHTTPSCallContext(p)
+	}
 	p.mu.Unlock()
-	call, cancel := context.WithCancelCause(ctx)
-	stop, exited := make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(exited)
-		select {
-		case <-stop:
-			return
-		case <-call.Done():
-		case <-p.stop:
-			cancel(net.ErrClosed)
-		}
-		p.mu.Lock()
-		conn := p.active
-		p.mu.Unlock()
-		if conn != nil {
-			_ = conn.Close()
-		}
-	}()
-	var conn net.Conn
-	var response *http.Response
+	returned := false
 	defer func() {
-		if conn != nil {
-			_ = conn.Close()
+		if recovered := recover(); recovered != nil || !returned {
+			err = ErrControlTaskExit
+			call.cancel(err)
 		}
-		if response != nil && response.Body != nil {
-			_ = response.Body.Close()
+		if !inherited {
+			call.finish()
 		}
-		close(stop)
-		<-exited
-		cancel(nil)
 		p.mu.Lock()
-		if cause := context.Cause(call); cause != nil && cause != context.Canceled {
+		if cause := call.cause(); cause != nil && err != ErrControlTaskExit {
 			err = cause
 		}
-		if cause := ctx.Err(); cause != nil {
-			err = cause
-		}
-		if p.closed {
+		if p.closed && err != ErrControlTaskExit {
 			err = net.ErrClosed
 		}
 		if err == nil {
@@ -228,56 +241,74 @@ func (p *HTTPSBootstrapProvider) read(ctx context.Context, path string, bootstra
 		}
 		if err != nil {
 			clear(out)
-			n = 0
+			n, applicationError = 0, false
+		}
+		if !inherited {
+			call.stopCall()
 		}
 		p.active, p.busy = nil, false
 		p.cleanupLocked()
 		p.mu.Unlock()
 	}()
-	deadline := time.Now().Add(cfg.Timeout)
-	if end, ok := ctx.Deadline(); ok && end.Before(deadline) {
-		deadline = end
+	if !inherited {
+		err = call.start(ctx)
 	}
-	conn, err = numeric.Connect(call, cfg.RemoteAddress, deadline)
+	if err == nil {
+		n, applicationError, err = p.exchangeBody(call, cfg, endpoint, tlsConfig, method, path, query, body, out, exact, poolResult)
+	}
+	returned = true
+	return n, applicationError, err
+}
+
+func (p *HTTPSBootstrapProvider) exchangeBody(call *controlCallContext, cfg HTTPSBootstrapConfig, endpoint url.URL, tlsConfig *tls.Config, method, path string, query url.Values, body, out []byte, exact, poolResult bool) (n int, applicationError bool, err error) {
+	var conn net.Conn
+	var response *http.Response
+	// These defers run before the outer call's final ownership gate, including
+	// when TLS or context callbacks panic or terminate the original goroutine.
+	defer func() {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+	}()
+	defer func() {
+		if conn != nil {
+			_ = conn.Close()
+		}
+	}()
+	conn, err = numeric.Connect(call, cfg.RemoteAddress, call.deadline)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	p.mu.Lock()
 	if p.closed {
 		err = net.ErrClosed
 	} else {
-		err = call.Err()
+		err = call.cause()
 	}
 	if err == nil {
 		p.active = conn
 	}
 	p.mu.Unlock()
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	secured := tls.Client(conn, tlsConfig)
 	if err = secured.Handshake(); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if proto := secured.ConnectionState().NegotiatedProtocol; proto != "" && proto != "http/1.1" {
-		return 0, ErrResponse
+		return 0, false, ErrResponse
 	}
-	var query url.Values
 	endpoint.Path += path
-	if exact {
-		query = url.Values{"digest": {hex.EncodeToString(content.Digest[:])}, "encoded_bytes": {strconv.FormatUint(content.EncodedBytes, 10)}}
-	} else {
-		query = url.Values{"tenant_id": {bootstrap.Tenant}, "revocation_authority_id": {bootstrap.Authority}}
-		if path == "/bootstrap" {
-			query.Set("nonce", hex.EncodeToString(bootstrap.Nonce[:]))
-		}
-	}
 	endpoint.RawQuery = query.Encode()
-	request, err := http.NewRequestWithContext(call, http.MethodGet, endpoint.String(), nil)
+	request, err := http.NewRequestWithContext(call, method, endpoint.String(), bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	request.Close = true
+	if body != nil {
+		request.Header.Set("Content-Type", "application/cbor")
+	}
 	request.Header.Set("Accept", "application/cbor")
 	request.Header.Set("Cache-Control", "no-store")
 	// A TLS policy callback can outlive Close or caller cancellation. Observe
@@ -287,7 +318,7 @@ func (p *HTTPSBootstrapProvider) read(ctx context.Context, path string, bootstra
 	if p.closed {
 		err = net.ErrClosed
 	} else {
-		err = call.Err()
+		err = call.cause()
 	}
 	if err == nil {
 		err = p.reservation.Check()
@@ -297,31 +328,42 @@ func (p *HTTPSBootstrapProvider) read(ctx context.Context, path string, bootstra
 	}
 	p.mu.Unlock()
 	if err != nil {
-		return 0, err
+		return 0, false, err
+	}
+	// A credential-bearing original control publication also retains its
+	// current authorization guard through TLS. Run it outside provider locks.
+	if call.beforeWrite != nil {
+		if err = call.beforeWrite(); err != nil {
+			return 0, false, err
+		}
+	}
+	if err = call.Err(); err != nil {
+		return 0, false, err
 	}
 	if err = request.Write(secured); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	header := &headerReader{reader: secured, remaining: int64(cfg.HeaderBytes), active: true}
 	reader := bufio.NewReaderSize(header, 4096)
 	response, err = http.ReadResponse(reader, request)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	header.active = false
-	if response.ProtoMajor != 1 || response.ProtoMinor != 1 || response.StatusCode != http.StatusOK || len(response.TransferEncoding) != 0 || response.ContentLength <= 0 || response.ContentLength > int64(len(out)) || exact && response.ContentLength != int64(len(out)) || response.Header.Get("Content-Encoding") != "" || response.Header.Get("Content-Type") != "application/cbor" {
-		return 0, ErrResponse
+	if response.ProtoMajor != 1 || response.ProtoMinor != 1 || (response.StatusCode != http.StatusOK && (!poolResult || response.StatusCode != http.StatusConflict)) || len(response.TransferEncoding) != 0 || response.ContentLength <= 0 || response.ContentLength > int64(len(out)) || exact && response.ContentLength != int64(len(out)) || response.Header.Get("Content-Encoding") != "" || response.Header.Get("Content-Type") != "application/cbor" {
+		return 0, false, ErrResponse
 	}
+	applicationError = response.StatusCode == http.StatusConflict
 	n, err = io.ReadFull(response.Body, out[:int(response.ContentLength):int(response.ContentLength)])
 	if err != nil {
 		clear(out[:n])
-		return 0, err
+		return 0, false, err
 	}
 	if err = call.Err(); err != nil {
 		clear(out[:n])
-		return 0, err
+		return 0, false, err
 	}
-	return n, nil
+	return n, applicationError, nil
 }
 
 type headerReader struct {

@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // Reissue the fixture under its same independently configured signing key.
@@ -91,12 +91,20 @@ func admittedTestRace(t *testing.T, f *admissionIntegrationFixture, factory Cons
 	host := environmentTestOwner(t, f, 248, 1)
 	s := newEnvironmentSession(host, 0, context.Background())
 	p := &sourcePreparation{config: c, material: m, reservation: owned, shared: shared}
+	if err := p.references.reserveCarriers(c); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.references.adoptCarriers(c); err != nil {
+		t.Fatal(err)
+	}
 	if err := p.selection.begin(m, c.Generation, c.Hello.Attempt); err != nil {
 		t.Fatal(err)
 	}
 	config := c.Admission
 	config.Core.Session, config.Initial.Profile = lease.session, lease.session.Profile
-	p.race.init(p, s, config)
+	if err := p.race.init(p, s, config); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		s.context.cancel()
 		if err := p.cleanup(); err != nil {

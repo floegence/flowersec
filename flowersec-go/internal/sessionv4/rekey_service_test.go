@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 func runtimeRekey(t *testing.T, f *runtimeFixture) *RekeyService {
@@ -87,6 +88,8 @@ func TestSessionRuntimeAutomaticallyCompletesPeerRekey(t *testing.T) {
 				server.maintenance, _ = NewRecordWriter(server.engine, 0, cw)
 				cf := newRuntimeFixture(t, client, &runtimeTestInput{Reader: cr, interrupt: func() { _ = cr.Close() }}, native)
 				sf := newRuntimeFixture(t, server, &runtimeTestInput{Reader: sr, interrupt: func() { _ = sr.Close() }}, native)
+				var diagnosticCounts [2]diagnosticv4.Counters
+				client.admission.diagnostics, server.admission.diagnostics = &diagnosticCounts[0], &diagnosticCounts[1]
 				cs, ss := runtimeRekey(t, cf), runtimeRekey(t, sf)
 				c, s := cf.startOwner(t), sf.startOwner(t)
 				ctx, cancel := context.WithCancel(context.Background())
@@ -114,7 +117,7 @@ func TestSessionRuntimeAutomaticallyCompletesPeerRekey(t *testing.T) {
 					ss.causes.mu.Lock()
 					se := ss.causes.epoch
 					ss.causes.mu.Unlock()
-					if ce == 1 && se == 1 {
+					if ce == 1 && se == 1 && diagnosticCounts[0].Snapshot(diagnosticv4.MetricRekeySucceeded).Total == 1 && diagnosticCounts[1].Snapshot(diagnosticv4.MetricRekeySucceeded).Total == 1 {
 						break
 					}
 					select {
@@ -125,6 +128,16 @@ func TestSessionRuntimeAutomaticallyCompletesPeerRekey(t *testing.T) {
 					case <-timer.C:
 						t.Fatal("original rekey did not complete", ce, se)
 					case <-tick.C:
+					}
+				}
+				for i := range diagnosticCounts {
+					bank := &diagnosticCounts[i]
+					if bank.Snapshot(diagnosticv4.MetricRekeyStarted).Total != 1 || bank.Snapshot(diagnosticv4.MetricRekeySucceeded).Total != 1 || bank.Snapshot(diagnosticv4.MetricRekeyTimeout).Total != 0 {
+						t.Fatal("actual round not counted exactly once", i)
+					}
+					phases := bank.Snapshot(diagnosticv4.MetricRekeyPhaseCompleted)
+					if phases.Total != 3 || phases.Phase[diagnosticv4.PhaseRekeyLocalPrepare] != 1 || phases.Phase[diagnosticv4.PhaseRekeyProtocolPrepare] != 1 || phases.Phase[diagnosticv4.PhaseRekeyConfirmation] != 1 {
+						t.Fatal("authenticated rekey phases not observed", phases)
 					}
 				}
 				for _, e := range []*openEndpoint{client, server} {

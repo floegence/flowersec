@@ -9,9 +9,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type NotifyReceiverConfig struct {
@@ -351,6 +351,28 @@ func (m *NotifyMessage) FanoutObservation(action func(uint32, protocolv4.Service
 		return ErrOwner
 	}
 	m.mu.Lock()
+	if m.closed || m.busy || m.fanout || m.input == nil || m.input.deadline == nil {
+		m.mu.Unlock()
+		return ErrOwner
+	}
+	m.busy = true
+	deadline := m.input.deadline
+	m.mu.Unlock()
+	defer func() { m.mu.Lock(); m.busy = false; m.cleanupLocked(); m.mu.Unlock() }()
+	sample, err := deadline.Sample()
+	if err != nil {
+		return err
+	}
+	return m.FanoutObservationAt(sample, action)
+}
+
+// FanoutObservationAt uses the original authorization gate's clock sample.
+// No clock adapter runs while holding either that gate or the input gate.
+func (m *NotifyMessage) FanoutObservationAt(sample timev4.Sample, action func(uint32, protocolv4.ServiceContractPolicy, *timev4.Deadline, []byte) error) error {
+	if m == nil || action == nil {
+		return ErrOwner
+	}
+	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || m.fanout || m.input == nil {
 		return ErrOwner
@@ -378,7 +400,7 @@ func (m *NotifyMessage) FanoutObservation(action func(uint32, protocolv4.Service
 	if deadline == nil {
 		return ErrOwner
 	}
-	if err := deadline.Check(); err != nil {
+	if err := deadline.CheckAt(sample); err != nil {
 		return err
 	}
 	m.fanout = true

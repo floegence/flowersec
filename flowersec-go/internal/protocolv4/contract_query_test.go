@@ -114,7 +114,7 @@ func TestContractQueryRuntimeKnownBodiesAndEncoding(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				known := []*ServiceContract{nil}
+				known := []ContractQueryKnown{nil}
 				if target.HasKnown {
 					known[0] = contract
 				}
@@ -127,10 +127,10 @@ func TestContractQueryRuntimeKnownBodiesAndEncoding(t *testing.T) {
 					t.Fatal("canonical target mismatch", err)
 				}
 				if target.HasKnown {
-					if err = request.CheckKnown([]*ServiceContract{nil}); err == nil {
+					if err = request.CheckKnown([]ContractQueryKnown{nil}); err == nil {
 						t.Fatal("bare digest stood for known body")
 					}
-				} else if err = request.CheckKnown([]*ServiceContract{contract}); err == nil {
+				} else if err = request.CheckKnown([]ContractQueryKnown{contract}); err == nil {
 					t.Fatal("unrequested body accepted")
 				}
 			}
@@ -139,12 +139,12 @@ func TestContractQueryRuntimeKnownBodiesAndEncoding(t *testing.T) {
 				t.Fatal(err)
 			}
 			contract.Release()
-			if err = request.CheckKnown([]*ServiceContract{contract}); !errors.Is(err, CBORFailure("document_released")) {
+			if err = request.CheckKnown([]ContractQueryKnown{contract}); !errors.Is(err, CBORFailure("document_released")) {
 				t.Fatal("released body remained known", err)
 			}
 		})
 	}
-	if _, _, err = c.EncodeTargets(make([]byte, 2048), []ContractQueryTarget{{Namespace: "acme/files", Type: 1}, {Namespace: "acme/files", Type: 1}}, []*ServiceContract{nil, nil}); err == nil {
+	if _, _, err = c.EncodeTargets(make([]byte, 2048), []ContractQueryTarget{{Namespace: "acme/files", Type: 1}, {Namespace: "acme/files", Type: 1}}, []ContractQueryKnown{nil, nil}); err == nil {
 		t.Fatal("duplicate targets encoded")
 	}
 }

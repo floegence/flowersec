@@ -1,9 +1,9 @@
 package sessionv4
 
 import (
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // materialPreparation pins the original lease while credential-free candidate
@@ -139,15 +139,18 @@ func (p *materialPreparation) candidate(position int, dst []byte) (protocolv4.Po
 		return protocolv4.PoolMember{}, nil, err
 	}
 	l, index := m.lease.lease, p.indices[position]
-	// Tunnel preparation must have its grant/leg owners before it is enabled.
-	if err := l.maps[0].CheckDirectListenerCandidate(index); err != nil {
-		return protocolv4.PoolMember{}, nil, err
-	}
-	closure, err := protocolv4.BindEndpointCredentials(protocolv4.ClientToServer, l.maps[0], index, l.maps[2], l.maps[3], nil, nil)
+	// Apply the signed path-specific predicate. Tunnel candidates require both
+	// relay legs and their distinct leg ids; the direct listener predicate would
+	// incorrectly reject them or authorize the wrong endpoint role.
+	_, _, tunnel, err := l.endpointCredentialMaps(index, protocolv4.ClientToServer)
 	if err != nil {
 		return protocolv4.PoolMember{}, nil, err
 	}
-	if _, err = closure.CheckCurrent(l.validation[:], l.session.SessionNotAfterMS); err != nil {
+	closure, err := l.endpointClosure(index, protocolv4.ClientToServer)
+	if err != nil {
+		return protocolv4.PoolMember{}, nil, err
+	}
+	if _, err = closure.CheckCurrent(l.credentialBindings(index, protocolv4.ClientToServer, tunnel), l.session.SessionNotAfterMS); err != nil {
 		return protocolv4.PoolMember{}, nil, err
 	}
 	wire, digest, err := l.maps[0].CopyCandidateRoute(index, dst)

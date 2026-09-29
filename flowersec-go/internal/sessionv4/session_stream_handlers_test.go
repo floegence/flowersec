@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 func handlerCorePair(t *testing.T, framing string, handler func(role int) RawStreamHandlerConfig, configure func(role int, c *SessionStreamHandlerConfig)) ([2]*SessionCore, *[2]initialCoreFixture, [2]*ApplicationExecutor, context.Context) {
@@ -45,6 +45,14 @@ func handlerCorePairBeforeRun(t *testing.T, framing string, handler func(role in
 			t.Fatal(err)
 		}
 		c.Streams = factoryStreamConfig()
+		if registered := config.Handlers[0]; registered.HTTP != nil || registered.Delegated != nil || registered.ControlledHTTP != nil {
+			// Both roles reserve incoming services and initiate outgoing calls.
+			// Give each direction its own real receive storage and flow capacity.
+			c.Open.Active = 4
+			c.Open.PerClass = [3]uint32{4}
+			c.Open.PerOpener = [2][3]uint32{{4}, {4}}
+			c.Streams.ReceivePoolBytes = 256
+		}
 		c.Handlers = SessionStreamHandlerConfig{Plan: plan, Concurrency: 2, TimeoutMS: 3000, RuntimeBytes: 8192, RuntimeBytesPerInvocation: 32768}
 		if configure != nil {
 			configure(role, &c.Handlers)

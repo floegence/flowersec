@@ -19,7 +19,7 @@ describe("authorized HTTP scope additions", () => {
     expect(scope).toMatchObject({
       appBasePath: "/app/",
       http: {
-        additionalPathPrefixes: ["/platform/api/"],
+        additionalPathPrefixes: ["/platform//api/", "/platform/api/"],
         extraRequestHeaders: ["x-platform-csrf"],
       },
     });
@@ -29,8 +29,13 @@ describe("authorized HTTP scope additions", () => {
     expect(Object.isFrozen(http.extraRequestHeaders)).toBe(true);
     input.additionalPathPrefixes.push("/private/");
     input.extraRequestHeaders.push("authorization");
-    expect(http.additionalPathPrefixes).toEqual(["/platform/api/"]);
+    expect(http.additionalPathPrefixes).toEqual(["/platform//api/", "/platform/api/"]);
     expect(http.extraRequestHeaders).toEqual(["x-platform-csrf"]);
+  });
+
+  it("permits Cookie only as an explicit external header addition", () => {
+    expect(assertProxyRuntimeScope({ ...base, http: { extraRequestHeaders: ["Cookie"] } }))
+      .toMatchObject({ http: { extraRequestHeaders: ["cookie"] } });
   });
 
   it("keeps omitted HTTP additions absent", () => {
@@ -42,7 +47,6 @@ describe("authorized HTTP scope additions", () => {
     { additionalPathPrefixes: "/*" },
     { additionalPathPrefixes: [1] },
     { additionalPathPrefixes: ["https://other.example/"] },
-    { additionalPathPrefixes: ["//other.example/"] },
     { additionalPathPrefixes: ["/api/?q=1"] },
     { additionalPathPrefixes: ["/api/#fragment"] },
     { additionalPathPrefixes: ["/api/%2fprivate/"] },
@@ -50,7 +54,6 @@ describe("authorized HTTP scope additions", () => {
     { extraRequestHeaders: "x-platform-csrf" },
     { extraRequestHeaders: [null] },
     { extraRequestHeaders: [" authorization "] },
-    { extraRequestHeaders: ["Cookie"] },
     { extraRequestHeaders: ["host"] },
     { extraRequestHeaders: ["Set-Cookie"] },
     { extraRequestHeaders: ["x-injected\r\nheader"] },

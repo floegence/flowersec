@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type notifyStalledSink struct{}
@@ -206,9 +206,33 @@ func TestNotifyChannelRebuildWaitsForOriginalAlias(t *testing.T) {
 	}
 }
 
+func notificationRuntimeFixture(t *testing.T) (context.Context, [2]*RPCServices, [2]*executorFixture, [2]*bootstrapEndpoint, [2]*RPCChannel, [2][16]byte) {
+	t.Helper()
+	// Credentials, authority gates, Stream input and notification deadlines
+	// share one actual clock, as they do in complete Session assembly.
+	clock, err := timev4.NewClock(timev4.Profile{Rate: timev4.Rate{Denominator: 1}, MaxWidthMS: 2000, MaxAgeMS: 100000, MaxRoundTripMS: 1000}, func() (timev4.Tick, error) {
+		return timev4.Tick{Incarnation: [16]byte{1}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(clock.Close)
+	mark, err := clock.Monotonic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := clock.InstallTrusted(mark, timev4.Interval{LowerMS: 1200, UpperMS: 1250}); err != nil {
+		t.Fatal(err)
+	}
+	return rpcChannelRuntimeProfile(t, "services", func(_ int, _ *executorFixture, _ *SessionPlan, c *RPCServicesConfig) {
+		c.Routes.Methods = []rpcv4.MethodRoutes{{Contracts: [][]byte{initialFixture(t, "service_notify_observation")}}}
+		c.NotificationMethods = []NotificationMethod{{Method: 0}}
+	}, clock)
+}
+
 func authorizeNotificationRuntime(t *testing.T, r *RPCServices, f *executorFixture) protocolv4.ServiceContractPolicy {
 	t.Helper()
-	trust := newSessionAdmissionTrustFixture(t, f.root, f.reserve(t, 1, resourcev4.Vector{resourcev4.SDKBytes: 128, resourcev4.Items: 1}), r.owner)
+	trust := newSessionAdmissionTrustProfile(t, f.root, f.reserve(t, 1, resourcev4.Vector{resourcev4.SDKBytes: 128, resourcev4.Items: 1}), r.owner, "live_authority", "transport", r.clock)
 	a, err := protocolv4.NewEndpointAuthorization(trust.subscriptions[0], trust.authority)
 	if err != nil {
 		t.Fatal(err)
@@ -238,10 +262,7 @@ func authorizeNotificationRuntime(t *testing.T, r *RPCServices, f *executorFixtu
 }
 
 func TestNotifyChannelDuplexObservationAndCurrentSenderAuthorization(t *testing.T) {
-	ctx, services, fixtures, endpoints, _, _ := rpcChannelRuntimeFixtureConfigured(t, func(_ int, _ *executorFixture, _ *SessionPlan, c *RPCServicesConfig) {
-		c.Routes.Methods = []rpcv4.MethodRoutes{{Contracts: [][]byte{initialFixture(t, "service_notify_observation")}}}
-		c.NotificationMethods = []NotificationMethod{{Method: 0}}
-	})
+	ctx, services, fixtures, endpoints, _, _ := notificationRuntimeFixture(t)
 	var policies [2]protocolv4.ServiceContractPolicy
 	var observed [2]chan string
 	for role, r := range services {

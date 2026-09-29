@@ -3151,6 +3151,9 @@ private final class TransportV3RPCStreamAdapter: FlowersecRPCStream, @unchecked 
 
 enum TransportV3MetadataCodec {
   static func encode(_ metadata: StreamMetadata) throws -> Data {
+    guard metadata.v4Namespace == nil || metadata.v4Namespace == "application/json" else {
+      throw StreamMetadataError.invalidValue
+    }
     var output = Data()
     try appendObject(metadata.values, to: &output)
     return output
@@ -3216,6 +3219,8 @@ enum TransportV3MetadataCodec {
       output.append(Data(value ? "true".utf8 : "false".utf8))
     case .integer(let value):
       output.append(Data(String(value).utf8))
+    case .number:
+      throw StreamMetadataError.invalidValue
     case .string(let value):
       appendString(value, to: &output)
     case .array(let values):

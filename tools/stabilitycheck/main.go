@@ -212,6 +212,7 @@ func verifyTS(repoRoot string, m *manifest) error {
 	if err := os.MkdirAll(probeDir, 0o755); err != nil {
 		return err
 	}
+	defer os.RemoveAll(probeDir)
 
 	var typeProbe strings.Builder
 	typeIndex := 0
@@ -236,7 +237,11 @@ func verifyTS(repoRoot string, m *manifest) error {
 		for _, exportName := range subpath.TypeExports {
 			alias := fmt.Sprintf("ManifestType%d", typeIndex)
 			fmt.Fprintf(&typeProbe, "import type { %s as %s } from %q;\n", exportName, alias, sourceImport)
-			fmt.Fprintf(&typeProbe, "declare const manifestType%d: %s;\nvoid manifestType%d;\n", typeIndex, alias, typeIndex)
+			instantiation := alias
+			if arguments := subpath.TypeArguments[exportName]; len(arguments) != 0 {
+				instantiation += "<" + strings.Join(arguments, ", ") + ">"
+			}
+			fmt.Fprintf(&typeProbe, "declare const manifestType%d: %s;\nvoid manifestType%d;\n", typeIndex, instantiation, typeIndex)
 			typeIndex++
 		}
 		for _, exportName := range subpath.RuntimeExports {
@@ -590,7 +595,7 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 	if err != nil {
 		return nil, err
 	}
-	modulePaths, err := swiftBuildModulePaths(repoRoot, binPath)
+	modulePaths, err := swiftBuildModulePaths(binPath, module)
 	if err != nil {
 		return nil, err
 	}
@@ -640,6 +645,27 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 			Declaration: normalizeSwiftDeclaration(item.DeclarationFragments),
 		})
 	}
+	return normalizeSwiftSymbols(symbols)
+}
+
+func normalizeSwiftSymbols(symbols []dumpedSwiftSymbol) ([]dumpedSwiftSymbol, error) {
+	// A protocol requirement and its default implementation can have the same
+	// public path and declaration. Register that contract once, while refusing
+	// incompatible declarations that this manifest key cannot distinguish.
+	seen := make(map[string]string, len(symbols))
+	unique := make([]dumpedSwiftSymbol, 0, len(symbols))
+	for _, symbol := range symbols {
+		key := symbol.Kind + "\x00" + symbol.Name
+		if declaration, ok := seen[key]; ok {
+			if declaration != symbol.Declaration {
+				return nil, fmt.Errorf("Swift public path %s has distinct declarations", symbol.Name)
+			}
+			continue
+		}
+		seen[key] = symbol.Declaration
+		unique = append(unique, symbol)
+	}
+	symbols = unique
 	slices.SortFunc(symbols, func(a, b dumpedSwiftSymbol) int {
 		return strings.Compare(a.Kind+"\x00"+a.Name, b.Kind+"\x00"+b.Name)
 	})
@@ -706,7 +732,7 @@ func swiftBuildArguments(repoRoot string, arguments ...string) []string {
 	}, arguments...)
 }
 
-func swiftBuildModulePaths(repoRoot, binPath string) ([]string, error) {
+func swiftBuildModulePaths(binPath, module string) ([]string, error) {
 	candidates := []string{
 		filepath.Join(binPath, "Modules"),
 		binPath,
@@ -722,27 +748,49 @@ func swiftBuildModulePaths(repoRoot, binPath string) ([]string, error) {
 			return nil, err
 		}
 	}
-	for _, root := range []string{binPath, filepath.Join(repoRoot, ".build", "checkouts")} {
-		if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+	// SwiftPM has already selected the target's dependency headers and binary
+	// slices. Scanning all checkouts would import mutually exclusive XCFramework
+	// slices and redefine their Clang modules during symbol extraction.
+	data, err := os.ReadFile(filepath.Join(binPath, "description.json"))
+	if err != nil {
+		return nil, err
+	}
+	var description struct {
+		SwiftCommands map[string]struct {
+			ModuleName     string   `json:"moduleName"`
+			OtherArguments []string `json:"otherArguments"`
+		} `json:"swiftCommands"`
+	}
+	if err := json.Unmarshal(data, &description); err != nil {
+		return nil, fmt.Errorf("parse Swift build description: %w", err)
+	}
+	selected := 0
+	for _, command := range description.SwiftCommands {
+		if command.ModuleName != module {
 			continue
-		} else if err != nil {
-			return nil, err
 		}
-		if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
+		selected++
+		for index, argument := range command.OtherArguments {
+			var path string
+			if argument == "-I" {
+				next := index + 1
+				if next < len(command.OtherArguments) && command.OtherArguments[next] == "-Xcc" {
+					next++
+				}
+				if next >= len(command.OtherArguments) {
+					return nil, fmt.Errorf("Swift build description has incomplete -I for %s", module)
+				}
+				path = command.OtherArguments[next]
+			} else if value, ok := strings.CutPrefix(argument, "-fmodule-map-file="); ok {
+				path = filepath.Dir(value)
 			}
-			if entry.IsDir() || entry.Name() != "module.modulemap" {
-				return nil
+			if path != "" && !slices.Contains(paths, path) {
+				paths = append(paths, path)
 			}
-			dir := filepath.Dir(path)
-			if !slices.Contains(paths, dir) {
-				paths = append(paths, dir)
-			}
-			return nil
-		}); err != nil {
-			return nil, err
 		}
+	}
+	if selected != 1 {
+		return nil, fmt.Errorf("Swift build description has %d commands for %s, want one", selected, module)
 	}
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("swift build output %s does not contain module search paths", binPath)
@@ -1176,6 +1224,9 @@ func renderGoVerifier(m *manifest, goVersion string) (string, string, error) {
 	interfaceGroupIndexes := make(map[string]int)
 	if goVerifierUsesQualifier(m, "context") {
 		fmt.Fprintln(&imports, "\t\"context\"")
+	}
+	if goVerifierUsesQualifier(m, "io") {
+		fmt.Fprintln(&imports, "\t\"io\"")
 	}
 	if goVerifierUsesQualifier(m, "time") {
 		fmt.Fprintln(&imports, "\t\"time\"")

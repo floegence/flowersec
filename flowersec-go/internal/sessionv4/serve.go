@@ -2,15 +2,17 @@ package sessionv4
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"math"
 	"sync"
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // ServeConfig reserves the original aggregate, its coordinator and live child
@@ -23,6 +25,7 @@ type ServeConfig struct {
 }
 
 type serveChild struct {
+	owner                                                   ledgerv4.AdmissionOwner
 	session                                                 *EnvironmentSession
 	drain                                                   *DrainOperation
 	generation                                              uint64
@@ -30,6 +33,7 @@ type serveChild struct {
 }
 
 type ServeGroup struct {
+	incarnation                                [16]byte
 	lifetime                                   context.Context
 	position                                   int
 	abortResult                                DrainResult
@@ -77,6 +81,10 @@ func (e *Environment) NewServeGroup(ctx context.Context, c ServeConfig, reservat
 	if _, err = timev4.NewAge(c.Clock, c.DrainTimeoutMS, math.MaxUint64); err != nil {
 		return nil, err
 	}
+	var incarnation [16]byte
+	if _, err = rand.Read(incarnation[:]); err != nil || incarnation == ([16]byte{}) {
+		return nil, cryptov4.ErrConfiguration
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.closed {
@@ -107,7 +115,7 @@ func (e *Environment) NewServeGroup(ctx context.Context, c ServeConfig, reservat
 		shared.Release()
 		return nil, err
 	}
-	g := &ServeGroup{lifetime: ctx, config: c, environment: e, reservation: owned, shared: shared, children: make([]serveChild, c.Positions), operation: &DrainOperation{done: make(chan struct{})}, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	g := &ServeGroup{incarnation: incarnation, lifetime: ctx, config: c, environment: e, reservation: owned, shared: shared, children: make([]serveChild, c.Positions), operation: &DrainOperation{done: make(chan struct{})}, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	g.position = position
 	e.groups[position] = g
 	e.groupsActive++
@@ -139,8 +147,13 @@ func (g *ServeGroup) BeginIngress() (ServeIngress, error) {
 	for i := range g.children {
 		c := &g.children[i]
 		if !c.active {
+			var identities [32]byte
+			if _, err := rand.Read(identities[:]); err != nil || [16]byte(identities[:16]) == ([16]byte{}) || [16]byte(identities[16:]) == ([16]byte{}) {
+				return ServeIngress{}, cryptov4.ErrConfiguration
+			}
 			g.generation++
-			*c = serveChild{active: true, callback: true, generation: g.generation}
+			*c = serveChild{active: true, callback: true, generation: g.generation,
+				owner: ledgerv4.AdmissionOwner{Acceptor: g.incarnation, Invocation: [16]byte(identities[:16]), Carrier: [16]byte(identities[16:]), Generation: g.generation}}
 			g.active++
 			return ServeIngress{g, i, c.generation}, nil
 		}
@@ -160,18 +173,26 @@ func (i ServeIngress) childLocked() *serveChild {
 }
 
 func (i ServeIngress) Accept(ctx context.Context, c AcceptedIngressConfig) (*EnvironmentSession, error) {
-	if i.group == nil || c.Intake.Input.Config.Core.Clock != i.group.config.Clock {
-		return nil, cryptov4.ErrConfiguration
-	}
-	return i.group.environment.acceptIngress(ctx, c, i)
+	session, _, err := i.AcceptOwned(ctx, c)
+	return session, err
 }
 
 // AcceptOwned additionally reports the local graph transfer. This is only
 // cleanup ownership, never a claim about durable spend, admission or READY.
 func (i ServeIngress) AcceptOwned(ctx context.Context, c AcceptedIngressConfig) (*EnvironmentSession, bool, error) {
-	if i.group == nil || c.Intake.Input.Config.Core.Clock != i.group.config.Clock {
+	if i.group == nil || c.Intake.Input.Config.Core.Clock != i.group.config.Clock || c.Intake.Input.Owner != (ledgerv4.AdmissionOwner{}) {
 		return nil, false, cryptov4.ErrConfiguration
 	}
+	i.group.mu.Lock()
+	child := i.childLocked()
+	if child == nil || !child.callback || child.attached || i.group.closed {
+		i.group.mu.Unlock()
+		return nil, false, cryptov4.ErrClosed
+	}
+	// Only this original physical-ingress position supplies the durable owner.
+	// Detached caller fields or an old generation cannot mint another one.
+	c.Intake.Input.Owner = child.owner
+	i.group.mu.Unlock()
 	owned := false
 	s, err := i.group.environment.acceptIngressOwned(ctx, c, i, &owned)
 	return s, owned, err

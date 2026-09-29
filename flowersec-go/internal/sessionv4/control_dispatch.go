@@ -2,8 +2,8 @@ package sessionv4
 
 import (
 	"context"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // dispatchControl gives shared and native maintenance input the same semantic

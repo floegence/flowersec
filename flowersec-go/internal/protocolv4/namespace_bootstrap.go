@@ -3,8 +3,8 @@ package protocolv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // NamespaceBootstrap is the authenticated original online bootstrap pair.
@@ -20,6 +20,8 @@ type NamespaceBootstrap struct {
 // NamespaceAllocation names the two complete State backings and the shared
 // live owner in that order. Accounts include the original tenant/Environment
 // and any namespace subpool. Equal namespace names do not create a budget.
+// The root must also admit one actual reference per configured subscriber;
+// those positions belong to this shared namespace through its lifetime.
 type NamespaceAllocation struct {
 	Root     *resourcev4.Root
 	Owners   [3]resourcev4.OwnerKey
@@ -37,9 +39,6 @@ func NewBootstrappedNamespace(ctx context.Context, clock *timev4.Clock, trust Na
 	if ctx == nil || clock == nil || trust == nil || bootstrap.Rules == nil || bootstrap.Head == nil || bootstrap.Head.rules != bootstrap.Rules || uint64(len(bootstrap.State)) != bootstrap.Head.stateBytes || fetchDuration == 0 || attemptLimit == 0 {
 		return nil, CBORFailure("revocation_namespace_owner")
 	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	refs, err := reserveNamespace(bootstrap.Rules, subscriberSlots, allocation)
 	if err != nil {
 		return nil, err
@@ -49,7 +48,7 @@ func NewBootstrappedNamespace(ctx context.Context, clock *timev4.Clock, trust Na
 			ref.Release()
 		}
 	}()
-	return newBootstrappedNamespace(ctx, clock, trust, bootstrap, fetchDuration, attemptLimit, subscriberSlots, refs)
+	return newBootstrappedNamespace(ctx, clock, trust, bootstrap, fetchDuration, attemptLimit, subscriberSlots, refs, false)
 }
 
 func reserveNamespace(rules *NamespaceRules, subscriberSlots uint32, allocation NamespaceAllocation) (refs [3]resourcev4.Reference, err error) {
@@ -82,13 +81,14 @@ func reserveNamespace(rules *NamespaceRules, subscriberSlots uint32, allocation 
 	return refs, nil
 }
 
-func newBootstrappedNamespace(ctx context.Context, clock *timev4.Clock, trust NamespaceTrust, bootstrap NamespaceBootstrap, fetchDuration uint64, attemptLimit uint8, subscriberSlots uint32, refs [3]resourcev4.Reference) (_ *LiveNamespace, err error) {
+func newBootstrappedNamespace(ctx context.Context, clock *timev4.Clock, trust NamespaceTrust, bootstrap NamespaceBootstrap, fetchDuration uint64, attemptLimit uint8, subscriberSlots uint32, refs [3]resourcev4.Reference, initializing bool) (_ *LiveNamespace, err error) {
+	adopted := false
 	active, err := NewRevocationWorkspace(bootstrap.Rules, refs[0])
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
-		if err != nil {
+		if !adopted {
 			_ = active.Close()
 		}
 	}()
@@ -97,7 +97,7 @@ func newBootstrappedNamespace(ctx context.Context, clock *timev4.Clock, trust Na
 		return nil, err
 	}
 	defer func() {
-		if err != nil {
+		if !adopted {
 			_ = spare.Close()
 		}
 	}()
@@ -105,5 +105,7 @@ func newBootstrappedNamespace(ctx context.Context, clock *timev4.Clock, trust Na
 	if err != nil {
 		return nil, err
 	}
-	return NewLiveNamespace(ctx, clock, trust, pair, spare, fetchDuration, attemptLimit, subscriberSlots, refs[2])
+	n, err := newLiveNamespace(ctx, clock, trust, pair, spare, fetchDuration, attemptLimit, subscriberSlots, refs[2], initializing)
+	adopted = err == nil
+	return n, err
 }

@@ -1,7 +1,7 @@
 {
   "status": "draft",
   "coverage": "synthetic_resource_owner_composition_only",
-  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "schema_revision": "flowersec-v4.0.0-draft.74",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
   "unverified": [
     "Complete authenticated legal selections and actual component charges",

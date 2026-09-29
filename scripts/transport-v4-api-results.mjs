@@ -12,7 +12,7 @@ const fail = code => { throw new ApiResultError(code); };
 const requireThat = (condition, code) => { if (!condition) fail(code); };
 const MAX = 0xffffffffffffffffn;
 const primitives = new Set(["uint64", "bytes", "bool"]);
-const ruleNames = new Set(["registered_error_projection", "read_progress_bounds", "read_result_matrix", "reader_cursor_snapshot_matrix", "read_method_failure_matrix", "cleanup_result_matrix", "write_progress_matrix", "transfer_progress_matrix", "duplex_send_matrix", "duplex_direction_matrix", "duplex_result_matrix", "publication_result_matrix"]);
+const ruleNames = new Set(["registered_top_up_error_projection", "registered_error_projection", "read_progress_bounds", "read_result_matrix", "reader_cursor_snapshot_matrix", "read_method_failure_matrix", "cleanup_result_matrix", "lifecycle_result_matrix", "write_progress_matrix", "transfer_progress_matrix", "duplex_send_matrix", "duplex_direction_matrix", "duplex_result_matrix", "publication_result_matrix"]);
 const has = (object, name) => Object.hasOwn(object, name);
 function byteView(value) {
   try { return referenceByteView(value); } catch { fail("api_bytes"); }
@@ -28,6 +28,30 @@ export function apiEnumValues(schema, definition) {
 
 export function verifyApiSchema(schema) {
   const api = schema.api_schema;
+  const errors = Object.keys(schema.top_up_wire_result).filter(code => !["success", "replay"].includes(code));
+  assert.deepEqual(Object.keys(schema.top_up_error_metadata), errors, "incomplete TopUp error metadata");
+  for (const [code, entry] of Object.entries(schema.top_up_error_metadata)) {
+    assert.ok(["source", "operation", "request"].includes(entry.scope));
+    assert.ok(entry.write_actions.length > 0 && entry.write_actions.every(action => ["none", "terminal"].includes(action)));
+    assert.ok(["call_only", "authoritative_operation_facts_required"].includes(entry.terminal_semantics));
+    if (["source_exhausted", "source_unavailable", "source_contract_invalid", "permission_denied"].includes(code)) {
+      assert.equal(entry.scope, "source");
+      assert.deepEqual(entry.write_actions, ["none"]);
+      assert.equal(entry.terminal_semantics, "call_only");
+    }
+  }
+  const wireCodes = Object.keys(schema.top_up_wire_result);
+  assert.deepEqual(wireCodes.slice(0, 2), ["success", "replay"], "TopUp committed results must remain first");
+  for (const [code, entry] of Object.entries(schema.top_up_wire_result)) {
+    if (["success", "replay"].includes(code)) assert.equal(entry.server_committed, true, `${code} must carry committed evidence`);
+    else assert.equal(Object.hasOwn(entry, "server_committed"), false, `${code} cannot claim committed evidence`);
+  }
+  const plannedWireCodes = schema.api_vector_plan.filter(vector => vector.type === "TopUpWireResult").map(vector => vector.input);
+  assert.deepEqual(plannedWireCodes, wireCodes, "TopUpWireResult API vectors must cover the closed registry exactly once");
+  for (const vector of schema.api_vector_plan.filter(item => item.type === "TopUpWireResult")) {
+    assert.deepEqual(Object.keys(vector.context ?? {}).sort(), ["server_committed"], `${vector.id} missing committed context`);
+    assert.equal(vector.context.server_committed, Boolean(schema.top_up_wire_result[vector.input].server_committed), `${vector.id} committed context drift`);
+  }
   assert.equal(api.status, "draft_native_io_result_subset");
   assert.equal(api.representation, "native_public_objects_not_wire_maps");
   const definitions = {...api.types, ...api.contexts};
@@ -166,7 +190,10 @@ function rules(schema, name, value, context) {
     rules(schema, descriptor.type, value[field], descriptor.context_field === undefined ? undefined : context[descriptor.context_field]);
   }
   for (const rule of definition.rules ?? []) {
-    if (rule === "registered_error_projection") {
+    if (rule === "registered_top_up_error_projection") {
+      const entry = schema.top_up_error_metadata[value.code];
+      requireThat(entry && value.scope === entry.scope && entry.write_actions.includes(value.write_action), "api_top_up_error_projection");
+    } else if (rule === "registered_error_projection") {
       const entry = schema.error_code_metadata[value.code];
       requireThat(entry && value.scope === entry.scope && value.retry_disposition === entry.retry, "api_error_projection");
     } else if (rule === "read_progress_bounds") {
@@ -221,6 +248,9 @@ function rules(schema, name, value, context) {
     } else if (rule === "cleanup_result_matrix") {
       const complete = value.core_cleanup === "complete" && value.pending_callbacks === 0n;
       requireThat((value.status === "complete") === complete, "cleanup_progress");
+    } else if (rule === "lifecycle_result_matrix") {
+      requireThat(value.lifecycle_state !== "session_aborted" || value.object_kind === "session", "cleanup_lifecycle");
+      requireThat(value.cleanup_status.status !== "complete" || ["closed", "session_aborted"].includes(value.lifecycle_state), "cleanup_lifecycle");
     } else if (rule === "write_progress_matrix") {
       requireThat(value.accepted_bytes <= value.requested_bytes, "write_progress_bounds");
       requireThat((value.phase === "terminal") === (value.terminal_reason !== "none"), "write_terminal_reason");

@@ -8,8 +8,8 @@ import (
 	"io"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 const executionRecoveryHeadsSQL = `CREATE TABLE recovery_heads (key BLOB PRIMARY KEY CHECK(length(key)=193), generation BLOB NOT NULL CHECK(length(generation)=8), target BLOB NOT NULL CHECK(length(target)=32), stream BLOB NOT NULL CHECK(length(stream)=8)) STRICT, WITHOUT ROWID`

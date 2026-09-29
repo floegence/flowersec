@@ -1,8 +1,8 @@
 {
   "status": "draft",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
-  "schema_revision": "flowersec-v4.0.0-draft.66",
-  "schema_sha256": "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959",
+  "schema_revision": "flowersec-v4.0.0-draft.74",
+  "schema_sha256": "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af",
   "coverage": "draft_cbor_fields_only",
   "vectors": [
     {
@@ -2211,6 +2211,72 @@
       "kind": "cbor_fields",
       "sha256": "12190d05c4f76491be059cad26f1353290f934d08035e5ba1824cfd8622e5179",
       "bytes": 203
+    },
+    {
+      "id": "spend_receipt_spending",
+      "kind": "cbor_fields",
+      "sha256": "b9e1b1e2948849511c18f69a7acfcf189272bb23b0d97defd819fe8072a8bb95",
+      "bytes": 49
+    },
+    {
+      "id": "spend_receipt_unknown",
+      "kind": "cbor_fields",
+      "sha256": "e8a008e9198d7bb9084aae787dcd1a0fa44d064c08296dc864d8b8712561354f",
+      "bytes": 47
+    },
+    {
+      "id": "spend_receipt_denied",
+      "kind": "cbor_fields",
+      "sha256": "ed9879504146ec44a7cbbcee2bd1758c313d0c49def5c569aa46ba2c6a234edf",
+      "bytes": 47
+    },
+    {
+      "id": "spend_receipt_authorized",
+      "kind": "cbor_fields",
+      "sha256": "9f50e4d49080000d5b3bcb6575af7b96598ea9af8beafde953f23ef481c85e9d",
+      "bytes": 47
+    },
+    {
+      "id": "spend_receipt_not_started",
+      "kind": "cbor_fields",
+      "sha256": "bf6946671a5c06286c8d82370a76009d0979bce0c93a2ce5f3b768f12d505a14",
+      "bytes": 47
+    },
+    {
+      "id": "proxy_request_octets",
+      "kind": "cbor_fields",
+      "sha256": "75a457c02f3b5dfa30118e1c42dfa02e74f6074857e4eb46cc36e8eb57d09425",
+      "bytes": 62
+    },
+    {
+      "id": "proxy_response_octets",
+      "kind": "cbor_fields",
+      "sha256": "9146862462c95f2fb28bcc18652354b0ad1ac6cb3a3ddace652f98730907fb67",
+      "bytes": 83
+    },
+    {
+      "id": "proxy_response_failure",
+      "kind": "cbor_fields",
+      "sha256": "c34640f66c3459214d46ec6abb6a68a3bdc1874bb632d2ca6d88d639df1b05a8",
+      "bytes": 61
+    },
+    {
+      "id": "proxy_websocket_open",
+      "kind": "cbor_fields",
+      "sha256": "03c235a2bca25a7622fcaa99e88024f6b2b03fb89fe351ae9cf3efe7318aa70e",
+      "bytes": 51
+    },
+    {
+      "id": "proxy_websocket_response",
+      "kind": "cbor_fields",
+      "sha256": "b541b39ecc0e192cb3ee02e2cb2a47c20cd979868aad3995cd412c26380664fb",
+      "bytes": 16
+    },
+    {
+      "id": "proxy_body_end",
+      "kind": "cbor_fields",
+      "sha256": "2ebeaa73cc7beca8994ce8b0bb4296ad83c5663cfddb0d7fc3200d29ddb2c67c",
+      "bytes": 22
     },
     {
       "id": "error_session_protocol_violation",
@@ -7822,6 +7888,41 @@
       "sha256": "ee23951e6de3caf82b4a8df37ae8526cdb5e32bb04d9755c3d1fe3b7a94b3b3e",
       "bytes": 203,
       "expected_error": "enum_value"
+    },
+    {
+      "id": "spend_receipt_spending_authorized",
+      "kind": "malformed_cbor_fields",
+      "sha256": "d625aa48fef36d52c8fccc2ddb0ae78127626aeb3358ab92c298bd713e69ac4b",
+      "bytes": 49,
+      "expected_error": "variant_constant"
+    },
+    {
+      "id": "spend_receipt_unknown_state",
+      "kind": "malformed_cbor_fields",
+      "sha256": "5b84300cef5fdf1fd44973a56d4cbfd0346d876fe2d9c5dbad7abbe85a17643a",
+      "bytes": 49,
+      "expected_error": "enum_value"
+    },
+    {
+      "id": "spend_receipt_unknown_outcome",
+      "kind": "malformed_cbor_fields",
+      "sha256": "255d9d07abd64c6fceeb1782c41ce681c6c8271a9fb649fd9d1239da595a6c83",
+      "bytes": 47,
+      "expected_error": "enum_value"
+    },
+    {
+      "id": "proxy_request_append_zero",
+      "kind": "malformed_cbor_fields",
+      "sha256": "553a7d6112d2dc0a0b68cc10c55fe59c7c473d89b57534985892bb418e8294ed",
+      "bytes": 63,
+      "expected_error": "trailing_bytes"
+    },
+    {
+      "id": "proxy_request_duplicate_first_pair",
+      "kind": "malformed_cbor_fields",
+      "sha256": "a0f3085b527527ccda2b4de90b3a235a59a08108c45913bc0e5b5b85310ab4a9",
+      "bytes": 64,
+      "expected_error": "duplicate_key"
     }
   ],
   "domain_vectors": [
@@ -9721,55 +9822,55 @@
     },
     {
       "file": "testdata/transport_v4/corpus.json",
-      "sha256": "4fc338b5a3dda2d642e8a8dae966b377fa91f346d494aa6f3463325fb2b81f5d"
+      "sha256": "df8b2e48c96e716b5a5df9bca0bb1514882a6315691258bdd132b8c638d0a116"
     },
     {
       "file": "testdata/transport_v4/domains.json",
-      "sha256": "1c35ae217761cb1b5b3179492019f7aa278dee8cc72a2adaab77c11f8b5abcaf"
+      "sha256": "e58a707be5050c133e827a86747baaa622aa78304b13cf6bef889c82d92b0b57"
     },
     {
       "file": "testdata/transport_v4/signatures.json",
-      "sha256": "87e5c6b231e8295e042c17dfba18356c69bf09b714d1df93b287d39036e77899"
+      "sha256": "b6690f96b6de09fba679d13d34cf24a580491b7bb040104d3eb6b181e5b00a16"
     },
     {
       "file": "testdata/transport_v4/strict_signatures.json",
-      "sha256": "60906c3b11f6b3401724c0592a65c3ce1b216295c0efb6a39b1f5cba6eca0457"
+      "sha256": "9ac2ceac46a51dc2cabab59f4d6ffcaf3d5851ae7aa29ff4cb162c105ec74a02"
     },
     {
       "file": "testdata/transport_v4/profile_dh.json",
-      "sha256": "b31af42f94fc7872ec1130af04f968a2460da2cac7f3ba290bb4648feaced620"
+      "sha256": "d4a033e35478bb7decb0fd4fa7d003ba4c8133e77e359fe4c201b8b5512ae836"
     },
     {
       "file": "testdata/transport_v4/noise.json",
-      "sha256": "54a6fa2e7f01424492a6b53ca08a4d74c7429b7a1ae9d829f1faedc07ccdd6c3"
+      "sha256": "9233dd68544c76191924b9fad505cafad3c35ebeae9b6ee6ebee9d977cd4173e"
     },
     {
       "file": "testdata/transport_v4/records.json",
-      "sha256": "170ba844aa5203eee340926679dec538106323b39a4882c8c674e093e963d2b2"
+      "sha256": "849e533654bccf1a06f267028a2ba2a1fb1cf42a3e0bad2879c9b531e80d9bfe"
     },
     {
       "file": "testdata/transport_v4/ready.json",
-      "sha256": "fb0cf33e4bf73499ed598b5b7ef1d25a37b4f04c4f4fd8fda5c3e312c9a51b98"
+      "sha256": "108c7598ecb7e93db436de69470023ae551d726cdeb8c7bbecdf2ba2ade56100"
     },
     {
       "file": "testdata/transport_v4/rekey.json",
-      "sha256": "e155948cfcf860bec735759afb2a06dc173329ff3b0144c7706d8904eb5fbcb4"
+      "sha256": "9cb5fb6a18ceb94cde390b20ac7619cfa30840a18f2c5a65a9d08906d87c9204"
     },
     {
       "file": "testdata/transport_v4/text.json",
-      "sha256": "d497af8a0771f3f7c2c5ff99c54d45b10629e077b2aa1d9b7d0d68e4f24213c7"
+      "sha256": "34ecf90bdc8650eabb21ba20fe1b54968fe830959ee14561c3b104217717454b"
     },
     {
       "file": "testdata/transport_v4/errors.json",
-      "sha256": "950b6cbcdf4e8be1c90a5af91aafdb9bd5bd13410a337480f5483a86683f6271"
+      "sha256": "36ece5c1defc812b4975bc312f9af47f2f1e5e63ecf091420ee499d896cf869a"
     },
     {
       "file": "testdata/transport_v4/queries.json",
-      "sha256": "abe9ff430405dd93e3ca4a33ca38b2c34608e05d3fd0f674b89e6d5e60f3a78e"
+      "sha256": "f8ce53ecbf6780e270a74dae0a46220d8c3b485f940bd5f08596497e662955d9"
     },
     {
       "file": "testdata/transport_v4/fragments.json",
-      "sha256": "cd04735cf42ffdccf6c72603289918a45c6c2d704467b39472c3d9457632ef88"
+      "sha256": "cbf9a20b615b1c4aa7b43f78a993959680eedb87e02de47f797bfac6c2c0e4eb"
     },
     {
       "file": "testdata/transport_v4/fragment_states.json",
@@ -9781,67 +9882,67 @@
     },
     {
       "file": "testdata/transport_v4/api_results.json",
-      "sha256": "3efca99f183d6ede4cfa583861a47f1ff8f8dc3c1ef3980fe7e9d7f7c8d341d3"
+      "sha256": "8440fc80b64a56e2e588f05020d7da59323be58d7e185067e112d976b2409650"
     },
     {
       "file": "testdata/transport_v4/resources.json",
-      "sha256": "a693b8466fd442b9ce0cbae2d8599e44242f8e8cbe66ac5e25e13644ef856c04"
+      "sha256": "4a4595618b78074ef050bbc66b03d4570565ef47d2485dfe9d577af18662246a"
     },
     {
       "file": "testdata/transport_v4/resource_costs.json",
-      "sha256": "0aa127b20a6536904ea61a6a290a5deda7e8d7b9506fd575759c99782a371b24"
+      "sha256": "af01950af888b24cd60246381a1d8d9d3118dd7a239aafca8c0d274635c92da0"
     },
     {
       "file": "testdata/transport_v4/time_arithmetic.json",
-      "sha256": "9e527dc4f063b0c5de3d7553f1eb1e553878811d55cb1cab540d2df689fd923d"
+      "sha256": "f89d4a984932ec560bb1a56031566e7ffd159b1d99722eb0128383c56c0e861d"
     },
     {
       "file": "testdata/transport_v4/crypto_usage.json",
-      "sha256": "2e836d5fc6ef287dca736557a77a060ede01769b7f3279cd7e4173fd7f3ee68e"
+      "sha256": "37e7426e4eaff65d1e9aef8caa4170c314f42262eab7f266c28259ed3210e5e9"
     },
     {
       "file": "testdata/transport_v4/rekey_credit.json",
-      "sha256": "8614d417dd12f269b0e0f135ebaefa8d674b9ff1ca46d49bbb43fff6d99c9958"
+      "sha256": "b34385059a668184399b8c9e0f76e973ddc47e923da51bc7f6a4fc9d3c182037"
     },
     {
       "file": "testdata/transport_v4/application_headers.json",
-      "sha256": "c95e0f3ce1c4afe6d4836f652cfd21361dc7c9c862cdcfa0a8d40e5cd07cef3c"
+      "sha256": "6728c3e22783435575681aa2362edca36871c49b7ae4a67e66ca497e8dad795a"
     },
     {
       "file": "testdata/transport_v4/notify.json",
-      "sha256": "fefc3c99b0dae96480f67c00e6d104a4b37677e4a1c78fb748ada54e277df2c5"
+      "sha256": "c7c809f2f799e976876193d242adfd50ebb27f45490c6ce52bac0b6eb2e9b286"
     },
     {
       "file": "flowersec-go/internal/protocolv4/api_results_generated.go",
-      "sha256": "06186025f43d004f6726e371a6a683391ae7fddadd42c20dd7542b84cebaaedf"
+      "sha256": "16f1b2c86b6d476dda9718f05615267830f2c2968de581b549b43e71e216ccfb"
     },
     {
       "file": "flowersec-rust/src/api_results_v4_generated.rs",
-      "sha256": "7d4a4c96ff2b37c18fc25c51fe8d5b1922c1482fef5cd816c312cc6858d4e93e"
+      "sha256": "d40a90b0d22a00b170a82bfddd13bfd38c366489860137fad0eb2b7714ca86af"
     },
     {
       "file": "flowersec-swift/Sources/Flowersec/TransportV4APIResults.generated.swift",
-      "sha256": "07f6ceed662007df3d7069a8125234a96789cb6d7e16046202cf851ab936d76c"
+      "sha256": "7361b2c07c372d94dc4a3ae19b3e79ff0bdad67f602d4dca124b2d640beb631d"
     },
     {
       "file": "flowersec-ts/src/generated/transportV4APIResults.ts",
-      "sha256": "51dfed09c4732d86ddfe9cd2aee4dfa918e8211ac717f29391cdf245cc37353e"
+      "sha256": "bd17f6ef6e355aaccd83e40838018a799f356595c2fc8feef4a34c5643df1e4a"
     },
     {
       "file": "flowersec-go/internal/protocolv4/registry_generated.go",
-      "sha256": "bd78cddfa25c2c3637b55993a527cec4e99a92b31573a4cc43e44a0f6173daae"
+      "sha256": "d68862bb8d64c436ba943dab4ec0c2692eb02f330d73e9b7a5fe324ad06f4e67"
     },
     {
       "file": "flowersec-rust/src/protocol_v4_registry_generated.rs",
-      "sha256": "0c0859287b1b7a52472d0297d93f5ccc28d0d36b1a22c99b3456b81d11d42dba"
+      "sha256": "df1068fcca07641dad629940fe7ad2fbf5f782f0c89fda7f21c0e8508f0836b0"
     },
     {
       "file": "flowersec-swift/Sources/Flowersec/TransportV4Registry.generated.swift",
-      "sha256": "58a967c729e7e98934b7ee04170564b127c870da8eb0ca37bac5cb9ce65e2dbf"
+      "sha256": "088f83990cb3e882656ba86884229b931d2f85c0f60b4eb76abb7e704e1e0b3c"
     },
     {
       "file": "flowersec-ts/src/generated/transportV4Registry.ts",
-      "sha256": "fe68e3c323241fcb6c379da2fabb5091a23b07f16fc64a8190a18435be40e063"
+      "sha256": "678042f3b025b48936b1f621a95893d535740e911c93b572ff690ff32230ff5c"
     }
   ],
   "query_vectors": [
@@ -10930,6 +11031,273 @@
       "type": "CleanupStatus",
       "sha256": "311e65b95230862e96ef133174038ff461ca5bf0520613f59dadf10b0b9d9844",
       "expected_error": "api_enum"
+    },
+    {
+      "id": "top_up_error_source_exhausted_none",
+      "type": "TopUpError",
+      "sha256": "92c6fc80555349695da4b8b0bd4d15037019e397a3c95917fa69ce025828ca70"
+    },
+    {
+      "id": "top_up_error_source_unavailable_none",
+      "type": "TopUpError",
+      "sha256": "085a481156d30576bd89835b4b3da61272fcd2cef08c1b796c44bd69b7b30cab"
+    },
+    {
+      "id": "top_up_error_source_contract_invalid_none",
+      "type": "TopUpError",
+      "sha256": "5fc8e6e0d5b410f06a76cbc1b20731db0d41907f1931c0f63361aa8f2fa8e70f"
+    },
+    {
+      "id": "top_up_error_source_state_unknown_none",
+      "type": "TopUpError",
+      "sha256": "fa5f0bb065c366ace83d5f3c5c56ec3f67121b258084d7d2b9e14910a7a460ca"
+    },
+    {
+      "id": "top_up_error_operation_conflict_none",
+      "type": "TopUpError",
+      "sha256": "a39722e49afa60b417d81f2a748011b3dca9b211c8faaad9b6946061fad6cf77"
+    },
+    {
+      "id": "top_up_error_stale_generation_none",
+      "type": "TopUpError",
+      "sha256": "937e54c4b2af9d80fc366d3467c066318a7287f5aec6826484c697d967464c26"
+    },
+    {
+      "id": "top_up_error_future_generation_none",
+      "type": "TopUpError",
+      "sha256": "1fefe50b074c50cea14f182629c5bb0c3be5d9a3057e6c56ce8d34af007c8dae"
+    },
+    {
+      "id": "top_up_error_stale_operation_none",
+      "type": "TopUpError",
+      "sha256": "25585f542f4f5e618f886f7589017cb56cd45b69c26f00eb36b314a91231ef74"
+    },
+    {
+      "id": "top_up_error_future_operation_none",
+      "type": "TopUpError",
+      "sha256": "a93b9db8c9b8fb0a922521c1c2bae15822534d6c10fb85be831f5009060b5e3a"
+    },
+    {
+      "id": "top_up_error_sequence_gap_none",
+      "type": "TopUpError",
+      "sha256": "5a2ea37d02054993a64af520d85f8b6cb34adfa797c6e6e43a6f4b943b528fe4"
+    },
+    {
+      "id": "top_up_error_configuration_capacity_none",
+      "type": "TopUpError",
+      "sha256": "864a363e0f4d8422df7023f33df040f6ff4e8fa5ff74d560d7bc212fd6ac41ef"
+    },
+    {
+      "id": "top_up_error_configuration_capacity_terminal",
+      "type": "TopUpError",
+      "sha256": "3f6ac2ea16221c02ea42e69317da4845afc3fca5b9cd6bdde40ce9570c06f68a"
+    },
+    {
+      "id": "top_up_error_capacity_exhausted_none",
+      "type": "TopUpError",
+      "sha256": "d4da821a88e2c08537e37a8a3289f42e2e0cc1e1dba6fc7b11be4fbc4882d3df"
+    },
+    {
+      "id": "top_up_error_capacity_exhausted_terminal",
+      "type": "TopUpError",
+      "sha256": "d42d0b67e94d31a6795a3a4dbb2be414fc4e84005c38350563d21d8017cfb092"
+    },
+    {
+      "id": "top_up_error_relink_required_none",
+      "type": "TopUpError",
+      "sha256": "e902bb5de432295bcc865155f18862f00c5f0b8f491aa357ca81989f3853733f"
+    },
+    {
+      "id": "top_up_error_relink_required_terminal",
+      "type": "TopUpError",
+      "sha256": "f0a739f08dc906e09f2302b6e60f12af66f5cdccd58db362c60cb0c89a32209e"
+    },
+    {
+      "id": "top_up_error_spent_unknown_none",
+      "type": "TopUpError",
+      "sha256": "6bcbfeb50519dd9a33a7789708cbce7fc3e80533a4a501aae7c8f07c82005d19"
+    },
+    {
+      "id": "top_up_error_spent_unknown_terminal",
+      "type": "TopUpError",
+      "sha256": "90e2a17879a9c8aa9517dfe72b05e689ec4ed9dad29b4fc6c2dc24c17c1c8410"
+    },
+    {
+      "id": "top_up_error_top_up_request_expired_none",
+      "type": "TopUpError",
+      "sha256": "5ef94b15ee724fd68fb35d998faf4d1d9b5c3d24b7e1e495636b0560cfd1846a"
+    },
+    {
+      "id": "top_up_error_top_up_request_expired_terminal",
+      "type": "TopUpError",
+      "sha256": "0a30ff8509d18a26a1d8419612d57a8d8e399fd691cf6e9402cb5df66c982715"
+    },
+    {
+      "id": "top_up_error_source_reset_required_none",
+      "type": "TopUpError",
+      "sha256": "e091844f7e7a70ff6a1e072b997d5fbfbc608e0d2b9ba4c60c21659a97818555"
+    },
+    {
+      "id": "top_up_error_source_reset_required_terminal",
+      "type": "TopUpError",
+      "sha256": "e15dd4c402aa199eeb262da00141675dabfc9bc91f2b2e7991c415f48e8041a3"
+    },
+    {
+      "id": "top_up_error_permission_denied_none",
+      "type": "TopUpError",
+      "sha256": "050fce96f704f8c6f042d1b99557561986637a2470ac363e48254e0bf4c8afef"
+    },
+    {
+      "id": "top_up_error_permission_denied_cannot_write_terminal",
+      "type": "TopUpError",
+      "sha256": "90fb63130f86f4ebf1164dafdb72a513b3a86481ba4f0e44cb11ccf27e526d18",
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_source_contract_invalid_cannot_write_terminal",
+      "type": "TopUpError",
+      "sha256": "5842e467568f72cb4ac40ecfb5a042b3c036f60b0f9e4303d1533c3b2fd62a1b",
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_source_exhausted_cannot_write_terminal",
+      "type": "TopUpError",
+      "sha256": "7c9c0ee7ab3a7812cf1d4bd753a513395d7f8a77eb5dec2e67cc716608165c43",
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_source_unavailable_cannot_write_terminal",
+      "type": "TopUpError",
+      "sha256": "a04667ece3a2e5cfa733bb4f5475a8f3525a2b582e6d2407fa4e13ba49467a38",
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_wrong_scope",
+      "type": "TopUpError",
+      "sha256": "6ea90c13d66582dfffa6c0a3eb6f1189857f95bdd63993b0fed77d05b17bf56f",
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_wire_result_success",
+      "type": "TopUpWireResult",
+      "sha256": "8ebbca2ce3e9ff3c2a686eb1902cafda755a81de80f6baf71eff3cd2bb6b60b7"
+    },
+    {
+      "id": "top_up_wire_result_replay",
+      "type": "TopUpWireResult",
+      "sha256": "866be55748930181e55149409cc75c73eed76d23019e1b125147916427e3c44c"
+    },
+    {
+      "id": "top_up_wire_result_source_exhausted",
+      "type": "TopUpWireResult",
+      "sha256": "2c7f4e4a3bc03c6cfeeba2e587a0b35006dd12877b5e00e8be0485ec81bf4c0e"
+    },
+    {
+      "id": "top_up_wire_result_source_unavailable",
+      "type": "TopUpWireResult",
+      "sha256": "819e12b1e1ee7ef111bd49a340e71c6f58ba02f5c1c116c227599a0c720437d4"
+    },
+    {
+      "id": "top_up_wire_result_source_contract_invalid",
+      "type": "TopUpWireResult",
+      "sha256": "59a14e86b44fbbcf85acab66137de3184e5b66c7255b75808d7e4021e7b37453"
+    },
+    {
+      "id": "top_up_wire_result_source_state_unknown",
+      "type": "TopUpWireResult",
+      "sha256": "cabd810dc5423190b5c799a59a562119b6295d965974b2814af95d13e8339d5c"
+    },
+    {
+      "id": "top_up_wire_result_operation_conflict",
+      "type": "TopUpWireResult",
+      "sha256": "1ca43826bc1b34c6f226d8ac461adee7ad9e4fcd57fea870e89ac3c567bc6049"
+    },
+    {
+      "id": "top_up_wire_result_stale_generation",
+      "type": "TopUpWireResult",
+      "sha256": "08ec11f676a66ae1cc577658fd8dd49e27c8d8d4047477068339d6dedecab5ac"
+    },
+    {
+      "id": "top_up_wire_result_future_generation",
+      "type": "TopUpWireResult",
+      "sha256": "216cf1a8f0bcbe5e7413e1d8cbd6b2dc8a855d2f4460bd2f9a8f38415d75cb11"
+    },
+    {
+      "id": "top_up_wire_result_stale_operation",
+      "type": "TopUpWireResult",
+      "sha256": "7e99cd25eda3d0fdbd0aac7a080daa1fbac3809d40cd6fbf6544ee34d2fd2ffc"
+    },
+    {
+      "id": "top_up_wire_result_future_operation",
+      "type": "TopUpWireResult",
+      "sha256": "a40fec70d7b6bc45e3ee8b605bed0152e4c568149e75f987b66d6c76764ba420"
+    },
+    {
+      "id": "top_up_wire_result_sequence_gap",
+      "type": "TopUpWireResult",
+      "sha256": "c8a2c1fd2334c2ce27151e5ef65afb46267476e923e17c10d94b247e614acd46"
+    },
+    {
+      "id": "top_up_wire_result_configuration_capacity",
+      "type": "TopUpWireResult",
+      "sha256": "188ef2d85d109a9d9d855487f1978cd8251fa7e6fae695d8ec6569d037c20737"
+    },
+    {
+      "id": "top_up_wire_result_capacity_exhausted",
+      "type": "TopUpWireResult",
+      "sha256": "cfc70a5cfd2d282317fd0987c19bda5bc312c6acd54b4078d9c2725d0952954f"
+    },
+    {
+      "id": "top_up_wire_result_relink_required",
+      "type": "TopUpWireResult",
+      "sha256": "82d03146755427e3cfc7701a07f36dfd25a1ae35eef95f17c93c20dd629f70fd"
+    },
+    {
+      "id": "top_up_wire_result_spent_unknown",
+      "type": "TopUpWireResult",
+      "sha256": "0f5675093198d8c589002c8edb7998b8cad63da90d6fac2c3a9181960320dd57"
+    },
+    {
+      "id": "top_up_wire_result_top_up_request_expired",
+      "type": "TopUpWireResult",
+      "sha256": "1f9abc8b087fbf5e23604a6e73d126e3b82511a9fc46c0ce83f54139c9184d24"
+    },
+    {
+      "id": "top_up_wire_result_source_reset_required",
+      "type": "TopUpWireResult",
+      "sha256": "59ed13b9cdf239ea219915f8c41017a8d397a576b55f239719a437e10a0ad2c6"
+    },
+    {
+      "id": "top_up_wire_result_permission_denied",
+      "type": "TopUpWireResult",
+      "sha256": "5874ffbacf5018c1f804bc8611912f840544c964dca8d25d979f9f69a3fd210e"
+    },
+    {
+      "id": "api_lifecycle_active_wait",
+      "type": "LifecycleResult",
+      "sha256": "58fceb1a26f9b83db4384644c50dc3c4af309a6b81afa1c212ce9f83cb2be707"
+    },
+    {
+      "id": "api_lifecycle_aborted_pending",
+      "type": "LifecycleResult",
+      "sha256": "a04087947fd30ada88ba857b8fcd9a50d9d91c22682fadc8a31fffbf0eeeb019"
+    },
+    {
+      "id": "api_lifecycle_environment_complete",
+      "type": "LifecycleResult",
+      "sha256": "5f6794020c563febbfd29c53c968d085681b5542d2d910449eff9a7bfd12516c"
+    },
+    {
+      "id": "api_lifecycle_child_cannot_abort_session",
+      "type": "LifecycleResult",
+      "sha256": "d4a075f43c29d2639d898d1b328b6df869555dae219969076a1cf488a847d3af",
+      "expected_error": "cleanup_lifecycle"
+    },
+    {
+      "id": "api_lifecycle_active_cannot_be_released",
+      "type": "LifecycleResult",
+      "sha256": "bee63d2d31bd6b9ea3d3cd3350bdf2461f649f0938c6c39490ab54d67fa2a53c",
+      "expected_error": "cleanup_lifecycle"
     }
   ],
   "resource_vectors": [

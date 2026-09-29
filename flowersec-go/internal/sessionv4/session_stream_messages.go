@@ -2,10 +2,10 @@ package sessionv4
 
 import (
 	"context"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 func (p *SessionCorePlan) prepareMessages(contract *protocolv4.ServiceContract, config StreamMessagesConfig, reservation resourcev4.Reference, authorization *protocolv4.DeliveryAuthorization, identity [16]byte) (*StreamMessages, error) {
@@ -41,21 +41,44 @@ func (p *SessionCorePlan) prepareMessages(contract *protocolv4.ServiceContract, 
 	m.route = route
 	m.inputConfig.Clock = clock
 	m.network = network
-	m.networkHold, err = network.RetainStream(session, m.reservation)
+	if config.networkPosition != (rpcv4.OutgoingProtection{}) {
+		m.networkProtection = config.networkPosition
+		m.networkHold, err = network.RetainProtectedStream(session, m.reservation, config.networkPosition)
+	} else {
+		m.networkHold, err = network.RetainStream(session, m.reservation)
+	}
 	if err == nil {
 		path := rpcv4.Association{Channel: identity}
 		if config.Server {
 			m.ticket, err = network.ReserveIncomingStream(path)
+		} else if config.networkPosition != (rpcv4.OutgoingProtection{}) {
+			m.ticket, err = network.ReserveProtectedStream(config.networkPosition, config.Request, path)
 		} else {
 			m.ticket, err = network.ReserveOutgoing(config.Request, path)
 		}
 		m.positionHeld = err == nil
+		if err == nil && config.networkPosition != (rpcv4.OutgoingProtection{}) {
+			m.networkProtection, m.protectedTicket = config.networkPosition, m.ticket
+		}
+	}
+	if err == nil && config.environment != nil {
+		err = config.environment.admitStreamResult(m, config.resultPosition)
 	}
 	if err != nil {
+		m.releasePositionLocked()
 		m.Close()
 		return nil, err
 	}
 	return m, nil
+}
+
+func (m *StreamMessages) releaseNetworkHoldLocked() {
+	if m.networkProtection != (rpcv4.OutgoingProtection{}) {
+		m.networkProtection.ReturnStreamBacking(m.networkHold)
+	} else {
+		m.networkHold.Release()
+	}
+	m.networkHold = resourcev4.Reference{}
 }
 
 // OpenStreamMessages prepares the full request/current-item/error buffers,
@@ -87,6 +110,7 @@ func (c *SessionCore) OpenStreamMessages(ctx context.Context, kind string, metad
 	if err != nil {
 		return nil, err
 	}
+	defer m.finishEnvironmentPreparation()
 	defer func() {
 		if err != nil {
 			m.mu.Lock()
@@ -95,7 +119,7 @@ func (c *SessionCore) OpenStreamMessages(ctx context.Context, kind string, metad
 			m.Close()
 		}
 	}()
-	h, _, err := a.OpenLocal(ctx, BusinessStream, kind, metadata, &CarrierAssociation{shared: a.sharedIngress}, allocation.reservation, m.deadline)
+	h, _, err := p.openBusinessStream(ctx, allocation, kind, metadata, m.deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +161,7 @@ func (c *SessionCore) AcceptStreamMessages(ctx context.Context, h OpenHandle, co
 	if err != nil {
 		return nil, err
 	}
+	defer m.finishEnvironmentPreparation()
 	defer func() {
 		if err != nil {
 			m.mu.Lock()

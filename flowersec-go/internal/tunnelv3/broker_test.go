@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
 )
 
 type controlLifecycleStream struct {

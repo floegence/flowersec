@@ -5,10 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // One original protected position belongs to each opener. A rebuilt channel
@@ -96,7 +96,7 @@ func (r *RPCServices) OpenNotifyChannel(ctx context.Context, deadline *timev4.De
 		return nil, err
 	}
 	defer func() { go job.run() }()
-	job.handle, _, err = a.OpenLocal(job.context, InternalStream, spec.Kind, nil, &CarrierAssociation{shared: a.sharedIngress}, job.allocation.stream.reservation, deadline)
+	job.handle, _, err = r.openInternal(job.context, InternalStream, spec.Kind, job.allocation, deadline)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +187,10 @@ func (job *notifyChannelOpening) bind() (*NotifyChannel, error) {
 		return nil, err
 	}
 	job.channel = channel
+	if err = r.protectNotifyChannelLocked(channel.Publisher(), job.position-8); err != nil {
+		channel.Close()
+		return nil, err
+	}
 	job.receiver = channel.Receiver()
 	if err = r.notifications.AttachChannel(job.receiver); err != nil {
 		channel.Close()
@@ -218,6 +222,11 @@ func (job *notifyChannelOpening) run() {
 		r.notifications.DetachChannel(job.receiver)
 		job.allocation.release()
 		r.notifyChannels[job.position-8] = nil
+		for _, slot := range r.workloadSlots {
+			if slot != nil && !slot.closing {
+				slot.notify[job.position-8] = rpcv4.NotifyProtection{}
+			}
+		}
 		job.allocation, job.services, job.stream, job.channel, job.receiver = nil, nil, nil, nil, nil
 		job.handle = OpenHandle{}
 		job.context, job.cancel = nil, nil
@@ -249,7 +258,7 @@ func (job *notifyChannelOpening) cleanup() error {
 		} else {
 			err = a.CleanupStream(context.Background(), job.handle)
 		}
-		if err == nil {
+		if err == nil && job.services.native == nil {
 			err = a.CarrierClosed(job.handle)
 		}
 		if !errors.Is(err, ErrOpenPending) && !errors.Is(err, ErrTerminal) {

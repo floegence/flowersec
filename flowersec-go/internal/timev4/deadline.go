@@ -27,6 +27,9 @@ func NewWindowAt(c *Clock, start Mark, duration uint64) (*Window, error) {
 	if c == nil || start.owner != c {
 		return nil, ErrOwner
 	}
+	if err := c.checkMark(start); err != nil {
+		return nil, err
+	}
 	_, uncertainty, err := c.profile.Rate.Elapsed(0)
 	if err != nil {
 		return nil, err
@@ -41,7 +44,7 @@ func (w *Window) check(now Mark, sampleErr error) error {
 	if w.terminal != nil {
 		return w.terminal
 	}
-	if sampleErr != nil || !now.SameEra(w.start) || now.Milliseconds < w.start.Milliseconds {
+	if sampleErr != nil || !now.SameEra(w.start) || now.Milliseconds < w.start.Milliseconds || w.clock.checkMark(now) != nil {
 		w.terminal = ErrContinuity
 		return w.terminal
 	}
@@ -55,9 +58,9 @@ func (w *Window) check(now Mark, sampleErr error) error {
 }
 
 func (w *Window) Check() error {
+	now, err := w.clock.Monotonic()
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	now, err := w.clock.Monotonic()
 	return w.check(now, err)
 }
 
@@ -71,10 +74,28 @@ func (w *Window) CheckAt(now Mark) error {
 // window. Outward rounding may schedule a final one-millisecond recheck before
 // the strict elapsed_upper predicate proves expiry.
 func (w *Window) RemainingMS() (uint64, error) {
+	now, err := w.clock.Monotonic()
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	now, err := w.clock.Monotonic()
 	if err = w.check(now, err); err != nil {
+		return 0, err
+	}
+	delta, err := w.clock.profile.Rate.DeadlineDelta(0, w.duration)
+	if err != nil {
+		return 0, err
+	}
+	elapsed := now.Milliseconds - w.start.Milliseconds
+	if elapsed >= delta {
+		return 1, nil
+	}
+	return delta - elapsed, nil
+}
+
+// RemainingMSAt shares an existing local mark without calling the host adapter.
+func (w *Window) RemainingMSAt(now Mark) (uint64, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err := w.check(now, nil); err != nil {
 		return 0, err
 	}
 	delta, err := w.clock.profile.Rate.DeadlineDelta(0, w.duration)
@@ -118,6 +139,16 @@ func NewDeadline(c *Clock, cap uint64) (*Deadline, error) {
 	sample, err := c.Sample()
 	if err != nil {
 		return nil, err
+	}
+	return newDeadlineAt(c, sample, cap)
+}
+
+// NewDeadlineAt fixes an independent absolute deadline at the owner's original
+// sample. Callers charge its backing before creating it. A later Start cannot
+// improve this first conservative projection by obtaining a narrower anchor.
+func NewDeadlineAt(c *Clock, sample Sample, cap uint64) (*Deadline, error) {
+	if c == nil || sample.owner != c || !sample.valid {
+		return nil, ErrOwner
 	}
 	return newDeadlineAt(c, sample, cap)
 }
@@ -168,6 +199,9 @@ func (d *Deadline) check(sample Sample, sampleErr error) error {
 	if sample.owner != d.clock || !sample.valid {
 		return ErrUnavailable
 	}
+	if err := d.clock.checkSample(sample); err != nil {
+		return err
+	}
 	if !sample.ValidBefore(d.cap) {
 		d.terminal = ErrExpired
 		return d.terminal
@@ -196,9 +230,9 @@ func (d *Deadline) check(sample Sample, sampleErr error) error {
 // An unavailable wall anchor suspends a live recoverable owner; a known
 // original monotonic expiry still terminates it even while wall time is absent.
 func (d *Deadline) Sample() (Sample, error) {
+	sample, err := d.clock.Sample()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	sample, err := d.clock.Sample()
 	return sample, d.check(sample, err)
 }
 
@@ -220,13 +254,31 @@ func (d *Deadline) Cap() uint64 {
 
 func (d *Deadline) Tighten(cap uint64) error {
 	d.mu.Lock()
+	if cap > d.cap {
+		d.mu.Unlock()
+		return ErrOwner
+	}
+	d.cap = cap
+	d.mu.Unlock()
+	sample, err := d.clock.Sample()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.check(sample, err)
+}
+
+// TightenAt applies an adjacent owner's actual sample without calling the
+// adapter inside its publication gate. The original cap can only decrease.
+func (d *Deadline) TightenAt(cap uint64, sample Sample) error {
+	if d == nil || !sample.BelongsTo(d.clock) {
+		return ErrOwner
+	}
+	d.mu.Lock()
 	defer d.mu.Unlock()
 	if cap > d.cap {
 		return ErrOwner
 	}
 	d.cap = cap
-	sample, err := d.clock.Sample()
-	return d.check(sample, err)
+	return d.check(sample, nil)
 }
 
 // TightenAgeAt anchors a run limit at the first actual application entry.
@@ -240,14 +292,14 @@ func (d *Deadline) TightenAgeAt(start Sample, duration uint64) error {
 	if err != nil {
 		return err
 	}
+	now, sampleErr := d.clock.Sample()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	child := Deadline{clock: d.clock, cap: min(cap, d.cap)}
 	if err := child.check(start, nil); err != nil {
 		return err
 	}
-	now, err := d.clock.Sample()
-	if err = d.check(now, err); err != nil {
+	if err = d.check(now, sampleErr); err != nil {
 		return err
 	}
 	if child.projection.SameEra(d.projection) {
@@ -267,13 +319,34 @@ func (d *Deadline) Fork(cap uint64) (*Deadline, error) {
 	if d == nil {
 		return nil, ErrOwner
 	}
+	sample, err := d.clock.Sample()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if cap > d.cap {
 		return nil, ErrOwner
 	}
-	sample, err := d.clock.Sample()
 	if err = d.check(sample, err); err != nil {
+		return nil, err
+	}
+	child := &Deadline{clock: d.clock, cap: cap, projection: d.projection, monotonicDeadline: d.monotonicDeadline}
+	if err := child.check(sample, nil); err != nil {
+		return nil, err
+	}
+	return child, nil
+}
+
+// ForkAt preserves the original projection when an already admitted adjacent
+// owner supplies the same clock's current sample at its ownership gate.
+func (d *Deadline) ForkAt(cap uint64, sample Sample) (*Deadline, error) {
+	if d == nil || !sample.BelongsTo(d.clock) {
+		return nil, ErrOwner
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if cap > d.cap {
+		return nil, ErrOwner
+	}
+	if err := d.check(sample, nil); err != nil {
 		return nil, err
 	}
 	child := &Deadline{clock: d.clock, cap: cap, projection: d.projection, monotonicDeadline: d.monotonicDeadline}
@@ -294,14 +367,14 @@ func (d *Deadline) ForkAgeAt(start Sample, duration uint64) (*Deadline, error) {
 	if err != nil {
 		return nil, err
 	}
+	now, sampleErr := d.clock.Sample()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	child, err := newDeadlineAt(d.clock, start, min(cap, d.cap))
 	if err != nil {
 		return nil, err
 	}
-	now, err := d.clock.Sample()
-	if err = d.check(now, err); err != nil {
+	if err = d.check(now, sampleErr); err != nil {
 		return nil, err
 	}
 	if child.projection.SameEra(d.projection) {
@@ -313,14 +386,49 @@ func (d *Deadline) ForkAgeAt(start Sample, duration uint64) (*Deadline, error) {
 	return child, nil
 }
 
+// ForkAgeUsingSample begins a child at an adjacent authorization gate's exact
+// current sample. It invokes no host adapter; the child retains both this age
+// bound and the parent's earlier absolute/monotonic projection.
+func (d *Deadline) ForkAgeUsingSample(start Sample, duration uint64) (*Deadline, error) {
+	if d == nil || !start.BelongsTo(d.clock) {
+		return nil, ErrOwner
+	}
+	cap, err := add(start.LowerMS, duration)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := d.check(start, nil); err != nil {
+		return nil, err
+	}
+	child := &Deadline{clock: d.clock, cap: min(d.cap, cap), projection: d.projection, monotonicDeadline: d.monotonicDeadline}
+	if err := child.check(start, nil); err != nil {
+		return nil, err
+	}
+	return child, nil
+}
+
 // RemainingMS is for the owner's single merged wakeup. Host timer adapters may
 // clamp it to a representable chunk; every actual action must still call Check.
 // No uint64 millisecond deadline is narrowed into a nanosecond duration here.
 func (d *Deadline) RemainingMS() (uint64, error) {
+	sample, err := d.clock.Sample()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	sample, err := d.clock.Sample()
 	if err = d.check(sample, err); err != nil {
+		return 0, err
+	}
+	return d.monotonicDeadline - sample.Milliseconds, nil
+}
+
+// RemainingMSAt shares the owner's immutable gate sample with a bounded table
+// sweep. It preserves the original cap and earliest projection without invoking
+// a clock callback under the table's gate or resampling once per row.
+func (d *Deadline) RemainingMSAt(sample Sample) (uint64, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if err := d.check(sample, nil); err != nil {
 		return 0, err
 	}
 	return d.monotonicDeadline - sample.Milliseconds, nil
@@ -345,8 +453,8 @@ func (d *Deadline) TightenFrom(original *Deadline) error {
 	if d == original {
 		return d.Check()
 	}
-	original.mu.Lock()
 	sample, err := original.clock.Sample()
+	original.mu.Lock()
 	err = original.check(sample, err)
 	cap, projection, until := original.cap, original.projection, original.monotonicDeadline
 	original.mu.Unlock()
@@ -354,13 +462,17 @@ func (d *Deadline) TightenFrom(original *Deadline) error {
 		return err
 	}
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	d.cap = min(d.cap, cap)
 	if projection.SameEra(d.projection) {
 		d.monotonicDeadline = min(d.monotonicDeadline, until)
-	} else {
+	} else if projection.era > d.projection.era {
+		// A concurrent check may already have installed this owner's earlier
+		// projection in a newer era. An older parent sample cannot erase it.
 		d.projection, d.monotonicDeadline = projection, until
 	}
+	d.mu.Unlock()
 	sample, err = d.clock.Sample()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.check(sample, err)
 }

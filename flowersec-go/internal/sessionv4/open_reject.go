@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // HoldRejection transfers an authenticated OPEN into its protected rejection
@@ -177,6 +177,9 @@ func (a *OpenAdmission) PublishRejection(ctx context.Context, h OpenHandle, main
 	a.mu.Lock()
 	if err == nil {
 		err = a.checkDeadline(guard.deadline)
+	}
+	if err == nil && result.Complete {
+		s.outcomeComplete = true
 	}
 	s.deciding = false
 	s.retirementReferences--

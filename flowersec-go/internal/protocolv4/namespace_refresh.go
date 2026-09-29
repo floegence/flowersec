@@ -7,8 +7,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // NamespaceRefreshRequest selects an independently installed namespace, never
@@ -247,11 +247,32 @@ func (r *NamespaceRefresh) refresh(provider NamespaceRefreshProvider) (err error
 	var pinMu sync.Mutex
 	var pin *NamespacePin
 	go func() {
-		defer close(exited)
+		var failure error
+		returned := false
+		defer func() {
+			if recover() != nil || !returned {
+				failure = CBORFailure("revocation_refresh_provider")
+			}
+			if failure != nil {
+				cancel(failure)
+				pinMu.Lock()
+				p := pin
+				pinMu.Unlock()
+				if p != nil {
+					r.namespace.mu.Lock()
+					if r.namespace.pin == p && p.terminal == nil {
+						r.namespace.finishPin(p, failure)
+					}
+					r.namespace.mu.Unlock()
+				}
+			}
+			close(exited)
+		}()
 		timer := time.NewTimer(time.Hour)
 		defer timer.Stop()
 		for {
-			remaining, failure := window.RemainingMS()
+			var remaining uint64
+			remaining, failure = window.RemainingMS()
 			if failure == nil {
 				failure = r.reservation.Check()
 			}
@@ -272,19 +293,13 @@ func (r *NamespaceRefresh) refresh(provider NamespaceRefreshProvider) (err error
 				failure = context.Cause(call)
 			}
 			if failure != nil {
-				cancel(failure)
-				if p != nil {
-					r.namespace.mu.Lock()
-					if r.namespace.pin == p && p.terminal == nil {
-						r.namespace.finishPin(p, failure)
-					}
-					r.namespace.mu.Unlock()
-				}
+				returned = true
 				return
 			}
 			timer.Reset(time.Duration(max(1, min(remaining, 100))) * time.Millisecond)
 			select {
 			case <-stop:
+				returned = true
 				return
 			case <-call.Done():
 			case <-canceled:
@@ -353,9 +368,12 @@ func (r *NamespaceRefresh) refresh(provider NamespaceRefreshProvider) (err error
 			}
 			// Failed control transport does not revoke an independently valid
 			// existing configuration or cancel its selected content task.
-			r.trust.mu.Lock()
-			current := r.trust.checkCurrentLocked()
-			r.trust.mu.Unlock()
+			sample, current := r.trust.sampleCurrent()
+			if current == nil {
+				r.trust.mu.Lock()
+				current = r.trust.checkCurrentLockedAt(sample)
+				r.trust.mu.Unlock()
+			}
 			if current != nil {
 				return trustErr
 			}
@@ -416,7 +434,15 @@ func (r *NamespaceRefresh) refresh(provider NamespaceRefreshProvider) (err error
 			return 0, post
 		}
 		return size, readErr
-	}, true, check)
+	}, true, func(sample timev4.Sample) error {
+		if cause := context.Cause(call); cause != nil {
+			return cause
+		}
+		if err := r.reservation.Check(); err != nil {
+			return err
+		}
+		return window.CheckAt(sample.Mark)
+	})
 	installed = err == nil
 	return err
 }

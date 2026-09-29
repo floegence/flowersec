@@ -10,10 +10,12 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // SessionCoreConfig is the immutable transport part of a complete SessionPlan.
@@ -71,8 +73,12 @@ const (
 	coreSendOwner
 	coreNativeAuthOwner
 	coreLifecycleOwner
+	coreNativeStreamsOwner
+	coreUnreliableOwner
 	coreNativeReceiverStart
-	coreOwnerCapacity = coreNativeReceiverStart + 128
+	coreNativeOpenReceiverStart = coreNativeReceiverStart + 128
+	coreStreamServiceStart      = coreNativeOpenReceiverStart + 128
+	coreOwnerCapacity           = coreStreamServiceStart + maxStreamServices*streamServiceOwners
 )
 
 // SessionResourceScope is resolved by trusted local composition from verified
@@ -88,6 +94,8 @@ type SessionResourceScope struct {
 // Constructor work and cleanup observation use the caller's original position;
 // cancellation never launches another cleanup worker or refunds a live tail.
 type SessionCorePlan struct {
+	serviceFloors                                                                      []streamServiceFloor
+	diagnostics                                                                        *diagnosticv4.Counters
 	preaccepted                                                                        [maxPreacceptedStreams]*preacceptedStream
 	mu                                                                                 sync.Mutex
 	config                                                                             SessionCoreConfig
@@ -102,6 +110,9 @@ type SessionCorePlan struct {
 	admission                                                                          *OpenAdmission
 	runtime                                                                            *SessionRuntime
 	writer                                                                             *RecordWriter
+	nativeConnection                                                                   native.Connection
+	nativeStreams                                                                      *nativeStreamTransport
+	unreliable                                                                         *UnreliableMessages
 	input                                                                              sessionCoreCarrier
 	receivePool                                                                        *ReceivePool
 	dispatcher                                                                         *sessionStreamDispatcher
@@ -112,6 +123,8 @@ type SessionCorePlan struct {
 	accounts                                                                           [resourcev4.MaxAccountsPerCharge]resourcev4.Account
 	accountCount                                                                       int
 	streamMethods                                                                      uint32
+	streamCallerProtected, streamCallerUsed                                            uint32
+	streamServices                                                                     uint32
 	streamCalls                                                                        uint64
 	carrier                                                                            CarrierAssociation
 	probes                                                                             []ProbeSlot
@@ -189,13 +202,21 @@ func (c SessionCoreConfig) validateTime() error {
 	if err != nil || uncertainty >= min(c.Rekey.LocalPrepareMS, c.Rekey.ProtocolPrepareMS, c.Rekey.ConfirmationMS) {
 		return cryptov4.ErrConfiguration
 	}
-	for _, duration := range [...]uint64{c.Automatic.SubmissionMS + c.Automatic.ResponseMS, c.Messages.ReplyTimeoutMS, c.Termination.NormalMS, c.Termination.QuarantineMS, c.Rekey.LocalPrepareMS} {
+	for _, duration := range [...]uint64{c.Messages.ReplyTimeoutMS, c.Termination.NormalMS, c.Termination.QuarantineMS, c.Rekey.LocalPrepareMS} {
 		if _, err := timev4.NewWindow(c.Clock, duration); err != nil {
 			return err
 		}
 	}
-	for _, duration := range [...]uint64{c.Automatic.IntervalMS, c.Messages.IngressRefillMS} {
+	for _, duration := range [...]uint64{c.Messages.IngressRefillMS} {
 		if _, err := timev4.NewDelay(c.Clock, duration); err != nil {
+			return err
+		}
+	}
+	if c.Automatic != (AutomaticLivenessPolicy{}) {
+		if _, err := timev4.NewWindow(c.Clock, c.Automatic.SubmissionMS+c.Automatic.ResponseMS); err != nil {
+			return err
+		}
+		if _, err := timev4.NewDelay(c.Clock, c.Automatic.IntervalMS); err != nil {
 			return err
 		}
 	}
@@ -225,7 +246,7 @@ func (c SessionCoreConfig) validateTime() error {
 
 func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourcev4.Vector, total resourcev4.Vector, count uint32, err error) {
 	if c.Handlers != (SessionStreamHandlerConfig{}) {
-		if c.Native || c.Handlers.Plan != nil && c.Streams == (SessionStreamConfig{}) || uint64(c.Handlers.Concurrency) > uint64(c.Open.Opening)+uint64(c.Open.IngressItems) {
+		if c.Handlers.Plan != nil && c.Streams == (SessionStreamConfig{}) || uint64(c.Handlers.Concurrency) > uint64(c.Open.Opening)+uint64(c.Open.IngressItems) {
 			err = cryptov4.ErrConfiguration
 			return
 		}
@@ -239,7 +260,7 @@ func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourc
 	if !c.Session.Contract.Valid() || !profileSupported || c.Session.SessionNotAfterMS <= c.Session.IssuedAtMS || c.Native && c.MessageCarrier ||
 		c.RuntimeBytes == 0 || c.DecoderNodes <= 0 || c.MaxDataPayloadBytes == 0 || c.MaxDataPayloadBytes > uint64(signed.MaxFrame) ||
 		c.Open.Active > c.MaxScopes || c.Open.IngressItems > c.PendingScopes || c.ProbeSlots == 0 || c.ProbeSlots > 8 || c.PongSlots == 0 || c.PongSlots > c.Messages.IngressBurst ||
-		c.DispatchTimeoutMS == 0 || c.RetirementTimeoutMS == 0 || c.Automatic.IntervalMS == 0 || c.Automatic.SubmissionMS == 0 || c.Automatic.ResponseMS == 0 || c.Automatic.MissThreshold == 0 || c.Automatic.SubmissionMS > math.MaxUint64-c.Automatic.ResponseMS ||
+		c.DispatchTimeoutMS == 0 || c.RetirementTimeoutMS == 0 || (c.Automatic != (AutomaticLivenessPolicy{}) && (c.Automatic.IntervalMS == 0 || c.Automatic.SubmissionMS == 0 || c.Automatic.ResponseMS == 0 || c.Automatic.MissThreshold == 0 || c.Automatic.SubmissionMS > math.MaxUint64-c.Automatic.ResponseMS)) ||
 		c.Messages.IngressRefillMS == 0 || c.Messages.ReplyTimeoutMS == 0 || c.Termination.NormalMS == 0 || c.Termination.QuarantineMS == 0 || c.Termination.NormalMS > math.MaxUint64-c.Termination.QuarantineMS || c.Termination.QuarantineDirections == 0 || c.Termination.QuarantineDirections > 32 || c.Termination.QuarantineMS > 10000 ||
 		c.Rekey.LocalPrepareMS == 0 || c.Rekey.ProtocolPrepareMS == 0 || c.Rekey.ConfirmationMS == 0 {
 		err = cryptov4.ErrConfiguration
@@ -253,12 +274,22 @@ func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourc
 		}
 		send += uint64(workers)
 	}
-	if c.Open.Active == 0 && (send != 0 || c.NativeAuthWorkers != 0) || c.Open.Active != 0 && send == 0 || send > 128 {
+	if c.Open.Active == 0 && (send != 0 || c.NativeAuthWorkers != 0) || c.Open.Active != 0 && send == 0 || send > uint64(c.Open.Active) {
 		err = cryptov4.ErrConfiguration
 		return
 	}
 	if c.Native {
-		if c.NativeIngress.FrameTimeoutMS == 0 || c.NativeIngress.RefillMS == 0 || c.NativeIngress.Burst == 0 || c.Open.Active != 0 && (c.NativeAuthWorkers == 0 || c.NativeAuthWorkers > 128) || send+uint64(c.NativeAuthWorkers) > uint64(c.WorkSlots) {
+		// DATA publication transfers to charged per-Stream output. Fixed
+		// authentication workers and one send/key lane cover crypto work;
+		// every actual provider worker remains separately admitted below.
+		cryptoSend := send
+		if c.Streams != (SessionStreamConfig{}) {
+			cryptoSend = min(send, 1)
+		}
+		if c.Datagrams {
+			cryptoSend += 2
+		}
+		if c.NativeIngress.FrameTimeoutMS == 0 || c.NativeIngress.RefillMS == 0 || c.NativeIngress.Burst == 0 || c.Open.Active != 0 && (c.NativeAuthWorkers == 0 || c.NativeAuthWorkers > 128) || cryptoSend+uint64(c.NativeAuthWorkers) > uint64(c.WorkSlots) {
 			err = cryptov4.ErrConfiguration
 			return
 		}
@@ -267,6 +298,16 @@ func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourc
 		return
 	}
 	maxInt := uint64(^uint(0) >> 1)
+	if c.Datagrams {
+		if !c.Native || c.Streams == (SessionStreamConfig{}) || uint64(c.WorkSlots) < uint64(c.NativeAuthWorkers)+3 {
+			err = cryptov4.ErrConfiguration
+			return
+		}
+		charges[coreUnreliableOwner], err = unreliableCharge(c)
+		if err != nil {
+			return
+		}
+	}
 	if uint64(c.PongSlots) > maxInt/uint64(unsafe.Sizeof(PongSlot{})) || uint64(c.RekeyWaitSlots) > maxInt/uint64(unsafe.Sizeof(RekeyWaitSlot{})) {
 		err = cryptov4.ErrConfiguration
 		return
@@ -285,12 +326,33 @@ func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourc
 		return
 	}
 	if c.Streams != (SessionStreamConfig{}) {
-		if c.Native || c.Open.Active == 0 || c.Streams.InitialReceiveLimit > signed.MaxCredit {
+		if c.Open.Active == 0 || c.Streams.InitialReceiveLimit > signed.MaxCredit {
 			err = cryptov4.ErrConfiguration
 			return
 		}
 		if _, err = sessionStreamCharges(c.Streams, c.Session.Profile, uint64(signed.MaxFrame), c.MaxDataPayloadBytes, 0); err != nil {
 			return
+		}
+		if c.Native {
+			// Every admitted native send direction has an independent worker.
+			// A blocked physical Write cannot occupy a healthy Stream's only
+			// service position in the same class.
+			for class, active := range c.Open.PerClass {
+				if c.SendWorkers[class] < active {
+					err = cryptov4.ErrConfiguration
+					return
+				}
+			}
+			charges[coreNativeStreamsOwner], err = nativeStreamTransportCharge(c)
+			if err != nil {
+				return
+			}
+			for i := uint32(0); i < c.Open.IngressItems; i++ {
+				charges[coreNativeOpenReceiverStart+int(i)], err = RecordReceiverCharge(signed.MaxFrame, c.DecoderNodes, c.decode())
+				if err != nil {
+					return
+				}
+			}
 		}
 		charges[coreReceivePoolOwner], err = ReceivePoolCharge(c.Streams.ReceivePoolBytes, c.Open.Active)
 		if err != nil {
@@ -315,7 +377,7 @@ func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourc
 	if err != nil {
 		return
 	}
-	charges[coreLivenessOwner], err = LivenessCharge(int(c.ProbeSlots), true)
+	charges[coreLivenessOwner], err = LivenessCharge(int(c.ProbeSlots), c.Automatic != (AutomaticLivenessPolicy{}))
 	if err != nil {
 		return
 	}
@@ -378,6 +440,15 @@ func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourc
 			return
 		}
 	}
+	serviceSlots, e := appendStreamServiceFloorCharges(c, &charges)
+	if e != nil {
+		err = e
+		return
+	}
+	charges[corePlanOwner], err = charges[corePlanOwner].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(serviceSlots) * uint64(unsafe.Sizeof(streamServiceFloor{})), resourcev4.Items: uint64(serviceSlots)})
+	if err != nil {
+		return
+	}
 	for _, charge := range charges {
 		if charge != (resourcev4.Vector{}) {
 			total, err = total.Add(charge)
@@ -391,12 +462,39 @@ func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourc
 }
 
 // SessionCoreRequirements gives the batch's complete vector and distinct owner
-// count. The root also needs its own slab charge and two Environment reference
-// positions (plan and Engine), plus a third for message carriers, in addition
-// to the original Environment owner. All are acquired by the constructor.
+// count. SessionCoreReferenceSlots includes its primary references, Environment
+// borrows and the reusable delegated service references acquired at construction.
+// Root slab, existing Environment/registration owners and other compositions
+// retain their separate charges.
 func SessionCoreRequirements(c SessionCoreConfig) (resourcev4.Vector, uint32, error) {
 	_, total, count, err := sessionCoreCharges(c)
 	return total, count, err
+}
+
+// SessionCoreReferenceSlots is the additional number of root reference
+// positions needed by NewSessionCorePlan. It excludes existing owners and
+// later ordinary Stream/RPC allocations. Delegated service floors include all
+// aliases and their original receive-pool borrow, even while idle.
+func SessionCoreReferenceSlots(c SessionCoreConfig) (uint32, error) {
+	charges, _, count, err := sessionCoreCharges(c)
+	if err != nil {
+		return 0, err
+	}
+	count += 2
+	if c.MessageCarrier {
+		count++
+	}
+	for position := coreStreamServiceStart; position < len(charges); position++ {
+		if charges[position] == (resourcev4.Vector{}) {
+			continue
+		}
+		component := (position - coreStreamServiceStart) % streamServiceOwners
+		count += uint32(streamServiceBorrows(component))
+		if component == streamFactoryMetadata {
+			count++ // ReceiveProtection keeps one actual pool reference.
+		}
+	}
+	return count, nil
 }
 
 // sessionCoreBatch is scratch on the original admitted construction stack. It
@@ -405,22 +503,34 @@ func SessionCoreRequirements(c SessionCoreConfig) (resourcev4.Vector, uint32, er
 // the enclosing owner may then include requests in its single ReserveBatch.
 // Requests and adoption stay on this original synchronous construction path.
 type sessionCoreBatch struct {
-	receivePool    *ReceivePool
-	config         SessionCoreConfig
-	root           *resourcev4.Root
-	owner          resourcev4.OwnerKey
-	environment    resourcev4.Reference
-	scope          SessionResourceScope
-	charges        [coreOwnerCapacity]resourcev4.Vector
-	positions      [coreOwnerCapacity]int
-	accounts       [resourcev4.MaxAccountsPerCharge]resourcev4.Account
-	borrows        [3]resourcev4.Reference
-	count          int
-	accountCount   int
-	prepared, used bool
+	nativeConnection native.Connection
+	serviceFloors    []streamServiceFloor
+	receivePool      *ReceivePool
+	config           SessionCoreConfig
+	root             *resourcev4.Root
+	owner            resourcev4.OwnerKey
+	environment      resourcev4.Reference
+	scope            SessionResourceScope
+	charges          [coreOwnerCapacity]resourcev4.Vector
+	positions        [coreOwnerCapacity]int
+	accounts         [resourcev4.MaxAccountsPerCharge]resourcev4.Account
+	borrows          [3]resourcev4.Reference
+	count            int
+	accountCount     int
+	prepared, used   bool
 }
 
 func prepareSessionCoreBatch(b *sessionCoreBatch, c SessionCoreConfig, root *resourcev4.Root, owner resourcev4.OwnerKey, environment resourcev4.Reference, scope SessionResourceScope, accounts ...resourcev4.Account) error {
+	if err := describeSessionCoreBatch(b, c, root, owner, environment, scope, accounts...); err != nil {
+		return err
+	}
+	return b.reserveEnvironmentBorrows()
+}
+
+// Freeze the original concrete requests without borrowing parents again. A
+// pre-Acquire headroom transfers its already admitted parent references only
+// after every request and source identity has passed the same claim gate.
+func describeSessionCoreBatch(b *sessionCoreBatch, c SessionCoreConfig, root *resourcev4.Root, owner resourcev4.OwnerKey, environment resourcev4.Reference, scope SessionResourceScope, accounts ...resourcev4.Account) error {
 	if b == nil || b.prepared || b.used || owner.Backing == ([16]byte{}) || len(accounts) > resourcev4.MaxAccountsPerCharge-2 {
 		return resourcev4.ErrOwner
 	}
@@ -436,17 +546,6 @@ func prepareSessionCoreBatch(b *sessionCoreBatch, c SessionCoreConfig, root *res
 	*b = sessionCoreBatch{config: c, root: root, owner: owner, environment: environment, scope: scope, charges: charges, accountCount: len(accounts) + 2}
 	b.accounts[0], b.accounts[1] = scope.Tenant, scope.Session
 	copy(b.accounts[2:], accounts)
-	borrows := 2
-	if c.MessageCarrier {
-		borrows++
-	}
-	for i := 0; i < borrows; i++ {
-		b.borrows[i], err = environment.Borrow()
-		if err != nil {
-			b.release()
-			return err
-		}
-	}
 	for position, charge := range charges {
 		if charge != (resourcev4.Vector{}) {
 			b.positions[b.count] = position
@@ -454,6 +553,25 @@ func prepareSessionCoreBatch(b *sessionCoreBatch, c SessionCoreConfig, root *res
 		}
 	}
 	b.prepared = true
+	return nil
+}
+
+func (b *sessionCoreBatch) reserveEnvironmentBorrows() error {
+	if b == nil || !b.prepared || b.used || b.borrows != ([3]resourcev4.Reference{}) {
+		return resourcev4.ErrOwner
+	}
+	borrows := 2
+	if b.config.MessageCarrier {
+		borrows++
+	}
+	for i := 0; i < borrows; i++ {
+		ref, err := b.environment.Borrow()
+		if err != nil {
+			b.release()
+			return err
+		}
+		b.borrows[i] = ref
+	}
 	return nil
 }
 
@@ -475,7 +593,8 @@ func (b *sessionCoreBatch) request(index int) (resourcev4.Request, error) {
 	return resourcev4.Request{Owner: key, Charge: b.charges[position], Accounts: b.accounts[:b.accountCount]}, nil
 }
 
-// release ends this construction and returns only its Environment borrows.
+// release ends this construction and returns its Environment borrows and any
+// not-yet-adopted receive pool and protected service floors.
 // The enclosing owner always releases its original ReserveBatch output after
 // adoption, including on error: Take has invalidated the copies that moved.
 func (b *sessionCoreBatch) release() {
@@ -483,6 +602,10 @@ func (b *sessionCoreBatch) release() {
 		return
 	}
 	b.used = true
+	for i := range b.serviceFloors {
+		b.serviceFloors[i].close()
+	}
+	b.serviceFloors = nil
 	if b.receivePool != nil {
 		b.receivePool.Close()
 		b.receivePool = nil
@@ -520,7 +643,8 @@ func (b *sessionCoreBatch) prepareReceivePool(refs []resourcev4.Reference) error
 }
 
 // adopt consumes this preparation once, using only its original core prefix
-// from the enclosing ReserveBatch. It admits no charge or reference position.
+// from the enclosing ReserveBatch. It admits no new charge. Protected service
+// aliases and receive references are acquired before publishing the plan.
 // On failure it releases the core references already taken and its own borrows;
 // the caller still owns every not-yet-taken original output, including all
 // non-core aggregate entries. Handler claim is the final fallible operation.
@@ -528,14 +652,21 @@ func (b *sessionCoreBatch) adopt(refs []resourcev4.Reference) (_ *SessionCorePla
 	if b == nil || !b.prepared || b.used {
 		return nil, resourcev4.ErrOwner
 	}
+	if len(refs) != b.count {
+		// A malformed caller slice cannot be adopted or retried. Release the
+		// construction-time borrows here so the failed one-shot adoption leaves
+		// the original aggregate with no retained core ownership.
+		b.release()
+		return nil, resourcev4.ErrOwner
+	}
 	if err := b.prepareReceivePool(refs); err != nil {
+		return nil, err
+	}
+	if err := b.prepareStreamServiceFloor(refs); err != nil {
 		return nil, err
 	}
 	b.used = true
 	defer b.release()
-	if len(refs) != b.count {
-		return nil, resourcev4.ErrOwner
-	}
 	var taken [coreOwnerCapacity]resourcev4.Reference
 	defer func() {
 		if err != nil {
@@ -546,6 +677,9 @@ func (b *sessionCoreBatch) adopt(refs []resourcev4.Reference) (_ *SessionCorePla
 	}()
 	for i, ref := range refs {
 		position := b.positions[i]
+		if position >= coreStreamServiceStart {
+			continue
+		}
 		if position == coreReceivePoolOwner && b.receivePool != nil {
 			continue
 		}
@@ -571,13 +705,26 @@ func (b *sessionCoreBatch) adopt(refs []resourcev4.Reference) (_ *SessionCorePla
 			return nil, err
 		}
 	}
+	// Native ownership is validated before the final handler claim and before
+	// publishing any core. Failure still follows this batch's reference cleanup;
+	// no partially adopted aggregate or I/O escapes the credential gate.
+	if b.nativeConnection != nil {
+		if err = b.nativeConnection.CheckStreamCapacity(b.config.Open.Active + b.config.Open.IngressItems + 1); err != nil {
+			return nil, err
+		}
+		if err = b.nativeConnection.ClaimSession(b.environment); err != nil {
+			return nil, err
+		}
+	}
 	if b.config.Handlers.Plan != nil {
 		if err = b.config.Handlers.Plan.claimSession(); err != nil {
 			return nil, err
 		}
 	}
 	p := &SessionCorePlan{config: b.config, refs: taken, environment: b.borrows[0], sharedEnvironment: b.borrows[0], engineEnvironment: b.borrows[1], carrierEnvironment: b.borrows[2], wake: make(chan struct{}, 1), cleanup: make(chan struct{})}
+	p.nativeConnection = b.nativeConnection
 	p.receivePool, b.receivePool = b.receivePool, nil
+	p.serviceFloors, b.serviceFloors = b.serviceFloors, nil
 	p.root, p.resourceOwner, p.accountCount, p.accounts = b.root, b.owner, b.accountCount, b.accounts
 	clear(b.borrows[:])
 	p.core.plan = p
@@ -734,6 +881,7 @@ func (p *SessionCorePlan) PrepareRecords(f *cryptov4.FinishedHandshake, records 
 		return nil, cryptov4.ErrConfiguration
 	}
 	p.preparing, p.busy = true, true
+	records.Diagnostics = p.diagnostics
 	options, reservation, environment := p.config.EngineResources, p.refs[coreEngineOwner], p.engineEnvironment
 	p.mu.Unlock()
 	defer p.finishWork()
@@ -795,6 +943,8 @@ func (p *SessionCorePlan) Install(engine *cryptov4.Engine, input RuntimeInput, o
 	}
 	p.mu.Lock()
 	p.admission = a
+	a.application = p.application
+	a.diagnostics = p.diagnostics
 	p.mu.Unlock()
 	if c.Streams != (SessionStreamConfig{}) {
 		pool := p.receivePool
@@ -809,6 +959,7 @@ func (p *SessionCorePlan) Install(engine *cryptov4.Engine, input RuntimeInput, o
 	if err != nil {
 		return nil, err
 	}
+	w.failureOwner = a
 	p.mu.Lock()
 	p.writer = w
 	p.mu.Unlock()
@@ -830,8 +981,22 @@ func (p *SessionCorePlan) Install(engine *cryptov4.Engine, input RuntimeInput, o
 			return nil, err
 		}
 	}
+	if c.Datagrams && engine.DatagramSelected() {
+		unreliable, unreliableErr := newUnreliableMessages(engine, p.nativeConnection, c, p.refs[coreUnreliableOwner])
+		if unreliableErr != nil {
+			return nil, unreliableErr
+		}
+		p.mu.Lock()
+		p.unreliable = unreliable
+		p.mu.Unlock()
+	}
 	p.probes = make([]ProbeSlot, int(c.ProbeSlots))
-	liveness, err := NewLivenessWithPolicy(a, w, p.probes, c.Automatic, p.refs[coreLivenessOwner])
+	var liveness *Liveness
+	if c.Automatic == (AutomaticLivenessPolicy{}) {
+		liveness, err = NewLiveness(a, w, p.probes, p.refs[coreLivenessOwner])
+	} else {
+		liveness, err = NewLivenessWithPolicy(a, w, p.probes, c.Automatic, p.refs[coreLivenessOwner])
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -863,7 +1028,7 @@ func (p *SessionCorePlan) Install(engine *cryptov4.Engine, input RuntimeInput, o
 	if _, err = NewRetirementService(retirement, c.RetirementTimeoutMS, p.refs[coreRetirementOwner]); err != nil {
 		return nil, err
 	}
-	runtimeConfig := SessionRuntimeConfig{Admission: a, Input: input, DispatchTimeoutMS: c.DispatchTimeoutMS, Reservation: p.refs[coreRuntimeOwner]}
+	runtimeConfig := SessionRuntimeConfig{Admission: a, Input: input, DispatchTimeoutMS: c.DispatchTimeoutMS, Reservation: p.refs[coreRuntimeOwner], unreliable: p.unreliable}
 	if c.Native {
 		runtimeConfig.MaintenanceIngress, err = NewMaintenanceIngress(a, &p.carrier, c.NativeIngress, c.DecoderNodes, decode, p.refs[coreIngressOwner], p.refs[coreIngressReceiverOwner])
 	} else {
@@ -872,11 +1037,26 @@ func (p *SessionCorePlan) Install(engine *cryptov4.Engine, input RuntimeInput, o
 	if err != nil {
 		return nil, err
 	}
-	if p.rpc != nil {
-		if runtimeConfig.SharedIngress == nil {
-			return nil, cryptov4.ErrConfiguration
+	if c.Native && c.Streams != (SessionStreamConfig{}) {
+		native, nativeErr := newNativeStreamTransport(a, p.nativeConnection, c, p.refs[coreNativeStreamsOwner], p.refs[coreNativeOpenReceiverStart:coreNativeOpenReceiverStart+int(c.Open.IngressItems)])
+		if nativeErr != nil {
+			return nil, nativeErr
 		}
-		if _, err = p.rpc.PrepareBootstrap(runtimeConfig.SharedIngress, p.receivePool, output); err != nil {
+		p.mu.Lock()
+		p.nativeStreams = native
+		p.mu.Unlock()
+		runtimeConfig.native = native
+	}
+	if err = p.installStreamWorkloads(); err != nil {
+		return nil, err
+	}
+	if p.rpc != nil {
+		if c.Native {
+			_, err = p.rpc.prepareNativeBootstrap(p.nativeStreams, p.receivePool)
+		} else {
+			_, err = p.rpc.PrepareBootstrap(runtimeConfig.SharedIngress, p.receivePool, output)
+		}
+		if err != nil {
 			return nil, err
 		}
 		runtimeConfig.rpc = p.rpc
@@ -904,10 +1084,20 @@ func (p *SessionCorePlan) Install(engine *cryptov4.Engine, input RuntimeInput, o
 func (p *SessionCorePlan) closeOwners() {
 	p.mu.Lock()
 	runtime, a, engine, writer, initial, input := p.runtime, p.admission, p.engine, p.writer, p.initial, p.input
+	native := p.nativeStreams
+	unreliable := p.unreliable
+	connection := p.nativeConnection
 	pool := p.receivePool
+	floors := p.serviceFloors
 	preaccepted := p.preaccepted
 	dispatcher, handlers := p.dispatcher, p.config.Handlers.Plan
 	p.mu.Unlock()
+	if unreliable != nil {
+		unreliable.Close()
+	}
+	for i := range floors {
+		floors[i].close()
+	}
 	for _, entry := range preaccepted {
 		entry.close()
 	}
@@ -921,6 +1111,11 @@ func (p *SessionCorePlan) closeOwners() {
 	}
 	if input != nil {
 		_ = input.Close()
+	}
+	if native != nil {
+		native.Close()
+	} else if connection != nil {
+		_ = connection.Close()
 	}
 	if pool != nil {
 		pool.Close()
@@ -1023,6 +1218,16 @@ func (p *SessionCorePlan) WaitCleanup(ctx context.Context) (err error) {
 	}
 	if p.input != nil {
 		if err = p.input.WaitCleanup(ctx); err != nil {
+			return err
+		}
+	}
+	if p.nativeStreams != nil {
+		if err = p.nativeStreams.WaitCleanup(ctx); err != nil {
+			return err
+		}
+	}
+	if p.unreliable != nil {
+		if err = p.unreliable.WaitCleanup(ctx); err != nil {
 			return err
 		}
 	}
@@ -1132,6 +1337,16 @@ func (p *SessionCorePlan) Retire() (err error) {
 			return err
 		}
 	}
+	if p.nativeStreams != nil {
+		if err = p.nativeStreams.Retire(); err != nil {
+			return err
+		}
+	}
+	if p.unreliable != nil {
+		if err = p.unreliable.Retire(); err != nil {
+			return err
+		}
+	}
 	if p.admission != nil {
 		if err = p.admission.Retire(); err != nil {
 			return err
@@ -1156,9 +1371,19 @@ func (p *SessionCorePlan) Retire() (err error) {
 			return err
 		}
 	}
+	for i := range p.serviceFloors {
+		for _, owner := range p.serviceFloors[i].owners {
+			if !owner.CleanupComplete() {
+				return cryptov4.ErrCapacity
+			}
+		}
+	}
 	p.mu.Lock()
+	p.serviceFloors = nil
 	p.engine, p.admission, p.runtime, p.writer = nil, nil, nil, nil
 	p.initial = nil
+	p.nativeStreams, p.nativeConnection = nil, nil
+	p.unreliable = nil
 	p.input = nil
 	p.receivePool, p.root = nil, nil
 	p.dispatcher = nil
@@ -1170,6 +1395,7 @@ func (p *SessionCorePlan) Retire() (err error) {
 	p.accountCount = 0
 	p.probes, p.pongs, p.rekeyWait = nil, nil, nil
 	p.config.Clock = nil
+	p.diagnostics = nil
 	p.carrier.mu.Lock()
 	p.carrier.bound, p.carrier.shared = nil, nil
 	p.carrier.mu.Unlock()

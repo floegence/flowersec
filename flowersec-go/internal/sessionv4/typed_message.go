@@ -9,10 +9,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // TypedMessageConfig is trusted local policy. Neither time limits nor runtime
@@ -48,6 +48,7 @@ func (c *TypedMessageConfig) releaseCodecs() {
 type TypedMessageStream struct {
 	clock                                             *timev4.Clock
 	decoder                                           *typedMessageDecode
+	dependencyFloor                                   *resourcev4.BorrowPool
 	executor                                          *ApplicationExecutor
 	group                                             *applicationGroup
 	executionBacking                                  resourcev4.Reference
@@ -105,7 +106,15 @@ func typedMessageCharges(config TypedMessageConfig) (charges [4]resourcev4.Vecto
 	if err != nil || !config.OpenerToAcceptor.matches(inbound) || !config.AcceptorToOpener.matches(outbound) {
 		return charges, cryptov4.ErrConfiguration
 	}
-	charges[0], err = (resourcev4.Vector{resourcev4.SDKBytes: 2*4006 + uint64(unsafe.Sizeof(TypedMessageStream{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + 2*uint64(unsafe.Sizeof(time.Timer{})) + uint64(unsafe.Sizeof(timev4.Window{})), resourcev4.Items: 6, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2, resourcev4.Timers: 2}).Add(resourcev4.Vector{resourcev4.SDKBytes: config.RuntimeBytes})
+	dependencyCharge, err := resourcev4.BorrowPoolCharge(dependencyFloorCapacity)
+	if err != nil {
+		return charges, err
+	}
+	charges[0], err = (resourcev4.Vector{resourcev4.SDKBytes: 2*4006 + uint64(unsafe.Sizeof(TypedMessageStream{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + 2*uint64(unsafe.Sizeof(time.Timer{})) + uint64(unsafe.Sizeof(timev4.Window{})), resourcev4.Items: 6, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2, resourcev4.Timers: 2}).Add(dependencyCharge)
+	if err != nil {
+		return charges, err
+	}
+	charges[0], err = charges[0].Add(resourcev4.Vector{resourcev4.SDKBytes: config.RuntimeBytes})
 	if err != nil {
 		return charges, err
 	}
@@ -163,6 +172,11 @@ func prepareTypedMessages(o *StreamOwnership, config TypedMessageConfig) (_ *Typ
 			}
 		}
 	}()
+	m.dependencyFloor, err = resourcev4.NewBorrowPoolForSources(m.reservation, dependencyFloorCapacity)
+	if err != nil {
+		return nil, err
+	}
+	m.reservation = m.dependencyFloor.Metadata()
 	m.config, err = config.capture(m.reservation)
 	if err != nil {
 		return nil, err
@@ -191,8 +205,18 @@ func prepareTypedMessages(o *StreamOwnership, config TypedMessageConfig) (_ *Typ
 }
 
 func (m *TypedMessageStream) disposeCandidate() {
-	m.waiter.Close()
-	m.sendBudget.close()
+	if m.dependencyFloor != nil {
+		m.dependencyFloor.Close()
+		m.dependencyFloor = nil
+	}
+	if m.waiter != nil {
+		m.waiter.Close()
+		m.waiter = nil
+	}
+	if m.sendBudget != nil {
+		m.sendBudget.close()
+		m.sendBudget = nil
+	}
 	if m.ioCancel != nil {
 		m.ioCancel()
 	}
@@ -245,7 +269,7 @@ func (m *TypedMessageStream) match(kind string, metadata []byte, localOpener boo
 func (m *TypedMessageStream) bindTypedMessages(o *StreamOwnership) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.admission == nil || o.rawUsed || o.users != 0 || o.cleaning || o.messages != nil || o.resume != nil || o.typed != nil && o.typed != m || o.revoked.Load() || o.sealed.Load() {
+	if o.admission == nil || o.rawUsed || o.users != 0 || o.cleaning || o.messages != nil || o.conn != nil || o.resume != nil || o.typed != nil && o.typed != m || o.revoked.Load() || o.sealed.Load() {
 		return ErrStreamOwned
 	}
 	a, q, f := o.admission, o.queue, o.flow.receive
@@ -295,7 +319,7 @@ func (o *StreamOwnership) AsTypedMessages(config TypedMessageConfig) (_ *TypedMe
 		return nil, cryptov4.ErrConfiguration
 	}
 	o.mu.Lock()
-	if o.admission == nil || o.typed != nil || o.messages != nil || o.resume != nil || o.rawUsed || o.users != 0 || o.cleaning || o.revoked.Load() || o.sealed.Load() {
+	if o.admission == nil || o.typed != nil || o.messages != nil || o.conn != nil || o.resume != nil || o.rawUsed || o.users != 0 || o.cleaning || o.revoked.Load() || o.sealed.Load() {
 		o.mu.Unlock()
 		return nil, ErrStreamOwned
 	}
@@ -601,7 +625,7 @@ func (m *TypedMessageStream) WaitCleanup(ctx context.Context) error {
 	if m == nil || ctx == nil {
 		return cryptov4.ErrConfiguration
 	}
-	dependencies, err := captureApplicationDependencies(ctx)
+	dependencies, err := captureApplicationDependenciesWithFloor(ctx, m.dependencyFloor)
 	if err != nil {
 		return err
 	}

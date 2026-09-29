@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // This fixture composes public protocol APIs with exact independently pinned
@@ -43,12 +43,13 @@ type sessionAdmissionTrustFixture struct {
 }
 
 type sessionAdmissionTrust struct {
-	rejected    atomic.Bool
-	head        protocolv4.NamespaceHeadTrust
-	activation  protocolv4.ActivationTrustBinding
-	permissions [3]protocolv4.IssuerPermission
-	scopes      [3]protocolv4.CredentialScope
-	policy      *protocolv4.CredentialPolicy
+	rejected          atomic.Bool
+	head              protocolv4.NamespaceHeadTrust
+	activation        protocolv4.ActivationTrustBinding
+	permissions       [3]protocolv4.IssuerPermission
+	scopes            [3]protocolv4.CredentialScope
+	policy            *protocolv4.CredentialPolicy
+	preparationPolicy atomic.Pointer[protocolv4.CredentialPolicy]
 }
 
 func (s *sessionAdmissionTrust) Head(h protocolv4.NamespaceHeadTrust) error {
@@ -68,7 +69,7 @@ func (s *sessionAdmissionTrust) Issuer(p protocolv4.IssuerPermission, c protocol
 	return protocolv4.CBORFailure("independent_trust_rejected")
 }
 func (s *sessionAdmissionTrust) Policy(p *protocolv4.CredentialPolicy) error {
-	if s.rejected.Load() || p != s.policy {
+	if s.rejected.Load() || p != s.policy && p != s.preparationPolicy.Load() {
 		return protocolv4.CBORFailure("independent_trust_rejected")
 	}
 	return nil
@@ -226,23 +227,32 @@ func newSessionAdmissionTrustFixture(t *testing.T, root *resourcev4.Root, enviro
 	if len(sources) > 0 {
 		source = sources[0]
 	}
+	return newSessionAdmissionTrustProfile(t, root, environment, owner, source, "transport")
+}
+
+func newSessionAdmissionTrustProfile(t *testing.T, root *resourcev4.Root, environment resourcev4.Reference, owner resourcev4.OwnerKey, source, application string, clocks ...*timev4.Clock) *sessionAdmissionTrustFixture {
+	t.Helper()
 	f := &sessionAdmissionTrustFixture{source: source, trust: &sessionAdmissionTrust{}}
 	var tick atomic.Uint64
 	f.tick = &tick
 	var err error
-	f.clock, err = timev4.NewClock(timev4.Profile{Rate: timev4.Rate{Denominator: 1}, MaxWidthMS: 2000, MaxAgeMS: 100000, MaxRoundTripMS: 1000}, func() (timev4.Tick, error) {
-		return timev4.Tick{Milliseconds: tick.Load(), Incarnation: [16]byte{1}}, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(f.clock.Close)
-	mark, err := f.clock.Monotonic()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = f.clock.InstallTrusted(mark, timev4.Interval{LowerMS: 1200, UpperMS: 1250}); err != nil {
-		t.Fatal(err)
+	if len(clocks) == 1 {
+		f.clock = clocks[0]
+	} else {
+		f.clock, err = timev4.NewClock(timev4.Profile{Rate: timev4.Rate{Denominator: 1}, MaxWidthMS: 2000, MaxAgeMS: 100000, MaxRoundTripMS: 1000}, func() (timev4.Tick, error) {
+			return timev4.Tick{Milliseconds: tick.Load(), Incarnation: [16]byte{1}}, nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(f.clock.Close)
+		mark, err := f.clock.Monotonic()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = f.clock.InstallTrusted(mark, timev4.Interval{LowerMS: 1200, UpperMS: 1250}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	capacity := admissionMap(t, "NamespaceCapacity", initialFixture(t, "namespace_capacity_fields"), map[string]protocolv4.Field{"max_state_encoded_bytes": {Number: 4096}})
 	capacityDigest := admissionDigest(t, "namespace_capacity_digest", capacity)
@@ -283,7 +293,17 @@ func newSessionAdmissionTrustFixture(t *testing.T, root *resourcev4.Root, enviro
 	candidate := parent.Root().Named("Artifact", "candidates").Index(0)
 	reference := admissionEncode(t, "RevocationNamespaceRef", map[string]protocolv4.Field{"tenant_id": admissionText("tenant-1"), "revocation_authority_id": admissionText("revocation-1"), "generation": {Number: 1}, "namespace_capacity_digest": admissionBytes(capacityDigest[:]), "role_mask": {Number: 3}})
 	candidateWire := admissionMap(t, "Candidate", candidate.Encoded(), map[string]protocolv4.Field{"revocation_namespace_refs": admissionArray(reference)})
-	contract := admissionMap(t, "SessionContract", parent.Root().Named("Artifact", "session_contract").Encoded(), map[string]protocolv4.Field{"max_frame": {Number: 65536}, "max_streams": {Number: 4}, "max_credit": {Number: 1 << 20}, "idle_duration_ms": {Number: 1000000}})
+	contractFields := map[string]protocolv4.Field{"max_frame": {Number: 65536}, "max_streams": {Number: 4}, "max_credit": {Number: 1 << 20}, "idle_duration_ms": {Number: 1000000}}
+	if application != "transport" {
+		value, err := protocolv4.EnumValue("SessionContract", "application_profile", application)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contractFields["application_profile"] = protocolv4.Field{Number: value}
+		contractFields["max_streams"] = protocolv4.Field{Number: 16}
+		contractFields["rpc_max_general_outstanding"] = protocolv4.Field{Number: 32}
+	}
+	contract := admissionMap(t, "SessionContract", parent.Root().Named("Artifact", "session_contract").Encoded(), contractFields)
 	changes := common()
 	changes["initiation_not_after_ms"] = protocolv4.Field{Number: 1500}
 	changes["session_not_after_ms"] = protocolv4.Field{Number: 5000}

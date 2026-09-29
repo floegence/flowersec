@@ -2,15 +2,18 @@ package sessionv4
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func (p poolSQLiteAuthority) CheckAdmission(i ledgerv4.SQLiteIdentity, facts protocolv4.AdmissionFacts) error {
@@ -21,6 +24,14 @@ func (p poolSQLiteAuthority) CheckAdmission(i ledgerv4.SQLiteIdentity, facts pro
 	return nil
 }
 
+func (p poolSQLiteAuthority) CheckParentWinner(i ledgerv4.SQLiteIdentity, facts protocolv4.AdmissionFacts) error {
+	f, err := facts.Fields()
+	if err != nil || f.WinnerAuthority == "" || f.WinnerAuthority != p.original.WinnerAuthority {
+		return ledgerv4.ErrConflict
+	}
+	return p.CheckAdmission(i, facts)
+}
+
 func TestSessionEstablishmentSourcesToAdmissionReadyAndDuplex(t *testing.T) {
 	for _, source := range []string{"preauthorized_pool", "live_authority"} {
 		t.Run(source, func(t *testing.T) { sessionEstablishmentDuplex(t, source) })
@@ -28,6 +39,10 @@ func TestSessionEstablishmentSourcesToAdmissionReadyAndDuplex(t *testing.T) {
 }
 
 func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironment ...bool) {
+	viaControl := source == "live_control"
+	if viaControl {
+		source = "live_authority"
+	}
 	viaSource := len(acquireInEnvironment) > 0 && acquireInEnvironment[0]
 	viaIntake := len(acquireInEnvironment) > 1 && acquireInEnvironment[1]
 	viaIngress := len(acquireInEnvironment) > 2 && acquireInEnvironment[2]
@@ -35,14 +50,29 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 	viaApplication := len(acquireInEnvironment) > 4 && acquireInEnvironment[4]
 	viaBytes := len(acquireInEnvironment) > 5 && acquireInEnvironment[5]
 	viaStatic := len(acquireInEnvironment) > 6 && acquireInEnvironment[6]
+	viaRegistry := len(acquireInEnvironment) > 7 && acquireInEnvironment[7]
+	viaController := len(acquireInEnvironment) > 8 && acquireInEnvironment[8]
+	failInitialize := len(acquireInEnvironment) > 9 && acquireInEnvironment[9]
+	lateInitialize := len(acquireInEnvironment) > 10 && acquireInEnvironment[10]
+	closeCandidate := len(acquireInEnvironment) > 11 && acquireInEnvironment[11]
+	expireCandidate := len(acquireInEnvironment) > 12 && acquireInEnvironment[12]
+	completionBlocked := len(acquireInEnvironment) > 13 && acquireInEnvironment[13]
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	connectContext, cancelConnect := context.WithCancel(ctx)
 	defer cancelConnect()
 	f := admissionIntegration(t, ctx, source)
+	var verification *protocolv4.NamespaceRegistry
+	if viaRegistry {
+		verification = environmentVerificationRegistry(t, f)
+	}
 	var raw *materialBytesFixture
 	if viaBytes {
-		raw = materialBytesFor(t, f)
+		if verification != nil {
+			raw = materialBytesFor(t, f, verification)
+		} else {
+			raw = materialBytesFor(t, f)
+		}
 	}
 	// Replace the fixture's unused message provider with the actual byte pipe
 	// before any admission or irreversible consume has occurred.
@@ -85,7 +115,7 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 	if err != nil {
 		t.Fatal(err)
 	}
-	environmentConfig := EnvironmentConfig{Positions: 2, RuntimeBytes: 65536}
+	environmentConfig := EnvironmentConfig{Positions: 2, RuntimeBytes: 65536, Verification: verification}
 	if viaStatic {
 		environmentConfig.Materials, environmentConfig.MaterialCreateMS, environmentConfig.Clock = 1, 1000, f.trust.clock
 	}
@@ -122,7 +152,9 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 		}
 		t.Cleanup(func() {
 			group.Close()
-			if err := group.WaitCleanup(context.Background()); err != nil {
+			cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := group.WaitCleanup(cleanup); err != nil {
 				t.Error(err)
 			}
 			if err := group.Retire(); err != nil {
@@ -201,14 +233,22 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 		leases[role].Close()
 	}
 	var applicationPlans [2]*SessionPlan
+	var executor *ApplicationExecutor
 	var authorized, released [2]atomic.Uint32
 	if viaApplication {
-		c := ApplicationExecutorConfig{Running: 4, ResidentRunning: 2, CompletionRunning: 1, CompletionReserved: 2, RuntimeBytes: 8192, RuntimeBytesPerTask: 65536}
+		completionReserved := uint32(2)
+		if viaController {
+			completionReserved++
+		}
+		if completionBlocked {
+			completionReserved++
+		}
+		c := ApplicationExecutorConfig{Running: 4, ResidentRunning: 2, CompletionRunning: 1, CompletionReserved: completionReserved, RuntimeBytes: 8192, RuntimeBytesPerTask: 65536}
 		cost, err := ApplicationExecutorCharge(c)
 		if err != nil {
 			t.Fatal(err)
 		}
-		executor, err := NewApplicationExecutor(c, reserve(340, cost))
+		executor, err = NewApplicationExecutor(c, reserve(340, cost))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -279,6 +319,91 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 	var server serverResult
 	var client *SessionCore
 	var clientSession *EnvironmentSession
+	var controller *ConnectionController
+	var initialized atomic.Uint32
+	initializeFailure := errors.New("test application registration outcome unknown")
+	controllerConnect := func(pool *PoolSessionInput, live *LiveSessionInput) (*EnvironmentSession, error) {
+		var completionGate *CompletionTask
+		var completionRelease chan struct{}
+		if completionBlocked {
+			completionRelease = make(chan struct{})
+			entered := make(chan struct{})
+			future, err := executor.ReserveCompletion(reserve(450, executor.CompletionCharge()), f.environment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			completionGate, err = future.Submit(func() error { close(entered); <-completionRelease; return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			<-entered
+			defer func() { close(completionRelease); _ = completionGate.Wait(context.Background()) }()
+		}
+		controller = controllerForTest(t, f, host, ControllerConfig{Clock: f.trust.clock, SourceIncarnation: [16]byte{1}, AttemptTimeoutMS: 1000, DrainTimeoutMS: 1000, RuntimeBytes: 65536,
+			Executor: executor, InitializeClass: ApplicationResident,
+			Source: controllerSourceFunc(func(_ context.Context, request ControllerRequest) (*ControllerPreparation, error) {
+				if request.Attempt != 1 {
+					return nil, cryptov4.ErrConfiguration
+				}
+				return &ControllerPreparation{Config: sourceConfig, Pool: pool, Live: live}, nil
+			}),
+			InitializeSession: func(initCtx context.Context, candidate *EnvironmentSession) error {
+				initialized.Add(1)
+				if _, err := candidate.Core(); err != nil {
+					return err
+				}
+				if _, err := controller.CaptureSession(); !errors.Is(err, ErrControllerInitialization) {
+					t.Error("initializer candidate published prematurely", err)
+				}
+				if _, err := checkApplicationContext(initCtx); err != nil {
+					t.Error("initializer bypassed ordinary context", err)
+				}
+				if _, err := controller.WaitForSession(initCtx); !errors.Is(err, ErrApplicationDependency) {
+					t.Error("initializer could wait on its own publication", err)
+				}
+				if err := controller.WaitCleanup(initCtx); !errors.Is(err, ErrApplicationDependency) {
+					t.Error("initializer could wait on its own cleanup", err)
+				}
+				if _, err := controller.ReplaceSession(initCtx, ControllerReplaceOptions{}); !errors.Is(err, ErrApplicationDependency) {
+					t.Error("initializer could acquire recursively", err)
+				}
+				if failInitialize {
+					return initializeFailure
+				}
+				if lateInitialize {
+					cancelConnect()
+					waitController(t, controller, func(s ControllerSnapshot) bool { return s.LastError != nil })
+				}
+				if closeCandidate || expireCandidate {
+					if closeCandidate {
+						candidate.Close()
+					} else {
+						f.trust.tick.Add(100000)
+					}
+					select {
+					case <-initCtx.Done():
+					case <-time.After(time.Second):
+						t.Error("candidate lifetime did not cancel initializer")
+					}
+				}
+				if completionBlocked {
+					cancelConnect()
+					waitController(t, controller, func(s ControllerSnapshot) bool { return s.LastError != nil })
+				}
+				return nil
+			}})
+		result, err := controller.ReplaceSession(connectContext, ControllerReplaceOptions{})
+		if err == nil {
+			if !result.CurrentSwitched || result.Previous != nil {
+				t.Error("invalid first publication", result)
+			}
+			captured, captureErr := controller.CaptureSession()
+			if captureErr != nil || captured != result.Current {
+				t.Error("current changed identity", captureErr)
+			}
+		}
+		return result.Current, err
+	}
 	run := func(store *ledgerv4.SQLiteStore, authority ledgerv4.SQLiteAdmissionAuthority, connect func() (*SessionCore, error)) error {
 		t.Cleanup(func() {
 			if server.admission != nil {
@@ -327,6 +452,7 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 							return
 						}
 						defer child.Release()
+						ingress.Intake.Input.Owner = ledgerv4.AdmissionOwner{}
 						session, err = child.Accept(connectContext, ingress)
 					} else {
 						session, err = host.AcceptIngress(connectContext, ingress)
@@ -372,7 +498,9 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 		_, err = consumeSessionPool(t, f, a, func(store *ledgerv4.SQLiteStore, authority poolSQLiteAuthority, work resourcev4.Reference) (*InitialExchange, error) {
 			return nil, run(store, authority, func() (*SessionCore, error) {
 				var err error
-				if viaStatic {
+				if viaController {
+					clientSession, err = controllerConnect(&PoolSessionInput{Store: store, Authority: authority, Consume: work}, nil)
+				} else if viaStatic {
 					clientSession, err = host.ConnectMaterialPool(connectContext, materials[0], MaterialConnectConfig(sourceConfig), PoolSessionInput{Store: store, Authority: authority, Consume: work})
 				} else if viaSource {
 					clientSession, err = host.ConnectSourcePool(connectContext, sourceConfig, PoolSessionInput{Store: store, Authority: authority, Consume: work})
@@ -425,10 +553,41 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 			return run(store, authority, func() (*SessionCore, error) {
 				var err error
 				input := LiveSessionInput{Store: store, Authority: authority, Issuance: issuance, Owner: ledgerv4.LiveSpendOwner{Invocation: [16]byte{1}, Generation: 1, RequestDigest: [32]byte{2}, ClientMaterialNotAfter: 1400}, Guard: guard, Policy: func(context.Context) (bool, error) { callbacks++; return true, nil }, Buffers: ownerBuffer, Invocation: invocation}
-				if viaSource {
+				if viaControl {
+					original := input
+					control := LiveControlConfig{RuntimeBytes: 65536, Provider: liveAuthorizationProviderFunc(func(call context.Context, request LiveAuthorizationRequest, dst []byte) (int, error) {
+						if request.AttemptNo != 1 || request.Tenant != fields.Tenant || request.Issuer != fields.Issuer || request.Lease != fields.Lease || request.Attempt != fields.Attempt || request.Artifact != fields.Artifact || request.Winner != fields.Winner || request.ClientIdentity != fields.ClientIdentity || request.ServerIdentity != fields.ServerIdentity || request.Audience != fields.Audience || request.CryptoProfile != fields.Profile || request.ActivationNotAfterMS == 0 {
+							return 0, ledgerv4.ErrConflict
+						}
+						durable, err := ledgerv4.NewSQLiteLiveSpend(call, store, authority, issuance, original.Owner, f.trust.clock, f.config.Initial.Deadline, guard, ownerBuffer, invocation, f.environment)
+						if err != nil {
+							return 0, err
+						}
+						defer func() {
+							if err := durable.Cleanup(); err != nil {
+								t.Error(err)
+							}
+						}()
+						n := 0
+						err = durable.Authorize(original.Policy, func(_ context.Context, proof []byte) error { n = copy(dst, proof); return nil })
+						return n, err
+					})}
+					cost, costErr := LiveControlCharge(control)
+					if costErr != nil {
+						return nil, costErr
+					}
+					input = LiveSessionInput{Control: control, Buffers: reserve(259, cost)}
+					var material *ConnectionMaterial
+					if viaStatic {
+						material = materials[0]
+					}
+					clientSession, _, err = host.ConnectPrepared(connectContext, sourceConfig, material, nil, &input)
+				} else if viaSource {
 					sourceConfig.LiveIssuance = SourceLiveIssuance{Signer: f.trust.issueSigner, IssuedAt: 1150, ActivationEnd: 1400, SessionEnd: 4000, Reservation: reserve(258, issuanceCharge)}
 					input.Issuance = nil
-					if viaStatic {
+					if viaController {
+						clientSession, err = controllerConnect(nil, &input)
+					} else if viaStatic {
 						clientSession, err = host.ConnectMaterialLiveSQLite(connectContext, materials[0], MaterialConnectConfig(sourceConfig), input)
 					} else {
 						clientSession, err = host.ConnectSourceLiveSQLite(connectContext, sourceConfig, input)
@@ -447,12 +606,45 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 			t.Fatal("policy invocation count", callbacks, err)
 		}
 	}
+	if viaController && (failInitialize || lateInitialize || closeCandidate || expireCandidate || completionBlocked) {
+		if err == nil || initialized.Load() != 1 {
+			t.Fatal("failed initializer published or was repeated", err, initialized.Load())
+		}
+		if failInitialize && !errors.Is(err, initializeFailure) {
+			t.Fatal("original initialization error lost", err)
+		}
+		if _, captureErr := controller.CaptureSession(); !errors.Is(captureErr, ErrControllerInitialization) {
+			t.Fatal("failure reopened publication", captureErr)
+		}
+		if retryErr := controller.RetryNow(context.Background()); !errors.Is(retryErr, ErrControllerInitialization) {
+			t.Fatal("RetryNow replayed initialization", retryErr)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
+	}
+	if viaController && initialized.Load() != 1 {
+		t.Fatal("initializer count", initialized.Load())
 	}
 	cancelConnect()
 	if client == nil || server.core == nil {
 		t.Fatal("READY did not deliver both original Sessions")
+	}
+
+	if got := host.DiagnosticCounts(diagnosticv4.MetricConnectionAttempt).Total; got != 2 {
+		t.Fatal("preparation handoffs changed the original attempt count", got)
+	}
+	if got := host.DiagnosticCounts(diagnosticv4.MetricConnectionFailure).Total; got != 0 {
+		t.Fatal("successful READY reported a failure", got)
+	}
+	for _, established := range []*SessionCore{client, server.core} {
+		engine := established.Engine()
+		// Exercise the ordinary authenticated engine composition: the backing
+		// is the same originally charged bank, not a copied counter value.
+		if established.plan.diagnostics != &host.counters || engine == nil || established.Admission().diagnostics != &host.counters {
+			t.Fatal("original Environment diagnostics not bound through READY")
+		}
 	}
 
 	fixtures := [2]initialCoreFixture{{root: f.root, next: 70}, {root: f.root, next: 90}}

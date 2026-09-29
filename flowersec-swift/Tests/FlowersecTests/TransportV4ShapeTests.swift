@@ -66,7 +66,7 @@ final class TransportV4ShapeTests: XCTestCase {
       XCTAssertEqual(ctx, original, id)
       if vector["expected_error"].text == nil { positive += 1 } else { negative += 1 }
     }
-    XCTAssertEqual(positive, 337); XCTAssertEqual(negative, 324)
+    XCTAssertEqual(positive, 348); XCTAssertEqual(negative, 326)
     print("Swift field shape: \(positive) positive / \(negative) negative cases")
   }
 
@@ -87,7 +87,7 @@ final class TransportV4ShapeTests: XCTestCase {
       let changed = V4CBORValue.map(pairs + [.init(key: .uint(65535), value: .uint(0))])
       rejects("unknown_field") { try r.checkMap(name, changed, context: ctx) }
     }
-    XCTAssertEqual(seen.count, 93)
+    XCTAssertEqual(seen.count, 99)
   }
 
   // v4.swift_shape.context_boundaries

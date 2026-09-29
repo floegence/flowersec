@@ -13,7 +13,10 @@ type OwnerKey struct {
 }
 
 type referenceSlot struct {
+	borrowPool       *BorrowPool
 	protectedIdle    bool
+	protectedScope   bool
+	protectedNext    uint32
 	generation       uint64
 	charge           uint32
 	chargeGeneration uint64
@@ -78,12 +81,14 @@ func (r *Root) scopeSet(owner OwnerKey, value Vector, input []Account, existing 
 		if accountIndex(scopes[:count], a) >= 0 {
 			continue
 		}
-		alreadyCharged := existing != nil && accountIndex(existing.accounts[:existing.count], a) >= 0
+		alreadyCharged := existing != nil && (accountIndex(existing.accounts[:existing.count], a) >= 0 || r.protectedScopeHeld(existing, a, nil))
+		if existing == nil || accountIndex(existing.accounts[:existing.count], a) < 0 {
+			additions++
+		}
 		if !alreadyCharged {
 			if !fits(s.used, s.limit, value) {
 				return scopes, 0, ErrCapacity
 			}
-			additions++
 		}
 		scopes[count] = a
 		count++
@@ -104,8 +109,10 @@ func (r *Root) attachScopes(c *chargeSlot, scopes []Account) {
 			c.accounts[i] = a
 			c.count++
 			account := a.slotLocked(r)
-			account.used, _ = account.used.Add(c.value)
-			account.charges++
+			if !r.protectedScopeHeld(c, a, nil) {
+				account.used, _ = account.used.Add(c.value)
+				account.charges++
+			}
 		}
 		c.accountRefs[i]++
 	}
@@ -119,8 +126,10 @@ func (r *Root) releaseScopes(c *chargeSlot, scopes []Account) {
 			continue
 		}
 		account := a.slotLocked(r)
-		account.used = account.used.subtract(c.value)
-		account.charges--
+		if !r.protectedScopeHeld(c, a, nil) {
+			account.used = account.used.subtract(c.value)
+			account.charges--
+		}
 		if account.closed && account.charges == 0 {
 			account.active = false
 		}
@@ -177,6 +186,9 @@ func (r *Root) reserveLocked(owner OwnerKey, value Vector, accounts []Account) (
 	s := &r.refs[refIndex]
 	*s = referenceSlot{generation: s.generation + 1, charge: uint32(chargeIndex), chargeGeneration: c.generation, owner: owner, accounts: scopes, count: count, active: true, primary: true}
 	r.used, _ = r.used.Add(value)
+	for i, value := range r.used {
+		r.peak[i] = max(r.peak[i], value)
+	}
 	r.attachScopes(c, scopes[:count])
 	r.chargeCount++
 	r.referenceCount++
@@ -500,6 +512,10 @@ func (ref Reference) releaseLocked() {
 	if s == nil {
 		return
 	}
+	if s.borrowPool != nil {
+		s.borrowPool.releaseLocked(ref, s, c)
+		return
+	}
 	if s.primary {
 		c.sealed = true
 	}
@@ -514,10 +530,14 @@ func (ref Reference) releaseLocked() {
 		r.finishProtectedLocked(c)
 		return
 	}
+	if s.protectedScope {
+		r.releaseProtectedScopeLocked(s, c)
+	} else {
+		r.releaseScopes(c, s.accounts[:s.count])
+	}
 	s.active = false
 	s.owner = OwnerKey{}
 	s.transferredTo = Reference{}
-	r.releaseScopes(c, s.accounts[:s.count])
 	s.accounts, s.count = [MaxAccountsPerCharge]Account{}, 0
 	c.refs--
 	r.referenceCount--

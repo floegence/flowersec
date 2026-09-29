@@ -22,17 +22,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/quicbase"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/webtransportv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v5/internal/rpcwire"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/tunnelv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/quicbase"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/webtransportv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/connectv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v6/internal/rpc"
+	rpcv1 "github.com/floegence/flowersec/flowersec-go/v6/internal/rpcwire"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/tunnelv3"
 )
 
 // BrowserTopology identifies a Chromium WebTransport leg paired with one Go

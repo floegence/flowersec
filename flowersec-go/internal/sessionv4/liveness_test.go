@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func TestLivenessResourceRevocationStopsAdmissionAndTickets(t *testing.T) {
@@ -221,6 +221,9 @@ func TestLivenessCancelledSubmittedTailRetainsSlot(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal("sample cancellation broke original publication", err)
 	}
+	if after, terminal := o.Result(); !terminal || after != result {
+		t.Fatal("late publication changed the terminal cancellation fact", result, after)
+	}
 	next := testProbe(t, p, 500)
 	if next.nonce == o.nonce {
 		t.Fatal("cancelled nonce reused")
@@ -228,6 +231,45 @@ func TestLivenessCancelledSubmittedTailRetainsSlot(t *testing.T) {
 	if _, err := client.engine.ScopeFrontier(0, protocolv4.ClientToServer); err != nil {
 		t.Fatal("sample cancellation closed Session", err)
 	}
+}
+
+func TestLivenessPongBeforeProviderReturnRetainsImmutableResultAndTail(t *testing.T) {
+	client, server, _ := idleEndpoints(t, 1000)
+	p := testLiveness(t, client, 1)
+	o := testProbe(t, p, 500)
+	entered, release := make(chan struct{}), make(chan struct{})
+	client.maintenance.writer = idleWriterFunc(func(b []byte) (int, error) {
+		_, _ = client.control.Write(b)
+		close(entered)
+		<-release
+		return len(b), nil
+	})
+	done := make(chan error, 1)
+	go func() { _, err := o.Publish(context.Background()); done <- err }()
+	<-entered
+	nonce := receivePing(t, client, server)
+	if !pong(t, server, client, p, nonce) {
+		close(release)
+		t.Fatal("early authenticated PONG did not complete original sample")
+	}
+	result, err := o.Wait(context.Background())
+	if err != nil || !result.Submitted || result.Complete {
+		close(release)
+		t.Fatal("PONG invented local provider exit", result, err)
+	}
+	o.Release()
+	if _, err := p.Begin(500); !errors.Is(err, cryptov4.ErrCapacity) {
+		close(release)
+		t.Fatal("successful PONG refunded physical publication tail", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if after, terminal := o.Result(); !terminal || after != result {
+		t.Fatal("provider return rewrote successful sample", result, after)
+	}
+	_ = testProbe(t, p, 500)
 }
 
 func TestLivenessRekeyInterruptsAndAllowsOrdinaryPeerReply(t *testing.T) {

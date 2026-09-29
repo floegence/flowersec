@@ -1,5 +1,5 @@
 // Generated draft native API types; DO NOT EDIT. Not a qualified SDK runtime.
-pub(crate) const API_RESULTS_SCHEMA_SHA256: &str = "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959";
+pub(crate) const API_RESULTS_SCHEMA_SHA256: &str = "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af";
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) enum V4ApplicationProfile {
@@ -314,12 +314,152 @@ pub(crate) struct V4ResponsePublicationStatus {
     pub(crate) cause: Option<V4ResponsePublicationCause>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum V4TopUpWireResult {
+    Success,
+    Replay,
+    SourceExhausted,
+    SourceUnavailable,
+    SourceContractInvalid,
+    SourceStateUnknown,
+    OperationConflict,
+    StaleGeneration,
+    FutureGeneration,
+    StaleOperation,
+    FutureOperation,
+    SequenceGap,
+    ConfigurationCapacity,
+    CapacityExhausted,
+    RelinkRequired,
+    SpentUnknown,
+    TopUpRequestExpired,
+    SourceResetRequired,
+    PermissionDenied,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum V4TopUpErrorCode {
+    SourceExhausted,
+    SourceUnavailable,
+    SourceContractInvalid,
+    SourceStateUnknown,
+    OperationConflict,
+    StaleGeneration,
+    FutureGeneration,
+    StaleOperation,
+    FutureOperation,
+    SequenceGap,
+    ConfigurationCapacity,
+    CapacityExhausted,
+    RelinkRequired,
+    SpentUnknown,
+    TopUpRequestExpired,
+    SourceResetRequired,
+    PermissionDenied,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum V4TopUpErrorScope {
+    Source,
+    Operation,
+    Request,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum V4TopUpWriteAction {
+    None,
+    Terminal,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct V4TopUpError {
+    pub(crate) code: V4TopUpErrorCode,
+    pub(crate) scope: V4TopUpErrorScope,
+    pub(crate) write_action: V4TopUpWriteAction,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum V4LifecycleObjectKind {
+    Session,
+    Environment,
+    Operation,
+    Subscription,
+    Bridge,
+    Adapter,
+    Stream,
+    Material,
+    Source,
+    Registration,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum V4LifecycleState {
+    Active,
+    Closing,
+    Closed,
+    SessionAborted,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum V4LifecycleReason {
+    None,
+    Canceled,
+    DeadlineExceeded,
+    DependencyUnavailable,
+    CoreCleanupFailed,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct V4LifecycleResult {
+    pub(crate) object_kind: V4LifecycleObjectKind,
+    pub(crate) lifecycle_state: V4LifecycleState,
+    pub(crate) cleanup_status: V4CleanupStatus,
+    pub(crate) reason: V4LifecycleReason,
+}
+
+pub(crate) fn top_up_error_projection(code: V4TopUpErrorCode, action: V4TopUpWriteAction) -> Option<V4TopUpError> {
+    match code {
+        V4TopUpErrorCode::SourceExhausted => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Source, write_action: action }) } else { None } },
+        V4TopUpErrorCode::SourceUnavailable => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Source, write_action: action }) } else { None } },
+        V4TopUpErrorCode::SourceContractInvalid => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Source, write_action: action }) } else { None } },
+        V4TopUpErrorCode::SourceStateUnknown => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Source, write_action: action }) } else { None } },
+        V4TopUpErrorCode::OperationConflict => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Operation, write_action: action }) } else { None } },
+        V4TopUpErrorCode::StaleGeneration => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Request, write_action: action }) } else { None } },
+        V4TopUpErrorCode::FutureGeneration => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Request, write_action: action }) } else { None } },
+        V4TopUpErrorCode::StaleOperation => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Operation, write_action: action }) } else { None } },
+        V4TopUpErrorCode::FutureOperation => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Operation, write_action: action }) } else { None } },
+        V4TopUpErrorCode::SequenceGap => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Operation, write_action: action }) } else { None } },
+        V4TopUpErrorCode::ConfigurationCapacity => { if action == V4TopUpWriteAction::None || action == V4TopUpWriteAction::Terminal { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Request, write_action: action }) } else { None } },
+        V4TopUpErrorCode::CapacityExhausted => { if action == V4TopUpWriteAction::None || action == V4TopUpWriteAction::Terminal { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Operation, write_action: action }) } else { None } },
+        V4TopUpErrorCode::RelinkRequired => { if action == V4TopUpWriteAction::None || action == V4TopUpWriteAction::Terminal { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Source, write_action: action }) } else { None } },
+        V4TopUpErrorCode::SpentUnknown => { if action == V4TopUpWriteAction::None || action == V4TopUpWriteAction::Terminal { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Source, write_action: action }) } else { None } },
+        V4TopUpErrorCode::TopUpRequestExpired => { if action == V4TopUpWriteAction::None || action == V4TopUpWriteAction::Terminal { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Operation, write_action: action }) } else { None } },
+        V4TopUpErrorCode::SourceResetRequired => { if action == V4TopUpWriteAction::None || action == V4TopUpWriteAction::Terminal { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Source, write_action: action }) } else { None } },
+        V4TopUpErrorCode::PermissionDenied => { if action == V4TopUpWriteAction::None { Some(V4TopUpError { code, scope: V4TopUpErrorScope::Source, write_action: action }) } else { None } },
+    }
+}
+
+pub(crate) fn valid_lifecycle_result(value: &V4LifecycleResult) -> bool {
+    let cleanup = &value.cleanup_status;
+    (cleanup.status == V4CleanupState::Complete) == (cleanup.core_cleanup == V4CoreCleanup::Complete && cleanup.pending_callbacks == 0)
+        && (value.lifecycle_state != V4LifecycleState::SessionAborted || value.object_kind == V4LifecycleObjectKind::Session)
+        && (cleanup.status != V4CleanupState::Complete || matches!(value.lifecycle_state, V4LifecycleState::Closed | V4LifecycleState::SessionAborted))
+}
+
 pub(crate) fn connection_assurance(class: &str) -> Option<V4ConnectionGuarantees> {
     match class {
         "native_websocket_tls13" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::SharedOrdered, bound_stream_input_isolation: V4BoundStreamInputIsolation::SharedFailureScope, datagram: false, local_consumer_tls13_verification: V4ConsumerTLS13Verification::ConsumerEnforced, scope: V4ConnectionGuaranteeScope::CompleteDirectPath, assumptions: V4ConnectionGuaranteeAssumptions::AuthenticatedPeerWithinTransportProfile }),
         "native_websocket_loopback" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::SharedOrdered, bound_stream_input_isolation: V4BoundStreamInputIsolation::SharedFailureScope, datagram: false, local_consumer_tls13_verification: V4ConsumerTLS13Verification::NotApplicable, scope: V4ConnectionGuaranteeScope::CompleteDirectPath, assumptions: V4ConnectionGuaranteeAssumptions::AuthenticatedPeerWithinTransportProfile }),
         "accepted_websocket" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::SharedOrdered, bound_stream_input_isolation: V4BoundStreamInputIsolation::SharedFailureScope, datagram: false, local_consumer_tls13_verification: V4ConsumerTLS13Verification::NotApplicable, scope: V4ConnectionGuaranteeScope::CompleteDirectPath, assumptions: V4ConnectionGuaranteeAssumptions::AuthenticatedPeerWithinTransportProfile }),
         "browser_websocket_terminator" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::SharedOrdered, bound_stream_input_isolation: V4BoundStreamInputIsolation::SharedFailureScope, datagram: false, local_consumer_tls13_verification: V4ConsumerTLS13Verification::ControlledTerminator, scope: V4ConnectionGuaranteeScope::CompleteDirectPath, assumptions: V4ConnectionGuaranteeAssumptions::AuthenticatedPeerWithinTransportProfile }),
+        "native_quic_tls13" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::IndependentWithinProfile, bound_stream_input_isolation: V4BoundStreamInputIsolation::BoundStreamWithinProfile, datagram: true, local_consumer_tls13_verification: V4ConsumerTLS13Verification::ConsumerEnforced, scope: V4ConnectionGuaranteeScope::CompleteDirectPath, assumptions: V4ConnectionGuaranteeAssumptions::AuthenticatedPeerWithinTransportProfile }),
+        "accepted_quic" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::IndependentWithinProfile, bound_stream_input_isolation: V4BoundStreamInputIsolation::BoundStreamWithinProfile, datagram: true, local_consumer_tls13_verification: V4ConsumerTLS13Verification::NotApplicable, scope: V4ConnectionGuaranteeScope::CompleteDirectPath, assumptions: V4ConnectionGuaranteeAssumptions::AuthenticatedPeerWithinTransportProfile }),
+        "native_webtransport_tls13" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::IndependentWithinProfile, bound_stream_input_isolation: V4BoundStreamInputIsolation::BoundStreamWithinProfile, datagram: true, local_consumer_tls13_verification: V4ConsumerTLS13Verification::ConsumerEnforced, scope: V4ConnectionGuaranteeScope::CompleteDirectPath, assumptions: V4ConnectionGuaranteeAssumptions::AuthenticatedPeerWithinTransportProfile }),
+        "accepted_webtransport" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::IndependentWithinProfile, bound_stream_input_isolation: V4BoundStreamInputIsolation::BoundStreamWithinProfile, datagram: true, local_consumer_tls13_verification: V4ConsumerTLS13Verification::NotApplicable, scope: V4ConnectionGuaranteeScope::CompleteDirectPath, assumptions: V4ConnectionGuaranteeAssumptions::AuthenticatedPeerWithinTransportProfile }),
+        "go_relay_native_consumer" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::IndependentWithinProfile, bound_stream_input_isolation: V4BoundStreamInputIsolation::BoundStreamWithinProfile, datagram: true, local_consumer_tls13_verification: V4ConsumerTLS13Verification::ConsumerEnforced, scope: V4ConnectionGuaranteeScope::CompleteRelayPath, assumptions: V4ConnectionGuaranteeAssumptions::TrustedRelayAndPeersWithinTransportProfile }),
+        "go_relay_native_observer" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::IndependentWithinProfile, bound_stream_input_isolation: V4BoundStreamInputIsolation::BoundStreamWithinProfile, datagram: true, local_consumer_tls13_verification: V4ConsumerTLS13Verification::NotApplicable, scope: V4ConnectionGuaranteeScope::CompleteRelayPath, assumptions: V4ConnectionGuaranteeAssumptions::TrustedRelayAndPeersWithinTransportProfile }),
+        "go_relay_shared_consumer" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::SharedOrdered, bound_stream_input_isolation: V4BoundStreamInputIsolation::SharedFailureScope, datagram: false, local_consumer_tls13_verification: V4ConsumerTLS13Verification::ConsumerEnforced, scope: V4ConnectionGuaranteeScope::CompleteRelayPath, assumptions: V4ConnectionGuaranteeAssumptions::TrustedRelayAndPeersWithinTransportProfile }),
+        "go_relay_shared_observer" => Some(V4ConnectionGuarantees { reliable_progress: V4ReliableProgress::SharedOrdered, bound_stream_input_isolation: V4BoundStreamInputIsolation::SharedFailureScope, datagram: false, local_consumer_tls13_verification: V4ConsumerTLS13Verification::NotApplicable, scope: V4ConnectionGuaranteeScope::CompleteRelayPath, assumptions: V4ConnectionGuaranteeAssumptions::TrustedRelayAndPeersWithinTransportProfile }),
         _ => None,
     }
 }

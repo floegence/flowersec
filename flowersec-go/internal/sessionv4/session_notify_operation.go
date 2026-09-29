@@ -8,11 +8,11 @@ import (
 	"math"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // NotifyOperation is the notification capability view of the original
@@ -46,7 +46,7 @@ func (r *RPCServices) PrepareNotifyOperation(ctx context.Context, route rpcv4.Co
 }
 
 func (r *RPCServices) PrepareNotifyAndSave(ctx context.Context, route rpcv4.ContractRoute, payload []byte, options rpcv4.NotifyPreparation, store ReferenceStoreBinding) (*NotifyOperation, protocolv4.OperationReference, error) {
-	if err := checkPrepareSaveContext(ctx); err != nil {
+	if err := r.checkReferenceStore(ctx, store); err != nil {
 		return nil, protocolv4.OperationReference{}, err
 	}
 	options.RequireExecution = true
@@ -103,15 +103,19 @@ func (n *NotifyOperation) Start(ctx context.Context) NotifyStartResult {
 	err := o.request.WithStart(ctx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte) error {
 		r := o.services
 		r.mu.Lock()
-		if r.closed || r.retired || r.callSerial == math.MaxUint64 {
+		if r.closed || r.retired || o.workload == nil && r.callSerial == math.MaxUint64 {
 			r.mu.Unlock()
 			return rpcv4.ErrClosed
 		}
 		var publisher *rpcv4.NotifyPublisher
-		for _, job := range r.notifyChannels {
+		var protection rpcv4.NotifyProtection
+		for position, job := range r.notifyChannels {
 			if job != nil && job.channel != nil {
 				publisher = job.channel.availablePublisher()
 				if publisher != nil {
+					if o.workload != nil {
+						protection = o.workload.notify[position]
+					}
 					break
 				}
 			}
@@ -130,23 +134,31 @@ func (n *NotifyOperation) Start(ctx context.Context) NotifyStartResult {
 			r.mu.Unlock()
 			return err
 		}
-		r.callSerial++
-		var seed [56]byte
-		copy(seed[:16], "prepared-notify4/")
-		copy(seed[16:32], r.owner.Instance[:])
-		copy(seed[32:48], r.owner.Backing[:])
-		binary.BigEndian.PutUint64(seed[48:], r.callSerial)
-		digest := sha256.Sum256(seed[:])
-		var requests [2]resourcev4.Request
 		var refs [2]resourcev4.Reference
-		for i, v := range [2]resourcev4.Vector{source, status} {
-			owner := r.owner
-			copy(owner.Instance[:], digest[:16])
-			copy(owner.Backing[:], digest[16:])
-			owner.Backing[0] ^= byte(i)
-			requests[i] = resourcev4.Request{Owner: owner, Charge: v, Accounts: r.accounts[:r.accountCount]}
+		if o.workload != nil {
+			if o.workload.workload.shape != 2 || protection == (rpcv4.NotifyProtection{}) {
+				r.mu.Unlock()
+				return cryptov4.ErrNotReady
+			}
+			err = resourcev4.CheckoutProtectedBatch(o.workload.owners[workloadCall:workloadCall+2], refs[:])
+		} else {
+			r.callSerial++
+			var seed [56]byte
+			copy(seed[:16], "prepared-notify4/")
+			copy(seed[16:32], r.owner.Instance[:])
+			copy(seed[32:48], r.owner.Backing[:])
+			binary.BigEndian.PutUint64(seed[48:], r.callSerial)
+			digest := sha256.Sum256(seed[:])
+			var requests [2]resourcev4.Request
+			for i, v := range [2]resourcev4.Vector{source, status} {
+				owner := r.owner
+				copy(owner.Instance[:], digest[:16])
+				copy(owner.Backing[:], digest[16:])
+				owner.Backing[0] ^= byte(i)
+				requests[i] = resourcev4.Request{Owner: owner, Charge: v, Accounts: r.accounts[:r.accountCount]}
+			}
+			err = r.root.ReserveBatch(requests[:], refs[:])
 		}
-		err = r.root.ReserveBatch(requests[:], refs[:])
 		dispatch := r.notifications
 		runtimeBytes := r.runtimeBytes
 		r.mu.Unlock()
@@ -169,7 +181,11 @@ func (n *NotifyOperation) Start(ctx context.Context) NotifyStartResult {
 		s.policy = policy
 		s.metadata = o.metadata
 		s.mu.Unlock()
-		submission, err = publisher.Submit(ctx, header, payload, deadline, s, refs[0], refs[1], runtimeBytes)
+		if protection != (rpcv4.NotifyProtection{}) {
+			submission, err = protection.Submit(ctx, header, payload, deadline, s, refs[0], refs[1], runtimeBytes)
+		} else {
+			submission, err = publisher.Submit(ctx, header, payload, deadline, s, refs[0], refs[1], runtimeBytes)
+		}
 		return err
 	})
 	if err != nil {
@@ -325,14 +341,14 @@ func (n *NotifyOperation) WaitCleanup(ctx context.Context) error {
 		return rpcv4.ErrOwner
 	}
 	o := n.owner
-	o.mu.Lock()
-	complete := !o.preparing && o.closed && o.detached
-	o.mu.Unlock()
-	if complete {
+	if o.Snapshot().CleanupComplete {
 		return nil
 	}
 	_, err := n.wait(ctx, true)
-	return err
+	if err != nil {
+		return err
+	}
+	return o.WaitCleanup(ctx)
 }
 func (n *NotifyOperation) Close() {
 	if n != nil && n.owner != nil {

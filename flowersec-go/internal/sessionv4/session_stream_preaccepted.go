@@ -1,6 +1,7 @@
 package sessionv4
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -10,36 +11,41 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 const serviceStreamQuantum = uint64(16 * 1024)
 const maxPreacceptedStreams = 8
+const maxPreacceptedStreamsPerService = 2
+const preacceptedIdleMS = uint64(30000)
 
 // Each entry is one actual business Stream in this same Session, never a free
 // channel, alternate admission policy or replacement for a retired generation.
 // Its original Stream factory task stays charged until transfer or real cleanup.
 type preacceptedStream struct {
-	mu                           sync.Mutex
-	plan                         *SessionCorePlan
-	allocation                   *sessionStreamAllocation
-	admission                    *OpenAdmission
-	owner                        *StreamOwnership
-	route                        rpcv4.ContractRoute
-	reservation, claimHold       resourcev4.Reference
-	deadline                     *timev4.Deadline
-	context                      context.Context
-	cancel                       context.CancelFunc
-	changed                      chan struct{}
-	binding                      [32]byte
-	kind                         string
-	metadata                     [4096]byte
-	metadataBytes, index         int
-	claimed, closed, transferred bool
+	mu                                   sync.Mutex
+	plan                                 *SessionCorePlan
+	allocation                           *sessionStreamAllocation
+	admission                            *OpenAdmission
+	owner                                *StreamOwnership
+	route                                rpcv4.ContractRoute
+	reservation, claimHold, claimReserve resourcev4.Reference
+	deadline                             *timev4.Deadline
+	idle                                 *timev4.Window
+	context                              context.Context
+	cancel                               context.CancelFunc
+	changed                              chan struct{}
+	binding                              [32]byte
+	kind                                 string
+	metadata                             [4096]byte
+	namespace                            [128]byte
+	namespaceBytes                       int
+	metadataBytes, index                 int
+	claimed, closed, transferred         bool
 }
 
 func preacceptedBinding(kind string, metadata []byte, contract [32]byte) [32]byte {
@@ -63,6 +69,20 @@ func preacceptedBinding(kind string, metadata []byte, contract [32]byte) [32]byt
 // A try_now miss never calls it and never adds replenishment demand. The exact
 // route, kind and metadata are fixed before OPEN; the lifetime is not renewed.
 func (c *SessionCore) PreacceptServiceStream(ctx context.Context, kind string, metadata []byte, contract [32]byte, deadline *timev4.Deadline) (err error) {
+	return c.preacceptServiceStream(ctx, kind, metadata, contract, deadline, false)
+}
+
+// Required declarations share the existing pool's pending or empty entry.
+// The original pool gate performs the final check, so concurrent registrations
+// cannot open duplicate Streams for the same target. Checkout never calls this.
+func (c *SessionCore) preacceptServiceStream(ctx context.Context, kind string, metadata []byte, contract [32]byte, deadline *timev4.Deadline, required bool, workloads ...*unaryWorkload) (err error) {
+	if len(workloads) > 1 {
+		return cryptov4.ErrConfiguration
+	}
+	var workload *unaryWorkload
+	if len(workloads) == 1 {
+		workload = workloads[0]
+	}
 	if c == nil || c.plan == nil || ctx == nil || deadline == nil || !canonicalStreamHandlerKind(kind) || len(metadata) > 4096 {
 		return cryptov4.ErrConfiguration
 	}
@@ -74,7 +94,21 @@ func (c *SessionCore) PreacceptServiceStream(ctx context.Context, kind string, m
 		return ErrApplicationDependency
 	}
 	p := c.plan
-	allocation, admission, err := p.prepareStream(ctx, len(kind)+len(metadata))
+	binding := preacceptedBinding(kind, metadata, contract)
+	if required {
+		p.mu.Lock()
+		existing := p.hasPreacceptedTargetLocked(binding, workload)
+		p.mu.Unlock()
+		if existing {
+			return nil
+		}
+	}
+	finishCapacity, err := p.preacceptedCapacityGate(binding, contract, required, workload)
+	if err != nil {
+		return err
+	}
+	defer finishCapacity()
+	allocation, admission, err := p.preparePreacceptedStream(ctx, kind, metadata, contract, workload)
 	if err != nil {
 		return err
 	}
@@ -88,6 +122,9 @@ func (c *SessionCore) PreacceptServiceStream(ctx context.Context, kind string, m
 	defer p.mu.Unlock()
 	if p.closed || p.rpc == nil || !deadline.BelongsTo(p.engine.Clock()) || !serviceStreamGeometry(p.config.Streams) {
 		return cryptov4.ErrConfiguration
+	}
+	if required && p.hasPreacceptedTargetLocked(binding, workload) {
+		return nil
 	}
 	index := -1
 	for j, entry := range p.preaccepted {
@@ -106,11 +143,7 @@ func (c *SessionCore) PreacceptServiceStream(ctx context.Context, kind string, m
 	if !live {
 		return cryptov4.ErrNotReady
 	}
-	var charges [2]resourcev4.Vector
-	charges[0], err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(preacceptedStream{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + uint64(unsafe.Sizeof(time.Timer{})) + uint64(len(kind)) + 512, resourcev4.Items: 3, resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: p.config.Streams.RuntimeBytes})
-	if err == nil {
-		charges[1], err = rpcv4.ContractRouteCharge(p.config.Streams.RuntimeBytes)
-	}
+	charges, err := preacceptedStreamCharges(p.config.Streams.RuntimeBytes, len(kind))
 	if err != nil {
 		return err
 	}
@@ -127,7 +160,11 @@ func (c *SessionCore) PreacceptServiceStream(ctx context.Context, kind string, m
 		copy(owner.Backing[:], digest[16:])
 		requests[j] = resourcev4.Request{Owner: owner, Charge: charge, Accounts: p.accounts[:p.accountCount]}
 	}
-	if err := p.root.ReserveBatch(requests[:], refs[:]); err != nil {
+	if f := allocation.callerFloor; f != nil {
+		if err := resourcev4.CheckoutProtectedBatch(f.owners[streamCallerPreaccepted:], refs[:]); err != nil {
+			return err
+		}
+	} else if err := p.root.ReserveBatch(requests[:], refs[:]); err != nil {
 		return err
 	}
 	defer func() {
@@ -150,6 +187,9 @@ func (c *SessionCore) PreacceptServiceStream(ctx context.Context, kind string, m
 	if err != nil || policy.Shape != 1 {
 		return rpcv4.ErrMethod
 	}
+	if err := p.preacceptedServiceCapacityLocked(policy.Namespace); err != nil {
+		return err
+	}
 	fixed, err := deadline.Fork(deadline.Cap())
 	if err != nil {
 		return err
@@ -158,16 +198,56 @@ func (c *SessionCore) PreacceptServiceStream(ctx context.Context, kind string, m
 		return err
 	}
 	work, cancel := context.WithCancel(parent)
-	entry := &preacceptedStream{plan: p, allocation: allocation, admission: admission, route: route, reservation: refs[0], deadline: fixed, context: work, cancel: cancel, changed: make(chan struct{}, 1), index: index, kind: strings.Clone(kind), binding: preacceptedBinding(kind, metadata, contract)}
+	entry := &preacceptedStream{plan: p, allocation: allocation, admission: admission, route: route, reservation: refs[0], deadline: fixed, context: work, cancel: cancel, changed: make(chan struct{}, 1), index: index, kind: strings.Clone(kind), binding: binding}
+	entry.claimReserve, err = entry.reservation.Borrow()
+	if err != nil {
+		cancel()
+		return err
+	}
 	entry.metadataBytes = copy(entry.metadata[:], metadata)
+	entry.namespaceBytes = copy(entry.namespace[:], policy.Namespace)
 	p.preaccepted[index] = entry
+	if f := allocation.callerFloor; f != nil {
+		f.preaccepted = entry
+	}
 	committed = true
 	go entry.run()
 	return nil
 }
 
+func (p *SessionCorePlan) hasPreacceptedTargetLocked(binding [32]byte, workloads ...*unaryWorkload) bool {
+	for _, entry := range p.preaccepted {
+		if entry == nil {
+			continue
+		}
+		entry.mu.Lock()
+		existing := entry.matchesWorkload(workloads) && entry.binding == binding && !entry.closed && !entry.claimed && !entry.transferred
+		entry.mu.Unlock()
+		if existing {
+			return true
+		}
+	}
+	return false
+}
+
 func serviceStreamGeometry(c SessionStreamConfig) bool {
 	return c.ReceiveBytes >= serviceStreamQuantum && c.InitialReceiveLimit >= serviceStreamQuantum && c.QueueBytes >= serviceStreamQuantum
+}
+
+// Pending and closing entries retain their service share until the original
+// factory has actually cleaned them. Different methods of one service share
+// the same two positions; a different digest does not create another pool.
+func (p *SessionCorePlan) preacceptedServiceCapacityLocked(namespace string) error {
+	count := 0
+	for _, entry := range p.preaccepted {
+		if entry != nil && string(entry.namespace[:entry.namespaceBytes]) == namespace {
+			count++
+		}
+	}
+	if count >= maxPreacceptedStreamsPerService {
+		return cryptov4.ErrCapacity
+	}
+	return nil
 }
 
 func (e *preacceptedStream) signalLocked() {
@@ -193,9 +273,16 @@ func (e *preacceptedStream) run() {
 		e.route.Release()
 		clear(e.metadata[:])
 		e.kind = ""
+		e.mu.Lock()
+		e.claimReserve.Release()
+		e.claimReserve = resourcev4.Reference{}
 		e.reservation.Release()
+		e.mu.Unlock()
 		p := e.plan
 		p.mu.Lock()
+		if f := e.allocation.callerFloor; f != nil && f.preaccepted == e {
+			f.preaccepted = nil
+		}
 		if p.preaccepted[e.index] == e {
 			p.preaccepted[e.index] = nil
 			p.notifyLocked()
@@ -204,7 +291,7 @@ func (e *preacceptedStream) run() {
 		p.finishStream(e.allocation)
 	}()
 	a, allocation := e.admission, e.allocation
-	h, _, err := a.OpenLocal(e.context, BusinessStream, e.kind, e.metadata[:e.metadataBytes], &CarrierAssociation{shared: a.sharedIngress}, allocation.reservation, e.deadline)
+	h, _, err := e.plan.openBusinessStream(e.context, allocation, e.kind, e.metadata[:e.metadataBytes], e.deadline)
 	if err == nil {
 		err = a.WaitOutcome(e.context, h)
 	}
@@ -223,8 +310,13 @@ func (e *preacceptedStream) run() {
 	if err != nil {
 		_ = a.Cancel(h)
 	}
+	var idle *timev4.Window
+	if err == nil {
+		idle, err = timev4.NewWindow(e.plan.engine.Clock(), preacceptedIdleMS)
+	}
 	e.mu.Lock()
 	e.owner = owner
+	e.idle = idle
 	if err != nil {
 		e.closed = true
 	}
@@ -237,14 +329,24 @@ func (e *preacceptedStream) run() {
 	timer.Stop()
 	defer timer.Stop()
 	for {
+		// Sample outside the entry gate. An idle window is never transferred
+		// into the business deadline and cannot be renewed by observations.
+		now, sampleErr := e.plan.engine.Clock().Sample()
+		remaining, lifetimeErr := e.deadline.RemainingMS()
+		if lifetimeErr == nil && idle != nil {
+			idleRemaining, idleErr := idle.RemainingMS()
+			remaining, lifetimeErr = min(remaining, idleRemaining), idleErr
+		}
 		e.mu.Lock()
 		if e.transferred && !e.claimed {
 			e.mu.Unlock()
 			return
 		}
-		remaining, lifetimeErr := e.deadline.RemainingMS()
-		if lifetimeErr == nil && e.owner != nil {
-			lifetimeErr = e.owner.checkLifetime()
+		if lifetimeErr == nil {
+			lifetimeErr = sampleErr
+		}
+		if lifetimeErr == nil && e.idle != nil {
+			lifetimeErr = e.idle.CheckAt(now.Mark)
 		}
 		if lifetimeErr != nil && !cursorTimePaused(lifetimeErr) || e.context.Err() != nil {
 			e.closed = true
@@ -274,6 +376,7 @@ func (e *preacceptedStream) run() {
 		if remaining == 0 || cursorTimePaused(lifetimeErr) {
 			remaining = 10
 		}
+		remaining = min(remaining, preacceptedIdleMS)
 		timer.Reset(idleTimerChunk(remaining))
 		select {
 		case <-e.changed:
@@ -286,52 +389,131 @@ func (e *preacceptedStream) run() {
 
 // A private checkout excludes competing constructors but publishes no bytes.
 // A failed vector acquisition releases it only after all temporary aliases end.
-func (p *SessionCorePlan) claimPreaccepted(ctx context.Context, kind string, metadata []byte, contract [32]byte) (*preacceptedStream, error) {
+func (p *SessionCorePlan) claimPreaccepted(ctx context.Context, kind string, metadata []byte, contract [32]byte, floor *streamCallerFloor) (*preacceptedStream, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	binding := preacceptedBinding(kind, metadata, contract)
+	now, err := p.engine.Clock().Sample()
+	if err != nil {
+		return nil, err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
 		return nil, cryptov4.ErrClosed
 	}
 	for _, entry := range p.preaccepted {
-		if entry == nil {
+		if entry == nil || entry.allocation.callerFloor != floor {
 			continue
 		}
 		entry.mu.Lock()
-		available := !entry.closed && !entry.claimed && !entry.transferred && entry.owner != nil && entry.binding == binding
+		available := entry.availableAt(binding, now, false)
 		if available {
-			if err := entry.owner.checkLifetime(); err == nil {
-				hold, err := entry.reservation.Borrow()
-				if err != nil {
-					entry.mu.Unlock()
-					return nil, err
-				}
-				entry.claimHold, entry.claimed = hold, true
+			hold, err := entry.claimReserve.TakeBorrow()
+			if err != nil {
 				entry.mu.Unlock()
-				return entry, nil
+				return nil, err
 			}
+			entry.claimHold, entry.claimReserve, entry.claimed = hold, resourcev4.Reference{}, true
+			entry.mu.Unlock()
+			return entry, nil
 		}
 		entry.mu.Unlock()
 	}
 	return nil, cryptov4.ErrNotReady
 }
 
+// availableAt is called under the original entry gate. It only inspects the
+// same owner that checkout will transfer; it creates no speculative demand.
+func (e *preacceptedStream) availableAt(binding [32]byte, now timev4.Sample, claimed bool) bool {
+	if e.closed || e.claimed != claimed || e.transferred || e.owner == nil || e.binding != binding || e.idle == nil || e.idle.CheckAt(now.Mark) != nil || e.deadline.CheckAt(now) != nil || e.context.Err() != nil || e.reservation.Check() != nil {
+		return false
+	}
+	o := e.owner
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.admission == nil || o.revoked.Load() || o.sealed.Load() || o.closeRequested.Load() || o.rawUsed || o.messages != nil || o.typed != nil || o.conn != nil || o.resume != nil || o.users != 0 || o.cleaning || o.accepted.Load() != 0 {
+		return false
+	}
+	a := o.admission
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	s, err := a.slot(o.handle)
+	if err != nil || a.closed || a.draining || a.peerGoAway.set || s.owner != o || !s.accepted || s.cancelled || s.coreCleaned || s.phase != openLive || s.carrier == nil {
+		return false
+	}
+	q, f := o.queue, o.flow.receive
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.closed || q.sealed || q.cleaned || q.size != 0 || q.accepted != 0 || q.writeOwner != o || q.reservation.Check() != nil {
+		return false
+	}
+	q.flow.mu.Lock()
+	stopped := q.flow.reset.Load() || q.flow.stopping || q.flow.cleaned
+	q.flow.mu.Unlock()
+	if stopped {
+		return false
+	}
+	f.pool.mu.Lock()
+	defer f.pool.mu.Unlock()
+	return !f.pool.closed && !f.cleaned && !f.abandoned && !f.hasTerminal && f.size == 0 && f.delivered == 0 && f.readOwner == o && f.reservation.Check() == nil
+}
+
+func (p *SessionCorePlan) checkPreaccepted(ctx context.Context, kind string, metadata []byte, contract [32]byte, workloads ...*unaryWorkload) error {
+	if p == nil || p.engine == nil {
+		return cryptov4.ErrNotReady
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	now, err := p.engine.Clock().Sample()
+	if err != nil {
+		return err
+	}
+	binding := preacceptedBinding(kind, metadata, contract)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return cryptov4.ErrClosed
+	}
+	for _, entry := range p.preaccepted {
+		if entry != nil && entry.matchesWorkload(workloads) {
+			entry.mu.Lock()
+			available := entry.availableAt(binding, now, false)
+			entry.mu.Unlock()
+			if available {
+				return nil
+			}
+		}
+	}
+	return cryptov4.ErrNotReady
+}
+
 func (e *preacceptedStream) releaseClaim() {
 	e.mu.Lock()
 	e.claimed = false
-	e.claimHold.Release()
+	if !e.closed && !e.transferred {
+		if ref, err := e.claimHold.TakeBorrow(); err == nil {
+			e.claimReserve = ref
+		} else {
+			// Exhaustion or a closed original scope cannot create a fresh
+			// checkout alias. Retire the same entry without replacement.
+			e.closed = true
+			e.claimHold.Release()
+		}
+	} else {
+		e.claimHold.Release()
+	}
 	e.claimHold = resourcev4.Reference{}
 	e.signalLocked()
 	e.mu.Unlock()
 }
 
-func (e *preacceptedStream) transfer(ctx context.Context, m *StreamMessages) error {
+func (e *preacceptedStream) transfer(ctx context.Context, m *StreamMessages, now timev4.Sample) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.closed || !e.claimed || e.transferred || e.owner == nil {
+	if !e.availableAt(e.binding, now, true) {
 		return cryptov4.ErrNotReady
 	}
 	owner := e.owner
@@ -367,7 +549,7 @@ func (p *SessionCorePlan) beginPreacceptedMessages(ctx context.Context, kind str
 	if err != nil {
 		return nil, err
 	}
-	entry, err := p.claimPreaccepted(ctx, kind, metadata, digest)
+	entry, err := p.claimPreaccepted(ctx, kind, metadata, digest, config.transportFloor)
 	if err != nil {
 		return nil, err
 	}
@@ -376,6 +558,7 @@ func (p *SessionCorePlan) beginPreacceptedMessages(ctx context.Context, kind str
 	if err != nil {
 		return nil, err
 	}
+	defer m.finishEnvironmentPreparation()
 	committed := false
 	defer func() {
 		if !committed {
@@ -389,6 +572,10 @@ func (p *SessionCorePlan) beginPreacceptedMessages(ctx context.Context, kind str
 		return nil, err
 	}
 	if err := m.prepareStartDependencies(ctx, config.dependencies); err != nil {
+		return nil, err
+	}
+	now, err := p.engine.Clock().Sample()
+	if err != nil {
 		return nil, err
 	}
 	p.mu.Lock()
@@ -406,7 +593,7 @@ func (p *SessionCorePlan) beginPreacceptedMessages(ctx context.Context, kind str
 	}
 	work, cancel := context.WithCancel(parent)
 	m.openingCancel = cancel
-	err = entry.transfer(ctx, m)
+	err = entry.transfer(ctx, m, now)
 	p.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -414,4 +601,68 @@ func (p *SessionCorePlan) beginPreacceptedMessages(ctx context.Context, kind str
 	committed = true
 	go m.runAcceptedPublication(work)
 	return m, nil
+}
+
+func preacceptedStreamCharges(runtimeBytes uint64, kindBytes int) (charges [2]resourcev4.Vector, err error) {
+	if runtimeBytes == 0 || kindBytes < 0 {
+		return charges, cryptov4.ErrConfiguration
+	}
+	charges[0], err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(preacceptedStream{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + uint64(unsafe.Sizeof(timev4.Window{})) + uint64(unsafe.Sizeof(time.Timer{})) + uint64(kindBytes) + 512, resourcev4.Items: 4, resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
+	if err == nil {
+		charges[1], err = rpcv4.ContractRouteCharge(runtimeBytes)
+	}
+	return
+}
+
+// Explicit/required preparation consumes a matching method's original floor.
+// It does not multiply that method's transport target or borrow another method's
+// reservation. A busy declared target reports capacity instead of adding one.
+func (p *SessionCorePlan) preparePreacceptedStream(ctx context.Context, kind string, metadata []byte, contract [32]byte, workload *unaryWorkload) (*sessionStreamAllocation, *OpenAdmission, error) {
+	if workload == nil {
+		return p.prepareStream(ctx, len(kind)+len(metadata))
+	}
+	p.mu.Lock()
+	if p.closed || p.rpc == nil {
+		p.mu.Unlock()
+		return nil, nil, cryptov4.ErrClosed
+	}
+	r := p.rpc
+	r.mu.Lock()
+	var floor *streamCallerFloor
+	declared := false
+	for _, slot := range r.workloadSlots {
+		if slot == nil || slot.closed || slot.closing || slot.workload.closed || slot.workload.cleaned {
+			continue
+		}
+		w := slot.workload
+		if w != workload || w.stream == nil || w.stream.core != &p.core || w.admissionContract != contract || w.stream.kind != kind || !bytes.Equal(w.stream.metadata, metadata) {
+			continue
+		}
+		declared = true
+		if slot.transport.checkAvailableLocked() == nil {
+			floor = slot.transport
+			break
+		}
+	}
+	r.mu.Unlock()
+	p.mu.Unlock()
+	if !declared || floor == nil {
+		return nil, nil, cryptov4.ErrCapacity
+	}
+	return p.prepareStreamInvocation(ctx, len(kind)+len(metadata), nil, false, floor)
+}
+
+// Empty selector slices are read-only pool inspection. An explicit nil target
+// denotes ordinary capacity; a workload can see only its own original floors.
+func (e *preacceptedStream) matchesWorkload(workloads []*unaryWorkload) bool {
+	if len(workloads) == 0 {
+		return true
+	}
+	if len(workloads) != 1 {
+		return false
+	}
+	if e.allocation.callerFloor == nil {
+		return workloads[0] == nil
+	}
+	return e.allocation.callerFloor.workload == workloads[0]
 }

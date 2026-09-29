@@ -102,6 +102,12 @@ export interface ByteStream {
   read(options?: OperationOptions): Promise<Uint8Array | null>;
   write(data: Uint8Array, options?: OperationOptions): Promise<number>;
   closeWrite(): Promise<void>;
+  /**
+   * Waits for the authenticated send drain after CloseWrite. Older carriers
+   * may omit this optional operation; adapters then retain their existing
+   * close semantics.
+   */
+  finish?(): Promise<void>;
   reset(): Promise<void>;
   close(): Promise<void>;
 }

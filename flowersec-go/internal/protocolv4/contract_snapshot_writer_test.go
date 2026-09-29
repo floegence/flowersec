@@ -90,7 +90,7 @@ func TestContractSnapshotWriterMaximumBoundedStepsAndOriginalBytes(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, request, err := targetCodec.EncodeTargets(make([]byte, 2048), targets, make([]*ServiceContract, 8))
+	_, request, err := targetCodec.EncodeTargets(make([]byte, 2048), targets, make([]ContractQueryKnown, 8))
 	if err != nil {
 		t.Fatal(err)
 	}

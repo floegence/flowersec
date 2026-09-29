@@ -4,35 +4,42 @@ import (
 	"context"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // WithNotifyPublication is the SDK-only gate for observation publication.
 // Execution requires its own original execution owner and cannot enter this
-// path. Registration -> endpoint -> lease -> dispatch is the same order used
-// by receiving observation fanout; the action accepts only finite SDK bytes.
+// path. Endpoint -> lease -> dispatch -> registration matches receiving
+// observation fanout; the action accepts only finite SDK bytes.
 func (d *NotificationDispatch) WithNotifyPublication(h protocolv4.ApplicationHeader, action func(resourcev4.Reference) error) error {
 	if d == nil || h.Kind() != "observation_notify" || action == nil {
 		return rpcv4.ErrConfiguration
 	}
 	d.mu.Lock()
-	routes := d.routes
+	routes, clock := d.routes, d.clock
 	d.mu.Unlock()
 	if routes == nil {
 		return rpcv4.ErrClosed
 	}
-	return routes.WithRegisteredNotify(h, func(method uint32, policy protocolv4.ServiceContractPolicy) error {
-		return d.withAuthority(method, func(local notificationMethod) error {
-			if local.policy.Namespace != policy.Namespace || local.policy.Type != policy.Type || local.policy.Semantics != 0 {
+	method, _, err := routes.RegisteredContractPolicy(h.Fields().ServiceContractDigest)
+	if err != nil {
+		return err
+	}
+	now, err := clock.Sample()
+	if err != nil {
+		return err
+	}
+	return d.withAuthority(method, func(local notificationMethod) error {
+		return routes.WithRegisteredNotify(h, func(registered uint32, policy protocolv4.ServiceContractPolicy) error {
+			if registered != method {
 				return rpcv4.ErrMethod
 			}
-			now, err := d.clock.Sample()
-			if err != nil {
-				return err
+			if local.policy.Namespace != policy.Namespace || local.policy.Type != policy.Type || local.policy.Semantics != 0 {
+				return rpcv4.ErrMethod
 			}
 			deadline := h.Fields().DeadlineAtMS
 			if !now.ValidBefore(deadline) || policy.MessageLifetimeMS == 0 || policy.MessageLifetimeMS > math.MaxUint64-now.LowerMS || deadline > now.LowerMS+policy.MessageLifetimeMS {
@@ -54,7 +61,7 @@ func (r *RPCServices) BeginObservationNotify(ctx context.Context, header, payloa
 		return nil, err
 	}
 	r.mu.Lock()
-	if r.closed || r.retired {
+	if r.closed || r.retired || r.draining.Load() {
 		r.mu.Unlock()
 		return nil, cryptov4.ErrClosed
 	}

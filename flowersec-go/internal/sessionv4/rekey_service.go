@@ -7,9 +7,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // RekeyService owns one bounded coordinator and one publication worker. Peer
@@ -198,12 +198,7 @@ func (p *RekeyService) check() (bool, error) {
 	active := p.active
 	p.mu.Unlock()
 	if active != nil {
-		active.timing.mu.Lock()
-		var err error
-		if active.timing.phase != nil {
-			err = active.timing.phase.Check()
-		}
-		active.timing.mu.Unlock()
+		err := active.timing.checkPhase()
 		if err != nil {
 			return false, rekeyTimeError(err)
 		}

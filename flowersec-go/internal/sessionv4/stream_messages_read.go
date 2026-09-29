@@ -5,8 +5,8 @@ import (
 	"errors"
 	"io"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 var ErrStreamResultDelivered = errors.New("sessionv4: stream terminal already delivered")
@@ -18,13 +18,22 @@ func (m *StreamMessages) ReadNextEncoded(ctx context.Context) ([]byte, StreamMes
 	if m == nil || ctx == nil {
 		return nil, StreamMessageStatus{}, cryptov4.ErrConfiguration
 	}
+	if m.resumeExchange && !m.server {
+		if status, err := m.WaitStatus(ctx); err != nil {
+			return nil, status, err
+		}
+	}
 	if err := m.checkReadDependency(ctx); err != nil {
 		return nil, m.Status(), err
 	}
 	m.mu.Lock()
 	if m.abandoned {
+		s, err := m.statusLocked(), m.closedErrorLocked()
+		if m.failure == nil {
+			err = ErrUnaryResultAbandoned
+		}
 		m.mu.Unlock()
-		return nil, m.Status(), ErrUnaryResultAbandoned
+		return nil, s, err
 	}
 	if m.server {
 		m.mu.Unlock()
@@ -118,10 +127,16 @@ func (m *StreamMessages) closedErrorLocked() error {
 	if m.failure != nil {
 		return m.failure
 	}
+	if m.resumeExchange && m.abandoned {
+		return ErrUnaryResultAbandoned
+	}
 	return cryptov4.ErrClosed
 }
 
 func (m *StreamMessages) terminalStatusLocked() bool {
+	if m.resumeExchange && !m.server {
+		return m.closed || m.resumeValidated
+	}
 	return m.closed || m.status.Terminal || m.inputEOF && (!m.server || m.outputClosed)
 }
 

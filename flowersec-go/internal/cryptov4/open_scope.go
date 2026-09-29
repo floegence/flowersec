@@ -1,6 +1,6 @@
 package cryptov4
 
-import "github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+import "github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 
 // IncomingScope owns one bounded temporary receive key, then the authenticated
 // OPEN association. It consumes neither a positive active slot nor a lifetime

@@ -9,8 +9,8 @@ import (
 	"math"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 var ErrRecordWriter = errors.New("sessionv4: record writer failed")
@@ -34,9 +34,11 @@ type RecordWriteResult struct {
 // the original provider call keeps its buffer and cleanup responsibility.
 type RecordWriter struct {
 	maintenanceOwner             *OpenAdmission
+	failureOwner                 *OpenAdmission
 	mu                           sync.Mutex
 	engine                       *cryptov4.Engine
 	writer                       io.Writer
+	output                       []byte // Original Stream-owned publication backing.
 	scope                        uint64
 	closed, active               bool
 	publication, nextPublication uint64
@@ -84,7 +86,11 @@ func (w *RecordWriter) notifyDecisionOpportunity() {
 	if a := w.maintenanceOwner; a != nil {
 		a.mu.Lock()
 		a.notifyDecisionOpportunityLocked()
+		liveness := a.liveness
 		a.mu.Unlock()
+		if liveness != nil {
+			liveness.notifyPublicationOpportunity()
+		}
 	}
 }
 
@@ -158,7 +164,7 @@ func (w *RecordWriter) writeClaimed(ctx context.Context, seal func() (*cryptov4.
 			if gateErr != nil {
 				return result, gateErr
 			}
-			return result, cryptov4.ErrCapacity
+			return result, errRecordWriterBusy
 		}
 	}
 	w.mu.Lock()
@@ -179,6 +185,7 @@ func (w *RecordWriter) writeClaimed(ctx context.Context, seal func() (*cryptov4.
 	}
 	w.active = true
 	w.mu.Unlock()
+	var providerFailure error
 	defer func() {
 		w.mu.Lock()
 		w.active, w.publication = false, 0
@@ -190,6 +197,9 @@ func (w *RecordWriter) writeClaimed(ctx context.Context, seal func() (*cryptov4.
 		// Do not acquire admission under the writer gate: the original
 		// maintenance priority path orders those locks in the other direction.
 		w.notifyDecisionOpportunity()
+		if providerFailure != nil && w.failureOwner != nil && !w.failureOwner.nativeWriteFailure(w.scope, providerFailure) {
+			w.failureOwner.closeWithTransportCause(providerFailure)
+		}
 	}()
 	packet, err := seal()
 	if err != nil {
@@ -213,9 +223,19 @@ func (w *RecordWriter) writeClaimed(ctx context.Context, seal func() (*cryptov4.
 		return result, err
 	}
 	_, profile := w.engine.SessionBinding()
-	_, result.Header, _, err = protocolv4.ParseRecord(data, profile, protocolv4.MaxPayloadLength)
+	var frame protocolv4.FrameType
+	frame, result.Header, _, err = protocolv4.ParseRecord(data, profile, protocolv4.MaxPayloadLength)
 	if err != nil {
 		return result, err
+	}
+	if (frame == protocolv4.FrameStreamData || frame == protocolv4.FrameOpenStream) && w.output != nil {
+		if err = packet.MoveReliableOutput(w.output); err != nil {
+			return result, err
+		}
+		data, err = packet.Bytes()
+		if err != nil {
+			return result, err
+		}
 	}
 	if ticketed != nil {
 		if err = ticketed(); err != nil {
@@ -236,24 +256,27 @@ func (w *RecordWriter) writeClaimed(ctx context.Context, seal func() (*cryptov4.
 		}
 		n, writeErr := w.writer.Write(data[result.EnvelopeBytes:])
 		if n < 0 || n > len(data)-result.EnvelopeBytes {
+			providerFailure = ErrRecordWriter
 			return result, ErrRecordWriter
 		}
 		result.EnvelopeBytes += n
 		result.Complete = result.EnvelopeBytes == len(data)
 		if writeErr != nil {
+			providerFailure = writeErr
 			return result, writeErr
 		}
 		if result.Complete {
 			// Count only the complete successful provider handoff. The result
 			// retains actual bytes/submission even if idle expired during I/O.
-			if err = packet.Published(); err != nil {
-				return result, err
-			}
 			if published != nil {
 				published()
 			}
+			if err = packet.Published(); err != nil {
+				return result, err
+			}
 		}
 		if n == 0 {
+			providerFailure = io.ErrNoProgress
 			return result, io.ErrNoProgress
 		}
 	}

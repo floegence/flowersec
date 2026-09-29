@@ -2,7 +2,7 @@ package cryptov4
 
 import (
 	"errors"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"testing"
 	"time"
 )

@@ -3,7 +3,7 @@ package protocolv4
 import (
 	"bytes"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/unicode151"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/unicode151"
 )
 
 // This cursor is private to the fixed snapshot reader. It borrows immutable

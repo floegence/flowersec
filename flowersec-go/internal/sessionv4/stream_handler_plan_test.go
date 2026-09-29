@@ -11,8 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func streamHandlerTestConfig() StreamHandlerPlanConfig {
@@ -92,6 +93,48 @@ func TestStreamHandlerPlanRejectsInvalidSnapshotBeforeTakingResources(t *testing
 			}
 		})
 	}
+}
+
+func TestStreamHandlerPlanRawMetadataProjectionAuthorizesBeforeAcceptance(t *testing.T) {
+	f := newExecutorFixture(t, 2, 1)
+	wire, err := protocolv4.EncodeStreamMetadataEnvelope(protocolv4.StreamMetadataEnvelope{
+		Namespace: "application/json", Version: 1, Values: map[string][]byte{"message": []byte(`"hello"`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(chan string, 1)
+	config := streamHandlerTestConfig()
+	config.Handlers[0].MetadataContract = &protocolv4.RawStreamMetadataContract{
+		ContractID: "code.raw.v1", Namespace: "application/json", Version: 1,
+		Fields: []protocolv4.RawStreamMetadataField{{Name: "message", Type: protocolv4.RawStreamMetadataString, Required: true}},
+	}
+	config.Handlers[0].AuthorizeProjection = func(_ context.Context, _ any, projection map[string]any) error {
+		seen <- projection["message"].(string)
+		return nil
+	}
+	p := newStreamHandlerTestPlan(t, f, config)
+	capture, err := p.Capture("example/raw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, backing := f.job(t, 1)
+	result := make(chan error, 1)
+	job, err := f.executor.TrySubmit(capture.WorkClass(), task, backing, func() { result <- capture.Authorize(context.Background(), wire) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitApplicationPermitTask(t, job)
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if got := <-seen; got != "hello" {
+		t.Fatalf("projection=%q", got)
+	}
+	if err := capture.Accept(); err != nil {
+		t.Fatal(err)
+	}
+	capture.Release()
 }
 
 func TestStreamHandlerPlanFreezesRegistrationAndOriginalApplicationBinding(t *testing.T) {

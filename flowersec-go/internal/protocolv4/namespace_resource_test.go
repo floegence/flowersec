@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func (f *namespaceFixture) reserve(t *testing.T, charge resourcev4.Vector) resourcev4.Reference {
@@ -96,8 +96,8 @@ func TestNamespaceResourceRetainsHistoryAndActualFetchTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ref.release()
-	if f.resources.Snapshot().References != 4 || f.resources.Snapshot().Reservations != 3 {
-		t.Fatal("subscription failed to borrow the same backing", f.resources.Snapshot())
+	if f.resources.Snapshot().References != 3+8 || f.resources.Snapshot().Reservations != 3 {
+		t.Fatal("subscription replaced the original namespace reference", f.resources.Snapshot())
 	}
 	h, input := f.bindHead(t, 2, [2]uint64{})
 	if err := n.Observe(h); err != nil {

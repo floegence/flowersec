@@ -7,8 +7,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var ErrApplicationDependency = errors.New("sessionv4: dependency_unavailable")
@@ -17,6 +17,10 @@ var ErrApplicationDependency = errors.New("sessionv4: dependency_unavailable")
 // local, original owners; no peer field, goroutine identity or ambient global
 // context can manufacture an invocation or remove a Completion ancestor.
 const maxApplicationAncestors = 8
+
+// Each dependency floor serves one bounded ancestor chain. Independent SDK
+// components admit their own floor and therefore share no checkout slots.
+const dependencyFloorCapacity = maxApplicationAncestors
 
 type applicationLane uint8
 
@@ -61,25 +65,28 @@ func (c *applicationContext) Value(key any) any {
 // cannot retain an old Session, input or executor after actual callback exit.
 // A known SDK child pins the original metadata with a real reference below.
 type applicationContextState struct {
-	mu            sync.Mutex
-	executor      *ApplicationExecutor
-	result        *UnaryCall
-	streamResult  *StreamMessages
-	messageResult *typedMessageDecode
-	backing       resourcev4.Reference
-	lane          applicationLane
-	class         ApplicationWorkClass
-	live          bool
-	deadline      time.Time
-	serial        [maxApplicationAncestors]uint64
-	depth         int
-	sequence      uint64
+	mu              sync.Mutex
+	services        *invocationServices
+	executor        *ApplicationExecutor
+	result          *UnaryCall
+	streamResult    *StreamMessages
+	messageResult   *typedMessageDecode
+	backing         resourcev4.Reference
+	dependencyFloor *resourcev4.BorrowPool
+	lane            applicationLane
+	class           ApplicationWorkClass
+	live            bool
+	deadline        time.Time
+	serial          [maxApplicationAncestors]uint64
+	depth           int
+	sequence        uint64
 }
 
 type applicationDependencies struct {
 	states [maxApplicationAncestors]*applicationContextState
 	refs   [maxApplicationAncestors]resourcev4.Reference
 	count  int
+	floor  *resourcev4.BorrowPool
 }
 
 func applicationContextBytes() uint64 {
@@ -115,7 +122,11 @@ func enterApplicationContextState(parent context.Context, executor *ApplicationE
 		return nil, nil, err
 	}
 	deadline, _ := parent.Deadline()
-	s := &applicationContextState{deadline: deadline, executor: executor, backing: backing, lane: lane, class: class, live: true}
+	var dependencyFloor *resourcev4.BorrowPool
+	if dependencies != nil {
+		dependencyFloor = dependencies.floor
+	}
+	s := &applicationContextState{deadline: deadline, executor: executor, backing: backing, dependencyFloor: dependencyFloor, lane: lane, class: class, live: true}
 	c := &applicationContext{Context: parent, state: s}
 	if dependencies != nil {
 		c.ancestors, c.count = dependencies.states, dependencies.count
@@ -123,11 +134,13 @@ func enterApplicationContextState(parent context.Context, executor *ApplicationE
 	return c, func() {
 		s.mu.Lock()
 		s.live = false
+		s.services = nil
 		s.executor = nil
 		s.result = nil
 		s.streamResult = nil
 		s.messageResult = nil
 		s.backing = resourcev4.Reference{}
+		s.dependencyFloor = nil
 		s.mu.Unlock()
 	}, nil
 }
@@ -136,6 +149,11 @@ func enterApplicationContextState(parent context.Context, executor *ApplicationE
 // and pins only real original references. An exited parent cannot be used to
 // create work. Already accepted children retain their own independent rights.
 func captureApplicationDependencies(ctx context.Context) (d applicationDependencies, err error) {
+	return captureApplicationDependenciesWithFloor(ctx, nil)
+}
+
+func captureApplicationDependenciesWithFloor(ctx context.Context, floor *resourcev4.BorrowPool) (d applicationDependencies, err error) {
+	d.floor = floor
 	if ctx == nil {
 		return d, cryptov4.ErrConfiguration
 	}
@@ -163,6 +181,10 @@ func captureApplicationDependencies(ctx context.Context) (d applicationDependenc
 			s = c.ancestors[j]
 		}
 		s.mu.Lock()
+		if j == c.count && s.services != nil && s.services.sealed.Load() {
+			s.mu.Unlock()
+			return d, ErrApplicationDependency
+		}
 		if !s.live || j == c.count && !s.currentSerialLocked(c.serial) {
 			s.mu.Unlock()
 			if j == c.count {
@@ -170,7 +192,7 @@ func captureApplicationDependencies(ctx context.Context) (d applicationDependenc
 			}
 			continue
 		}
-		ref, e := s.backing.Borrow()
+		ref, e := d.borrowLocked(s)
 		s.mu.Unlock()
 		if e != nil {
 			return d, e
@@ -192,6 +214,9 @@ func (d *applicationDependencies) merge(source *applicationDependencies) error {
 	if source == nil {
 		return nil
 	}
+	if d.floor == nil {
+		d.floor = source.floor
+	}
 	for j := 0; j < source.count; j++ {
 		s := source.states[j]
 		found := false
@@ -210,7 +235,7 @@ func (d *applicationDependencies) merge(source *applicationDependencies) error {
 			s.mu.Unlock()
 			return ErrApplicationDependency
 		}
-		ref, err := s.backing.Borrow()
+		ref, err := d.borrowLocked(s)
 		s.mu.Unlock()
 		if err != nil {
 			return err
@@ -221,6 +246,26 @@ func (d *applicationDependencies) merge(source *applicationDependencies) error {
 	return nil
 }
 
+// The child's already admitted workload owns these positions, even when its
+// original parent belongs to another invocation or result. A declared floor
+// never falls back to an unreserved root slot while an earlier use is live.
+func (d *applicationDependencies) borrowLocked(s *applicationContextState) (resourcev4.Reference, error) {
+	if d.floor != nil {
+		return d.floor.Borrow(s.backing)
+	}
+	return s.borrowDependencyLocked()
+}
+
+// The invocation gate orders entry/exit with a future dependency checkout.
+// A configured floor cannot silently compete for a fresh root reference when
+// its admitted aliases are occupied by real children or result tails.
+func (s *applicationContextState) borrowDependencyLocked() (resourcev4.Reference, error) {
+	if s.dependencyFloor != nil {
+		return s.dependencyFloor.Borrow(s.backing)
+	}
+	return s.backing.Borrow()
+}
+
 func (d *applicationDependencies) checkOrigin() error {
 	if d.count == 0 {
 		return nil
@@ -228,7 +273,7 @@ func (d *applicationDependencies) checkOrigin() error {
 	s := d.states[d.count-1]
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.live {
+	if !s.live || s.services != nil && s.services.sealed.Load() {
 		return ErrApplicationDependency
 	}
 	return nil
@@ -263,7 +308,7 @@ func checkApplicationContext(ctx context.Context) (bool, error) {
 	}
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
-	if !c.state.live || !c.state.currentSerialLocked(c.serial) {
+	if !c.state.live || !c.state.currentSerialLocked(c.serial) || c.state.services != nil && c.state.services.sealed.Load() {
 		return true, ErrApplicationDependency
 	}
 	return true, nil

@@ -1,6 +1,6 @@
 package sessionv4
 
-import "github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
+import "github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 
 // ordinaryMaintenanceReady admits one ordinary publication quantum only when
 // no original critical/normal owner is ready. The original admission gate is

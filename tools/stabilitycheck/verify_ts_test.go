@@ -63,3 +63,54 @@ func TestTypeScriptBuildDoesNotPostProcessDeclarations(t *testing.T) {
 		}
 	}
 }
+
+// Compile against the real TypeScript compiler so arity, constraints, and
+// missing exports remain checked, including types reached through aliases.
+func TestVerifyTSGenericExports(t *testing.T) {
+	dependencies, err := filepath.Abs("../../flowersec-ts/node_modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		symbol  string
+		failure string
+	}{
+		{"valid", []string{`"transport"`}, "PublicGeneric", ""},
+		{"missing arguments", nil, "PublicGeneric", "requires 1 type argument"},
+		{"wrong constraint", []string{`"execution"`}, "PublicGeneric", "does not satisfy the constraint"},
+		{"wrong arity", []string{`"transport"`, `"transport"`}, "PublicGeneric", "requires 1 type argument"},
+		{"missing export", []string{`"transport"`}, "Missing", "has no exported member"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			pkg := filepath.Join(root, "flowersec-ts")
+			if err := os.MkdirAll(filepath.Join(pkg, "src"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(dependencies, filepath.Join(pkg, "node_modules")); err != nil {
+				t.Fatal(err)
+			}
+			files := map[string]string{
+				"package.json":   `{"type":"module","exports":{".":{"types":"./dist/index.d.ts","default":"./dist/index.js"}}}`,
+				"src/index.ts":   `export type { Generic as PublicGeneric } from "./generic.js"; export const value = 1;`,
+				"src/generic.ts": `export interface Generic<T extends "transport"> { value: T }`,
+			}
+			for path, content := range files {
+				if err := os.WriteFile(filepath.Join(pkg, path), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			m := &manifest{TS: tsManifest{Subpaths: []tsSubpath{{Specifier: "test", PackageJSONExport: ".", RuntimeExports: []string{"value"}, TypeExports: []string{tc.symbol}, TypeArguments: map[string][]string{tc.symbol: tc.args}}}}}
+			err := verifyTS(root, m)
+			if tc.failure == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.failure) {
+				t.Fatalf("wanted %q, got %v", tc.failure, err)
+			}
+		})
+	}
+}

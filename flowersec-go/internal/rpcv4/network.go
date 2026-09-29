@@ -8,8 +8,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var (
@@ -73,19 +73,24 @@ const (
 )
 
 type networkSlot struct {
-	short          bool
-	generation     uint64
-	state          networkState
-	class          networkClass
-	header         protocolv4.ApplicationHeader
-	path           Association
-	inputState     InputState
-	inputAttached  bool
-	resultAdmitted bool
-	message        sendMessage
-	completion     *Completion
-	received       receiveMessage
-	observation    *outputInterestState
+	streamBacking                                resourcev4.Reference
+	streamBorrowed                               bool
+	protectionGeneration                         uint64
+	protected, protectionInUse, protectionClosed bool
+	short                                        bool
+	generation                                   uint64
+	state                                        networkState
+	class                                        networkClass
+	header                                       protocolv4.ApplicationHeader
+	path                                         Association
+	inputState                                   InputState
+	inputAttached                                bool
+	resultAdmitted                               bool
+	message                                      sendMessage
+	completion                                   *Completion
+	received                                     receiveMessage
+	observation                                  *outputInterestState
+	responsePublication                          *Publication
 }
 
 // Network reserves one Session's shared outgoing completions and incoming
@@ -161,6 +166,29 @@ func NewNetwork(c NetworkConfig, reservation resourcev4.Reference) (*Network, er
 		n.slots[i] = make([]networkSlot, size)
 	}
 	return n, nil
+}
+
+// CheckAdmission validates an original unpublished Network after its primary
+// reservation has moved into the table. Dormant workload protections are
+// allowed; no channel, consumer or request may have been attached yet.
+func (n *Network) CheckAdmission(c NetworkConfig, request resourcev4.Request) error {
+	if n == nil {
+		return ErrOwner
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if err := n.liveLocked(); err != nil {
+		return err
+	}
+	if n.config != c || n.inputs != nil || n.queries != nil || n.queryClient != nil || n.serviceConsumer != nil || n.count != ([2][2]uint16{}) {
+		return ErrOwner
+	}
+	for i := range n.publishers {
+		if n.publishers[i] != nil || n.receivers[i] != nil {
+			return ErrOwner
+		}
+	}
+	return n.reservation.CheckRequest(request)
 }
 
 func (n *Network) classify(h protocolv4.ApplicationHeader, dir int) (networkClass, error) {
@@ -269,7 +297,7 @@ func (n *Network) acquireClassLocked(dir int, h protocolv4.ApplicationHeader, pa
 	if short && (dir != outgoing || class != generalUnary) {
 		return Ticket{}, ErrMethod
 	}
-	if dir == outgoing && class != contractQuery && n.config.ProtectShortCall && !short && n.shortOutgoing == 0 && n.count[outgoing][0] >= n.config.Session.Limits().RPCMaxGeneralOutstanding-1 {
+	if dir == outgoing && class != contractQuery && !short && !n.spareOutgoingLocked(1) {
 		return Ticket{}, ErrCapacity
 	}
 	if path.Channel == ([16]byte{}) || class == generalStreaming && path.Serial != 0 || dir == incoming && class != generalStreaming && path.Serial == 0 || dir == outgoing && path.Serial != 0 {
@@ -281,14 +309,14 @@ func (n *Network) acquireClassLocked(dir int, h protocolv4.ApplicationHeader, pa
 	start, end, bucket := n.bounds(class)
 	for i := start; i < end; i++ {
 		s := &n.slots[dir][i]
-		if s.state != networkFree || s.generation == math.MaxUint64 {
+		if s.state != networkFree || s.protected || s.generation == math.MaxUint64 {
 			continue
 		}
 		state := networkReserved
 		if dir == incoming {
 			state = networkReply
 		}
-		*s = networkSlot{generation: s.generation + 1, state: state, class: class, header: h, path: path, short: short}
+		*s = networkSlot{generation: s.generation + 1, protectionGeneration: s.protectionGeneration, state: state, class: class, header: h, path: path, short: short}
 		n.count[dir][bucket]++
 		if short {
 			n.shortOutgoing++
@@ -469,6 +497,7 @@ func (n *Network) releaseLocked(t Ticket, s *networkSlot) {
 		n.queries.cancelOutputLocked(t)
 	}
 	s.observation.lose("owner_unavailable", true)
+	s.responsePublication.update(false, false, false, true, "owner_unavailable")
 	s.message.requestCleanup.requestEnded()
 	if s.completion != nil {
 		s.completion.finish("owner_unavailable")
@@ -483,11 +512,10 @@ func (n *Network) releaseLocked(t Ticket, s *networkSlot) {
 	}
 	_, _, bucket := n.bounds(s.class)
 	n.count[t.direction][bucket]--
-	if s.short {
+	if s.short && !s.protected {
 		n.shortOutgoing--
 	}
-	generation := s.generation
-	*s = networkSlot{generation: generation}
+	n.resetSlotLocked(s)
 	n.cleanupLocked()
 }
 func (n *Network) Close() {
@@ -497,6 +525,15 @@ func (n *Network) Close() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.closed = true
+	for i := range n.slots[outgoing] {
+		s := &n.slots[outgoing][i]
+		if s.protected {
+			s.protectionClosed = true
+			if s.state == networkFree {
+				n.dropProtectionLocked(s)
+			}
+		}
+	}
 	if n.inputs != nil {
 		n.inputs.Close()
 	}
@@ -535,6 +572,7 @@ func (n *Network) cleanupLocked() {
 }
 
 type NetworkSnapshot struct {
+	OutgoingProtected, OutgoingProtectedInUse                                        uint16
 	OutgoingFull, OutgoingLate, OutgoingStreaming, OutgoingReserved, IncomingReplies uint16
 	OutgoingGeneral, OutgoingQueries, IncomingGeneral, IncomingQueries               uint16
 	Closed, CleanupComplete                                                          bool
@@ -548,6 +586,12 @@ func (n *Network) Snapshot() NetworkSnapshot {
 	defer n.mu.Unlock()
 	v := NetworkSnapshot{OutgoingGeneral: n.count[0][0], OutgoingQueries: n.count[0][1], IncomingGeneral: n.count[1][0], IncomingQueries: n.count[1][1], Closed: n.closed, CleanupComplete: n.retired}
 	for _, s := range n.slots[outgoing] {
+		if s.protected {
+			v.OutgoingProtected++
+			if s.protectionInUse {
+				v.OutgoingProtectedInUse++
+			}
+		}
 		switch s.state {
 		case networkReserved:
 			v.OutgoingReserved++

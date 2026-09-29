@@ -8,15 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type acceptedSQLiteAuthority struct {
 	identity ledgerv4.SQLiteIdentity
 	facts    protocolv4.AdmissionFacts
+	parent   *ledgerv4.SQLiteStore
 }
 
 func (a acceptedSQLiteAuthority) Check(identity ledgerv4.SQLiteIdentity, epoch uint64, create bool) error {
@@ -32,6 +33,16 @@ func (a acceptedSQLiteAuthority) CheckAdmission(identity ledgerv4.SQLiteIdentity
 		return ledgerv4.ErrFenced
 	}
 	return nil
+}
+
+func (a acceptedSQLiteAuthority) ParentWinnerStore() *ledgerv4.SQLiteStore { return a.parent }
+func (a acceptedSQLiteAuthority) CheckParentWinner(identity ledgerv4.SQLiteIdentity, facts protocolv4.AdmissionFacts) error {
+	want, _ := a.facts.Fields()
+	actual, err := facts.Fields()
+	if err != nil || actual.WinnerAuthority == "" || actual.WinnerAuthority != want.WinnerAuthority {
+		return ledgerv4.ErrFenced
+	}
+	return a.CheckAdmission(identity, facts)
 }
 
 func admitAcceptedSQLite(t *testing.T, f *admissionIntegrationFixture, a *SessionAdmissionReservation) (*InitialExchange, protocolv4.AdmissionResponse) {
@@ -94,6 +105,7 @@ func admitAcceptedSQLite(t *testing.T, f *admissionIntegrationFixture, a *Sessio
 	if err != nil {
 		t.Fatal(err)
 	}
+	authority.parent = store
 	owner := ledgerv4.AdmissionOwner{Acceptor: [16]byte{1}, Invocation: [16]byte{2}, Carrier: [16]byte{3}, Generation: 1}
 	x, response, err := a.AdmitSQLite(store, authority, owner, reserve(232, buffers), reserve(233, invocation))
 	if err != nil {

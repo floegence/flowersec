@@ -3,15 +3,15 @@ package rpcv4
 import (
 	"context"
 	"errors"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func installQueryService(t *testing.T, f *rpcFixture, clocks ...*timev4.Clock) *ContractQueryService {
@@ -53,7 +53,7 @@ func startQuery(t *testing.T, f *rpcFixture) (Ticket, *Completion, protocolv4.Co
 		t.Fatal(err)
 	}
 	var payload [2048]byte
-	length, targets, err := codec.EncodeTargets(payload[:], []protocolv4.ContractQueryTarget{{Namespace: policy.Namespace, Type: policy.Type}}, []*protocolv4.ServiceContract{nil})
+	length, targets, err := codec.EncodeTargets(payload[:], []protocolv4.ContractQueryTarget{{Namespace: policy.Namespace, Type: policy.Type}}, []protocolv4.ContractQueryKnown{nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func queryCompletion(t *testing.T, c *Completion, targets protocolv4.ContractQue
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := codec.Decode(targets, payload, []*protocolv4.ServiceContract{nil}, []uint64{0}, [][]byte{make([]byte, 8192)})
+	set, err := codec.Decode(targets, payload, []protocolv4.ContractQueryKnown{nil}, []uint64{0}, [][]byte{make([]byte, 8192)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +546,7 @@ func fixedTargetWire(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	wire := make([]byte, 2048)
-	n, _, err := codec.EncodeTargets(wire, []protocolv4.ContractQueryTarget{{Namespace: "acme/files", Type: 1}}, []*protocolv4.ServiceContract{nil})
+	n, _, err := codec.EncodeTargets(wire, []protocolv4.ContractQueryTarget{{Namespace: "acme/files", Type: 1}}, []protocolv4.ContractQueryKnown{nil})
 	if err != nil {
 		t.Fatal(err)
 	}

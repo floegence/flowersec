@@ -7,7 +7,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrResponseLimit = errors.New("rpcv4: response exceeds original limit")
@@ -18,19 +19,22 @@ var ErrResponseLimit = errors.New("rpcv4: response exceeds original limit")
 // current authorization and deadline gates remain the Session dispatcher's
 // responsibility; acquiring this owner alone never authorizes application work.
 type AcceptedResult struct {
-	mu                             sync.Mutex
-	publisher                      *Publisher
-	ticket                         Ticket
-	routes                         *ContractRoutes
-	entry                          *contractRouteEntry
-	reservation, source            resourcev4.Reference
-	payload                        []byte
-	limit, written                 uint32
-	runtimeBytes                   uint64
-	tail                           *acceptedResultTail
-	publication                    *Publication
-	writer                         ResponseWriter
-	opened, sealed, failed, closed bool
+	mu                                 sync.Mutex
+	publisher                          *Publisher
+	ticket                             Ticket
+	routes                             *ContractRoutes
+	entry                              *contractRouteEntry
+	reservation, source                resourcev4.Reference
+	payload                            []byte
+	limit, written                     uint32
+	runtimeBytes                       uint64
+	tail                               *acceptedResultTail
+	publication                        *Publication
+	publicationClock                   *timev4.Clock
+	publicationTimeout, publicationCap uint64
+	publicationBound                   bool
+	writer                             ResponseWriter
+	opened, sealed, failed, closed     bool
 }
 
 // ResponseWriter is a bounded, once-only output capability. Write copies its
@@ -60,7 +64,7 @@ func AcceptedResultSourceCharge(responseLimit uint32, runtimeBytes uint64) (reso
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	return v.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(acceptedResultTail{})), resourcev4.Items: 1})
+	return v.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(acceptedResultTail{})) + uint64(unsafe.Sizeof(timev4.Deadline{})), resourcev4.Items: 2})
 }
 
 // NewAcceptedResult accepts only the actual complete input from this Network's
@@ -143,11 +147,39 @@ func (p *Publisher) NewAcceptedResult(t Ticket, input *VerifiedInput, metadata, 
 		return nil, err
 	}
 	o := &AcceptedResult{publisher: p, ticket: t, routes: routes, entry: entry, reservation: owned, source: output, limit: s.header.Fields().ResponseLimitBytes, runtimeBytes: runtimeBytes, tail: &acceptedResultTail{}}
+	if entry.policy.RestartFlush {
+		o.publication = &Publication{}
+		s.responsePublication = o.publication
+		o.publicationCap = s.header.Fields().DeadlineAtMS
+	}
 	o.payload = make([]byte, max(o.limit, 256))
 	o.writer.owner = o
 	routes.captures++
 	s.resultAdmitted = true
 	return o, nil
+}
+
+// PreparePublication binds the pre-handler observation to the original
+// response. Its deadline starts only when Finalize hands the selected response
+// to this publisher, and cannot exceed the original request deadline.
+func (o *AcceptedResult) PreparePublication(clock *timev4.Clock) (*Publication, error) {
+	if o == nil || clock == nil {
+		return nil, ErrConfiguration
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.closed || o.sealed {
+		return nil, ErrClosed
+	}
+	if o.publication == nil {
+		return nil, nil
+	}
+	timeout := o.entry.policy.RestartFlushDeadlineMS
+	if timeout == 0 || timeout > 120000 {
+		return nil, ErrConfiguration
+	}
+	o.publicationClock, o.publicationTimeout = clock, timeout
+	return o.publication, nil
 }
 
 func (o *AcceptedResult) Writer() (*ResponseWriter, error) {
@@ -274,16 +306,35 @@ func (w *ResponseWriter) Finalize(errorCode uint32) (*Publication, error) {
 	if err != nil {
 		return nil, err
 	}
+	pub := o.publication
+	if pub == nil {
+		pub = &Publication{}
+	}
+	if o.entry.policy.RestartFlush && o.publicationTimeout == 0 {
+		return nil, ErrConfiguration
+	}
+	var deadline *timev4.Deadline
+	if o.publicationTimeout != 0 {
+		deadline, err = timev4.NewAge(o.publicationClock, o.publicationTimeout, o.publicationCap)
+		if err != nil {
+			return nil, err
+		}
+	}
 	source, err := o.source.Take(charge)
 	if err != nil {
 		return nil, err
 	}
-	pub := &Publication{}
+	if deadline != nil {
+		pub.mu.Lock()
+		pub.deadline = deadline
+		pub.mu.Unlock()
+	}
 	s.message = sendMessage{publisher: p, header: h, headerBytes: uint16(size), payload: o.payload[:o.written:o.written], reservation: source, publication: pub, resultSource: o.tail, prev: -1, nextReady: -1}
 	copy(s.message.headerWire[:], wire[:size])
 	o.source = resourcev4.Reference{}
 	o.payload = nil
 	o.publication = pub
+	o.publicationBound = true
 	o.sealed = true
 	p.enqueueLocked(o.ticket, p.lane(s, o.ticket.direction))
 	return pub, nil
@@ -303,6 +354,11 @@ func (o *AcceptedResult) Refuse(code string) error {
 	if err := o.publisher.QueueRefusal(o.ticket, code); err != nil {
 		return err
 	}
+	reason := "response_superseded"
+	if code == "deadline_exceeded" {
+		reason = "deadline"
+	}
+	o.publication.update(false, false, false, true, reason)
 	o.sealed = true
 	o.releaseSourceLocked()
 	return nil
@@ -328,7 +384,8 @@ func (o *AcceptedResult) Close() {
 		return
 	}
 	o.closed = true
-	if o.publication == nil {
+	if !o.publicationBound {
+		o.publication.update(false, false, false, true, "owner_unavailable")
 		o.releaseSourceLocked()
 	}
 	r := o.routes

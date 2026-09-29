@@ -1,6 +1,6 @@
 package cryptov4
 
-import "github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+import "github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 
 func (e *Engine) BootstrapSpec() (protocolv4.BootstrapSpec, bool) {
 	return e.bootstrap, e.bootstrapEnabled

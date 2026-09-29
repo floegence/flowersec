@@ -4,8 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 func TestRekeyTimingOriginalThreeStages(t *testing.T) {
@@ -42,6 +43,8 @@ func TestRekeyTimingExpirationAndNoRefresh(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			var counts diagnosticv4.Counters
+			timing.startDiagnostics(&counts)
 			if phase != "local" {
 				if err = timing.Init(); err != nil {
 					t.Fatal(err)
@@ -58,6 +61,12 @@ func TestRekeyTimingExpirationAndNoRefresh(t *testing.T) {
 				if err = timing.Check(); !errors.Is(err, cryptov4.ErrExpired) {
 					t.Fatal("wait refreshed deadline", err)
 				}
+			}
+			if phase != "local" {
+				_ = timing.checkPhase()
+			}
+			if got := counts.Snapshot(diagnosticv4.MetricRekeyTimeout); got.Total != 1 || got.Phase[timing.diagnosticPhase()] != 1 {
+				t.Fatal("repeated phase checks changed timeout count", got)
 			}
 			if timing.anchor.Milliseconds != 0 {
 				t.Fatal("expired anchor moved")

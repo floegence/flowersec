@@ -9,9 +9,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var (
@@ -28,14 +28,22 @@ var (
 // default. A live application context rejects explicit queued before encoding;
 // its default is fixed to try_now before immutable header construction.
 type UnaryPreparation struct {
-	Clock                                                *timev4.Clock
+	Clock *timev4.Clock
+	// ParentDeadline is an original SDK work bound, not a wire option. It
+	// narrows legal explicit/default lifetimes and their Completion grace.
+	ParentDeadline                                       *timev4.Deadline
 	DeadlineAtMS, DefaultLifetimeMS, AdmissionNotAfterMS uint64
 	ResponseLimitBytes                                   uint32
-	AdmissionMode                                        uint8
-	ExplicitAdmissionMode                                bool
-	RequireExecution, RequireDurable                     bool
-	Offer                                                protocolv4.AdmissionOfferBounds
-	RuntimeBytes                                         uint64
+	// Method-bound callers use this to distinguish explicit zero from omission.
+	// Direct route preparation already supplies a selected limit, including zero.
+	ExplicitResponseLimit bool
+	// Supplied by the original RPC owner, never by a method or wire header.
+	CompletionGraceMS                uint64
+	AdmissionMode                    uint8
+	ExplicitAdmissionMode            bool
+	RequireExecution, RequireDurable bool
+	Offer                            protocolv4.AdmissionOfferBounds
+	RuntimeBytes                     uint64
 }
 
 // PreparedRequest owns the immutable bytes and exact route until Start transfers
@@ -48,6 +56,7 @@ type PreparedRequest struct {
 	route        ContractRoute
 	deadline     *timev4.Deadline
 	preparation  *timev4.Deadline
+	completion   *timev4.Deadline
 	codec        *protocolv4.ApplicationHeaderCodec
 	header       protocolv4.ApplicationHeader
 	wire         [512]byte
@@ -74,7 +83,7 @@ func PreparedRequestCharge(payloadBytes uint32, runtimeBytes uint64) (resourcev4
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	c, err := (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(PreparedRequest{})) + 2*uint64(unsafe.Sizeof(timev4.Deadline{})) + uint64(payloadBytes), resourcev4.Items: 4}).Add(resourcev4.Vector{resourcev4.SDKBytes: codec})
+	c, err := (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(PreparedRequest{})) + 3*uint64(unsafe.Sizeof(timev4.Deadline{})) + uint64(payloadBytes), resourcev4.Items: 5}).Add(resourcev4.Vector{resourcev4.SDKBytes: codec})
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
@@ -175,9 +184,37 @@ func beginRequestPreparation(route ContractRoute, payloadLimit uint32, options U
 	if deadline <= now.UpperMS || deadline > now.LowerMS+horizon {
 		return nil, timev4.ErrExpired
 	}
-	p.deadline, err = timev4.NewDeadline(options.Clock, deadline)
+	if parent := options.ParentDeadline; parent != nil {
+		if !parent.BelongsTo(options.Clock) {
+			return nil, timev4.ErrOwner
+		}
+		if err = parent.CheckAt(now); err != nil {
+			return nil, err
+		}
+		deadline = min(deadline, parent.Cap())
+	}
+	p.deadline, err = timev4.NewDeadlineAt(options.Clock, now, deadline)
 	if err != nil {
 		return nil, err
+	}
+	if options.ParentDeadline != nil {
+		if err = p.deadline.TightenFrom(options.ParentDeadline); err != nil {
+			return nil, err
+		}
+	}
+	if options.CompletionGraceMS != 0 {
+		if shape != 0 || resume || options.CompletionGraceMS > math.MaxUint64-deadline {
+			return nil, ErrConfiguration
+		}
+		p.completion, err = timev4.NewDeadlineAt(options.Clock, now, deadline+options.CompletionGraceMS)
+		if err != nil {
+			return nil, err
+		}
+		if options.ParentDeadline != nil {
+			if err = p.completion.TightenFrom(options.ParentDeadline); err != nil {
+				return nil, err
+			}
+		}
 	}
 	preparationCap := deadline
 	if now.LowerMS <= math.MaxUint64-60000 {
@@ -349,6 +386,27 @@ func (p *PreparedRequest) Header() protocolv4.ApplicationHeader {
 	return p.header
 }
 
+// CheckOriginalOffer verifies a replacement physical route against the exact
+// installed execution window captured by this preparation. Another window
+// covering the same cutoff does not authorize replacing that original Offer.
+func (p *PreparedRequest) CheckOriginalOffer(routes *ContractRoutes) error {
+	if p == nil {
+		return ErrOwner
+	}
+	p.mu.Lock()
+	if p.closed || !p.ready || !p.finalized {
+		p.mu.Unlock()
+		return ErrClosed
+	}
+	offer, digest, execution := p.offer, p.policy.Digest, p.header.HasExecutionIdentity()
+	p.mu.Unlock()
+	if !execution {
+		return nil
+	}
+	_, err := routes.CapturePreparationOffer(digest, offer)
+	return err
+}
+
 // CaptureReference copies only query metadata from the immutable original
 // request. It does not transfer Start rights or retain its route/Session.
 func (p *PreparedRequest) CaptureReference(codec *protocolv4.OperationReferenceCodec, domain string, target protocolv4.ManagementTarget) (protocolv4.OperationReference, error) {
@@ -436,6 +494,7 @@ func (p *PreparedRequest) cleanupLocked() {
 	p.route = ContractRoute{}
 	p.deadline = nil
 	p.preparation = nil
+	p.completion = nil
 	p.codec = nil
 	p.reservation.Release()
 	p.reservation = resourcev4.Reference{}
@@ -457,4 +516,33 @@ func (p *PreparedRequest) StartDeadline() (*timev4.Deadline, error) {
 		return nil, ErrOwner
 	}
 	return p.deadline, nil
+}
+
+// CompletionDeadline lends the separately captured result-receive projection
+// during the same original Start borrow. It is not renewed by queue admission.
+func (p *PreparedRequest) CompletionDeadline() (*timev4.Deadline, error) {
+	if p == nil {
+		return nil, ErrOwner
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.users != 1 || !p.ready || p.completion == nil {
+		return nil, ErrOwner
+	}
+	return p.completion, nil
+}
+
+// PreparationDeadline is the original finite pre-header lifetime. Successful
+// local Start admission does not renew or disarm it; only header acceptance
+// ends that condition, independently of request assembly and result receipt.
+func (p *PreparedRequest) PreparationDeadline() (*timev4.Deadline, error) {
+	if p == nil {
+		return nil, ErrOwner
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.users != 1 || !p.ready {
+		return nil, ErrOwner
+	}
+	return p.preparation, nil
 }

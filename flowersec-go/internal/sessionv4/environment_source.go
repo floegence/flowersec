@@ -5,9 +5,10 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrConnectionRequirementUnavailable = protocolv4.ErrConnectionRequirementUnavailable
@@ -19,6 +20,7 @@ var ErrConnectionRequirementUnavailable = protocolv4.ErrConnectionRequirementUna
 // against its actual endpoint/TLS policy before any credential-free dialing.
 type CarrierPreparationRequest struct {
 	Config         PreparedCarrierConfig
+	Scope          SessionResourceScope
 	Route          []byte
 	AddressAttempt uint8
 	Budget         CarrierAttemptBudget
@@ -33,6 +35,11 @@ type CarrierAttemptBudget struct{ PreauthBytes, WorkUnits uint64 }
 // delegated signing capability and original times before acquisition; only the
 // actual selected candidate is filled after preparation. No signing runs here.
 type SourceLiveIssuance struct {
+	Tunnel *protocolv4.LiveTunnelActivationConfig
+	// Tunnels binds independent relay/Grant policy by original signed candidate
+	// index. Use Tunnel for a common policy, or Tunnels for distinct relays.
+	// Direct candidates always use the direct original projection.
+	Tunnels                             [16]*protocolv4.LiveTunnelActivationConfig
 	Signer                              protocolv4.MapSigner
 	IssuedAt, ActivationEnd, SessionEnd uint64
 	Reservation                         resourcev4.Reference
@@ -52,7 +59,12 @@ type ConsumerCarrierFactory interface {
 // Admission is a frozen local template: signed Session fields and the feature
 // envelope are derived from the acquired material, never a previous lease.
 // Candidate and address ceilings may be more conservative than signed limits.
+// CarrierReservation uses SourceCarrierCharge for its reusable method position.
 type SourceConnectConfig struct {
+	staticMaterial                                          *ConnectionMaterial
+	controller                                              *controllerAttempt
+	controllerOwner                                         *ConnectionController
+	poolSource                                              *PreauthorizedPoolSource
 	Identity                                                *ApplicationIdentity
 	Generation                                              MaterialGeneration
 	Requirements                                            MaterialRequirements
@@ -75,6 +87,7 @@ type SourceConnectConfig struct {
 }
 
 type sourcePreparation struct {
+	references    sourceReferences
 	config        SourceConnectConfig
 	input         environmentEstablishment
 	reservation   resourcev4.Reference
@@ -94,20 +107,30 @@ func SourcePreparationCharge(c SourceConnectConfig) (resourcev4.Vector, error) {
 		return resourcev4.Vector{}, err
 	}
 	if c.RuntimeBytes == 0 || c.Limits.Hello.RouteBytes <= 0 || c.Limits.Hello.RouteBytes > 1<<20 ||
-		len(c.Hello.IdentityHint) > c.Limits.Hello.HelloBytes || len(c.Hello.Policy.Exporter) > c.Limits.Hello.ContextBytes ||
+		len(c.Hello.IdentityHint) > c.Limits.Hello.HelloBytes || len(c.Hello.Policy.Exporter) != 0 ||
+		c.Hello.Policy.BindingMode > 1 || c.Hello.BindingModes == 0 || c.Hello.BindingModes & ^uint64(3) != 0 || c.Hello.BindingModes&(1<<c.Hello.Policy.BindingMode) == 0 ||
 		c.ParallelCandidates > 2 || c.AddressAttempts > 8 || c.AttemptBudget.PreauthBytes == 0 || c.AttemptBudget.PreauthBytes > 262144 || c.AttemptBudget.WorkUnits == 0 || c.AttemptBudget.WorkUnits > 256 {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
 	a := c.LiveIssuance
-	if a.Signer == nil && (a.Reservation != (resourcev4.Reference{}) || a.IssuedAt != 0 || a.ActivationEnd != 0 || a.SessionEnd != 0) || a.Signer != nil && (a.IssuedAt >= a.ActivationEnd || a.ActivationEnd > a.SessionEnd) {
+	perCandidate := a.Tunnels != ([16]*protocolv4.LiveTunnelActivationConfig{})
+	if a.Tunnel != nil && perCandidate || a.Signer == nil && (perCandidate || a.Tunnel != nil || a.Reservation != (resourcev4.Reference{}) || a.IssuedAt != 0 || a.ActivationEnd != 0 || a.SessionEnd != 0) || a.Signer != nil && (a.IssuedAt >= a.ActivationEnd || a.ActivationEnd > a.SessionEnd) {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
-	n := uint64(unsafe.Sizeof(sourcePreparation{})) + 2*uint64(c.Limits.Hello.RouteBytes) + uint64(len(c.Hello.IdentityHint)) + uint64(len(c.Hello.Policy.Exporter))
+	// Admission scratch and the retained future graph belong to this source
+	// preparation in both fixed-Session and Controller connections. Charging
+	// them on the Controller would leave ordinary Connect unaccounted for.
+	n := uint64(unsafe.Sizeof(sourcePreparation{})) + uint64(unsafe.Sizeof(sessionHeadroom{})) +
+		uint64(unsafe.Sizeof(sessionAdmissionBatch{})) + uint64(unsafe.Sizeof([sessionAdmissionOwnerCapacity + 2]resourcev4.Request{})) +
+		// Total preparation, two retained cancellation windows and two
+		// concurrent prospective winners before the winner gate.
+		5*uint64(unsafe.Sizeof(timev4.Window{})) +
+		2*uint64(c.Limits.Hello.RouteBytes) + uint64(len(c.Hello.IdentityHint)) + uint64(len(c.Hello.Policy.Exporter))
 	snapshot, err := rpcServicesSnapshotCharge(c.Admission.RPC)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	charge, err := (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: 3, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2, resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
+	charge, err := (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: 11, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2, resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
@@ -125,34 +148,55 @@ func (e *Environment) ConnectSourcePool(ctx context.Context, c SourceConnectConf
 }
 
 func (e *Environment) ConnectSourceLiveSQLite(ctx context.Context, c SourceConnectConfig, spend LiveSessionInput) (*EnvironmentSession, error) {
-	if spend.Store == nil || spend.Authority == nil || (spend.Issuance == nil) == (c.LiveIssuance.Signer == nil) || spend.Guard == nil || spend.Policy == nil || spend.Establishment != nil || spend.Admission != nil {
+	if !spend.validAuthority(c.LiveIssuance.Signer != nil) || spend.Control.Provider != nil || spend.Establishment != nil || spend.Admission != nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	return e.startSource(ctx, c, environmentEstablishment{kind: 2, live: spend}, nil)
 }
 
-func (e *Environment) startSource(ctx context.Context, c SourceConnectConfig, input environmentEstablishment, static *ConnectionMaterial) (*EnvironmentSession, error) {
+func (e *Environment) startSourcePrepared(ctx context.Context, c SourceConnectConfig, input environmentEstablishment, static *ConnectionMaterial) (*EnvironmentSession, bool, error) {
 	if e == nil || ctx == nil || c.Carrier == nil || c.Root == nil ||
 		c.Admission.Initial.Deadline == nil || !c.Requirements.valid() ||
 		c.Hello.Artifact != nil || c.Hello.Workspace != nil || c.RuntimeBytes == 0 {
-		return nil, cryptov4.ErrConfiguration
+		return nil, false, cryptov4.ErrConfiguration
 	}
-	if static == nil {
+	if c.poolSource != nil {
+		if static != nil || input.kind != 1 || c.Identity != nil || c.Provider != nil || c.Acquisition != (resourcev4.Reference{}) || c.Material != (resourcev4.Reference{}) || c.MaterialRuntimeBytes != 0 {
+			return nil, false, cryptov4.ErrConfiguration
+		}
+		if err := c.poolSource.access(); err != nil {
+			return nil, false, err
+		}
+		c.poolSource.mu.Lock()
+		pool := c.poolSource.pool
+		closed := c.poolSource.closed
+		c.poolSource.mu.Unlock()
+		if pool == nil || closed {
+			return nil, false, cryptov4.ErrConfiguration
+		}
+		pool.mu.Lock()
+		belongs := !pool.closed && pool.environment == e
+		pool.mu.Unlock()
+		if !belongs {
+			return nil, false, cryptov4.ErrConfiguration
+		}
+	} else if static == nil {
 		if c.Identity == nil || c.Provider == nil || c.Identity.role != protocolv4.ClientToServer {
-			return nil, cryptov4.ErrConfiguration
+			return nil, false, cryptov4.ErrConfiguration
 		}
 	} else if c.Identity != nil || c.Provider != nil || c.Acquisition != (resourcev4.Reference{}) || c.Material != (resourcev4.Reference{}) || c.MaterialRuntimeBytes != 0 {
-		return nil, cryptov4.ErrConfiguration
+		return nil, false, cryptov4.ErrConfiguration
 	}
+	c.staticMaterial = static
 	var err error
 	if c.Requirements, err = c.Requirements.capture(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// One captured requirement set follows acquisition, every original
 	// candidate, final admission and READY publication. No second template
 	// may silently override or weaken it.
 	if c.Admission.Requirements != (protocolv4.V4ConnectionRequirements{}) {
-		return nil, cryptov4.ErrConfiguration
+		return nil, false, cryptov4.ErrConfiguration
 	}
 	c.Admission.Requirements = c.Requirements.Connection
 	// The source's exact profile is fixed before issuer work. Material later
@@ -160,28 +204,47 @@ func (e *Environment) startSource(ctx context.Context, c SourceConnectConfig, in
 	profile := c.Requirements.ApplicationProfile
 	if profile == "transport" {
 		if c.Admission.RPC != nil {
-			return nil, ErrConnectionRequirementUnavailable
+			return nil, false, ErrConnectionRequirementUnavailable
 		}
 	} else if (profile != "services" && profile != "execution") || !e.services || c.Admission.RPC == nil || c.Admission.Application == nil {
-		return nil, ErrConnectionRequirementUnavailable
+		return nil, false, ErrConnectionRequirementUnavailable
 	}
 	if c.Requirements.Connection.Datagram && !c.Admission.Core.Datagrams ||
 		(c.Requirements.Connection.IndependentReliableReadProgress || c.Requirements.Connection.BoundStreamInputIsolation) && !c.Admission.Core.Native {
-		return nil, protocolv4.ErrRequiredGuaranteeUnavailable
+		return nil, false, protocolv4.ErrRequiredGuaranteeUnavailable
 	}
 	charge, err := SourcePreparationCharge(c)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err = c.Admission.Initial.Deadline.Check(); err != nil {
-		return nil, err
+		return nil, false, err
+	}
+	adopted := false
+	if c.Admission.headroom == nil {
+		// This is only an early local refusal, not a promise of a position.
+		// The publication gate below checks again after constructing the
+		// original resource vector. Result/dependency admission may take the
+		// Environment gate, so it must run outside that gate.
+		if err = e.checkSourcePosition(ctx); err != nil {
+			return nil, false, err
+		}
+		c.Admission.headroom, err = reserveSessionHeadroom(c, e)
+		if err != nil {
+			return nil, false, err
+		}
+		defer func() {
+			if !adopted {
+				c.Admission.headroom.close()
+			}
+		}()
 	}
 	// Only finite local gates execute under this lock. Issuer, provider, crypto
 	// and store work begin after the original position and watcher are installed.
 	e.mu.Lock()
 	if e.closed {
 		e.mu.Unlock()
-		return nil, cryptov4.ErrClosed
+		return nil, false, cryptov4.ErrClosed
 	}
 	slot := -1
 	for i, current := range e.positions {
@@ -191,8 +254,9 @@ func (e *Environment) startSource(ctx context.Context, c SourceConnectConfig, in
 		}
 	}
 	if slot < 0 {
+		e.observePositionRejection()
 		e.mu.Unlock()
-		return nil, cryptov4.ErrCapacity
+		return nil, false, cryptov4.ErrCapacity
 	}
 	err = ctx.Err()
 	if err == nil {
@@ -207,7 +271,7 @@ func (e *Environment) startSource(ctx context.Context, c SourceConnectConfig, in
 			err = e.reservation.CheckSameEnvironment(ref)
 		}
 	}
-	if static == nil {
+	if static == nil && c.poolSource == nil {
 		for _, ref := range [...]resourcev4.Reference{c.Acquisition, c.Material} {
 			if err == nil {
 				err = e.reservation.CheckSameEnvironment(ref)
@@ -223,9 +287,11 @@ func (e *Environment) startSource(ctx context.Context, c SourceConnectConfig, in
 		err = application.claimPreparation(s)
 	}
 	var shared, owned resourcev4.Reference
+	var references sourceReferences
 	var selection materialPreparation
 	if err == nil {
-		shared, err = c.Dependencies.Borrow()
+		references, err = c.Admission.headroom.takeSource(c)
+		shared = references.shared
 	}
 	if err == nil && static != nil {
 		source := "preauthorized_pool"
@@ -235,14 +301,19 @@ func (e *Environment) startSource(ctx context.Context, c SourceConnectConfig, in
 		err = selection.claim(static, c.Generation, c.Hello.Attempt, e, source, c.Requirements)
 	}
 	if err == nil {
-		owned, err = c.Preparation.Take(charge)
+		if references.workloadSnapshotBytes > charge[resourcev4.SDKBytes] {
+			err = resourcev4.ErrOwner
+		} else {
+			charge[resourcev4.SDKBytes] -= references.workloadSnapshotBytes
+			owned, err = c.Preparation.Take(charge)
+		}
 	}
 	if err != nil {
 		selection.close()
 		application.undoPreparation(s)
-		shared.Release()
+		references.close()
 		e.mu.Unlock()
-		return nil, err
+		return nil, false, err
 	}
 	c.Admission.RPC = captureRPCServicesConfig(c.Admission.RPC)
 	if c.Admission.RPC != nil {
@@ -252,16 +323,58 @@ func (e *Environment) startSource(ctx context.Context, c SourceConnectConfig, in
 	c.Hello.Policy.Exporter = bytes.Clone(c.Hello.Policy.Exporter)
 	c.Admission.applicationHost = s
 	s.application = application
-	source := &sourcePreparation{config: c, input: input, reservation: owned, shared: shared, material: static, selection: selection}
+	source := &sourcePreparation{config: c, input: input, reservation: owned, shared: shared, references: references, material: static, selection: selection}
+	source.references.shared = resourcev4.Reference{}
 	s.source = source
+	if c.controllerOwner != nil {
+		if err = c.controllerOwner.attach(c.controller, s); err != nil {
+			source.selection.close()
+			application.undoPreparation(s)
+			owned.Release()
+			shared.Release()
+			source.references.close()
+			e.mu.Unlock()
+			return nil, false, err
+		}
+	}
+	source.config.controller, source.config.controllerOwner = nil, nil
 	s.preparationOwner, s.preparationDependencies = owned, shared
 	s.preparationDeadline = c.Admission.Initial.Deadline
 	s.staticMaterial = static
 	e.positions[slot], e.active = s, e.active+1
+	adopted = true
+	s.beginDiagnostics()
 	e.mu.Unlock()
 	go s.watch(ctx)
 	go s.run(environmentEstablishment{source: source})
-	return s.deliver(ctx)
+	result, err := s.deliver(ctx)
+	return result, true, err
+}
+
+func (e *Environment) checkSourcePosition(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return cryptov4.ErrClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := e.shared.Check(); err != nil {
+		return err
+	}
+	for _, current := range e.positions {
+		if current == nil {
+			return nil
+		}
+	}
+	e.observePositionRejection()
+	return cryptov4.ErrCapacity
+}
+
+func (e *Environment) startSource(ctx context.Context, c SourceConnectConfig, input environmentEstablishment, static *ConnectionMaterial) (*EnvironmentSession, error) {
+	s, _, err := e.startSourcePrepared(ctx, c, input, static)
+	return s, err
 }
 
 func (p *sourcePreparation) prepare(s *EnvironmentSession) (input environmentEstablishment, err error) {
@@ -270,17 +383,50 @@ func (p *sourcePreparation) prepare(s *EnvironmentSession) (input environmentEst
 	if err = p.check(s); err != nil {
 		return input, err
 	}
+	if err = p.references.subscriptions.AdoptSourcePreparation(c.Subscriptions); err != nil {
+		return input, err
+	}
+	if err = p.references.adoptCarriers(c); err != nil {
+		return input, err
+	}
 	source := "preauthorized_pool"
 	if input.kind == 2 {
 		source = "live_authority"
 	}
-	if p.material == nil {
-		p.acquisition, err = NewMaterialAcquisition(&s.context, c.Identity, c.Generation, source, c.Requirements, c.Admission.Initial.Deadline, c.RuntimeBytes, c.MaterialRuntimeBytes, c.Acquisition, c.Material)
+	if p.material == nil && c.poolSource != nil {
+		if err = c.Admission.headroom.checkWorkloadRevision(); err != nil {
+			return input, err
+		}
+		p.material, err = c.poolSource.acquirePrepared(&s.context, c.Requirements, p.references.subscriptions)
 		if err != nil {
 			return input, err
 		}
-		p.material, err = p.acquisition.Acquire(c.Provider)
+		p.references.verification.release()
+		// The installed item's generation belongs to that immutable material.
+		// A newer pool owner never rewrites an earlier item's captured identity.
+		c.Generation = p.material.generation
+		p.config.Generation = c.Generation
+		err = p.selection.claim(p.material, c.Generation, c.Hello.Attempt, s.environment, source, c.Requirements)
+		if err == nil {
+			err = p.selection.validate()
+		}
+	} else if p.material == nil {
+		p.acquisition, err = newMaterialAcquisition(&s.context, c.Identity, c.Generation, source, c.Requirements, c.Admission.Initial.Deadline, c.RuntimeBytes, c.MaterialRuntimeBytes, c.Acquisition, c.Material, &p.references)
 		if err != nil {
+			return input, err
+		}
+		provider := c.Provider
+		if p.references.materialProvider != nil {
+			provider = p.references.materialProvider
+		}
+		if err = c.Admission.headroom.checkWorkloadRevision(); err != nil {
+			return input, err
+		}
+		p.material, err = p.acquisition.Acquire(provider)
+		if err != nil {
+			s.mu.Lock()
+			s.controllerSourceFailure = controllerSourceFailure(err)
+			s.mu.Unlock()
 			return input, err
 		}
 		err = p.selection.begin(p.material, c.Generation, c.Hello.Attempt)
@@ -288,6 +434,13 @@ func (p *sourcePreparation) prepare(s *EnvironmentSession) (input environmentEst
 		err = p.selection.validate()
 	}
 	if err != nil {
+		return input, err
+	}
+	if err = p.references.subscriptions.CompleteSourceNamespaces(p.material.lease.lease.allCredentialBindings()); err != nil {
+		return input, err
+	}
+	p.references.verification.release()
+	if err = s.environment.checkMaterialVerification(p.material); err != nil {
 		return input, err
 	}
 	config := c.Admission
@@ -301,7 +454,9 @@ func (p *sourcePreparation) prepare(s *EnvironmentSession) (input environmentEst
 	config.Initial.Profile = config.Core.Session.Profile
 	config.Initial.Role = protocolv4.ClientToServer
 	config.Initial.ActivationSourceProfile = source
-	p.race.init(p, s, config)
+	if err = p.race.init(p, s, config); err != nil {
+		return input, err
+	}
 	for {
 		p.prepared, config, err = p.race.prepare()
 		if err != nil {
@@ -321,13 +476,36 @@ func (p *sourcePreparation) prepare(s *EnvironmentSession) (input environmentEst
 		}
 		p.prepared = nil
 	}
+	if err = p.race.waitLosers(); err != nil {
+		return input, err
+	}
+	// Winner replacement is over. Return idle provider positions now, while
+	// the winner retains its actual backing through physical retirement.
+	for i := range p.race.slots {
+		if preparation := p.race.slots[i].providerPreparation; preparation != nil {
+			preparation.Close()
+		}
+	}
 	c.Hello.Index = p.prepared.AdmissionBinding().Candidate.Index
 	if input.kind == 2 && c.LiveIssuance.Signer != nil {
 		l, authority := p.material.lease.lease, c.LiveIssuance
+		tunnel, selectErr := authority.tunnelFor(l, c.Hello.Index)
+		if selectErr != nil {
+			return input, selectErr
+		}
 		p.issuance, err = protocolv4.NewLiveActivationPlan(l.maps[0], l.verification.Rules, l.verification.Delegation, l.verification.Once, authority.Signer,
-			protocolv4.LiveActivationConfig{Index: c.Hello.Index, Attempt: c.Hello.Attempt, IssuedAt: authority.IssuedAt, ActivationEnd: authority.ActivationEnd, SessionEnd: authority.SessionEnd}, authority.Reservation, c.Environment, p.material.reservation)
+			protocolv4.LiveActivationConfig{Tunnel: tunnel, Index: c.Hello.Index, Attempt: c.Hello.Attempt, IssuedAt: authority.IssuedAt, ActivationEnd: authority.ActivationEnd, SessionEnd: authority.SessionEnd}, authority.Reservation, c.Environment, p.material.reservation)
 		if err != nil {
 			return input, err
+		}
+		if tunnel != nil {
+			local := l.tunnelMaterial(c.Hello.Index, protocolv4.ClientToServer)
+			if local == nil || !local.pendingGrant {
+				return input, cryptov4.ErrConfiguration
+			}
+			if err = p.issuance.MatchGrantPreparation(protocolv4.ClientToServer, local.liveGrant); err != nil {
+				return input, err
+			}
 		}
 		input.live.Issuance = p.issuance
 		guard := input.live.Guard
@@ -347,7 +525,7 @@ func (p *sourcePreparation) prepare(s *EnvironmentSession) (input environmentEst
 		}
 	}
 	var subscriptions *protocolv4.CredentialSubscriptions
-	p.establishment, subscriptions, err = p.material.establishment(c.Hello, c.Limits, c.Generation, c.Establishment, c.Subscriptions, true)
+	p.establishment, subscriptions, err = p.material.establishment(c.Hello, c.Limits, c.Generation, c.Establishment, c.Subscriptions, true, p.references.subscriptions)
 	if err != nil {
 		return input, err
 	}
@@ -356,6 +534,8 @@ func (p *sourcePreparation) prepare(s *EnvironmentSession) (input environmentEst
 	if err != nil {
 		return input, err
 	}
+	p.config.Admission.headroom.close()
+	p.config.Admission.headroom = nil
 	if input.kind == 1 {
 		input.pool.Establishment, input.pool.Admission = establishment, p.admission
 	} else {
@@ -363,6 +543,31 @@ func (p *sourcePreparation) prepare(s *EnvironmentSession) (input environmentEst
 	}
 	_, err = s.environment.admitAt(&s.context, input, s)
 	return input, err
+}
+
+func (c SourceLiveIssuance) tunnelFor(lease *ArtifactLease, index uint64) (*protocolv4.LiveTunnelActivationConfig, error) {
+	if lease == nil || index >= uint64(len(c.Tunnels)) {
+		return nil, cryptov4.ErrConfiguration
+	}
+	candidate := lease.maps[0].Field("candidates").Index(int(index))
+	kind, ok := candidate.Named("Candidate", "path_kind").Uint()
+	if !ok {
+		return nil, cryptov4.ErrConfiguration
+	}
+	if kind == 0 {
+		if c.Tunnels[index] != nil {
+			return nil, cryptov4.ErrConfiguration
+		}
+		return nil, nil
+	}
+	selected := c.Tunnel
+	if selected == nil {
+		selected = c.Tunnels[index]
+	}
+	if kind != 1 || selected == nil {
+		return nil, cryptov4.ErrConfiguration
+	}
+	return selected, nil
 }
 
 func (p *sourcePreparation) check(s *EnvironmentSession) error {
@@ -426,6 +631,15 @@ func (p *sourcePreparation) cleanup() error {
 		}
 	}
 	c := p.config
+	c.Admission.headroom.close()
+	p.references.close()
+	for i := range p.race.slots {
+		p.race.slots[i].parent.close()
+		p.race.slots[i].floor.Close()
+		if preparation := p.race.slots[i].providerPreparation; preparation != nil {
+			preparation.Close()
+		}
+	}
 	c.LiveIssuance.Reservation.Release()
 	for _, ref := range [...]resourcev4.Reference{c.Acquisition, c.Material, c.Establishment, c.Subscriptions, c.CarrierReservation} {
 		ref.Release()
@@ -435,6 +649,9 @@ func (p *sourcePreparation) cleanup() error {
 	p.input.pool.Consume.Release()
 	p.input.live.Buffers.Release()
 	p.input.live.Invocation.Release()
+	if relay := p.input.live.ServerPublication.Relay; relay != nil {
+		relay.Reservation.Release()
+	}
 	clear(c.Hello.IdentityHint)
 	clear(c.Hello.Policy.Exporter)
 	p.shared.Release()

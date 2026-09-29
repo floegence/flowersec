@@ -5,7 +5,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 // v4.go_rpc_channel.credit
@@ -20,7 +20,7 @@ func TestProtectedReceiveCreditReturnsThroughOriginalMaintenance(t *testing.T) {
 	flow.pool.mu.Lock()
 	flow.minimumPromise = 512
 	flow.creditLimit = flow.limit
-	flow.creditAck = flow.released
+	flow.creditAck = flow.observed.Offset
 	flow.pool.mu.Unlock()
 	for i := range 12 {
 		payload := bytes.Repeat([]byte{1}, 64)
@@ -31,10 +31,22 @@ func TestProtectedReceiveCreditReturnsThroughOriginalMaintenance(t *testing.T) {
 			t.Fatal(err)
 		}
 		s.wire.Reset()
-		var buf [64]byte
+		var prefix [1]byte
+		first, err := flow.ReadInto(f.ctx, prefix[:])
+		if err != nil || first.Progress.Filled != 1 {
+			t.Fatal("prefix read", first, err)
+		}
+		// The authenticated record is 64 bytes while only one application byte
+		// has transferred. The actual maintenance frame must ACK all 64 bytes.
+		progressTerminal(t, f, "STREAM_ACK_CREDIT")
+		_, ack, _, _, _ := s.peer.send.Snapshot()
+		if ack != uint64((i+1)*64) {
+			t.Fatal("ACK used application release instead of authenticated input", ack)
+		}
+		var buf [63]byte
 		result, err := flow.ReadInto(f.ctx, buf[:])
 		n, terminal := int(result.Progress.Filled), result.ReadTerminal
-		if err != nil || n != len(payload) || terminal != protocolv4.V4ReadTerminalOpen {
+		if err != nil || n != len(payload)-1 || terminal != protocolv4.V4ReadTerminalOpen {
 			t.Fatal(n, terminal, err)
 		}
 		if flow.pool.Outstanding() != 512 {

@@ -3,8 +3,8 @@ package sessionv4
 import (
 	"crypto/sha256"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 type initialAdmission struct {
@@ -160,7 +160,24 @@ func (x *InitialExchange) authenticate(config cryptov4.HandshakeConfig, records 
 	sent := make(chan error, 1)
 	ticket := make(chan error, 1)
 	go func() {
-		ticketed := false
+		returned := false
+		ticketed, sentResult := false, false
+		defer func() {
+			// A provider or READY callback may panic or call runtime.Goexit while
+			// the caller is waiting on either completion channel. Publish the
+			// terminal task-exit result from the defer so neither side can wait
+			// forever and the original carrier is fenced by the caller.
+			if recovered := recover(); recovered != nil || !returned {
+				if !ticketed {
+					ticketed = true
+					ticket <- ErrEnvironmentTaskExit
+				}
+				if !sentResult {
+					sentResult = true
+					sent <- ErrEnvironmentTaskExit
+				}
+			}
+		}()
 		_, sendErr := x.sendFlight(protocolv4.FrameReady, func(dst []byte) (int, error) {
 			if len(ready) > len(dst) {
 				return 0, protocolv4.ErrPayloadTooLarge
@@ -168,14 +185,17 @@ func (x *InitialExchange) authenticate(config cryptov4.HandshakeConfig, records 
 			return copy(dst, ready), nil
 		}, func() error {
 			err := f.MarkReadySubmitted()
-			ticketed = true
 			ticket <- err
+			ticketed = true
 			return err
 		}, true)
 		if !ticketed {
 			ticket <- sendErr
+			ticketed = true
 		}
 		sent <- sendErr
+		sentResult = true
+		returned = true
 	}()
 	err = <-ticket
 	if err == nil {

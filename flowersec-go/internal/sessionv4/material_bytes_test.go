@@ -7,15 +7,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type materialBytesFixture struct {
 	*admissionIntegrationFixture
-	trust   *protocolv4.NamespaceTrustStore
-	config  ArtifactLeaseBytesConfig
-	reserve func(resourcev4.Vector) resourcev4.Reference
+	trust      *protocolv4.NamespaceTrustStore
+	config     ArtifactLeaseBytesConfig
+	reserve    func(resourcev4.Vector) resourcev4.Reference
+	bootstrap  func([32]byte) ([]byte, []byte)
+	rootKeyID  [16]byte
+	rootPublic [32]byte
 }
 
 // This fixture uses a real independently signed TrustConfig and production
@@ -26,7 +29,7 @@ func newMaterialBytesFixture(t *testing.T, source string) *materialBytesFixture 
 	return materialBytesFor(t, admissionIntegration(t, context.Background(), source))
 }
 
-func materialBytesFor(t *testing.T, f *admissionIntegrationFixture) *materialBytesFixture {
+func materialBytesFor(t *testing.T, f *admissionIntegrationFixture, registries ...*protocolv4.NamespaceRegistry) *materialBytesFixture {
 	t.Helper()
 	source := f.trust.source
 	x := &materialBytesFixture{admissionIntegrationFixture: f}
@@ -68,6 +71,7 @@ func materialBytesFor(t *testing.T, f *admissionIntegrationFixture) *materialByt
 	headDelegation := admissionMap(t, "HeadSignerDelegation", initialFixture(t, "head_delegation_fields"), map[string]protocolv4.Field{"namespace_capacity_digest": admissionBytes(capacityDigest[:]), "signer_public_key": admissionBytes(headKey)})
 	rootSeed, rootID := [32]byte{81, 19, 3}, [16]byte{99}
 	rootPublic := [32]byte(ed25519.NewKeyFromSeed(rootSeed[:]).Public().(ed25519.PublicKey))
+	x.rootKeyID, x.rootPublic = rootID, rootPublic
 	wire := admissionEncode(t, "TrustConfig", map[string]protocolv4.Field{
 		"schema_revision": admissionText("4"), "tenant_id": admissionText("tenant-1"), "revocation_authority_id": admissionText("revocation-1"), "authority_generation": {Number: 1}, "revision": {Number: 1}, "issued_at_ms": {Number: 900}, "not_after_ms": {Number: 100000},
 		"capacity": {Kind: protocolv4.EncodedMap, Bytes: capacity}, "publication": {Kind: protocolv4.EncodedMap, Bytes: publication},
@@ -88,33 +92,87 @@ func materialBytesFor(t *testing.T, f *admissionIntegrationFixture) *materialByt
 	if err != nil {
 		t.Fatal(err)
 	}
-	x.trust, err = protocolv4.NewNamespaceTrustStore(protocolv4.NamespaceTrustRoot{Tenant: "tenant-1", Authority: "revocation-1", KeyID: rootID, PublicKey: rootPublic, MaxLifetimeMS: 100000}, limits, f.trust.clock, wire, x.reserve(charge), borrow)
+	x.trust, err = protocolv4.NewNamespaceTrustAnchor(protocolv4.NamespaceTrustRoot{Tenant: "tenant-1", Authority: "revocation-1", KeyID: rootID, PublicKey: rootPublic, MaxLifetimeMS: 100000}, limits, f.trust.clock, x.reserve(charge), borrow)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rules, err := x.trust.Rules()
-	if err != nil {
-		t.Fatal(err)
+	if len(registries) != 0 {
+		if err := registries[0].Register(x.trust); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		if err := x.trust.Update(wire); err != nil {
+			t.Fatal(err)
+		}
 	}
 	segment := admissionEncode(t, "CohortPolicySegment", map[string]protocolv4.Field{"first_cohort": {Number: 0}, "last_cohort": {Number: 100}, "certificate_impact_ms": {Number: 1000}, "connection_impact_ms": {Number: 10000}})
 	state := admissionMap(t, "RevocationState", initialFixture(t, "revocation_state_fields"), map[string]protocolv4.Field{"namespace_capacity_digest": admissionBytes(capacityDigest[:]), "revoked_issuers": admissionArray(), "revoked_certificates": admissionArray(), "revoked_leases": admissionArray(), "cohort_policy_segments": admissionArray(segment)})
 	stateDigest, headDelegationDigest := admissionDigest(t, "revocation_state_digest", state), admissionDigest(t, "head_signer_delegation_digest", headDelegation)
 	signedHead := initialSignTemplate(t, "FreshnessHead", initialFixture(t, "freshness_head_fields"), map[string]protocolv4.Field{"credential_revocation_floors": {Kind: protocolv4.EncodedArray, Bytes: []byte{0x82, 0, 0}}, "namespace_capacity_digest": admissionBytes(capacityDigest[:]), "signer_delegation_digest": admissionBytes(headDelegationDigest[:]), "state_digest": admissionBytes(stateDigest[:]), "state_encoded_bytes": {Number: uint64(len(state))}}, seed)
-	head, err := rules.BindHead(signedHead, headDelegation, 1, 900, 100000)
+	headWire, err := signedHead.Bytes()
 	if err != nil {
 		t.Fatal(err)
+	}
+	x.bootstrap = func(nonce [32]byte) ([]byte, []byte) {
+		response := admissionEncode(t, "TrustBootstrapResponse", map[string]protocolv4.Field{
+			"schema_revision": admissionText("4"), "tenant_id": admissionText("tenant-1"), "revocation_authority_id": admissionText("revocation-1"), "request_nonce": admissionBytes(nonce[:]),
+			"issued_at_ms": {Number: 1000}, "not_after_ms": {Number: 5000}, "trust_config": admissionBytes(wire), "freshness_head": admissionBytes(headWire), "signing_key_id": admissionBytes(rootID[:]), "signature": admissionBytes(make([]byte, 64)),
+		})
+		signed := initialSignTemplate(t, "TrustBootstrapResponse", response, nil, rootSeed)
+		defer signed.Release()
+		encoded, err := signed.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bytes.Clone(encoded), bytes.Clone(state)
 	}
 	allocation := protocolv4.NamespaceAllocation{Root: f.root}
 	for i := range allocation.Owners {
 		next++
 		allocation.Owners[i] = admissionResourceKey(f.owner, next)
 	}
-	n, err := protocolv4.NewBootstrappedNamespace(context.Background(), f.trust.clock, x.trust, protocolv4.NamespaceBootstrap{Rules: rules, Head: head, State: state}, 4000, 2, 8, allocation)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := x.trust.AttachNamespace(n); err != nil {
-		t.Fatal(err)
+	var n *protocolv4.LiveNamespace
+	if len(registries) != 0 {
+		bl := protocolv4.NamespaceBootstrapLimits{ResponseBytes: 32768, ResponseNodes: 8192, StateBytes: 4096, DurationMS: 4000, FetchDurationMS: 4000, FetchAttempts: 2, Subscribers: 8, RuntimeBytes: 65536}
+		cost, err := protocolv4.NamespaceBootstrapCharge(bl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		job, err := protocolv4.NewNamespaceOnlineBootstrap(context.Background(), x.trust, bl, allocation, x.reserve(cost))
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider := materialBootstrapProvider{query: func(_ context.Context, request protocolv4.NamespaceBootstrapRequest, out []byte) (int, error) {
+			if request.Tenant != "tenant-1" || request.Authority != "revocation-1" {
+				return 0, protocolv4.CBORFailure("namespace_mismatch")
+			}
+			response, _ := x.bootstrap(request.Nonce)
+			return copy(out, response), nil
+		}, state: state}
+		n, err = job.Run(context.Background(), provider)
+		job.Close()
+		if cleanup := job.Retire(); cleanup != nil {
+			t.Fatal(cleanup)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		rules, err := x.trust.Rules()
+		if err != nil {
+			t.Fatal(err)
+		}
+		head, err := rules.BindHead(signedHead, headDelegation, 1, 900, 100000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, err = protocolv4.NewBootstrappedNamespace(context.Background(), f.trust.clock, x.trust, protocolv4.NamespaceBootstrap{Rules: rules, Head: head, State: state}, 4000, 2, 8, allocation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := x.trust.AttachNamespace(n); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Cleanup(func() {
 		x.trust.Close()
@@ -141,6 +199,20 @@ func materialBytesFor(t *testing.T, f *admissionIntegrationFixture) *materialByt
 		x.config.Proof = read(f.trust.proof)
 	}
 	return x
+}
+
+// This is an independently signed test authority, not production bootstrap
+// freshness evidence. The actual nonce, parser and startup engine are exercised.
+type materialBootstrapProvider struct {
+	query func(context.Context, protocolv4.NamespaceBootstrapRequest, []byte) (int, error)
+	state []byte
+}
+
+func (p materialBootstrapProvider) Query(ctx context.Context, r protocolv4.NamespaceBootstrapRequest, dst []byte) (int, error) {
+	return p.query(ctx, r, dst)
+}
+func (p materialBootstrapProvider) Fetch(_ context.Context, _ protocolv4.NamespaceContent, dst []byte) (int, error) {
+	return copy(dst, p.state), nil
 }
 
 func (f *materialBytesFixture) lease(t *testing.T) (*ArtifactLease, error) {

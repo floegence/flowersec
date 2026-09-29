@@ -1,9 +1,9 @@
 package rpcv4
 
 import (
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // StreamPreparation selects a per-item response limit explicitly. Aggregate
@@ -11,6 +11,7 @@ import (
 // Execution windows and guarantees use the same immutable request engine.
 type StreamPreparation struct {
 	Clock                                                *timev4.Clock
+	ParentDeadline                                       *timev4.Deadline
 	DeadlineAtMS, DefaultLifetimeMS, AdmissionNotAfterMS uint64
 	MaxItemBytes                                         uint32
 	AdmissionMode                                        uint8
@@ -21,7 +22,7 @@ type StreamPreparation struct {
 }
 
 func (o StreamPreparation) RequestOptions() UnaryPreparation {
-	return UnaryPreparation{Clock: o.Clock, DeadlineAtMS: o.DeadlineAtMS, DefaultLifetimeMS: o.DefaultLifetimeMS, AdmissionNotAfterMS: o.AdmissionNotAfterMS, ResponseLimitBytes: o.MaxItemBytes, AdmissionMode: o.AdmissionMode, ExplicitAdmissionMode: o.ExplicitAdmissionMode, RequireExecution: o.RequireExecution, RequireDurable: o.RequireDurable, Offer: o.Offer, RuntimeBytes: o.RuntimeBytes}
+	return UnaryPreparation{Clock: o.Clock, ParentDeadline: o.ParentDeadline, DeadlineAtMS: o.DeadlineAtMS, DefaultLifetimeMS: o.DefaultLifetimeMS, AdmissionNotAfterMS: o.AdmissionNotAfterMS, ResponseLimitBytes: o.MaxItemBytes, AdmissionMode: o.AdmissionMode, ExplicitAdmissionMode: o.ExplicitAdmissionMode, RequireExecution: o.RequireExecution, RequireDurable: o.RequireDurable, Offer: o.Offer, RuntimeBytes: o.RuntimeBytes}
 }
 
 func PrepareStream(route ContractRoute, payload []byte, options StreamPreparation, reservation, routeReservation resourcev4.Reference) (*PreparedRequest, error) {

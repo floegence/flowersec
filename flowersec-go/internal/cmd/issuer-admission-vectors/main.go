@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	_ "github.com/floegence/flowersec/flowersec-go/v5/controlplane"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/issuervector"
+	_ "github.com/floegence/flowersec/flowersec-go/v6/controlplane"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/issuervector"
 )
 
 const fixtureRelativePath = "testdata/transport_v3/go_issuer_admission_vectors.json"

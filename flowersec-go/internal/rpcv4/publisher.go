@@ -7,9 +7,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrSerialExhausted = errors.New("rpcv4: channel serial exhausted")
@@ -22,6 +22,12 @@ type BatchSink interface {
 	TryAccept(context.Context, [][]byte) (uint64, error)
 	Published(uint64) (bool, error)
 	Wake() <-chan struct{}
+}
+
+// ResponseBatchSink attaches the original response observation atomically to
+// the final fragment. The sink records provider handoff before physical cleanup.
+type ResponseBatchSink interface {
+	TryAcceptResponse(context.Context, [][]byte, *Publication) (uint64, error)
 }
 
 const (
@@ -81,6 +87,15 @@ type Publication struct {
 	mu                                            sync.Mutex
 	progress                                      PublicationProgress
 	requestTracked, requestActive, requestPending bool
+	settled                                       chan struct{}
+	waiters                                       uint8
+	deadline                                      *timev4.Deadline
+}
+
+// ObserveResponseHandoff is called only by the original internal carrier owner
+// after the exact response tail has been accepted by its provider.
+func (p *Publication) ObserveResponseHandoff() {
+	p.update(true, true, true, true, "")
 }
 
 func (p *Publication) Progress() PublicationProgress {
@@ -89,7 +104,53 @@ func (p *Publication) Progress() PublicationProgress {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.expireLocked()
 	return p.progress
+}
+
+// Wait observes this publication's original terminal decision. Canceling an
+// observer never changes the publication or the publisher's fixed deadline.
+func (p *Publication) Wait(ctx context.Context) (PublicationProgress, error) {
+	return p.WaitOwner(ctx, nil)
+}
+
+// WaitOwner shares the original bounded observation slots. Closing a borrowed
+// maintenance capability ends only its wait, never the publication decision.
+func (p *Publication) WaitOwner(ctx context.Context, ownerClosed <-chan struct{}) (PublicationProgress, error) {
+	if p == nil || ctx == nil {
+		return p.Progress(), ErrConfiguration
+	}
+	p.mu.Lock()
+	p.expireLocked()
+	if p.progress.Terminal {
+		progress := p.progress
+		p.mu.Unlock()
+		return progress, nil
+	}
+	if p.waiters == 4 {
+		progress := p.progress
+		p.mu.Unlock()
+		return progress, ErrCapacity
+	}
+	p.waiters++
+	defer func() {
+		p.mu.Lock()
+		p.waiters--
+		p.mu.Unlock()
+	}()
+	if p.settled == nil {
+		p.settled = make(chan struct{})
+	}
+	settled := p.settled
+	p.mu.Unlock()
+	select {
+	case <-settled:
+		return p.Progress(), nil
+	case <-ownerClosed:
+		return p.Progress(), ErrClosed
+	case <-ctx.Done():
+		return p.Progress(), ctx.Err()
+	}
 }
 
 // RequestCleanupComplete observes only the original ordinary request's
@@ -128,6 +189,7 @@ func (p *Publication) update(header, message, flushed, terminal bool, reason str
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.expireLocked()
 	if p.progress.Terminal {
 		return
 	}
@@ -136,6 +198,25 @@ func (p *Publication) update(header, message, flushed, terminal bool, reason str
 	p.progress.Flushed = flushed
 	p.progress.Terminal = terminal
 	p.progress.Reason = reason
+	if terminal {
+		p.deadline = nil
+	}
+	if terminal && p.settled != nil {
+		close(p.settled)
+	}
+}
+
+func (p *Publication) expireLocked() {
+	if p.progress.Terminal || p.deadline == nil {
+		return
+	}
+	if errors.Is(p.deadline.Check(), timev4.ErrExpired) {
+		p.progress.Terminal, p.progress.Reason = true, "deadline"
+		p.deadline = nil
+		if p.settled != nil {
+			close(p.settled)
+		}
+	}
 }
 
 type Publisher struct {
@@ -505,6 +586,11 @@ func (p *Publisher) smallReplyLocked(t Ticket, s *networkSlot, code string) erro
 	}
 	m.header = h
 	m.headerBytes = uint16(length)
+	reason := "response_superseded"
+	if code == "deadline_exceeded" {
+		reason = "deadline"
+	}
+	s.responsePublication.update(false, false, false, true, reason)
 	s.message = m
 	s.message.payload = s.message.small[:len(payload)]
 	p.enqueueLocked(t, p.lane(s, t.direction))
@@ -550,6 +636,7 @@ func (p *Publisher) stopResponseLocked(t Ticket) error {
 	}
 	p.unlinkLocked(t)
 	m.abort = true
+	s.responsePublication.update(true, false, false, true, "response_aborted")
 	m.publication.update(true, false, false, true, "response_aborted")
 	m.releaseSource()
 	p.enqueueLocked(t, p.lane(s, t.direction))
@@ -625,6 +712,15 @@ func (p *Publisher) Step(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	t, s := n.indexed(p.head[lane])
+	if t.direction == incoming && s.message.publication != nil {
+		progress := s.message.publication.Progress()
+		if progress.Terminal && progress.Reason == "deadline" && !s.message.abort && !s.message.sdk {
+			if err := p.stopResponseLocked(t); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+	}
 	if guard := s.message.requestGuard; guard != nil && !s.message.abort && !s.message.stop {
 		h, publication := s.message.header, s.message.publication
 		n.mu.Unlock()
@@ -678,7 +774,15 @@ func (p *Publisher) stepLocked(ctx context.Context, t Ticket, s *networkSlot, la
 		return false, err
 	}
 	p.views[0] = p.buffer[:length]
-	tail, err := p.sink.TryAccept(ctx, p.views[:])
+	var tail uint64
+	lastResponse := t.direction == incoming && m.publication != nil && !m.sdk &&
+		(f.Kind == protocolv4.RPCBegin && m.header.Fields().PayloadBytes == 0 ||
+			f.Kind == protocolv4.RPCData && m.next+uint32(len(f.Payload)) == m.header.Fields().PayloadBytes)
+	if sink, ok := p.sink.(ResponseBatchSink); ok && lastResponse {
+		tail, err = sink.TryAcceptResponse(ctx, p.views[:], m.publication)
+	} else {
+		tail, err = p.sink.TryAccept(ctx, p.views[:])
+	}
 	p.views[0] = nil
 	if err != nil {
 		return false, err
@@ -735,6 +839,7 @@ func (p *Publisher) stepLocked(ctx context.Context, t Ticket, s *networkSlot, la
 		m.querySource = ContractQueryJob{}
 		m.queryRequest = ContractQueryCall{}
 		if t.direction == incoming {
+			s.responsePublication = nil
 			s.observation.lose("response_complete", true)
 			n.releaseLocked(t, s)
 		}
@@ -782,6 +887,7 @@ func (p *Publisher) Close() {
 			s := &n.slots[d][i]
 			if s.path.Channel == p.channel {
 				s.observation.lose("owner_unavailable", false)
+				s.responsePublication.update(false, false, false, true, "owner_unavailable")
 			}
 			if s.message.publisher == p {
 				s.message.publication.update(false, false, false, true, "owner_unavailable")

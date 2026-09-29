@@ -13,9 +13,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -67,6 +68,9 @@ type TicketGuard interface {
 // unauthenticated record. Deadlines must already use the trusted time adapter's
 // conservative local projection. RootBorn is sampled before the actual KDF.
 type Config struct {
+	// Diagnostics borrows the original Environment bank through actual Engine
+	// retirement. Trusted composition owns its reservation and lifetime.
+	Diagnostics                         *diagnosticv4.Counters
 	Profile                             string
 	ApplicationProfile                  string
 	Root, HandshakeHash, ContextDigest  [32]byte
@@ -102,6 +106,7 @@ type recordKey struct {
 	exhausted bool
 	replay    replayWindow
 	busy      bool
+	detached  bool
 	good      usage
 }
 type scopeKeys struct {
@@ -123,6 +128,8 @@ type workspace struct {
 	input, output []byte
 	maintenance   bool
 	sharedInput   bool
+	nativeInput   bool
+	datagram      bool
 	direction     protocolv4.Direction
 }
 
@@ -171,8 +178,13 @@ type Engine struct {
 	maintenance                           [2]*workspace
 	sharedInput                           *workspace
 	sharedInputReserved                   bool
+	nativeInput                           []*workspace
+	nativeInputCount                      uint32
+	datagrams                             *DatagramQueue
+	datagramWork                          [2]*workspace
 	reliableFlight                        uint32
 	outgoingPackets                       uint32
+	detachedPackets                       uint32
 	invalidTotal, possibleFailures        uint32
 	pause                                 *timev4.Delay
 	receiveDisabled                       bool
@@ -547,7 +559,7 @@ func (e *Engine) ReserveSharedInput() error {
 	if err := e.serviceInitializationLive(); err != nil {
 		return err
 	}
-	if e.sharedInputReserved || e.config.WorkSlots < 2 || len(e.free) == 0 {
+	if e.sharedInputReserved || e.nativeInputCount != 0 || e.config.WorkSlots < 2 || len(e.free) == 0 {
 		return ErrConfiguration
 	}
 	w, err := e.workspace(false, 1-e.config.SendDirection)
@@ -589,6 +601,20 @@ func (e *Engine) ServiceInitializationEpoch() (uint32, error) {
 }
 
 func (e *Engine) inputWorkspace(maintenance, datagram bool) (*workspace, error) {
+	if datagram && e.datagrams != nil {
+		return e.datagramWorkspace(1 - e.config.SendDirection)
+	}
+	if e.nativeInputCount != 0 && !maintenance && !datagram {
+		if len(e.nativeInput) == 0 {
+			return nil, ErrCapacity
+		}
+		last := len(e.nativeInput) - 1
+		w := e.nativeInput[last]
+		e.nativeInput[last] = nil
+		e.nativeInput = e.nativeInput[:last]
+		e.borrowedWork++
+		return w, nil
+	}
 	if e.sharedInputReserved && !maintenance && !datagram {
 		if e.sharedInput == nil {
 			return nil, ErrCapacity
@@ -611,7 +637,15 @@ func (e *Engine) release(w *workspace) {
 		e.finishCleanupLocked()
 		return
 	}
-	if w.sharedInput {
+	if w.datagram {
+		e.datagramWork[w.direction] = w
+	} else if w.nativeInput {
+		e.nativeInput = append(e.nativeInput, w)
+		select {
+		case e.receiveWake <- struct{}{}:
+		default:
+		}
+	} else if w.sharedInput {
 		e.sharedInput = w
 		select {
 		case e.receiveWake <- struct{}{}:
@@ -670,9 +704,10 @@ func (e *Engine) charge(epoch *epochState, key *recordKey, direction protocolv4.
 	return nil
 }
 
-// Packet retains the preallocated workspace until Release. Bytes are borrowed
-// only while this unique owner is live; callers must finish using them before
-// Release and must not retain aliases afterward.
+// Packet retains its original output, key and epoch until Release. Its shared
+// workspace can move once into preadmitted reliable publication storage. Bytes
+// are borrowed only while this unique owner is live; callers must finish using
+// them before transfer/Release and must not retain aliases afterward.
 type Packet struct {
 	engine    *Engine
 	workspace *workspace
@@ -730,19 +765,30 @@ func (p *Packet) Release() {
 		return
 	}
 	p.released = true
+	if p.workspace == nil {
+		clear(p.data)
+	}
 	p.data = nil
 	w := p.workspace
 	p.workspace = nil
 	e := p.engine
+	key := p.key
 	p.engine, p.epoch, p.key = nil, nil, nil
 	reliable := p.outgoing && !p.datagram
 	p.mu.Unlock()
 	if reliable {
 		e.mu.Lock()
 		e.outgoingPackets--
+		if w == nil {
+			e.detachedPackets--
+			key.detached = false
+		}
+		e.finishCleanupLocked()
 		e.mu.Unlock()
 	}
-	e.release(w)
+	if w != nil {
+		e.release(w)
+	}
 }
 
 // Seal's successful precharge is the irreversible record ticket. Sequence and
@@ -828,7 +874,12 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 		e.mu.Unlock()
 		return nil, err
 	}
-	w, err := e.workspace(scope == 0, e.config.SendDirection)
+	var w *workspace
+	if scope == protocolv4.DatagramScope() && e.datagrams != nil {
+		w, err = e.datagramWorkspace(e.config.SendDirection)
+	} else {
+		w, err = e.workspace(scope == 0, e.config.SendDirection)
+	}
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
@@ -963,6 +1014,10 @@ func (e *Engine) open(input []byte, validate func(protocolv4.FrameType, protocol
 }
 
 func (e *Engine) openReserved(input []byte, validate func(protocolv4.FrameType, protocolv4.RecordHeader, []byte) error, marker *RekeyRound, reserved *workspace) (*Packet, protocolv4.FrameType, protocolv4.RecordHeader, error) {
+	return e.openReservedDatagram(input, validate, marker, reserved, nil, nil)
+}
+
+func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.FrameType, protocolv4.RecordHeader, []byte) error, marker *RekeyRound, reserved *workspace, queue *DatagramQueue, payload *[]byte) (*Packet, protocolv4.FrameType, protocolv4.RecordHeader, error) {
 	defer func() {
 		if reserved != nil {
 			e.release(reserved)
@@ -976,55 +1031,67 @@ func (e *Engine) openReserved(input []byte, validate func(protocolv4.FrameType, 
 		return nil, 0, header, err
 	}
 	e.mu.Lock()
+	dropMetric := e.datagramDropMetricLocked(frame, header)
 	if err = e.inputLive(); err != nil {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, err
 	}
 	epoch, epochErr := e.receiveEpoch(frame, header, marker)
 	if epochErr != nil {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, epochErr
 	}
 	keys := epoch.keys.get(header.Scope)
 	if keys == nil {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrScope
 	}
 	if keys.bootstrap && ((!keys.openSubmitted && (1-e.config.SendDirection != e.bootstrap.Opener || frame != protocolv4.FrameOpenStream)) || keys.openSubmitted && frame == protocolv4.FrameOpenStream) {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrNotReady
 	}
 	if keys.opening && (!keys.openSubmitted || frame != protocolv4.FrameStreamData) || keys.incoming != nil && (frame != protocolv4.FrameOpenStream || keys.incoming.authenticated || header != keys.incoming.header) {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrNotReady
 	}
 	direction := protocolv4.Direction(1 - e.config.SendDirection)
 	key := keys.keys[direction]
 	if key == nil || keys.deriving[direction] {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrNotReady
 	}
 	datagram := frame == protocolv4.FrameDatagram
 	if datagram {
 		if err = e.datagramGate(); err != nil {
+			e.observeDatagramDropLocked(dropMetric)
 			e.mu.Unlock()
 			return nil, frame, header, err
 		}
 		if e.invalidTotal+e.possibleFailures >= 32 {
+			e.observeDatagramDropLocked(dropMetric)
 			e.mu.Unlock()
 			return nil, frame, header, ErrReceiveBlocked
 		}
 		if !key.replay.admits(header.Sequence) {
+			e.observeDatagramDropLocked(dropMetric)
 			e.mu.Unlock()
 			return nil, frame, header, ErrReplay
 		}
 	} else if key.busy || key.exhausted || header.Sequence != key.next {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, ErrSequence
 	}
 	prefixSize := protocolv4.EnvelopePrefixSize + protocolv4.RecordHeaderSize()
 	aad, err := protocolv4.RecordAAD(e.config.Profile, direction, input[:prefixSize])
 	if err != nil {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, err
 	}
@@ -1035,10 +1102,12 @@ func (e *Engine) openReserved(input []byte, validate func(protocolv4.FrameType, 
 		reserved = nil // This call now owns the original KDF position.
 	}
 	if err != nil {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		return nil, frame, header, err
 	}
 	if err = e.charge(epoch, key, direction, frame, len(aad), len(ciphertext)-e.profile.TagBytes, true); err != nil {
+		e.observeDatagramDropLocked(dropMetric)
 		e.mu.Unlock()
 		e.release(w)
 		return nil, frame, header, err
@@ -1104,6 +1173,13 @@ func (e *Engine) openReserved(input []byte, validate func(protocolv4.FrameType, 
 	if !datagram {
 		key.busy = false
 	}
+	if queue != nil && err == nil {
+		if queue != e.datagrams || queue.closed || payload == nil {
+			err = ErrClosed
+		} else {
+			err = e.live()
+		}
+	}
 	if err == nil {
 		err = e.inputLive()
 	}
@@ -1134,6 +1210,10 @@ func (e *Engine) openReserved(input []byte, validate func(protocolv4.FrameType, 
 				key.replay.accept(header.Sequence)
 				blocks := func(n int) uint64 { return uint64(n/16) + uint64((n%16+15)/16) }
 				addUsage(&key.good, usage{calls: 1, blocks: blocks(len(aad)) + blocks(len(plaintext)) + 1, bytes: uint64(len(ciphertext))})
+				if queue != nil {
+					queue.appendLocked(epoch.number, *payload)
+					_ = e.idle.Refresh()
+				}
 			}
 		} else if key.next != header.Sequence {
 			err = ErrSequence
@@ -1151,6 +1231,12 @@ func (e *Engine) openReserved(input []byte, validate func(protocolv4.FrameType, 
 				e.switching.received = true
 			}
 		}
+	}
+	if err != nil {
+		e.observeDatagramDropLocked(dropMetric)
+	}
+	if datagram && e.datagrams != nil {
+		e.datagrams.notifyLocked()
 	}
 	e.mu.Unlock()
 	if err != nil {
@@ -1356,6 +1442,23 @@ func (e *Engine) Close() {
 		w.input, w.output = nil, nil
 	}
 	e.free = nil
+	for _, w := range e.nativeInput {
+		clear(w.input)
+		clear(w.output)
+		w.input, w.output = nil, nil
+	}
+	e.nativeInput = nil
+	if e.datagrams != nil {
+		e.datagrams.closeLocked()
+	}
+	for i, w := range e.datagramWork {
+		if w != nil {
+			clear(w.input)
+			clear(w.output)
+			w.input, w.output = nil, nil
+			e.datagramWork[i] = nil
+		}
+	}
 	if e.sharedInput != nil {
 		clear(e.sharedInput.input)
 		clear(e.sharedInput.output)

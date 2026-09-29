@@ -12,9 +12,9 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrReferenceExpired = errors.New("ledgerv4: local operation reference expired")
@@ -68,7 +68,7 @@ func openSQLiteReferences(ctx context.Context, backing *SQLiteBacking, identity 
 	if err := reservation.CheckAllocationScope(c.Root, c.Owner, c.Accounts); err != nil {
 		return nil, err
 	}
-	s, err := openSQLitePurpose(ctx, backing, identity, continuity, reservation, environment, create, nil, &c)
+	s, err := openSQLitePurpose(ctx, backing, identity, continuity, reservation, environment, create, nil, &c, nil, nil, nil, nil)
 	if s == nil {
 		return nil, err
 	}
@@ -120,13 +120,16 @@ func (r *SQLiteReferences) check() error {
 // never treats a queued task, a successful write before commit, or a lost
 // commit response as confirmation. The caller owns the original handoff gate.
 func (r *SQLiteReferences) Save(ctx context.Context, ref protocolv4.OperationReference) error {
-	if r == nil || r.store == nil || !ref.Valid() || ref.TargetDomain() != r.config.Domain {
+	if r == nil || r.store == nil || !ref.Valid() {
 		return ErrConfiguration
 	}
 	if err := r.store.begin(ctx); err != nil {
 		return err
 	}
 	defer r.store.end()
+	if ref.TargetDomain() != r.config.Domain {
+		return ErrConfiguration
+	}
 	n, err := r.codec.Export(r.wire[:], ref)
 	if err != nil {
 		return err
@@ -213,13 +216,16 @@ func (r *SQLiteReferences) readRow(key [32]byte) (n int, expires uint64, found b
 // accesses execution history. The supplied reference is an exact selector;
 // imported values still require separately authorized queries afterward.
 func (r *SQLiteReferences) Load(ctx context.Context, selector protocolv4.OperationReference) (protocolv4.OperationReference, bool, error) {
-	if r == nil || r.store == nil || !selector.Valid() || selector.TargetDomain() != r.config.Domain {
+	if r == nil || r.store == nil || !selector.Valid() {
 		return protocolv4.OperationReference{}, false, ErrConfiguration
 	}
 	if err := r.store.begin(ctx); err != nil {
 		return protocolv4.OperationReference{}, false, err
 	}
 	defer r.store.end()
+	if selector.TargetDomain() != r.config.Domain {
+		return protocolv4.OperationReference{}, false, ErrConfiguration
+	}
 	defer clear(r.existing[:])
 	if err := r.store.checkFence(); err != nil {
 		return protocolv4.OperationReference{}, false, err
@@ -252,7 +258,12 @@ func (r *SQLiteReferences) Load(ctx context.Context, selector protocolv4.Operati
 }
 
 func (r *SQLiteReferences) CheckBinding(domain string, backing resourcev4.Reference) error {
-	if r == nil || r.store == nil || domain != r.config.Domain {
+	if r == nil || r.store == nil {
+		return ErrOwner
+	}
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+	if r.store.closed || r.store.complete || domain != r.config.Domain {
 		return ErrOwner
 	}
 	if err := backing.CheckSameEnvironment(r.store.reservation); err != nil {

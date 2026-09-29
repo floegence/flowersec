@@ -53,7 +53,7 @@ test("Chromium runs production v3 WebTransport with the artifact TLS pin", async
     ],
     { cwd: path.join(repositoryRoot, "flowersec-go"), stdio: ["ignore", "pipe", "pipe"] },
   );
-  captureStderr(peer);
+  const stderr = captureStderr(peer);
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -129,7 +129,7 @@ test("Chromium WebTransport rejects an unknown v3 pin before durable spend", asy
     ],
     { cwd: path.join(repositoryRoot, "flowersec-go"), stdio: ["ignore", "pipe", "pipe"] },
   );
-  captureStderr(peer);
+  const stderr = captureStderr(peer);
   const context = await browser.newContext();
   const page = await context.newPage();
 
@@ -160,7 +160,7 @@ test("Chromium WebTransport rejects an unknown v3 pin before durable spend", asy
         return {
           connected: false,
           spendCount,
-          error: { code: error.code, disposition: error.disposition.kind },
+          error: { code: error.code, disposition: error.retryDisposition.kind },
         };
       }
     }, JSON.stringify(artifact)).catch((error: unknown) => {
@@ -255,14 +255,14 @@ test("Portable browsers run the v3 WebSocket client contract", async ({ page }) 
     candidate.url = endpoint.url;
     artifact.path.candidates = [candidate];
     await page.goto(site.origin, { waitUntil: "networkidle" });
-    const result = await page.evaluate(async ({ artifactJSON, roots }) => {
+    const result = await page.evaluate(async ({ artifactJSON }) => {
       const sdk = await import("/dist/browser/index.js");
       let spendCount = 0;
       try {
         const session = await sdk.connect(sdk.createArtifactLease(
           sdk.parseArtifact(artifactJSON),
           async () => { spendCount += 1; },
-        ), { roots });
+        ));
         await session.close().catch(() => undefined);
         return { connected: true, spendCount };
       } catch (error) {
@@ -270,10 +270,10 @@ test("Portable browsers run the v3 WebSocket client contract", async ({ page }) 
         return {
           connected: false,
           spendCount,
-          error: { code: error.code, disposition: error.disposition.kind },
+          error: { code: error.code, disposition: error.retryDisposition.kind },
         };
       }
-    }, { artifactJSON: JSON.stringify(artifact), roots: endpoint.ca_pem });
+    }, { artifactJSON: JSON.stringify(artifact) });
     expect(result).toEqual({ connected: true, spendCount: 1 });
   } finally {
     await site.close();
@@ -339,7 +339,7 @@ test("Chromium WebTransport production adapter rejects a wrong pin for a public-
         return {
           connected: false,
           spendCount,
-          error: { code: error.code, disposition: error.disposition.kind },
+          error: { code: error.code, disposition: error.retryDisposition.kind },
         };
       }
     }, JSON.stringify(artifact)).catch((error: unknown) => {
@@ -386,7 +386,7 @@ test("Chromium WebTransport fails closed when certificate hashes are unsupported
         return {
           connected: false,
           spendCount,
-          error: { code: error.code, disposition: error.disposition.kind },
+          error: { code: error.code, disposition: error.retryDisposition.kind },
         };
       }
     }, singleWebTransportArtifact("pin"));
@@ -441,7 +441,7 @@ test("Chromium WebTransport delegates CA trust without certificate hashes", asyn
         ));
       } catch (error) {
         if (!(error instanceof sdk.ConnectError)) throw error;
-        code = `${error.code}:${error.disposition.kind}`;
+        code = `${error.code}:${error.retryDisposition.kind}`;
       }
       const constructorURL = calls[0]?.[0];
       return {
@@ -515,7 +515,7 @@ async function verifyProductionWebTransportUnsupported(page: Page): Promise<void
           },
           error: {
             code: error.code,
-            disposition: error.disposition.kind,
+            disposition: error.retryDisposition.kind,
             belongsToFixedPublicSet: publicCodes.includes(error.code),
           },
         };
@@ -542,6 +542,7 @@ async function verifyProductionWebTransportUnsupported(page: Page): Promise<void
 
 function captureStderr(peer: ReturnType<typeof spawn>): string[] {
   const stderr: string[] = [];
+  if (peer.stderr === null) throw new Error("peer stderr must be piped");
   peer.stderr.setEncoding("utf8");
   peer.stderr.on("data", (chunk: string) => stderr.push(chunk));
   return stderr;

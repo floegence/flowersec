@@ -23,12 +23,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/tlspolicy"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 	ws "github.com/gorilla/websocket"
 )
 
@@ -75,7 +75,7 @@ func policyTestSession(t *testing.T) protocolv4.ArtifactSessionParameters {
 }
 
 func TestWebSocketDefaultPolicyActualTLSAndOriginalExpiry(t *testing.T) {
-	for _, mode := range []string{"ca", "ca_wrong_san", "ca_no_roots", "pin", "pin_other_san", "wrong_pin", "long_der", "route_mismatch", "route_digest", "credential_header"} {
+	for _, mode := range []string{"ca", "ca_wrong_san", "ca_no_roots", "pin", "pin_other_san", "wrong_pin", "long_der", "route_mismatch", "route_digest", "credential_header", "frame_capacity"} {
 		t.Run(mode, func(t *testing.T) {
 			const start = uint64(2000000000000)
 			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -166,9 +166,12 @@ func TestWebSocketDefaultPolicyActualTLSAndOriginalExpiry(t *testing.T) {
 			defer wrapper.Release()
 			owner.Backing[0] = 3
 			factory := WebSocketConsumerFactory{DefaultPolicy: &WebSocketPolicy{Clock: clock, Roots: roots}, PreparationWorkUnits: 128, Root: root, Owner: owner, Environment: environment,
-				Options: websocket.Options{MaxMessageBytes: 4096, ReadBufferBytes: 125, WriteBufferBytes: 125, HandshakeBytes: 4096, MaxControlsPerSecond: 8, HandshakeTimeout: time.Second, MessageTimeout: time.Second, RuntimeBytes: 16384, ProviderRuntimeBytes: 65536, ProviderTasks: 4},
+				Options: websocket.Options{MaxMessageBytes: 131080, ReadBufferBytes: 125, WriteBufferBytes: 125, HandshakeBytes: 4096, MaxControlsPerSecond: 8, HandshakeTimeout: time.Second, MessageTimeout: time.Second, RuntimeBytes: 16384, ProviderRuntimeBytes: 65536, ProviderTasks: 4},
 				Dial:    websocket.DialConfig{URL: "wss://authorized.example:" + u.Port() + "/flowersec/v4/direct", RemoteAddress: address, Subprotocol: websocket.SubprotocolDirect}}
 			request := sessionv4.CarrierPreparationRequest{Route: route, Budget: sessionv4.CarrierAttemptBudget{PreauthBytes: 131072, WorkUnits: 128}, Config: sessionv4.PreparedCarrierConfig{Candidate: protocolv4.PoolMember{CandidateID: id, RouteDigest: digest}, Attempt: id, Session: policyTestSession(t), Role: protocolv4.ClientToServer, Deadline: deadline, Reservation: wrapper, Environment: environment, RuntimeBytes: 8192}}
+			if mode == "frame_capacity" {
+				factory.Options.MaxMessageBytes = 131079
+			}
 			if mode == "route_mismatch" {
 				factory.Dial.URL = strings.Replace(factory.Dial.URL, "authorized.example", "other.example", 1)
 			}

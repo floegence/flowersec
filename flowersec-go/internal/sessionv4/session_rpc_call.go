@@ -4,15 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"math"
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // UnaryCall retains a detached local outcome. Wait cancellation only detaches
@@ -21,6 +22,8 @@ import (
 type UnaryDecoder func(context.Context, rpcv4.InputBorrow) error
 
 type UnaryCall struct {
+	next              *UnaryCall
+	forwardingClosed  bool
 	invocation        *unaryInvocation
 	request           protocolv4.ApplicationHeader
 	publication       *rpcv4.Publication
@@ -45,10 +48,16 @@ func (c *UnaryCall) Wait(ctx context.Context) (UnaryCallOutcome, error) {
 	if c == nil || ctx == nil {
 		return UnaryCallOutcome{}, cryptov4.ErrConfiguration
 	}
+	if next := c.redirected(); next != nil {
+		return next.Wait(ctx)
+	}
 	c.mu.Lock()
 	if c.finished {
 		outcome := c.resultStatusLocked().Outcome
 		c.mu.Unlock()
+		if next := c.redirected(); next != nil {
+			return next.Wait(ctx)
+		}
 		return outcome, nil
 	}
 	executor, dependencyFailure := c.executor, c.dependencyFailure
@@ -63,13 +72,17 @@ func (c *UnaryCall) Wait(ctx context.Context) (UnaryCallOutcome, error) {
 	case <-dependencyFailure:
 		select {
 		case <-c.done:
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			return c.resultStatusLocked().Outcome, nil
+			return c.Wait(ctx)
 		default:
+		}
+		if next := c.redirected(); next != nil {
+			return next.Wait(ctx)
 		}
 		return UnaryCallOutcome{}, ErrCompletionDependency
 	case <-c.done:
+		if next := c.redirected(); next != nil {
+			return next.Wait(ctx)
+		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		return c.resultStatusLocked().Outcome, nil
@@ -88,6 +101,10 @@ func (c *UnaryCall) finish(outcome UnaryCallOutcome) {
 }
 
 type unaryInvocation struct {
+	operation                              *UnaryOperation
+	routeRevoked                           bool
+	relocating                             bool
+	controller                             controllerDispatch
 	fixedResultRead                        bool
 	dependencies                           applicationDependencies
 	dependency                             *completionDependency
@@ -105,6 +122,7 @@ type unaryInvocation struct {
 	publication                            *rpcv4.Publication
 	ticket                                 rpcv4.Ticket
 	deadline                               *timev4.Deadline
+	preparation                            *timev4.Deadline
 	ctx                                    context.Context
 	decode                                 UnaryDecoder
 	plan                                   *SessionPlan
@@ -127,7 +145,7 @@ func shortUnaryMetadataCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	c, err := (resourcev4.Vector{resourcev4.SDKBytes: completionDependencyBytes() + applicationContextBytes() + uint64(unsafe.Sizeof(unaryInvocation{})) + uint64(unsafe.Sizeof(UnaryCall{})) + 2*uint64(unsafe.Sizeof(timev4.Deadline{})), resourcev4.Items: 4}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
+	c, err := (resourcev4.Vector{resourcev4.SDKBytes: completionDependencyBytes() + applicationContextBytes() + uint64(unsafe.Sizeof(unaryInvocation{})) + uint64(unsafe.Sizeof(UnaryCall{})) + 3*uint64(unsafe.Sizeof(timev4.Deadline{})), resourcev4.Items: 5}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
@@ -135,9 +153,10 @@ func shortUnaryMetadataCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
 }
 
 // BeginShortUnary is a trusted local binding entry point, not a peer-selected
-// priority. The exact captured contract, request header and configured short
-// envelope must agree. Complete request/result backing, the original K slot,
-// root result position and future Completion opportunity precede publication.
+// priority. The exact captured contract and request header must agree. Calls
+// within the configured envelope first use the original short floor; larger
+// legal calls and overlap use fully charged spare general capacity. Complete
+// backing, original K/result positions and Completion precede publication.
 func (r *RPCServices) BeginShortUnary(ctx context.Context, route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte, decode func(rpcv4.InputBorrow) error) (_ *UnaryCall, err error) {
 	if decode == nil {
 		return nil, cryptov4.ErrConfiguration
@@ -163,6 +182,10 @@ func (r *RPCServices) BeginUnaryContext(ctx context.Context, route rpcv4.Contrac
 }
 
 func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte, class ApplicationWorkClass, protected, prepared bool, inherited *applicationDependencies, resultPlan *unaryResultPlan, decode UnaryDecoder, fixedReads ...bool) (_ *UnaryCall, err error) {
+	return r.beginUnaryController(ctx, route, h, header, payload, class, protected, prepared, inherited, resultPlan, decode, nil, nil, nil, fixedReads...)
+}
+
+func (r *RPCServices) beginUnaryController(ctx context.Context, route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte, class ApplicationWorkClass, protected, prepared bool, inherited *applicationDependencies, resultPlan *unaryResultPlan, decode UnaryDecoder, controller *controllerDispatch, original *rpcv4.PreparedRequest, workload *unaryWorkloadSlot, fixedReads ...bool) (_ *UnaryCall, err error) {
 	fixedRead := len(fixedReads) == 1 && fixedReads[0]
 	if len(fixedReads) > 1 {
 		return nil, cryptov4.ErrConfiguration
@@ -170,7 +193,14 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 	if r == nil || ctx == nil || (decode == nil && resultPlan == nil) || resultPlan != nil && (resultPlan.decode == nil || resultPlan.environment == nil) || class > ApplicationResident || (!fixedRead && h.Kind() != "transient_unary_request" && h.Kind() != "execution_unary_request" || fixedRead && h.Kind() != "read_result_request") || uint64(len(payload)) != uint64(h.Fields().PayloadBytes) {
 		return nil, cryptov4.ErrConfiguration
 	}
-	dependencies, err := captureApplicationDependencies(ctx)
+	var referenceFloor *resourcev4.BorrowPool
+	if workload != nil {
+		referenceFloor = workload.references
+		if referenceFloor == nil {
+			return nil, resourcev4.ErrOwner
+		}
+	}
+	dependencies, err := captureApplicationDependenciesWithFloor(ctx, referenceFloor)
 	if err != nil {
 		return nil, err
 	}
@@ -186,8 +216,12 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 		return nil, ErrApplicationDependency
 	}
 	if !fixedRead {
-		if err := route.CheckRequest(h); err != nil {
-			return nil, err
+		if controller == nil || controller.controller == nil {
+			if err := route.CheckRequest(h); err != nil {
+				return nil, err
+			}
+		} else if r.routes == nil {
+			return nil, cryptov4.ErrNotReady
 		}
 	}
 	r.mu.Lock()
@@ -209,12 +243,19 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 		return nil, cryptov4.ErrConfiguration
 	}
 	completionEnd := h.Fields().DeadlineAtMS + r.completionGraceMS
-	i, refs, err := r.reserveUnaryLocked(ctx, h, publisher, protected, resultPlan, decode)
+	i, refs, err := r.reserveUnaryLocked(ctx, h, publisher, protected, resultPlan, decode, workload)
 	if err != nil {
 		r.mu.Unlock()
 		return nil, err
 	}
+	protected = i.protected
 	i.dependencies = dependencies
+	if controller != nil && controller.controller != nil {
+		// The invocation takes its own real alias before becoming publishable;
+		// closing the prepared handle cannot release a live publisher's owner.
+		i.controller, err = controller.clone()
+		i.operation = controller.operation
+	}
 	i.fixedResultRead = fixedRead
 	call := i.result
 	plan, clock, network, runtimeBytes := r.plan, r.clock, r.network, r.runtimeBytes
@@ -226,6 +267,7 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 		refs[4].Release()
 		refs[5].Release()
 		if err != nil {
+			i.controller.close()
 			if i.ticket != (rpcv4.Ticket{}) {
 				_ = network.Release(i.ticket)
 			}
@@ -249,6 +291,9 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 		}
 		close(i.preparationDone)
 	}()
+	if err != nil {
+		return nil, err
+	}
 	if protected && resultPlan == nil {
 		minimum, e := unaryResultCharge(runtimeBytes)
 		if e != nil {
@@ -260,8 +305,18 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 		}
 	}
 	if !fixedRead {
-		i.route, err = route.Clone(refs[3], runtimeBytes)
+		if controller != nil && controller.controller != nil {
+			i.route, err = r.routes.Capture(h.Fields().ServiceContractDigest, refs[3], runtimeBytes)
+		} else {
+			i.route, err = route.Clone(refs[3], runtimeBytes)
+		}
 		if err != nil {
+			return nil, err
+		}
+		if err = i.route.CheckRequest(h); err != nil {
+			return nil, err
+		}
+		if err = i.route.WithRegistered(func() error { return nil }); err != nil {
 			return nil, err
 		}
 		_, i.policy, err = i.route.Policy()
@@ -286,7 +341,34 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 			return nil, err
 		}
 	}
-	i.deadline, err = timev4.NewDeadline(clock, h.Fields().DeadlineAtMS)
+	var completionDeadline *timev4.Deadline
+	if original != nil {
+		var deadline *timev4.Deadline
+		deadline, err = original.StartDeadline()
+		if err == nil {
+			i.deadline, err = deadline.Fork(h.Fields().DeadlineAtMS)
+		}
+		if err == nil {
+			deadline, err = original.PreparationDeadline()
+		}
+		if err == nil {
+			i.preparation, err = deadline.Fork(deadline.Cap())
+		}
+		if err == nil {
+			deadline, err = original.CompletionDeadline()
+		}
+		if err == nil && deadline.Cap() != completionEnd {
+			err = cryptov4.ErrConfiguration
+		}
+		if err == nil {
+			completionDeadline, err = deadline.Fork(completionEnd)
+		}
+	} else {
+		i.deadline, err = timev4.NewDeadline(clock, h.Fields().DeadlineAtMS)
+		if err == nil {
+			completionDeadline, err = timev4.NewDeadline(clock, completionEnd)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -299,15 +381,20 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 	}
 	if resultPlan != nil {
 		var subscriptionFloor *protocolv4.DeliverySubscriptionFloor
+		var resultPosition environmentResultProtection
 		if protected {
 			subscriptionFloor = r.deliveryFloor
-			if subscriptionFloor == nil {
+			resultPosition = r.shortResultPosition
+			if subscriptionFloor == nil || resultPosition.environment == nil {
 				return nil, cryptov4.ErrNotReady
 			}
 		}
+		if workload != nil {
+			subscriptionFloor, resultPosition = workload.authority, workload.result
+		}
 		var inputCancel context.CancelFunc
 		i.ctx, inputCancel = context.WithCancel(ctx)
-		if err = call.prepareResult(resultPlan, plan.executor, refs[4], refs[5], i.future, authorization, runtimeBytes, inputCancel, &i.dependencies, i.dependency, subscriptionFloor); err != nil {
+		if err = call.prepareResult(resultPlan, plan.executor, refs[4], refs[5], i.future, authorization, runtimeBytes, inputCancel, &i.dependencies, i.dependency, subscriptionFloor, resultPosition); err != nil {
 			inputCancel()
 			return nil, err
 		}
@@ -328,7 +415,9 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 	}
 	// The channel association is supplied by its original publisher, never by
 	// caller wire bytes. The publisher repeats exact canonical header equality.
-	if class == ApplicationShort {
+	if workload != nil {
+		i.ticket, err = i.publisher.ReserveProtectedRequest(h, workload.network, class == ApplicationShort)
+	} else if class == ApplicationShort {
 		i.ticket, err = i.publisher.ReserveShortRequest(h)
 	} else {
 		i.ticket, err = i.publisher.ReserveRequest(h)
@@ -336,9 +425,8 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 	if err != nil {
 		return nil, err
 	}
-	completionDeadline, err := timev4.NewDeadline(clock, completionEnd)
-	if err != nil {
-		return nil, err
+	if workload != nil {
+		workload.activeCall.Store(i)
 	}
 	if resultPlan != nil {
 		i.completion, err = network.NewOwnedTimedCompletion(i.ticket, unaryResponseLimit(h), refs[2], call.deferred.metadata, runtimeBytes, completionDeadline)
@@ -356,12 +444,13 @@ func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute,
 	}
 	i.mu.Lock()
 	i.preparing = false
+	call.mu.Lock()
+	call.invocation = i
 	if call.deferred != nil {
-		call.mu.Lock()
 		call.deferred.preparing = false
-		call.invocation, call.request, call.publication = i, h, i.publication
-		call.mu.Unlock()
+		call.request, call.publication = h, i.publication
 	}
+	call.mu.Unlock()
 	i.mu.Unlock()
 	return call, nil
 }
@@ -373,6 +462,7 @@ func (r *RPCServices) AdvanceCalls() {
 	if r == nil {
 		return
 	}
+	defer r.advanceWorkloads()
 	defer r.advanceOperations()
 	r.mu.Lock()
 	i, closed, count := r.localCall, r.closed, len(r.generalCalls)
@@ -408,7 +498,7 @@ func (r *RPCServices) removeUnaryLocked(i *unaryInvocation) {
 	}
 }
 
-func (r *RPCServices) reserveUnaryLocked(ctx context.Context, h protocolv4.ApplicationHeader, publisher *rpcv4.Publisher, protected bool, resultPlan *unaryResultPlan, decode UnaryDecoder) (_ *unaryInvocation, refs [6]resourcev4.Reference, err error) {
+func (r *RPCServices) reserveUnaryLocked(ctx context.Context, h protocolv4.ApplicationHeader, publisher *rpcv4.Publisher, protected bool, resultPlan *unaryResultPlan, decode UnaryDecoder, workload *unaryWorkloadSlot) (_ *unaryInvocation, refs [6]resourcev4.Reference, err error) {
 	index := -1
 	var future *CompletionReservation
 	defer func() {
@@ -419,20 +509,50 @@ func (r *RPCServices) reserveUnaryLocked(ctx context.Context, h protocolv4.Appli
 			}
 		}
 	}()
-	if protected {
-		if r.localCall != nil || h.Fields().PayloadBytes > r.shortRequestBytes || h.Fields().ResponseLimitBytes > r.shortResponseBytes {
+	if workload != nil {
+		protected = false
+		if workload.workload.services != r || !workload.used || workload.closed || workload.index >= len(r.generalCalls) || r.generalCalls[workload.index] != nil || r.workloadSlots[workload.index] != workload || resultPlan == nil {
 			return nil, refs, cryptov4.ErrCapacity
 		}
-		if err = resourcev4.CheckoutProtectedBatch(r.shortCaller[:], refs[:]); err != nil {
+		if err = workload.releaseCallUseLocked(); err != nil {
 			return nil, refs, err
 		}
-		future, err = r.completionFloor.Checkout()
-	} else {
+		index = workload.index
+		err = resourcev4.CheckoutProtectedBatch(workload.owners[workloadCall:workloadCompletion], refs[:])
+		if err == nil {
+			future, err = workload.completion.Checkout()
+		}
+		if err != nil {
+			return nil, refs, err
+		}
+	}
+	if protected {
+		// The short floor is a minimum opportunity, not a concurrency or wire
+		// limit. Larger legal calls and overlap with its real tails use spare
+		// general capacity without changing their trusted short work class.
+		protected = r.localCall == nil && h.Fields().PayloadBytes <= r.shortRequestBytes && unaryResponseLimit(h) <= r.shortResponseBytes
+		if protected {
+			err = resourcev4.CheckoutProtectedBatch(r.shortCaller[:], refs[:])
+			if err == nil {
+				future, err = r.completionFloor.Checkout()
+			}
+			if errors.Is(err, resourcev4.ErrCapacity) || errors.Is(err, cryptov4.ErrCapacity) {
+				for j := range refs {
+					refs[j].Release()
+					refs[j] = resourcev4.Reference{}
+				}
+				protected, err = false, nil
+			} else if err != nil {
+				return nil, refs, err
+			}
+		}
+	}
+	if !protected && workload == nil {
 		if r.callSerial == math.MaxUint64 {
 			return nil, refs, cryptov4.ErrCapacity
 		}
 		for j, call := range r.generalCalls {
-			if call == nil {
+			if call == nil && (j >= len(r.workloadSlots) || r.workloadSlots[j] == nil) {
 				index = j
 				break
 			}
@@ -441,33 +561,16 @@ func (r *RPCServices) reserveUnaryLocked(ctx context.Context, h protocolv4.Appli
 			return nil, refs, cryptov4.ErrCapacity
 		}
 		var charges [7]resourcev4.Vector
-		charges[0], err = shortUnaryMetadataCharge(r.runtimeBytes)
+		var caller [6]resourcev4.Vector
+		caller, err = shortCallerCharges(r.runtimeBytes, h.Fields().PayloadBytes, unaryResponseLimit(h))
 		if err != nil {
 			return nil, refs, err
 		}
-		charges[1], err = rpcv4.MessageSourceCharge(h.Fields().PayloadBytes, r.runtimeBytes)
-		if err != nil {
-			return nil, refs, err
-		}
-		charges[2], err = rpcv4.CompletionCharge(unaryResponseLimit(h), r.runtimeBytes)
-		if err != nil {
-			return nil, refs, err
-		}
-		charges[3], err = rpcv4.ContractRouteCharge(r.runtimeBytes)
-		if err != nil {
-			return nil, refs, err
-		}
+		copy(charges[:], caller[:4])
 		count, futureIndex, resultIndex := 5, 4, 2
 		if resultPlan != nil {
 			charges[0][resourcev4.SDKBytes] -= uint64(unsafe.Sizeof(UnaryCall{}))
-			charges[4], err = unaryResultCharge(r.runtimeBytes)
-			if err != nil {
-				return nil, refs, err
-			}
-			charges[5], err = protocolv4.CredentialSubscriptionsCharge().Add(resourcev4.Vector{resourcev4.SDKBytes: r.runtimeBytes})
-			if err != nil {
-				return nil, refs, err
-			}
+			copy(charges[4:6], caller[4:6])
 			count, futureIndex, resultIndex = 7, 6, 4
 		}
 		charges[futureIndex] = r.plan.executor.CompletionCharge()
@@ -507,6 +610,7 @@ func (r *RPCServices) reserveUnaryLocked(ctx context.Context, h protocolv4.Appli
 }
 
 func (i *unaryInvocation) advance(closed bool) bool {
+	i.advanceControllerRoute()
 	i.mu.Lock()
 	if i.preparing || i.cleaned {
 		cleaned := i.cleaned
@@ -522,7 +626,7 @@ func (i *unaryInvocation) advance(closed bool) bool {
 	i.mu.Lock()
 	i.publicationUsers--
 	defer i.mu.Unlock()
-	if i.preparing {
+	if i.preparing || i.relocating {
 		return false
 	}
 	if i.cleaned {
@@ -618,7 +722,6 @@ func (i *unaryInvocation) advance(closed bool) bool {
 		}
 		i.result.mu.Lock()
 		d.networkSettled = true
-		i.result.invocation = nil
 		inputCancel := d.inputCancel
 		d.inputCancel = nil
 		i.result.mu.Unlock()
@@ -627,15 +730,24 @@ func (i *unaryInvocation) advance(closed bool) bool {
 		}
 	}
 	i.dependencies.release()
+	i.controller.close()
 	i.route.Release()
 	i.route = rpcv4.ContractRoute{}
 	i.metadata.Release()
 	i.legacyResult.Release()
 	i.metadata, i.legacyResult = resourcev4.Reference{}, resourcev4.Reference{}
+	// All call kinds keep the original invocation until its actual provider
+	// and Completion tails exit. Detach only after releasing their ownership;
+	// observation cancellation alone is not cleanup evidence.
+	i.result.mu.Lock()
+	i.result.invocation = nil
+	i.result.mu.Unlock()
 	i.result, i.completion, i.task, i.publisher, i.publication = nil, nil, nil, nil, nil
 	i.deadline, i.ctx = nil, nil
+	i.preparation = nil
 	i.plan = nil
 	i.services = nil
+	i.operation = nil
 	i.cleaned = true
 	return true
 }

@@ -122,3 +122,81 @@ func (m *SignedMap) CheckDirectConnectionGuarantees(index uint64, role Direction
 	}
 	return nil
 }
+
+// CheckConnectionRequirements filters both physical legs of a signed tunnel.
+// It proves only eligibility; actual guarantees must come from a qualified
+// provider covering the complete route, including the forwarding relay.
+func (m *SignedMap) CheckConnectionRequirements(index uint64, r V4ConnectionRequirements) error {
+	if err := m.CheckCandidate(index); err != nil {
+		return err
+	}
+	candidate := m.Field("candidates").Index(int(index))
+	path, _ := candidate.Named("Candidate", "path_kind").Uint()
+	if path == 0 {
+		return m.CheckDirectConnectionRequirements(index, r)
+	}
+	session, err := m.SessionParameters()
+	if err != nil {
+		return err
+	}
+	if err = r.CheckProfile(session.Contract.Limits().ApplicationProfile); err != nil {
+		return err
+	}
+	ws, err := EnumValue("Leg", "carrier", "websocket")
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"client_leg", "server_leg"} {
+		leg := candidate.Named("Candidate", name)
+		carrier, _ := leg.Named("Leg", "carrier").Uint()
+		if carrier == ws && (r.IndependentReliableReadProgress || r.BoundStreamInputIsolation || r.Datagram) {
+			return ErrRequiredGuaranteeUnavailable
+		}
+	}
+	dialer, _ := candidate.Named("Candidate", "client_leg").Named("Leg", "dialer_role").Uint()
+	if r.LocalConsumerTls13Verification && dialer != uint64(ClientToServer) {
+		return ErrRequiredGuaranteeUnavailable
+	}
+	return nil
+}
+
+// CheckConnectionGuarantees never upgrades a single observed hop to a full
+// relay path. Native independence/datagrams require both compatible legs and
+// the original provider's complete relay-path qualification.
+func (m *SignedMap) CheckConnectionGuarantees(index uint64, role Direction, g V4ConnectionGuarantees) error {
+	if err := m.CheckCandidate(index); err != nil {
+		return err
+	}
+	candidate := m.Field("candidates").Index(int(index))
+	path, _ := candidate.Named("Candidate", "path_kind").Uint()
+	if path == 0 {
+		return m.CheckDirectConnectionGuarantees(index, role, g)
+	}
+	if !g.Valid() || g.Scope != V4ConnectionGuaranteeScopeCompleteRelayPath || role > ServerToClient {
+		return CBORFailure("carrier_binding_invalid")
+	}
+	ws, err := EnumValue("Leg", "carrier", "websocket")
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{"client_leg", "server_leg"} {
+		leg := candidate.Named("Candidate", name)
+		carrier, _ := leg.Named("Leg", "carrier").Uint()
+		if carrier == ws && (g.ReliableProgress != V4ReliableProgressSharedOrdered || g.BoundStreamInputIsolation != V4BoundStreamInputIsolationSharedFailureScope || g.Datagram) {
+			return CBORFailure("carrier_binding_invalid")
+		}
+	}
+	leg := candidate.Named("Candidate", "client_leg")
+	dialer, _ := leg.Named("Leg", "dialer_role").Uint()
+	if role == ServerToClient || dialer != uint64(ClientToServer) {
+		if g.LocalConsumerTls13Verification != V4ConsumerTLS13VerificationNotApplicable {
+			return CBORFailure("carrier_binding_invalid")
+		}
+	} else {
+		required, ok := leg.Named("Leg", "tls_policy").Named("TLSPolicy", "require_consumer_tls13_verification").Bool()
+		if !ok || g.LocalConsumerTls13Verification == V4ConsumerTLS13VerificationNotApplicable || required && g.LocalConsumerTls13Verification != V4ConsumerTLS13VerificationConsumerEnforced {
+			return CBORFailure("carrier_binding_invalid")
+		}
+	}
+	return nil
+}

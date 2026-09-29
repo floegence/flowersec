@@ -52,7 +52,7 @@ describe("v4.ts_rules", () => {
       else { positive += 1; expect(encode(decode()), vector.id).toEqual(input); }
       expect(ctx, vector.id).toEqual(before);
     }
-    expect(positive).toBe(337); expect(negative).toBe(relations ? 816 : 133); expect(separate).toBe(relations ? 12 : 0);
+    expect(positive).toBe(348); expect(negative).toBe(relations ? 821 : 134); expect(separate).toBe(relations ? 12 : 0);
   });
 
   // v4.ts_rules.scoped_paths

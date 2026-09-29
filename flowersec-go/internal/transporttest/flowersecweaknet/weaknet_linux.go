@@ -12,13 +12,13 @@ import (
 	"os/exec"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv3"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv3"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest/linuxnetlab"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/transporttest/tunnelworkload"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
+	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/linuxnetlab"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/tunnelworkload"
 	"golang.org/x/sys/unix"
 )
 

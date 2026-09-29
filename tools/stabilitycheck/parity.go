@@ -65,7 +65,7 @@ var expectedServerParityEntrypoints = map[string]string{
 	"go/endpoint-client/webtransport/tunnel/connect":                   "flowersec.Connect",
 	"go/direct-server/webtransport/direct/accept":                      "flowersec.NewAcceptor/NewWebTransportDirectListener",
 	"go/tunnel-runtime/webtransport/tunnel/pair-forward":               "flowersec.NewTunnelRuntime/NewWebTransportTunnelListener",
-	"go/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "flowersec-go/v5/controlplane",
+	"go/control-plane/carrier-neutral/carrier-neutral/issue-authorize": "flowersec-go/v6/controlplane",
 	"go/proxy-server/carrier-neutral/direct/proxy":                     "flowersec.NewProxyServer",
 	"node-typescript/endpoint-client/websocket/direct/connect":         "@floegence/flowersec-core/node connect",
 	"node-typescript/endpoint-client/websocket/tunnel/connect":         "@floegence/flowersec-core/node connect",
@@ -89,7 +89,7 @@ var expectedServerParityEntrypoints = map[string]string{
 
 var expectedPortableServerEntrypoints = map[string]map[string]string{
 	"controlplane_issue_authorize": {
-		"go": "flowersec-go/v5/controlplane",
+		"go": "flowersec-go/v6/controlplane",
 	},
 	"server_admission_paths": {
 		"go":         "flowersec.NewAcceptor: WebSocket/raw QUIC/WebTransport direct",

@@ -8,11 +8,12 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrDenied = errors.New("ledgerv4: authorization denied")
@@ -40,27 +41,42 @@ type sqliteLiveSpend struct {
 	store                                        *sqliteStore
 	invocation                                   *Invocation
 	plan                                         *protocolv4.LiveActivationPlan
+	relay                                        *SQLiteLiveRelayPublication
 	guard                                        func() error
 	reservation, storeReference                  resourcev4.Reference
 	key                                          [admissionKeyBytes]byte
 	keySize, spendingSize, targetSize, proofSize int
 	spending, target, scratch, proof             []byte
+	grants                                       [2][]byte
+	grantSizes                                   [2]int
+	tunnel                                       bool
 	authority                                    string
 	fence                                        uint64
 	started, running, closed, cleaned            bool
+	cleaning                                     bool
 }
 
-func SQLiteLiveSpendCharges(maxRecordBytes uint32) (owner, invocation resourcev4.Vector, err error) {
+func SQLiteLiveSpendCharges(maxRecordBytes uint32, tunnel ...bool) (owner, invocation resourcev4.Vector, err error) {
+	if len(tunnel) > 1 {
+		return owner, invocation, ErrConfiguration
+	}
 	proof, err := protocolv4.SchemaByteLimit("ActivationAuthorization")
 	if err != nil {
 		return owner, invocation, err
 	}
 	// Both the complete TxA projection and complete proof must fit together
 	// in the TxB record before policy is allowed to run.
-	if maxRecordBytes < uint32(2*proof+2048) || maxRecordBytes > 1<<20 {
+	grant := 0
+	if len(tunnel) == 1 && tunnel[0] {
+		grant, err = protocolv4.SchemaByteLimit("Grant")
+		if err != nil {
+			return owner, invocation, err
+		}
+	}
+	if maxRecordBytes < uint32(2*proof+4*grant+2048) || maxRecordBytes > 1<<20 {
 		return owner, invocation, ErrConfiguration
 	}
-	owner = resourcev4.Vector{resourcev4.SDKBytes: 3*uint64(maxRecordBytes) + uint64(proof) + uint64(unsafe.Sizeof(SQLiteLiveSpend{})) + uint64(unsafe.Sizeof(sqliteLiveSpend{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + 128, resourcev4.Items: 1, resourcev4.WorkSlots: 1}
+	owner = resourcev4.Vector{resourcev4.SDKBytes: 3*uint64(maxRecordBytes) + uint64(proof+2*grant) + uint64(unsafe.Sizeof(SQLiteLiveSpend{})) + uint64(unsafe.Sizeof(sqliteLiveSpend{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + uint64(unsafe.Sizeof(timev4.Window{})) + 384, resourcev4.Items: 1, resourcev4.WorkSlots: 1, resourcev4.Timers: 1}
 	invocation, err = InvocationCharge(admissionKeyBytes, int(maxRecordBytes))
 	return
 }
@@ -88,7 +104,8 @@ func NewSQLiteLiveSpend(ctx context.Context, store *SQLiteStore, authority SQLit
 			ref.Release()
 		}
 	}()
-	charge, _, err := SQLiteLiveSpendCharges(limit)
+	tunnel := plan.IsTunnel()
+	charge, _, err := SQLiteLiveSpendCharges(limit, tunnel)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +120,14 @@ func NewSQLiteLiveSpend(ctx context.Context, store *SQLiteStore, authority SQLit
 	}()
 	proofCap, _ := protocolv4.SchemaByteLimit("ActivationAuthorization")
 	a := &sqliteLiveSpend{store: store.sqliteStore, plan: plan, guard: guard, reservation: held, storeReference: ref, spending: make([]byte, limit), target: make([]byte, limit), scratch: make([]byte, limit), proof: make([]byte, proofCap), authority: identity.Authority, fence: epoch}
-	fields, unsignedSize, err := plan.CopyProjection(a.scratch)
+	a.tunnel = tunnel
+	if tunnel {
+		grantCap, _ := protocolv4.SchemaByteLimit("Grant")
+		for i := range a.grants {
+			a.grants[i] = make([]byte, grantCap)
+		}
+	}
+	fields, sizes, err := plan.CopyProjections([3][]byte{a.scratch, a.grants[0], a.grants[1]})
 	if err != nil {
 		return nil, err
 	}
@@ -149,16 +173,32 @@ func NewSQLiteLiveSpend(ctx context.Context, store *SQLiteStore, authority SQLit
 		return nil, ErrStorageUnavailable
 	}
 	w := admissionWriter{dst: a.spending}
-	w.text("flowersec/live-spending/1")
+	format := "flowersec/live-spending/2"
+	if tunnel {
+		format = "flowersec/live-spending/3"
+	}
+	w.text(format)
 	for _, n := range []uint64{1, epoch, identity.Generation, owner.Generation, deadline.Cap(), owner.ClientMaterialNotAfter, now.UpperMS, fields.Winner.Index} {
 		w.uint(n)
 	}
+	w.uint(fields.ParentInitiationEnd)
+	w.uint(fields.ParentSessionEnd)
 	w.text(identity.Authority)
-	for _, b := range [][]byte{identity.StoreID[:], owner.Invocation[:], owner.RequestDigest[:], intent[:], fields.Winner.CandidateID[:], fields.Winner.RouteDigest[:], fields.Artifact[:], fields.Signer[:]} {
+	w.text(fields.Tenant)
+	w.text(fields.Audience)
+	for _, b := range [][]byte{identity.StoreID[:], owner.Invocation[:], owner.RequestDigest[:], intent[:], fields.Winner.CandidateID[:], fields.Winner.RouteDigest[:], fields.Artifact[:], fields.Signer[:], fields.Issuer[:], fields.Lease[:], fields.Attempt[:], fields.ClientIdentity[:], fields.ServerIdentity[:]} {
 		w.bytes(b)
 	}
-	w.uint(uint64(unsignedSize))
-	w.bytes(a.scratch[:unsignedSize])
+	w.uint(uint64(sizes[0]))
+	w.bytes(a.scratch[:sizes[0]])
+	if tunnel {
+		for side := range a.grants {
+			w.bytes(fields.GrantSigners[side][:])
+			w.uint(uint64(sizes[side+1]))
+			w.bytes(a.grants[side][:sizes[side+1]])
+			clear(a.grants[side])
+		}
+	}
 	if w.err != nil {
 		return nil, w.err
 	}
@@ -170,7 +210,7 @@ func NewSQLiteLiveSpend(ctx context.Context, store *SQLiteStore, authority SQLit
 
 func (a *sqliteLiveSpend) check() error {
 	a.mu.Lock()
-	closed := a.closed
+	closed, relay := a.closed, a.relay
 	a.mu.Unlock()
 	if closed {
 		return ErrOwner
@@ -187,7 +227,36 @@ func (a *sqliteLiveSpend) check() error {
 	if err := a.storeReference.Check(); err != nil {
 		return err
 	}
+	if relay != nil {
+		if err := relay.Check(); err != nil {
+			return err
+		}
+	}
 	return a.guard()
+}
+
+// AttachRelayPublication transfers the already prepared local publication
+// owner to this original TxA/TxB invocation before policy can start.
+func (a *SQLiteLiveSpend) AttachRelayPublication(publication *SQLiteLiveRelayPublication) error {
+	if a == nil || a.sqliteLiveSpend == nil || publication == nil {
+		return ErrConfiguration
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed || a.started || a.relay != nil || !a.tunnel {
+		return ErrOwner
+	}
+	if err := publication.Check(); err != nil {
+		return err
+	}
+	publication.mu.Lock()
+	defer publication.mu.Unlock()
+	if publication.closed || publication.started || publication.original != nil || publication.plan != a.plan || publication.source != a.store {
+		return ErrOwner
+	}
+	publication.original = a.sqliteLiveSpend
+	a.relay = publication
+	return nil
 }
 
 // Authorize starts policy once only after original TxA confirmation. Positive
@@ -196,6 +265,16 @@ func (a *sqliteLiveSpend) check() error {
 // Callback errors become a consumed unknown outcome; neither queries nor a
 // second object may dispatch the old intent again.
 func (a *SQLiteLiveSpend) Authorize(policy func(context.Context) (bool, error), publish func(context.Context, []byte) error) (err error) {
+	if a == nil || a.sqliteLiveSpend == nil || a.tunnel || publish == nil {
+		return ErrConfiguration
+	}
+	return a.AuthorizeMaterial(policy, func(ctx context.Context, material [3][]byte) error { return publish(ctx, material[0]) })
+}
+
+// AuthorizeMaterial publishes the private original proof/client Grant/server
+// Grant only after their complete atomic TxB is durably confirmed. The callback
+// is the original invocation's sole dispatch; a read cannot reconstruct it.
+func (a *SQLiteLiveSpend) AuthorizeMaterial(policy func(context.Context) (bool, error), publish func(context.Context, [3][]byte) error) (err error) {
 	if a == nil || a.sqliteLiveSpend == nil || policy == nil || publish == nil {
 		return ErrConfiguration
 	}
@@ -206,10 +285,24 @@ func (a *SQLiteLiveSpend) Authorize(policy func(context.Context) (bool, error), 
 	}
 	a.started, a.running = true, true
 	a.mu.Unlock()
+	var first *OriginalCommit
 	defer func() {
+		// This is terminal bookkeeping in the original task after its actual
+		// write has exited. It never creates another callback or material owner.
+		// If the exact CAS cannot complete, retain the original failure and
+		// leave recovery to report unknown; cancellation alone is not a receipt.
+		if first != nil && first.revokeUndispatched() {
+			_ = a.finishNotStarted()
+		}
 		a.mu.Lock()
 		a.running = false
+		relay := a.relay
 		a.mu.Unlock()
+		if relay != nil {
+			if closeErr := relay.Close(); err == nil {
+				err = closeErr
+			}
+		}
 		if err != nil {
 			a.Close(err)
 		}
@@ -218,7 +311,7 @@ func (a *SQLiteLiveSpend) Authorize(policy func(context.Context) (bool, error), 
 		return err
 	}
 	tx := Transaction{Kind: SpendTxA, Authority: a.authority, Key: a.key[:a.keySize], BeforeVersion: 0, CommitVersion: 1, FencingEpoch: a.fence, Projection: a.spending[:a.spendingSize]}
-	first, err := a.invocation.Begin(tx)
+	first, err = a.invocation.Begin(tx)
 	if err != nil {
 		return err
 	}
@@ -247,24 +340,22 @@ func (a *SQLiteLiveSpend) Authorize(policy func(context.Context) (bool, error), 
 		outcome = 2
 	}
 	if outcome == 2 {
-		a.proofSize, err = a.plan.Issue(a.proof, a.check)
+		var sizes [3]int
+		sizes, err = a.plan.IssueMaterial([3][]byte{a.proof, a.grants[0], a.grants[1]}, a.check)
 		if err != nil {
 			return err
 		}
+		a.proofSize, a.grantSizes = sizes[0], [2]int{sizes[1], sizes[2]}
 	}
-	w := admissionWriter{dst: a.target}
-	w.text("flowersec/live-consumed/1")
-	w.uint(2)
-	w.uint(a.fence)
-	w.uint(outcome)
-	w.uint(uint64(a.spendingSize))
-	w.bytes(a.spending[:a.spendingSize])
-	w.uint(uint64(a.proofSize))
-	w.bytes(a.proof[:a.proofSize])
-	if w.err != nil {
-		return w.err
+	now, err := a.invocation.deadline.Sample()
+	if err != nil {
+		return err
 	}
-	a.targetSize = w.n
+	a.targetSize, err = encodeLiveMaterial(a.target, a.spending[:a.spendingSize], a.proof[:a.proofSize],
+		[2][]byte{a.grants[0][:a.grantSizes[0]], a.grants[1][:a.grantSizes[1]]}, a.fence, outcome, now.UpperMS, 2)
+	if err != nil {
+		return err
+	}
 	if outcome != 2 {
 		// No next irreversible action follows denied/unknown consumption, so
 		// no confirmation continuation is created for this terminal write.
@@ -294,8 +385,63 @@ func (a *SQLiteLiveSpend) Authorize(policy func(context.Context) (bool, error), 
 		if err := a.check(); err != nil {
 			return err
 		}
-		return publish(ctx, a.proof[:a.proofSize:a.proofSize])
+		if a.relay != nil {
+			if err := a.relay.publish(ctx, a.sqliteLiveSpend); err != nil {
+				return err
+			}
+		}
+		return publish(ctx, [3][]byte{a.proof[:a.proofSize:a.proofSize], a.grants[0][:a.grantSizes[0]:a.grantSizes[0]], a.grants[1][:a.grantSizes[1]:a.grantSizes[1]]})
 	})
+}
+
+// finishNotStarted reuses the original retained row/work buffers after the
+// callback guard is permanently closed. It may outlive caller cancellation,
+// but never the original claim deadline, clock era, store fence, or its single
+// bounded cleanup window. No confirmation continuation follows this write.
+func (a *sqliteLiveSpend) finishNotStarted() error {
+	i := a.invocation
+	window, err := timev4.NewWindow(i.clock, 2000)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(i.ctx), 2*time.Second)
+	defer cancel()
+	check := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := window.Check(); err != nil {
+			return err
+		}
+		now, err := i.deadline.Sample()
+		if err != nil {
+			return err
+		}
+		if !now.Mark.SameEra(i.origin) {
+			return timev4.ErrContinuity
+		}
+		return a.storeReference.Check()
+	}
+	if err = check(); err != nil {
+		return err
+	}
+	now, err := i.deadline.Sample()
+	if err != nil {
+		return err
+	}
+	a.targetSize, err = encodeLiveConsumed(a.target, a.spending[:a.spendingSize], nil, a.fence, 3, now.UpperMS)
+	if err != nil {
+		return err
+	}
+	s := a.store
+	if err = s.begin(ctx); err != nil {
+		return err
+	}
+	defer s.end()
+	if s.epoch != a.fence {
+		return ErrFenced
+	}
+	return s.writeTransaction(ctx, check, a.consume)
 }
 
 func (a *sqliteLiveSpend) consume() error {
@@ -344,7 +490,7 @@ func (b liveCommitStore) Commit(ctx context.Context, tx Transaction, dst []byte)
 		if present != int64(0) {
 			return ErrConflict
 		}
-		value, err := s.scalar("SELECT admission_rows+spend_rows FROM manifest WHERE id=1")
+		value, err := s.scalar("SELECT admission_rows+spend_rows+winner_rows+issuance_rows+relay_rows FROM manifest WHERE id=1")
 		if err != nil {
 			return err
 		}
@@ -431,24 +577,50 @@ func (a *SQLiteLiveSpend) Cleanup() error {
 	}
 	a.Close(ErrOwner)
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.cleaned {
+		a.mu.Unlock()
 		return nil
 	}
-	if a.running {
+	if a.running || a.cleaning {
+		a.mu.Unlock()
 		return ErrCapacity
 	}
+	a.cleaning = true
+	relay := a.relay
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.cleaning = false
+		a.mu.Unlock()
+	}()
 	if err := a.invocation.Cleanup(); err != nil {
 		return err
 	}
+	var cleanupErr error
+	if relay != nil {
+		cleanupErr = relay.Close()
+		relay.mu.Lock()
+		complete := relay.cleaned
+		relay.mu.Unlock()
+		if !complete {
+			return cleanupErr
+		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.relay = nil
 	clear(a.spending)
 	clear(a.target)
 	clear(a.scratch)
 	clear(a.proof)
+	for i := range a.grants {
+		clear(a.grants[i])
+		a.grants[i] = nil
+	}
 	clear(a.key[:])
 	a.spending, a.target, a.scratch, a.proof, a.guard, a.plan, a.store = nil, nil, nil, nil, nil, nil, nil
 	a.storeReference.Release()
 	a.reservation.Release()
 	a.cleaned = true
-	return nil
+	return cleanupErr
 }

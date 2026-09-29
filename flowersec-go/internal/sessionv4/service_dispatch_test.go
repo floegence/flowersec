@@ -10,27 +10,29 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 type serviceDispatchFixture struct {
-	f         *executorFixture
-	trust     *sessionAdmissionTrustFixture
-	plan      *SessionPlan
-	dispatch  *ServiceDispatch
-	network   *rpcv4.Network
-	routes    *rpcv4.ContractRoutes
-	publisher *rpcv4.Publisher
-	receiver  *rpcv4.Receiver
-	sink      *queryIntegrationSink
-	policy    protocolv4.ServiceContractPolicy
-	codec     *protocolv4.ApplicationHeaderCodec
-	serial    uint64
-	contract  *protocolv4.ServiceContract
-	history   *rpcv4.VolatileExecutions
+	f            *executorFixture
+	trust        *sessionAdmissionTrustFixture
+	plan         *SessionPlan
+	dispatch     *ServiceDispatch
+	network      *rpcv4.Network
+	routes       *rpcv4.ContractRoutes
+	publisher    *rpcv4.Publisher
+	receiver     *rpcv4.Receiver
+	sink         *queryIntegrationSink
+	policy       protocolv4.ServiceContractPolicy
+	codec        *protocolv4.ApplicationHeaderCodec
+	serial       uint64
+	contract     *protocolv4.ServiceContract
+	history      *rpcv4.VolatileExecutions
+	durable      *durableServiceStorage
+	closeSession func()
 }
 
 func newServiceDispatchFixture(t *testing.T, handler func(context.Context, UnaryRequest, *UnaryResponse) (uint32, error)) *serviceDispatchFixture {
@@ -77,11 +79,18 @@ func newServiceDispatchFixtureContract(t *testing.T, handler func(context.Contex
 	}
 	t.Cleanup(func() { authorization.Close(nil) })
 	body := initialFixture(t, "service_unary_transient")
+	if executionContract == "restart_flush" {
+		body = restartFlushContract(t)
+	}
 	profile := "services"
 	if execution {
 		profile = "execution"
-		body = initialFixture(t, executionContract)
-		body = bytes.Replace(body, []byte{0x0d, 0x01}, []byte{0x0d, 0x00}, 1)
+		if executionContract == "service_unary_durable_chain" {
+			body = initialFixture(t, "service_unary_execution")
+		} else {
+			body = initialFixture(t, executionContract)
+			body = bytes.Replace(body, []byte{0x0d, 0x01}, []byte{0x0d, 0x00}, 1)
+		}
 	}
 	cc, _ := protocolv4.NewServiceContractCodec(256)
 	contract, err := cc.Decode(body)
@@ -93,10 +102,26 @@ func newServiceDispatchFixtureContract(t *testing.T, handler func(context.Contex
 	if err != nil {
 		t.Fatal(err)
 	}
+	var durable *durableServiceStorage
+	if executionContract == "service_unary_durable_chain" {
+		durable = newDurableServiceStorage(t, f, trust.clock, env, contract, body)
+	}
 	rc := rpcv4.ContractRoutesConfig{Methods: []rpcv4.MethodRoutes{{Contracts: [][]byte{body}}}, ContractNodes: 256, RuntimeBytes: 4096}
 	if execution {
 		rc.Clock = trust.clock
 		rc.Methods[0].OfferWindowMS = 1000
+	}
+	if execution {
+		rc.Methods[0].InitialOffers = []protocolv4.AdmissionOfferBounds{{Digest: policy.Digest, NotBeforeMS: 1000, NotAfterMS: 2000}}
+		rc.Methods[0].AdvertisedContract = policy.Digest
+	}
+	if durable != nil {
+		var canonical [8192]byte
+		registration, err := durable.store.ReadRegistration(context.Background(), policy.Digest, canonical[:], func() error { return nil })
+		if err != nil || !registration.Enabled || !bytes.Equal(canonical[:registration.ContractBytes], body) {
+			t.Fatal("original durable registration unavailable", registration, err)
+		}
+		rc.Methods[0].InitialOffers = registration.Offers[:registration.OfferCount]
 	}
 	charge, _ = rpcv4.ContractRoutesCharge(rc)
 	routes, err := rpcv4.NewContractRoutes(rc, f.reserve(t, 1, charge))
@@ -104,16 +129,6 @@ func newServiceDispatchFixtureContract(t *testing.T, handler func(context.Contex
 		t.Fatal(err)
 	}
 	t.Cleanup(routes.Close)
-	if execution {
-		var offer [256]byte
-		encoded, err := protocolv4.EncodeMap(offer[:], "AdmissionOffer", []protocolv4.Field{{Name: "service_contract_digest", Kind: protocolv4.ByteString, Bytes: policy.Digest[:]}, {Name: "not_before_ms", Number: 1000}, {Name: "not_after_ms", Number: 2000}})
-		if err == nil {
-			err = routes.RegisterOffer(policy.Digest, encoded)
-		}
-		if err != nil {
-			t.Fatal("register execution offer", err)
-		}
-	}
 	nc := rpcv4.NetworkConfig{Session: testSessionContract(t, protocolv4.DHProfileX25519, profile, 4096, 4, 0, 5000).Contract, Query: rpcv4.QueryBinding{Type: 7, Contract: [32]byte{9}}, RuntimeBytes: 4096}
 	if execution {
 		nc.ResultRead = rpcv4.QueryBinding{Type: 3, Contract: policy.Digest}
@@ -157,7 +172,19 @@ func newServiceDispatchFixtureContract(t *testing.T, handler func(context.Contex
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := applicationTestPlan(t, f, SessionPlanConfig{Services: true, RuntimeBytes: 4096, ExecutionHistoryNamespaces: []string{policy.Namespace}, AuthorizeApplication: func(_ context.Context, c AuthenticatedRequestContext) (AuthorizeApplicationResult, error) {
+	var maintenance *MaintenanceOwner
+	if policy.RestartFlush {
+		charge, err := MaintenanceOwnerCharge(4, 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		maintenance, err = NewMaintenanceOwner(4, 4096, f.reserve(t, 1, charge))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(maintenance.Close)
+	}
+	plan := applicationTestPlan(t, f, SessionPlanConfig{MaintenanceOwner: maintenance, Services: true, RuntimeBytes: 4096, ExecutionHistoryNamespaces: []string{policy.Namespace}, AuthorizeApplication: func(_ context.Context, c AuthenticatedRequestContext) (AuthorizeApplicationResult, error) {
 		lease, err := c.ReserveLease(c.Binding(), "original context", func(context.Context) error { return nil })
 		if err == nil {
 			err = lease.SetServiceAccess(policy.Namespace, policy.Type, true)
@@ -190,21 +217,26 @@ func newServiceDispatchFixtureContract(t *testing.T, handler func(context.Contex
 	var history *rpcv4.VolatileExecutions
 	if execution {
 		owner := resourcev4.OwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Instance: [16]byte{120}, Backing: [16]byte{120}, Kind: 12}
-		hc := rpcv4.VolatileExecutionConfig{Root: root, Owner: owner, Clock: trust.clock, Service: rpcv4.ExecutionService{Tenant: "tenant", Audience: "audience", Namespace: policy.Namespace}, CallerAuthorities: [][32]byte{{8}}, Records: 16, Active: 4, TaskCharge: f.executor.TaskCharge(), RuntimeBytes: 4096, WorkRuntimeBytes: 4096, ResultRuntimeBytes: 4096}
-		charge, err := rpcv4.VolatileExecutionsCharge(hc)
-		if err != nil {
-			t.Fatal(err)
+		var ref resourcev4.Reference
+		if durable == nil {
+			hc := rpcv4.VolatileExecutionConfig{Root: root, Owner: owner, Clock: trust.clock, Service: rpcv4.ExecutionService{Tenant: "tenant", Audience: "audience", Namespace: policy.Namespace}, CallerAuthorities: [][32]byte{{8}}, Records: 16, Active: 4, TaskCharge: f.executor.TaskCharge(), RuntimeBytes: 4096, WorkRuntimeBytes: 4096, ResultRuntimeBytes: 4096}
+			charge, err := rpcv4.VolatileExecutionsCharge(hc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref, err = root.Reserve(owner, charge)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(ref.Release)
+			history, err = rpcv4.NewVolatileExecutions(hc, ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(history.Close)
+		} else {
+			config.DurableProviderRuntimeBytes = 65536
 		}
-		ref, err := root.Reserve(owner, charge)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(ref.Release)
-		history, err = rpcv4.NewVolatileExecutions(hc, ref)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(history.Close)
 		owner.Instance, owner.Backing = [16]byte{121}, [16]byte{121}
 		rc := rpcv4.ServiceRegistryConfig{Root: root, Owner: owner, Entries: 4, RuntimeBytes: 4096}
 		charge, err = rpcv4.ServiceRegistryCharge(rc)
@@ -221,7 +253,11 @@ func newServiceDispatchFixtureContract(t *testing.T, handler func(context.Contex
 			t.Fatal(err)
 		}
 		t.Cleanup(registry.Close)
-		if err = registry.Bind(rpcv4.ServiceBinding{Authority: rpcv4.ServiceAuthority{Tenant: "tenant", Audience: "audience", Namespace: policy.Namespace}, History: history}); err != nil {
+		binding := rpcv4.ServiceBinding{Authority: rpcv4.ServiceAuthority{Tenant: "tenant", Audience: "audience", Namespace: policy.Namespace}, History: history}
+		if durable != nil {
+			binding.DurableHistory = durable.history
+		}
+		if err = registry.Bind(binding); err != nil {
 			t.Fatal(err)
 		}
 		config.ExecutionRegistry = registry
@@ -264,7 +300,7 @@ func newServiceDispatchFixtureContract(t *testing.T, handler func(context.Contex
 		t.Fatal(err)
 	}
 	dispatch.activate()
-	t.Cleanup(func() {
+	closeSession := func() {
 		plan.Close()
 		receiver.Close()
 		publisher.Close()
@@ -285,9 +321,10 @@ func newServiceDispatchFixtureContract(t *testing.T, handler func(context.Contex
 			}
 			runtime.Gosched()
 		}
-	})
+	}
+	t.Cleanup(closeSession)
 	codec, _ := protocolv4.NewApplicationHeaderCodec()
-	return &serviceDispatchFixture{contract: contract, history: history, f: f, trust: trust, plan: plan, dispatch: dispatch, network: network, routes: routes, publisher: publisher, receiver: receiver, sink: sink, policy: policy, codec: codec}
+	return &serviceDispatchFixture{durable: durable, closeSession: closeSession, contract: contract, history: history, f: f, trust: trust, plan: plan, dispatch: dispatch, network: network, routes: routes, publisher: publisher, receiver: receiver, sink: sink, policy: policy, codec: codec}
 }
 func (f *serviceDispatchFixture) request(t *testing.T, payload []byte, mode uint8, deadline uint64) {
 	t.Helper()

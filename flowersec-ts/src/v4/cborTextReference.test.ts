@@ -56,7 +56,7 @@ describe("v4.ts_text", () => {
       else { expect(encode(decode()), vector.id).toEqual(raw); positive += 1; }
       expect(ctx).toEqual(before);
     }
-    expect(positive).toBe(337); expect(negative).toBe(826); expect(separate).toBe(2);
+    expect(positive).toBe(348); expect(negative).toBe(831); expect(separate).toBe(2);
   });
 
   // v4.ts_text.address_boundaries

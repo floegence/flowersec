@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/artifactv3"
 )
 
 // ErrInvalidArtifact reports an invalid or forged opaque artifact handle.

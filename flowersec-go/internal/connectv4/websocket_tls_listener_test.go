@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/tlspolicy"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func serverTLSCertificate(t *testing.T, days int, dns string) ([]byte, *ecdsa.PrivateKey, *x509.CertPool) {

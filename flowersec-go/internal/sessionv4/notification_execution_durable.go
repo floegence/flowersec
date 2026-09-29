@@ -4,8 +4,9 @@ import (
 	"context"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func (d *NotificationDispatch) admitDurableNotification(message *rpcv4.NotifyMessage, history *rpcv4.DurableExecutions, access *notificationExecutionAccess, registration NotificationMethod) (bool, error) {
@@ -171,16 +172,16 @@ func (i *notificationExecution) runDurable() {
 	}
 	d := i.dispatch
 	var request NotificationRequest
-	err = d.withAuthority(i.method.Method, func(notificationMethod) error {
+	err = d.withAuthoritySample(i.method.Method, func(_ notificationMethod, sample timev4.Sample) error {
 		if i.ctx.Err() != nil {
 			return rpcv4.ErrClosed
 		}
-		if err := i.deadline.Check(); err != nil {
+		if err := i.deadline.CheckAt(sample); err != nil {
 			return err
 		}
 		for _, token := range d.tokens {
 			if token != nil && !token.closed && token.method.method.Method == i.method.Method && token.subscription.identity <= i.subscriberBoundary {
-				if err := token.enqueueLocked(i.deadline, payload); err != nil {
+				if err := token.enqueueLocked(i.deadline, payload, sample); err != nil {
 					token.gapLocked("dropped_budget")
 				}
 			}
@@ -196,13 +197,16 @@ func (i *notificationExecution) runDurable() {
 		return
 	}
 	defer exit()
+	if attachInvocationServices(callCtx, i.method.services) != nil {
+		return
+	}
 	if i.method.ExecutionHandler(callCtx, request) == nil {
 		_ = i.durableWork.Finish(context.Background(), 0, nil)
 	}
 }
 
 func (d *NotificationDispatch) advanceDurableNotification(index int, i *notificationExecution) {
-	err := i.access.WithExecutionAccess(rpcv4.ExecutionTarget{Service: i.access.service, Caller: i.access.caller}, func(resourcev4.Reference) error { return i.deadline.Check() })
+	err := i.access.withExecutionAccessSample(rpcv4.ExecutionTarget{Service: i.access.service, Caller: i.access.caller}, func(_ resourcev4.Reference, sample timev4.Sample) error { return i.deadline.CheckAt(sample) })
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if err != nil {

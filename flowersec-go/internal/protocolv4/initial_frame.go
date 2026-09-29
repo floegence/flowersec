@@ -39,6 +39,10 @@ func InitialFrame(frame FrameType, sender Direction, profile string) (InitialFra
 		return InitialFrameSpec{Maximum: p.HandshakeMessageBytes, Exact: p.HandshakeMessageBytes}, nil
 	case FrameReady:
 		schema = "READY"
+	case FrameHopAuth:
+		// HOP_AUTH is deliberately excluded from the direct InitialExchange.
+		// Callers must carry an explicit tunnel activated-preauth context.
+		return InitialFrameSpec{}, ErrHopAuthStage
 	default:
 		return InitialFrameSpec{}, ErrUnknownFrame
 	}
@@ -55,6 +59,27 @@ func InitialFrame(frame FrameType, sender Direction, profile string) (InitialFra
 	}
 	maximum, err := SchemaByteLimit(schema)
 	return InitialFrameSpec{Schema: schema, Maximum: maximum}, err
+}
+
+// InitialFrameContext is the explicit phase proof required before admitting a
+// HOP_AUTH frame. A frame type or ALPN alone cannot put a carrier into this
+// state; the tunnel owner installs this context only after its activated
+// pre-auth checks have succeeded.
+type InitialFrameContext struct {
+	Tunnel           bool
+	ActivatedPreauth bool
+	HopSenderRole    HopSenderRole
+	HopPhase         HopAuthPhase
+}
+
+func InitialFrameForContext(frame FrameType, sender Direction, profile string, context InitialFrameContext) (InitialFrameSpec, error) {
+	if frame == FrameHopAuth {
+		if !context.Tunnel {
+			return InitialFrameSpec{}, ErrHopAuthStage
+		}
+		return HopAuthFrameSpec(context.ActivatedPreauth, sender, context.HopSenderRole, context.HopPhase)
+	}
+	return InitialFrame(frame, sender, profile)
 }
 
 func (s InitialFrameSpec) CheckLength(n int) error {

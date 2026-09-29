@@ -6,9 +6,10 @@ import (
 	"io"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 const (
@@ -214,7 +215,7 @@ func (x *NativeDataAssembly) read(ctx context.Context, reader io.Reader, service
 		// STOPPED. It cannot invalidate that proof or reset the reverse direction.
 		// Partial input, arbitrary provider errors and earlier failures remain
 		// failures; neither an EOF hint nor a peer tuple alone proves drainage.
-		if err == io.EOF && input.read == 0 && x.cause == nil && !x.closed && !x.pool.closed && !flow.fenced && flow.hasTerminal && flow.observed == flow.terminal && ctx.Err() == nil {
+		if (err == io.EOF || err == native.ErrNormalDrained) && input.read == 0 && x.cause == nil && !x.closed && !x.pool.closed && !flow.fenced && flow.hasTerminal && flow.observed == flow.terminal && ctx.Err() == nil {
 			err = errNativeDataTerminal
 			x.phase, x.closed = nativeDataIdle, true
 			x.signalStateLocked()
@@ -446,6 +447,9 @@ func (x *NativeDataAssembly) failLocked(err error) {
 	if x.cause == nil {
 		x.cause = err
 		if x.flow != nil {
+			if send := x.flow.streamSend; send != nil {
+				send.reset.Store(true)
+			}
 			x.flow.termination.start(true, err)
 		}
 	}

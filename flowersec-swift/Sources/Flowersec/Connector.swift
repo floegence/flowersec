@@ -51,7 +51,7 @@ public struct ConnectError: Error, Equatable, Sendable {
   }
 }
 
-/// Establishes a carrier-neutral Transport v3 session from a strict v3 lease.
+/// Establishes a carrier-neutral Transport v4 session from a strict lease.
 ///
 /// Candidate capability filtering and TLS verification happen before the
 /// single-use lease is spent. No downgrade path is available.

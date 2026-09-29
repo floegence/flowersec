@@ -84,6 +84,12 @@ type ControllerObservation = Readonly<{
 
 type ScenarioRunner = (scenario: ControllerScenario) => Promise<void>;
 
+type MutableFixtureFields<T> = { -readonly [Key in keyof T]: T[Key] };
+type MutableArtifactFixture = Omit<ArtifactV3, "path" | "session"> & {
+  path: MutableFixtureFields<ArtifactV3["path"]>;
+  session: MutableFixtureFields<ArtifactV3["session"]>;
+};
+
 const artifactFixture = JSON.parse(readFileSync(
   new URL("../../../testdata/transport_v3/artifact_vectors.json", import.meta.url),
   "utf8",
@@ -970,7 +976,7 @@ class VectorTracker {
     this.transportsCreated += transportsCreated;
   }
 
-  observe(controller: ReturnType<typeof createConnectionControllerV3>): ControllerObservation {
+  observe<Session extends ManagedSessionV3>(controller: ConnectionControllerV3<Session>): ControllerObservation {
     let disposition: string | null = null;
     const unsubscribe = controller.subscribe((snapshot) => {
       disposition = snapshot.retryDisposition?.kind ?? null;
@@ -1121,7 +1127,7 @@ function singleCandidateArtifact(input: ArtifactV3, id: string): ArtifactV3 {
 }
 
 function multiCandidateArtifact(input: ArtifactV3, count: number): ArtifactV3 {
-  const output = structuredClone(input) as ArtifactV3;
+  const output: MutableArtifactFixture = structuredClone(input);
   output.path.candidates = output.path.candidates.slice(0, count);
   if (output.path.candidates.length !== count) throw new Error(`fixture has fewer than ${count} candidates`);
   return output;
@@ -1138,7 +1144,7 @@ function allCandidateFailures(
 }
 
 function mixedCAPinArtifact(input: ArtifactV3): ArtifactV3 {
-  const output = structuredClone(input) as ArtifactV3;
+  const output: MutableArtifactFixture = structuredClone(input);
   output.path.candidates = output.path.candidates
     .filter(({ id }) => id === "w-ca" || id === "t-pin")
     .map((candidate) => structuredClone(candidate));
@@ -1158,7 +1164,7 @@ function twoPinArtifact(input: ArtifactV3): ArtifactV3 {
 }
 
 function withChangedPin(input: ArtifactV3): ArtifactV3 {
-  const output = structuredClone(input) as ArtifactV3;
+  const output: MutableArtifactFixture = structuredClone(input);
   output.path.candidates = output.path.candidates.map((candidate) => candidate.tls.mode !== "pin" ? candidate : {
     ...candidate,
     tls: {
@@ -1174,13 +1180,13 @@ function withChangedPin(input: ArtifactV3): ArtifactV3 {
 }
 
 function withInitExpiry(input: ArtifactV3, expiry: number): ArtifactV3 {
-  const output = structuredClone(input) as ArtifactV3;
+  const output: MutableArtifactFixture = structuredClone(input);
   output.session.init_expire_at_unix_s = expiry;
   return output;
 }
 
 function withCandidateCA(input: ArtifactV3): ArtifactV3 {
-  const output = structuredClone(input) as ArtifactV3;
+  const output: MutableArtifactFixture = structuredClone(input);
   output.path.candidates = output.path.candidates.map((candidate) => ({ ...candidate, tls: { mode: "ca" } }));
   return output;
 }
@@ -1223,7 +1229,7 @@ function browserWebTransportArtifact(
     tls: "ca" | "pin" | "existing";
   }>[],
 ): ArtifactV3 {
-  const output = structuredClone(input) as ArtifactV3;
+  const output: MutableArtifactFixture = structuredClone(input);
   const template = output.path.candidates.find(({ carrier }) => carrier === "webtransport");
   if (template === undefined) throw new Error("WebTransport candidate required");
   output.path.candidates = candidates.map(({ id, host, tls }) => {
@@ -1288,7 +1294,7 @@ function numberInput(scenario: ControllerScenario, key: string): number {
   return value;
 }
 
-function controllerDisposition(controller: ReturnType<typeof createConnectionControllerV3>): string | null {
+function controllerDisposition<Session extends ManagedSessionV3>(controller: ConnectionControllerV3<Session>): string | null {
   let disposition: string | null = null;
   const unsubscribe = controller.subscribe((snapshot) => {
     disposition = snapshot.retryDisposition?.kind ?? null;
@@ -1297,8 +1303,8 @@ function controllerDisposition(controller: ReturnType<typeof createConnectionCon
   return disposition;
 }
 
-async function waitForControllerState(
-  controller: ReturnType<typeof createConnectionControllerV3>,
+async function waitForControllerState<Session extends ManagedSessionV3>(
+  controller: ConnectionControllerV3<Session>,
   state: string,
 ): Promise<void> {
   try {

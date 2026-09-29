@@ -391,13 +391,29 @@ function check(root) {
     if (examplePin !== undefined && examplePin !== rootPin) errors.push(`Swift shared pin ${identity} differs: ${rootPin} != ${examplePin}`);
   }
 
+  // The schema owns the complete registered native browser tuple. Permit
+  // only its exact generated data declaration; adapters still cannot invent
+  // protocol strings, parsers, or fallback paths outside that registry.
+  const carrierDeclarations = new Map();
+  if (fs.existsSync(path.join(root, "stability/transport_v4_schema.json"))) {
+    const registry = readJSON(root, "stability/transport_v4_schema.json").carrier_provider_registry;
+    if (registry !== undefined) {
+      carrierDeclarations.set("flowersec-ts/src/generated/transportV4Registry.ts", `export const transportV4CarrierProviderRegistry = ${JSON.stringify(registry)} as const;`);
+      carrierDeclarations.set("flowersec-rust/src/protocol_v4_registry_generated.rs", `pub(crate) const CARRIER_PROVIDER_REGISTRY_JSON: &str = ${JSON.stringify(JSON.stringify(registry))};`);
+    }
+  }
   const legacyFiles = [
     ...walkFiles(path.join(root, "flowersec-rust"), (file) => /\.(?:rs|toml|md)$/.test(file)),
     ...walkFiles(path.join(root, "flowersec-ts/src"), (file) => /\.(?:ts|js|mjs)$/.test(file) && !file.endsWith(".test.ts")),
     ...walkFiles(path.join(root, "scripts"), (file) => /\.(?:js|mjs)$/.test(file) && !path.basename(file).startsWith("check-dependency-contracts.")),
   ];
   for (const file of legacyFiles) {
-    const source = fs.readFileSync(file, "utf8");
+    let source = fs.readFileSync(file, "utf8");
+    const declaration = carrierDeclarations.get(path.relative(root, file));
+    if (declaration !== undefined) {
+      if (!source.includes(declaration)) errors.push(`generated carrier registry drift in ${path.relative(root, file)}`);
+      source = source.replace(declaration, "");
+    }
     if (/:protocol\s*(?:=|",|"\s*:\s*)\s*["']?webtransport["']?(?!-h3)|sec-webtransport-http3-draft[^\n]*draft02/i.test(source)) {
       errors.push(`legacy WebTransport wire in ${path.relative(root, file)}`);
     }

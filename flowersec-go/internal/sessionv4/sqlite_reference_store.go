@@ -6,10 +6,10 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // SQLiteReferenceStore adapts only query-reference persistence. Its provider
@@ -84,9 +84,8 @@ func (s *SQLiteReferenceStore) SaveOperationReference(ctx context.Context, ref p
 	if err := store.Save(ctx, ref); err != nil {
 		return ReferenceSaveUnknown, err
 	}
-	if err := ctx.Err(); err != nil {
-		return ReferenceSaveUnknown, err
-	}
+	// Save's successful durable commit is an immutable persistence fact.
+	// Cancellation competes separately with the original handle handoff.
 	return ReferenceSaveConfirmed, nil
 }
 

@@ -85,11 +85,12 @@ type nativeABIManifest struct {
 }
 
 type tsSubpath struct {
-	Specifier         string   `json:"specifier"`
-	PackageJSONExport string   `json:"package_json_export"`
-	DocTokens         []string `json:"doc_tokens"`
-	RuntimeExports    []string `json:"runtime_exports"`
-	TypeExports       []string `json:"type_exports,omitempty"`
+	Specifier         string              `json:"specifier"`
+	PackageJSONExport string              `json:"package_json_export"`
+	DocTokens         []string            `json:"doc_tokens"`
+	RuntimeExports    []string            `json:"runtime_exports"`
+	TypeExports       []string            `json:"type_exports,omitempty"`
+	TypeArguments     map[string][]string `json:"type_arguments,omitempty"`
 }
 
 type swiftManifest struct {
@@ -289,6 +290,16 @@ func validateManifest(repoRoot string, m *manifest) error {
 		}
 		if err := requireUnique("ts.type_exports("+subpath.Specifier+")", subpath.TypeExports); err != nil {
 			return err
+		}
+		for symbol, arguments := range subpath.TypeArguments {
+			if !slices.Contains(subpath.TypeExports, symbol) || len(arguments) == 0 {
+				return fmt.Errorf("ts.type_arguments(%s) must name a type export with nonempty arguments: %s", subpath.Specifier, symbol)
+			}
+			for _, argument := range arguments {
+				if strings.TrimSpace(argument) == "" {
+					return fmt.Errorf("ts.type_arguments(%s).%s contains an empty argument", subpath.Specifier, symbol)
+				}
+			}
 		}
 		for _, symbol := range subpath.RuntimeExports {
 			if _, removed := removedLegacyTSRuntimeExports[symbol]; removed {

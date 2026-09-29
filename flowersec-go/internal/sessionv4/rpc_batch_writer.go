@@ -6,10 +6,10 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // RPCBatchWriter is the one ordinary RPC publisher's attachment to the real
@@ -142,6 +142,17 @@ func (w *RPCBatchWriter) notifyLocked() {
 // are singleton batches. Source bytes remain immutable through this call and
 // are no longer borrowed on return. No provider or peer completion is inferred.
 func (w *RPCBatchWriter) TryAccept(ctx context.Context, fragments [][]byte) (uint64, error) {
+	return w.tryAcceptResponse(ctx, fragments, nil)
+}
+
+func (w *RPCBatchWriter) TryAcceptResponse(ctx context.Context, fragments [][]byte, publication *rpcv4.Publication) (uint64, error) {
+	if publication == nil {
+		return 0, cryptov4.ErrConfiguration
+	}
+	return w.tryAcceptResponse(ctx, fragments, publication)
+}
+
+func (w *RPCBatchWriter) tryAcceptResponse(ctx context.Context, fragments [][]byte, publication *rpcv4.Publication) (uint64, error) {
 	if w == nil || w.framing != channelRPC || ctx == nil || len(fragments) == 0 || len(fragments) > 4 {
 		return 0, cryptov4.ErrConfiguration
 	}
@@ -161,7 +172,7 @@ func (w *RPCBatchWriter) TryAccept(ctx context.Context, fragments [][]byte) (uin
 	if total > 65536 {
 		return 0, cryptov4.ErrConfiguration
 	}
-	return w.acceptBytes(ctx, fragments, total)
+	return w.acceptBytesGuarded(ctx, fragments, total, nil, publication)
 }
 
 func (w *RPCBatchWriter) TryAcceptNotify(ctx context.Context, chunk []byte) (uint64, error) {
@@ -175,7 +186,7 @@ func (w *RPCBatchWriter) acceptBytes(ctx context.Context, fragments [][]byte, to
 	return w.acceptBytesGuarded(ctx, fragments, total, nil)
 }
 
-func (w *RPCBatchWriter) acceptBytesGuarded(ctx context.Context, fragments [][]byte, total int, gate rpcv4.ManagementPublicationGate) (uint64, error) {
+func (w *RPCBatchWriter) acceptBytesGuarded(ctx context.Context, fragments [][]byte, total int, gate rpcv4.ManagementPublicationGate, publication ...*rpcv4.Publication) (uint64, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed || w.retired || w.queue == nil {
@@ -217,6 +228,9 @@ func (w *RPCBatchWriter) acceptBytesGuarded(ctx context.Context, fragments [][]b
 		q.accepted += uint64(total)
 		w.owner.accepted.Add(uint64(total))
 		w.tail = q.accepted
+		if len(publication) != 0 && publication[0] != nil {
+			q.responsePublication, q.responseTail = publication[0], w.tail
+		}
 		q.completion.accepted(q.accepted)
 		q.Notify() // Current SendService does not coalesce or wait for another write.
 		return nil

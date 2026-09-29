@@ -6,9 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // ErrCandidateExhausted means this immutable provider snapshot has no further
@@ -16,6 +18,9 @@ import (
 // providers must never retry the same endpoint under weaker TLS policy.
 var ErrCandidateExhausted = errors.New("sessionv4: candidate preparation exhausted")
 var ErrPreparationBudget = errors.New("sessionv4: preparation budget exhausted")
+
+const candidatePreparationMS = 30000
+const candidateCleanupMS = 5000
 
 // candidateRace is embedded in the original admitted source. Two fixed method
 // positions include canceled provider/Close tails; a position is reused only
@@ -28,17 +33,24 @@ type candidateRace struct {
 	config                SessionAdmissionConfig
 	slots                 [2]candidatePreparation
 	wake                  chan struct{}
-	next, ordinal         int
+	next                  int
 	attempts, bytes, work uint64
 	winner                *PreparedCarrier
 	winnerSlot            *candidatePreparation
 	winnerConfig          SessionAdmissionConfig
 	nextStart             time.Time
+	preparationWindow     *timev4.Window
 	closed                bool
 	last                  error
+	transportFailure      bool
+	nonTransportFailure   bool
 }
 
 type candidatePreparation struct {
+	parent              preparedCarrierReference
+	floor               *resourcev4.ProtectedReservation
+	providerPreparation CarrierPreparation
+	cleanupWindow       *timev4.Window
 	ctx                 sessionRuntimeContext
 	done                chan struct{}
 	route               []byte
@@ -49,12 +61,23 @@ type candidatePreparation struct {
 	retainedReservation resourcev4.Reference
 }
 
-func (r *candidateRace) init(p *sourcePreparation, s *EnvironmentSession, c SessionAdmissionConfig) {
+func (r *candidateRace) init(p *sourcePreparation, s *EnvironmentSession, c SessionAdmissionConfig) error {
+	window, err := timev4.NewWindow(c.Core.Clock, candidatePreparationMS)
+	if err != nil {
+		return err
+	}
 	r.source, r.session, r.config = p, s, c
+	r.preparationWindow = window
 	r.wake = make(chan struct{}, 1)
 	for i := range r.slots {
 		r.slots[i].route = make([]byte, p.config.Limits.Hello.RouteBytes)
+		r.slots[i].parent.origin = p.config.Environment
+		r.slots[i].parent.idle = p.references.carriers[i]
+		p.references.carriers[i] = resourcev4.Reference{}
+		r.slots[i].floor, p.references.carrierFloors[i] = p.references.carrierFloors[i], nil
+		r.slots[i].providerPreparation, p.references.providerPreparations[i] = p.references.providerPreparations[i], nil
 	}
+	return nil
 }
 
 func (r *candidateRace) signal() {
@@ -64,10 +87,13 @@ func (r *candidateRace) signal() {
 	}
 }
 
-func (r *candidateRace) stopLocked(winner *candidatePreparation) {
+func (r *candidateRace) stopLocked(winner *candidatePreparation, window *timev4.Window) {
 	for i := range r.slots {
 		slot := &r.slots[i]
 		if slot != winner && slot.done != nil {
+			if slot.cleanupWindow == nil {
+				slot.cleanupWindow = window
+			}
 			slot.ctx.cancel()
 		}
 	}
@@ -79,15 +105,22 @@ func (r *candidateRace) prepare() (*PreparedCarrier, SessionAdmissionConfig, err
 	if parallel == 0 {
 		parallel = 2
 	}
+	parallel = min(parallel, p.references.carrierCount)
 	parallel = min(parallel, int(p.selection.budget.ParallelCandidates))
-	timer := time.NewTimer(max(0, time.Until(r.nextStart)))
+	timer := time.NewTimer(0)
 	defer timer.Stop()
-	var tick <-chan time.Time = timer.C
-	mayStart := false
 	for {
 		if err := p.check(r.session); err != nil {
 			return nil, r.config, err
 		}
+		remaining, err := r.preparationWindow.RemainingMS()
+		if err != nil {
+			return nil, r.config, err
+		}
+		if _, _, err := r.loserCleanupRemaining(); err != nil {
+			return nil, r.config, err
+		}
+		mayStart := !time.Now().Before(r.nextStart)
 		r.mu.Lock()
 		if r.winner != nil {
 			winner, config := r.winner, r.winnerConfig
@@ -118,7 +151,14 @@ func (r *candidateRace) prepare() (*PreparedCarrier, SessionAdmissionConfig, err
 			if err == nil {
 				err = ErrCandidateExhausted
 			}
+			transport := r.transportFailure && !r.nonTransportFailure
 			r.mu.Unlock()
+			if transport {
+				// Only fully exhausted native preparation can supply this fact.
+				// Earlier refusal and cleanup failure cannot be hidden by a
+				// later disconnected candidate.
+				r.session.closeWithSource(err, true)
+			}
 			return nil, r.config, err
 		}
 		start := mayStart && free >= 0 && r.next < p.selection.count
@@ -132,7 +172,7 @@ func (r *candidateRace) prepare() (*PreparedCarrier, SessionAdmissionConfig, err
 			member, route, err := p.selection.candidate(position, slot.route)
 			config := r.config
 			if err == nil {
-				err = p.material.lease.lease.maps[0].CheckDirectConnectionRequirements(member.Index, config.Requirements)
+				err = p.material.lease.lease.maps[0].CheckConnectionRequirements(member.Index, config.Requirements)
 			}
 			if err == nil {
 				config.Features, err = p.material.lease.lease.maps[0].FeatureEnvelope(member.Index, protocolv4.FeatureEnvelopePolicy{LocalCapabilities: p.config.LocalCapabilities, ProposedOffer: p.config.Hello.Offered, RouteAllowedFeatures: p.config.Hello.Policy.RouteAllowedFeatures})
@@ -143,34 +183,41 @@ func (r *candidateRace) prepare() (*PreparedCarrier, SessionAdmissionConfig, err
 			if err != nil {
 				r.mu.Lock()
 				r.last = err
+				r.nonTransportFailure = true
 				r.mu.Unlock()
 				continue
 			}
 			r.mu.Lock()
 			slot.ctx = sessionRuntimeContext{parent: &r.session.context, done: make(chan struct{})}
 			slot.done, slot.member, slot.config, slot.cleanupError = make(chan struct{}), member, config, nil
+			slot.cleanupWindow = nil
 			r.mu.Unlock()
 			go r.run(slot, route)
-			mayStart = false
 			r.nextStart = time.Now().Add(250 * time.Millisecond)
-			timer.Reset(250 * time.Millisecond)
-			tick = timer.C
 			continue
 		}
+		// One original timer observes pacing, total preparation and canceled
+		// provider tails even when every candidate position is occupied.
+		delay := time.Duration(min(remaining, 100)) * time.Millisecond
+		if !mayStart {
+			delay = min(delay, max(time.Millisecond, time.Until(r.nextStart)))
+		}
+		timer.Reset(delay)
 		select {
 		case <-r.session.context.Done():
 			return nil, r.config, r.session.context.Err()
 		case <-r.wake:
-		case <-tick:
-			mayStart = true
-			tick = nil
+		case <-timer.C:
 		}
 	}
 }
 
 // claimAttempt consumes the complete qualified allowance before any provider
 // call. Failure/cancellation does not refund cumulative signed attempt budget.
-func (r *candidateRace) claimAttempt(address uint8) (resourcev4.Reference, error) {
+func (r *candidateRace) claimAttempt(slot *candidatePreparation, address uint8) (resourcev4.Reference, error) {
+	if err := r.preparationWindow.Check(); err != nil {
+		return resourcev4.Reference{}, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p := r.source
@@ -186,21 +233,13 @@ func (r *candidateRace) claimAttempt(address uint8) (resourcev4.Reference, error
 	if err := p.check(r.session); err != nil {
 		return resourcev4.Reference{}, err
 	}
-	charge, err := PreparedCarrierCharge(p.config.CarrierRuntimeBytes)
+	// The position stays charged through failed preparation and real cleanup.
+	// Reuse changes only its original handle generation; no root competition
+	// or new owner is introduced by a later address or signed candidate.
+	ref, err := slot.floor.Checkout()
 	if err != nil {
 		return resourcev4.Reference{}, err
 	}
-	var ref resourcev4.Reference
-	if r.ordinal == 0 {
-		ref = p.config.CarrierReservation
-		err = ref.Check()
-	} else {
-		ref, err = p.config.Root.Reserve(admissionResourceKey(p.config.Owner, 400+uint32(r.ordinal)), charge, p.config.Scope.Tenant)
-	}
-	if err != nil {
-		return resourcev4.Reference{}, err
-	}
-	r.ordinal++
 	r.attempts++
 	r.bytes += cost.PreauthBytes
 	r.work += cost.WorkUnits
@@ -222,10 +261,13 @@ func (r *candidateRace) run(slot *candidatePreparation, route []byte) {
 	var prepared *PreparedCarrier
 	var ref resourcev4.Reference
 	err := ErrEnvironmentTaskExit
+	var previousFailure error
+	transport := false
 	returned, handed := false, false
 	defer func() {
 		if recover() != nil || !returned {
 			err = ErrEnvironmentTaskExit
+			transport = false
 		}
 		if slot.cleanupError != nil {
 			slot.retained, slot.retainedReservation = prepared, ref
@@ -233,6 +275,8 @@ func (r *candidateRace) run(slot *candidatePreparation, route []byte) {
 		r.mu.Lock()
 		if err != nil {
 			r.last = err
+			r.transportFailure = transport
+			r.nonTransportFailure = r.nonTransportFailure || !transport
 		}
 		r.signal()
 		close(slot.done)
@@ -256,28 +300,52 @@ func (r *candidateRace) run(slot *candidatePreparation, route []byte) {
 	}
 	attempts = min(attempts, uint8(p.selection.budget.CandidateAddressAttempts))
 	for address := uint8(0); address < attempts; address++ {
+		transport = false
 		if err = slot.ctx.Err(); err != nil {
 			returned = true
 			return
 		}
-		ref, err = r.claimAttempt(address)
+		ref, err = r.claimAttempt(slot, address)
 		if err != nil {
 			returned = true
 			return
 		}
 		request := CarrierPreparationRequest{Config: PreparedCarrierConfig{Candidate: slot.member, Attempt: p.selection.attempt, Session: r.config.Core.Session, Role: protocolv4.ClientToServer, Deadline: p.config.Admission.Initial.Deadline, Reservation: ref, Environment: p.config.Environment, RuntimeBytes: p.config.CarrierRuntimeBytes}, Route: route, AddressAttempt: address, Budget: p.config.AttemptBudget}
-		prepared, err = p.config.Carrier.PrepareCarrier(&slot.ctx, request)
+		if p.references.carrierCount != 0 {
+			request.Config.originalParent = &slot.parent
+			request.Config.originalAlias = slot.parent.snapshot()
+		}
+		request.Scope = p.config.Scope
+		factory := p.config.Carrier
+		if slot.providerPreparation != nil {
+			factory = slot.providerPreparation
+		}
+		prepared, err = factory.PrepareCarrier(&slot.ctx, request)
+		addressesExhausted := err == native.ErrAddressesExhausted
+		if addressesExhausted {
+			if prepared != nil {
+				err = cryptov4.ErrConfiguration
+			} else if previousFailure != nil {
+				err = previousFailure
+			}
+		}
+		// A factory includes policy and binding work. Only a carrier's own
+		// native-boundary projection is evidence of preparation interruption.
+		transport = err == native.ErrConnectionLost
 		if err == nil && prepared == nil {
 			err = cryptov4.ErrConfiguration
 		}
 		if err == nil {
-			err = prepared.Check()
+			err = prepared.checkPreparation(request.Config)
 		}
 		if err == nil {
 			err = slot.config.Requirements.Check(prepared.guarantees)
 		}
 		if err == nil {
-			err = p.material.lease.lease.maps[0].CheckDirectConnectionGuarantees(slot.member.Index, protocolv4.ClientToServer, prepared.guarantees)
+			err = p.material.lease.lease.maps[0].CheckConnectionGuarantees(slot.member.Index, protocolv4.ClientToServer, prepared.guarantees)
+		}
+		if err == nil {
+			err = p.material.lease.lease.maps[0].CheckBindingMode(slot.member.Index, p.config.Hello.Policy.BindingMode)
 		}
 		if err == nil {
 			binding := prepared.AdmissionBinding()
@@ -286,6 +354,24 @@ func (r *candidateRace) run(slot *candidatePreparation, route []byte) {
 			}
 		}
 		if err == nil {
+			var policy protocolv4.HelloPolicy
+			policy, err = prepared.bindHelloPolicy(p.config.Hello.Policy, r.config.Core.Session.ArtifactDigest)
+			clear(policy.Exporter)
+		}
+		if err == nil {
+			var cleanupWindow *timev4.Window
+			var now timev4.Mark
+			now, err = p.config.Admission.Core.Clock.Monotonic()
+			if err == nil {
+				err = r.preparationWindow.CheckAt(now)
+			}
+			if err == nil {
+				cleanupWindow, err = timev4.NewWindowAt(p.config.Admission.Core.Clock, now, candidateCleanupMS)
+			}
+			if err != nil {
+				returned = true
+				return
+			}
 			r.mu.Lock()
 			if r.closed || r.winner != nil {
 				err = cryptov4.ErrClosed
@@ -295,13 +381,18 @@ func (r *candidateRace) run(slot *candidatePreparation, route []byte) {
 			if err == nil {
 				r.winner, r.winnerSlot, r.winnerConfig = prepared, slot, slot.config
 				handed = true
-				r.stopLocked(slot)
+				r.stopLocked(slot, cleanupWindow)
 			}
 			r.mu.Unlock()
 			if handed {
 				returned = true
 				return
 			}
+		}
+		if err != nil && !transport {
+			r.mu.Lock()
+			r.nonTransportFailure = true
+			r.mu.Unlock()
 		}
 		slot.cleanupError = ErrEnvironmentTaskExit
 		slot.cleanupError = retirePrepared(prepared)
@@ -312,10 +403,11 @@ func (r *candidateRace) run(slot *candidatePreparation, route []byte) {
 		prepared = nil
 		ref.Release()
 		ref = resourcev4.Reference{}
-		if errors.Is(err, ErrCandidateExhausted) {
+		if addressesExhausted || errors.Is(err, ErrCandidateExhausted) {
 			returned = true
 			return
 		}
+		previousFailure = err
 	}
 	returned = true
 }
@@ -332,6 +424,10 @@ func (r *candidateRace) rejectWinner(p *PreparedCarrier) error {
 	slot := r.winnerSlot
 	r.mu.Unlock()
 	<-slot.done
+	window, err := timev4.NewWindow(r.config.Core.Clock, candidateCleanupMS)
+	if err != nil {
+		return err
+	}
 	r.mu.Lock()
 	p.mu.Lock()
 	if p.admission != nil || p.activated {
@@ -342,6 +438,10 @@ func (r *candidateRace) rejectWinner(p *PreparedCarrier) error {
 	p.sealLocked(nil)
 	p.mu.Unlock()
 	slot.ctx.cancel()
+	if slot.cleanupWindow == nil {
+		slot.cleanupWindow = window
+	}
+	r.nonTransportFailure = true
 	r.winner, r.winnerSlot = nil, nil
 	slot.done = make(chan struct{})
 	r.mu.Unlock()
@@ -374,7 +474,7 @@ func (r *candidateRace) cleanup() error {
 	}
 	r.mu.Lock()
 	r.closed = true
-	r.stopLocked(nil)
+	r.stopLocked(nil, nil)
 	r.mu.Unlock()
 	for i := range r.slots {
 		slot := &r.slots[i]

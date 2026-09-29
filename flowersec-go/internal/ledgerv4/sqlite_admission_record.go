@@ -3,7 +3,7 @@ package ledgerv4
 import (
 	"encoding/binary"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 const (
@@ -54,7 +54,7 @@ func (r *admissionRecord) encode(dst []byte, state byte, terminalAt uint64, rese
 	for _, s := range []string{r.authority, f.Tenant, f.Audience, f.Profile, f.Source, f.SpendAuthority, f.WinnerAuthority, f.SigningKey} {
 		w.text(s)
 	}
-	for _, b := range [][]byte{f.Issuer[:], f.Lease[:], f.Attempt[:], f.Candidate[:], f.Artifact[:], f.Proof[:], f.SessionNonce[:], f.ClientIdentity[:], f.ServerIdentity[:], f.AdmissionBinding[:], f.HelloTranscript[:], f.TransportContext[:], f.AdmissionNonce[:], f.Route[:]} {
+	for _, b := range [][]byte{f.Issuer[:], f.Lease[:], f.Attempt[:], f.Candidate[:], f.Artifact[:], f.Proof[:], f.SessionNonce[:], f.ClientIdentity[:], f.ServerIdentity[:], f.AdmissionBinding[:], f.HelloTranscript[:], f.TransportContext[:], f.AdmissionNonce[:], f.Route[:], f.CandidateSet[:]} {
 		w.bytes(b)
 	}
 	for _, n := range []uint64{f.CandidateIndex, f.IssuedAt, f.ActivationEnd, f.SessionEnd, f.Features, f.BindingMode} {

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func installQueryClient(t *testing.T, f *rpcFixture) *ContractQueryClient {
@@ -29,7 +29,7 @@ func beginClientQuery(t *testing.T, f *rpcFixture, c *ContractQueryClient) Contr
 	if err != nil {
 		t.Fatal(err)
 	}
-	call, err := c.Begin(f.p, []protocolv4.ContractQueryTarget{{Namespace: policy.Namespace, Type: policy.Type}}, []*protocolv4.ServiceContract{nil}, 50000)
+	call, err := c.Begin(f.p, []protocolv4.ContractQueryTarget{{Namespace: policy.Namespace, Type: policy.Type}}, []protocolv4.ContractQueryKnown{nil}, 50000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestContractQueryClientRetainsCompleteAndBorrowedVectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	set, err := codec.Decode(targets, payload, []*protocolv4.ServiceContract{nil}, []uint64{0}, [][]byte{make([]byte, 8192)})
+	set, err := codec.Decode(targets, payload, []protocolv4.ContractQueryKnown{nil}, []uint64{0}, [][]byte{make([]byte, 8192)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestContractQueryClientRetainsCompleteAndBorrowedVectors(t *testing.T) {
 	}
 	second := beginClientQuery(t, a, client)
 	policy, _ := contract.Policy()
-	if _, err := client.Begin(a.p, []protocolv4.ContractQueryTarget{{Namespace: policy.Namespace, Type: policy.Type}}, []*protocolv4.ServiceContract{nil}, 50000); !errors.Is(err, ErrCapacity) {
+	if _, err := client.Begin(a.p, []protocolv4.ContractQueryTarget{{Namespace: policy.Namespace, Type: policy.Type}}, []protocolv4.ContractQueryKnown{nil}, 50000); !errors.Is(err, ErrCapacity) {
 		t.Fatal("logical Q2 completion refunded an old complete vector", err)
 	}
 	borrow.Release()
@@ -146,7 +146,7 @@ func TestContractQueryClientFixedDecodeRetainsOriginalResponse(t *testing.T) {
 	pumpRPC(t, b, a)
 	pumpRPC(t, b, a)
 	outputs := [][]byte{make([]byte, 8192)}
-	decoder, err := call.BeginDecode([]*protocolv4.ServiceContract{nil}, []uint64{0}, outputs)
+	decoder, err := call.BeginDecode([]protocolv4.ContractQueryKnown{nil}, []uint64{0}, outputs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestContractQueryClientMalformedSnapshotFailsOriginalChannel(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
-	decoder, err := call.BeginDecode([]*protocolv4.ServiceContract{nil}, []uint64{0}, [][]byte{make([]byte, 8192)})
+	decoder, err := call.BeginDecode([]protocolv4.ContractQueryKnown{nil}, []uint64{0}, [][]byte{make([]byte, 8192)})
 	if err != nil {
 		t.Fatal(err)
 	}

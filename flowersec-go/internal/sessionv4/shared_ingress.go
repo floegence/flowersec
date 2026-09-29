@@ -7,10 +7,10 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var (
@@ -37,6 +37,7 @@ type SharedIngress struct {
 	carrier                      *CarrierAssociation
 	receiver                     *RecordReceiver
 	reservation                  resourcev4.Reference
+	input                        connectionInputReader
 	closed                       bool
 	discardPolicy                SharedDiscardPolicy
 	discardWindow                *timev4.Window
@@ -296,10 +297,11 @@ func (g *SharedIngress) rejectClosedData(kind protocolv4.FrameType, header proto
 	if index := a.find(header.Scope); index >= 0 {
 		s := &a.slots[index]
 		closed = closed || !s.accepted && s.rejectionToken && (s.phase == openRecent || s.phase == openHeld)
+		closed = closed || s.accepted && s.coreCleaned && (s.phase == openRecent || s.phase == openHeld)
 		if s.accepted && s.flow != nil {
 			f := s.flow.receive
 			f.pool.mu.Lock()
-			closed = f.sharedInputFailed || f.hasTerminal && f.observed == f.terminal || s.drainSubmitted && f.fenced
+			closed = closed || f.sharedInputFailed || f.hasTerminal && f.observed == f.terminal || s.drainSubmitted && f.fenced
 			f.pool.mu.Unlock()
 		}
 	}

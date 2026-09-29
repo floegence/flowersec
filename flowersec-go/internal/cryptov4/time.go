@@ -3,7 +3,7 @@ package cryptov4
 import (
 	"errors"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func securityTimeError(err error) error {

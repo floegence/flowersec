@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -12,15 +13,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/defaults"
-	internaljsonframe "github.com/floegence/flowersec/flowersec-go/v5/internal/framing/jsonframe"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/defaults"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/gorilla/websocket"
 )
 
 const (
 	proxyHTTPStreamKind = "flowersec-proxy/http1"
 	proxyWSStreamKind   = "flowersec-proxy/ws"
-	proxyWireVersion    = 1
+	proxyWireVersion    = 2
 )
 
 var ErrInvalidProxyServer = errors.New("invalid Flowersec proxy server")
@@ -29,9 +30,12 @@ var ErrInvalidProxyServer = errors.New("invalid Flowersec proxy server")
 // application. The upstream is fixed by the application and can never be
 // selected by an untrusted session peer.
 type ProxyServerOptions struct {
-	Upstream                    string
-	UpstreamOrigin              string
-	AllowedUpstreamHosts        []string
+	Upstream             string
+	UpstreamOrigin       string
+	AllowedUpstreamHosts []string
+	// AllowedUpstreamAddresses fixes the numeric addresses or CIDRs for a named
+	// upstream. Numeric upstreams are always pinned to their exact address.
+	AllowedUpstreamAddresses    []string
 	AllowedOrigins              []string
 	MaxConcurrentStreams        int
 	MaxConcurrentHTTPStreams    int
@@ -69,8 +73,14 @@ type ProxyServer struct {
 	active       sync.WaitGroup
 }
 
+type proxyStream interface {
+	io.ReadWriter
+	Reset() error
+}
+
 type proxyServerConfig struct {
 	upstream          *url.URL
+	network           *proxyNetworkPolicy
 	upstreamOrigin    string
 	allowedOrigins    map[string]struct{}
 	maxJSONFrame      int
@@ -97,13 +107,7 @@ func NewProxyServer(options ProxyServerOptions) (*ProxyServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	transport := &http.Transport{
-		Proxy:               nil,
-		DisableCompression:  true,
-		DialContext:         (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
-		ForceAttemptHTTP2:   false,
-		MaxIdleConnsPerHost: 8,
-	}
+	transport := newProxyHTTPTransport(config)
 	closeCtx, closeCancel := context.WithCancel(context.Background())
 	return &ProxyServer{
 		config:       config,
@@ -116,7 +120,7 @@ func NewProxyServer(options ProxyServerOptions) (*ProxyServer, error) {
 			Transport:     transport,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
-		wsDialer: &websocket.Dialer{Proxy: nil, HandshakeTimeout: 10 * time.Second, EnableCompression: false},
+		wsDialer: &websocket.Dialer{Proxy: nil, NetDialContext: config.network.dialContext, HandshakeTimeout: 10 * time.Second, EnableCompression: false},
 	}, nil
 }
 
@@ -162,8 +166,8 @@ func (server *ProxyServer) Close() error {
 		server.closed = true
 		server.closeCancel()
 		server.stateMu.Unlock()
-		if transport, ok := server.httpClient.Transport.(*http.Transport); ok {
-			transport.CloseIdleConnections()
+		if transport, ok := server.httpClient.Transport.(*proxyHTTPTransport); ok {
+			transport.Close()
 		}
 		server.active.Wait()
 	})
@@ -172,36 +176,40 @@ func (server *ProxyServer) Close() error {
 
 func (server *ProxyServer) limit(handler StreamHandler) StreamHandler {
 	return func(ctx context.Context, incoming IncomingStream) error {
-		server.stateMu.Lock()
-		if server.closed {
-			server.stateMu.Unlock()
-			if incoming.Stream != nil {
-				_ = incoming.Stream.Reset()
-			}
-			server.report(ErrInvalidProxyServer)
-			return nil
-		}
-		server.active.Add(1)
-		server.stateMu.Unlock()
-		defer server.active.Done()
+		return server.runLimited(ctx, incoming.Stream, func(ctx context.Context) error { return handler(ctx, incoming) })
+	}
+}
 
-		select {
-		case server.permits <- struct{}{}:
-			defer func() { <-server.permits }()
-			operationCtx, cancel := context.WithCancel(ctx)
-			stop := context.AfterFunc(server.closeCtx, cancel)
-			defer func() {
-				stop()
-				cancel()
-			}()
-			return handler(operationCtx, incoming)
-		default:
-			if incoming.Stream != nil {
-				_ = incoming.Stream.Reset()
-			}
-			server.report(ErrInvalidProxyServer)
-			return nil
+func (server *ProxyServer) runLimited(ctx context.Context, stream proxyStream, handler func(context.Context) error) error {
+	server.stateMu.Lock()
+	if server.closed {
+		server.stateMu.Unlock()
+		if stream != nil {
+			_ = stream.Reset()
 		}
+		server.report(ErrInvalidProxyServer)
+		return nil
+	}
+	server.active.Add(1)
+	server.stateMu.Unlock()
+	defer server.active.Done()
+
+	select {
+	case server.permits <- struct{}{}:
+		defer func() { <-server.permits }()
+		operationCtx, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(server.closeCtx, cancel)
+		defer func() {
+			stop()
+			cancel()
+		}()
+		return handler(operationCtx)
+	default:
+		if stream != nil {
+			_ = stream.Reset()
+		}
+		server.report(ErrInvalidProxyServer)
+		return nil
 	}
 }
 
@@ -224,6 +232,12 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 		return fail()
 	}
 	host = strings.ToLower(strings.TrimSpace(host))
+	portText = strconv.Itoa(port)
+	upstream.Host = net.JoinHostPort(host, portText)
+	network, err := compileProxyNetworkPolicy(host, portText, options.AllowedUpstreamAddresses)
+	if err != nil {
+		return fail()
+	}
 	allowedHosts := options.AllowedUpstreamHosts
 	if len(allowedHosts) == 0 {
 		allowedHosts = []string{"127.0.0.1"}
@@ -263,7 +277,7 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 	if maxHTTP < 1 || maxHTTP > maxConcurrent || maxEvents < 1 || maxEvents > maxHTTP || eventIdleTimeout < 0 {
 		return fail()
 	}
-	maxJSON := positiveProxyLimit(options.MaxJSONFrameBytes, internaljsonframe.DefaultMaxJSONFrameBytes)
+	maxJSON := positiveProxyLimit(options.MaxJSONFrameBytes, protocolv4.ProxyMetadataLimit())
 	maxChunk := positiveProxyLimit(options.MaxChunkBytes, defaults.ProxyMaxChunkBytes)
 	maxWS := positiveProxyLimit(options.MaxWebSocketFrameBytes, defaults.ProxyMaxWSFrameBytes)
 	maxBody := options.MaxBodyBytes
@@ -288,11 +302,14 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 	if err != nil {
 		return fail()
 	}
-	responseHeaders, err := normalizeProxyHeaderSet(options.ExtraResponseHeaders)
+	responseHeaders, err := normalizeProxyHeaderSet(options.ExtraResponseHeaders, true)
 	if err != nil {
 		return fail()
 	}
 	blockedResponses, err := normalizeProxyHeaderSet(options.BlockedResponseHeaders)
+	if _, stripsCoding := blockedResponses["content-encoding"]; stripsCoding {
+		return fail()
+	}
 	if err != nil {
 		return fail()
 	}
@@ -317,7 +334,7 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 		forbiddenPrefixes = append(forbiddenPrefixes, prefix)
 	}
 	return proxyServerConfig{
-		upstream: upstream, upstreamOrigin: origin, allowedOrigins: allowedOrigins, maxJSONFrame: maxJSON, maxChunk: maxChunk,
+		upstream: upstream, network: network, upstreamOrigin: origin, allowedOrigins: allowedOrigins, maxJSONFrame: maxJSON, maxChunk: maxChunk,
 		maxHTTP: maxHTTP, maxEvents: maxEvents, eventIdleTimeout: eventIdleTimeout,
 		maxBody: maxBody, maxWSFrame: maxWS, defaultTimeout: defaultTimeout, maxTimeout: maxTimeout,
 		requestHeaders: requestHeaders, responseHeaders: responseHeaders, blockedResponses: blockedResponses,

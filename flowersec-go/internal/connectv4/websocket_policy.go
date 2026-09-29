@@ -11,12 +11,12 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/tlspolicy"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrierv4/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // WebSocketPolicy is the native direct default. Clock and CA roots are fixed
@@ -79,6 +79,7 @@ func (c WebSocketPolicy) prepare(request sessionv4.CarrierPreparationRequest, di
 	host, hostOK := leg.Named("Leg", "host").Text()
 	port, portOK := leg.Named("Leg", "port").Uint()
 	pathText, pathOK := leg.Named("Leg", "path").Text()
+	alpn, alpnOK := leg.Named("Leg", "alpn").Text()
 	subprotocol, subOK := leg.Named("Leg", "subprotocol").Text()
 	actualPort := uint64(443)
 	if u.Scheme == "ws" {
@@ -87,10 +88,13 @@ func (c WebSocketPolicy) prepare(request sessionv4.CarrierPreparationRequest, di
 	if u.Port() != "" {
 		actualPort, err = strconv.ParseUint(u.Port(), 10, 16)
 	}
-	if err != nil || !hostOK || !portOK || !pathOK || !subOK || u.Hostname() != host || u.Path != pathText || actualPort != port || dial.Subprotocol != subprotocol || !dial.RemoteAddress.IsValid() || uint64(dial.RemoteAddress.Port()) != port {
+	// The signed route's ALPN is part of the carrier tuple. Native v4
+	// preparation only permits HTTP/1.1; checking it here prevents a route
+	// decoder or provider default from widening the upgrade protocol.
+	if err != nil || !hostOK || !portOK || !pathOK || !alpnOK || !subOK || alpn != "http/1.1" || u.Hostname() != host || u.Path != pathText || actualPort != port || dial.Subprotocol != subprotocol || !dial.RemoteAddress.IsValid() || uint64(dial.RemoteAddress.Port()) != port {
 		return dial, nil, websocket.ErrEndpoint
 	}
-	if ip, parseErr := netip.ParseAddr(host); parseErr == nil && ip.Unmap() != dial.RemoteAddress.Addr().Unmap() {
+	if ip, parseErr := netip.ParseAddr(host); parseErr == nil && ip != dial.RemoteAddress.Addr() {
 		return dial, nil, websocket.ErrEndpoint
 	}
 	origin := ""

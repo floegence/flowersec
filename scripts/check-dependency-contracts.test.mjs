@@ -173,6 +173,30 @@ test("legacy WebTransport wire, parsers, and fallbacks are rejected", (t) => {
   }, /legacy WebTransport wire|legacy parser or fallback/);
 });
 
+test("registered browser native tuple data does not authorize adapter fallback", (t) => {
+  const root = createFixture(t);
+  const registry = { webtransport: { tuples: [{ id: "chromium_h3_draft02", protocol: "webtransport", request_headers: { "sec-webtransport-http3-draft02": "1" } }] } };
+  write(root, "stability/transport_v4_schema.json", JSON.stringify({ carrier_provider_registry: registry }));
+  const declarations = [
+    ["flowersec-ts/src/generated/transportV4Registry.ts", `export const transportV4CarrierProviderRegistry = ${JSON.stringify(registry)} as const;`],
+    ["flowersec-rust/src/protocol_v4_registry_generated.rs", `pub(crate) const CARRIER_PROVIDER_REGISTRY_JSON: &str = ${JSON.stringify(JSON.stringify(registry))};`],
+  ];
+  for (const [file, declaration] of declarations) write(root, file, `${declaration}\n`);
+  const valid = runChecker(root);
+  assert.equal(valid.status, 0, valid.stderr);
+  for (const [file, declaration] of declarations) {
+    write(root, file, `${declaration}\n// :protocol=webtransport\n`);
+    const extra = runChecker(root);
+    assert.notEqual(extra.status, 0);
+    assert.match(extra.stderr, /legacy WebTransport wire/);
+    write(root, file, declaration.replace('chromium_h3_draft02', 'arbitrary_provider'));
+    const drift = runChecker(root);
+    assert.notEqual(drift.status, 0);
+    assert.match(drift.stderr, /generated carrier registry drift/);
+    write(root, file, `${declaration}\n`);
+  }
+});
+
 test("every high-impact dependency names a registered executable test", (t) => {
   expectFailure(t, (root) => {
     const contractPath = path.join(root, "stability/dependency_contracts.json");

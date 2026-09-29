@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // ContractQueryMethod fixes the finite local authorization lookup before
@@ -157,13 +157,101 @@ func (p *SessionPlan) publishContractQuery(job rpcv4.ContractQueryJob, epoch uin
 }
 
 type sessionContractQueries struct {
+	plan          *SessionPlan
 	service       *rpcv4.ContractQueryService
 	consumer      atomic.Pointer[rpcv4.ContractQueryConsumer]
 	initiator     atomic.Pointer[rpcv4.ContractQueryInitiator]
 	workers       atomic.Int32
 	group         sdkQueryGroup
 	registrations [2]*sdkQueryRegistration
+	protections   [2]sdkQueryProtection
 	owners        [2]incomingSDKQuery
+}
+
+// reserveContractQueriesLocked protects the two actual fixed-lane positions
+// before Acquire. The descriptors live in the original charged Session query
+// owner. No registration, ready entry or query step exists until attachment.
+func (p *SessionPlan) reserveContractQueriesLocked() (_ *sessionContractQueries, err error) {
+	e := p.executor
+	if p.closed || p.claimed || p.queries != nil || p.queryPreparation != nil || !p.config.ContractQueries || e == nil {
+		return nil, cryptov4.ErrTransition
+	}
+	var aliases [2]resourcev4.Reference
+	defer func() {
+		for _, ref := range aliases {
+			ref.Release()
+		}
+	}()
+	for i := range aliases {
+		aliases[i], err = p.reservation.Borrow()
+		if err != nil {
+			return nil, err
+		}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	q := e.queries
+	if e.closed || q == nil || q.failed || !q.worker {
+		return nil, cryptov4.ErrClosed
+	}
+	if int(q.count)+len(aliases) > len(q.slots) {
+		return nil, cryptov4.ErrCapacity
+	}
+	if err := e.reservation.CheckSameRoot(p.reservation); err != nil {
+		return nil, err
+	}
+	for i, ref := range aliases {
+		moved, err := ref.TakeBorrow()
+		if err != nil {
+			return nil, err
+		}
+		aliases[i] = moved
+	}
+	x := &sessionContractQueries{plan: p}
+	index := 0
+	for i, ref := range aliases {
+		for q.slots[index].registration != nil || q.slots[index].protection != nil {
+			index++
+		}
+		guard := &x.protections[i]
+		*guard = sdkQueryProtection{executor: e, index: index}
+		x.owners[i] = incomingSDKQuery{parent: x, plan: p}
+		q.slots[index] = sdkQuerySlot{group: &x.group, direction: 0, backing: ref, protection: guard}
+		aliases[i] = resourcev4.Reference{}
+		q.count++
+		index++
+	}
+	p.queryPreparation = x
+	return x, nil
+}
+
+func (x *sessionContractQueries) releasePreparation() {
+	if x == nil {
+		return
+	}
+	x.close()
+	p := x.plan
+	p.mu.Lock()
+	if p.queryPreparation == x {
+		p.queryPreparation = nil
+	}
+	p.mu.Unlock()
+}
+
+func (x *sessionContractQueries) checkPreparation(p *SessionPlan) error {
+	if x == nil || p == nil || x.plan != p || x.service != nil || x.consumer.Load() != nil || x.initiator.Load() != nil || x.workers.Load() != 0 {
+		return cryptov4.ErrTransition
+	}
+	for i := range x.protections {
+		guard := &x.protections[i]
+		if x.registrations[i] != nil || guard.executor != p.executor || x.owners[i].plan != p || x.owners[i].parent != x {
+			return resourcev4.ErrOwner
+		}
+		if err := guard.available(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // InstallContractQueries is a once-only pre-admission attachment. Both incoming
@@ -171,6 +259,10 @@ type sessionContractQueries struct {
 // Failed installation leaves the plan unusable for queries; Close/Retire joins
 // any already captured index references. It never allocates a Session worker.
 func (p *SessionPlan) InstallContractQueries(service *rpcv4.ContractQueryService) error {
+	return p.installContractQueries(service, nil)
+}
+
+func (p *SessionPlan) installContractQueries(service *rpcv4.ContractQueryService, x *sessionContractQueries) error {
 	if p == nil || service == nil {
 		return cryptov4.ErrConfiguration
 	}
@@ -184,18 +276,23 @@ func (p *SessionPlan) InstallContractQueries(service *rpcv4.ContractQueryService
 			return err
 		}
 	}
-	x := &sessionContractQueries{service: service}
-	x.workers.Store(2)
-	p.queries = x
-	for i := range x.owners {
-		x.owners[i] = incomingSDKQuery{parent: x, plan: p}
-		borrow, err := p.reservation.Borrow()
+	if x == nil {
+		var err error
+		x, err = p.reserveContractQueriesLocked()
 		if err != nil {
-			x.close()
 			return err
 		}
-		r, err := p.executor.registerSDKQuery(&x.group, 0, &x.owners[i], borrow)
-		borrow.Release()
+	} else if err := x.checkPreparation(p); err != nil {
+		return err
+	}
+	if p.queryPreparation != x {
+		return resourcev4.ErrOwner
+	}
+	x.service = service
+	x.workers.Store(2)
+	p.queries, p.queryPreparation = x, nil
+	for i := range x.owners {
+		r, err := x.protections[i].activate(&x.owners[i])
 		if err != nil {
 			x.close()
 			return err
@@ -243,7 +340,15 @@ func (p *SessionPlan) checkQueryAttachmentLocked(requireOutgoing bool) error {
 }
 
 func (x *sessionContractQueries) close() {
+	if x == nil {
+		return
+	}
 	x.initiator.Swap(nil).Stop()
+	for i := range x.protections {
+		if x.protections[i].executor != nil {
+			x.protections[i].Close()
+		}
+	}
 	for _, r := range x.registrations {
 		r.Close()
 	}

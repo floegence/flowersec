@@ -33,13 +33,13 @@ func NewDelay(c *Clock, duration uint64) (*Delay, error) {
 }
 
 func (d *Delay) RemainingMS() (uint64, error) {
+	now, err := d.clock.Monotonic()
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.terminal != nil {
 		return 0, d.terminal
 	}
-	now, err := d.clock.Monotonic()
-	if err != nil || !now.SameEra(d.start) || now.Milliseconds < d.start.Milliseconds {
+	if err != nil || !now.SameEra(d.start) || now.Milliseconds < d.start.Milliseconds || d.clock.checkMark(now) != nil {
 		d.terminal = ErrContinuity
 		return 0, d.terminal
 	}

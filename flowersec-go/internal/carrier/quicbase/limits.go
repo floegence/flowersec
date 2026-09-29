@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
 )
 
 const MinimumInitialPacketSize uint16 = 1200
@@ -55,7 +55,18 @@ func BindSessionLimits(limits Limits, maxLogical uint16) (Limits, error) {
 }
 
 func (limits Limits) Validate() error {
-	if limits.MaxInboundStreams < 1 || limits.MaxInboundStreams > 130 ||
+	return limits.validate(130)
+}
+
+// ValidateV4 bounds the independently admitted v4 provider. The current
+// protocol's 1035 positive scopes, bounded unaccepted streams and maintenance
+// can coexist without changing the older logical-carrier capacity contract.
+func (limits Limits) ValidateV4() error {
+	return limits.validate(2048)
+}
+
+func (limits Limits) validate(maxInbound int64) error {
+	if limits.MaxInboundStreams < 1 || limits.MaxInboundStreams > maxInbound ||
 		limits.InitialStreamReceiveWindow == 0 ||
 		limits.InitialStreamReceiveWindow > maxStreamReceiveWindow ||
 		limits.MaxStreamReceiveWindow > maxStreamReceiveWindow ||

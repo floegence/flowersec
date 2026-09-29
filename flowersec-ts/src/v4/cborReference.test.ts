@@ -37,7 +37,7 @@ describe("v4.ts_cbor", () => {
         if (vector.decimal) expect(parsed, vector.id).toEqual(uint(BigInt(vector.decimal)));
       }
     }
-    expect(positive).toBe(337); expect(negative).toBe(252);
+    expect(positive).toBe(348); expect(negative).toBe(254);
   });
 
   // v4.ts_cbor.limits

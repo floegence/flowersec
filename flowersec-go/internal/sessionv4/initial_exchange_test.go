@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func initialFixture(t *testing.T, id string) []byte {
@@ -316,7 +316,12 @@ func initialTestPairPrepared(t *testing.T, profile, framing string, flights int,
 		peer := configs[1-role]
 		configs[role].PeerCertificateDigest, configs[role].PeerDHPublic, configs[role].PeerEdPublic = peer.LocalCertificateDigest, peer.LocalDHPublic, peer.LocalEdPublic
 	}
-	wires := [][]byte{initialHelloProfile(t, initialFixture(t, "client_hello_fields"), "ClientHello", profile), initialHelloProfile(t, initialFixture(t, "server_hello_fields"), "ServerHello", profile), fsb, fsa}
+	// The authenticated configs and actual initial flights share the same
+	// captured artifacts, including fixtures for a fresh transport context.
+	if !bytes.Equal(configs[0].FSB, configs[1].FSB) || !bytes.Equal(configs[0].FSA, configs[1].FSA) {
+		t.Fatal("peer initial artifacts differ")
+	}
+	wires := [][]byte{initialHelloProfile(t, initialFixture(t, "client_hello_fields"), "ClientHello", profile), initialHelloProfile(t, initialFixture(t, "server_hello_fields"), "ServerHello", profile), configs[0].FSB, configs[0].FSA}
 	for phase, wire := range wires[:flights] {
 		frame, sender := initialFlight(uint8(phase))
 		result := make(chan error, 1)

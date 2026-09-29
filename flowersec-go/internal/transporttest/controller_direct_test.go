@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
 )
 
 func TestProductionControllerArtifactCurrentPinConnects(t *testing.T) {

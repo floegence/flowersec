@@ -1,6 +1,8 @@
 package flowersec
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -20,7 +22,7 @@ import (
 func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	var wantHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.RequestURI() != "/api/items?q=~user" {
+		if request.URL.RequestURI() != "/public/../api//items?q=%7euser" {
 			t.Errorf("upstream path = %q", request.URL.RequestURI())
 		}
 		if request.Host != wantHost {
@@ -54,7 +56,7 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	}
 
 	client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
-	if err := writeProxyJSON(client, proxyHTTPRequest{
+	if err := writeProxyMetadata(client, proxyHTTPRequest{
 		Version: proxyWireVersion, RequestID: "request-1", Method: http.MethodGet,
 		Path: "/public/../api//items?q=%7euser", Headers: []proxyHeader{{Name: "accept", Value: "text/plain"}},
 		ExternalOrigin: "https://app.example",
@@ -65,7 +67,7 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	var response proxyHTTPResponse
-	if err := readProxyJSON(client, 1<<20, &response); err != nil {
+	if err := readProxyMetadata(client, 1<<20, &response); err != nil {
 		t.Fatal(err)
 	}
 	if !response.OK || response.Status != http.StatusOK || response.RequestID != "request-1" {
@@ -112,10 +114,14 @@ func TestProxyServerCanonicalPathContract(t *testing.T) {
 		raw  string
 		want string
 	}{
-		{raw: "/safe/../admin?mode=raw", want: "/admin?mode=raw"},
-		{raw: "/safe/%2e%2e/admin?mode=encoded", want: "/admin?mode=encoded"},
-		{raw: "/safe\\..\\admin?mode=backslash", want: "/admin?mode=backslash"},
-		{raw: "/safe//child?mode=double", want: "/safe/child?mode=double"},
+		{raw: "/safe/../admin?mode=raw", want: "/safe/../admin?mode=raw"},
+		{raw: "/safe/%2e%2e/admin?mode=encoded", want: "/safe/%2e%2e/admin?mode=encoded"},
+		{raw: "/safe//child?mode=double", want: "/safe//child?mode=double"},
+		{raw: "/objects/a%2Fb?x=%2f&x=+&x=%41", want: "/objects/a%2Fb?x=%2f&x=+&x=%41"},
+		{raw: "/literal%25/a;b/%ff", want: "/literal%25/a;b/%ff"},
+		{raw: "/?", want: "/?"},
+		{raw: "//other.example/a?", want: "//other.example/a?"},
+		{raw: "/", want: "/"},
 	}
 	for _, test := range tests {
 		t.Run(test.raw, func(t *testing.T) {
@@ -129,11 +135,11 @@ func TestProxyServerCanonicalPathContract(t *testing.T) {
 		})
 	}
 	for _, raw := range []string{
-		"/%2fadmin", "/%2Fadmin", "/%5cadmin", "/%5Cadmin", "/\\evil.example/admin",
+		"/\\evil.example/admin", "/safe\\..\\admin", "/bad%", "/bad%xy", "/a#fragment", "/a b", "/é",
 	} {
 		t.Run("reject "+raw, func(t *testing.T) {
 			if _, err := parseProxyPath(raw); err == nil {
-				t.Fatalf("unsafe encoded separator accepted: %q", raw)
+				t.Fatalf("invalid request target accepted: %q", raw)
 			}
 		})
 	}
@@ -144,7 +150,7 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 		CheckOrigin: func(request *http.Request) bool { return request.Header.Get("Origin") != "" },
 	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.RequestURI() != "/api/socket?q=~user" {
+		if request.URL.RequestURI() != "/public/../api//socket?q=%7euser" {
 			t.Errorf("upstream WebSocket path = %q", request.URL.RequestURI())
 		}
 		connection, err := upgrader.Upgrade(writer, request, nil)
@@ -177,13 +183,13 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 	}
 
 	client := serveProxyTestStream(t, handlers, proxyWSStreamKind)
-	if err := writeProxyJSON(client, proxyWebSocketOpen{
+	if err := writeProxyMetadata(client, proxyWebSocketOpen{
 		Version: proxyWireVersion, ConnID: "socket-1", Path: "/public/../api//socket?q=%7euser",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	var opened proxyWebSocketResponse
-	if err := readProxyJSON(client, 1<<20, &opened); err != nil {
+	if err := readProxyMetadata(client, 1<<20, &opened); err != nil {
 		t.Fatal(err)
 	}
 	if !opened.OK || opened.ConnID != "socket-1" {
@@ -236,13 +242,13 @@ func TestProxyServerWebSocketUpstreamCloseResetsOpenDownstreamAndJoinsRelays(t *
 		})
 	}()
 
-	if err := writeProxyJSON(client, proxyWebSocketOpen{
+	if err := writeProxyMetadata(client, proxyWebSocketOpen{
 		Version: proxyWireVersion, ConnID: "upstream-close", Path: "/socket",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	var opened proxyWebSocketResponse
-	if err := readProxyJSON(client, 1<<20, &opened); err != nil {
+	if err := readProxyMetadata(client, 1<<20, &opened); err != nil {
 		t.Fatal(err)
 	}
 	if !opened.OK {
@@ -366,7 +372,7 @@ func TestProxyServerCloseCancelsActiveAndRejectsFutureDispatch(t *testing.T) {
 			Kind: proxyHTTPStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
 		})
 	}()
-	if err := writeProxyJSON(client, proxyHTTPRequest{
+	if err := writeProxyMetadata(client, proxyHTTPRequest{
 		Version: proxyWireVersion, RequestID: "close", Method: http.MethodGet, Path: "/slow",
 	}); err != nil {
 		t.Fatal(err)
@@ -425,7 +431,7 @@ func TestProxyServerHTTPStreamResetCancelsUpstream(t *testing.T) {
 		})
 		close(done)
 	}()
-	if err := writeProxyJSON(client, proxyHTTPRequest{
+	if err := writeProxyMetadata(client, proxyHTTPRequest{
 		Version: proxyWireVersion, RequestID: "cancel", Method: http.MethodGet, Path: "/slow",
 	}); err != nil {
 		t.Fatal(err)
@@ -462,7 +468,7 @@ func TestProxyServerCloseInterruptsPartialHTTPFrames(t *testing.T) {
 			return err
 		}},
 		{name: "body terminator", write: func(client net.Conn) error {
-			if err := writeProxyJSON(client, proxyHTTPRequest{
+			if err := writeProxyMetadata(client, proxyHTTPRequest{
 				Version: proxyWireVersion, RequestID: "partial", Method: http.MethodGet, Path: "/slow",
 			}); err != nil {
 				return err
@@ -630,13 +636,13 @@ func newProxyWebSocketRelayHarness(
 			Kind: proxyWSStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
 		})
 	}()
-	if err := writeProxyJSON(client, proxyWebSocketOpen{
+	if err := writeProxyMetadata(client, proxyWebSocketOpen{
 		Version: proxyWireVersion, ConnID: "relay-harness", Path: "/socket",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	var opened proxyWebSocketResponse
-	if err := readProxyJSON(client, 1<<20, &opened); err != nil {
+	if err := readProxyMetadata(client, 1<<20, &opened); err != nil {
 		t.Fatal(err)
 	}
 	if !opened.OK {
@@ -694,3 +700,118 @@ func (stream *proxyServerTestStream) Reset() error { return stream.Close() }
 
 var _ ByteStream = (*proxyServerTestStream)(nil)
 var _ io.ReadWriteCloser = (*proxyServerTestStream)(nil)
+
+func TestProxyServerPreservesContentCodedRepresentation(t *testing.T) {
+	var coded bytes.Buffer
+	encoder := gzip.NewWriter(&coded)
+	if _, err := encoder.Write([]byte("origin representation")); err != nil {
+		t.Fatal(err)
+	}
+	if err := encoder.Close(); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept-Encoding") != "" {
+			t.Error("core added Accept-Encoding")
+		}
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(coded.Bytes())
+	}))
+	defer upstream.Close()
+	server, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.RegisterStreamHandlers(handlers); err != nil {
+		t.Fatal(err)
+	}
+	client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
+	if err := writeProxyMetadata(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "coded", Method: "GET", Path: "/"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeProxyTerminator(client); err != nil {
+		t.Fatal(err)
+	}
+	var response proxyHTTPResponse
+	if err := readProxyMetadata(client, 1<<20, &response); err != nil {
+		t.Fatal(err)
+	}
+	coding := ""
+	for _, header := range response.Headers {
+		if header.Name == "content-encoding" {
+			coding = header.Value
+		}
+	}
+	if !response.OK || coding != "gzip" {
+		t.Fatal("lost origin coding", response)
+	}
+	var body []byte
+	var total int64
+	for {
+		chunk, done, err := readProxyChunk(client, 1<<20, &total, 1<<20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if done {
+			break
+		}
+		body = append(body, chunk...)
+	}
+	if !bytes.Equal(body, coded.Bytes()) {
+		t.Fatal("server transformed coded bytes")
+	}
+	if _, err = NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL, BlockedResponseHeaders: []string{"content-encoding"}}); !errors.Is(err, ErrInvalidProxyServer) {
+		t.Fatal("policy can erase coding", err)
+	}
+}
+
+func TestProxyServerPreservesRawTargetAndHeadRepresentationLength(t *testing.T) {
+	for _, target := range []string{"/files//secret?x=%2f&x=+&x=%41", "/?", "/objects/a%2Fb/literal%25/a;b/%ff"} {
+		t.Run(target, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.RequestURI != target {
+					t.Errorf("wire target = %q, want %q", r.RequestURI, target)
+				}
+				w.Header().Set("Content-Length", "1073741824")
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer upstream.Close()
+			handlers, err := NewSessionHandlers(SessionHandlerOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			proxy, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer proxy.Close()
+			if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+				t.Fatal(err)
+			}
+			client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
+			if err := writeProxyMetadata(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "head", Method: http.MethodHead, Path: target}); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeProxyTerminator(client); err != nil {
+				t.Fatal(err)
+			}
+			var response proxyHTTPResponse
+			if err := readProxyMetadata(client, 1<<20, &response); err != nil {
+				t.Fatal(err)
+			}
+			if !response.OK || response.Status != http.StatusOK {
+				t.Fatalf("response = %+v", response)
+			}
+			var total int64
+			chunk, done, err := readProxyChunk(client, 1<<20, &total, 1<<20)
+			if err != nil || !done || len(chunk) != 0 {
+				t.Fatalf("HEAD body = %q, done=%v, err=%v", chunk, done, err)
+			}
+		})
+	}
+}

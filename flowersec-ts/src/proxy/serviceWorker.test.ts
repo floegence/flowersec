@@ -1,3 +1,4 @@
+import { gzipSync, deflateSync, brotliCompressSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
 import { createProxyServiceWorkerScript } from "./serviceWorker.js";
@@ -16,6 +17,23 @@ describe("proxy service worker generator", () => {
     expect(script).toContain("runtime-token");
     expect(script).not.toContain("proxy.runtime@1");
     expect(script).not.toContain("Yamux");
+  });
+
+  it.each([["HEAD", 200], ["GET", 304]] as const)("preserves %s/%s representation metadata above the body limit", async (method, status) => {
+    let remote: MessagePort | undefined;
+    const target = { id: "client", postMessage(_message: unknown, transfers: Transferable[]) {
+      remote = transfers[0] as MessagePort;
+      remote.postMessage({ type: "flowersec-proxy:response_meta", status,
+        headers: [{ name: "content-length", value: "1073741824" }, { name: "content-encoding", value: "gzip" }] });
+    } };
+    try {
+      const worker = generatedWorker(async () => target, { maxEncodedBodyBytes: 8 });
+      const response = await within(worker.fetch(new Request("https://app.example/large", { method })));
+      expect(response.status).toBe(status);
+      expect(response.body).toBeNull();
+      expect(response.headers.get("content-length")).toBe("1073741824");
+      expect(response.headers.get("content-encoding")).toBe("gzip");
+    } finally { remote?.close(); }
   });
 
   it("rejects unsafe or unbounded generator inputs", () => {
@@ -134,6 +152,59 @@ describe("proxy service worker generator", () => {
     const worker = generatedWorker(async () => target, { responseMetadataTimeoutMs: 20 });
     const response = await within(worker.fetch(new Request("https://app.example/api")));
     await expect(within(response.text(), 200)).resolves.toBe("later");
+  });
+});
+
+
+describe("service worker content representation", () => {
+  it.each(["gzip", "deflate", "br", "gzip, br"])("decodes %s once and retains origin metadata", async (coding) => {
+    const plain = Buffer.from("decoded browser body");
+    const coded = coding === "gzip" ? gzipSync(plain) : coding === "deflate" ? deflateSync(plain) : brotliCompressSync(coding === "br" ? plain : gzipSync(plain));
+    let remote: MessagePort | undefined;
+    const worker = generatedWorker(async () => ({ id: "client", postMessage(_message: unknown, transfers: Transferable[]) {
+      remote = transfers[0] as MessagePort;
+      let sent = false;
+      remote.onmessage = event => {
+        if (sent || event.data?.type !== "flowersec-proxy:response_credit") return;
+        sent = true;
+        const data = Uint8Array.from(coded).buffer;
+        remote!.postMessage({ type: "flowersec-proxy:response_chunk", data }, [data]);
+        remote!.postMessage({ type: "flowersec-proxy:response_end" });
+      };
+      remote.postMessage({ type: "flowersec-proxy:response_meta", status: 200, headers: [
+        { name: "content-encoding", value: coding }, { name: "content-length", value: String(coded.length) }, { name: "etag", value: '"origin"' },
+      ] });
+    } }), {});
+    try {
+      const response = await within(worker.fetch(new Request("https://app.example/api")));
+      expect(await within(response.text())).toBe(plain.toString());
+      expect(response.headers.get("content-encoding")).toBe(coding);
+      expect(response.headers.get("content-length")).toBe(String(coded.length));
+      expect(response.headers.get("etag")).toBe('"origin"');
+    } finally { remote?.close(); }
+  });
+
+  it("fails the body and cancels the original source when decoded bytes exceed the cap", async () => {
+    const coded = gzipSync(Buffer.alloc(8192, 65));
+    let remote: MessagePort | undefined;
+    let aborted = false;
+    const worker = generatedWorker(async () => ({ id: "client", postMessage(_message: unknown, transfers: Transferable[]) {
+      remote = transfers[0] as MessagePort;
+      let sent = false;
+      remote.onmessage = event => {
+        if (event.data?.type === "flowersec-proxy:abort") { aborted = true; return; }
+        if (sent || event.data?.type !== "flowersec-proxy:response_credit") return;
+        sent = true;
+        const data = Uint8Array.from(coded).buffer;
+        remote!.postMessage({ type: "flowersec-proxy:response_chunk", data }, [data]);
+      };
+      remote.postMessage({ type: "flowersec-proxy:response_meta", status: 200, headers: [{ name: "content-encoding", value: "gzip" }] });
+    } }), { maxDecodedBodyBytes: 1024 });
+    try {
+      const response = await within(worker.fetch(new Request("https://app.example/api")));
+      await expect(within(response.text())).rejects.toThrow(/decoded body exceeds limit/);
+      await waitFor(() => aborted);
+    } finally { remote?.close(); }
   });
 });
 

@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:0b858c7f-da6c-5e2e-8892-46d315524db4",
+  "serialNumber": "urn:uuid:6ce18bcf-28e7-50bd-8635-4324081782fa",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "flowersec-source",
-      "version": "5.5.0",
-      "purl": "pkg:generic/flowersec-source@5.5.0",
-      "bom-ref": "pkg:generic/flowersec-source@5.5.0"
+      "version": "6.0.0",
+      "purl": "pkg:generic/flowersec-source@6.0.0",
+      "bom-ref": "pkg:generic/flowersec-source@6.0.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "78d308cf17735b4b2510fd6dd05c1b22ed5a072c7b57edbf498dae530890ff58"
+        "value": "ae824e5f729367026e2c0ce01e0b0c91b5ee3e35a9a28c8cb307d5943bda14ef"
       }
     ]
   },
@@ -124,6 +124,62 @@
         {
           "name": "flowersec:declared-license",
           "value": "Apache-2.0 OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "alloc-no-stdlib",
+      "version": "2.0.4",
+      "purl": "pkg:cargo/alloc-no-stdlib@2.0.4",
+      "bom-ref": "pkg:cargo/alloc-no-stdlib@2.0.4",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dropbox/rust-alloc-no-stdlib"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "alloc-stdlib",
+      "version": "0.2.2",
+      "purl": "pkg:cargo/alloc-stdlib@0.2.2",
+      "bom-ref": "pkg:cargo/alloc-stdlib@0.2.2",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dropbox/rust-alloc-no-stdlib"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -637,6 +693,62 @@
     },
     {
       "type": "library",
+      "name": "brotli-decompressor",
+      "version": "5.0.0",
+      "purl": "pkg:cargo/brotli-decompressor@5.0.0",
+      "bom-ref": "pkg:cargo/brotli-decompressor@5.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dropbox/rust-brotli-decompressor"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause OR MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bumpalo",
+      "version": "3.20.2",
+      "purl": "pkg:cargo/bumpalo@3.20.2",
+      "bom-ref": "pkg:cargo/bumpalo@3.20.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/fitzgen/bumpalo"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "bumpalo",
       "version": "3.20.3",
       "purl": "pkg:cargo/bumpalo@3.20.3",
@@ -945,6 +1057,34 @@
     },
     {
       "type": "library",
+      "name": "console_error_panic_hook",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/console_error_panic_hook@0.1.7",
+      "bom-ref": "pkg:cargo/console_error_panic_hook@0.1.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rustwasm/console_error_panic_hook"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "const-oid",
       "version": "0.10.2",
       "purl": "pkg:cargo/const-oid@0.10.2",
@@ -1229,6 +1369,34 @@
       "version": "0.1.6",
       "purl": "pkg:cargo/crypto-common@0.1.6",
       "bom-ref": "pkg:cargo/crypto-common@0.1.6",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/traits"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crypto-common",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/crypto-common@0.1.7",
+      "bom-ref": "pkg:cargo/crypto-common@0.1.7",
       "licenses": [
         {
           "expression": "MIT"
@@ -1813,6 +1981,62 @@
     },
     {
       "type": "library",
+      "name": "fallible-iterator",
+      "version": "0.3.0",
+      "purl": "pkg:cargo/fallible-iterator@0.3.0",
+      "bom-ref": "pkg:cargo/fallible-iterator@0.3.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/sfackler/rust-fallible-iterator"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fallible-streaming-iterator",
+      "version": "0.1.9",
+      "purl": "pkg:cargo/fallible-streaming-iterator@0.1.9",
+      "bom-ref": "pkg:cargo/fallible-streaming-iterator@0.1.9",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/sfackler/fallible-streaming-iterator"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "fastrand",
       "version": "2.5.0",
       "purl": "pkg:cargo/fastrand@2.5.0",
@@ -2280,6 +2504,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "generic-array",
+      "version": "0.14.7",
+      "purl": "pkg:cargo/generic-array@0.14.7",
+      "bom-ref": "pkg:cargo/generic-array@0.14.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/fizyk20/generic-array.git"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -3325,6 +3577,34 @@
     },
     {
       "type": "library",
+      "name": "libsqlite3-sys",
+      "version": "0.38.2",
+      "purl": "pkg:cargo/libsqlite3-sys@0.38.2",
+      "bom-ref": "pkg:cargo/libsqlite3-sys@0.38.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rusqlite/rusqlite"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "linux-raw-sys",
       "version": "0.12.1",
       "purl": "pkg:cargo/linux-raw-sys@0.12.1",
@@ -4333,6 +4613,34 @@
     },
     {
       "type": "library",
+      "name": "pkg-config",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/pkg-config@0.3.34",
+      "bom-ref": "pkg:cargo/pkg-config@0.3.34",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rust-lang/pkg-config-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "poly1305",
       "version": "0.8.0",
       "purl": "pkg:cargo/poly1305@0.8.0",
@@ -4558,6 +4866,34 @@
     {
       "type": "library",
       "name": "proc-macro2",
+      "version": "1.0.106",
+      "purl": "pkg:cargo/proc-macro2@1.0.106",
+      "bom-ref": "pkg:cargo/proc-macro2@1.0.106",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dtolnay/proc-macro2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "proc-macro2",
       "version": "1.0.107",
       "purl": "pkg:cargo/proc-macro2@1.0.107",
       "bom-ref": "pkg:cargo/proc-macro2@1.0.107",
@@ -4710,6 +5046,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/quinn-rs/quinn"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "quote",
+      "version": "1.0.45",
+      "purl": "pkg:cargo/quote@1.0.45",
+      "bom-ref": "pkg:cargo/quote@1.0.45",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dtolnay/quote"
         }
       ],
       "properties": [
@@ -5229,6 +5593,34 @@
     },
     {
       "type": "library",
+      "name": "rusqlite",
+      "version": "0.40.2",
+      "purl": "pkg:cargo/rusqlite@0.40.2",
+      "bom-ref": "pkg:cargo/rusqlite@0.40.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/rusqlite/rusqlite"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "rustc_version",
       "version": "0.4.1",
       "purl": "pkg:cargo/rustc_version@0.4.1",
@@ -5444,6 +5836,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "ISC"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustversion",
+      "version": "1.0.22",
+      "purl": "pkg:cargo/rustversion@1.0.22",
+      "bom-ref": "pkg:cargo/rustversion@1.0.22",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dtolnay/rustversion"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -6256,6 +6676,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "BSD-3-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "syn",
+      "version": "2.0.117",
+      "purl": "pkg:cargo/syn@2.0.117",
+      "bom-ref": "pkg:cargo/syn@2.0.117",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dtolnay/syn"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -7161,6 +7609,34 @@
     },
     {
       "type": "library",
+      "name": "vcpkg",
+      "version": "0.2.15",
+      "purl": "pkg:cargo/vcpkg@0.2.15",
+      "bom-ref": "pkg:cargo/vcpkg@0.2.15",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/mcgoo/vcpkg-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "version_check",
       "version": "0.9.5",
       "purl": "pkg:cargo/version_check@0.9.5",
@@ -7302,6 +7778,34 @@
     {
       "type": "library",
       "name": "wasm-bindgen",
+      "version": "0.2.114",
+      "purl": "pkg:cargo/wasm-bindgen@0.2.114",
+      "bom-ref": "pkg:cargo/wasm-bindgen@0.2.114",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wasm-bindgen",
       "version": "0.2.127",
       "purl": "pkg:cargo/wasm-bindgen@0.2.127",
       "bom-ref": "pkg:cargo/wasm-bindgen@0.2.127",
@@ -7314,6 +7818,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/wasm-bindgen/wasm-bindgen"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wasm-bindgen-macro",
+      "version": "0.2.114",
+      "purl": "pkg:cargo/wasm-bindgen-macro@0.2.114",
+      "bom-ref": "pkg:cargo/wasm-bindgen-macro@0.2.114",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro"
         }
       ],
       "properties": [
@@ -7358,6 +7890,34 @@
     {
       "type": "library",
       "name": "wasm-bindgen-macro-support",
+      "version": "0.2.114",
+      "purl": "pkg:cargo/wasm-bindgen-macro-support@0.2.114",
+      "bom-ref": "pkg:cargo/wasm-bindgen-macro-support@0.2.114",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wasm-bindgen-macro-support",
       "version": "0.2.127",
       "purl": "pkg:cargo/wasm-bindgen-macro-support@0.2.127",
       "bom-ref": "pkg:cargo/wasm-bindgen-macro-support@0.2.127",
@@ -7370,6 +7930,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wasm-bindgen-shared",
+      "version": "0.2.114",
+      "purl": "pkg:cargo/wasm-bindgen-shared@0.2.114",
+      "bom-ref": "pkg:cargo/wasm-bindgen-shared@0.2.114",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared"
         }
       ],
       "properties": [
@@ -10018,9 +10606,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native",
-      "version": "5.5.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native@5.5.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native@5.5.0",
+      "version": "6.0.0",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native@6.0.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native@6.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -10046,9 +10634,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-darwin-arm64",
-      "version": "5.5.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@5.5.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@5.5.0",
+      "version": "6.0.0",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@6.0.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@6.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -10074,9 +10662,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-darwin-x64",
-      "version": "5.5.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@5.5.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@5.5.0",
+      "version": "6.0.0",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@6.0.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@6.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -10102,9 +10690,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-      "version": "5.5.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@5.5.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@5.5.0",
+      "version": "6.0.0",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@6.0.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@6.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -10130,9 +10718,9 @@
     {
       "type": "library",
       "name": "@floegence/flowersec-node-native-linux-x64-gnu",
-      "version": "5.5.0",
-      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@5.5.0",
-      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@5.5.0",
+      "version": "6.0.0",
+      "purl": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@6.0.0",
+      "bom-ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@6.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -12584,6 +13172,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "brotli-dec-wasm",
+      "version": "2.3.2",
+      "purl": "pkg:npm/brotli-dec-wasm@2.3.2",
+      "bom-ref": "pkg:npm/brotli-dec-wasm@2.3.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/brotli-dec-wasm/-/brotli-dec-wasm-2.3.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -16234,7 +16850,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/flowersec-source@5.5.0",
+      "ref": "pkg:generic/flowersec-source@6.0.0",
       "dependsOn": [
         "pkg:cargo/aes-gcm@0.11.1",
         "pkg:cargo/async-trait@0.1.92",
@@ -16262,6 +16878,7 @@
         "pkg:cargo/rcgen@0.14.10",
         "pkg:cargo/regex-lite@0.1.9",
         "pkg:cargo/ring@0.17.14",
+        "pkg:cargo/rusqlite@0.40.2",
         "pkg:cargo/rustls-native-certs@0.8.4",
         "pkg:cargo/rustls@0.23.45",
         "pkg:cargo/serde@1.0.229",
@@ -16305,7 +16922,7 @@
         "pkg:golang/modernc.org/mathutil@v1.7.1",
         "pkg:golang/modernc.org/memory@v1.12.1",
         "pkg:golang/modernc.org/sqlite@v1.59.0",
-        "pkg:npm/%40floegence/flowersec-node-native@5.5.0",
+        "pkg:npm/%40floegence/flowersec-node-native@6.0.0",
         "pkg:npm/%40noble/ciphers@2.4.0",
         "pkg:npm/%40noble/curves@2.4.0",
         "pkg:npm/%40noble/hashes@2.4.0",
@@ -16319,6 +16936,7 @@
         "pkg:npm/ajv-formats-draft2019@1.6.1",
         "pkg:npm/ajv-formats@3.0.1",
         "pkg:npm/ajv@8.20.0",
+        "pkg:npm/brotli-dec-wasm@2.3.2",
         "pkg:npm/eslint@10.9.1",
         "pkg:npm/tr46@6.0.0",
         "pkg:npm/tsx@4.23.13",
@@ -16336,6 +16954,8 @@
       "ref": "pkg:cargo/aead@0.5.2",
       "dependsOn": [
         "pkg:cargo/crypto-common@0.1.6",
+        "pkg:cargo/crypto-common@0.1.7",
+        "pkg:cargo/generic-array@0.14.7",
         "pkg:cargo/generic-array@0.14.9"
       ]
     },
@@ -16363,6 +16983,16 @@
         "pkg:cargo/ctr@0.10.1",
         "pkg:cargo/ctutils@0.4.2",
         "pkg:cargo/ghash@0.6.0"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/alloc-no-stdlib@2.0.4",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/alloc-stdlib@0.2.2",
+      "dependsOn": [
+        "pkg:cargo/alloc-no-stdlib@2.0.4"
       ]
     },
     {
@@ -16460,6 +17090,7 @@
     {
       "ref": "pkg:cargo/block-buffer@0.10.4",
       "dependsOn": [
+        "pkg:cargo/generic-array@0.14.7",
         "pkg:cargo/generic-array@0.14.9"
       ]
     },
@@ -16468,6 +17099,17 @@
       "dependsOn": [
         "pkg:cargo/hybrid-array@0.4.14"
       ]
+    },
+    {
+      "ref": "pkg:cargo/brotli-decompressor@5.0.0",
+      "dependsOn": [
+        "pkg:cargo/alloc-no-stdlib@2.0.4",
+        "pkg:cargo/alloc-stdlib@0.2.2"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/bumpalo@3.20.2",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/bumpalo@3.20.3",
@@ -16524,6 +17166,7 @@
       "ref": "pkg:cargo/cipher@0.4.4",
       "dependsOn": [
         "pkg:cargo/crypto-common@0.1.6",
+        "pkg:cargo/crypto-common@0.1.7",
         "pkg:cargo/inout@0.1.4",
         "pkg:cargo/zeroize@1.9.0"
       ]
@@ -16539,6 +17182,13 @@
     {
       "ref": "pkg:cargo/cmov@0.5.4",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/console_error_panic_hook@0.1.7",
+      "dependsOn": [
+        "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/wasm-bindgen@0.2.114"
+      ]
     },
     {
       "ref": "pkg:cargo/const-oid@0.10.2",
@@ -16584,6 +17234,7 @@
     {
       "ref": "pkg:cargo/crypto-bigint@0.5.5",
       "dependsOn": [
+        "pkg:cargo/generic-array@0.14.7",
         "pkg:cargo/generic-array@0.14.9",
         "pkg:cargo/rand_core@0.6.4",
         "pkg:cargo/subtle@2.6.1",
@@ -16607,6 +17258,13 @@
       "ref": "pkg:cargo/crypto-common@0.1.6",
       "dependsOn": [
         "pkg:cargo/generic-array@0.14.9",
+        "pkg:cargo/typenum@1.20.1"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/crypto-common@0.1.7",
+      "dependsOn": [
+        "pkg:cargo/generic-array@0.14.7",
         "pkg:cargo/typenum@1.20.1"
       ]
     },
@@ -16707,6 +17365,7 @@
         "pkg:cargo/block-buffer@0.10.4",
         "pkg:cargo/const-oid@0.9.6",
         "pkg:cargo/crypto-common@0.1.6",
+        "pkg:cargo/crypto-common@0.1.7",
         "pkg:cargo/subtle@2.6.1"
       ]
     },
@@ -16757,6 +17416,7 @@
         "pkg:cargo/crypto-bigint@0.5.5",
         "pkg:cargo/digest@0.10.7",
         "pkg:cargo/ff@0.13.1",
+        "pkg:cargo/generic-array@0.14.7",
         "pkg:cargo/generic-array@0.14.9",
         "pkg:cargo/group@0.13.0",
         "pkg:cargo/hkdf@0.12.4",
@@ -16793,6 +17453,14 @@
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/windows-sys@0.61.2"
       ]
+    },
+    {
+      "ref": "pkg:cargo/fallible-iterator@0.3.0",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/fallible-streaming-iterator@0.1.9",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/fastrand@2.5.0",
@@ -16897,6 +17565,14 @@
         "pkg:cargo/memchr@2.8.3",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/slab@0.4.12"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/generic-array@0.14.7",
+      "dependsOn": [
+        "pkg:cargo/typenum@1.20.1",
+        "pkg:cargo/version_check@0.9.5",
+        "pkg:cargo/zeroize@1.9.0"
       ]
     },
     {
@@ -17135,6 +17811,7 @@
     {
       "ref": "pkg:cargo/inout@0.1.4",
       "dependsOn": [
+        "pkg:cargo/generic-array@0.14.7",
         "pkg:cargo/generic-array@0.14.9"
       ]
     },
@@ -17183,6 +17860,14 @@
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
         "pkg:cargo/windows-link@0.2.1"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/libsqlite3-sys@0.38.2",
+      "dependsOn": [
+        "pkg:cargo/cc@1.4.4",
+        "pkg:cargo/pkg-config@0.3.34",
+        "pkg:cargo/vcpkg@0.2.15"
       ]
     },
     {
@@ -17412,6 +18097,10 @@
       ]
     },
     {
+      "ref": "pkg:cargo/pkg-config@0.3.34",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/poly1305@0.8.0",
       "dependsOn": [
         "pkg:cargo/cpufeatures@0.2.17",
@@ -17468,6 +18157,12 @@
         "pkg:cargo/primefield@0.14.0",
         "pkg:cargo/serdect@0.4.3",
         "pkg:cargo/wnaf@0.14.1"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/proc-macro2@1.0.106",
+      "dependsOn": [
+        "pkg:cargo/unicode-ident@1.0.24"
       ]
     },
     {
@@ -17541,6 +18236,12 @@
         "pkg:cargo/socket2@0.6.5",
         "pkg:cargo/tracing@0.1.44",
         "pkg:cargo/windows-sys@0.61.2"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/quote@1.0.45",
+      "dependsOn": [
+        "pkg:cargo/proc-macro2@1.0.106"
       ]
     },
     {
@@ -17658,6 +18359,16 @@
       ]
     },
     {
+      "ref": "pkg:cargo/rusqlite@0.40.2",
+      "dependsOn": [
+        "pkg:cargo/bitflags@2.13.1",
+        "pkg:cargo/fallible-iterator@0.3.0",
+        "pkg:cargo/fallible-streaming-iterator@0.1.9",
+        "pkg:cargo/libsqlite3-sys@0.38.2",
+        "pkg:cargo/smallvec@1.15.2"
+      ]
+    },
+    {
       "ref": "pkg:cargo/rustc_version@0.4.1",
       "dependsOn": [
         "pkg:cargo/semver@1.0.28"
@@ -17719,6 +18430,10 @@
       ]
     },
     {
+      "ref": "pkg:cargo/rustversion@1.0.22",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/rustversion@1.0.23",
       "dependsOn": []
     },
@@ -17746,6 +18461,7 @@
       "dependsOn": [
         "pkg:cargo/base16ct@0.2.0",
         "pkg:cargo/der@0.7.10",
+        "pkg:cargo/generic-array@0.14.7",
         "pkg:cargo/generic-array@0.14.9",
         "pkg:cargo/pkcs8@0.10.2",
         "pkg:cargo/subtle@2.6.1",
@@ -17918,6 +18634,14 @@
     {
       "ref": "pkg:cargo/subtle@2.6.1",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/syn@2.0.117",
+      "dependsOn": [
+        "pkg:cargo/proc-macro2@1.0.106",
+        "pkg:cargo/quote@1.0.45",
+        "pkg:cargo/unicode-ident@1.0.24"
+      ]
     },
     {
       "ref": "pkg:cargo/syn@2.0.119",
@@ -18114,6 +18838,7 @@
       "ref": "pkg:cargo/universal-hash@0.5.1",
       "dependsOn": [
         "pkg:cargo/crypto-common@0.1.6",
+        "pkg:cargo/crypto-common@0.1.7",
         "pkg:cargo/subtle@2.6.1"
       ]
     },
@@ -18143,6 +18868,10 @@
       "dependsOn": []
     },
     {
+      "ref": "pkg:cargo/vcpkg@0.2.15",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:cargo/version_check@0.9.5",
       "dependsOn": []
     },
@@ -18169,6 +18898,16 @@
       ]
     },
     {
+      "ref": "pkg:cargo/wasm-bindgen@0.2.114",
+      "dependsOn": [
+        "pkg:cargo/cfg-if@1.0.4",
+        "pkg:cargo/once_cell@1.21.4",
+        "pkg:cargo/rustversion@1.0.22",
+        "pkg:cargo/wasm-bindgen-macro@0.2.114",
+        "pkg:cargo/wasm-bindgen-shared@0.2.114"
+      ]
+    },
+    {
       "ref": "pkg:cargo/wasm-bindgen@0.2.127",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.4",
@@ -18179,10 +18918,27 @@
       ]
     },
     {
+      "ref": "pkg:cargo/wasm-bindgen-macro@0.2.114",
+      "dependsOn": [
+        "pkg:cargo/quote@1.0.45",
+        "pkg:cargo/wasm-bindgen-macro-support@0.2.114"
+      ]
+    },
+    {
       "ref": "pkg:cargo/wasm-bindgen-macro@0.2.127",
       "dependsOn": [
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/wasm-bindgen-macro-support@0.2.127"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/wasm-bindgen-macro-support@0.2.114",
+      "dependsOn": [
+        "pkg:cargo/bumpalo@3.20.2",
+        "pkg:cargo/proc-macro2@1.0.106",
+        "pkg:cargo/quote@1.0.45",
+        "pkg:cargo/syn@2.0.117",
+        "pkg:cargo/wasm-bindgen-shared@0.2.114"
       ]
     },
     {
@@ -18193,6 +18949,12 @@
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/syn@2.0.119",
         "pkg:cargo/wasm-bindgen-shared@0.2.127"
+      ]
+    },
+    {
+      "ref": "pkg:cargo/wasm-bindgen-shared@0.2.114",
+      "dependsOn": [
+        "pkg:cargo/unicode-ident@1.0.24"
       ]
     },
     {
@@ -18737,28 +19499,28 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native@5.5.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native@6.0.0",
       "dependsOn": [
-        "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@5.5.0",
-        "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@5.5.0",
-        "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@5.5.0",
-        "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@5.5.0"
+        "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@6.0.0",
+        "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@6.0.0",
+        "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@6.0.0",
+        "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@6.0.0"
       ]
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@5.5.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@6.0.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@5.5.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@6.0.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@5.5.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@6.0.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@5.5.0",
+      "ref": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@6.0.0",
       "dependsOn": []
     },
     {
@@ -19271,6 +20033,14 @@
       "ref": "pkg:npm/brace-expansion@5.0.9",
       "dependsOn": [
         "pkg:npm/balanced-match@4.0.4"
+      ]
+    },
+    {
+      "ref": "pkg:npm/brotli-dec-wasm@2.3.2",
+      "dependsOn": [
+        "pkg:cargo/brotli-decompressor@5.0.0",
+        "pkg:cargo/console_error_panic_hook@0.1.7",
+        "pkg:cargo/wasm-bindgen@0.2.114"
       ]
     },
     {

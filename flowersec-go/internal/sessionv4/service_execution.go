@@ -8,10 +8,10 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 type serviceExecution struct {
@@ -152,6 +152,9 @@ func (d *ServiceDispatch) admitExecution(publisher *rpcv4.Publisher, ticket rpcv
 			d.rollback(index, i)
 		}
 	}()
+	if err := registration.services.requiredReady(ctx); err != nil {
+		return refuse("service_unavailable", err)
+	}
 	i.deadline, err = input.MessageDeadline(d.clock)
 	if err != nil {
 		return refuse(serviceRefusal(err), err)
@@ -199,6 +202,9 @@ func (d *ServiceDispatch) admitExecution(publisher *rpcv4.Publisher, ticket rpcv
 	i.result, err = publisher.NewAcceptedResult(ticket, input, refs[1], refs[2], d.runtimeBytes)
 	if err != nil {
 		return refuse(serviceRefusal(err), err)
+	}
+	if err = i.prepareResponsePublication(); err != nil {
+		return refuse("service_unavailable", err)
 	}
 	i.writer, err = i.result.Writer()
 	if err != nil {
@@ -280,6 +286,7 @@ func (i *serviceInvocation) runExecution() {
 		}
 		i.mu.Lock()
 		i.returned = true
+		i.publication.endHandler()
 		if failure != nil && !i.execution.outputFinished {
 			reason := serviceRefusal(failure)
 			if errors.Is(failure, ErrCompletionCallbackExit) {
@@ -305,7 +312,7 @@ func (i *serviceInvocation) runExecution() {
 		return
 	}
 	i.plan.lease.mu.Lock()
-	request := UnaryRequest{Binding: i.plan.lease.binding, ApplicationContext: i.plan.lease.context, Input: input, OutputInterest: i.observation.View()}
+	request := UnaryRequest{publication: i.publication, Binding: i.plan.lease.binding, ApplicationContext: i.plan.lease.context, Input: input, OutputInterest: i.observation.View()}
 	i.plan.lease.mu.Unlock()
 	callCtx, exit, err := enterApplicationContext(ctx, i.plan.executor, ordinaryApplicationLane, i.method.WorkClass, i.reservation, nil)
 	if err != nil {
@@ -313,7 +320,12 @@ func (i *serviceInvocation) runExecution() {
 		return
 	}
 	defer exit()
+	if err := attachInvocationServices(callCtx, i.method.services); err != nil {
+		failure, returned = err, true
+		return
+	}
 	code, err := i.method.Handler(callCtx, request, &i.response)
+	i.publication.endHandler()
 	returned = true
 	failure = err
 	if failure == nil {
@@ -427,6 +439,11 @@ func (d *ServiceDispatch) finishExecution(index int, i *serviceInvocation) {
 	i.input.Close()
 	i.result.Close()
 	if !i.result.CleanupComplete() || !i.observation.CleanupComplete() {
+		i.mu.Unlock()
+		return
+	}
+	i.publication.releasePhysical()
+	if !i.publication.cleanupComplete() {
 		i.mu.Unlock()
 		return
 	}

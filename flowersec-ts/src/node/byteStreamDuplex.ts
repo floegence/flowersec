@@ -6,6 +6,7 @@ export function createByteStreamDuplex(stream: ByteStream, signal?: AbortSignal)
   const operations = new AbortController();
   let reading = false;
   let ended = false;
+  let halfClosed = false;
   let duplex: Duplex;
   const abort = (): void => { duplex.destroy(new Error("Application stream canceled")); };
   duplex = new Duplex({
@@ -51,12 +52,17 @@ export function createByteStreamDuplex(stream: ByteStream, signal?: AbortSignal)
       })();
     },
     final(callback) {
-      void stream.closeWrite().then(() => callback(), () => callback(new Error("Application stream half-close failed")));
+      void stream.closeWrite().then(() => { halfClosed = true; callback(); }, () => callback(new Error("Application stream half-close failed")));
     },
     destroy(error, callback) {
       signal?.removeEventListener("abort", abort);
       operations.abort();
-      void (error ? stream.reset() : stream.close()).then(
+      const terminal = error
+        ? stream.reset()
+        : halfClosed
+          ? (stream.finish === undefined ? stream.close() : stream.finish())
+          : stream.close();
+      void terminal.then(
         () => callback(error),
         () => callback(error ?? new Error("Application stream close failed")),
       );

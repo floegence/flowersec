@@ -12,6 +12,7 @@ type Idle struct {
 	delta    uint64
 	enabled  bool
 	started  bool
+	starting bool
 	last     Mark
 	terminal error
 }
@@ -48,52 +49,88 @@ func NewIdle(c *Clock, signedMS, localMS uint64) (*Idle, error) {
 // authenticated input before this transition cannot arm or refresh the timer.
 func (i *Idle) Start() error {
 	i.mu.Lock()
-	defer i.mu.Unlock()
 	if i.terminal != nil {
-		return i.terminal
+		err := i.terminal
+		i.mu.Unlock()
+		return err
 	}
-	if i.started {
+	if i.started || i.starting {
+		i.mu.Unlock()
 		return ErrOwner
 	}
-	if i.enabled {
-		mark, err := i.clock.Monotonic()
-		if err != nil {
-			i.terminal = err
-			return err
-		}
-		i.last = mark
+	if !i.enabled {
+		i.started = true
+		i.mu.Unlock()
+		return nil
 	}
-	i.started = true
+	i.starting = true
+	i.mu.Unlock()
+	returned := false
+	defer func() {
+		i.mu.Lock()
+		i.starting = false
+		if !returned && i.terminal == nil {
+			i.terminal = ErrContinuity
+		}
+		i.mu.Unlock()
+	}()
+	mark, err := i.clock.Monotonic()
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	returned = true
+	if err == nil {
+		err = i.clock.checkMark(mark)
+	}
+	if err != nil {
+		i.terminal = err
+		return err
+	}
+	i.last, i.started = mark, true
 	return nil
 }
 
-func (i *Idle) remaining() (uint64, Mark, error) {
+func (i *Idle) remaining(refresh bool) (uint64, bool, error) {
+	i.mu.Lock()
 	if i.terminal != nil {
-		return 0, Mark{}, i.terminal
+		err, armed := i.terminal, i.enabled && i.started
+		i.mu.Unlock()
+		return 0, armed, err
 	}
 	if !i.enabled || !i.started {
-		return 0, Mark{}, nil
+		i.mu.Unlock()
+		return 0, false, nil
 	}
+	i.mu.Unlock()
 	now, err := i.clock.Monotonic()
-	if err != nil || !now.SameEra(i.last) || now.Milliseconds < i.last.Milliseconds {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.terminal != nil {
+		return 0, true, i.terminal
+	}
+	if err != nil || !now.SameEra(i.last) || i.clock.checkMark(now) != nil {
 		i.terminal = ErrContinuity
-		return 0, now, i.terminal
+		return 0, true, i.terminal
+	}
+	if now.Milliseconds < i.last.Milliseconds {
+		// Another qualifying activity completed while this sample was in
+		// flight. Preserve that later real activity; do not move it back.
+		now = i.last
 	}
 	elapsed := now.Milliseconds - i.last.Milliseconds
 	if elapsed >= i.delta {
 		i.terminal = ErrExpired
-		return 0, now, i.terminal
+		return 0, true, i.terminal
 	}
-	return i.delta - elapsed, now, nil
+	if refresh {
+		i.last = now
+	}
+	return i.delta - elapsed, true, nil
 }
 
 // RemainingMS is a wakeup hint, not a timer-derived authorization. Subtraction
 // preserves the full uint64 duration even when last+duration would overflow.
 func (i *Idle) RemainingMS() (milliseconds uint64, armed bool, err error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	milliseconds, _, err = i.remaining()
-	return milliseconds, i.enabled && i.started, err
+	return i.remaining(false)
 }
 
 func (i *Idle) Check() error { _, _, err := i.RemainingMS(); return err }
@@ -101,11 +138,6 @@ func (i *Idle) Check() error { _, _, err := i.RemainingMS(); return err }
 // Refresh first checks the old deadline at the very same sample. Activity at
 // or after expiry cannot revive the Session, even if the timer ran late.
 func (i *Idle) Refresh() error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	_, now, err := i.remaining()
-	if err == nil && i.enabled && i.started {
-		i.last = now
-	}
+	_, _, err := i.remaining(true)
 	return err
 }

@@ -7,7 +7,7 @@ import (
 	"math"
 	"net"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 // runNative uses the same single chunk and synchronous acceptance accounting

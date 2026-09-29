@@ -6,10 +6,10 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrSourceContractInvalid = errors.New("sessionv4: source contract invalid")
@@ -69,17 +69,17 @@ type MaterialLeaseProvider interface {
 // manager or a resumable token. Close fences publication; the original caller's
 // context cancels provider work. Resources remain until Acquire actually exits.
 type MaterialAcquisition struct {
-	mu                               sync.Mutex
-	ctx                              context.Context
-	deadline                         *timev4.Deadline
-	identity                         identityUse
-	generation                       MaterialGeneration
-	request                          MaterialLeaseRequest
-	source                           string
-	reservation, material            resourcev4.Reference
-	materialCharge                   resourcev4.Vector
-	started, active, closed, cleaned bool
-	done                             chan struct{}
+	mu                                   sync.Mutex
+	ctx                                  context.Context
+	deadline                             *timev4.Deadline
+	identity                             identityUse
+	generation                           MaterialGeneration
+	request                              MaterialLeaseRequest
+	source                               string
+	reservation, material, establishment resourcev4.Reference
+	materialCharge                       resourcev4.Vector
+	started, active, closed, cleaned     bool
+	done                                 chan struct{}
 }
 
 func MaterialAcquisitionCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
@@ -90,6 +90,10 @@ func MaterialAcquisitionCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
 }
 
 func NewMaterialAcquisition(ctx context.Context, identity *ApplicationIdentity, generation MaterialGeneration, source string, requirements MaterialRequirements, deadline *timev4.Deadline, runtimeBytes, materialRuntimeBytes uint64, reservation, material resourcev4.Reference) (_ *MaterialAcquisition, err error) {
+	return newMaterialAcquisition(ctx, identity, generation, source, requirements, deadline, runtimeBytes, materialRuntimeBytes, reservation, material, nil)
+}
+
+func newMaterialAcquisition(ctx context.Context, identity *ApplicationIdentity, generation MaterialGeneration, source string, requirements MaterialRequirements, deadline *timev4.Deadline, runtimeBytes, materialRuntimeBytes uint64, reservation, material resourcev4.Reference, references *sourceReferences) (_ *MaterialAcquisition, err error) {
 	if ctx == nil || deadline == nil || identity == nil || generation.Source == ([16]byte{}) || generation.Generation == 0 || !requirements.valid() || source != "preauthorized_pool" && source != "live_authority" || reservation == material {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -113,23 +117,47 @@ func NewMaterialAcquisition(ctx context.Context, identity *ApplicationIdentity, 
 	if err = reservation.CheckSameEnvironment(material); err != nil {
 		return nil, err
 	}
-	i, err := identity.capture(reservation)
+	var i identityUse
+	var establishment resourcev4.Reference
+	if references == nil {
+		i, err = identity.capture(reservation)
+		if err == nil {
+			establishment, err = material.Borrow()
+		}
+	} else {
+		if references.identity.identity != identity || references.materialOrigin != material || references.generation != generation {
+			return nil, resourcev4.ErrOwner
+		}
+		if err = references.establishment.CheckBorrowedFrom(material); err != nil {
+			return nil, err
+		}
+		i, err = references.identity.take(reservation)
+		if err == nil {
+			establishment, err = references.establishment.TakeBorrow()
+			if err == nil {
+				references.establishment = resourcev4.Reference{}
+			}
+		}
+	}
 	if err != nil {
+		i.release()
 		return nil, err
 	}
 	owned, err := reservation.Take(charge)
 	if err != nil {
 		i.release()
+		establishment.Release()
 		return nil, err
 	}
 	result, err := material.Take(resultCharge)
 	if err != nil {
 		owned.Release()
 		i.release()
+		establishment.Release()
 		return nil, err
 	}
 	scope := identity.credential.Scope()
-	a := &MaterialAcquisition{ctx: ctx, deadline: deadline, identity: i, generation: generation, source: source, reservation: owned, material: result, materialCharge: resultCharge, done: make(chan struct{}), request: MaterialLeaseRequest{IdentityDigest: identity.credential.Facts().Digest, Tenant: scope.Tenant, Audience: scope.Audience, Profile: scope.Profile, Role: identity.role, Requirements: requirements}}
+	a := &MaterialAcquisition{ctx: ctx, deadline: deadline, identity: i, generation: generation, source: source, reservation: owned, material: result, establishment: establishment, materialCharge: resultCharge, done: make(chan struct{}), request: MaterialLeaseRequest{IdentityDigest: identity.credential.Facts().Digest, Tenant: scope.Tenant, Audience: scope.Audience, Profile: scope.Profile, Role: identity.role, Requirements: requirements}}
 	return a, nil
 }
 
@@ -137,16 +165,20 @@ func (a *MaterialAcquisition) checkLocked() error {
 	if a.closed {
 		return cryptov4.ErrClosed
 	}
-	if err := a.ctx.Err(); err != nil {
-		return err
-	}
-	if err := a.deadline.Check(); err != nil {
-		return err
-	}
 	if err := a.reservation.Check(); err != nil {
 		return err
 	}
 	return a.material.Check()
+}
+
+// The original active invocation pins ctx, deadline and identity while opaque
+// context/clock callbacks run. Publication only checks their captured outcome
+// and the original deadline under the owner gate; Close never waits for them.
+func (a *MaterialAcquisition) sampleInvocation() (timev4.Sample, error) {
+	if err := a.ctx.Err(); err != nil {
+		return timev4.Sample{}, err
+	}
+	return a.deadline.Sample()
 }
 
 func (a *MaterialAcquisition) Acquire(provider MaterialLeaseProvider) (result *ConnectionMaterial, err error) {
@@ -154,7 +186,7 @@ func (a *MaterialAcquisition) Acquire(provider MaterialLeaseProvider) (result *C
 		return nil, cryptov4.ErrConfiguration
 	}
 	a.mu.Lock()
-	if a.started {
+	if a.started || a.active {
 		a.mu.Unlock()
 		return nil, cryptov4.ErrTransition
 	}
@@ -162,10 +194,10 @@ func (a *MaterialAcquisition) Acquire(provider MaterialLeaseProvider) (result *C
 		a.mu.Unlock()
 		return nil, err
 	}
-	a.started, a.active = true, true
+	a.active = true
 	ctx, request := a.ctx, a.request
 	a.mu.Unlock()
-	returned := false
+	returned, started := false, false
 	defer func() {
 		if recover() != nil || !returned {
 			err = ErrEnvironmentTaskExit
@@ -176,11 +208,44 @@ func (a *MaterialAcquisition) Acquire(provider MaterialLeaseProvider) (result *C
 		}
 		a.mu.Lock()
 		a.active = false
-		a.closed = true
+		if started || !returned {
+			a.closed = true
+		}
 		a.cleanupLocked()
 		a.mu.Unlock()
 	}()
+	now, err := a.sampleInvocation()
+	a.mu.Lock()
+	if err == nil {
+		err = a.checkLocked()
+	}
+	if err == nil {
+		err = a.deadline.CheckAt(now)
+	}
+	if err == nil {
+		a.started, started = true, true
+	}
+	a.mu.Unlock()
+	if err != nil {
+		returned = true
+		return nil, err
+	}
 	if err = a.identity.identity.check(); err != nil {
+		returned = true
+		return nil, err
+	}
+	// Key-provider validation can itself block. A concurrent Close must win
+	// before issuer work begins, without releasing the captured identity.
+	now, err = a.sampleInvocation()
+	a.mu.Lock()
+	if err == nil {
+		err = a.checkLocked()
+	}
+	if err == nil {
+		err = a.deadline.CheckAt(now)
+	}
+	a.mu.Unlock()
+	if err != nil {
 		returned = true
 		return nil, err
 	}
@@ -193,8 +258,14 @@ func (a *MaterialAcquisition) Acquire(provider MaterialLeaseProvider) (result *C
 		returned = true
 		return nil, err
 	}
+	now, err = a.sampleInvocation()
 	a.mu.Lock()
-	err = a.checkLocked()
+	if err == nil {
+		err = a.checkLocked()
+	}
+	if err == nil {
+		err = a.deadline.CheckAt(now)
+	}
 	a.mu.Unlock()
 	if err != nil {
 		returned = true
@@ -213,19 +284,22 @@ func (a *MaterialAcquisition) Acquire(provider MaterialLeaseProvider) (result *C
 	a.mu.Lock()
 	i := a.identity
 	a.identity = identityUse{}
+	establishment := a.establishment
+	a.establishment = resourcev4.Reference{}
 	a.mu.Unlock()
-	result, err = newConnectionMaterialCaptured(lease, i, a.generation, a.materialCharge, a.material)
+	result, err = newConnectionMaterialPrepared(lease, i, a.generation, a.materialCharge, a.material, establishment)
 	if err != nil {
 		returned = true
 		return nil, err
 	}
+	now, err = a.sampleInvocation()
 	a.mu.Lock()
 	// material has moved into result, so only the original invocation, caller
 	// cancellation and deadline are checked at this final publication gate.
 	if a.closed {
 		err = cryptov4.ErrClosed
-	} else if err = a.ctx.Err(); err == nil {
-		err = a.deadline.Check()
+	} else if err == nil {
+		err = a.deadline.CheckAt(now)
 	}
 	if err == nil {
 		err = a.reservation.Check()
@@ -250,12 +324,13 @@ func (a *MaterialAcquisition) cleanupLocked() {
 		return
 	}
 	a.identity.release()
+	a.establishment.Release()
 	a.reservation.Release()
 	a.material.Release()
 	a.ctx, a.deadline = nil, nil
 	a.request = MaterialLeaseRequest{}
 	a.source = ""
-	a.reservation, a.material = resourcev4.Reference{}, resourcev4.Reference{}
+	a.reservation, a.material, a.establishment = resourcev4.Reference{}, resourcev4.Reference{}, resourcev4.Reference{}
 	a.cleaned = true
 	close(a.done)
 }

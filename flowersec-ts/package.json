@@ -1,6 +1,6 @@
 {
   "name": "@floegence/flowersec-core",
-  "version": "5.5.0",
+  "version": "6.0.0",
   "description": "Flowersec core TypeScript library for carrier-neutral encrypted sessions and multiplexed streams.",
   "license": "MIT",
   "repository": {
@@ -53,7 +53,7 @@
     "postcss": "^8.5.23"
   },
   "scripts": {
-    "build": "node ./scripts/clean-dist.mjs && node ./node_modules/@typescript/native/bin/tsc -p tsconfig.build.json && node ./scripts/build-browser-vendor.mjs",
+    "build": "node ./scripts/generate-brotli-worker.mjs --check && node ./scripts/clean-dist.mjs && node ./node_modules/@typescript/native/bin/tsc -p tsconfig.build.json && node ./scripts/build-browser-vendor.mjs",
     "bench": "vitest bench --run",
     "test": "npm run build && vitest run --exclude 'src/**/*.integration.test.ts'",
     "test:browser": "npm run test:browser:chromium",
@@ -71,26 +71,27 @@
     "prepublishOnly": "npm run build && npm run verify:package"
   },
   "dependencies": {
-    "@types/node": "26.4.0",
     "@noble/ciphers": "2.4.0",
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
+    "@types/node": "26.4.0",
+    "@types/ws": "8.18.1",
+    "brotli-dec-wasm": "2.3.2",
     "tr46": "6.0.0",
     "ws": "8.21.3"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
-    "@typescript/native": "npm:typescript@7.0.2",
-    "typescript": "npm:@typescript/typescript6@6.0.2",
-    "@types/ws": "8.18.1",
     "@typescript-eslint/eslint-plugin": "8.68.0",
     "@typescript-eslint/parser": "8.68.0",
+    "@typescript/native": "npm:typescript@7.0.2",
     "@vitest/coverage-v8": "4.1.11",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "ajv-formats-draft2019": "1.6.1",
     "eslint": "10.9.1",
     "tsx": "4.23.13",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
     "vite": "8.2.1",
     "vitest": "4.1.11"
   }

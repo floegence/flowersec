@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 // A second valid signature can keep the same parent/attempt/winner while

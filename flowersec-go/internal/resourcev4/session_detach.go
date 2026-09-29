@@ -14,7 +14,7 @@ func (ref Reference) DetachSessionScope() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, c := ref.slotsLocked()
-	if s == nil || c.protected != nil && (!c.protected.hasAnchor || ref.index == c.protected.anchorIndex) {
+	if s == nil || s.protectedScope || c.protected != nil && (!c.protected.hasAnchor || ref.index == c.protected.anchorIndex) {
 		return ErrOwner
 	}
 	// A completed input or an actual physical retirement may race Session
@@ -60,7 +60,7 @@ func (ref Reference) RestoreOriginalScopes(anchor Reference) error {
 	defer r.mu.Unlock()
 	s, c := ref.slotsLocked()
 	a, ac := anchor.slotsLocked()
-	if s == nil || a == nil || ac != c {
+	if s == nil || a == nil || ac != c || s.protectedScope {
 		return ErrOwner
 	}
 	for _, scope := range s.accounts[:s.count] {

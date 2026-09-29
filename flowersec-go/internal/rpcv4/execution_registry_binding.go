@@ -1,6 +1,6 @@
 package rpcv4
 
-import "github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+import "github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 
 // Exactly one history owns a logical service. Backend selection comes only
 // from trusted registration, never from a wire request or a failed lookup.

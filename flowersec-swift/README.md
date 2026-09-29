@@ -10,6 +10,15 @@ then select the `Flowersec` library product.
 
 ## Public API
 
+The native v4 client starts with `TransportEnvironment(configuration:)` and
+explicit trusted time, pinned namespace roots, numerical endpoints and durable
+SQLite pool history. It verifies a `TransportV4PoolCredential`, binds it to an
+original `TransportV4ApplicationIdentity`, and connects with
+`connectMaterial(_:requirements:)` or `connect(source:requirements:)`.
+See [Swift transport v4](../docs/SWIFT_TRANSPORT_V4.md) for configuration,
+host adapter obligations, metadata and cleanup.
+
+The separate transport v3 entrance provides RPC and notifications:
 Parse an opaque `Artifact` with `parseArtifact(...)`, bind it to a single-use
 `ArtifactLease`, and call `connect(lease:options:)` with `ConnectorOptions`.
 The Apple WebSocket runtime requires an explicit absolute HTTP(S) `origin` in
@@ -35,7 +44,14 @@ state are not public.
 
 ## Supported Connections
 
+The v4 entrance supports direct preauthorized-pool TLS 1.3 WebSocket sessions,
+both Noise profiles, CA and signed leaf-DER pin policies, and bounded binary
+stream metadata. It exposes reliable byte streams, rekey, liveness and close;
+its `Session.rpc` operations are unavailable. Live authority, services,
+notifications, resume and a v4 reconnect controller are not implemented.
+
 Swift supports direct and relayed TLS 1.3 WebSocket sessions on macOS and iOS.
+The v3 entrance supports direct and relayed TLS 1.3 WebSocket sessions.
 CA mode uses system trust or explicit PEM roots; pin mode verifies only the
 artifact-bound active pin set and never falls back to CA. Raw QUIC,
 WebTransport, unreliable messages, server acceptance, tunnel relay, and
@@ -57,7 +73,8 @@ The lease retains the ordinary atomic spend and retirement semantics.
 
 The [Swift cookbook](../examples/swift/README.md) establishes a WSS session,
 performs typed RPC and notification exchange, completes a reliable stream, and
-closes the Session.
+closes the Session through the v3 entrance. The
+[v4 guide](../docs/SWIFT_TRANSPORT_V4.md) covers the configured v4 lifecycle.
 
 See the [API contract](../docs/API_CONTRACT.md),
 [Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md),

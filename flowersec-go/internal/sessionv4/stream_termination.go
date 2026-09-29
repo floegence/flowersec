@@ -9,9 +9,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var (
@@ -31,9 +31,35 @@ type StreamTerminationPolicy struct {
 type directionTermination struct {
 	mu               sync.Mutex
 	service          *StreamTerminationService
+	normalMS         uint64
 	normal, until    *timev4.Window
 	quarantine, done bool
 	cause, failure   error
+}
+
+// selectConnTermination fixes the native adapter and original directions to
+// the same normal-close preset before either starts. A received FIN may have
+// started a direction before adapter construction; that window cannot be
+// extended or silently replaced. Both selections commit together.
+func selectConnTermination(send, receive *directionTermination, normalMS uint64) error {
+	if normalMS == 0 || normalMS > 60000 {
+		return cryptov4.ErrConfiguration
+	}
+	send.mu.Lock()
+	defer send.mu.Unlock()
+	receive.mu.Lock()
+	defer receive.mu.Unlock()
+	for _, d := range [...]*directionTermination{send, receive} {
+		current := d.normalMS
+		if current == 0 && d.service != nil {
+			current = d.service.policy.NormalMS
+		}
+		if (d.until != nil || d.normal != nil || d.done || d.failure != nil) && current != normalMS {
+			return cryptov4.ErrTransition
+		}
+	}
+	send.normalMS, receive.normalMS = normalMS, normalMS
+	return nil
 }
 
 func (d *directionTermination) start(failed bool, cause error) {
@@ -58,8 +84,12 @@ func (d *directionTermination) start(failed bool, cause error) {
 		}
 		duration := p.policy.QuarantineMS
 		if !failed {
-			duration += p.policy.NormalMS
-			d.normal, err = timev4.NewWindowAt(p.admission.engine.Clock(), now, p.policy.NormalMS)
+			normal := d.normalMS
+			if normal == 0 {
+				normal = p.policy.NormalMS
+			}
+			duration += normal
+			d.normal, err = timev4.NewWindowAt(p.admission.engine.Clock(), now, normal)
 		}
 		if err == nil {
 			d.until, err = timev4.NewWindowAt(p.admission.engine.Clock(), now, duration)
@@ -365,6 +395,9 @@ func (p *StreamTerminationService) nextLocked() (chosen *openSlot, kind terminal
 		if s.pendingRejection() && !s.deciding {
 			return s, terminalReject, (i + 1) % len(a.slots)
 		}
+		if s.compactRecent() && s.stoppedDirty && !s.terminalPublishing && !s.cleanupBusy {
+			return s, terminalStopped, (i + 1) % len(a.slots)
+		}
 		if !s.accepted || s.flow == nil || s.phase != openLive && s.phase != openRecent || s.terminalPublishing || s.cleanupBusy {
 			continue
 		}
@@ -428,7 +461,7 @@ func (p *StreamTerminationService) Progress(ctx context.Context) (result RecordW
 	}
 	if kind == terminalReject {
 		p.rejectionPublication = chosen.deadline
-	} else {
+	} else if chosen.flow != nil {
 		d := &chosen.flow.receive.termination
 		if kind == terminalStopped {
 			d = &chosen.flow.send.termination
@@ -521,6 +554,7 @@ func (p *StreamTerminationService) Run(ctx context.Context) (err error) {
 	defer timer.Stop()
 	busy, retry := false, false
 	for {
+		a.releaseClosedStreams()
 		if err := ctx.Err(); err != nil {
 			return err
 		}

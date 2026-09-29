@@ -1,6 +1,6 @@
 {
   "status": "draft",
-  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "schema_revision": "flowersec-v4.0.0-draft.74",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
   "unresolved": [
     "Complete storage, application and public API maps; issuer-derived Artifact credential dependency closure and runtime policy/feature eligibility",
@@ -10244,6 +10244,329 @@
       "deferred_constraints": [
         "Local query-only persistence format, never a frame or credential. target_domain resolves only through trusted local configuration. Import grants no dispatch, Start, payload, Session or key capability. The operation cutoff in the first eight ID bytes must be positive and no later than deadline_at_ms."
       ]
+    },
+    "SpendReceipt": {
+      "fields": {
+        "0": {
+          "name": "lease_id",
+          "type": "bytes",
+          "length": 16
+        },
+        "1": {
+          "name": "attempt_id",
+          "type": "bytes",
+          "length": 16
+        },
+        "2": {
+          "name": "state",
+          "type": "uint8",
+          "enum": {
+            "spending": 0,
+            "consumed": 1
+          }
+        },
+        "3": {
+          "name": "authorization_outcome",
+          "type": "uint8",
+          "enum": {
+            "unknown": 0,
+            "denied": 1,
+            "authorized": 2,
+            "not_started": 3
+          }
+        },
+        "4": {
+          "name": "updated_at_ms",
+          "type": "uint64",
+          "min": 1
+        },
+        "5": {
+          "name": "query_after_duration_ms",
+          "type": "uint64"
+        }
+      },
+      "required": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "max_encoded_bytes": 61,
+      "deferred_constraints": [
+        "Authenticated caller facts only under 3.9.2. No proof, grant, dispatch, material, storage identity or execution authority. A query delay never extends original authorization or task deadlines. not_started requires the original owner to prove no callback dispatch; recovery never infers it."
+      ]
+    },
+    "ProxyField": {
+      "fields": {
+        "0": {
+          "name": "name",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        },
+        "1": {
+          "name": "value",
+          "type": "bytes",
+          "min_bytes": 0,
+          "max_bytes": 1048576
+        }
+      },
+      "required": [
+        0,
+        1
+      ],
+      "max_encoded_bytes": 1048576,
+      "deferred_constraints": [
+        "Application Stream metadata only. Ordered field values retain HTTP octets; ASCII token, original header facts, target/policy, body/trailer integrity and resource ownership are checked by the proxy application. No authentication or authority is established by decoding."
+      ]
+    },
+    "ProxyError": {
+      "fields": {
+        "0": {
+          "name": "code",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        },
+        "1": {
+          "name": "message",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        }
+      },
+      "required": [
+        0,
+        1
+      ],
+      "max_encoded_bytes": 1048576,
+      "deferred_constraints": [
+        "Application Stream metadata only. Ordered field values retain HTTP octets; ASCII token, original header facts, target/policy, body/trailer integrity and resource ownership are checked by the proxy application. No authentication or authority is established by decoding."
+      ]
+    },
+    "ProxyHTTPRequest": {
+      "fields": {
+        "0": {
+          "name": "version",
+          "type": "uint32",
+          "const": 2
+        },
+        "1": {
+          "name": "request_id",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        },
+        "2": {
+          "name": "method",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        },
+        "3": {
+          "name": "path",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        },
+        "4": {
+          "name": "headers",
+          "type": "array",
+          "min_items": 0,
+          "max_items_ref": "max_proxy_fields",
+          "items": {
+            "type": "map",
+            "schema_ref": "ProxyField"
+          }
+        },
+        "5": {
+          "name": "external_origin",
+          "type": "bytes",
+          "min_bytes": 0,
+          "max_bytes": 1048576,
+          "optional": true
+        },
+        "6": {
+          "name": "timeout_ms",
+          "type": "uint32",
+          "max": 300000,
+          "optional": true
+        }
+      },
+      "required": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "max_encoded_bytes": 1048576,
+      "deferred_constraints": [
+        "Application Stream metadata only. Ordered field values retain HTTP octets; ASCII token, original header facts, target/policy, body/trailer integrity and resource ownership are checked by the proxy application. No authentication or authority is established by decoding."
+      ]
+    },
+    "ProxyHTTPResponse": {
+      "fields": {
+        "0": {
+          "name": "version",
+          "type": "uint32",
+          "const": 2
+        },
+        "1": {
+          "name": "request_id",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        },
+        "2": {
+          "name": "ok",
+          "type": "bool"
+        },
+        "3": {
+          "name": "status",
+          "type": "uint32",
+          "min": 200,
+          "max": 599,
+          "optional": true
+        },
+        "4": {
+          "name": "headers",
+          "type": "array",
+          "min_items": 0,
+          "max_items_ref": "max_proxy_fields",
+          "items": {
+            "type": "map",
+            "schema_ref": "ProxyField"
+          },
+          "optional": true
+        },
+        "5": {
+          "name": "error",
+          "type": "map",
+          "schema_ref": "ProxyError",
+          "optional": true
+        }
+      },
+      "required": [
+        0,
+        1,
+        2
+      ],
+      "max_encoded_bytes": 1048576,
+      "deferred_constraints": [
+        "Application Stream metadata only. Ordered field values retain HTTP octets; ASCII token, original header facts, target/policy, body/trailer integrity and resource ownership are checked by the proxy application. No authentication or authority is established by decoding."
+      ]
+    },
+    "ProxyWebSocketOpen": {
+      "fields": {
+        "0": {
+          "name": "version",
+          "type": "uint32",
+          "const": 2
+        },
+        "1": {
+          "name": "conn_id",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        },
+        "2": {
+          "name": "path",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        },
+        "3": {
+          "name": "headers",
+          "type": "array",
+          "min_items": 0,
+          "max_items_ref": "max_proxy_fields",
+          "items": {
+            "type": "map",
+            "schema_ref": "ProxyField"
+          }
+        }
+      },
+      "required": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "max_encoded_bytes": 1048576,
+      "deferred_constraints": [
+        "Application Stream metadata only. Ordered field values retain HTTP octets; ASCII token, original header facts, target/policy, body/trailer integrity and resource ownership are checked by the proxy application. No authentication or authority is established by decoding."
+      ]
+    },
+    "ProxyWebSocketResponse": {
+      "fields": {
+        "0": {
+          "name": "version",
+          "type": "uint32",
+          "const": 2
+        },
+        "1": {
+          "name": "conn_id",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 1048576
+        },
+        "2": {
+          "name": "ok",
+          "type": "bool"
+        },
+        "3": {
+          "name": "protocol",
+          "type": "bytes",
+          "min_bytes": 0,
+          "max_bytes": 1048576,
+          "optional": true
+        },
+        "4": {
+          "name": "error",
+          "type": "map",
+          "schema_ref": "ProxyError",
+          "optional": true
+        }
+      },
+      "required": [
+        0,
+        1,
+        2
+      ],
+      "max_encoded_bytes": 1048576,
+      "deferred_constraints": [
+        "Application Stream metadata only. Ordered field values retain HTTP octets; ASCII token, original header facts, target/policy, body/trailer integrity and resource ownership are checked by the proxy application. No authentication or authority is established by decoding."
+      ]
+    },
+    "ProxyBodyEnd": {
+      "fields": {
+        "0": {
+          "name": "version",
+          "type": "uint32",
+          "const": 2
+        },
+        "1": {
+          "name": "trailers",
+          "type": "array",
+          "min_items": 0,
+          "max_items_ref": "max_proxy_fields",
+          "items": {
+            "type": "map",
+            "schema_ref": "ProxyField"
+          }
+        }
+      },
+      "required": [
+        0,
+        1
+      ],
+      "max_encoded_bytes": 1048576,
+      "deferred_constraints": [
+        "Application Stream metadata only. Ordered field values retain HTTP octets; ASCII token, original header facts, target/policy, body/trailer integrity and resource ownership are checked by the proxy application. No authentication or authority is established by decoding."
+      ]
     }
   },
   "error_codes": {
@@ -10971,7 +11294,7 @@
   },
   "connection_assurance_registry": {
     "source": "3.7.7,5.1",
-    "boundary": "Finite direct WebSocket capability definitions only. Provider and complete signed-route binding plus actual preparation are mandatory. TLS13 describes only the observing consumer leg; accepted observers cannot attest a remote consumer. This table neither qualifies implementations nor enables a deployment or runtime. Native/relay independent progress, isolation and datagram definitions require their complete original provider integration and qualification.",
+    "boundary": "Finite direct and complete relay carrier capability definitions. Actual provider preparation and exact signed-route binding are mandatory. Relay capability requires an independently trusted immutable deployment binding for both endpoints and the forwarding implementation. The table defines capabilities, not engineering qualification or observed remote behavior. TLS13 describes only the actual consumer leg. Datagram use still requires signed negotiation and preadmitted owners.",
     "entries": {
       "native_websocket_tls13": {
         "reliable_progress": "shared_ordered",
@@ -11004,6 +11327,70 @@
         "local_consumer_tls13_verification": "controlled_terminator",
         "scope": "complete_direct_path",
         "assumptions": "authenticated_peer_within_transport_profile"
+      },
+      "native_quic_tls13": {
+        "reliable_progress": "independent_within_profile",
+        "bound_stream_input_isolation": "bound_stream_within_profile",
+        "datagram": true,
+        "local_consumer_tls13_verification": "consumer_enforced",
+        "scope": "complete_direct_path",
+        "assumptions": "authenticated_peer_within_transport_profile"
+      },
+      "accepted_quic": {
+        "reliable_progress": "independent_within_profile",
+        "bound_stream_input_isolation": "bound_stream_within_profile",
+        "datagram": true,
+        "local_consumer_tls13_verification": "not_applicable",
+        "scope": "complete_direct_path",
+        "assumptions": "authenticated_peer_within_transport_profile"
+      },
+      "native_webtransport_tls13": {
+        "reliable_progress": "independent_within_profile",
+        "bound_stream_input_isolation": "bound_stream_within_profile",
+        "datagram": true,
+        "local_consumer_tls13_verification": "consumer_enforced",
+        "scope": "complete_direct_path",
+        "assumptions": "authenticated_peer_within_transport_profile"
+      },
+      "accepted_webtransport": {
+        "reliable_progress": "independent_within_profile",
+        "bound_stream_input_isolation": "bound_stream_within_profile",
+        "datagram": true,
+        "local_consumer_tls13_verification": "not_applicable",
+        "scope": "complete_direct_path",
+        "assumptions": "authenticated_peer_within_transport_profile"
+      },
+      "go_relay_native_consumer": {
+        "reliable_progress": "independent_within_profile",
+        "bound_stream_input_isolation": "bound_stream_within_profile",
+        "datagram": true,
+        "local_consumer_tls13_verification": "consumer_enforced",
+        "scope": "complete_relay_path",
+        "assumptions": "trusted_relay_and_peers_within_transport_profile"
+      },
+      "go_relay_native_observer": {
+        "reliable_progress": "independent_within_profile",
+        "bound_stream_input_isolation": "bound_stream_within_profile",
+        "datagram": true,
+        "local_consumer_tls13_verification": "not_applicable",
+        "scope": "complete_relay_path",
+        "assumptions": "trusted_relay_and_peers_within_transport_profile"
+      },
+      "go_relay_shared_consumer": {
+        "reliable_progress": "shared_ordered",
+        "bound_stream_input_isolation": "shared_failure_scope",
+        "datagram": false,
+        "local_consumer_tls13_verification": "consumer_enforced",
+        "scope": "complete_relay_path",
+        "assumptions": "trusted_relay_and_peers_within_transport_profile"
+      },
+      "go_relay_shared_observer": {
+        "reliable_progress": "shared_ordered",
+        "bound_stream_input_isolation": "shared_failure_scope",
+        "datagram": false,
+        "local_consumer_tls13_verification": "not_applicable",
+        "scope": "complete_relay_path",
+        "assumptions": "trusted_relay_and_peers_within_transport_profile"
       }
     }
   },
@@ -11510,6 +11897,96 @@
         "rules": [
           "publication_result_matrix"
         ]
+      },
+      "TopUpWireResult": {
+        "registry": "top_up_wire_result",
+        "select": "keys",
+        "exclude": []
+      },
+      "TopUpErrorCode": {
+        "registry": "top_up_wire_result",
+        "select": "keys",
+        "exclude": [
+          "success",
+          "replay"
+        ]
+      },
+      "TopUpErrorScope": {
+        "registry": "top_up_error_metadata",
+        "select": "scope",
+        "exclude": []
+      },
+      "TopUpWriteAction": {
+        "enum": [
+          "none",
+          "terminal"
+        ]
+      },
+      "TopUpError": {
+        "fields": {
+          "code": {
+            "type": "TopUpErrorCode"
+          },
+          "scope": {
+            "type": "TopUpErrorScope"
+          },
+          "write_action": {
+            "type": "TopUpWriteAction"
+          }
+        },
+        "rules": [
+          "registered_top_up_error_projection"
+        ]
+      },
+      "LifecycleObjectKind": {
+        "enum": [
+          "session",
+          "environment",
+          "operation",
+          "subscription",
+          "bridge",
+          "adapter",
+          "stream",
+          "material",
+          "source",
+          "registration"
+        ]
+      },
+      "LifecycleState": {
+        "enum": [
+          "active",
+          "closing",
+          "closed",
+          "session_aborted"
+        ]
+      },
+      "LifecycleReason": {
+        "enum": [
+          "none",
+          "canceled",
+          "deadline_exceeded",
+          "dependency_unavailable",
+          "core_cleanup_failed"
+        ]
+      },
+      "LifecycleResult": {
+        "fields": {
+          "object_kind": {
+            "type": "LifecycleObjectKind"
+          },
+          "lifecycle_state": {
+            "type": "LifecycleState"
+          },
+          "cleanup_status": {
+            "type": "CleanupStatus"
+          },
+          "reason": {
+            "type": "LifecycleReason"
+          }
+        },
+        "rules": [
+          "lifecycle_result_matrix"
+        ]
       }
     },
     "contexts": {
@@ -11692,7 +12169,7 @@
       "errors": "Only the allocated protocol-error subset is projected. The code, scope and preserve_facts disposition are selected by a trusted owner after attribution; validation does not authorize retry, reconnect or replay. Local/application/connection error allocations remain incomplete.",
       "read": "ReadContext is private trusted original-owner validation input, not a public result or wire field. start_offset is the ordinary call start or fixed cursor start; transferred is the actual ordinary handoff count or current internal cursor filled. stream_status is the committed fact at this result gate. The reference does not perform I/O, claim handoff, acquire ownership, scan a retained canceled prefix, reserve memory or grant credit. Production owners must establish these facts and enforce all original gates.",
       "read_method_failure": "Method failures have no ReadResult payload or wait status. cursor is present exactly when the original cursor exists; transferred_bytes is cumulative Stream-to-cursor movement and remains accurate after delivery or abandonment. Private context binds the fixed start/target, original failure gate, committed stream/error/cause and lifecycle facts. It is captured by that owner, never inferred from caller-supplied metadata. Local time/authorization/resource failures do not manufacture a Stream error or replace an existing EOF/abort. Invalid arguments and target mismatches are checked before delivery state; TakePrefix may freeze an existing waiter. Native error wrappers retain finite SDK reason identities, not provider chains.",
-      "cleanup": "pending means unfinished obligations, not proof that Close was requested. Only actual core resource exit plus zero owned pending callbacks permits complete; independently transferred result owners are excluded. Incomplete wait observations do not change lifecycle or permanently overwrite owner progress. This detail snapshot is not the complete object_kind/lifecycle_state/reason envelope, which remains unresolved; no combination commands parent closure or reconnect.",
+      "cleanup": "pending means unfinished obligations, not proof that Close was requested. Only actual core resource exit plus zero owned pending callbacks permits complete; independently transferred result owners are excluded. LifecycleResult separately identifies the original object, its actual lifecycle and finite local reason. Session abort does not follow from a child cleanup error. Incomplete wait observations do not change lifecycle or permanently overwrite owner progress; no combination commands parent closure or reconnect.",
       "close": "send_drained and read_terminal are independent authenticated direction facts. Cleanup or callback success cannot synthesize them. First-error preservation, normal_auto_destroy and adapter behavior require runtime qualification.",
       "write": "WriteProgress counts the original request's local application acceptance, not tickets, acknowledgements or delivery. Prepared has no accepted bytes; running has no terminal reason; terminal completion is stable. Internal reference allocation of phase/reason names grants no Start/retry or runtime owner authority. Complete acceptance may coexist with pending cleanup.",
       "transfer": "TransferContext is a private trusted original-owner fact, not public or wire input. The difference between source reads and destination acceptance is at most one finite chunk and is preserved exactly in the result tail or by an explicit source adapter. Source-retained counts do not prove ownership or data integrity; real atomic handoff, bounded backing, lifecycle and adapter qualification remain required.",
@@ -16747,6 +17224,542 @@
         }
       },
       "expected_error": "api_enum"
+    },
+    {
+      "id": "top_up_error_source_exhausted_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_exhausted",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_unavailable_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_unavailable",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_contract_invalid_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_contract_invalid",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_state_unknown_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_state_unknown",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_operation_conflict_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "operation_conflict",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_stale_generation_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "stale_generation",
+        "scope": "request",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_future_generation_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "future_generation",
+        "scope": "request",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_stale_operation_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "stale_operation",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_future_operation_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "future_operation",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_sequence_gap_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "sequence_gap",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_configuration_capacity_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "configuration_capacity",
+        "scope": "request",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_configuration_capacity_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "configuration_capacity",
+        "scope": "request",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_capacity_exhausted_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "capacity_exhausted",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_capacity_exhausted_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "capacity_exhausted",
+        "scope": "operation",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_relink_required_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "relink_required",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_relink_required_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "relink_required",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_spent_unknown_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "spent_unknown",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_spent_unknown_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "spent_unknown",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_top_up_request_expired_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "top_up_request_expired",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_top_up_request_expired_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "top_up_request_expired",
+        "scope": "operation",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_reset_required_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_reset_required",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_source_reset_required_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_reset_required",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_permission_denied_none",
+      "type": "TopUpError",
+      "input": {
+        "code": "permission_denied",
+        "scope": "source",
+        "write_action": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_error_permission_denied_cannot_write_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "permission_denied",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_source_contract_invalid_cannot_write_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_contract_invalid",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_source_exhausted_cannot_write_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_exhausted",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_source_unavailable_cannot_write_terminal",
+      "type": "TopUpError",
+      "input": {
+        "code": "source_unavailable",
+        "scope": "source",
+        "write_action": "terminal"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_error_wrong_scope",
+      "type": "TopUpError",
+      "input": {
+        "code": "permission_denied",
+        "scope": "operation",
+        "write_action": "none"
+      },
+      "expected_error": "api_top_up_error_projection"
+    },
+    {
+      "id": "top_up_wire_result_success",
+      "type": "TopUpWireResult",
+      "input": "success",
+      "context": {
+        "server_committed": true
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_replay",
+      "type": "TopUpWireResult",
+      "input": "replay",
+      "context": {
+        "server_committed": true
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_exhausted",
+      "type": "TopUpWireResult",
+      "input": "source_exhausted",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_unavailable",
+      "type": "TopUpWireResult",
+      "input": "source_unavailable",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_contract_invalid",
+      "type": "TopUpWireResult",
+      "input": "source_contract_invalid",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_state_unknown",
+      "type": "TopUpWireResult",
+      "input": "source_state_unknown",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_operation_conflict",
+      "type": "TopUpWireResult",
+      "input": "operation_conflict",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_stale_generation",
+      "type": "TopUpWireResult",
+      "input": "stale_generation",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_future_generation",
+      "type": "TopUpWireResult",
+      "input": "future_generation",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_stale_operation",
+      "type": "TopUpWireResult",
+      "input": "stale_operation",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_future_operation",
+      "type": "TopUpWireResult",
+      "input": "future_operation",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_sequence_gap",
+      "type": "TopUpWireResult",
+      "input": "sequence_gap",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_configuration_capacity",
+      "type": "TopUpWireResult",
+      "input": "configuration_capacity",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_capacity_exhausted",
+      "type": "TopUpWireResult",
+      "input": "capacity_exhausted",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_relink_required",
+      "type": "TopUpWireResult",
+      "input": "relink_required",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_spent_unknown",
+      "type": "TopUpWireResult",
+      "input": "spent_unknown",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_top_up_request_expired",
+      "type": "TopUpWireResult",
+      "input": "top_up_request_expired",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_source_reset_required",
+      "type": "TopUpWireResult",
+      "input": "source_reset_required",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "top_up_wire_result_permission_denied",
+      "type": "TopUpWireResult",
+      "input": "permission_denied",
+      "context": {
+        "server_committed": false
+      },
+      "accept": true
+    },
+    {
+      "id": "api_lifecycle_active_wait",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "subscription",
+        "lifecycle_state": "active",
+        "cleanup_status": {
+          "status": "cleanup_incomplete",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "1"
+          }
+        },
+        "reason": "deadline_exceeded"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_lifecycle_aborted_pending",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "session",
+        "lifecycle_state": "session_aborted",
+        "cleanup_status": {
+          "status": "cleanup_incomplete",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "1"
+          }
+        },
+        "reason": "deadline_exceeded"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_lifecycle_environment_complete",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "environment",
+        "lifecycle_state": "closed",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "reason": "none"
+      },
+      "accept": true
+    },
+    {
+      "id": "api_lifecycle_child_cannot_abort_session",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "adapter",
+        "lifecycle_state": "session_aborted",
+        "cleanup_status": {
+          "status": "cleanup_incomplete",
+          "core_cleanup": "pending",
+          "pending_callbacks": {
+            "$bigint": "1"
+          }
+        },
+        "reason": "none"
+      },
+      "expected_error": "cleanup_lifecycle"
+    },
+    {
+      "id": "api_lifecycle_active_cannot_be_released",
+      "type": "LifecycleResult",
+      "input": {
+        "object_kind": "subscription",
+        "lifecycle_state": "active",
+        "cleanup_status": {
+          "status": "complete",
+          "core_cleanup": "complete",
+          "pending_callbacks": {
+            "$bigint": "0"
+          }
+        },
+        "reason": "none"
+      },
+      "expected_error": "cleanup_lifecycle"
     }
   ],
   "carrier_tuples": {
@@ -16876,6 +17889,11 @@
     "max_data_payload_bytes": {
       "type": "uint32",
       "source": "EffectiveReliableLimit; unresolved until complete size schema"
+    },
+    "max_proxy_fields": {
+      "type": "uint64",
+      "unit": "items",
+      "source": "Fixed proxy application field count, bounded by complete metadata bytes; never an authorization selector."
     }
   },
   "map_projections": {
@@ -18931,6 +19949,16 @@
         "op": "less_than",
         "left": "issued_at_ms",
         "right": "not_after_ms"
+      }
+    ],
+    "SpendReceipt": [
+      {
+        "op": "variant",
+        "discriminator": "state",
+        "value": 0,
+        "constants": {
+          "authorization_outcome": 0
+        }
       }
     ]
   },
@@ -38833,6 +39861,249 @@
           "deadline_at_ms": 10000,
           "cancel_mode": 1
         }
+      },
+      {
+        "id": "spend_receipt_spending",
+        "schema": "SpendReceipt",
+        "values": {
+          "lease_id": {
+            "$bytes": "01010101010101010101010101010101"
+          },
+          "attempt_id": {
+            "$bytes": "02020202020202020202020202020202"
+          },
+          "state": 0,
+          "authorization_outcome": 0,
+          "updated_at_ms": 1000,
+          "query_after_duration_ms": 1000
+        }
+      },
+      {
+        "id": "spend_receipt_unknown",
+        "schema": "SpendReceipt",
+        "values": {
+          "lease_id": {
+            "$bytes": "01010101010101010101010101010101"
+          },
+          "attempt_id": {
+            "$bytes": "02020202020202020202020202020202"
+          },
+          "state": 1,
+          "authorization_outcome": 0,
+          "updated_at_ms": 1000,
+          "query_after_duration_ms": 0
+        }
+      },
+      {
+        "id": "spend_receipt_denied",
+        "schema": "SpendReceipt",
+        "values": {
+          "lease_id": {
+            "$bytes": "01010101010101010101010101010101"
+          },
+          "attempt_id": {
+            "$bytes": "02020202020202020202020202020202"
+          },
+          "state": 1,
+          "authorization_outcome": 1,
+          "updated_at_ms": 1000,
+          "query_after_duration_ms": 0
+        }
+      },
+      {
+        "id": "spend_receipt_authorized",
+        "schema": "SpendReceipt",
+        "values": {
+          "lease_id": {
+            "$bytes": "01010101010101010101010101010101"
+          },
+          "attempt_id": {
+            "$bytes": "02020202020202020202020202020202"
+          },
+          "state": 1,
+          "authorization_outcome": 2,
+          "updated_at_ms": 1000,
+          "query_after_duration_ms": 0
+        }
+      },
+      {
+        "id": "spend_receipt_not_started",
+        "schema": "SpendReceipt",
+        "values": {
+          "lease_id": {
+            "$bytes": "01010101010101010101010101010101"
+          },
+          "attempt_id": {
+            "$bytes": "02020202020202020202020202020202"
+          },
+          "state": 1,
+          "authorization_outcome": 3,
+          "updated_at_ms": 1000,
+          "query_after_duration_ms": 0
+        }
+      },
+      {
+        "id": "proxy_request_octets",
+        "schema": "ProxyHTTPRequest",
+        "limits": {
+          "max_proxy_fields": 65535
+        },
+        "values": {
+          "version": 2,
+          "request_id": {
+            "$bytes": "722d31"
+          },
+          "method": {
+            "$bytes": "7041744368"
+          },
+          "path": {
+            "$bytes": "2f612f2f623f783d25666626783d2b"
+          },
+          "headers": [
+            {
+              "name": {
+                "$bytes": "782d726570656174"
+              },
+              "value": {
+                "$bytes": "e9"
+              }
+            },
+            {
+              "name": {
+                "$bytes": "782d726570656174"
+              },
+              "value": {
+                "$bytes": "ff"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "proxy_response_octets",
+        "schema": "ProxyHTTPResponse",
+        "limits": {
+          "max_proxy_fields": 65535
+        },
+        "values": {
+          "version": 2,
+          "request_id": {
+            "$bytes": "722d31"
+          },
+          "ok": true,
+          "status": 200,
+          "headers": [
+            {
+              "name": {
+                "$bytes": "7365742d636f6f6b6965"
+              },
+              "value": {
+                "$bytes": "613d313b20536563757265"
+              }
+            },
+            {
+              "name": {
+                "$bytes": "7365742d636f6f6b6965"
+              },
+              "value": {
+                "$bytes": "623d323b20487474704f6e6c79"
+              }
+            },
+            {
+              "name": {
+                "$bytes": "782d62797465"
+              },
+              "value": {
+                "$bytes": "0980ff"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "proxy_response_failure",
+        "schema": "ProxyHTTPResponse",
+        "limits": {
+          "max_proxy_fields": 65535
+        },
+        "values": {
+          "version": 2,
+          "request_id": {
+            "$bytes": "722d31"
+          },
+          "ok": false,
+          "error": {
+            "code": {
+              "$bytes": "757073747265616d5f726571756573745f6661696c6564"
+            },
+            "message": {
+              "$bytes": "70726f7879206f7065726174696f6e206661696c6564"
+            }
+          }
+        }
+      },
+      {
+        "id": "proxy_websocket_open",
+        "schema": "ProxyWebSocketOpen",
+        "limits": {
+          "max_proxy_fields": 65535
+        },
+        "values": {
+          "version": 2,
+          "conn_id": {
+            "$bytes": "632d31"
+          },
+          "path": {
+            "$bytes": "2f736f636b65743f"
+          },
+          "headers": [
+            {
+              "name": {
+                "$bytes": "7365632d776562736f636b65742d70726f746f636f6c"
+              },
+              "value": {
+                "$bytes": "63686174"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "proxy_websocket_response",
+        "schema": "ProxyWebSocketResponse",
+        "limits": {
+          "max_proxy_fields": 65535
+        },
+        "values": {
+          "version": 2,
+          "conn_id": {
+            "$bytes": "632d31"
+          },
+          "ok": true,
+          "protocol": {
+            "$bytes": "63686174"
+          }
+        }
+      },
+      {
+        "id": "proxy_body_end",
+        "schema": "ProxyBodyEnd",
+        "limits": {
+          "max_proxy_fields": 65535
+        },
+        "values": {
+          "version": 2,
+          "trailers": [
+            {
+              "name": {
+                "$bytes": "782d636865636b73756d"
+              },
+              "value": {
+                "$bytes": "6f6b"
+              }
+            }
+          ]
+        }
       }
     ],
     "malformed": [
@@ -48470,7 +49741,342 @@
         "field": "call_shape",
         "value": 3,
         "error": "enum_value"
+      },
+      {
+        "id": "spend_receipt_spending_authorized",
+        "source": "spend_receipt_spending",
+        "field": "authorization_outcome",
+        "value": 2,
+        "error": "variant_constant"
+      },
+      {
+        "id": "spend_receipt_unknown_state",
+        "source": "spend_receipt_spending",
+        "field": "state",
+        "value": 2,
+        "error": "enum_value"
+      },
+      {
+        "id": "spend_receipt_unknown_outcome",
+        "source": "spend_receipt_authorized",
+        "field": "authorization_outcome",
+        "value": 4,
+        "error": "enum_value"
+      },
+      {
+        "id": "proxy_request_append_zero",
+        "source": "proxy_request_octets",
+        "mutation": "append_zero",
+        "error": "trailing_bytes"
+      },
+      {
+        "id": "proxy_request_duplicate_first_pair",
+        "source": "proxy_request_octets",
+        "mutation": "duplicate_first_pair",
+        "error": "duplicate_key"
       }
     ]
+  },
+  "top_up_error_metadata": {
+    "source_exhausted": {
+      "scope": "source",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "call_only"
+    },
+    "source_unavailable": {
+      "scope": "source",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "call_only"
+    },
+    "source_contract_invalid": {
+      "scope": "source",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "call_only"
+    },
+    "source_state_unknown": {
+      "scope": "source",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "operation_conflict": {
+      "scope": "operation",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "stale_generation": {
+      "scope": "request",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "future_generation": {
+      "scope": "request",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "stale_operation": {
+      "scope": "operation",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "future_operation": {
+      "scope": "operation",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "sequence_gap": {
+      "scope": "operation",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "configuration_capacity": {
+      "scope": "request",
+      "write_actions": [
+        "none",
+        "terminal"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "capacity_exhausted": {
+      "scope": "operation",
+      "write_actions": [
+        "none",
+        "terminal"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "relink_required": {
+      "scope": "source",
+      "write_actions": [
+        "none",
+        "terminal"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "spent_unknown": {
+      "scope": "source",
+      "write_actions": [
+        "none",
+        "terminal"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "top_up_request_expired": {
+      "scope": "operation",
+      "write_actions": [
+        "none",
+        "terminal"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "source_reset_required": {
+      "scope": "source",
+      "write_actions": [
+        "none",
+        "terminal"
+      ],
+      "terminal_semantics": "authoritative_operation_facts_required"
+    },
+    "permission_denied": {
+      "scope": "source",
+      "write_actions": [
+        "none"
+      ],
+      "terminal_semantics": "call_only"
+    }
+  },
+  "carrier_provider_registry": {
+    "webtransport": {
+      "binding": "Trusted immutable Environment provider/deployment binding; this registry is not interoperability evidence.",
+      "alpn": "h3",
+      "dedicated_connection": true,
+      "application_protocol": "",
+      "admission_stream_opener": "leg_dialer",
+      "session_flow_control": "disabled_by_zero_local_configuration_and_no_peer_initial_limits",
+      "forbidden_peer_settings": [
+        11108,
+        11109,
+        11105
+      ],
+      "native_mapping": {
+        "bidirectional_prefix": 65,
+        "unidirectional_prefix": 84,
+        "session_id": "actual_connect_stream_id",
+        "datagram": "rfc_http3_quarter_connect_stream_id",
+        "capsule_provider": "Flowersec bounded native H3 lifecycle over quic-go@v0.62.0; webtransport-go@v0.13.0 tuple constants"
+      },
+      "listener": {
+        "module": "github.com/quic-go/webtransport-go",
+        "version": "v0.13.0",
+        "quic_module": "github.com/quic-go/quic-go",
+        "quic_version": "v0.62.0",
+        "config": "zero",
+        "header_bytes": 16384,
+        "settings_wait_ms": 5000,
+        "max_connect_requests_per_connection": 1,
+        "owned_assembly": "flowersec-go/internal/carrierv4/webtransport/owned_native.go",
+        "bounded_native_associations": true
+      },
+      "tuples": [
+        {
+          "id": "go_native_h3",
+          "implementation": "github.com/quic-go/webtransport-go@v0.13.0",
+          "quic_implementation": "github.com/quic-go/quic-go@v0.62.0",
+          "runtime": "go1.27.1",
+          "protocol": "webtransport-h3",
+          "request_headers": {},
+          "forbidden_request_headers": [
+            "sec-webtransport-http3-draft02",
+            "wt-available-protocols",
+            "wt-protocol",
+            "capsule-protocol"
+          ],
+          "required_peer_settings": {
+            "746385408": 1
+          },
+          "required_http3_datagram": true,
+          "required_remote_partial_reset": true,
+          "response_headers": {},
+          "qualification": "not_verified"
+        },
+        {
+          "id": "chromium_h3_draft02",
+          "implementation": "chromium@8a845075e8ec4ef45d9f547d6dbb23bc56f2958e",
+          "quic_implementation": "quiche@0b2bc13f4fdad122a0ffc163b182a9b0f9cfdfbd",
+          "runtime": "trusted_deployment_binding",
+          "protocol": "webtransport",
+          "request_headers": {
+            "sec-webtransport-http3-draft02": "1"
+          },
+          "forbidden_request_headers": [
+            "wt-available-protocols",
+            "wt-protocol",
+            "capsule-protocol"
+          ],
+          "required_peer_settings": {
+            "727725890": 1
+          },
+          "required_http3_datagram": true,
+          "required_remote_partial_reset": false,
+          "response_headers": {},
+          "qualification": "not_verified"
+        }
+      ]
+    },
+    "normal_drained": {
+      "application_code": 62723,
+      "raw_quic_code": 62723,
+      "webtransport_application_code": 62723,
+      "webtransport_http3_code_formula": "0x52e4a40fa8db + application_code + floor(application_code / 0x1e)",
+      "sender_action": "STOP_SENDING on the original receive half; RESET_STREAM with the same mapped code may be observed on that half",
+      "relay_action": "Stop only the corresponding logical traffic direction and discard its bounded downstream queue; preserve reverse traffic and maintenance",
+      "fin_action": "Drain already submitted bytes before FIN; never replace an already queued FIN with a cleanup RESET_STREAM",
+      "authority": "Authenticated endpoint drained or rejected proof, or propagation of the exact native signal by the existing opaque relay mapping; never end-to-end success",
+      "qualification": "not_verified"
+    },
+    "relay": {
+      "boundary": "Trusted local deployment configuration selects one exact route digest and one finite profile before Prepare. Each profile requires the Go v4 endpoint owners and Go RelayPair from the same deployed Flowersec build and pinned provider runtime range. Remote deployment facts are operator trust, not facts inferred from a signed descriptor or local successful dial. No receipts or peer capability claims are loaded. Engineering qualification remains not_verified until actual pairwise probes complete.",
+      "implementation": "flowersec-go/v6",
+      "runtime": "Go 1.27.1",
+      "qualification": "not_verified",
+      "profiles": [
+        {
+          "id": "go_v4_raw_quic_raw_quic",
+          "client_carrier": 0,
+          "server_carrier": 0,
+          "consumer_assurance": "go_relay_native_consumer",
+          "observer_assurance": "go_relay_native_observer"
+        },
+        {
+          "id": "go_v4_raw_quic_websocket",
+          "client_carrier": 0,
+          "server_carrier": 1,
+          "consumer_assurance": "go_relay_shared_consumer",
+          "observer_assurance": "go_relay_shared_observer"
+        },
+        {
+          "id": "go_v4_raw_quic_webtransport",
+          "client_carrier": 0,
+          "server_carrier": 2,
+          "consumer_assurance": "go_relay_native_consumer",
+          "observer_assurance": "go_relay_native_observer"
+        },
+        {
+          "id": "go_v4_websocket_raw_quic",
+          "client_carrier": 1,
+          "server_carrier": 0,
+          "consumer_assurance": "go_relay_shared_consumer",
+          "observer_assurance": "go_relay_shared_observer"
+        },
+        {
+          "id": "go_v4_websocket_websocket",
+          "client_carrier": 1,
+          "server_carrier": 1,
+          "consumer_assurance": "go_relay_shared_consumer",
+          "observer_assurance": "go_relay_shared_observer"
+        },
+        {
+          "id": "go_v4_websocket_webtransport",
+          "client_carrier": 1,
+          "server_carrier": 2,
+          "consumer_assurance": "go_relay_shared_consumer",
+          "observer_assurance": "go_relay_shared_observer"
+        },
+        {
+          "id": "go_v4_webtransport_raw_quic",
+          "client_carrier": 2,
+          "server_carrier": 0,
+          "consumer_assurance": "go_relay_native_consumer",
+          "observer_assurance": "go_relay_native_observer"
+        },
+        {
+          "id": "go_v4_webtransport_websocket",
+          "client_carrier": 2,
+          "server_carrier": 1,
+          "consumer_assurance": "go_relay_shared_consumer",
+          "observer_assurance": "go_relay_shared_observer"
+        },
+        {
+          "id": "go_v4_webtransport_webtransport",
+          "client_carrier": 2,
+          "server_carrier": 2,
+          "consumer_assurance": "go_relay_native_consumer",
+          "observer_assurance": "go_relay_native_observer"
+        }
+      ]
+    }
+  },
+  "proxy_application_registry": {
+    "version": 2,
+    "metadata_length_prefix": "uint32be",
+    "body_framing": "uint32be chunk length; zero length followed by length-prefixed ProxyBodyEnd; missing terminal is truncation",
+    "http_stream_kind": "flowersec-proxy/http1",
+    "websocket_stream_kind": "flowersec-proxy/ws",
+    "max_metadata_bytes": 1048576,
+    "max_field_count": 65535,
+    "max_chunk_bytes": 262144,
+    "max_body_bytes": 67108864,
+    "max_concurrent_streams": 64,
+    "string_projection": "Field names, method, path, IDs, origin, protocol and error values are ASCII bytes. Header values are HTTP octets, mapped isomorphically to Latin-1 at string APIs. No UTF-8 conversion or Unicode normalization.",
+    "status": "implementation_in_progress"
   }
 }

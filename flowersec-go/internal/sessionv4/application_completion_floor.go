@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // CompletionFloor holds one Session's future short-result opportunity in the
@@ -17,11 +17,12 @@ type CompletionFloor struct {
 	executor        atomic.Pointer[ApplicationExecutor]
 	index           int
 	backing, anchor resourcev4.Reference
+	use             *completionFloorUse
 	closed          bool // guarded by the original executor
 }
 
 func (e *ApplicationExecutor) CompletionFloorCharge() resourcev4.Vector {
-	v, _ := e.CompletionCharge().Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(CompletionFloor{})), resourcev4.Items: 1})
+	v, _ := e.CompletionCharge().Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(CompletionFloor{})) + uint64(unsafe.Sizeof(completionFloorUse{})), resourcev4.Items: 2})
 	return v
 }
 
@@ -49,6 +50,10 @@ func (e *ApplicationExecutor) NewCompletionFloor(reservation, backing resourcev4
 // Checkout consumes no new quota or reference. Its order is assigned at each
 // actual future-result admission, so an old idle floor cannot jump newer work.
 func (f *CompletionFloor) Checkout() (*CompletionReservation, error) {
+	return f.checkout(nil)
+}
+
+func (f *CompletionFloor) checkout(use *completionFloorUse) (*CompletionReservation, error) {
 	if f == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -58,8 +63,11 @@ func (f *CompletionFloor) Checkout() (*CompletionReservation, error) {
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if f.executor.Load() != e || f.closed || e.closed {
+	if f.executor.Load() != e || (e.closed || f.closed) && use == nil {
 		return nil, cryptov4.ErrClosed
+	}
+	if f.use != use || use != nil && use.closed {
+		return nil, cryptov4.ErrCapacity
 	}
 	s := &e.completions[f.index]
 	if s.floor != f || s.reservation != nil || s.task != nil || e.completionOrder == math.MaxUint64 {
@@ -100,13 +108,35 @@ func (f *CompletionFloor) Close() {
 	}
 	// Already accepted future results keep their original completion promise,
 	// including submission after Session Close. Only their owner may cancel it.
-	if s.reservation == nil && !s.submitted {
+	if f.use == nil && s.reservation == nil && !s.submitted {
 		e.releaseCompletionLocked(f.index)
 	}
 	e.cleanupLocked()
 }
 
 func (f *CompletionFloor) CleanupComplete() bool { return f == nil || f.executor.Load() == nil }
+
+// Headroom validates the original primary charge after it has moved into the
+// executor. Its retained alias cannot stand in for that primary ownership.
+func (f *CompletionFloor) checkAdmissionRequest(request resourcev4.Request) error {
+	if f == nil {
+		return cryptov4.ErrConfiguration
+	}
+	e := f.executor.Load()
+	if e == nil {
+		return cryptov4.ErrClosed
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if f.executor.Load() != e || f.closed || e.closed {
+		return cryptov4.ErrClosed
+	}
+	s := &e.completions[f.index]
+	if s.floor != f || f.use != nil || s.reservation != nil || s.task != nil {
+		return cryptov4.ErrCapacity
+	}
+	return s.charge.CheckRequest(request)
+}
 
 // An independently attached result no longer belongs to Session cleanup.
 // Its exact future descriptor/charge remains in the root executor, while only
@@ -119,6 +149,11 @@ func (e *ApplicationExecutor) detachCompletionFloorLocked(s *completionSlot) {
 	f.backing.Release()
 	f.anchor.Release()
 	f.backing, f.anchor = resourcev4.Reference{}, resourcev4.Reference{}
+	if f.use != nil {
+		// A stream still owns its original multi-item completion opportunity.
+		// Only the Session anchors leave; its result and future stay charged.
+		return
+	}
 	f.executor.Store(nil)
 	s.floor = nil
 }
@@ -148,4 +183,29 @@ func (f *CompletionFloor) DetachSessionScope() error {
 		}
 	}
 	return nil
+}
+
+// checkAvailable does not claim a worker or alter ordering. Workload reuse
+// requires the original future/result/decoder responsibility to have returned.
+func (f *CompletionFloor) checkAvailable() error {
+	if f == nil {
+		return cryptov4.ErrConfiguration
+	}
+	e := f.executor.Load()
+	if e == nil {
+		return cryptov4.ErrClosed
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if f.executor.Load() != e || f.closed || e.closed {
+		return cryptov4.ErrClosed
+	}
+	s := &e.completions[f.index]
+	if s.floor != f || f.use != nil || s.reservation != nil || s.task != nil || e.completionOrder == math.MaxUint64 {
+		return cryptov4.ErrCapacity
+	}
+	if err := s.backing.Check(); err != nil {
+		return err
+	}
+	return s.charge.Check()
 }

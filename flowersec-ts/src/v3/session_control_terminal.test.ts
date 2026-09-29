@@ -815,6 +815,7 @@ type StreamInternals = {
 
 type SessionInternals = {
   config: { idleTimeoutMs?: number };
+  openFrozen: boolean;
   markAuthenticatedActivity(): void;
   streams: Map<bigint, StreamInternals>;
   readStreamRecord(stream: StreamInternals): Promise<unknown>;

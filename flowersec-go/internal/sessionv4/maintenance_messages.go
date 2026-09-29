@@ -7,17 +7,17 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrMaintenanceRate = errors.New("sessionv4: ordinary maintenance rate exhausted")
 
 // MaintenanceMessagePolicy fixes finite ingress work and original reply work
-// windows before admission. The token bucket refills conservatively by one
-// token per proven interval, without accumulating unbounded catch-up work.
+// windows before admission. Refill uses cumulative proven elapsed time and
+// constant work, with no retained credit beyond the admitted finite burst.
 type MaintenanceMessagePolicy struct {
 	IngressBurst                    uint32
 	IngressRefillMS, ReplyTimeoutMS uint64
@@ -43,7 +43,7 @@ type MaintenanceMessages struct {
 	head, count                           int
 	closed, active                        bool
 	tokens                                uint32
-	refill                                *timev4.Delay
+	refill                                maintenanceRefill
 	wake, stop, done                      chan struct{}
 	started, coordinator, worker, cleaned bool
 }
@@ -85,30 +85,11 @@ func NewMaintenanceMessages(p *Liveness, slots []PongSlot, policy MaintenanceMes
 	return q, nil
 }
 
-func (q *MaintenanceMessages) consume() error {
+func (q *MaintenanceMessages) consume(now timev4.Mark, rate timev4.Rate) error {
 	if err := q.reservation.Check(); err != nil {
 		return err
 	}
-	if q.refill != nil {
-		if err := q.refill.Check(); err == nil {
-			q.tokens = min(q.tokens+1, q.policy.IngressBurst)
-			q.refill = nil
-		} else if !errors.Is(err, timev4.ErrPending) {
-			return err
-		}
-	}
-	if q.tokens == 0 {
-		return ErrMaintenanceRate
-	}
-	if q.refill == nil {
-		var err error
-		q.refill, err = timev4.NewDelay(q.liveness.admission.engine.Clock(), q.policy.IngressRefillMS)
-		if err != nil {
-			return err
-		}
-	}
-	q.tokens--
-	return nil
+	return q.refill.consume(now, rate, q.policy.IngressRefillMS, q.policy.IngressBurst, &q.tokens)
 }
 
 // Handle copies only the fixed opaque nonce; it never retains the decoder or
@@ -137,12 +118,17 @@ func (q *MaintenanceMessages) Handle(record *ReceivedRecord) (matched bool, err 
 	if err := record.AcceptMessage(); err != nil {
 		return false, err
 	}
+	clock := p.admission.engine.Clock()
+	now, err := clock.Monotonic()
+	if err != nil {
+		return false, err
+	}
 	q.mu.Lock()
 	if q.closed {
 		q.mu.Unlock()
 		return false, cryptov4.ErrClosed
 	}
-	if err = q.consume(); err != nil {
+	if err = q.consume(now, clock.Profile().Rate); err != nil {
 		q.mu.Unlock()
 		return false, err
 	}
@@ -382,7 +368,7 @@ func MaintenanceMessagesCharge(slots int) (resourcev4.Vector, error) {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
 	return resourcev4.Vector{
-		resourcev4.SDKBytes: uint64(unsafe.Sizeof(MaintenanceMessages{})) + uint64(slots)*(uint64(unsafe.Sizeof(PongSlot{}))+uint64(unsafe.Sizeof(timev4.Window{}))) + uint64(unsafe.Sizeof(timev4.Delay{})),
+		resourcev4.SDKBytes: uint64(unsafe.Sizeof(MaintenanceMessages{})) + uint64(slots)*(uint64(unsafe.Sizeof(PongSlot{}))+uint64(unsafe.Sizeof(timev4.Window{}))),
 		resourcev4.Items:    2 + 2*uint64(slots), resourcev4.Tasks: 2, resourcev4.WorkSlots: 2, resourcev4.Timers: 1,
 	}, nil
 }
@@ -392,6 +378,7 @@ func (q *MaintenanceMessages) retire() error {
 	if !q.cleaned {
 		return cryptov4.ErrCapacity
 	}
+	q.refill = maintenanceRefill{}
 	q.reservation.Release()
 	return nil
 }

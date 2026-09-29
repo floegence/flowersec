@@ -7,12 +7,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"errors"
 	"math/big"
+	"net/netip"
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func testCertificate(t *testing.T, curve elliptic.Curve, days int, serial int64, key *ecdsa.PrivateKey) ([]byte, *x509.Certificate, *ecdsa.PrivateKey) {
@@ -131,5 +133,48 @@ func TestCARequiresSANChainAndWholeTrustedTimeInterval(t *testing.T) {
 	}
 	if _, err := prepared.Verify(state, "authorized.example", roots, timev4.Interval{LowerMS: 86399999, UpperMS: 86400001}); err == nil {
 		t.Fatal("upper-only validation ignored unproven notBefore")
+	}
+}
+
+// Supply the exact SAN octets: x509.CreateCertificate's IPAddresses helper
+// normalizes mapped IPv6 to four bytes before encoding.
+func TestCAIPIdentityPreservesAddressFamily(t *testing.T) {
+	now := timev4.Interval{LowerMS: 100000000, UpperMS: 100000100}
+	prepared, err := (Policy{}).Prepare(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, san := range []string{"192.0.2.1", "2001:db8::1"} {
+		t.Run(san, func(t *testing.T) {
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := asn1.Marshal([]asn1.RawValue{{Class: 2, Tag: 7, Bytes: netip.MustParseAddr(san).AsSlice()}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			template := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Unix(86400, 0), NotAfter: time.Unix(86400*31, 0), BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, ExtraExtensions: []pkix.Extension{{Id: asn1.ObjectIdentifier{2, 5, 29, 17}, Value: encoded}}}
+			der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			certificate, err := x509.ParseCertificate(der)
+			if err != nil {
+				t.Fatal(err)
+			}
+			roots := x509.NewCertPool()
+			roots.AddCert(certificate)
+			state := tls.ConnectionState{Version: tls.VersionTLS13, PeerCertificates: []*x509.Certificate{certificate}}
+			for _, host := range []string{"192.0.2.1", "::ffff:c000:201", "2001:db8::1"} {
+				_, err := prepared.Verify(state, host, roots, now)
+				if host == san && err != nil {
+					t.Fatal("exact IP SAN rejected", err)
+				}
+				if host != san && !errors.Is(err, ErrCertificate) {
+					t.Fatal("IP family alias accepted", err)
+				}
+			}
+		})
 	}
 }

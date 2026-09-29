@@ -8,10 +8,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // SessionStreamHandlerConfig installs a frozen role-neutral raw Stream plan
@@ -22,6 +22,7 @@ type SessionStreamHandlerConfig struct {
 	internal                                           bool
 	Plan                                               *StreamHandlerPlan
 	Concurrency                                        uint32
+	ServiceTarget                                      uint32
 	TimeoutMS, RuntimeBytes, RuntimeBytesPerInvocation uint64
 }
 
@@ -33,7 +34,7 @@ type sessionStreamDispatcher struct {
 	reservation                       resourcev4.Reference
 	context                           context.Context
 	cancel                            context.CancelFunc
-	active                            uint32
+	active, services                  uint32
 	started, running, closed, cleaned bool
 	stop, done                        chan struct{}
 	publication                       <-chan struct{}
@@ -44,9 +45,16 @@ type streamHandlerContext struct {
 	deadline time.Time
 }
 
-func (c *streamHandlerContext) Deadline() (time.Time, bool) { return c.deadline, true }
+func (c *streamHandlerContext) Deadline() (time.Time, bool) {
+	if c.deadline.IsZero() {
+		return time.Time{}, false
+	}
+	return c.deadline, true
+}
 
 type streamHandlerInvocation struct {
+	watchMu         sync.Mutex
+	service         *preparedStreamService
 	dispatcher      *sessionStreamDispatcher
 	allocation      *sessionStreamAllocation
 	handle          OpenHandle
@@ -65,6 +73,9 @@ type streamHandlerInvocation struct {
 }
 
 func sessionStreamDispatcherCharge(c SessionStreamHandlerConfig) (resourcev4.Vector, error) {
+	if c.ServiceTarget > 128 || c.Plan == nil && c.ServiceTarget != 0 {
+		return resourcev4.Vector{}, cryptov4.ErrConfiguration
+	}
 	if c.RuntimeBytes == 0 || c.Plan == nil && !c.internal {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
@@ -110,6 +121,9 @@ func newSessionStreamDispatcher(core *SessionCore, config SessionStreamHandlerCo
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	if config.ServiceTarget == 0 {
+		config.ServiceTarget = 64
+	}
 	return &sessionStreamDispatcher{config: config, core: core, executor: executor, reservation: owned, context: ctx, cancel: cancel, stop: make(chan struct{}), done: make(chan struct{})}, nil
 }
 
@@ -204,7 +218,12 @@ func (d *sessionStreamDispatcher) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		allocation, _, err := d.core.plan.prepareStreamInvocation(d.context, kindCap+metadataCap, d)
+		service, err := a.pendingDelegatedKind(h, d.config.Plan)
+		if err != nil {
+			d.finishInvocation()
+			return err
+		}
+		allocation, _, err := d.core.plan.prepareStreamInvocation(d.context, kindCap+metadataCap, d, service)
 		if err != nil {
 			d.finishInvocation()
 			reason := "resource_exhausted"
@@ -261,10 +280,11 @@ func (job *streamHandlerInvocation) watch() {
 	defer timer.Stop()
 	ownerReady := job.ownerReady
 	var ownerChange <-chan struct{}
+	var connAbort <-chan struct{}
 	for {
 		remaining, err := job.deadline.RemainingMS()
 		if err != nil {
-			job.cancel()
+			job.cancelInvocation()
 			return
 		}
 		timer.Reset(idleTimerChunk(remaining))
@@ -272,23 +292,28 @@ func (job *streamHandlerInvocation) watch() {
 		case <-job.done:
 			return
 		case <-job.dispatcher.stop:
-			job.cancel()
+			job.cancelInvocation()
 			return
 		case <-job.handle.owner.engine.Done():
-			job.cancel()
+			job.cancelInvocation()
 			return
 		case <-ownerReady:
 			ownerReady = nil
 			ownerChange = job.owner.changed
-			if err := job.owner.enterCallback(); err != nil {
-				job.cancel()
+			connAbort, err = job.owner.handlerSupervision()
+			if err != nil {
+				job.cancelInvocation()
 				return
 			}
 		case <-ownerChange:
-			if err := job.owner.enterCallback(); err != nil {
-				job.cancel()
+			connAbort, err = job.owner.handlerSupervision()
+			if err != nil {
+				job.cancelInvocation()
 				return
 			}
+		case <-connAbort:
+			job.cancelInvocation()
+			return
 		case <-timer.C:
 		}
 	}
@@ -306,7 +331,10 @@ func (job *streamHandlerInvocation) run() {
 		job.preparation.Release()
 		job.metadata = nil
 		d.core.plan.finishStream(job.allocation)
-		d.finishInvocation()
+		if job.service == nil || !job.service.transferred {
+			d.finishInvocation()
+		}
+		job.service.release()
 	}()
 	var err error
 	for {
@@ -342,6 +370,13 @@ func (job *streamHandlerInvocation) run() {
 		return
 	}
 	registration, _ := job.capture.projection()
+	job.allocation.reservation.NormalTerminationMS = registration.NormalTerminationMS
+	if registration.HTTP != nil || registration.Delegated != nil || registration.ControlledHTTP != nil {
+		if err := job.prepareStreamService(registration); err != nil {
+			_ = d.reject(job.handle, "resource_exhausted")
+			return
+		}
+	}
 	if registration.Resume != nil {
 		job.recovery, err = job.prepareResumeServer(*registration.Resume)
 		if err != nil {
@@ -388,6 +423,10 @@ func (job *streamHandlerInvocation) run() {
 		}
 		defer exit()
 		authorizeErr = job.capture.Authorize(callCtx, metadata)
+		if authorizeErr == nil && job.service != nil {
+			authorizeErr = ErrStreamHandlerCallbackExit
+			authorizeErr = job.service.setup(callCtx, job.capture, metadata)
+		}
 	})
 	if err != nil {
 		_ = d.reject(job.handle, "resource_exhausted")
@@ -411,7 +450,7 @@ func (job *streamHandlerInvocation) run() {
 	var handlerReady *QueuedApplicationTask
 	if job.recovery != nil {
 		handlerReady, err = d.executor.prepareApplication(job.capture.plan.group, job.capture.WorkClass(), job.allocation.refs[streamFactoryHandlerTask], job.allocation.refs[streamFactoryInvocation])
-	} else {
+	} else if job.service == nil {
 		permit, err = d.executor.TryAcquire(job.capture.WorkClass(), job.allocation.refs[streamFactoryHandlerTask], job.allocation.refs[streamFactoryInvocation])
 	}
 	if err != nil {
@@ -437,6 +476,8 @@ func (job *streamHandlerInvocation) run() {
 			var permitErr error
 			if handlerReady != nil {
 				permitErr = handlerReady.checkPrepared()
+			} else if job.service != nil {
+				permitErr = job.service.check()
 			} else {
 				permitErr = permit.commitAcceptance()
 			}
@@ -463,13 +504,21 @@ func (job *streamHandlerInvocation) run() {
 		return
 	}
 	o := job.allocation.candidate
-	owner, err := a.bindStreamOwnership(job.handle, o.reservation, job.deadline, &job.context, o)
+	deadline, ownerContext := job.deadline, context.Context(&job.context)
+	if job.service != nil {
+		deadline, ownerContext = job.service.deadline, job.service.context
+	}
+	owner, err := a.bindStreamOwnership(job.handle, o.reservation, deadline, ownerContext, o)
 	if err != nil {
 		_ = a.Cancel(job.handle)
 		return
 	}
 	job.allocation.candidate = nil
 	job.owner = owner
+	if job.service != nil {
+		job.runStreamService(owner)
+		return
+	}
 	if job.messages != nil {
 		if err := job.messages.bindTypedMessages(owner); err != nil {
 			owner.mu.Lock()
@@ -548,6 +597,15 @@ func (job *streamHandlerInvocation) finishWatch() {
 	<-job.watchDone
 }
 
+func (job *streamHandlerInvocation) cancelInvocation() {
+	job.watchMu.Lock()
+	defer job.watchMu.Unlock()
+	job.cancel()
+	if job.service != nil && !job.service.transferred {
+		job.service.cancel()
+	}
+}
+
 func (d *sessionStreamDispatcher) finishInvocation() {
 	d.mu.Lock()
 	d.active--
@@ -556,7 +614,7 @@ func (d *sessionStreamDispatcher) finishInvocation() {
 }
 
 func (d *sessionStreamDispatcher) cleanupLocked() {
-	if d.closed && !d.running && d.active == 0 && !d.cleaned {
+	if d.closed && !d.running && d.active == 0 && d.services == 0 && !d.cleaned {
 		d.cleaned = true
 		close(d.done)
 	}

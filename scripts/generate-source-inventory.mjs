@@ -233,7 +233,22 @@ function mergeComponents(groups) {
 }
 
 function loadLicensePolicy(repoRoot) {
-  return readJson(path.join(repoRoot, "scripts/source-license-policy.json"));
+  const policy = readJson(path.join(repoRoot, "scripts/source-license-policy.json"));
+  const embedded = readJson(path.join(repoRoot, "scripts/brotli-wasm-components.json"));
+  for (const component of embedded.components) {
+    const texts = component.licenses.map(file => {
+      if (sha256(file.text) !== file.sha256) throw new Error("Brotli embedded license digest mismatch");
+      return `${file.path}\n\n${file.text.trimEnd()}`;
+    });
+    const licenseText = texts.join("\n\n") + "\n";
+    policy.bundledNotices[`pkg:cargo/${component.name}@${component.version}`] = {
+      copyright: "Upstream copyright notices are reproduced in the complete license materials below.",
+      license: resolveLicenseReview(component.license, policy).concludedExpression,
+      licenseTextLines: licenseText.trimEnd().split("\n"),
+      sha256: sha256(licenseText),
+    };
+  }
+  return policy;
 }
 
 const officialSchemaValidatorCache = new Map();
@@ -1112,6 +1127,30 @@ export function collectNpmContext(lockfile, policy, options = {}) {
     }
   }
 
+  // The npm artifact contains a compiled Rust decoder. Its locked source
+  // closure is part of distribution provenance, including build dependencies.
+  const brotli = byPackagePath.get("node_modules/brotli-dec-wasm");
+  if (brotli) {
+    const embedded = readJson(new URL("./brotli-wasm-components.json", import.meta.url));
+    if (brotli.version !== embedded.version) throw new Error("Brotli embedded source revision drift");
+    const refs = new Map(embedded.components.map(c => [c.name, `pkg:cargo/${c.name}@${c.version}`]));
+    for (const component of embedded.components) {
+      const purl = refs.get(component.name);
+      byPackagePath.set(purl, makeComponent({
+        ecosystem: "cargo", name: component.name, version: component.version,
+        license: component.license, source: component.repository, purl, policy,
+        sourceEvidence: { kind: "cargo-lock-checksum", value: component.checksum },
+      }));
+      for (const dependency of component.dependencies ?? []) {
+        if (!refs.has(dependency)) throw new Error("Brotli source dependency missing");
+        edges.push({ from: purl, to: refs.get(dependency), kind: "runtime" });
+      }
+    }
+    for (const dependency of embedded.root_dependencies) {
+      if (!refs.has(dependency)) throw new Error("Brotli root dependency missing");
+      edges.push({ from: brotli.purl, to: refs.get(dependency), kind: "runtime" });
+    }
+  }
   const sourceComponents = mergeComponents([[...byPackagePath.values()]]);
   const sourceEdges = uniqueEdges(edges);
   const runtimeReachable = new Set([root.purl]);

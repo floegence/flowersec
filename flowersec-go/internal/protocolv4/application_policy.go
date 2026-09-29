@@ -35,6 +35,8 @@ func (c *ServiceContract) MethodShapeDigest() ([32]byte, error) {
 // or permission to dispatch. Optional execution fields remain zero locally;
 // the registered variant determines whether they exist on the wire.
 type ServiceContractPolicy struct {
+	RestartFlush                                                                                 bool
+	RestartFlushDeadlineMS                                                                       uint64
 	Digest                                                                                       [32]byte
 	Namespace                                                                                    string
 	Type                                                                                         uint32
@@ -64,6 +66,8 @@ func (c *ServiceContract) Policy() (ServiceContractPolicy, error) {
 	ns, _ := root.Named("ServiceContract", "service_namespace").Text()
 	p := ServiceContractPolicy{Digest: c.digest, Namespace: ns, Type: uint32(get("type_id")), Shape: uint8(get("call_shape")), ExecutionMode: uint8(get("execution_mode")), ResponseLimitMode: uint8(get("response_limit_mode")), RequestMaxBytes: uint32(get("request_max_bytes")), MinResponseBytes: uint32(get("min_response_limit_bytes")), MaxResponseBytes: uint32(get("max_response_bytes")), MessageLifetimeMS: get("max_message_lifetime_ms"), TransientRunMS: get("max_transient_run_ms"), HistoryRetentionMS: get("history_retention_ms"), ResultRetentionMS: get("result_retention_ms"), AdmissionWindowMS: get("max_operation_admission_window_ms"), ExecutionHorizonMS: get("max_execution_horizon_ms"), ExecutionRunMS: get("max_execution_run_ms")}
 	p.CancelMode = uint8(get("cancel_mode"))
+	p.RestartFlush, _ = root.Named("ServiceContract", "restart_flush").Bool()
+	p.RestartFlushDeadlineMS = get("restart_flush_deadline_ms")
 	p.Checkpoint = root.Named("ServiceContract", "checkpoint_format").valid()
 	p.CheckpointFormat, _ = root.Named("ServiceContract", "checkpoint_format").Text()
 	if p.Shape == 1 {

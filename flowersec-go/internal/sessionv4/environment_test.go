@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func environmentTestOwner(t *testing.T, f *admissionIntegrationFixture, position uint32, slots uint32) *Environment {
@@ -127,8 +128,56 @@ func TestEnvironmentCancellationRetainsOriginalProviderTail(t *testing.T) {
 		if err := host.WaitCleanup(wait); !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatal("logical cancellation asserted physical cleanup", err)
 		}
+		// Waiting again cannot mint another timeout for the same cleanup owner.
+		_ = host.WaitCleanup(wait)
+		if got := host.DiagnosticCounts(diagnosticv4.MetricCleanupTimeout).Total; got != 1 {
+			t.Fatal("cleanup wait counted repeatedly", got)
+		}
+		if got := host.DiagnosticCounts(diagnosticv4.MetricConnectionAttempt).Total; got != 1 {
+			t.Fatal("original attempt missing", got)
+		}
+		if got := host.DiagnosticCounts(diagnosticv4.MetricConnectionFailure); got.Total != 1 || got.Code[diagnosticv4.CodeCancelled] != 1 {
+			t.Fatal("canceled attempt not counted exactly once", got)
+		}
 		if err := host.Retire(); !errors.Is(err, cryptov4.ErrCapacity) {
 			t.Fatal("live Environment charge refunded", err)
+		}
+		host.mu.Lock()
+		session := host.positions[0]
+		host.mu.Unlock()
+		session.mu.Lock()
+		deadline := session.cleanupDeadline
+		session.mu.Unlock()
+		canceled, cancelWait := context.WithCancel(context.Background())
+		cancelWait()
+		if err := session.WaitCleanup(canceled); !errors.Is(err, context.Canceled) {
+			t.Fatal("cleanup observer cancellation changed the owner", err)
+		}
+		before := f.root.Snapshot().Charged
+		for range 8 {
+			session.Close()
+			if status := session.CleanupStatus(); status.Status != protocolv4.V4CleanupStatePending || status.PendingCallbacks != 0 {
+				t.Fatal("provider tail was confused with an application callback", status)
+			}
+		}
+		session.mu.Lock()
+		unchanged := session.cleanupDeadline == deadline
+		session.mu.Unlock()
+		if !unchanged || time.Until(deadline) > sessionCleanupTimeout {
+			t.Fatal("repeated Close renewed its original five-second deadline")
+		}
+		if err := session.WaitCleanup(context.Background()); !errors.Is(err, ErrSessionCleanupIncomplete) {
+			t.Fatal("fixed cleanup observation did not return incomplete", err)
+		}
+		status := session.CleanupStatus()
+		if status.Status != protocolv4.V4CleanupStateCleanupIncomplete || status.CoreCleanup != protocolv4.V4CoreCleanupPending || status.PendingCallbacks != 0 || status.Validate() != nil {
+			t.Fatal("blocked provider cleanup status", status)
+		}
+		if time.Now().Before(deadline) || f.root.Snapshot().Charged != before {
+			t.Fatal("deadline observation returned early or released physical backing")
+		}
+		if err := session.WaitCleanup(context.Background()); !errors.Is(err, ErrSessionCleanupIncomplete) {
+			t.Fatal("a second observer lost the shared finite result", err)
 		}
 		used, err := f.scope.Session.Usage()
 		if err != nil || used[resourcev4.Sessions] != 1 || f.provider.retires.Load() != 0 {
@@ -142,6 +191,9 @@ func TestEnvironmentCancellationRetainsOriginalProviderTail(t *testing.T) {
 		defer stop()
 		if err := host.WaitCleanup(wait); err != nil {
 			t.Fatal(err)
+		}
+		if err := session.WaitCleanup(context.Background()); err != nil || session.CleanupStatus().Status != protocolv4.V4CleanupStateComplete {
+			t.Fatal("late physical retirement did not converge", session.CleanupStatus(), err)
 		}
 		if f.provider.retires.Load() != 1 {
 			t.Fatal("original provider was not retired exactly once")

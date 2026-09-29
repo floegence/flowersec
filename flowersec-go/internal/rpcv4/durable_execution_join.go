@@ -8,9 +8,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // DurableExecutionJoin is one original response obligation. Refresh is provider
@@ -65,7 +65,7 @@ func (s *DurableExecutions) admitJoined(ctx context.Context, routes *ContractRou
 	j := &DurableExecutionJoin{&durableExecutionJoin{reservation: owned, access: access}}
 	j.target = ExecutionTarget{Service: s.config.Service, Caller: caller, Operation: h.Fields().OperationID, RequestDigest: h.Fields().RequestDigest, ContractDigest: h.Fields().ServiceContractDigest}
 	j.target.Caller.Subject = strings.Clone(caller.Subject)
-	j.deadline, err = deadline.Fork(h.Fields().DeadlineAtMS)
+	j.deadline, err = deadline.Fork(min(deadline.Cap(), h.Fields().DeadlineAtMS))
 	if err == nil {
 		err = access.WithExecutionAccess(j.target, func(authority resourcev4.Reference) error {
 			s.mu.Lock()

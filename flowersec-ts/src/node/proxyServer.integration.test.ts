@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, test } from "vitest";
 
-import { createProxyRuntime } from "../proxy/runtime.js";
+import { createProxyRuntimeWithStreams as createProxyRuntime } from "../proxy/runtime.js";
 import { testCertificatePEM, testPrivateKeyPEM } from "../testSupport/tlsFixture.js";
 import { createAcceptor, createArtifactLease, connect, parseArtifact, ProxyServer, SessionHandlers } from "./index.js";
 

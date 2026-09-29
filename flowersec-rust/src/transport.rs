@@ -67,6 +67,8 @@ impl TryFrom<JsonObject> for StreamMetadata {
 /// Closed, redacted failure set shared by public session, stream, and RPC operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum SessionError {
+    #[error("Flowersec stream read is already in progress")]
+    ReadInProgress,
     #[error("Flowersec operation was canceled")]
     Canceled,
     #[error("Flowersec session is closed")]
@@ -85,6 +87,8 @@ pub enum SessionError {
     RekeyFailed,
     #[error("Flowersec liveness probe failed")]
     LivenessFailed,
+    #[error("Flowersec authenticated liveness path is unresponsive")]
+    LivenessPathUnresponsive,
     #[error("Flowersec operation failed")]
     OperationFailed,
 }
@@ -275,6 +279,7 @@ impl SessionError {
     /// Returns the stable public code string for this redacted session failure.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ReadInProgress => "read_in_progress",
             Self::Canceled => "canceled",
             Self::Closed => "closed",
             Self::GoingAway => "going_away",
@@ -284,6 +289,7 @@ impl SessionError {
             Self::Timeout => "timeout",
             Self::RekeyFailed => "rekey_failed",
             Self::LivenessFailed => "liveness_failed",
+            Self::LivenessPathUnresponsive => "liveness_path_unresponsive",
             Self::OperationFailed => "operation_failed",
         }
     }
@@ -314,6 +320,7 @@ impl From<SessionError> for io::Error {
     fn from(error: SessionError) -> Self {
         let kind = match error {
             SessionError::Canceled => io::ErrorKind::Interrupted,
+            SessionError::ReadInProgress => io::ErrorKind::WouldBlock,
             SessionError::Closed | SessionError::GoingAway => io::ErrorKind::ConnectionAborted,
             SessionError::StreamRejected => io::ErrorKind::PermissionDenied,
             SessionError::ResourceExhausted => io::ErrorKind::OutOfMemory,
@@ -321,6 +328,7 @@ impl From<SessionError> for io::Error {
             SessionError::Timeout => io::ErrorKind::TimedOut,
             SessionError::RekeyFailed
             | SessionError::LivenessFailed
+            | SessionError::LivenessPathUnresponsive
             | SessionError::OperationFailed => io::ErrorKind::Other,
         };
         io::Error::new(kind, error)
@@ -341,12 +349,69 @@ pub trait ByteStream: fmt::Debug + Send + Sync + 'static {
     /// Stable terminal failure, if the stream has already terminated abnormally.
     /// The closed enum cannot retain carrier diagnostics, peer payloads, or secrets.
     fn terminal_error(&self) -> Option<SessionError>;
+    /// Current committed receive terminal without consuming input.
+    fn read_state(
+        &self,
+    ) -> (
+        crate::api_v4::ReadStreamStatus,
+        Option<crate::api_v4::ReadError>,
+    ) {
+        (
+            if self.terminal_error().is_some() {
+                crate::api_v4::ReadStreamStatus::Aborted
+            } else {
+                crate::api_v4::ReadStreamStatus::Open
+            },
+            None,
+        )
+    }
+    /// Shared receive owner, including ordinary reads. Providers without a
+    /// bounded cursor-transfer implementation must leave this unavailable.
+    fn read_owner(&self) -> Option<Arc<crate::api_v4::StreamReadOwner>> {
+        None
+    }
+    /// Original private result-delivery owner. Providers that cannot retain
+    /// an independent trusted handoff gate must leave this unavailable;
+    /// ReaderCursor then fails closed before exposing any bytes.
+    fn read_delivery_owner(&self) -> Option<Arc<crate::api_v4::ReadDeliveryAuthorization>> {
+        None
+    }
+    /// Transfer one authenticated prefix from the original bounded receive queue.
+    /// A canceled wait must leave both the source record and untransferred suffix
+    /// owned by that stream. This method must not use ordinary `read` plus an
+    /// adapter suffix queue, and must validate the cursor's owner identity.
+    async fn read_cursor_piece(
+        &self,
+        _cursor: &crate::api_v4::ReaderCursor,
+    ) -> Result<(), SessionError> {
+        Err(SessionError::OperationFailed)
+    }
     /// Reads the next non-empty byte chunk, or `None` after peer FIN.
     async fn read(&self) -> Result<Option<Bytes>, SessionError>;
     /// Writes bytes and returns the accepted byte count.
     async fn write(&self, payload: Bytes) -> Result<usize, SessionError>;
+    /// Original session staging owner shared by every stream of that session.
+    /// Missing capability rejects preparation before retaining input or work.
+    fn write_staging_owner(&self) -> Option<Arc<crate::api_v4::WriteStagingOwner>> {
+        None
+    }
+    /// Runs a prepared request using the stream's actual ordered admission gate.
+    /// The default refuses: wrapping ordinary `write` would invent acceptance.
+    async fn write_prepared(
+        &self,
+        _payload: Bytes,
+        _admission: &crate::api_v4::WriteRequestAdmission,
+    ) -> Result<(), SessionError> {
+        Err(SessionError::OperationFailed)
+    }
     /// Sends logical FIN while keeping the receive direction available.
     async fn close_write(&self) -> Result<(), SessionError>;
+    /// Waits until the authenticated send direction is drained.  Providers
+    /// that cannot expose a separate drain report the same stable operation
+    /// error instead of silently treating close as a successful Finish.
+    async fn finish(&self) -> Result<(), SessionError> {
+        Err(SessionError::OperationFailed)
+    }
     /// Aborts both logical directions using the stable generic reset state.
     async fn reset(&self) -> Result<(), SessionError>;
     /// Aborts both logical directions and releases local resources.
@@ -355,6 +420,9 @@ pub trait ByteStream: fmt::Debug + Send + Sync + 'static {
     /// [`ByteStream::close_write`] when the peer must observe a clean FIN.
     async fn close(&self) -> Result<(), SessionError>;
 }
+
+/// The v6 name for the carrier-neutral encrypted byte stream.
+pub use ByteStream as Stream;
 
 /// One accepted logical stream and its authenticated setup metadata.
 pub struct IncomingStream {

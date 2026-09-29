@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 // ContractQueryDecode retains the original complete response through the real
@@ -20,7 +20,7 @@ type ContractQueryDecode struct {
 	receiver *Receiver
 }
 
-func (call ContractQueryCall) BeginDecode(known []*protocolv4.ServiceContract, windows []uint64, outputs [][]byte) (*ContractQueryDecode, error) {
+func (call ContractQueryCall) BeginDecode(known []protocolv4.ContractQueryKnown, windows []uint64, outputs [][]byte) (*ContractQueryDecode, error) {
 	q := call.client
 	if q == nil {
 		return nil, ErrOwner

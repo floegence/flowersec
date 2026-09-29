@@ -14,11 +14,11 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	"modernc.org/sqlite"
 )
 
-const sqliteStorageRevision = 2
+const sqliteStorageRevision = 7
 
 // SQLiteIdentity is independently configured stable authority identity. It is
 // not learned from the database or a peer. Generation changes require the
@@ -50,6 +50,11 @@ type sqliteStore struct {
 	conn                              driver.Conn
 	business                          *SQLiteExecutions
 	references                        *SQLiteReferences
+	topUps                            *SQLiteTopUpJournal
+	topUpServer                       *SQLiteTopUpServer
+	namespace                         *SQLiteNamespaceHistory
+	archive                           *SQLiteAuditArchive
+	publication                       *SQLitePublicationStore
 	workPins                          uint32
 	execer                            driver.ExecerContext
 	querier                           driver.QueryerContext
@@ -66,7 +71,7 @@ func SQLiteStoreCharge(l SQLiteLimits) (resourcev4.Vector, error) {
 	if !l.valid() {
 		return resourcev4.Vector{}, ErrConfiguration
 	}
-	sdk := uint64(unsafe.Sizeof(SQLiteStore{})) + uint64(unsafe.Sizeof(sqliteStore{})) + 128
+	sdk := uint64(unsafe.Sizeof(SQLiteStore{})) + uint64(unsafe.Sizeof(sqliteStore{})) + 128 + 4*sqliteManifestPrefixBytes
 	provider := uint64(l.MaxPages)*sqlitePageBytes*2 + uint64(l.MaxRecordBytes)*2
 	if l.RuntimeBytes > math.MaxUint64-sdk || l.ProviderRuntimeBytes > math.MaxUint64-provider {
 		return resourcev4.Vector{}, ErrConfiguration
@@ -100,11 +105,21 @@ func OpenSQLite(ctx context.Context, backing *SQLiteBacking, identity SQLiteIden
 }
 
 func openSQLite(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, reservation, environment resourcev4.Reference, create bool) (result *SQLiteStore, err error) {
-	return openSQLitePurpose(ctx, backing, identity, continuity, reservation, environment, create, nil, nil)
+	return openSQLitePurpose(ctx, backing, identity, continuity, reservation, environment, create, nil, nil, nil, nil, nil, nil)
 }
 
-func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, reservation, environment resourcev4.Reference, create bool, business *SQLiteExecutionConfig, references *SQLiteReferenceConfig) (result *SQLiteStore, err error) {
-	if business != nil && references != nil {
+func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, reservation, environment resourcev4.Reference, create bool, business *SQLiteExecutionConfig, references *SQLiteReferenceConfig, topUps *SQLiteTopUpConfig, topUpServer *SQLiteTopUpServerConfig, namespace *SQLiteNamespaceConfig, archive *SQLiteAuditArchiveConfig, publications ...*SQLitePublicationConfig) (result *SQLiteStore, err error) {
+	var publication *SQLitePublicationConfig
+	if len(publications) > 1 {
+		return nil, ErrConfiguration
+	}
+	if len(publications) == 1 {
+		publication = publications[0]
+	}
+	if publication != nil && (business != nil || references != nil || topUps != nil || topUpServer != nil || namespace != nil || archive != nil) {
+		return nil, ErrConfiguration
+	}
+	if archive != nil && (business != nil || references != nil || topUps != nil || topUpServer != nil || namespace != nil) || business != nil && references != nil || topUps != nil && (business != nil || references != nil) || topUpServer != nil && (business != nil || references != nil || topUps != nil) || namespace != nil && (business != nil || references != nil || topUps != nil || topUpServer != nil) {
 		return nil, ErrConfiguration
 	}
 	if ctx == nil || backing == nil || backing.sqliteBacking == nil || continuity == nil || !validSQLiteIdentity(identity) {
@@ -119,6 +134,21 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 	}
 	if references != nil {
 		charge, err = SQLiteReferencesCharge(backing.limits, *references)
+	}
+	if topUps != nil {
+		charge, err = SQLiteTopUpJournalCharge(backing.limits, *topUps)
+	}
+	if topUpServer != nil {
+		charge, err = SQLiteTopUpServerCharge(backing.limits, *topUpServer)
+	}
+	if namespace != nil {
+		charge, err = SQLiteNamespaceHistoryCharge(backing.limits, *namespace)
+	}
+	if archive != nil {
+		charge, err = SQLiteAuditArchiveCharge(backing.limits, *archive)
+	}
+	if publication != nil {
+		charge, _, _, err = SQLitePublicationStoreCharges(backing.limits, *publication)
 	}
 	if err != nil {
 		return nil, err
@@ -224,16 +254,47 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 			return nil, err
 		}
 	}
-	if err = s.configure(create); err != nil {
-		return nil, err
+	if topUps != nil {
+		s.topUps = newSQLiteTopUpJournal(s, *topUps)
 	}
+	if topUpServer != nil {
+		s.topUpServer, err = newSQLiteTopUpServer(s, *topUpServer)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if namespace != nil {
+		s.namespace, err = newSQLiteNamespaceHistory(s, *namespace)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if archive != nil {
+		s.archive, err = newSQLiteAuditArchive(s, *archive)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if publication != nil {
+		s.publication, err = newSQLitePublicationStore(s, *publication)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err = s.configure(create); err != nil {
+		return nil, s.projectStorageFormat(err, StorageRevision{}, StorageFormatBackend)
+	}
+	var observed StorageRevision
 	if create {
 		err = s.createSchema()
 	} else {
+		if observed, err = s.inspectStorageHeader(); err != nil {
+			return nil, err
+		}
 		err = s.openSchema()
 	}
 	if err != nil {
-		return nil, err
+		return nil, s.projectStorageFormat(err, observed, StorageFormatState)
 	}
 	if err = ctx.Err(); err != nil {
 		return nil, err
@@ -440,6 +501,32 @@ func (s *SQLiteStore) Retire() error {
 		return ErrOwner
 	}
 	if !s.retired {
+		if s.references != nil {
+			s.references.codec = nil
+			clear(s.references.wire[:])
+			clear(s.references.existing[:])
+			clear(s.references.gc[:])
+			s.references.config = SQLiteReferenceConfig{}
+		}
+		if s.topUps != nil {
+			clear(s.topUps.record)
+			s.topUps.record = nil
+			clear(s.topUps.pending[:])
+			clear(s.topUps.applied[:])
+			s.topUps.config = SQLiteTopUpConfig{}
+		}
+		if s.topUpServer != nil {
+			s.topUpServer.clear()
+		}
+		if s.namespace != nil {
+			s.namespace.clear()
+		}
+		if s.archive != nil {
+			s.archive.clear()
+		}
+		if s.publication != nil {
+			s.publication.clear()
+		}
 		s.retired = true
 		s.backing.releaseConnection(s.disk)
 		s.disk = resourcev4.Reference{}

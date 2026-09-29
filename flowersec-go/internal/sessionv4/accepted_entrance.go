@@ -3,13 +3,14 @@ package sessionv4
 import (
 	"context"
 	"io"
+	"math"
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // AcceptedEntranceConfig is the Acceptor's fixed local entrance policy, before
@@ -40,6 +41,8 @@ type AcceptedEntrance struct {
 	initial                                                     *InitialExchange
 	carrier                                                     *PreparedCarrier
 	listener                                                    AcceptedRouteVerifier
+	tunnel                                                      *TunnelServerAllowRecipient
+	hop                                                         hopAuthentication
 	owner, environment, initialBacking                          resourcev4.Reference
 	config                                                      AcceptedEntranceConfig
 	guard                                                       acceptedAuthorization
@@ -57,6 +60,7 @@ type acceptedAuthorization struct {
 	reservation, environment resourcev4.Reference
 	deadline                 *timev4.Deadline
 	authorization            *protocolv4.EndpointAuthorization
+	tunnel                   *TunnelServerAllowRecipient
 	application              *ApplicationLease
 	owner                    *SessionAdmissionReservation
 	admitted                 bool
@@ -65,10 +69,11 @@ type acceptedAuthorization struct {
 	reservationKey           [32]byte
 	terminal                 error
 	wake                     chan struct{}
+	sampling                 uint32
 }
 
 func acceptedEntranceCharges(c AcceptedEntranceConfig) (metadata, initial, carrier resourcev4.Vector, err error) {
-	if c.RuntimeBytes == 0 || c.InitialRuntimeBytes == 0 || c.Initial.Role != protocolv4.ServerToClient || c.Initial.Deadline == nil || c.Initial.Authorization != nil || c.Initial.Reservation != (resourcev4.Reference{}) || c.Initial.accepted != nil || c.Initial.original.enabled || c.Initial.ActivationSourceProfile != "live_authority" && c.Initial.ActivationSourceProfile != "preauthorized_pool" {
+	if c.RuntimeBytes == 0 || c.InitialRuntimeBytes == 0 || c.Initial.Role != protocolv4.ServerToClient || c.Initial.Deadline == nil || c.Initial.Authorization != nil || c.Initial.Reservation != (resourcev4.Reference{}) || c.Initial.accepted != nil || c.Initial.hop != nil || c.Initial.original.enabled || c.Initial.ActivationSourceProfile != "live_authority" && c.Initial.ActivationSourceProfile != "preauthorized_pool" {
 		return metadata, initial, carrier, cryptov4.ErrConfiguration
 	}
 	if _, err = protocolv4.Profile(c.Initial.Profile); err != nil {
@@ -196,7 +201,11 @@ func newAcceptedEntrance(ctx context.Context, c AcceptedEntranceConfig, provider
 	}()
 	e := &AcceptedEntrance{owner: owned, environment: environment, initialBacking: backing, listener: listener, config: c, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	e.guard = acceptedAuthorization{reservation: owned, environment: environment, deadline: c.Initial.Deadline, wake: make(chan struct{}, 1)}
-	p := &preparedCarrier{binding: PreparedCarrierBinding{Role: protocolv4.ServerToClient, MessageCarrier: messages != nil}, guarantees: guarantees, reservation: transport, environment: environment, shared: shared, provider: provider, stream: stream, messages: messages, activated: true}
+	native, nativeErr := preparedNativeConnection(provider, stream, environment)
+	if nativeErr != nil {
+		return nil, nativeErr
+	}
+	p := &preparedCarrier{native: native, binding: PreparedCarrierBinding{Role: protocolv4.ServerToClient, MessageCarrier: messages != nil, Native: native != nil}, guarantees: guarantees, reservation: transport, environment: environment, shared: shared, provider: provider, stream: stream, messages: messages, activated: true}
 	p.streamAdapter.owner, p.messageAdapter.owner = p, p
 	e.carrier = &PreparedCarrier{p}
 	config := c.Initial
@@ -227,69 +236,156 @@ func (g *acceptedAuthorization) checkLocked() error {
 			return err
 		}
 	}
-	if g.authorization != nil {
-		return g.authorization.Check()
-	}
-	return g.deadline.Check()
+	return nil
 }
-func (g *acceptedAuthorization) Check() error {
+
+// sample runs the one synchronous authorization/deadline observation while
+// retaining the guard's resources. Close and retirement may fence the guard,
+// but neither can clear the captured values until this callback returns.
+func (g *acceptedAuthorization) sample(preflight func() error, call func(*protocolv4.EndpointAuthorization, *timev4.Deadline) error) (err error) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.checkLocked()
+	if err = g.checkLocked(); err != nil {
+		g.mu.Unlock()
+		return err
+	}
+	if preflight != nil {
+		if err = preflight(); err != nil {
+			g.mu.Unlock()
+			return err
+		}
+	}
+	if g.sampling == math.MaxUint32 {
+		g.mu.Unlock()
+		return cryptov4.ErrCapacity
+	}
+	g.sampling++
+	authorization, deadline, tunnel := g.authorization, g.deadline, g.tunnel
+	g.mu.Unlock()
+	returned := false
+	defer func() {
+		abnormal := recover() != nil || !returned
+		g.mu.Lock()
+		g.sampling--
+		if abnormal {
+			if g.terminal == nil {
+				g.terminal = ErrEnvironmentTaskExit
+			}
+			select {
+			case g.wake <- struct{}{}:
+			default:
+			}
+		} else if err == nil {
+			err = g.checkLocked()
+		}
+		g.mu.Unlock()
+	}()
+	if authorization == nil && tunnel != nil {
+		err = tunnel.checkPreauth()
+	}
+	if err == nil {
+		err = call(authorization, deadline)
+	}
+	returned = true
+	return err
+}
+
+func (g *acceptedAuthorization) Check() error {
+	return g.sample(nil, func(authorization *protocolv4.EndpointAuthorization, deadline *timev4.Deadline) error {
+		if authorization != nil {
+			return authorization.Check()
+		}
+		if deadline == nil {
+			return cryptov4.ErrConfiguration
+		}
+		sample, err := deadline.Sample()
+		if err == nil {
+			err = deadline.CheckAt(sample)
+		}
+		return err
+	})
 }
 func (g *acceptedAuthorization) RemainingMS() (uint64, error) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	if err := g.checkLocked(); err != nil {
-		return 0, err
-	}
-	if g.authorization != nil {
-		return g.authorization.RemainingMS()
-	}
-	return g.deadline.RemainingMS()
+	tunnel := g.tunnel
+	g.mu.Unlock()
+	var remaining uint64
+	err := g.sample(nil, func(authorization *protocolv4.EndpointAuthorization, deadline *timev4.Deadline) error {
+		if authorization != nil {
+			var err error
+			remaining, err = authorization.RemainingMS()
+			return err
+		}
+		if deadline == nil {
+			return cryptov4.ErrConfiguration
+		}
+		sample, err := deadline.Sample()
+		if err != nil {
+			return err
+		}
+		remaining, err = deadline.RemainingMSAt(sample)
+		if err == nil && tunnel != nil {
+			var fresh uint64
+			fresh, err = tunnel.remainingPreauth()
+			remaining = min(remaining, fresh)
+		}
+		return err
+	})
+	return remaining, err
 }
 func (g *acceptedAuthorization) Wake() <-chan struct{} {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.authorization != nil {
-		return g.authorization.Wake()
+	authorization := g.authorization
+	wake, tunnel := g.wake, g.tunnel
+	g.mu.Unlock()
+	if authorization == nil && tunnel != nil {
+		return tunnel.preparationWake()
 	}
-	return g.wake
+	if authorization != nil {
+		return authorization.Wake()
+	}
+	return wake
 }
 func (g *acceptedAuthorization) Notify() {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.authorization != nil {
-		g.authorization.Notify()
+	authorization := g.authorization
+	wake, tunnel := g.wake, g.tunnel
+	g.mu.Unlock()
+	if authorization == nil && tunnel != nil {
+		tunnel.notifyPreparation()
+	}
+	if authorization != nil {
+		authorization.Notify()
 	}
 	select {
-	case g.wake <- struct{}{}:
+	case wake <- struct{}{}:
 	default:
 	}
 }
 func (g *acceptedAuthorization) Close(cause error) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
 	if cause == nil {
 		cause = cryptov4.ErrClosed
 	}
 	if g.terminal == nil {
 		g.terminal = cause
 	}
-	if g.authorization != nil {
-		g.authorization.Close(cause)
+	authorization := g.authorization
+	wake := g.wake
+	g.mu.Unlock()
+	if authorization != nil {
+		authorization.Close(cause)
 	}
 	select {
-	case g.wake <- struct{}{}:
+	case wake <- struct{}{}:
 	default:
 	}
 }
 func (g *acceptedAuthorization) checkAdmitted() error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if err := g.checkLocked(); err != nil {
+	if err := g.Check(); err != nil {
 		return err
 	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	if !g.admitted {
 		return ErrAdmissionRejected
 	}
@@ -299,16 +395,18 @@ func (g *acceptedAuthorization) checkAdmitted() error {
 // A verified original entrance may send a signed rejection without acquiring
 // an admitted continuation. This never permits an admitted FSA or Noise.
 func (g *acceptedAuthorization) checkResponse(admitted bool) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if err := g.checkLocked(); err != nil {
+	return g.sample(func() error {
+		if g.owner == nil || g.authorization == nil || admitted && !g.admitted {
+			return ErrAdmissionRejected
+		}
+		return nil
+	}, func(authorization *protocolv4.EndpointAuthorization, _ *timev4.Deadline) error {
+		if authorization == nil {
+			return ErrAdmissionRejected
+		}
+		_, err := authorization.CheckAdmission()
 		return err
-	}
-	if g.owner == nil || g.authorization == nil || admitted && !g.admitted {
-		return ErrAdmissionRejected
-	}
-	_, err := g.authorization.CheckAdmission()
-	return err
+	})
 }
 
 func (g *acceptedAuthorization) matchResponse(response protocolv4.AdmissionResponse) error {
@@ -374,6 +472,9 @@ func (e *AcceptedEntrance) readClientHello(dst []byte, host *EnvironmentSession)
 		return 0, err
 	}
 	defer e.end()
+	if err = x.authenticateHop(); err != nil {
+		return 0, err
+	}
 	if err = x.Receive(protocolv4.FrameNegotiate, func([]byte) error { return nil }); err != nil {
 		return 0, err
 	}
@@ -405,14 +506,30 @@ func (e *AcceptedEntrance) negotiate(hello InitialHello, host *EnvironmentSessio
 	if err != nil {
 		return nil, err
 	}
-	if err = hello.Artifact.CheckDirectListenerCandidate(hello.Index); err != nil {
-		return nil, err
-	}
-	if err = e.listener.CheckAcceptedRoute(hello.Artifact, hello.Index, hello.Policy); err != nil {
-		return nil, err
-	}
-	if err = hello.Artifact.CheckDirectConnectionGuarantees(hello.Index, protocolv4.ServerToClient, e.carrier.guarantees); err != nil {
-		return nil, err
+	if e.tunnel != nil {
+		if err = e.checkTunnelHello(hello); err != nil {
+			return nil, err
+		}
+	} else {
+		if err = hello.Artifact.CheckDirectListenerCandidate(hello.Index); err != nil {
+			return nil, err
+		}
+		// Material lookup supplies policy, never TLS exporter authority. The
+		// original accepted owner derives and retains the selected actual value.
+		if len(hello.Policy.Exporter) != 0 {
+			return nil, cryptov4.ErrConfiguration
+		}
+		hello.Policy, err = e.carrier.bindHelloPolicy(hello.Policy, session.ArtifactDigest)
+		if err != nil {
+			return nil, err
+		}
+		defer clear(hello.Policy.Exporter)
+		if err = e.listener.CheckAcceptedRoute(hello.Artifact, hello.Index, hello.Policy); err != nil {
+			return nil, err
+		}
+		if err = hello.Artifact.CheckDirectConnectionGuarantees(hello.Index, protocolv4.ServerToClient, e.carrier.guarantees); err != nil {
+			return nil, err
+		}
 	}
 	return x.negotiateServerRetained(hello)
 }
@@ -448,7 +565,9 @@ func (e *AcceptedEntrance) Close() {
 	x, p := e.initial, e.carrier
 	e.signalLocked()
 	e.mu.Unlock()
-	x.Close(cryptov4.ErrClosed)
+	if x != nil {
+		x.Close(cryptov4.ErrClosed)
+	}
 	_ = p.Close()
 	e.mu.Lock()
 	e.closing = false
@@ -493,8 +612,10 @@ func (e *AcceptedEntrance) WaitCleanup(ctx context.Context) (err error) {
 		e.signalLocked()
 		e.mu.Unlock()
 	}()
-	if err = e.initial.WaitCleanup(ctx); err != nil {
-		return err
+	if e.initial != nil {
+		if err = e.initial.WaitCleanup(ctx); err != nil {
+			return err
+		}
 	}
 	return e.carrier.WaitCleanup(ctx)
 }
@@ -514,6 +635,18 @@ func (e *AcceptedEntrance) retireAdmission(admission *SessionAdmissionReservatio
 		e.mu.Unlock()
 		return cryptov4.ErrCapacity
 	}
+	e.guard.mu.Lock()
+	if e.guard.sampling != 0 {
+		e.guard.mu.Unlock()
+		e.mu.Unlock()
+		return cryptov4.ErrCapacity
+	}
+	// Fence any late holder of the authorization interface before clearing its
+	// captured resources. New observations then fail under the guard mutex.
+	if e.guard.terminal == nil {
+		e.guard.terminal = cryptov4.ErrClosed
+	}
+	e.guard.mu.Unlock()
 	e.retiring = true
 	p := e.carrier
 	e.mu.Unlock()
@@ -526,12 +659,17 @@ func (e *AcceptedEntrance) retireAdmission(admission *SessionAdmissionReservatio
 	}
 	e.initial, e.carrier, e.admission = nil, nil, nil
 	e.listener = nil
+	if e.tunnel != nil {
+		e.tunnel.retireEntrance()
+		e.tunnel = nil
+	}
+	e.hop = hopAuthentication{}
 	e.host = nil
 	e.config = AcceptedEntranceConfig{}
 	e.initialBacking.Release()
 	e.initialBacking, e.environment = resourcev4.Reference{}, resourcev4.Reference{}
 	e.guard.mu.Lock()
-	e.guard.deadline, e.guard.owner, e.guard.authorization, e.guard.application = nil, nil, nil, nil
+	e.guard.deadline, e.guard.owner, e.guard.authorization, e.guard.application, e.guard.tunnel = nil, nil, nil, nil, nil
 	e.guard.mu.Unlock()
 	e.retired = true
 	e.owner.Release()

@@ -9,9 +9,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 const managementEnvelopeBytes = 2 + 512 + 1024
@@ -79,17 +79,18 @@ type managementWirePending struct {
 	abandoned bool
 }
 type managementWireReply struct {
-	serial       uint64
-	length       int
-	running      bool
-	ready        bool
-	cancel       bool
-	target       ExecutionTarget
-	access       ExecutionAccess
-	deadline     *timev4.Deadline
-	request      protocolv4.ApplicationHeaderFields
-	requestError error
-	wire         [managementEnvelopeBytes]byte
+	serial              uint64
+	length              int
+	running             bool
+	timedOut, published bool
+	ready               bool
+	cancel              bool
+	target              ExecutionTarget
+	access              ExecutionAccess
+	deadline            *timev4.Deadline
+	request             protocolv4.ApplicationHeaderFields
+	requestError        error
+	wire                [managementEnvelopeBytes]byte
 }
 
 // ExecutionManagementWire is one actual channel generation, with two original
@@ -463,7 +464,14 @@ func (r ManagementReply) Publish(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	*p = managementWireReply{}
+	if p.running {
+		// A deadline reply does not release the in-flight store's original slot.
+		p.published = true
+		p.length = 0
+		clear(p.wire[:])
+	} else {
+		*p = managementWireReply{}
+	}
 	return nil
 }
 
@@ -475,7 +483,7 @@ func (r ManagementReply) checkLocked() error {
 		return ErrOwner
 	}
 	p := &r.wire.replies[r.index]
-	if p.serial != r.serial || p.running || p.length == 0 {
+	if p.serial != r.serial || p.running && !p.timedOut || p.published || p.length == 0 {
 		return ErrOwner
 	}
 	return nil
@@ -574,6 +582,32 @@ type ManagementJob struct {
 	wire   *ExecutionManagementWire
 	index  int
 	serial uint64
+}
+
+// Unavailable resolves only the original small response. A running provider
+// retains the same slot and wire owner until its actual return. Late results
+// cannot overwrite this outcome, free its position early, or publish twice.
+func (j ManagementJob) Unavailable() (ManagementReply, error) {
+	w := j.wire
+	if w == nil {
+		return ManagementReply{}, ErrOwner
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return ManagementReply{}, ErrManagementClosed
+	}
+	p := &w.replies[j.index]
+	if p.serial != j.serial || p.published {
+		return ManagementReply{}, ErrOwner
+	}
+	if !p.timedOut {
+		p.timedOut, p.ready, p.access = true, false, nil
+		if err := w.encodeReplyLocked(p, protocolv4.ManagementResult{Status: "unavailable"}); err != nil {
+			return ManagementReply{}, err
+		}
+	}
+	return ManagementReply{wire: w, index: j.index, serial: j.serial}, nil
 }
 
 // RemainingMS exposes only the original receive/work cap, never a fresh
@@ -729,6 +763,14 @@ func (j ManagementJob) Run(ctx context.Context, resolver ExecutionManagementReso
 		w.cleanupLocked()
 		completed = true
 		return reply, ErrManagementClosed
+	}
+	if p.timedOut {
+		completed = true
+		if p.published {
+			*p = managementWireReply{}
+			return reply, nil
+		}
+		return ManagementReply{wire: w, index: index, serial: serial}, nil
 	}
 	// Conflicts also reveal a fact about this key. Keep the resolved permission
 	// for every response derived from the authority, including bounded errors.

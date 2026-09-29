@@ -6,7 +6,7 @@ import (
 	"io"
 	"iter"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 )
 
 type StreamItem struct {
@@ -75,6 +75,15 @@ func (m *StreamMessages) AbandonResult() (StreamMessageStatus, error) {
 	}
 	if m.terminalDelivered {
 		return m.statusLocked(), ErrStreamResultDelivered
+	}
+	if m.resumeExchange && !m.outputStarted.Load() {
+		return m.statusLocked(), ErrUnaryNotStarted
+	}
+	if m.resumeExchange && m.startCommitted && !m.transportCleaned && m.failure == nil {
+		m.abandoned = true
+		m.abandonStreamResultLocked()
+		m.signalLocked()
+		return m.statusLocked(), nil
 	}
 	m.closeLocked()
 	return m.statusLocked(), nil

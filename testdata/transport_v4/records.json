@@ -1,5 +1,5 @@
 {
-  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "schema_revision": "flowersec-v4.0.0-draft.74",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
   "coverage": "fixed_material_record_encoding_and_aead_reference_only",
   "vectors": [
@@ -17533,5 +17533,5 @@
     "Runtime owners, opaque keys, cancellation and cleanup",
     "Provider and independent cryptographic qualification"
   ],
-  "schema_sha256": "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959"
+  "schema_sha256": "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af"
 }

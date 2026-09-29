@@ -35,7 +35,6 @@ for (const forbidden of [
   'ArtifactCodecError',
   'maximumAttemptsReached',
   'encodedByteCount',
-  'maxEncodedBytes',
   'maxDepth',
   'maxNodes',
   'maxObjectKeys',
@@ -43,6 +42,15 @@ for (const forbidden of [
   'maxKeyBytes',
   'maxStringBytes',
   'maximumSafeInteger',
+  'V4ClientEnvironment',
+  'V4CredentialAdmission',
+  'V4DirectPoolMaterial',
+  'V4NativeSessionAdmission',
+  'V4PinnedTLS',
+  'V4StreamMetadataProjection',
+  'V4StreamMetadataCodec',
+  'ConnectionMaterialOwner',
+  'TransportEnvironmentOwner',
 ]) {
   assert.equal(rendered.includes(forbidden), false, `Swift public API leaked ${forbidden}`);
 }
@@ -56,6 +64,34 @@ assert.equal(
 );
 assert.equal(rendered.includes('ArtifactError'), true, 'Swift public API must expose ArtifactError');
 assert.equal(rendered.includes('invalidValue'), true, 'Swift metadata errors must expose invalidValue');
+for (const [name, fragments] of [
+  ['TransportEnvironment.init(configuration:)', ['TransportV4ClientConfiguration', 'async throws']],
+  ['TransportEnvironment.preparePoolMaterial(_:identity:)', ['TransportV4PoolCredential', 'TransportV4ApplicationIdentity', 'throws -> ConnectionMaterial']],
+  ['TransportEnvironment.connectMaterial(_:requirements:)', ['ConnectionMaterial', 'ConnectionRequirements', 'async throws -> any Session']],
+  ['TransportEnvironment.connect(source:requirements:)', ['any ConnectionMaterialSource', 'ConnectionRequirements', 'async throws -> any Session']],
+  ['TransportEnvironment.generateApplicationIdentity(profile:)', ['TransportV4CryptoProfile', 'TransportV4ApplicationIdentity']],
+  ['TransportEnvironment.importApplicationIdentity(profile:signingSeed:noiseStaticPrivateKey:)', ['TransportV4CryptoProfile', 'Data', 'TransportV4ApplicationIdentity']],
+  ['TransportEnvironment.refreshTrustedTime()', ['throws']],
+  ['TransportEnvironment.refreshNamespace(authority:head:state:)', ['String', 'Data', 'throws']],
+  ['TransportEnvironment.invalidateTimeContinuity()', []],
+  ['ConnectionMaterial.waitCleanup()', ['async throws -> CleanupStatus']],
+  ['StreamMetadata.init(namespace:version:values:)', ['String', 'UInt16', '[String : Data]', 'throws']],
+  ['StreamMetadata.init(encodedV4:)', ['Data', 'throws']],
+  ['StreamMetadata.encodedV4()', ['throws -> Data']],
+  ['StreamMetadata.v4Namespace', ['String?']],
+  ['StreamMetadata.v4Version', ['UInt16?']],
+  ['StreamMetadata.v4Values', ['[String : Data]?']],
+]) {
+  assert.equal(surface.some(({ pathComponents, declaration }) =>
+    pathComponents.join('.') === name && fragments.every((fragment) => declaration.includes(fragment))),
+  true, `Swift v4 public signature missing or changed: ${name}`);
+}
+for (const opaque of ['ConnectionMaterial', 'TransportV4ApplicationIdentity', 'ReaderCursor',
+  'WriteOperation', 'NotificationSubscription', 'OperationHandle']) {
+  assert.equal(surface.some(({ pathComponents }) => pathComponents[0] === opaque
+    && (pathComponents[1]?.startsWith('init(') || pathComponents[1] === 'owner')),
+  false, `${opaque} must retain its original SDK owner`);
+}
 assert.equal(
   rendered.includes('RPCNotificationError'),
   true,

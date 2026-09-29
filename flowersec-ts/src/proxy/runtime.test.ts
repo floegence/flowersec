@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { u32be } from "../utils/bin.js";
 import type { ByteStream, Session, StreamOpenOptions } from "../public/contract.js";
-import { createProxyRuntime } from "./runtime.js";
+import { createProxyRuntimeWithStreams as createProxyRuntime } from "./runtime.js";
+import {encodeProxyMetadata,decodeProxyMetadata} from "./wire.js";
+import { matchesPathPrefix, normalizeSubtreePath } from "./policy.js";
 import { registerProxyRuntimeServiceWorkerBridge } from "./serviceWorkerRuntime.js";
 
 function concat(chunks: readonly Uint8Array[]): Uint8Array {
@@ -12,8 +14,11 @@ function concat(chunks: readonly Uint8Array[]): Uint8Array {
   return output;
 }
 
-function jsonFrame(value: unknown): Uint8Array {
-  const payload = new TextEncoder().encode(JSON.stringify(value));
+function bodyEnd(): Uint8Array { return concat([u32be(0),metadataFrame({v:2,trailers:[]})]); }
+
+function metadataFrame(value: unknown): Uint8Array {
+  const v=value as Record<string,unknown>;
+  const payload = encodeProxyMetadata(Object.hasOwn(v,"trailers")?"ProxyBodyEnd":Object.hasOwn(v,"request_id")?"ProxyHTTPResponse":"ProxyWebSocketResponse",v);
   return concat([u32be(payload.length), payload]);
 }
 
@@ -21,6 +26,8 @@ class FakeStream implements ByteStream {
   readonly kind = "fake";
   terminalError = undefined;
   readonly writes: Uint8Array[] = [];
+  wsResponseProtocol: string | undefined;
+  wsFirstFrame: Uint8Array = new Uint8Array();
   readCalls = 0;
   closed = false;
   resetCalled = false;
@@ -29,6 +36,7 @@ class FakeStream implements ByteStream {
   constructor(reads: Array<Uint8Array | Error | null>, private readonly partialWrite = 3) { this.reads = reads; }
   async read(): Promise<Uint8Array | null> {
     this.readCalls++;
+    if(this.wsResponseProtocol !== undefined && this.readCalls===1) return concat([metadataFrame({v:2,conn_id:firstWrittenMetadata(this).conn_id,ok:true,protocol:this.wsResponseProtocol}), this.wsFirstFrame]);
     const value = this.reads.shift() ?? null;
     if (value instanceof Error) throw value;
     return value;
@@ -78,9 +86,53 @@ async function collectPort(port: MessagePort, terminal: string): Promise<Record<
 }
 
 describe("Session proxy runtime", () => {
+  it("rejects hidden length mismatches before opening a stream", async () => {
+    const session = new FakeSession([]);
+    const runtime = createProxyRuntime({ session });
+    const channel = new MessageChannel();
+    const result = collectPort(channel.port2, "flowersec-proxy:response_error");
+    runtime.dispatchFetch({ id: "mismatch", method: "POST", path: "/", headers: [
+      { name: "connection", value: "content-length" }, { name: "content-length", value: "9" },
+    ], body: new Uint8Array([1]).buffer }, channel.port1);
+    expect((await result)[0]?.type).toBe("flowersec-proxy:response_error");
+    expect(session.opens).toHaveLength(0);
+    runtime.dispose();
+  });
+
+  it.each([false, true])("validates response length before the terminal even when Connection hides it: %s", async (hidden) => {
+    const fields = [{ name: "content-length", value: "3" }];
+    if (hidden) fields.push({ name: "connection", value: "content-length" });
+    const stream = new FakeStream([concat([
+      metadataFrame({ v: 2, request_id: "short", ok: true, status: 200, headers: fields }),
+      u32be(2), new Uint8Array([111, 107]), bodyEnd(),
+    ])]);
+    const runtime = createProxyRuntime({ session: new FakeSession([stream]) });
+    const channel = new MessageChannel();
+    const result = collectPort(channel.port2, "flowersec-proxy:response_end");
+    runtime.dispatchFetch({ id: "short", method: "GET", path: "/", headers: [] }, channel.port1);
+    const messages = await result;
+    expect(messages.map(message => message.type)).toEqual(["flowersec-proxy:response_meta", "flowersec-proxy:response_chunk", "flowersec-proxy:response_error"]);
+    expect(messages[0]?.headers).toEqual(hidden ? [] : [{ name: "content-length", value: "3" }]);
+    expect(stream.resetCalled).toBe(true);
+    runtime.dispose();
+  });
+
+  it("requires the bounded terminal after a zero-length body marker", async () => {
+    const stream = new FakeStream([concat([
+      metadataFrame({ v: 2, request_id: "truncated", ok: true, status: 204, headers: [] }), u32be(0),
+    ])]);
+    const runtime = createProxyRuntime({ session: new FakeSession([stream]) });
+    const channel = new MessageChannel();
+    const result = collectPort(channel.port2, "flowersec-proxy:response_error");
+    runtime.dispatchFetch({ id: "truncated", method: "GET", path: "/", headers: [] }, channel.port1);
+    expect((await result).map(message => message.type)).toEqual(["flowersec-proxy:response_error"]);
+    expect(stream.resetCalled).toBe(true);
+    runtime.dispose();
+  });
+
   it("forwards declared HTTP headers without expanding WebSocket access", async () => {
     const stream = new FakeStream([concat([
-      jsonFrame({ v: 1, request_id: "platform", ok: true, status: 200, headers: [] }), u32be(0),
+      metadataFrame({ v: 2, request_id: "platform", ok: true, status: 200, headers: [] }), bodyEnd(),
     ])]);
     const session = new FakeSession([stream]);
     const runtime = createProxyRuntime({
@@ -104,7 +156,7 @@ describe("Session proxy runtime", () => {
       body: new TextEncoder().encode("{}").buffer,
     }, channel.port1);
     expect(await collecting).toContainEqual(expect.objectContaining({ status: 200 }));
-    expect(firstWrittenJSON(stream)).toMatchObject({ headers: [
+    expect(firstWrittenMetadata(stream)).toMatchObject({ headers: [
       { name: "content-type", value: "application/json" },
       { name: "x-platform-csrf", value: "proof" },
     ] });
@@ -113,7 +165,7 @@ describe("Session proxy runtime", () => {
       const blocked = new MessageChannel();
       const result = collectPort(blocked.port2, "flowersec-proxy:response_error");
       runtime.dispatchFetch({ id: "denied", method: "GET", path, headers: [] }, blocked.port1);
-      expect(await result).toContainEqual(expect.objectContaining({ status: 403 }));
+      expect(await result).toContainEqual(expect.objectContaining({ status: path.includes("..") ? 400 : 403 }));
     }
     expect(session.opens).toHaveLength(1);
     runtime.dispose();
@@ -133,29 +185,30 @@ describe("Session proxy runtime", () => {
       const collecting = collectPort(channel.port2, "flowersec-proxy:response_error");
       runtime.dispatchFetch({ id: path, method: "GET", path, headers: [] }, channel.port1);
       await expect(collecting).resolves.toEqual([
-        expect.objectContaining({ status: 403, code: "policy_denied" }),
+        expect.objectContaining(path === "/%61dmin" ? { status: 403, code: "policy_denied" } : { status: 400, code: "invalid_request" }),
       ]);
       expect(session.opens).toEqual([]);
-      await expect(runtime.openWebSocketStream(path)).rejects.toThrow(/denied/);
+      await expect(runtime.openWebSocketStream(path)).rejects.toThrow();
       runtime.dispose();
     }
 
     const httpStream = new FakeStream([concat([
-      jsonFrame({ v: 1, request_id: "canonical", ok: true, status: 204, headers: [] }),
-      u32be(0),
+      metadataFrame({ v: 2, request_id: "canonical", ok: true, status: 204, headers: [] }),
+      bodyEnd(),
     ])]);
-    const wsStream = new FakeStream([jsonFrame({ v: 1, ok: true, protocol: "" })]);
+    const wsStream = new FakeStream([]);
+    wsStream.wsResponseProtocol="";
     const session = new FakeSession([httpStream, wsStream]);
     const runtime = createProxyRuntime({ session, pathPolicy: { allowedPathPrefixes: ["/api"] } });
     const channel = new MessageChannel();
     const collecting = collectPort(channel.port2, "flowersec-proxy:response_end");
     runtime.dispatchFetch({
-      id: "canonical", method: "GET", path: "/public/../api//items?q=%7euser", headers: [],
+      id: "canonical", method: "GET", path: "/api//items?q=%7euser", headers: [],
     }, channel.port1);
     await collecting;
-    expect(firstWrittenJSON(httpStream)).toMatchObject({ path: "/api/items?q=~user" });
-    await runtime.openWebSocketStream("/public/../api//socket?q=1");
-    expect(firstWrittenJSON(wsStream)).toMatchObject({ path: "/api/socket?q=1" });
+    expect(firstWrittenMetadata(httpStream)).toMatchObject({ path: "/api//items?q=%7euser" });
+    await runtime.openWebSocketStream("/api//socket?q=1");
+    expect(firstWrittenMetadata(wsStream)).toMatchObject({ path: "/api//socket?q=1" });
     for (const path of ["/api/%2fadmin", "/api/%5cadmin"]) {
       const rejectedChannel = new MessageChannel();
       const rejected = collectPort(rejectedChannel.port2, "flowersec-proxy:response_error");
@@ -163,15 +216,15 @@ describe("Session proxy runtime", () => {
       await expect(rejected).resolves.toEqual([
         expect.objectContaining({ status: 400, code: "invalid_request" }),
       ]);
-      await expect(runtime.openWebSocketStream(path)).rejects.toThrow(/encoded separator/);
+      await expect(runtime.openWebSocketStream(path)).rejects.toThrow(/encoded separator|forbidden segment/);
     }
     runtime.dispose();
   });
 
   it("streams an HTTP request with partial writes and returns bounded response messages", async () => {
     const response = concat([
-      jsonFrame({ v: 1, request_id: "request-1", ok: true, status: 201, headers: [{ name: "content-type", value: "text/plain" }] }),
-      u32be(2), new Uint8Array([111, 107]), u32be(0),
+      metadataFrame({ v: 2, request_id: "request-1", ok: true, status: 201, headers: [{ name: "content-type", value: "text/plain" }] }),
+      u32be(2), new Uint8Array([111, 107]), bodyEnd(),
     ]);
     const stream = new FakeStream([response, null]);
     const session = new FakeSession([stream]);
@@ -219,10 +272,10 @@ describe("Session proxy runtime", () => {
 
   it("does not read the next response chunk without Service Worker credit", async () => {
     const stream = new FakeStream([
-      jsonFrame({ v: 1, request_id: "credit", ok: true, status: 200, headers: [] }),
+      metadataFrame({ v: 2, request_id: "credit", ok: true, status: 200, headers: [] }),
       concat([u32be(1), Uint8Array.of(1)]),
       concat([u32be(1), Uint8Array.of(2)]),
-      u32be(0),
+      bodyEnd(),
     ]);
     const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxChunkBytes: 8, maxBodyBytes: 64 });
     const serviceWorker = new EventTarget();
@@ -265,18 +318,21 @@ describe("Session proxy runtime", () => {
   });
 
   it("opens WebSockets through a carrier-neutral ByteStream", async () => {
-    const stream = new FakeStream([jsonFrame({ v: 1, ok: true, protocol: "chat" })]);
+    const stream = new FakeStream([]); stream.wsResponseProtocol="chat";
     const session = new FakeSession([stream]);
     const runtime = createProxyRuntime({ session });
     const opened = await runtime.openWebSocketStream("/socket", { protocols: ["chat"] });
-    expect(opened).toEqual({ stream, protocol: "chat" });
+    expect(opened.protocol).toBe("chat");
+    expect(opened.stream).not.toBe(stream);
     expect(session.opens[0]).toEqual({
       kind: "flowersec-proxy/ws",
       options: {
+        signal: expect.any(AbortSignal),
         metadata: expect.objectContaining({ values: { protocol: "flowersec.proxy.websocket", version: 2 } }),
       },
     });
     runtime.dispose();
+    await expect.poll(() => stream.resetCalled).toBe(true);
   });
 
   it("removes queued admission abort listeners on dequeue and runtime close", async () => {
@@ -285,8 +341,8 @@ describe("Session proxy runtime", () => {
     try {
       const first = new ControlledReadStream();
       const second = new FakeStream([concat([
-        jsonFrame({ v: 1, request_id: "second", ok: true, status: 204, headers: [] }),
-        u32be(0),
+        metadataFrame({ v: 2, request_id: "second", ok: true, status: 204, headers: [] }),
+        bodyEnd(),
       ])]);
       const runtime = createProxyRuntime({
         session: new FakeSession([first, second]),
@@ -308,8 +364,8 @@ describe("Session proxy runtime", () => {
         expect.objectContaining({ status: 499, code: "canceled" }),
       ]);
       first.respond(concat([
-        jsonFrame({ v: 1, request_id: "first", ok: true, status: 204, headers: [] }),
-        u32be(0),
+        metadataFrame({ v: 2, request_id: "first", ok: true, status: 204, headers: [] }),
+        bodyEnd(),
       ]));
       await Promise.all([firstDone, secondDone]);
       const addedAfterDequeue = add.mock.calls.filter(([type]) => type === "abort").length;
@@ -345,6 +401,56 @@ describe("Session proxy runtime", () => {
   });
 });
 
+it("preserves a WebSocket frame coalesced with the opening response", async () => {
+  const stream = new FakeStream([]); stream.wsResponseProtocol = "chat";
+  stream.wsFirstFrame = new Uint8Array([2, 0, 0, 0, 2, 7, 9]);
+  const runtime = createProxyRuntime({ session: new FakeSession([stream]) });
+  try {
+    const opened = await runtime.openWebSocketStream("/socket");
+    expect(await opened.stream.read()).toEqual(stream.wsFirstFrame);
+    expect(stream.readCalls).toBe(1);
+    expect(await opened.stream.read()).toBeNull();
+    await opened.stream.close(); expect(stream.resetCalled).toBe(true);
+  } finally { runtime.dispose(); }
+});
+
+it("resets a late WebSocket OPEN result after runtime disposal", async () => {
+  const stream = new FakeStream([]);
+  let resolve!: (stream: ByteStream) => void;
+  let openingObserved!: () => void;
+  const observed = new Promise<void>(yes => { openingObserved = yes; });
+  const runtime = createProxyRuntime({ session: { openStream: () => new Promise(yes => { resolve = yes; openingObserved(); }) } });
+  const opening = runtime.openWebSocketStream("/socket");
+  const failed = expect(opening).rejects.toThrow();
+  await observed;
+  runtime.dispose(); resolve(stream); await failed;
+  expect(stream.resetCalled).toBe(true); expect(stream.writes).toHaveLength(0);
+});
+
+it("retains request admission through authenticated Finish and actual cleanup", async () => {
+  let drain!: () => void, clean!: () => void, finishEntered = false;
+  class TailStream extends FakeStream {
+    constructor() { super([]); }
+    override async read(): Promise<Uint8Array | null> {
+      if (this.readCalls++ > 0) return null;
+      return concat([metadataFrame({ v: 2, request_id: firstWrittenMetadata(this).request_id, ok: true, status: 200, headers: [] }), bodyEnd()]);
+    }
+    async finish(): Promise<void> { finishEntered = true; await new Promise<void>(resolve => { drain = resolve; }); }
+    dispose(onCleanup?: () => void): void { if (onCleanup !== undefined) clean = onCleanup; }
+  }
+  const stream = new TailStream();
+  const runtime = createProxyRuntime({ session: new FakeSession([stream, new FetchResponseStream("text/plain", [])]), maxConcurrentHttpStreams: 1 });
+  try {
+    const response = await runtime.fetch("/first"), consuming = response.text();
+    await expect.poll(() => finishEntered).toBe(true);
+    await expect(runtime.fetch("/blocked-by-drain")).rejects.toMatchObject({ code: "resource_exhausted" });
+    drain(); expect(await consuming).toBe("");
+    await expect(runtime.fetch("/blocked-by-cleanup")).rejects.toMatchObject({ code: "resource_exhausted" });
+    clean(); expect(await (await runtime.fetch("/next")).text()).toBe("");
+    expect(stream.resetCalled).toBe(false);
+  } finally { runtime.dispose(); }
+});
+
 class ControlledReadStream extends FakeStream {
   private resolveRead: ((value: Uint8Array | null) => void) | undefined;
   private rejectRead: ((error: unknown) => void) | undefined;
@@ -370,10 +476,10 @@ class ControlledReadStream extends FakeStream {
   }
 }
 
-function firstWrittenJSON(stream: FakeStream): Record<string, unknown> {
+function firstWrittenMetadata(stream: FakeStream): Record<string, unknown> {
   const bytes = concat(stream.writes);
   const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0);
-  return JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + length))) as Record<string, unknown>;
+  return decodeProxyMetadata(stream.wsResponseProtocol === undefined ? "ProxyHTTPRequest" : "ProxyWebSocketOpen",bytes.subarray(4, 4 + length));
 }
 
 async function nextPortMessage(port: MessagePort): Promise<Record<string, unknown>> {
@@ -397,11 +503,11 @@ class FetchResponseStream extends FakeStream {
     this.readCalls++;
     if (!this.initialized) {
       this.initialized = true;
-      return jsonFrame({ v: 1, request_id: firstWrittenJSON(this).request_id, ok: true, status: 200,
+      return metadataFrame({ v: 2, request_id: firstWrittenMetadata(this).request_id, ok: true, status: 200,
         headers: [{ name: "content-type", value: this.contentType }] });
     }
     const chunk = this.chunks.shift();
-    return chunk === undefined ? u32be(0) : concat([u32be(chunk.length), chunk]);
+    return chunk === undefined ? bodyEnd() : concat([u32be(chunk.length), chunk]);
   }
 }
 
@@ -530,4 +636,47 @@ it("supports HTTP direct pages where secure-context randomUUID is unavailable", 
   const runtime = createProxyRuntime({ session: new FakeSession([new FetchResponseStream("text/plain", [])]) });
   try { expect(await (await runtime.fetch("/api")).text()).toBe(""); }
   finally { runtime.dispose(); vi.unstubAllGlobals(); }
+});
+
+
+it("reserves the original request slot before reading any second upload", async () => {
+  const responseStream = new FetchResponseStream("text/plain", []);
+  const runtime = createProxyRuntime({ session: new FakeSession([responseStream]), maxConcurrentHttpStreams: 1, maxConcurrentEventStreams: 1, maxQueuedHttpBodyBytes: 8 });
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let started!: () => void;
+  const reading = new Promise<void>(resolve => { started = resolve; });
+  const body = new ReadableStream<Uint8Array>({ start(value) { controller = value; }, pull() { started(); } }, { highWaterMark: 0 });
+  let otherReads = 0;
+  const other = new ReadableStream<Uint8Array>({ pull() { otherReads++; } }, { highWaterMark: 0 });
+  try {
+    const first = runtime.fetch("/api", { method: "POST", body, duplex: "half" } as RequestInit);
+    await reading;
+    await expect(runtime.fetch("/api", { method: "POST", body: other, duplex: "half" } as RequestInit)).rejects.toMatchObject({ code: "resource_exhausted" });
+    expect(otherReads).toBe(0);
+    controller.enqueue(Uint8Array.of(1)); controller.close();
+    const response = await first;
+    await expect(runtime.fetch("/api")).rejects.toMatchObject({ code: "resource_exhausted" });
+    await response.arrayBuffer();
+  } finally { runtime.dispose(); await other.cancel(); }
+});
+
+it.each(["/objects/a%2Fb?q=%2f&x=%41+", "/literal%25", "/a;b", "/a//b?", "//a/b"])('preserves whole-upstream target %s', async (path) => {
+  const stream = new FakeStream([concat([metadataFrame({ v: 2, request_id: "whole", ok: true, status: 204, headers: [] }), bodyEnd()])]);
+  const runtime = createProxyRuntime({ session: new FakeSession([stream]), pathPolicy: { allowedWebSocketPathPrefixes: ["/socket/"] } });
+  const channel = new MessageChannel();
+  try {
+    const done = collectPort(channel.port2, "flowersec-proxy:response_end");
+    runtime.dispatchFetch({ id: "whole", method: "GET", path, headers: [] }, channel.port1);
+    expect(await done).toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_end" }));
+    expect(firstWrittenMetadata(stream)).toMatchObject({ path });
+  } finally { runtime.dispose(); channel.port2.close(); }
+});
+
+
+it("compares subtree UTF-8 segments without stripping BOM or folding escapes into a different target", () => {
+  const path = "/files/%EF%BB%BFname";
+  expect(normalizeSubtreePath(path)).toBe(path);
+  expect(matchesPathPrefix(path, "/files/name")).toBe(false);
+  expect(matchesPathPrefix("/files/%6eame", "/files/name")).toBe(true);
+  expect(matchesPathPrefix("/files//name", "/files/name")).toBe(false);
 });

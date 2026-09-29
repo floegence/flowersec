@@ -5,8 +5,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type offerFixture struct {
@@ -63,6 +63,55 @@ func offerBytes(t *testing.T, digest [32]byte, start, end uint64) []byte {
 		t.Fatal(err)
 	}
 	return wire
+}
+
+func TestContractOffersReplacementRetainsOriginalPreparedWindow(t *testing.T) {
+	f := newOfferFixture(t, true, timev4.Interval{LowerMS: 25, UpperMS: 25})
+	original := protocolv4.AdmissionOfferBounds{Digest: f.digest, NotBeforeMS: 0, NotAfterMS: 100}
+	if err := f.registry.RegisterOffer(f.digest, offerBytes(t, f.digest, 0, 100)); err != nil {
+		t.Fatal(err)
+	}
+	routeCharge, _ := ContractRouteCharge(4096)
+	route, err := f.registry.Capture(f.digest, f.rpc.reserve(routeCharge), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer route.Release()
+	charge, _ := PreparedRequestCharge(0, 4096)
+	p, err := PrepareUnary(route, nil, UnaryPreparation{Clock: f.clock, DeadlineAtMS: 99, AdmissionNotAfterMS: 100, ResponseLimitBytes: 1024, Offer: original, RuntimeBytes: 4096}, f.rpc.reserve(charge), f.rpc.reserve(routeCharge))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if err := p.CheckOriginalOffer(f.registry); err != nil {
+		t.Fatal(err)
+	}
+	// A separately admitted physical route knows the same digest but only a
+	// different window. Even covering the same cutoff must not replace Offer.
+	var wire [8192]byte
+	n, err := route.CopyCanonical(wire[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := ContractRoutesConfig{Methods: []MethodRoutes{{Contracts: [][]byte{wire[:n]}, OfferWindowMS: 1000}}, ContractNodes: 768, RuntimeBytes: 4096, Clock: f.clock}
+	charge, _ = ContractRoutesCharge(config)
+	replacement, err := NewContractRoutes(config, f.rpc.reserve(charge))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.Close()
+	if err := replacement.RegisterOffer(f.digest, offerBytes(t, f.digest, 20, 150)); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CheckOriginalOffer(replacement); err != ErrAdmissionOfferUnavailable {
+		t.Fatal("replacement synthesized a different Offer", err)
+	}
+	if err := replacement.RegisterOffer(f.digest, offerBytes(t, f.digest, 0, 100)); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CheckOriginalOffer(replacement); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // v4.go_contract_query.registry_windows
@@ -169,5 +218,51 @@ func TestContractOffersRejectForeignNonexecutionAndInvalidClock(t *testing.T) {
 				t.Fatal("clock loss erased old window")
 			}
 		})
+	}
+}
+
+func TestPreparationOfferMustMatchOneInstalledOriginalWindow(t *testing.T) {
+	f := newOfferFixture(t, true, timev4.Interval{LowerMS: 25, UpperMS: 25})
+	r := f.registry
+	first := protocolv4.AdmissionOfferBounds{Digest: f.digest, NotBeforeMS: 0, NotAfterMS: 100}
+	future := protocolv4.AdmissionOfferBounds{Digest: f.digest, NotBeforeMS: 50, NotAfterMS: 150}
+	if _, err := r.CapturePreparationOffer(f.digest, first); err != ErrAdmissionOfferUnavailable {
+		t.Fatal("caller supplied an unregistered offer", err)
+	}
+	for _, offer := range []protocolv4.AdmissionOfferBounds{first, future} {
+		if err := r.RegisterOffer(f.digest, offerBytes(t, offer.Digest, offer.NotBeforeMS, offer.NotAfterMS)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := r.CapturePreparationOffer(f.digest, protocolv4.AdmissionOfferBounds{}); err != nil || got != first {
+		t.Fatal("future snapshot displaced usable original window", got, err)
+	}
+	if got, err := r.CapturePreparationOffer(f.digest, future); err != nil || got != future {
+		t.Fatal("installed future snapshot could not retain pending status", got, err)
+	}
+	merged := first
+	merged.NotAfterMS = future.NotAfterMS
+	if _, err := r.CapturePreparationOffer(f.digest, merged); err != ErrAdmissionOfferUnavailable {
+		t.Fatal("overlapping offers merged into new authority", err)
+	}
+	f.ticks.Store(100)
+	if _, err := r.CapturePreparationOffer(f.digest, first); err != ErrAdmissionOfferUnavailable {
+		t.Fatal("expired captured offer silently renewed", err)
+	}
+	if got, err := r.CapturePreparationOffer(f.digest, protocolv4.AdmissionOfferBounds{}); err != nil || got != future {
+		t.Fatal(got, err)
+	}
+}
+
+func TestPreparationOfferCanCaptureInstalledFutureWithoutMakingItReady(t *testing.T) {
+	f := newOfferFixture(t, true, timev4.Interval{LowerMS: 25, UpperMS: 25})
+	if err := f.registry.RegisterOffer(f.digest, offerBytes(t, f.digest, 50, 150)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := f.registry.CapturePreparationOffer(f.digest, protocolv4.AdmissionOfferBounds{}); err != nil || got.NotBeforeMS != 50 {
+		t.Fatal(got, err)
+	}
+	if _, err := f.registry.OfferForQuery(f.digest); err != ErrMethod {
+		t.Fatal("future capture opened current readiness", err)
 	}
 }

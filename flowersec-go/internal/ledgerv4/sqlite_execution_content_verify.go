@@ -7,7 +7,7 @@ import (
 	"io"
 	"math"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 func (e *SQLiteExecutions) verifyContentCounts() error {

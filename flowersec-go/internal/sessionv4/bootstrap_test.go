@@ -12,9 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type bootstrapSigner struct{ key ed25519.PrivateKey }
@@ -44,7 +44,7 @@ func newBootstrapPairSetup(t *testing.T, profile, application string, shared boo
 	return newBootstrapPairSetupCapacity(t, profile, application, shared, maxCredit, 4, setup)
 }
 
-func newBootstrapPairSetupCapacity(t *testing.T, profile, application string, shared bool, maxCredit uint64, scopes uint32, setup func(int, *bootstrapEndpoint) *Bootstrap) (*bootstrapEndpoint, *bootstrapEndpoint) {
+func newBootstrapPairSetupCapacity(t *testing.T, profile, application string, shared bool, maxCredit uint64, scopes uint32, setup func(int, *bootstrapEndpoint) *Bootstrap, clocks ...*timev4.Clock) (*bootstrapEndpoint, *bootstrapEndpoint) {
 	t.Helper()
 	// The cryptographic handshake consumes the shared public FSB/FSA fixture.
 	// Certificate/admission trust and provider qualification are separate tests.
@@ -65,7 +65,12 @@ func newBootstrapPairSetupCapacity(t *testing.T, profile, application string, sh
 			}
 		}
 	}
-	clock := sessionTestClock(t)
+	var clock *timev4.Clock
+	if len(clocks) == 1 {
+		clock = clocks[0]
+	} else {
+		clock = sessionTestClock(t)
+	}
 	now, err := clock.Sample()
 	if err != nil {
 		t.Fatal(err)

@@ -1,6 +1,6 @@
 package rpcv4
 
-import "github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+import "github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 
 // ApplicationInput is the original result allocation after irrevocable input
 // delivery. Application code owns the bytes and may retain them. The SDK keeps

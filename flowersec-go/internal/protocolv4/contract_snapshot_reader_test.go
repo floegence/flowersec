@@ -9,7 +9,7 @@ import (
 
 // Run the shared positive/negative corpus and maximum-body cases through both
 // codec paths. The protected path must preserve exact semantics and source bytes.
-func decodeSnapshotsBoth(t *testing.T, codec *ContractSnapshotCodec, request ContractQueryTargets, wire []byte, known []*ServiceContract, windows []uint64, outputs [][]byte) (ContractSnapshotSet, error) {
+func decodeSnapshotsBoth(t *testing.T, codec *ContractSnapshotCodec, request ContractQueryTargets, wire []byte, known []ContractQueryKnown, windows []uint64, outputs [][]byte) (ContractSnapshotSet, error) {
 	t.Helper()
 	expectedOutputs := make([][]byte, len(outputs))
 	for i := range outputs {
@@ -80,18 +80,18 @@ func TestContractSnapshotReaderCancellationAndReuse(t *testing.T) {
 	reader, err := NewContractSnapshotReader()
 	appOK(t, err)
 	outputs := [][]byte{make([]byte, 8192)}
-	read, err := reader.Begin(request, wire, []*ServiceContract{nil}, []uint64{1000}, outputs)
+	read, err := reader.Begin(request, wire, []ContractQueryKnown{nil}, []uint64{1000}, outputs)
 	appOK(t, err)
 	for range 4 {
 		_, err = read.Step()
 		appOK(t, err)
 	}
-	if _, err = reader.Begin(request, wire, []*ServiceContract{nil}, []uint64{1000}, outputs); !errors.Is(err, CBORFailure("decoder_busy")) {
+	if _, err = reader.Begin(request, wire, []ContractQueryKnown{nil}, []uint64{1000}, outputs); !errors.Is(err, CBORFailure("decoder_busy")) {
 		t.Fatal(err)
 	}
 	original := bytes.Clone(wire)
 	read.Close()
-	next, err := reader.Begin(request, wire, []*ServiceContract{nil}, []uint64{1000}, outputs)
+	next, err := reader.Begin(request, wire, []ContractQueryKnown{nil}, []uint64{1000}, outputs)
 	appOK(t, err)
 	defer next.Close()
 	if _, err = read.Step(); !errors.Is(err, CBORFailure("document_released")) {

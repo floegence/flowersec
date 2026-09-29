@@ -6,44 +6,70 @@ import (
 	"sync"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrEnvironmentTaskExit = errors.New("sessionv4: original Environment task exited without returning")
+var ErrSessionCleanupIncomplete = errors.New("sessionv4: session cleanup_incomplete")
+
+const sessionCleanupTimeout = 5 * time.Second
 
 // EnvironmentSession is the original dual-READY Session and its physical
 // cleanup owner. It contains no independent engine, carrier, nonce or quota.
 // Connect cancellation ends at successful delivery; Close remains available
 // independently of the shared Environment and any caller's cleanup wait.
 type EnvironmentSession struct {
-	application                               *SessionPlan
-	mu                                        sync.Mutex
-	environment                               *Environment
-	position                                  int
-	establishment                             *SessionEstablishment
-	admission                                 *SessionAdmissionReservation
-	entrance                                  *AcceptedEntrance
-	core                                      *SessionCore
-	context                                   sessionRuntimeContext
-	preparationDeadline                       *timev4.Deadline
-	staticMaterial                            *ConnectionMaterial
-	source                                    *sourcePreparation
-	intake                                    *acceptedIntake
-	ingress                                   *acceptedIngress
-	preparationOwner, preparationDependencies resourcev4.Reference
-	ready, published, stop, watchDone, done   chan struct{}
-	delivered, closed, cleaned                bool
-	result, cleanupError                      error
-	drain                                     *DrainOperation
-	info                                      protocolv4.V4SessionInfo
-	serve                                     ServeIngress
+	publicView                                      any
+	diagnosticStarted                               time.Time
+	diagnosticPhase                                 diagnosticv4.Phase
+	cleanupTimeoutObserved                          bool
+	cleanupDeadline                                 time.Time
+	cleanupObserved, physicalDone, cleanupWatchDone chan struct{}
+	application                                     *SessionPlan
+	mu                                              sync.Mutex
+	environment                                     *Environment
+	position                                        int
+	establishment                                   *SessionEstablishment
+	admission                                       *SessionAdmissionReservation
+	entrance                                        *AcceptedEntrance
+	core                                            *SessionCore
+	context                                         sessionRuntimeContext
+	preparationDeadline                             *timev4.Deadline
+	staticMaterial                                  *ConnectionMaterial
+	source                                          *sourcePreparation
+	intake                                          *acceptedIntake
+	ingress                                         *acceptedIngress
+	preparationOwner, preparationDependencies       resourcev4.Reference
+	ready, published, stop, watchDone, done         chan struct{}
+	delivered, closed, cleaned                      bool
+	result, cleanupError                            error
+	drain                                           *DrainOperation
+	controllerRetention                             *timev4.Deadline
+	controllerSourceFailure                         *ControllerSourceError
+	controllerTransportFailure                      bool
+	info                                            protocolv4.V4SessionInfo
+	serve                                           ServeIngress
+}
+
+// PublicView memoizes only the SDK's opaque facade for this original owner.
+// The factory is SDK-local allocation, with no I/O, callbacks or owner reads.
+// It prevents delayed observers from manufacturing a second public identity.
+func (s *EnvironmentSession) PublicView(factory func() any) any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.publicView == nil {
+		s.publicView = factory()
+	}
+	return s.publicView
 }
 
 func newEnvironmentSession(e *Environment, slot int, ctx context.Context) *EnvironmentSession {
 	return &EnvironmentSession{environment: e, position: slot,
+		cleanupObserved: make(chan struct{}), physicalDone: make(chan struct{}), cleanupWatchDone: make(chan struct{}),
 		context: sessionRuntimeContext{parent: ctx, done: make(chan struct{})}, ready: make(chan struct{}), published: make(chan struct{}), stop: make(chan struct{}), watchDone: make(chan struct{}), done: make(chan struct{})}
 }
 
@@ -110,6 +136,7 @@ func (s *EnvironmentSession) deliver(ctx context.Context) (*EnvironmentSession, 
 	if err == nil {
 		s.context.parent = nil
 		s.delivered = true
+		s.diagnosticPhase = diagnosticv4.PhaseApplication
 	}
 	s.context.mu.Unlock()
 	if err != nil {
@@ -122,6 +149,9 @@ func (s *EnvironmentSession) deliver(ctx context.Context) (*EnvironmentSession, 
 }
 
 func (s *EnvironmentSession) watch(parent context.Context) {
+	// Its fixed observation position was admitted with the Environment. The
+	// provider Close below may block independently of the original run task.
+	go s.watchCleanup()
 	defer func() {
 		if recover() != nil {
 			s.closeWith(ErrEnvironmentTaskExit)
@@ -133,7 +163,12 @@ func (s *EnvironmentSession) watch(parent context.Context) {
 	// expiry. It must keep progressing while an issuer or provider is blocked.
 	var timer *time.Timer
 	var deadlineWake <-chan time.Time
-	if s.preparationDeadline != nil {
+	// Ingress may hand the same original deadline to intake while this watcher
+	// starts. Read the presence bit under the same gate as that handoff.
+	s.mu.Lock()
+	hasPreparationDeadline := s.preparationDeadline != nil
+	s.mu.Unlock()
+	if hasPreparationDeadline {
 		timer = time.NewTimer(0)
 		deadlineWake = timer.C
 		defer timer.Stop()
@@ -211,25 +246,33 @@ func (s *EnvironmentSession) run(input environmentEstablishment) {
 	}()
 	err = s.context.Err()
 	if err == nil && ingress != nil {
+		s.setDiagnosticPhase(diagnosticv4.PhasePrepare)
 		input, err = ingress.prepare(s)
 		intake = input.intake
 	}
 	if err == nil && source != nil {
+		s.setDiagnosticPhase(diagnosticv4.PhaseMaterial)
 		input, err = source.prepare(s)
 	}
 	if err == nil && intake != nil {
+		s.setDiagnosticPhase(diagnosticv4.PhaseActivate)
 		input, err = intake.prepare(s)
 	}
 	p := s.establishment
 	a = s.admission
 	if err == nil {
+		s.setDiagnosticPhase(diagnosticv4.PhaseSpend)
 		switch input.kind {
 		case 1:
 			i := input.pool
-			core, err = p.connectPool(a, i.Store, i.Authority, i.Consume, s)
+			core, err = p.connectPool(a, i.Store, i.Authority, i.Consume, s, i.ServerAllow)
 		case 2:
 			i := input.live
-			core, err = p.connectLiveSQLite(a, i.Store, i.Authority, i.Issuance, i.Owner, i.Guard, i.Policy, i.Buffers, i.Invocation, s)
+			if i.Control.Provider != nil {
+				core, err = p.connectLiveControl(a, i.Control, i.Buffers, s)
+			} else {
+				core, err = p.connectLiveSQLite(a, i.Store, i.Authority, i.Issuance, i.Owner, i.Guard, i.Policy, i.Buffers, i.Invocation, s, i.ServerPublication)
+			}
 		case 3:
 			i := input.accepted
 			a, core, err = p.accept(&s.context, i.Entrance, i.Config, i.Subscriptions, i.Root, i.ResourceOwner, i.Environment, i.Preauth, i.Scope, i.Store, i.Authority, i.Owner, i.Buffers, i.Invocation, s)
@@ -237,6 +280,17 @@ func (s *EnvironmentSession) run(input environmentEstablishment) {
 	}
 	if err == nil {
 		err = core.Runtime().bindApplicationPublication(s.published)
+	}
+	var initialTransportFailure bool
+	if err != nil && a != nil {
+		a.mu.Lock()
+		initial := a.initial
+		a.mu.Unlock()
+		if initial != nil {
+			initial.mu.Lock()
+			initialTransportFailure = initial.transportFailure && controllerNetworkRetry(err) && initial.terminal == err
+			initial.mu.Unlock()
+		}
 	}
 	s.mu.Lock()
 	s.admission = a
@@ -247,12 +301,17 @@ func (s *EnvironmentSession) run(input environmentEstablishment) {
 		if err == nil {
 			err = cryptov4.ErrClosed
 		}
-		s.closeLocked(err)
+		s.closeLockedSource(err, initialTransportFailure)
 	}
 	close(s.ready)
 	s.mu.Unlock()
 	if err == nil {
 		err = core.Runtime().Run(&s.context)
+		runtime := core.Runtime()
+		runtime.mu.Lock()
+		transportFailure := runtime.transportFailure
+		runtime.mu.Unlock()
+		s.closeWithSource(err, transportFailure)
 	}
 	returned = true
 }
@@ -332,6 +391,9 @@ func (s *EnvironmentSession) finish(input environmentEstablishment, a *SessionAd
 	case 2:
 		input.live.Buffers.Release()
 		input.live.Invocation.Release()
+		if relay := input.live.ServerPublication.Relay; relay != nil {
+			relay.Reservation.Release()
+		}
 	case 3:
 		input.accepted.Buffers.Release()
 		input.accepted.Invocation.Release()
@@ -340,6 +402,8 @@ func (s *EnvironmentSession) finish(input environmentEstablishment, a *SessionAd
 		}
 	}
 	input = environmentEstablishment{}
+	close(s.physicalDone)
+	<-s.cleanupWatchDone
 	s.mu.Lock()
 	e, slot := s.environment, s.position
 	s.establishment, s.admission, s.entrance, s.core = nil, nil, nil, nil
@@ -374,18 +438,29 @@ func (s *EnvironmentSession) finish(input environmentEstablishment, a *SessionAd
 }
 
 func (s *EnvironmentSession) closeLocked(cause error) {
+	s.closeLockedSource(cause, false)
+}
+
+func (s *EnvironmentSession) closeLockedSource(cause error, transport bool) {
 	if s.closed {
 		return
 	}
+	s.observeClosure(cause)
 	s.closed = true
+	s.cleanupDeadline = time.Now().Add(sessionCleanupTimeout)
 	s.result = cause
+	s.controllerTransportFailure = transport && controllerNetworkRetry(cause)
 	s.context.cancel()
 	close(s.stop)
 }
 
 func (s *EnvironmentSession) closeWith(cause error) {
+	s.closeWithSource(cause, false)
+}
+
+func (s *EnvironmentSession) closeWithSource(cause error, transport bool) {
 	s.mu.Lock()
-	s.closeLocked(cause)
+	s.closeLockedSource(cause, transport)
 	s.mu.Unlock()
 }
 
@@ -406,6 +481,15 @@ func (s *EnvironmentSession) Drain(timeoutMS, absoluteCap uint64) (*DrainOperati
 	}
 	if !s.delivered || s.closed || s.core == nil {
 		return nil, cryptov4.ErrClosed
+	}
+	if s.controllerRetention != nil {
+		if err := s.controllerRetention.Check(); err != nil {
+			s.closeLocked(err)
+			return nil, err
+		}
+		if absoluteCap == 0 || s.controllerRetention.Cap() < absoluteCap {
+			absoluteCap = s.controllerRetention.Cap()
+		}
 	}
 	op, err := s.core.Drain(timeoutMS, absoluteCap)
 	if err == nil {
@@ -455,14 +539,100 @@ func (s *EnvironmentSession) drainForGroup(cap uint64) (*DrainOperation, error) 
 	return op, nil
 }
 
-// CleanupStatus reports physical exit independently of the drain result.
-func (s *EnvironmentSession) CleanupStatus() (complete bool, err error) {
+// watchCleanup publishes one fixed observation without replacing any real
+// cleanup work. No observer can extend the deadline or refund its owner.
+func (s *EnvironmentSession) watchCleanup() {
+	defer close(s.cleanupWatchDone)
+	<-s.stop
+	s.mu.Lock()
+	deadline := s.cleanupDeadline
+	s.mu.Unlock()
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-s.physicalDone:
+	case <-timer.C:
+		select {
+		case <-s.physicalDone:
+			return
+		default:
+		}
+		s.observeCleanupTimeout(context.DeadlineExceeded)
+		close(s.cleanupObserved)
+	}
+}
+
+// CleanupStatus is a passive, finite observation of the original owner. The
+// transport core and its attributable application callbacks remain distinct.
+func (s *EnvironmentSession) CleanupStatus() protocolv4.V4CleanupStatus {
+	status := protocolv4.V4CleanupStatus{Status: protocolv4.V4CleanupStatePending, CoreCleanup: protocolv4.V4CoreCleanupPending}
 	if s == nil {
-		return false, cryptov4.ErrConfiguration
+		return status
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.cleaned, s.cleanupError
+	if s.cleaned {
+		s.mu.Unlock()
+		status.Status, status.CoreCleanup = protocolv4.V4CleanupStateComplete, protocolv4.V4CoreCleanupComplete
+		return status
+	}
+	if s.cleanupError != nil || s.closed && !time.Now().Before(s.cleanupDeadline) {
+		status.Status = protocolv4.V4CleanupStateCleanupIncomplete
+	}
+	a, application := s.admission, s.application
+	s.mu.Unlock()
+	var scope resourcev4.Account
+	if a != nil {
+		a.mu.Lock()
+		core, prepared, accepted, retired := a.core, a.prepared, a.accepted, a.retired
+		scope = a.scope.Session
+		if application == nil {
+			application = a.application
+		}
+		a.mu.Unlock()
+		coreDone := retired
+		if core != nil {
+			core.mu.Lock()
+			coreDone = core.cleaned
+			core.mu.Unlock()
+		}
+		providerDone := retired
+		if accepted != nil {
+			accepted.mu.Lock()
+			providerDone = accepted.cleaned
+			accepted.mu.Unlock()
+		} else if prepared != nil && prepared.preparedCarrier != nil {
+			prepared.mu.Lock()
+			providerDone = prepared.complete
+			prepared.mu.Unlock()
+		}
+		if coreDone && providerDone {
+			select {
+			case <-s.watchDone:
+				status.CoreCleanup = protocolv4.V4CoreCleanupComplete
+			default:
+			}
+		}
+	}
+	if application != nil {
+		application.mu.Lock()
+		executor, backing := application.executor, application.reservation
+		application.mu.Unlock()
+		if executor != nil {
+			executor.mu.Lock()
+			for _, slot := range executor.slots {
+				if slot.active && slot.started && slot.backing.RetainsCleanupScope(scope, backing) {
+					status.PendingCallbacks++
+				}
+			}
+			for _, slot := range executor.completions {
+				if slot.active && slot.running && slot.backing.RetainsCleanupScope(scope, backing) {
+					status.PendingCallbacks++
+				}
+			}
+			executor.mu.Unlock()
+		}
+	}
+	return status
 }
 
 func (s *EnvironmentSession) WaitTermination(ctx context.Context) error {
@@ -486,6 +656,31 @@ func (s *EnvironmentSession) WaitCleanup(ctx context.Context) error {
 	select {
 	case <-s.done:
 		return nil
+	case <-s.cleanupObserved:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.cleaned {
+			return nil
+		}
+		if s.cleanupError != nil {
+			return s.cleanupError
+		}
+		return ErrSessionCleanupIncomplete
+	case <-ctx.Done():
+		s.observeCleanupTimeout(ctx.Err())
+		return ctx.Err()
+	}
+}
+
+// WaitPhysicalCleanup joins an owning SDK aggregate to the actual retirement
+// notification. Public observers use WaitCleanup's fixed finite result.
+func (s *EnvironmentSession) WaitPhysicalCleanup(ctx context.Context) error {
+	if s == nil || ctx == nil {
+		return cryptov4.ErrConfiguration
+	}
+	select {
+	case <-s.done:
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -503,6 +698,30 @@ func (s *EnvironmentSession) Core() (*SessionCore, error) {
 		return nil, cryptov4.ErrClosed
 	}
 	return s.core, nil
+}
+
+// OpenStream is the public-adapter seam for an already delivered v4 session.
+// It deliberately delegates to the original SessionCore so OPEN admission,
+// stream limits, READY authorization and owner cleanup remain on the same
+// state machine.  It does not create a carrier or a second session graph.
+func (s *EnvironmentSession) OpenStream(ctx context.Context, kind string, metadata []byte, deadline *timev4.Deadline) (*StreamOwnership, error) {
+	if s == nil || ctx == nil {
+		return nil, cryptov4.ErrConfiguration
+	}
+	core, err := s.Core()
+	if err != nil {
+		return nil, err
+	}
+	if deadline == nil {
+		// The public facade does not accept a detached trusted-time handle.
+		// Its OPEN uses the original local dispatch window and signed Session
+		// cap; cancellation still belongs to this same caller's operation.
+		deadline, err = timev4.NewAge(core.plan.config.Clock, core.plan.config.DispatchTimeoutMS, core.plan.config.Session.SessionNotAfterMS)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return core.OpenStream(ctx, kind, metadata, deadline)
 }
 
 func (s *EnvironmentSession) abortFromGroup(result DrainResult) DrainResult {

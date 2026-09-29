@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type initialCoreFixture struct {
@@ -43,10 +43,17 @@ func initialCorePrepareCarrier(t *testing.T, fixtures *[2]initialCoreFixture, me
 }
 
 func initialCorePrepareConfig(t *testing.T, fixtures *[2]initialCoreFixture, messages bool, configure func(*SessionCoreConfig)) func(*cryptov4.HandshakeConfig, *InitialConfig) {
+	return initialCorePrepareWithResources(t, fixtures, messages, configure, nil)
+}
+
+func initialCorePrepareWithResources(t *testing.T, fixtures *[2]initialCoreFixture, messages bool, configure func(*SessionCoreConfig), resources func(*resourcev4.Config)) func(*cryptov4.HandshakeConfig, *InitialConfig) {
 	return func(h *cryptov4.HandshakeConfig, initial *InitialConfig) {
 		f := &fixtures[h.Role]
 		cfg := resourcev4.Config{ProfileRevision: [32]byte{1}, AccountSlots: 8, ReservationSlots: 256, ReferenceSlots: 512,
-			Limit: resourcev4.Vector{resourcev4.SDKBytes: 64 << 20, resourcev4.Items: 4096, resourcev4.Tasks: 256, resourcev4.WorkSlots: 256, resourcev4.Timers: 64, resourcev4.Sessions: 2}}
+			Limit: resourcev4.Vector{resourcev4.SDKBytes: 64 << 20, resourcev4.ProviderBytes: 64 << 20, resourcev4.Items: 4096, resourcev4.Tasks: 256, resourcev4.WorkSlots: 256, resourcev4.Timers: 64, resourcev4.Sessions: 2}}
+		if resources != nil {
+			resources(&cfg)
+		}
 		backing, err := resourcev4.BackingBytes(cfg)
 		if err != nil {
 			t.Fatal(err)

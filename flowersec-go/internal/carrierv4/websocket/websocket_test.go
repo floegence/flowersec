@@ -21,13 +21,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/sessionv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	ws "github.com/gorilla/websocket"
 )
-
-var _ sessionv4.InitialMessages = (*Messages)(nil)
 
 func testOptions() Options {
 	return Options{MaxMessageBytes: 264, ReadBufferBytes: 125, WriteBufferBytes: 125,
@@ -181,54 +178,6 @@ func TestMessageBoundariesAndFragmentation(t *testing.T) {
 	kind, body, err := peer.ReadMessage()
 	if err != nil || kind != ws.BinaryMessage || !bytes.Equal(body, first) {
 		t.Fatalf("write: %d %x %v", kind, body, err)
-	}
-}
-
-func TestMessageInputRejectsEnvelopeBoundaries(t *testing.T) {
-	valid, err := (protocolv4.Envelope{FrameType: protocolv4.FramePing, Payload: []byte{1}}).Encode()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cases := []struct {
-		name   string
-		frames [][]byte
-	}{
-		{"empty", [][]byte{{}}}, {"short", [][]byte{{1, 2}}},
-		{"split", [][]byte{valid[:8], valid[8:]}},
-		{"concatenated", [][]byte{append(append([]byte{}, valid...), valid...)}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			provider, peer, _ := dialPair(t, testOptions())
-			options := sessionv4.SessionMessageInputOptions{MaxFrame: 256, WriteSlots: 3, RuntimeBytes: 16384}
-			charge, err := sessionv4.SessionMessageInputCharge(options)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, ref, environment := reservations(t, charge)
-			input, err := sessionv4.NewSessionMessageInput(context.Background(), provider, options, ref, environment)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				_ = input.Close()
-				if err := input.WaitCleanup(context.Background()); err != nil {
-					t.Error(err)
-				}
-				if err := input.Retire(); err != nil {
-					t.Error(err)
-				}
-			})
-			for _, wire := range tc.frames {
-				if err := peer.WriteMessage(ws.BinaryMessage, wire); err != nil {
-					t.Fatal(err)
-				}
-			}
-			var dst [512]byte
-			if n, err := input.Read(dst[:]); n != 0 || !errors.Is(err, sessionv4.ErrSessionMessageFraming) {
-				t.Fatalf("exposed invalid envelope: %d %v", n, err)
-			}
-		})
 	}
 }
 

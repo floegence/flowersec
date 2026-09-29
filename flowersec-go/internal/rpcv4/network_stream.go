@@ -1,8 +1,8 @@
 package rpcv4
 
 import (
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	"math"
 )
 
@@ -24,6 +24,19 @@ func (n *Network) RetainStream(session protocolv4.SessionContract, reservation r
 		return resourcev4.Reference{}, err
 	}
 	return n.reservation.Borrow()
+}
+
+// ReserveProtectedStream binds the original Session's protected K position to
+// this dedicated association. A position from another Network cannot silently
+// move a Stream's release/publication responsibility to that other Session.
+func (n *Network) ReserveProtectedStream(position OutgoingProtection, header protocolv4.ApplicationHeader, path Association) (Ticket, error) {
+	if n == nil || position.network != n {
+		return Ticket{}, ErrOwner
+	}
+	if !header.StreamRequest() && header.Kind() != "resume_request" {
+		return Ticket{}, ErrMethod
+	}
+	return position.Reserve(header, path, false)
 }
 
 // ReserveIncomingStream occupies one real general ReplySlot before the

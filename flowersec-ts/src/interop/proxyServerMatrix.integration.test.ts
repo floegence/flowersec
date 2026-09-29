@@ -11,7 +11,7 @@ import {
   parseArtifact,
   SessionError,
 } from "../node/index.js";
-import { createProxyRuntime } from "../proxy/runtime.js";
+import { createProxyRuntimeWithStreams as createProxyRuntime } from "../proxy/runtime.js";
 import { ProxyByteReader, writeAll } from "../proxy/stream.js";
 
 const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url));

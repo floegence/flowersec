@@ -19,14 +19,15 @@ type NamespaceReference struct {
 // issuer still verifies the complete route at issuance; an endpoint checks
 // exactly its signed role subset before consumption and on later credentials.
 type EndpointCredentials struct {
-	credentials [5]*Credential // Parent, client, server, optional own grant/relay.
-	count       int
-	refs        []NamespaceReference
-	role        Direction
-	selection   PoolMember
-	attempt     [16]byte
-	tunnel      bool
-	hardEnd     uint64
+	pendingGrant *LiveGrantPreparation
+	credentials  [5]*Credential // Parent, client, server, optional own grant/relay.
+	count        int
+	refs         []NamespaceReference
+	role         Direction
+	selection    PoolMember
+	attempt      [16]byte
+	tunnel       bool
+	hardEnd      uint64
 }
 
 func EndpointCredentialsBackingBytes() (uint64, error) {
@@ -39,7 +40,7 @@ func EndpointCredentialsBackingBytes() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	cost := uint64(unsafe.Sizeof(EndpointCredentials{})) + 2*uint64(artifactBytes) + uint64(count)*uint64(unsafe.Sizeof(NamespaceReference{}))
+	cost := uint64(unsafe.Sizeof(EndpointCredentials{})) + uint64(unsafe.Sizeof(LiveGrantPreparation{})) + 2*uint64(artifactBytes) + uint64(count)*uint64(unsafe.Sizeof(NamespaceReference{}))
 	for _, schema := range []string{"Artifact", "IdentityCertificate", "IdentityCertificate", "Grant", "IdentityCertificate"} {
 		n, err := CredentialBackingBytes(schema)
 		if err != nil {
@@ -63,10 +64,16 @@ func namespaceReference(v Value) NamespaceReference {
 // required before using this closure. It cannot construct relay authorization:
 // a relay must never receive the secret-bearing Artifact accepted here.
 func BindEndpointCredentials(role Direction, artifact *SignedMap, index uint64, client, server, grant, relay *SignedMap) (*EndpointCredentials, error) {
+	return bindEndpointCredentials(role, artifact, index, client, server, grant, relay, nil, nil)
+}
+
+// unsigned is restricted to the issuer's private frozen plan. No unsigned
+// closure is returned by a public credential or authorization constructor.
+func bindEndpointCredentials(role Direction, artifact *SignedMap, index uint64, client, server, grant, relay *SignedMap, unsigned *liveGrantPlan, pending *LiveGrantPreparation) (*EndpointCredentials, error) {
 	if role != ClientToServer && role != ServerToClient {
 		return nil, CBORFailure("credential_role")
 	}
-	result := &EndpointCredentials{role: role, count: 3}
+	result := &EndpointCredentials{role: role, count: 3, pendingGrant: pending}
 	for i, original := range []*SignedMap{artifact, client, server} {
 		credential, err := original.DetachCredential()
 		if err != nil {
@@ -100,7 +107,7 @@ func BindEndpointCredentials(role Direction, artifact *SignedMap, index uint64, 
 		}
 		candidate := candidates.Index(int(index))
 		result.tunnel = valueUint(candidate, "Candidate", "path_kind") == 1
-		if (grant != nil) != result.tunnel || (relay != nil) != result.tunnel {
+		if (grant != nil || unsigned != nil || pending != nil) != result.tunnel || (relay != nil) != result.tunnel {
 			return CBORFailure("credential_hop_presence")
 		}
 		for i, name := range []string{"client_identity_digest", "server_identity_digest"} {
@@ -141,14 +148,36 @@ func BindEndpointCredentials(role Direction, artifact *SignedMap, index uint64, 
 		return nil, err
 	}
 	if result.tunnel {
-		for i, original := range []*SignedMap{grant, relay} {
-			result.credentials[i+3], err = original.DetachCredential()
+		if pending != nil {
+			s := pending.Scope
+			if grant != nil || unsigned != nil || s.Schema != "Grant" || s.Tenant != parent.scope.Tenant || s.Role != 4|1<<uint64(role) ||
+				s.ParentIssuer != parent.scope.Issuer || s.ParentAuthority != parent.scope.Authority || s.ParentCapacityDigest != parent.scope.CapacityDigest || s.ParentGeneration != parent.scope.Generation || s.ParentCohort != parent.scope.Cohort {
+				return nil, CBORFailure("credential_grant_preparation")
+			}
+		} else if unsigned != nil {
+			result.credentials[3] = unsigned.credential
+		} else {
+			result.credentials[3], err = grant.DetachCredential()
 			if err != nil {
 				return nil, err
 			}
 		}
+		result.credentials[4], err = relay.DetachCredential()
+		if err != nil {
+			return nil, err
+		}
 		result.count = 5
-		if err := result.bindGrant(grant, route, contract, maxFrame); err != nil {
+		if pending != nil {
+			s := result.credentials[4].scope
+			if s.Schema != "IdentityCertificate" || s.Role != 2 || s.Tenant != parent.scope.Tenant {
+				return nil, CBORFailure("credential_grant_binding")
+			}
+		} else if unsigned != nil {
+			err = result.bindGrantFields(unsigned.document.Root(), route, contract, maxFrame)
+		} else {
+			err = result.bindGrant(grant, route, contract, maxFrame)
+		}
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -157,24 +186,32 @@ func BindEndpointCredentials(role Direction, artifact *SignedMap, index uint64, 
 	}
 	result.hardEnd = parent.facts.HardDeadlineMS
 	for _, credential := range result.credentials[1:result.count] {
-		result.hardEnd = min(result.hardEnd, credential.facts.HardDeadlineMS)
+		if credential != nil {
+			result.hardEnd = min(result.hardEnd, credential.facts.HardDeadlineMS)
+		}
+	}
+	if pending != nil {
+		result.hardEnd = min(result.hardEnd, pending.Scope.ExpiresMS)
 	}
 	return result, nil
 }
 
 func (e *EndpointCredentials) bindGrant(grant *SignedMap, route []byte, contract [32]byte, maxFrame uint64) error {
-	g, relay, parent := e.credentials[3], e.credentials[4], e.credentials[0]
-	mask := uint64(4) | uint64(1)<<uint64(e.role)
-	if g.scope.Schema != "Grant" || g.scope.Tenant != parent.scope.Tenant || g.scope.Role != mask || relay.scope.Schema != "IdentityCertificate" || relay.scope.Role != 2 || relay.scope.Tenant != parent.scope.Tenant {
-		return CBORFailure("credential_grant_binding")
-	}
 	c := grant.codec
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.current != grant {
 		return CBORFailure("credential_owner")
 	}
-	root := grant.document.Root()
+	return e.bindGrantFields(grant.document.Root(), route, contract, maxFrame)
+}
+
+func (e *EndpointCredentials) bindGrantFields(root Value, route []byte, contract [32]byte, maxFrame uint64) error {
+	g, relay, parent := e.credentials[3], e.credentials[4], e.credentials[0]
+	mask := uint64(4) | uint64(1)<<uint64(e.role)
+	if g.scope.Schema != "Grant" || g.scope.Tenant != parent.scope.Tenant || g.scope.Role != mask || relay.scope.Schema != "IdentityCertificate" || relay.scope.Role != 2 || relay.scope.Tenant != parent.scope.Tenant {
+		return CBORFailure("credential_grant_binding")
+	}
 	ref := root.Named("Grant", "parent_ref")
 	text := func(name string) string { value, _ := ref.Named("GrantParentRef", name).Text(); return value }
 	if text("tenant_id") != parent.scope.Tenant || text("revocation_authority_id") != parent.scope.Authority || text("revocation_policy_id") != parent.facts.PolicyID {
@@ -226,20 +263,21 @@ func (e *EndpointCredentials) checkReferences() error {
 	// The fixed credential count bounds both loops. Every local signed reference
 	// must have an actual local dependency; every dependency must match the full
 	// generation/capacity and required common or hop mask.
-	for _, credential := range e.credentials[:e.count] {
+	for i := 0; i < e.count; i++ {
+		scope := e.credentialScope(i)
 		found := false
 		for _, ref := range e.refs {
-			if ref.Tenant != credential.scope.Tenant || ref.Authority != credential.scope.Authority {
+			if ref.Tenant != scope.Tenant || ref.Authority != scope.Authority {
 				continue
 			}
 			mask := uint64(3)
 			if e.tunnel {
 				mask = 7
 			}
-			if credential == e.credentials[3] || credential == e.credentials[4] {
+			if i == 3 || i == 4 {
 				mask = 4 | uint64(1)<<uint64(e.role)
 			}
-			if ref.Generation != credential.scope.Generation || ref.CapacityDigest != credential.scope.CapacityDigest || ref.RoleMask&mask != mask || !e.tunnel && ref.RoleMask != mask {
+			if ref.Generation != scope.Generation || ref.CapacityDigest != scope.CapacityDigest || ref.RoleMask&mask != mask || !e.tunnel && ref.RoleMask != mask {
 				return CBORFailure("credential_namespace_binding")
 			}
 			found = true
@@ -250,8 +288,9 @@ func (e *EndpointCredentials) checkReferences() error {
 	}
 	for _, ref := range e.refs {
 		found := false
-		for _, credential := range e.credentials[:e.count] {
-			found = found || ref.Tenant == credential.scope.Tenant && ref.Authority == credential.scope.Authority
+		for i := 0; i < e.count; i++ {
+			scope := e.credentialScope(i)
+			found = found || ref.Tenant == scope.Tenant && ref.Authority == scope.Authority
 		}
 		if !found {
 			return CBORFailure("credential_namespace_extra")
@@ -279,8 +318,15 @@ func (e *EndpointCredentials) Deadline() uint64 { return e.hardEnd }
 // MatchActivation prevents a later proof/attempt from replacing the closure
 // admitted for this exact route. Activation inherits the parent's policy.
 func (e *EndpointCredentials) MatchActivation(a *ActivationAuthority) error {
-	if a == nil || e.credentials[0].facts.Digest != a.binding.artifactDigest || e.selection != a.binding.winner || e.tunnel && e.attempt != a.binding.attempt {
+	if e == nil || e.pendingGrant != nil || a == nil || e.credentials[0].facts.Digest != a.binding.artifactDigest || e.selection != a.binding.winner || e.tunnel && e.attempt != a.binding.attempt {
 		return CBORFailure("credential_activation_binding")
 	}
 	return nil
+}
+
+func (e *EndpointCredentials) credentialScope(index int) CredentialScope {
+	if index == 3 && e.pendingGrant != nil {
+		return e.pendingGrant.Scope
+	}
+	return e.credentials[index].scope
 }

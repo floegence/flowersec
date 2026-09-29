@@ -46,7 +46,7 @@ func TestProxyDeadlineBoundsIncompleteMetadataAndBody(t *testing.T) {
 				proxy.serveHTTP(ctx, IncomingStream{Stream: &proxyServerTestStream{Conn: local, kind: proxyHTTPStreamKind}})
 			}()
 			if method != "" {
-				if err := writeProxyJSON(remote, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "stalled", Method: method, Path: "/", TimeoutMS: 20}); err != nil {
+				if err := writeProxyMetadata(remote, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "stalled", Method: method, Path: "/", TimeoutMS: 20}); err != nil {
 					t.Fatal(err)
 				}
 			}

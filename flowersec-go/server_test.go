@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v5/internal/rpc"
+	internalrpc "github.com/floegence/flowersec/flowersec-go/v6/internal/rpc"
 )
 
 func TestSessionHandlersDispatchAcceptedStreamMetadata(t *testing.T) {

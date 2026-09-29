@@ -7,9 +7,10 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var (
@@ -31,6 +32,7 @@ type TerminalTuple struct {
 // Streams share this gate so two simultaneous expansions cannot oversubscribe
 // signed.max_credit or the actual reserved local backing pool.
 type ReceivePool struct {
+	diagnostics           *diagnosticv4.Counters
 	mu                    sync.Mutex
 	limit, used           uint64
 	capacity, backingUsed uint64
@@ -77,6 +79,7 @@ func (p *ReceivePool) Close() {
 	defer p.mu.Unlock()
 	if !p.closed {
 		p.closed = true
+		p.diagnostics = nil
 		for g := p.protections; g != nil; {
 			next := g.next
 			g.closeLocked()
@@ -93,6 +96,8 @@ func (p *ReceivePool) Close() {
 // reference until Cleanup, independently of consumed/revoked credit. Creation
 // does not authorize OPEN: a bootstrap or accepted Stream owner installs it.
 type ReceiveFlow struct {
+	streamSend                             *SendFlow // Immutable association, installed before acceptance.
+	consumerSaturationObserved             bool
 	pool                                   *ReceivePool
 	protection                             *ReceiveProtection
 	engine                                 *cryptov4.Engine
@@ -112,7 +117,9 @@ type ReceiveFlow struct {
 	terminal                                          TerminalTuple
 	hasTerminal, graceful, abandoned, fenced, cleaned bool
 	readPending                                       bool
+	readerCursor                                      *ReaderCursor
 	messageAdmissionPaused                            bool
+	closeCreditSealed                                 bool
 	rawUsed                                           bool
 	readOwner                                         *StreamOwnership
 	sharedInputFailed                                 bool
@@ -285,9 +292,10 @@ func (f *ReceiveFlow) applyDataLocked(frame *protocolv4.Frame, assembly *NativeD
 		n := copy(f.storage[tail:], data)
 		copy(f.storage, data[n:])
 		f.size += len(data)
+		f.observeConsumerSaturationLocked()
 	}
 	f.signalReadLocked()
-	if f.hasTerminal && f.termination.service != nil {
+	if (f.hasTerminal || f.creditReadyLocked()) && f.termination.service != nil {
 		f.termination.service.notify()
 	}
 	return nil

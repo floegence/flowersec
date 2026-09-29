@@ -239,6 +239,13 @@ type RPCFragmentParser struct {
 	failure                        error
 }
 
+// Pending reports whether a fragment has consumed bytes without reaching its
+// complete boundary. The owning Receiver reads this while holding its parser
+// gate; no borrowed payload escapes through this observation.
+func (p *RPCFragmentParser) Pending() bool {
+	return p != nil && p.failure == nil && (p.have != 0 || p.current.Serial != 0 || p.payloadRead != 0)
+}
+
 func RPCFragmentParserBackingBytes() (uint64, error) {
 	if _, err := runtimeRPCFragments(); err != nil {
 		return 0, err

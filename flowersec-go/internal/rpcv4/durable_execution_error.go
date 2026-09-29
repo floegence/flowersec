@@ -2,7 +2,7 @@ package rpcv4
 
 import (
 	"errors"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
 )
 
 // Preserve the provider cause while exposing the established RPC refusal.

@@ -271,7 +271,7 @@ test("v4.connection_requirements.schema: finite requirements and semantic guaran
 
 
 test("v4.connection_requirements.registry: shared WebSocket definitions cannot assert independent progress", () => {
- for (const [name, value] of Object.entries(schema.connection_assurance_registry.entries)) {
+ for (const [name, value] of Object.entries(schema.connection_assurance_registry.entries).filter(([name]) => name.includes("websocket"))) {
    assert.equal(value.reliable_progress, "shared_ordered");
    assert.equal(value.bound_stream_input_isolation, "shared_failure_scope");
    assert.equal(value.datagram, false);

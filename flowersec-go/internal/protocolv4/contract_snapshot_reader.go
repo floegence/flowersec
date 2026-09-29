@@ -23,7 +23,7 @@ type ContractSnapshotReader struct {
 type ContractSnapshotRead struct {
 	reader          *ContractSnapshotReader
 	request         ContractQueryTargets
-	known           [8]*ServiceContract
+	known           [8]ContractQueryKnown
 	windows         [8]uint64
 	outputs, bodies [8][]byte
 	result          ContractSnapshotSet
@@ -88,7 +88,7 @@ func NewContractSnapshotReader() (*ContractSnapshotReader, error) {
 
 // Begin borrows preadmitted output storage; nothing in it is publishable until
 // Result succeeds. In particular a partially copied candidate is not a result.
-func (c *ContractSnapshotReader) Begin(request ContractQueryTargets, wire []byte, known []*ServiceContract, windows []uint64, outputs [][]byte) (*ContractSnapshotRead, error) {
+func (c *ContractSnapshotReader) Begin(request ContractQueryTargets, wire []byte, known []ContractQueryKnown, windows []uint64, outputs [][]byte) (*ContractSnapshotRead, error) {
 	if c == nil || request.Count() < 1 || request.Count() > 8 {
 		return nil, CBORFailure("configuration_capacity")
 	}
@@ -196,6 +196,13 @@ func (r *ContractSnapshotRead) stepLocked() error {
 			if err := r.availableLocked(known); err != nil {
 				return err
 			}
+			size, err := known.CanonicalSize()
+			if err != nil {
+				return err
+			}
+			if size > len(r.outputs[r.index]) {
+				return CBORFailure("encoder_capacity")
+			}
 			r.index++
 		case c.validator.statuses[2]:
 			info.Status = "denied"
@@ -247,17 +254,38 @@ func (r *ContractSnapshotRead) stepLocked() error {
 			return nil
 		}
 		body := r.bodies[r.index]
-		end := min(r.offset+4096, len(body))
-		copy(r.outputs[r.index][r.offset:end], body[r.offset:end])
+		size := len(body)
+		known := r.known[r.index]
+		if r.result.items[r.index].Status == "available_unchanged" {
+			var err error
+			size, err = known.CanonicalSize()
+			if err != nil {
+				return err
+			}
+			if size > len(r.outputs[r.index]) {
+				return CBORFailure("encoder_capacity")
+			}
+		}
+		end := min(r.offset+4096, size)
+		if r.result.items[r.index].Status == "available_unchanged" {
+			if _, err := known.CopyCanonicalRange(r.outputs[r.index][r.offset:end], r.offset); err != nil {
+				return err
+			}
+		} else {
+			copy(r.outputs[r.index][r.offset:end], body[r.offset:end])
+		}
 		r.offset = end
-		if end == len(body) {
+		if end == size {
+			if size != 0 {
+				r.result.bodies[r.index] = contractSnapshotBody{policy: r.result.items[r.index].Policy, wire: r.outputs[r.index][:size:size]}
+			}
 			r.index++
 			r.offset = 0
 		}
 	}
 	return nil
 }
-func (r *ContractSnapshotRead) availableLocked(contract *ServiceContract) error {
+func (r *ContractSnapshotRead) availableLocked(contract ContractQueryKnown) error {
 	policy, err := contract.Policy()
 	if err != nil {
 		return err
@@ -276,7 +304,7 @@ func (r *ContractSnapshotRead) releaseInputLocked() {
 		r.envelope = nil
 	}
 	r.hash = nil
-	r.known = [8]*ServiceContract{}
+	r.known = [8]ContractQueryKnown{}
 	r.bodies = [8][]byte{}
 }
 func (r *ContractSnapshotRead) Result() (ContractSnapshotSet, error) {

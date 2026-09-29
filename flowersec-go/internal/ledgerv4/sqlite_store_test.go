@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 type sqliteContinuityFunc func(SQLiteIdentity, uint64, bool) error
@@ -226,7 +226,7 @@ func TestSQLiteRequiresIndependentContinuityAndEnvironment(t *testing.T) {
 
 func TestSQLiteRejectsManifestAndSchemaChanges(t *testing.T) {
 	for _, change := range []string{
-		"PRAGMA user_version=3",
+		"PRAGMA user_version=4",
 		"UPDATE manifest SET spend_rows=1",
 		"UPDATE manifest SET authority='replacement'",
 		"UPDATE manifest SET max_records=17",

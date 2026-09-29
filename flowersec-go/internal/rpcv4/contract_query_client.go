@@ -6,12 +6,13 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type queryClientSlot struct {
+	consumerHeld                                          bool
 	generation                                            uint64
 	occupied, stepping, closed, requestDone, responseDone bool
 	borrowed, taken                                       bool
@@ -38,6 +39,7 @@ type ContractQueryClient struct {
 	initiator       *ContractQueryInitiator
 	clock           *timev4.Clock
 	slots           [2]queryClientSlot
+	renewalBindings uint16
 	wake            chan struct{}
 	executorWake    chan<- struct{}
 	closed, cleaned bool
@@ -119,10 +121,14 @@ func (n *Network) NewContractQueryClient(clock *timev4.Clock, reservation resour
 // SDK opportunity. It starts no worker, channel, timer or retry. Both complete
 // directions and the request publication are committed before returning; all
 // failure paths retain or unwind the same original responsibility.
-func (q *ContractQueryClient) Begin(publisher *Publisher, targets []protocolv4.ContractQueryTarget, known []*protocolv4.ServiceContract, deadlineMS uint64) (ContractQueryCall, error) {
-	return q.begin(nil, publisher, targets, known, deadlineMS)
+func (q *ContractQueryClient) Begin(publisher *Publisher, targets []protocolv4.ContractQueryTarget, known []protocolv4.ContractQueryKnown, deadlineMS uint64) (ContractQueryCall, error) {
+	return q.begin(nil, publisher, targets, known, deadlineMS, nil)
 }
-func (q *ContractQueryClient) begin(initiator *ContractQueryInitiator, publisher *Publisher, targets []protocolv4.ContractQueryTarget, known []*protocolv4.ServiceContract, deadlineMS uint64) (call ContractQueryCall, err error) {
+func (q *ContractQueryClient) begin(initiator *ContractQueryInitiator, publisher *Publisher, targets []protocolv4.ContractQueryTarget, known []protocolv4.ContractQueryKnown, deadlineMS uint64, guard RequestPublicationGuard) (call ContractQueryCall, err error) {
+	return q.beginLane(initiator, publisher, targets, known, deadlineMS, guard, false)
+}
+
+func (q *ContractQueryClient) beginLane(initiator *ContractQueryInitiator, publisher *Publisher, targets []protocolv4.ContractQueryTarget, known []protocolv4.ContractQueryKnown, deadlineMS uint64, guard RequestPublicationGuard, renewal bool) (call ContractQueryCall, err error) {
 	if q == nil || publisher == nil {
 		return call, ErrOwner
 	}
@@ -137,6 +143,9 @@ func (q *ContractQueryClient) begin(initiator *ContractQueryInitiator, publisher
 	}
 	index := -1
 	for i := range q.slots {
+		if renewal && (q.renewalBindings == 0 || i != 1) || !renewal && q.renewalBindings != 0 && i == 1 {
+			continue
+		}
 		if !q.slots[i].occupied && q.slots[i].generation != math.MaxUint64 {
 			index = i
 			break
@@ -215,7 +224,7 @@ func (q *ContractQueryClient) begin(initiator *ContractQueryInitiator, publisher
 	s.ticket, s.completion, s.targets, s.deadline = ticket, completion, targetSet, deadline
 	networkSlot, _ := n.slotLocked(ticket)
 	networkSlot.completion = completion
-	networkSlot.message = sendMessage{publisher: publisher, header: h, headerBytes: uint16(hn), payload: s.request[:length:length], publication: &Publication{}, queryRequest: call, prev: -1, nextReady: -1}
+	networkSlot.message = sendMessage{publisher: publisher, header: h, headerBytes: uint16(hn), payload: s.request[:length:length], publication: &Publication{}, queryRequest: call, requestGuard: guard, prev: -1, nextReady: -1}
 	copy(networkSlot.message.headerWire[:], header[:hn])
 	publisher.enqueueLocked(ticket, laneQuery)
 	s.stepping = false
@@ -369,7 +378,7 @@ func (c ContractQueryCall) releaseResponse() {
 
 func (q *ContractQueryClient) releaseSlotLocked(index uint8) {
 	s := &q.slots[index]
-	if s.occupied && !s.stepping && s.requestDone && s.responseDone && !s.borrowed {
+	if s.occupied && !s.stepping && s.requestDone && s.responseDone && !s.borrowed && !s.consumerHeld {
 		*s = queryClientSlot{generation: s.generation}
 		q.notifyLocked()
 		q.cleanupLocked()
@@ -437,7 +446,7 @@ func (q *ContractQueryClient) Close() {
 }
 
 func (q *ContractQueryClient) cleanupLocked() {
-	if !q.closed || q.cleaned || q.decoding != nil {
+	if !q.closed || q.cleaned || q.decoding != nil || q.renewalBindings != 0 {
 		return
 	}
 	for i := range q.slots {
@@ -493,7 +502,7 @@ func (q *ContractQueryClient) ClaimInitiator(wake chan<- struct{}, owner resourc
 	q.executorWake = wake
 	return x, nil
 }
-func (x *ContractQueryInitiator) Begin(publisher *Publisher, targets []protocolv4.ContractQueryTarget, known []*protocolv4.ServiceContract, deadlineMS uint64) (ContractQueryCall, error) {
+func (x *ContractQueryInitiator) Begin(publisher *Publisher, targets []protocolv4.ContractQueryTarget, known []protocolv4.ContractQueryKnown, deadlineMS uint64) (ContractQueryCall, error) {
 	if x == nil {
 		return ContractQueryCall{}, ErrOwner
 	}
@@ -501,7 +510,20 @@ func (x *ContractQueryInitiator) Begin(publisher *Publisher, targets []protocolv
 	if q == nil {
 		return ContractQueryCall{}, ErrClosed
 	}
-	return q.begin(x, publisher, targets, known, deadlineMS)
+	return q.begin(x, publisher, targets, known, deadlineMS, nil)
+}
+
+// BeginGuarded retains the original Environment acquisition's publication
+// gate on the same query message. It adds no pool, waiter or retry path.
+func (x *ContractQueryInitiator) BeginGuarded(publisher *Publisher, targets []protocolv4.ContractQueryTarget, known []protocolv4.ContractQueryKnown, deadlineMS uint64, guard RequestPublicationGuard) (ContractQueryCall, error) {
+	if x == nil || guard == nil {
+		return ContractQueryCall{}, ErrOwner
+	}
+	q := x.client.Load()
+	if q == nil {
+		return ContractQueryCall{}, ErrClosed
+	}
+	return q.begin(x, publisher, targets, known, deadlineMS, guard)
 }
 func (x *ContractQueryInitiator) Stop() {
 	if x == nil {

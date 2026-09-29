@@ -44,6 +44,71 @@ export function generateApiTypes(schema, schemaSHA) {
     swift += `\nstruct ${native} {\n` + fields.map(([field, descriptor]) => `    let ${camel(field)}: ${type("swift", descriptor)}\n`).join("") + "}\n";
     ts += `\nexport interface ${native} {\n` + fields.map(([field, descriptor]) => `  readonly ${field}${descriptor.optional ? "?" : ""}: ${type("ts", descriptor)};\n`).join("") + "}\n";
   }
+  // Error projection is generated from one registry. This validates the
+  // mapping only; the runtime must independently prove a terminal commit.
+  go += "\nfunc TopUpErrorProjection(code V4TopUpErrorCode, action V4TopUpWriteAction) (V4TopUpError, bool) {\n\tswitch code {\n";
+  rust += "\npub(crate) fn top_up_error_projection(code: V4TopUpErrorCode, action: V4TopUpWriteAction) -> Option<V4TopUpError> {\n    match code {\n";
+  swift += "\nfunc topUpErrorProjection(_ code: V4TopUpErrorCode, _ action: V4TopUpWriteAction) -> V4TopUpError? {\n    switch code {\n";
+  ts += "\nexport function topUpErrorProjection(code: V4TopUpErrorCode, action: V4TopUpWriteAction): V4TopUpError | undefined {\n  switch (code) {\n";
+  for (const [code, entry] of Object.entries(schema.top_up_error_metadata)) {
+    const actions = entry.write_actions;
+    go += `\tcase V4TopUpErrorCode${pascal(code)}:\n\t\tif ${actions.map(action => `action == V4TopUpWriteAction${pascal(action)}`).join(" || ")} {\n\t\t\treturn V4TopUpError{Code: code, Scope: V4TopUpErrorScope${pascal(entry.scope)}, WriteAction: action}, true\n\t\t}\n`;
+    rust += `        V4TopUpErrorCode::${pascal(code)} => { if ${actions.map(action => `action == V4TopUpWriteAction::${pascal(action)}`).join(" || ")} { Some(V4TopUpError { code, scope: V4TopUpErrorScope::${pascal(entry.scope)}, write_action: action }) } else { None } },\n`;
+    swift += `    case .${camel(code)}: return (${actions.map(action => `action == .${camel(action)}`).join(" || ")}) ? V4TopUpError(code: code, scope: .${camel(entry.scope)}, writeAction: action) : nil\n`;
+    ts += `    case "${code}": return (${actions.map(action => `action === "${action}"`).join(" || ")}) ? Object.freeze({code, scope: "${entry.scope}", write_action: action}) : undefined;\n`;
+  }
+  go += "\t}\n\treturn V4TopUpError{}, false\n}\n";
+  rust += "    }\n}\n";
+  swift += "    }\n}\n";
+  ts += "  }\n}\n";
+  // Pure local result validation does not establish lifecycle or cleanup facts.
+  // Native closed enums reject unknown values structurally; Go and TS also
+  // check their string representations against the original schema.
+  const enumCheck = (language, name, field) => apiEnumValues(schema, schema.api_schema.types[name]).map(value =>
+    language === "go" ? `${field} == V4${name}${pascal(value)}` : `${field} === "${value}"`).join(" || ");
+  go += `
+func ValidLifecycleResult(value V4LifecycleResult) bool {
+\tcleanup := value.CleanupStatus
+\treturn (${enumCheck("go", "LifecycleObjectKind", "value.ObjectKind")}) &&
+\t\t(${enumCheck("go", "LifecycleState", "value.LifecycleState")}) &&
+\t\t(${enumCheck("go", "LifecycleReason", "value.Reason")}) &&
+\t\t(${enumCheck("go", "CleanupState", "cleanup.Status")}) &&
+\t\t(${enumCheck("go", "CoreCleanup", "cleanup.CoreCleanup")}) &&
+\t\t(cleanup.Status == V4CleanupStateComplete) == (cleanup.CoreCleanup == V4CoreCleanupComplete && cleanup.PendingCallbacks == 0) &&
+\t\t(value.LifecycleState != V4LifecycleStateSessionAborted || value.ObjectKind == V4LifecycleObjectKindSession) &&
+\t\t(cleanup.Status != V4CleanupStateComplete || value.LifecycleState == V4LifecycleStateClosed || value.LifecycleState == V4LifecycleStateSessionAborted)
+}
+`;
+  rust += `
+pub(crate) fn valid_lifecycle_result(value: &V4LifecycleResult) -> bool {
+    let cleanup = &value.cleanup_status;
+    (cleanup.status == V4CleanupState::Complete) == (cleanup.core_cleanup == V4CoreCleanup::Complete && cleanup.pending_callbacks == 0)
+        && (value.lifecycle_state != V4LifecycleState::SessionAborted || value.object_kind == V4LifecycleObjectKind::Session)
+        && (cleanup.status != V4CleanupState::Complete || matches!(value.lifecycle_state, V4LifecycleState::Closed | V4LifecycleState::SessionAborted))
+}
+`;
+  swift += `
+func validLifecycleResult(_ value: V4LifecycleResult) -> Bool {
+    let cleanup = value.cleanupStatus
+    return (cleanup.status == .complete) == (cleanup.coreCleanup == .complete && cleanup.pendingCallbacks == 0)
+        && (value.lifecycleState != .sessionAborted || value.objectKind == .session)
+        && (cleanup.status != .complete || value.lifecycleState == .closed || value.lifecycleState == .sessionAborted)
+}
+`;
+  ts += `
+export function validLifecycleResult(value: V4LifecycleResult): boolean {
+  const cleanup = value.cleanup_status;
+  return (${enumCheck("ts", "LifecycleObjectKind", "value.object_kind")}) &&
+    (${enumCheck("ts", "LifecycleState", "value.lifecycle_state")}) &&
+    (${enumCheck("ts", "LifecycleReason", "value.reason")}) &&
+    (${enumCheck("ts", "CleanupState", "cleanup.status")}) &&
+    (${enumCheck("ts", "CoreCleanup", "cleanup.core_cleanup")}) &&
+    typeof cleanup.pending_callbacks === "bigint" && cleanup.pending_callbacks >= 0n && cleanup.pending_callbacks <= 0xffffffffffffffffn &&
+    (cleanup.status === "complete") === (cleanup.core_cleanup === "complete" && cleanup.pending_callbacks === 0n) &&
+    (value.lifecycle_state !== "session_aborted" || value.object_kind === "session") &&
+    (cleanup.status !== "complete" || value.lifecycle_state === "closed" || value.lifecycle_state === "session_aborted");
+}
+`;
   // Provider classes are private inputs, never Session.Info fields. Each
   // native implementation selects a class from its original observations.
   const entries = Object.entries(schema.connection_assurance_registry.entries);

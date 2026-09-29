@@ -23,6 +23,8 @@ test("derives the published production dependency ranges with lock coverage", ()
       "@noble/curves": "2.4.0",
       "@noble/hashes": "2.4.0",
       "@types/node": "26.4.0",
+      "@types/ws": "8.18.1",
+      "brotli-dec-wasm": "2.3.2",
       tr46: "6.0.0",
       ws: "8.21.3",
     },

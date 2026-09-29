@@ -1,6 +1,6 @@
 {
   "status": "draft",
-  "schema_revision": "flowersec-v4.0.0-draft.66",
+  "schema_revision": "flowersec-v4.0.0-draft.74",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
   "coverage": "rekey_full_session_service_and_credit_arithmetic_only",
   "qualification": "Pure arithmetic only; no live owner, authenticated Artifact/TimeProfile, original causal clock anchor/incarnation, INIT ticket/deduction, ACK transition, pending-round exclusion, service/work/crypto/cleanup reservation, timer or provider/production qualification. Default zero additional authorized time tolerance; no implicit skew.",

@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-rust",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-rust/78d308cf17735b4b2510fd6dd05c1b22ed5a072c7b57edbf498dae530890ff58",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-rust/ae824e5f729367026e2c0ce01e0b0c91b5ee3e35a9a28c8cb307d5943bda14ef",
   "creationInfo": {
     "created": "2026-09-17T15:04:20Z",
     "creators": [
@@ -13,19 +13,36 @@
   "packages": [
     {
       "name": "flowersec",
-      "SPDXID": "SPDXRef-Package-199e62c536b0c18432a3",
-      "versionInfo": "5.5.0",
+      "SPDXID": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
+      "versionInfo": "6.0.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 78d308cf17735b4b2510fd6dd05c1b22ed5a072c7b57edbf498dae530890ff58",
+      "comment": "Flowersec source inventory SHA-256: ae824e5f729367026e2c0ce01e0b0c91b5ee3e35a9a28c8cb307d5943bda14ef",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:cargo/flowersec@5.5.0"
+          "referenceLocator": "pkg:cargo/flowersec@6.0.0"
+        }
+      ]
+    },
+    {
+      "name": "aead",
+      "SPDXID": "SPDXRef-Package-46186ca4893aca9013ba",
+      "versionInfo": "0.5.2",
+      "downloadLocation": "https://github.com/RustCrypto/traits",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/aead@0.5.2"
         }
       ]
     },
@@ -184,6 +201,23 @@
     },
     {
       "name": "base16ct",
+      "SPDXID": "SPDXRef-Package-adde7778d0a7291c0599",
+      "versionInfo": "0.2.0",
+      "downloadLocation": "https://github.com/RustCrypto/formats/tree/master/base16ct",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/base16ct@0.2.0"
+        }
+      ]
+    },
+    {
+      "name": "base16ct",
       "SPDXID": "SPDXRef-Package-60060f3937eeea7d3d3b",
       "versionInfo": "1.0.0",
       "downloadLocation": "https://github.com/RustCrypto/formats",
@@ -247,6 +281,40 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/bitflags@2.13.1"
+        }
+      ]
+    },
+    {
+      "name": "blake2",
+      "SPDXID": "SPDXRef-Package-85b73cc1773cf7f7853c",
+      "versionInfo": "0.10.6",
+      "downloadLocation": "https://github.com/RustCrypto/hashes",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/blake2@0.10.6"
+        }
+      ]
+    },
+    {
+      "name": "block-buffer",
+      "SPDXID": "SPDXRef-Package-bb521547c1921a0bddd9",
+      "versionInfo": "0.10.4",
+      "downloadLocation": "https://github.com/RustCrypto/utils",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/block-buffer@0.10.4"
         }
       ]
     },
@@ -370,6 +438,57 @@
       ]
     },
     {
+      "name": "chacha20",
+      "SPDXID": "SPDXRef-Package-378723e9b62e3abdee23",
+      "versionInfo": "0.9.1",
+      "downloadLocation": "https://github.com/RustCrypto/stream-ciphers",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/chacha20@0.9.1"
+        }
+      ]
+    },
+    {
+      "name": "chacha20poly1305",
+      "SPDXID": "SPDXRef-Package-4feffe7f5080d1cb6605",
+      "versionInfo": "0.10.1",
+      "downloadLocation": "https://github.com/RustCrypto/AEADs/tree/master/chacha20poly1305",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/chacha20poly1305@0.10.1"
+        }
+      ]
+    },
+    {
+      "name": "cipher",
+      "SPDXID": "SPDXRef-Package-f9e1e920f3a795458271",
+      "versionInfo": "0.4.4",
+      "downloadLocation": "https://github.com/RustCrypto/traits",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/cipher@0.4.4"
+        }
+      ]
+    },
+    {
       "name": "cipher",
       "SPDXID": "SPDXRef-Package-e63d96fee0dc11932b5f",
       "versionInfo": "0.5.2",
@@ -417,6 +536,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/const-oid@0.10.2"
+        }
+      ]
+    },
+    {
+      "name": "const-oid",
+      "SPDXID": "SPDXRef-Package-74bf6124dbc8093febd7",
+      "versionInfo": "0.9.6",
+      "downloadLocation": "https://github.com/RustCrypto/formats/tree/master/const-oid",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/const-oid@0.9.6"
         }
       ]
     },
@@ -473,6 +609,23 @@
     },
     {
       "name": "cpufeatures",
+      "SPDXID": "SPDXRef-Package-2d3b93be87d8b6f7d047",
+      "versionInfo": "0.2.17",
+      "downloadLocation": "https://github.com/RustCrypto/utils",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/cpufeatures@0.2.17"
+        }
+      ]
+    },
+    {
+      "name": "cpufeatures",
       "SPDXID": "SPDXRef-Package-6592604323f629577508",
       "versionInfo": "0.3.1",
       "downloadLocation": "https://github.com/RustCrypto/utils",
@@ -490,6 +643,23 @@
     },
     {
       "name": "crypto-bigint",
+      "SPDXID": "SPDXRef-Package-0922c4b1309a3e6ec159",
+      "versionInfo": "0.5.5",
+      "downloadLocation": "https://github.com/RustCrypto/crypto-bigint",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/crypto-bigint@0.5.5"
+        }
+      ]
+    },
+    {
+      "name": "crypto-bigint",
       "SPDXID": "SPDXRef-Package-2cbcef4f294fa8a1fae0",
       "versionInfo": "0.7.5",
       "downloadLocation": "https://github.com/RustCrypto/crypto-bigint",
@@ -502,6 +672,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/crypto-bigint@0.7.5"
+        }
+      ]
+    },
+    {
+      "name": "crypto-common",
+      "SPDXID": "SPDXRef-Package-a69443cbb7dfa91f6528",
+      "versionInfo": "0.1.6",
+      "downloadLocation": "https://github.com/RustCrypto/traits",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/crypto-common@0.1.6"
         }
       ]
     },
@@ -558,6 +745,23 @@
     },
     {
       "name": "curve25519-dalek",
+      "SPDXID": "SPDXRef-Package-d2a3fe312d512bcf581d",
+      "versionInfo": "4.1.3",
+      "downloadLocation": "https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/curve25519-dalek@4.1.3"
+        }
+      ]
+    },
+    {
+      "name": "curve25519-dalek",
       "SPDXID": "SPDXRef-Package-a7fa626f26fe25a19d63",
       "versionInfo": "5.0.0",
       "downloadLocation": "https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek",
@@ -604,6 +808,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/data-encoding@2.11.1"
+        }
+      ]
+    },
+    {
+      "name": "der",
+      "SPDXID": "SPDXRef-Package-28eb444a8ba5c919e742",
+      "versionInfo": "0.7.10",
+      "downloadLocation": "https://github.com/RustCrypto/formats/tree/master/der",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/der@0.7.10"
         }
       ]
     },
@@ -660,6 +881,23 @@
     },
     {
       "name": "digest",
+      "SPDXID": "SPDXRef-Package-f10f7ab8a8be69958672",
+      "versionInfo": "0.10.7",
+      "downloadLocation": "https://github.com/RustCrypto/traits",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/digest@0.10.7"
+        }
+      ]
+    },
+    {
+      "name": "digest",
       "SPDXID": "SPDXRef-Package-6bde4ebc8b171fc20ccb",
       "versionInfo": "0.11.3",
       "downloadLocation": "https://github.com/RustCrypto/traits",
@@ -694,6 +932,23 @@
     },
     {
       "name": "ecdsa",
+      "SPDXID": "SPDXRef-Package-10b158f4c78c0ede6047",
+      "versionInfo": "0.16.9",
+      "downloadLocation": "https://github.com/RustCrypto/signatures/tree/master/ecdsa",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/ecdsa@0.16.9"
+        }
+      ]
+    },
+    {
+      "name": "ecdsa",
       "SPDXID": "SPDXRef-Package-7f96fd7e79733c700be0",
       "versionInfo": "0.17.0",
       "downloadLocation": "https://github.com/RustCrypto/signatures",
@@ -706,6 +961,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/ecdsa@0.17.0"
+        }
+      ]
+    },
+    {
+      "name": "elliptic-curve",
+      "SPDXID": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "versionInfo": "0.13.8",
+      "downloadLocation": "https://github.com/RustCrypto/traits/tree/master/elliptic-curve",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/elliptic-curve@0.13.8"
         }
       ]
     },
@@ -727,6 +999,57 @@
       ]
     },
     {
+      "name": "fallible-iterator",
+      "SPDXID": "SPDXRef-Package-551d0305f689ea6ca0cc",
+      "versionInfo": "0.3.0",
+      "downloadLocation": "https://github.com/sfackler/rust-fallible-iterator",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/fallible-iterator@0.3.0"
+        }
+      ]
+    },
+    {
+      "name": "fallible-streaming-iterator",
+      "SPDXID": "SPDXRef-Package-9a80904da21b42a74cc2",
+      "versionInfo": "0.1.9",
+      "downloadLocation": "https://github.com/sfackler/fallible-streaming-iterator",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/fallible-streaming-iterator@0.1.9"
+        }
+      ]
+    },
+    {
+      "name": "ff",
+      "SPDXID": "SPDXRef-Package-92dd43215ce7bcd55e55",
+      "versionInfo": "0.13.1",
+      "downloadLocation": "https://github.com/zkcrypto/ff",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/ff@0.13.1"
+        }
+      ]
+    },
+    {
       "name": "ff",
       "SPDXID": "SPDXRef-Package-fa1fe1fed437f1672c7e",
       "versionInfo": "0.14.0",
@@ -740,6 +1063,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/ff@0.14.0"
+        }
+      ]
+    },
+    {
+      "name": "fiat-crypto",
+      "SPDXID": "SPDXRef-Package-038d6cb502d0e5e3fc66",
+      "versionInfo": "0.2.9",
+      "downloadLocation": "https://github.com/mit-plv/fiat-crypto",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0 OR BSD-1-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/fiat-crypto@0.2.9"
         }
       ]
     },
@@ -948,6 +1288,23 @@
       ]
     },
     {
+      "name": "generic-array",
+      "SPDXID": "SPDXRef-Package-da6e911e9bdbb51958a3",
+      "versionInfo": "0.14.9",
+      "downloadLocation": "https://github.com/fizyk20/generic-array.git",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/generic-array@0.14.9"
+        }
+      ]
+    },
+    {
       "name": "getrandom",
       "SPDXID": "SPDXRef-Package-b3120c1b070d3ed9ed49",
       "versionInfo": "0.2.17",
@@ -961,6 +1318,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/getrandom@0.2.17"
+        }
+      ]
+    },
+    {
+      "name": "getrandom",
+      "SPDXID": "SPDXRef-Package-2fc6aa84695b9ec9bb62",
+      "versionInfo": "0.3.4",
+      "downloadLocation": "https://github.com/rust-random/getrandom",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/getrandom@0.3.4"
         }
       ]
     },
@@ -1000,6 +1374,23 @@
     },
     {
       "name": "group",
+      "SPDXID": "SPDXRef-Package-a1807f7189213775621f",
+      "versionInfo": "0.13.0",
+      "downloadLocation": "https://github.com/zkcrypto/group",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/group@0.13.0"
+        }
+      ]
+    },
+    {
+      "name": "group",
       "SPDXID": "SPDXRef-Package-020cd8ba4c0a1b79708b",
       "versionInfo": "0.14.0",
       "downloadLocation": "https://github.com/zkcrypto/group",
@@ -1017,6 +1408,23 @@
     },
     {
       "name": "hkdf",
+      "SPDXID": "SPDXRef-Package-7f48ad479ac3df76aa21",
+      "versionInfo": "0.12.4",
+      "downloadLocation": "https://github.com/RustCrypto/KDFs/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/hkdf@0.12.4"
+        }
+      ]
+    },
+    {
+      "name": "hkdf",
       "SPDXID": "SPDXRef-Package-9961acf34a6d4e97eb5a",
       "versionInfo": "0.13.0",
       "downloadLocation": "https://github.com/RustCrypto/KDFs/",
@@ -1029,6 +1437,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/hkdf@0.13.0"
+        }
+      ]
+    },
+    {
+      "name": "hmac",
+      "SPDXID": "SPDXRef-Package-e1b3c3ca14166e4d0415",
+      "versionInfo": "0.12.1",
+      "downloadLocation": "https://github.com/RustCrypto/MACs",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/hmac@0.12.1"
         }
       ]
     },
@@ -1340,6 +1765,23 @@
     },
     {
       "name": "inout",
+      "SPDXID": "SPDXRef-Package-2e438d5d6de197cbff78",
+      "versionInfo": "0.1.4",
+      "downloadLocation": "https://github.com/RustCrypto/utils",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/inout@0.1.4"
+        }
+      ]
+    },
+    {
+      "name": "inout",
       "SPDXID": "SPDXRef-Package-1e4afcd0e377fb80a270",
       "versionInfo": "0.2.2",
       "downloadLocation": "https://github.com/RustCrypto/utils",
@@ -1420,6 +1862,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/libc@0.2.189"
+        }
+      ]
+    },
+    {
+      "name": "libsqlite3-sys",
+      "SPDXID": "SPDXRef-Package-8575297a327622545500",
+      "versionInfo": "0.38.2",
+      "downloadLocation": "https://github.com/rusqlite/rusqlite",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/libsqlite3-sys@0.38.2"
         }
       ]
     },
@@ -1679,6 +2138,23 @@
       ]
     },
     {
+      "name": "opaque-debug",
+      "SPDXID": "SPDXRef-Package-74cef42435ff0b24bca2",
+      "versionInfo": "0.3.1",
+      "downloadLocation": "https://github.com/RustCrypto/utils",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/opaque-debug@0.3.1"
+        }
+      ]
+    },
+    {
       "name": "openssl-probe",
       "SPDXID": "SPDXRef-Package-5ebeec344264251f9da6",
       "versionInfo": "0.2.1",
@@ -1692,6 +2168,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/openssl-probe@0.2.1"
+        }
+      ]
+    },
+    {
+      "name": "p256",
+      "SPDXID": "SPDXRef-Package-4a64eab2ab2326006bc2",
+      "versionInfo": "0.13.2",
+      "downloadLocation": "https://github.com/RustCrypto/elliptic-curves/tree/master/p256",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/p256@0.13.2"
         }
       ]
     },
@@ -1743,6 +2236,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/parking_lot_core@0.9.12"
+        }
+      ]
+    },
+    {
+      "name": "pem-rfc7468",
+      "SPDXID": "SPDXRef-Package-f149b83438f45790dcd7",
+      "versionInfo": "0.7.0",
+      "downloadLocation": "https://github.com/RustCrypto/formats/tree/master/pem-rfc7468",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/pem-rfc7468@0.7.0"
         }
       ]
     },
@@ -1833,6 +2343,23 @@
     },
     {
       "name": "pkcs8",
+      "SPDXID": "SPDXRef-Package-72f9b06d4e9dbdce71b7",
+      "versionInfo": "0.10.2",
+      "downloadLocation": "https://github.com/RustCrypto/formats/tree/master/pkcs8",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/pkcs8@0.10.2"
+        }
+      ]
+    },
+    {
+      "name": "pkcs8",
       "SPDXID": "SPDXRef-Package-b19749e839fc13fa8bfd",
       "versionInfo": "0.11.0",
       "downloadLocation": "https://github.com/RustCrypto/formats",
@@ -1845,6 +2372,40 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/pkcs8@0.11.0"
+        }
+      ]
+    },
+    {
+      "name": "pkg-config",
+      "SPDXID": "SPDXRef-Package-d14777a1d0c4436fb054",
+      "versionInfo": "0.3.34",
+      "downloadLocation": "https://github.com/rust-lang/pkg-config-rs",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/pkg-config@0.3.34"
+        }
+      ]
+    },
+    {
+      "name": "poly1305",
+      "SPDXID": "SPDXRef-Package-16d617696d80f737ca9c",
+      "versionInfo": "0.8.0",
+      "downloadLocation": "https://github.com/RustCrypto/universal-hashes",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/poly1305@0.8.0"
         }
       ]
     },
@@ -1913,6 +2474,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/primefield@0.14.0"
+        }
+      ]
+    },
+    {
+      "name": "primeorder",
+      "SPDXID": "SPDXRef-Package-14e52e960bb841e09092",
+      "versionInfo": "0.13.6",
+      "downloadLocation": "https://github.com/RustCrypto/elliptic-curves/tree/master/primeorder",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/primeorder@0.13.6"
         }
       ]
     },
@@ -2020,6 +2598,23 @@
     },
     {
       "name": "r-efi",
+      "SPDXID": "SPDXRef-Package-fead4be0c91fae7f5480",
+      "versionInfo": "5.3.0",
+      "downloadLocation": "https://github.com/r-efi/r-efi",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/r-efi@5.3.0"
+        }
+      ]
+    },
+    {
+      "name": "r-efi",
       "SPDXID": "SPDXRef-Package-d1bbeb671bbc7be46a3e",
       "versionInfo": "6.0.0",
       "downloadLocation": "https://github.com/r-efi/r-efi",
@@ -2070,6 +2665,23 @@
       ]
     },
     {
+      "name": "rand_core",
+      "SPDXID": "SPDXRef-Package-0d56b2a06458d630081d",
+      "versionInfo": "0.6.4",
+      "downloadLocation": "https://github.com/rust-random/rand",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/rand_core@0.6.4"
+        }
+      ]
+    },
+    {
       "name": "rand_pcg",
       "SPDXID": "SPDXRef-Package-311675a21e0ecba89f81",
       "versionInfo": "0.10.2",
@@ -2105,6 +2717,23 @@
     },
     {
       "name": "rfc6979",
+      "SPDXID": "SPDXRef-Package-a1013b0d24fbd66336a9",
+      "versionInfo": "0.4.0",
+      "downloadLocation": "https://github.com/RustCrypto/signatures/tree/master/rfc6979",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/rfc6979@0.4.0"
+        }
+      ]
+    },
+    {
+      "name": "rfc6979",
       "SPDXID": "SPDXRef-Package-8f95dbfca2a9672f6600",
       "versionInfo": "0.6.0",
       "downloadLocation": "https://github.com/RustCrypto/signatures",
@@ -2134,6 +2763,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/ring@0.17.14"
+        }
+      ]
+    },
+    {
+      "name": "rusqlite",
+      "SPDXID": "SPDXRef-Package-c69198723cf797c8e0f4",
+      "versionInfo": "0.40.2",
+      "downloadLocation": "https://github.com/rusqlite/rusqlite",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/rusqlite@0.40.2"
         }
       ]
     },
@@ -2309,6 +2955,23 @@
     },
     {
       "name": "sec1",
+      "SPDXID": "SPDXRef-Package-e8ddbf5b0debd3219a8c",
+      "versionInfo": "0.7.3",
+      "downloadLocation": "https://github.com/RustCrypto/formats/tree/master/sec1",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/sec1@0.7.3"
+        }
+      ]
+    },
+    {
+      "name": "sec1",
       "SPDXID": "SPDXRef-Package-54f52f9079f162fc6ba4",
       "versionInfo": "0.8.1",
       "downloadLocation": "https://github.com/RustCrypto/formats",
@@ -2479,6 +3142,23 @@
     },
     {
       "name": "sha2",
+      "SPDXID": "SPDXRef-Package-5bc140d2c0cdf0c2ba3d",
+      "versionInfo": "0.10.9",
+      "downloadLocation": "https://github.com/RustCrypto/hashes",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/sha2@0.10.9"
+        }
+      ]
+    },
+    {
+      "name": "sha2",
       "SPDXID": "SPDXRef-Package-f8aa6ac8303d62c4b0d0",
       "versionInfo": "0.11.0",
       "downloadLocation": "https://github.com/RustCrypto/hashes",
@@ -2508,6 +3188,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/shlex@2.0.1"
+        }
+      ]
+    },
+    {
+      "name": "signature",
+      "SPDXID": "SPDXRef-Package-4c54599f2542b977e770",
+      "versionInfo": "2.2.0",
+      "downloadLocation": "https://github.com/RustCrypto/traits/tree/master/signature",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/signature@2.2.0"
         }
       ]
     },
@@ -2563,6 +3260,23 @@
       ]
     },
     {
+      "name": "snow",
+      "SPDXID": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "versionInfo": "0.10.0",
+      "downloadLocation": "https://github.com/mcginty/snow",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/snow@0.10.0"
+        }
+      ]
+    },
+    {
       "name": "socket2",
       "SPDXID": "SPDXRef-Package-bc0877620faf54680466",
       "versionInfo": "0.6.5",
@@ -2576,6 +3290,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/socket2@0.6.5"
+        }
+      ]
+    },
+    {
+      "name": "spki",
+      "SPDXID": "SPDXRef-Package-e63df5309de7f5b1141d",
+      "versionInfo": "0.7.3",
+      "downloadLocation": "https://github.com/RustCrypto/formats/tree/master/spki",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/spki@0.7.3"
         }
       ]
     },
@@ -3057,6 +3788,23 @@
     },
     {
       "name": "universal-hash",
+      "SPDXID": "SPDXRef-Package-1d6ba4c0574d74f86c18",
+      "versionInfo": "0.5.1",
+      "downloadLocation": "https://github.com/RustCrypto/traits",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/universal-hash@0.5.1"
+        }
+      ]
+    },
+    {
+      "name": "universal-hash",
       "SPDXID": "SPDXRef-Package-0ccbbc256016ce27f404",
       "versionInfo": "0.6.1",
       "downloadLocation": "https://github.com/RustCrypto/traits",
@@ -3124,6 +3872,40 @@
       ]
     },
     {
+      "name": "vcpkg",
+      "SPDXID": "SPDXRef-Package-4c2d1c6de212e5ffc7ff",
+      "versionInfo": "0.2.15",
+      "downloadLocation": "https://github.com/mcgoo/vcpkg-rs",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/vcpkg@0.2.15"
+        }
+      ]
+    },
+    {
+      "name": "version_check",
+      "SPDXID": "SPDXRef-Package-84f6bdce47e1e6d7bcc8",
+      "versionInfo": "0.9.5",
+      "downloadLocation": "https://github.com/SergioBenitez/version_check",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/version_check@0.9.5"
+        }
+      ]
+    },
+    {
       "name": "want",
       "SPDXID": "SPDXRef-Package-74dd26ebf4daf5b565b5",
       "versionInfo": "0.3.1",
@@ -3154,6 +3936,23 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1"
+        }
+      ]
+    },
+    {
+      "name": "wasip2",
+      "SPDXID": "SPDXRef-Package-37f5cbc2836b5ec78d28",
+      "versionInfo": "1.0.4+wasi-0.2.12",
+      "downloadLocation": "https://github.com/bytecodealliance/wasi-rs",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/wasip2@1.0.4+wasi-0.2.12"
         }
       ]
     },
@@ -3447,6 +4246,23 @@
       ]
     },
     {
+      "name": "wit-bindgen",
+      "SPDXID": "SPDXRef-Package-a359e9f07faaa270d2fd",
+      "versionInfo": "0.57.1",
+      "downloadLocation": "https://github.com/bytecodealliance/wit-bindgen",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:cargo/wit-bindgen@0.57.1"
+        }
+      ]
+    },
+    {
       "name": "wnaf",
       "SPDXID": "SPDXRef-Package-84bea3511bf37be4bf20",
       "versionInfo": "0.14.1",
@@ -3706,7 +4522,17 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
-      "relatedSpdxElement": "SPDXRef-Package-199e62c536b0c18432a3"
+      "relatedSpdxElement": "SPDXRef-Package-79a8e32b8cbaee5bd4f6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-46186ca4893aca9013ba",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a69443cbb7dfa91f6528"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-46186ca4893aca9013ba",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-da6e911e9bdbb51958a3"
     },
     {
       "spdxElementId": "SPDXRef-Package-55021521053834733ab4",
@@ -3854,6 +4680,16 @@
       "relatedSpdxElement": "SPDXRef-Package-4903a99134acbf6cadef"
     },
     {
+      "spdxElementId": "SPDXRef-Package-85b73cc1773cf7f7853c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f10f7ab8a8be69958672"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-bb521547c1921a0bddd9",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-da6e911e9bdbb51958a3"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-1af40ca6f517ba98c680",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-1aa220a2766b11514d66"
@@ -3884,6 +4720,61 @@
       "relatedSpdxElement": "SPDXRef-Package-767129199b27c8b9dbe7"
     },
     {
+      "spdxElementId": "SPDXRef-Package-378723e9b62e3abdee23",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-7fc4482f18df5002d5b3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-378723e9b62e3abdee23",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f9e1e920f3a795458271"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-378723e9b62e3abdee23",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2d3b93be87d8b6f7d047"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4feffe7f5080d1cb6605",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-46186ca4893aca9013ba"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4feffe7f5080d1cb6605",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-378723e9b62e3abdee23"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4feffe7f5080d1cb6605",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f9e1e920f3a795458271"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4feffe7f5080d1cb6605",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-16d617696d80f737ca9c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4feffe7f5080d1cb6605",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-f9e1e920f3a795458271",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a69443cbb7dfa91f6528"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-f9e1e920f3a795458271",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2e438d5d6de197cbff78"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-f9e1e920f3a795458271",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-e63d96fee0dc11932b5f",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-1af40ca6f517ba98c680"
@@ -3909,9 +4800,34 @@
       "relatedSpdxElement": "SPDXRef-Package-3aff639892787e793cd9"
     },
     {
+      "spdxElementId": "SPDXRef-Package-2d3b93be87d8b6f7d047",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-3aff639892787e793cd9"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-6592604323f629577508",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-3aff639892787e793cd9"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-0922c4b1309a3e6ec159",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-da6e911e9bdbb51958a3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-0922c4b1309a3e6ec159",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0d56b2a06458d630081d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-0922c4b1309a3e6ec159",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-0922c4b1309a3e6ec159",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
     },
     {
       "spdxElementId": "SPDXRef-Package-2cbcef4f294fa8a1fae0",
@@ -3952,6 +4868,16 @@
       "spdxElementId": "SPDXRef-Package-2cbcef4f294fa8a1fae0",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-a69443cbb7dfa91f6528",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-da6e911e9bdbb51958a3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-a69443cbb7dfa91f6528",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0b3f6363becb638b6d31"
     },
     {
       "spdxElementId": "SPDXRef-Package-1426df2ad70324c7ecc4",
@@ -3997,6 +4923,36 @@
       "spdxElementId": "SPDXRef-Package-7200abd5cd93567b7bad",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-08a4313c1c239600e6fd"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2a3fe312d512bcf581d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-7fc4482f18df5002d5b3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2a3fe312d512bcf581d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2d3b93be87d8b6f7d047"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2a3fe312d512bcf581d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-7200abd5cd93567b7bad"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2a3fe312d512bcf581d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-038d6cb502d0e5e3fc66"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2a3fe312d512bcf581d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a923358d904a79cbc616"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d2a3fe312d512bcf581d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
     },
     {
       "spdxElementId": "SPDXRef-Package-a7fa626f26fe25a19d63",
@@ -4064,6 +5020,21 @@
       "relatedSpdxElement": "SPDXRef-Package-1d08a07f2a99df4ec247"
     },
     {
+      "spdxElementId": "SPDXRef-Package-28eb444a8ba5c919e742",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-74bf6124dbc8093febd7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-28eb444a8ba5c919e742",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f149b83438f45790dcd7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-28eb444a8ba5c919e742",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-980abacca855574fe095",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-94e2b8112a091e773800"
@@ -4077,6 +5048,26 @@
       "spdxElementId": "SPDXRef-Package-980abacca855574fe095",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-f10f7ab8a8be69958672",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-bb521547c1921a0bddd9"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-f10f7ab8a8be69958672",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-74bf6124dbc8093febd7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-f10f7ab8a8be69958672",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a69443cbb7dfa91f6528"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-f10f7ab8a8be69958672",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
     },
     {
       "spdxElementId": "SPDXRef-Package-6bde4ebc8b171fc20ccb",
@@ -4114,6 +5105,36 @@
       "relatedSpdxElement": "SPDXRef-Package-4903a99134acbf6cadef"
     },
     {
+      "spdxElementId": "SPDXRef-Package-10b158f4c78c0ede6047",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28eb444a8ba5c919e742"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-10b158f4c78c0ede6047",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f10f7ab8a8be69958672"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-10b158f4c78c0ede6047",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-89a44a6d6c143e54ff6c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-10b158f4c78c0ede6047",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a1013b0d24fbd66336a9"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-10b158f4c78c0ede6047",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-4c54599f2542b977e770"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-10b158f4c78c0ede6047",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-e63df5309de7f5b1141d"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-7f96fd7e79733c700be0",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-980abacca855574fe095"
@@ -4145,6 +5166,71 @@
     },
     {
       "spdxElementId": "SPDXRef-Package-7f96fd7e79733c700be0",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-adde7778d0a7291c0599"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0922c4b1309a3e6ec159"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f10f7ab8a8be69958672"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-92dd43215ce7bcd55e55"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-da6e911e9bdbb51958a3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a1807f7189213775621f"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-7f48ad479ac3df76aa21"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f149b83438f45790dcd7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-72f9b06d4e9dbdce71b7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0d56b2a06458d630081d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-e8ddbf5b0debd3219a8c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-89a44a6d6c143e54ff6c",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
     },
@@ -4219,6 +5305,16 @@
       "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
     },
     {
+      "spdxElementId": "SPDXRef-Package-92dd43215ce7bcd55e55",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0d56b2a06458d630081d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-92dd43215ce7bcd55e55",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-fa1fe1fed437f1672c7e",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-767129199b27c8b9dbe7"
@@ -4229,187 +5325,197 @@
       "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-172fc24f211e6e5c7e61"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-eaff9de7507b7bbf0867"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-352dca6a3e16b3078a31"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-5ac7d44baa6f29b43c53"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-a7fa626f26fe25a19d63"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-52ac685b5313433709e3"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-9961acf34a6d4e97eb5a"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-aa616ef54751648a5da2"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-cb8383d1875ba4cfde7a"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-fda0b0d793314769e923"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-01b114ecd52e5226339f"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-28967656c18c3a40590a"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-a20273378978465c192c"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-d478948a1303e33212d6"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-fb439127cab77e7dd6d3"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-82bdfcea201099243644"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-5af164cd575311ab7450"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-0be973960f86de95593e"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-d9824d16c9751968fa96"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-c69198723cf797c8e0f4"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-0383fd61987c3bdb5d20"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-5aac26d73b151cba1fe8"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-6c4ae6cb9bb2f28fe601"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-beaff948ddb9e6cdd16a"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-f8aa6ac8303d62c4b0d0"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2afe636d3fbb91b6c7f6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-a5ee2daf84e403828ff1"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-ef6d5a795f968fe2e0d2"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-b00bf13708cd3274dc6a"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-95763b67b6c86a64068b"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-fbb5742ec04758111cf5"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-cad0b3a4458b9557e387"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-286c9de8c136fae33494"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-b69ac3ff7d9050fdaba2"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-38d47068e006dfd23ad0"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-1e1fd77af5cc90469f79"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-8ca732e18ab56f22d02b"
     },
     {
-      "spdxElementId": "SPDXRef-Package-199e62c536b0c18432a3",
+      "spdxElementId": "SPDXRef-Package-79a8e32b8cbaee5bd4f6",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
     },
@@ -4539,6 +5645,21 @@
       "relatedSpdxElement": "SPDXRef-Package-52ac685b5313433709e3"
     },
     {
+      "spdxElementId": "SPDXRef-Package-da6e911e9bdbb51958a3",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0b3f6363becb638b6d31"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-da6e911e9bdbb51958a3",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-84f6bdce47e1e6d7bcc8"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-da6e911e9bdbb51958a3",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-b3120c1b070d3ed9ed49",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-7fc4482f18df5002d5b3"
@@ -4562,6 +5683,26 @@
       "spdxElementId": "SPDXRef-Package-b3120c1b070d3ed9ed49",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-7847c9cd8f34456d591d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2fc6aa84695b9ec9bb62",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-7fc4482f18df5002d5b3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2fc6aa84695b9ec9bb62",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-3aff639892787e793cd9"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2fc6aa84695b9ec9bb62",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-fead4be0c91fae7f5480"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2fc6aa84695b9ec9bb62",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-37f5cbc2836b5ec78d28"
     },
     {
       "spdxElementId": "SPDXRef-Package-d7aad8adbed9e2ec2450",
@@ -4599,6 +5740,21 @@
       "relatedSpdxElement": "SPDXRef-Package-fe6695abea2c5b541de7"
     },
     {
+      "spdxElementId": "SPDXRef-Package-a1807f7189213775621f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-92dd43215ce7bcd55e55"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-a1807f7189213775621f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0d56b2a06458d630081d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-a1807f7189213775621f",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-020cd8ba4c0a1b79708b",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-fa1fe1fed437f1672c7e"
@@ -4614,9 +5770,19 @@
       "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
     },
     {
+      "spdxElementId": "SPDXRef-Package-7f48ad479ac3df76aa21",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-e1b3c3ca14166e4d0415"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-9961acf34a6d4e97eb5a",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-aa616ef54751648a5da2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e1b3c3ca14166e4d0415",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f10f7ab8a8be69958672"
     },
     {
       "spdxElementId": "SPDXRef-Package-aa616ef54751648a5da2",
@@ -4959,6 +6125,11 @@
       "relatedSpdxElement": "SPDXRef-Package-4cac26545130b2701f07"
     },
     {
+      "spdxElementId": "SPDXRef-Package-2e438d5d6de197cbff78",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-da6e911e9bdbb51958a3"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-1e4afcd0e377fb80a270",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-1aa220a2766b11514d66"
@@ -4977,6 +6148,21 @@
       "spdxElementId": "SPDXRef-Package-fee5a9db7602f748555e",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-7847c9cd8f34456d591d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-8575297a327622545500",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-24a6dd21b901f2311d39"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-8575297a327622545500",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-d14777a1d0c4436fb054"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-8575297a327622545500",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-4c2d1c6de212e5ffc7ff"
     },
     {
       "spdxElementId": "SPDXRef-Package-e67634ab9e91cbb8cf2e",
@@ -5032,6 +6218,26 @@
       "spdxElementId": "SPDXRef-Package-a89d2be635c3fb4ffcfd",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-e0f3ab5b499aab001761"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4a64eab2ab2326006bc2",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-10b158f4c78c0ede6047"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4a64eab2ab2326006bc2",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-89a44a6d6c143e54ff6c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4a64eab2ab2326006bc2",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-14e52e960bb841e09092"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4a64eab2ab2326006bc2",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-5bc140d2c0cdf0c2ba3d"
     },
     {
       "spdxElementId": "SPDXRef-Package-82bdfcea201099243644",
@@ -5094,6 +6300,11 @@
       "relatedSpdxElement": "SPDXRef-Package-fd4f17b042591538d067"
     },
     {
+      "spdxElementId": "SPDXRef-Package-f149b83438f45790dcd7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-cbd359d2ecd69fc550ca"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-8ec1cc7d283f4d826609",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-cbd359d2ecd69fc550ca"
@@ -5119,6 +6330,16 @@
       "relatedSpdxElement": "SPDXRef-Package-ebbb7b265442ac13c7a2"
     },
     {
+      "spdxElementId": "SPDXRef-Package-72f9b06d4e9dbdce71b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28eb444a8ba5c919e742"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-72f9b06d4e9dbdce71b7",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-e63df5309de7f5b1141d"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-b19749e839fc13fa8bfd",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-980abacca855574fe095"
@@ -5127,6 +6348,21 @@
       "spdxElementId": "SPDXRef-Package-b19749e839fc13fa8bfd",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-8eaefebdbff8992ce635"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-16d617696d80f737ca9c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2d3b93be87d8b6f7d047"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-16d617696d80f737ca9c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-74cef42435ff0b24bca2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-16d617696d80f737ca9c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-1d6ba4c0574d74f86c18"
     },
     {
       "spdxElementId": "SPDXRef-Package-fe6695abea2c5b541de7",
@@ -5177,6 +6413,11 @@
       "spdxElementId": "SPDXRef-Package-5ef2a6e360ec22483cf3",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-14e52e960bb841e09092",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-89a44a6d6c143e54ff6c"
     },
     {
       "spdxElementId": "SPDXRef-Package-beb76f14e9f99e5b9a32",
@@ -5374,6 +6615,11 @@
       "relatedSpdxElement": "SPDXRef-Package-45dd5651836b8cff9453"
     },
     {
+      "spdxElementId": "SPDXRef-Package-0d56b2a06458d630081d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3120c1b070d3ed9ed49"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-311675a21e0ecba89f81",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-767129199b27c8b9dbe7"
@@ -5397,6 +6643,16 @@
       "spdxElementId": "SPDXRef-Package-bbb0f54ef70e34a1c073",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-db95404a63b82303191a"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-a1013b0d24fbd66336a9",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-e1b3c3ca14166e4d0415"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-a1013b0d24fbd66336a9",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
     },
     {
       "spdxElementId": "SPDXRef-Package-8f95dbfca2a9672f6600",
@@ -5437,6 +6693,31 @@
       "spdxElementId": "SPDXRef-Package-d9824d16c9751968fa96",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-caee68a9311ea02149ee"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c69198723cf797c8e0f4",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-db95404a63b82303191a"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c69198723cf797c8e0f4",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-551d0305f689ea6ca0cc"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c69198723cf797c8e0f4",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-9a80904da21b42a74cc2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c69198723cf797c8e0f4",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-8575297a327622545500"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-c69198723cf797c8e0f4",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f453722122e8c15e4cd9"
     },
     {
       "spdxElementId": "SPDXRef-Package-a923358d904a79cbc616",
@@ -5527,6 +6808,36 @@
       "spdxElementId": "SPDXRef-Package-c509b1a089f8702488b8",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-0bacb6fb006377c1c560"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e8ddbf5b0debd3219a8c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-adde7778d0a7291c0599"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e8ddbf5b0debd3219a8c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28eb444a8ba5c919e742"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e8ddbf5b0debd3219a8c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-da6e911e9bdbb51958a3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e8ddbf5b0debd3219a8c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-72f9b06d4e9dbdce71b7"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e8ddbf5b0debd3219a8c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e8ddbf5b0debd3219a8c",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28c73bce61f2b1a45c05"
     },
     {
       "spdxElementId": "SPDXRef-Package-54f52f9079f162fc6ba4",
@@ -5674,6 +6985,21 @@
       "relatedSpdxElement": "SPDXRef-Package-6bde4ebc8b171fc20ccb"
     },
     {
+      "spdxElementId": "SPDXRef-Package-5bc140d2c0cdf0c2ba3d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-7fc4482f18df5002d5b3"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-5bc140d2c0cdf0c2ba3d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2d3b93be87d8b6f7d047"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-5bc140d2c0cdf0c2ba3d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f10f7ab8a8be69958672"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-f8aa6ac8303d62c4b0d0",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-7fc4482f18df5002d5b3"
@@ -5689,6 +7015,16 @@
       "relatedSpdxElement": "SPDXRef-Package-6bde4ebc8b171fc20ccb"
     },
     {
+      "spdxElementId": "SPDXRef-Package-4c54599f2542b977e770",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-f10f7ab8a8be69958672"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-4c54599f2542b977e770",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0d56b2a06458d630081d"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-1eea1946189307a4a53d",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-6bde4ebc8b171fc20ccb"
@@ -5699,6 +7035,51 @@
       "relatedSpdxElement": "SPDXRef-Package-767129199b27c8b9dbe7"
     },
     {
+      "spdxElementId": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-85b73cc1773cf7f7853c"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-4feffe7f5080d1cb6605"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-d2a3fe312d512bcf581d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-2fc6aa84695b9ec9bb62"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-4a64eab2ab2326006bc2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-d9824d16c9751968fa96"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a923358d904a79cbc616"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-5bc140d2c0cdf0c2ba3d"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-2afe636d3fbb91b6c7f6",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-bc0877620faf54680466",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-3aff639892787e793cd9"
@@ -5707,6 +7088,16 @@
       "spdxElementId": "SPDXRef-Package-bc0877620faf54680466",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-0bacb6fb006377c1c560"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e63df5309de7f5b1141d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-cbd359d2ecd69fc550ca"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-e63df5309de7f5b1141d",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-28eb444a8ba5c919e742"
     },
     {
       "spdxElementId": "SPDXRef-Package-8eaefebdbff8992ce635",
@@ -6014,6 +7405,16 @@
       "relatedSpdxElement": "SPDXRef-Package-0bce9bf226640d3a7979"
     },
     {
+      "spdxElementId": "SPDXRef-Package-1d6ba4c0574d74f86c18",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a69443cbb7dfa91f6528"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-1d6ba4c0574d74f86c18",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-b3a98207b2be89152ab6"
+    },
+    {
       "spdxElementId": "SPDXRef-Package-0ccbbc256016ce27f404",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-1426df2ad70324c7ecc4"
@@ -6052,6 +7453,11 @@
       "spdxElementId": "SPDXRef-Package-74dd26ebf4daf5b565b5",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-180693f07d7a6704aa3f"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-37f5cbc2836b5ec78d28",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-a359e9f07faaa270d2fd"
     },
     {
       "spdxElementId": "SPDXRef-Package-d9ee21cff23e4463802d",

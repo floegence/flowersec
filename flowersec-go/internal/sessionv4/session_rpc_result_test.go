@@ -10,16 +10,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 func deferredCallerFixture(t *testing.T) (*serviceDispatchFixture, *RPCServices, rpcv4.ContractRoute, *Environment) {
 	t.Helper()
 	f, r, route := shortCallerFixture(t, 16)
+	return deferredCallerForServiceFixture(t, f, r, route)
+}
+
+func deferredCallerForServiceFixture(t *testing.T, f *serviceDispatchFixture, r *RPCServices, route rpcv4.ContractRoute, capacities ...uint32) (*serviceDispatchFixture, *RPCServices, rpcv4.ContractRoute, *Environment) {
+	t.Helper()
 	config := EnvironmentConfig{Services: true, ResultOwners: 16, Positions: 1, Clock: f.trust.clock, RuntimeBytes: 65536}
+	if len(capacities) != 0 {
+		config.ResultOwners = capacities[0]
+	}
 	charge, err := EnvironmentCharge(config)
 	if err != nil {
 		t.Fatal(err)
@@ -42,6 +50,10 @@ func deferredCallerFixture(t *testing.T) (*serviceDispatchFixture, *RPCServices,
 	f.plan.mu.Lock()
 	f.plan.host = newEnvironmentSession(e, 0, context.Background())
 	f.plan.mu.Unlock()
+	r.shortResultPosition, err = e.protectResult(e.reservation)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		e.Close()
 		f.publisher.Close()
@@ -406,7 +418,7 @@ func beginProtectedDeferredCall(t *testing.T, f *serviceDispatchFixture, r *RPCS
 }
 
 func TestProtectedDeferredResultsReuseOriginalFloorAtSaturatedRoot(t *testing.T) {
-	f, r, route, _ := deferredCallerFixture(t)
+	f, r, route, e := deferredCallerFixture(t)
 	saturateServiceRoot(t, f)
 	before := f.f.root.Snapshot()
 	for serial := uint64(1); serial <= 3; serial++ {
@@ -426,7 +438,23 @@ func TestProtectedDeferredResultsReuseOriginalFloorAtSaturatedRoot(t *testing.T)
 			}
 		}
 		call.Close()
-		call.advanceResult()
+		cleanup := resultTestContext(t)
+		for {
+			r.AdvanceCalls()
+			e.advanceResults()
+			r.mu.Lock()
+			active := r.localCall != nil
+			r.mu.Unlock()
+			if !active && e.OperationsSnapshot().ActiveResults == 0 {
+				break
+			}
+			select {
+			case <-cleanup.Done():
+				t.Fatal("protected result did not finish physical cleanup", cleanup.Err())
+			default:
+				runtime.Gosched()
+			}
+		}
 		if after := f.f.root.Snapshot(); after != before {
 			t.Fatal("protected result did not return its actual original vector", before, after)
 		}

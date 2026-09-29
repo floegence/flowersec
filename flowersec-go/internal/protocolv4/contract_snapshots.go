@@ -6,9 +6,10 @@ import (
 )
 
 // ContractSnapshotInfo is a detached validation result, not installation or
-// authorization. Only available_full writes a canonical body to its caller's
-// already admitted destination. available_unchanged uses the original known
-// body which the query owner must retain; denied/unavailable carry neither.
+// authorization. Both successful variants copy a complete canonical body to
+// the admitted destination. ContractBytes describes the wire body, so it is
+// zero for available_unchanged; its owned Known body reports the copied size.
+// The query retains its original baseline until cleanup. Refusals carry none.
 type ContractSnapshotInfo struct {
 	Status        string
 	ContractBytes uint16
@@ -17,8 +18,60 @@ type ContractSnapshotInfo struct {
 	Offer         AdmissionOfferBounds
 }
 type ContractSnapshotSet struct {
-	count uint8
-	items [8]ContractSnapshotInfo
+	count  uint8
+	items  [8]ContractSnapshotInfo
+	bodies [8]contractSnapshotBody
+}
+
+// A body is minted only after the complete response validates. Its enclosing
+// SDK snapshot owner retains the charged output for the entire borrow lifetime.
+type contractSnapshotBody struct {
+	policy ServiceContractPolicy
+	wire   []byte
+}
+
+func ContractQueryKnownBackingBytes() uint64 {
+	return uint64(unsafe.Sizeof(contractSnapshotBody{})) + 256
+}
+
+func (b *contractSnapshotBody) Policy() (ServiceContractPolicy, error) { return b.policy, nil }
+func (b *contractSnapshotBody) CanonicalSize() (int, error)            { return len(b.wire), nil }
+func (b *contractSnapshotBody) CopyCanonicalRange(dst []byte, offset int) (int, error) {
+	if offset < 0 || offset > len(b.wire) {
+		return 0, CBORFailure("encoder_offset")
+	}
+	return copy(dst, b.wire[offset:]), nil
+}
+func (b *contractSnapshotBody) checkQueryDestination(dst []byte) error {
+	if queryBuffersOverlap(b.wire, dst) {
+		return CBORFailure("query_output_alias")
+	}
+	return nil
+}
+
+func (s *ContractSnapshotSet) Known(index int) (ContractQueryKnown, error) {
+	if s == nil || index < 0 || index >= int(s.count) || len(s.bodies[index].wire) == 0 {
+		return nil, CBORFailure("query_contract_body")
+	}
+	return &s.bodies[index], nil
+}
+
+// CopyKnown transfers a validated body's complete bytes into another already
+// admitted owner. The returned baseline aliases only that destination; keeping
+// it valid requires retaining those immutable bytes until every query exits.
+func (s *ContractSnapshotSet) CopyKnown(index int, destination []byte) (ContractQueryKnown, error) {
+	if s == nil || index < 0 || index >= int(s.count) || len(s.bodies[index].wire) == 0 {
+		return nil, CBORFailure("query_contract_body")
+	}
+	body := &s.bodies[index]
+	if len(destination) < len(body.wire) {
+		return nil, CBORFailure("encoder_capacity")
+	}
+	if queryBuffersOverlap(body.wire, destination) {
+		return nil, CBORFailure("query_output_alias")
+	}
+	n := copy(destination, body.wire)
+	return &contractSnapshotBody{policy: body.policy, wire: destination[:n:n]}, nil
 }
 
 func (s ContractSnapshotSet) Count() int { return int(s.count) }
@@ -116,7 +169,7 @@ func queryBuffersOverlap(a, b []byte) bool {
 	return x-y < uintptr(len(b))
 }
 
-func checkQueryOutputs(wire []byte, known []*ServiceContract, outputs [][]byte) error {
+func checkQueryOutputs(wire []byte, known []ContractQueryKnown, outputs [][]byte) error {
 	for i, dst := range outputs {
 		if queryBuffersOverlap(wire, dst) {
 			return CBORFailure("query_output_alias")
@@ -130,15 +183,8 @@ func checkQueryOutputs(wire []byte, known []*ServiceContract, outputs [][]byte) 
 			if contract == nil {
 				continue
 			}
-			contract.codec.mu.Lock()
-			live := contract.codec.current == contract
-			alias := live && queryBuffersOverlap(contract.document.Bytes(), dst)
-			contract.codec.mu.Unlock()
-			if !live {
-				return CBORFailure("document_released")
-			}
-			if alias {
-				return CBORFailure("query_output_alias")
+			if err := contract.checkQueryDestination(dst); err != nil {
+				return err
 			}
 		}
 	}
@@ -150,7 +196,7 @@ func checkQueryOutputs(wire []byte, known []*ServiceContract, outputs [][]byte) 
 // a local error with zero partial body publication. Reply bytes and known-body
 // storage are not mutable destinations. Windows are trusted per-method policy
 // bounds, not declarations extracted from the peer's Offer.
-func (c *ContractSnapshotCodec) Decode(request ContractQueryTargets, wire []byte, known []*ServiceContract, windows []uint64, destinations [][]byte) (ContractSnapshotSet, error) {
+func (c *ContractSnapshotCodec) Decode(request ContractQueryTargets, wire []byte, known []ContractQueryKnown, windows []uint64, destinations [][]byte) (ContractSnapshotSet, error) {
 	if c == nil || request.count == 0 {
 		return ContractSnapshotSet{}, CBORFailure("configuration_capacity")
 	}
@@ -224,6 +270,13 @@ func (c *ContractSnapshotCodec) Decode(request ContractQueryTargets, wire []byte
 			if err = c.validateAvailable(request.targets[i], item, known[i], policy, windows[i], info); err != nil {
 				return ContractSnapshotSet{}, err
 			}
+			size, err := known[i].CanonicalSize()
+			if err != nil {
+				return ContractSnapshotSet{}, err
+			}
+			if size > len(destinations[i]) {
+				return ContractSnapshotSet{}, CBORFailure("encoder_capacity")
+			}
 		case c.statuses[2]:
 			info.Status = "denied"
 		case c.statuses[3]:
@@ -233,11 +286,25 @@ func (c *ContractSnapshotCodec) Decode(request ContractQueryTargets, wire []byte
 		}
 	}
 	for i, body := range bodies[:count] {
+		if result.items[i].Status == "available_unchanged" {
+			size, err := known[i].CanonicalSize()
+			if err != nil {
+				return ContractSnapshotSet{}, err
+			}
+			if _, err := known[i].CopyCanonicalRange(destinations[i][:size], 0); err != nil {
+				return ContractSnapshotSet{}, err
+			}
+			result.bodies[i] = contractSnapshotBody{policy: result.items[i].Policy, wire: destinations[i][:size:size]}
+			continue
+		}
 		copy(destinations[i], body)
+		if len(body) != 0 {
+			result.bodies[i] = contractSnapshotBody{policy: result.items[i].Policy, wire: destinations[i][:len(body):len(body)]}
+		}
 	}
 	return result, nil
 }
-func (c *ContractSnapshotEncoder) validateAvailable(target ContractQueryTarget, item Value, contract *ServiceContract, policy ServiceContractPolicy, window uint64, info *ContractSnapshotInfo) error {
+func (c *ContractSnapshotEncoder) validateAvailable(target ContractQueryTarget, item Value, contract ContractQueryKnown, policy ServiceContractPolicy, window uint64, info *ContractSnapshotInfo) error {
 	if policy.Namespace != target.Namespace || policy.Type != target.Type {
 		return CBORFailure("query_target_mismatch")
 	}
@@ -249,7 +316,7 @@ func (c *ContractSnapshotEncoder) validateAvailable(target ContractQueryTarget, 
 		return CBORFailure("query_offer_presence")
 	}
 	if present {
-		bounds, err := contract.CheckOffer(c.offer, offer, window)
+		bounds, err := checkContractOffer(policy, c.offer, offer, window)
 		if err != nil {
 			return err
 		}

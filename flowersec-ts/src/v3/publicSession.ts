@@ -93,6 +93,13 @@ function projectByteStreamV3(stream: InternalByteStreamV3): ByteStreamV3 {
     async closeWrite() {
       try { await stream.closeWrite(); } catch (error) { throw redactSessionError(error); }
     },
+    async finish() {
+      try {
+        const finish = (stream as InternalByteStreamV3 & { finish?: () => Promise<void> }).finish;
+        if (finish !== undefined) await finish.call(stream);
+        else await stream.closeWrite();
+      } catch (error) { throw redactSessionError(error); }
+    },
     async reset() {
       try { await stream.reset(); } catch (error) { throw redactSessionError(error); }
     },

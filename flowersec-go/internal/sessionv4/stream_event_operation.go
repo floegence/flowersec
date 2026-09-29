@@ -3,13 +3,14 @@ package sessionv4
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var ErrSourceEvent = errors.New("sessionv4: event source conversion failed")
@@ -48,7 +49,7 @@ func prepareStreamEventOperation(job *serviceStreamCall, queue, metadata, cleanu
 		owned.Release()
 		return nil, err
 	}
-	cleanup, err := prepareStreamSourceCleanup(d.plan.executor, d.plan.applicationGroup, ApplicationResident, source.publisher, d.runtimeBytes, definition.CleanupMS, cleanupMetadata, cleanupTask)
+	cleanup, err := prepareStreamSourceCleanup(d.plan.executor, d.plan.applicationGroup, ApplicationResident, source.publisher, d.clock, d.runtimeBytes, definition.CleanupMS, cleanupMetadata, cleanupTask)
 	if err != nil {
 		source.setupExited(err)
 		source.close()
@@ -81,7 +82,7 @@ func (o *streamEventOperation) close() {
 		return
 	}
 	o.source.close()
-	o.cleanup.request()
+	_ = o.cleanup.request()
 }
 
 func (o *streamEventOperation) cleanupComplete() bool {
@@ -282,6 +283,15 @@ func (o *streamEventOperation) runEvent(job *serviceStreamCall, invocation *stre
 
 // This waits only on real original work and finite source/stream notifications.
 // Logical cancellation cannot free the input or an uncooperative callback.
+
+func remainingDuration(milliseconds uint64) time.Duration {
+	max := uint64(math.MaxInt64 / int64(time.Millisecond))
+	if milliseconds >= max {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(milliseconds) * time.Millisecond
+}
+
 func (o *streamEventOperation) waitTask(job *serviceStreamCall, done <-chan struct{}, queued *QueuedApplicationTask, timer *time.Timer, event bool) {
 	for {
 		select {
@@ -313,7 +323,7 @@ func (o *streamEventOperation) waitTask(job *serviceStreamCall, done <-chan stru
 		}
 		var timerC <-chan time.Time
 		if remaining > 0 {
-			timer.Reset(remaining)
+			timer.Reset(remainingDuration(remaining))
 			timerC = timer.C
 		} else {
 			timer.Stop()
@@ -346,7 +356,7 @@ func (o *streamEventOperation) waitCleanup(job *serviceStreamCall, timer *time.T
 		}
 		var timerC <-chan time.Time
 		if remaining > 0 {
-			timer.Reset(remaining)
+			timer.Reset(remainingDuration(remaining))
 			timerC = timer.C
 		} else {
 			timer.Stop()

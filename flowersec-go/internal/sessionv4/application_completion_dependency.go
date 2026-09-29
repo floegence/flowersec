@@ -8,8 +8,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var ErrCompletionDependency = errors.New("sessionv4: completion_dependency_unavailable")
@@ -22,6 +22,7 @@ const maxCompletionDependencyWaitMS = 30000
 type completionDependency struct {
 	mu       sync.Mutex
 	executor atomic.Pointer[ApplicationExecutor]
+	clock    *timev4.Clock
 	index    int
 	states   [maxApplicationAncestors]*applicationContextState
 	count    int
@@ -59,7 +60,7 @@ func (p *CompletionReservation) claimDependency(dependencies *applicationDepende
 	if err != nil {
 		return nil, err
 	}
-	d := &completionDependency{index: p.index, states: dependencies.states, count: dependencies.count, window: window, expired: make(chan struct{})}
+	d := &completionDependency{index: p.index, states: dependencies.states, count: dependencies.count, window: window, clock: clock, expired: make(chan struct{})}
 	for j := 0; j < d.count; j++ {
 		s := d.states[j]
 		s.mu.Lock()
@@ -86,8 +87,11 @@ func (p *CompletionReservation) claimDependency(dependencies *applicationDepende
 			return nil, ErrCompletionDependency
 		default:
 		}
-		if !original.deadline.IsZero() && !time.Now().Before(original.deadline) {
-			return nil, ErrCompletionDependency
+		if !original.deadline.IsZero() {
+			expired, err := trustedDeadlineExpired(original.clock, original.deadline)
+			if err != nil || expired {
+				return nil, ErrCompletionDependency
+			}
 		}
 		// Preflight the finite union; rejected joins cannot mutate an existing promise.
 		states, count := original.states, original.count
@@ -132,7 +136,12 @@ func (d *completionDependency) advance() {
 	d.mu.Lock()
 	states, count, deadline := d.states, d.count, d.deadline
 	d.mu.Unlock()
-	expired := d.window.Check() != nil || !deadline.IsZero() && !time.Now().Before(deadline)
+	expired := d.window.Check() != nil
+	if !expired && !deadline.IsZero() {
+		var deadlineExpired bool
+		deadlineExpired, _ = trustedDeadlineExpired(d.clock, deadline)
+		expired = deadlineExpired
+	}
 	e := d.executor.Load()
 	live := false
 	if e != nil {
@@ -161,6 +170,25 @@ func (d *completionDependency) advance() {
 	}
 	d.executor.Store(nil)
 	e.dispatchCompletionsLocked()
+}
+
+// trustedDeadlineExpired compares a context-derived absolute deadline against
+// the same qualified time interval used by the security gates.  A missing or
+// invalid interval fails closed; a host wall-clock jump cannot extend a
+// dependency claim.
+func trustedDeadlineExpired(clock *timev4.Clock, deadline time.Time) (bool, error) {
+	if clock == nil || deadline.IsZero() {
+		return false, nil
+	}
+	sample, err := clock.Sample()
+	if err != nil {
+		return true, err
+	}
+	ms := deadline.UnixMilli()
+	if ms < 0 {
+		return true, nil
+	}
+	return !sample.Interval.ValidBefore(uint64(ms)), nil
 }
 
 func completionContext(ctx interface{ Value(any) any }, executor *ApplicationExecutor) bool {

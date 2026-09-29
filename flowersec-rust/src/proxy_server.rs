@@ -1,5 +1,6 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
+    convert::Infallible,
     fmt,
     future::Future,
     pin::Pin,
@@ -15,15 +16,17 @@ use async_trait::async_trait;
 use bytes::{Buf, Bytes, BytesMut};
 use futures_util::{SinkExt, StreamExt};
 use http::{HeaderMap, Method, Request, StatusCode, Uri, header};
-use http_body_util::{BodyExt, Full};
-use hyper::{body::Incoming, client::conn::http1};
+use http_body_util::BodyExt;
+use hyper::{
+    body::{Body, Frame, Incoming, SizeHint},
+    client::conn::http1,
+};
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
-    net::TcpStream,
-    sync::{Notify, Semaphore},
+    sync::{Notify, Semaphore, watch},
     time::Instant,
 };
 use tokio_rustls::TlsConnector;
@@ -33,12 +36,15 @@ use url::Url;
 
 use crate::{
     HandlerRegistrationError, IncomingStream, SessionError, StreamHandler, StreamHandlerRegistrar,
-    session_handlers::register_stream_handlers, transport::ByteStream, websocket_transport,
+    proxy_network::{ProxyNetworkPolicy, ProxySocket},
+    session_handlers::register_stream_handlers,
+    transport::ByteStream,
+    websocket_transport,
 };
 
 const HTTP_KIND: &str = "flowersec-proxy/http1";
 const WEBSOCKET_KIND: &str = "flowersec-proxy/ws";
-const WIRE_VERSION: u8 = 1;
+const WIRE_VERSION: u8 = 2;
 pub(crate) const DEFAULT_MAX_JSON: usize = 1 << 20;
 pub(crate) const DEFAULT_MAX_CHUNK: usize = 256 * 1024;
 pub(crate) const DEFAULT_MAX_BODY: usize = 64 * 1024 * 1024;
@@ -53,8 +59,12 @@ const FORBIDDEN_HEADERS: &[&str] = &[
     "connection",
     "host",
     "keep-alive",
+    "proxy-authenticate",
     "proxy-authorization",
+    "proxy-connection",
     "set-cookie",
+    "te",
+    "trailer",
     "transfer-encoding",
     "upgrade",
 ];
@@ -70,7 +80,9 @@ const RESPONSE_HEADERS: &[&str] = &[
     "accept-ranges",
     "cache-control",
     "content-disposition",
+    "content-encoding",
     "content-language",
+    "content-length",
     "content-range",
     "content-type",
     "etag",
@@ -88,8 +100,13 @@ pub struct ProxyServerOptions {
     /// Explicit DER trust roots for HTTPS and WSS upstreams.
     pub upstream_trust_roots_der: Vec<Vec<u8>>,
     pub allowed_upstream_hosts: Vec<String>,
+    /// Numeric addresses or canonical CIDRs; required for DNS upstreams.
+    pub allowed_upstream_addresses: Vec<String>,
     pub allowed_origins: Vec<Url>,
     pub max_concurrent_streams: usize,
+    pub max_concurrent_http_streams: usize,
+    pub max_concurrent_event_streams: usize,
+    pub event_stream_idle_timeout: Duration,
     pub max_json_frame_bytes: usize,
     pub max_chunk_bytes: usize,
     pub max_body_bytes: usize,
@@ -119,8 +136,12 @@ impl ProxyServerOptions {
             upstream_origin,
             upstream_trust_roots_der: Vec::new(),
             allowed_upstream_hosts: Vec::new(),
+            allowed_upstream_addresses: Vec::new(),
             allowed_origins: Vec::new(),
             max_concurrent_streams: 0,
+            max_concurrent_http_streams: 0,
+            max_concurrent_event_streams: 0,
+            event_stream_idle_timeout: Duration::ZERO,
             max_json_frame_bytes: 0,
             max_chunk_bytes: 0,
             max_body_bytes: 0,
@@ -154,12 +175,16 @@ pub enum ProxyServerError {
 #[derive(Debug)]
 struct Config {
     upstream: Url,
+    network: ProxyNetworkPolicy,
     upstream_origin: String,
     upstream_trust_roots_der: Vec<Vec<u8>>,
     allowed_origins: HashSet<String>,
     max_json: usize,
     max_chunk: usize,
     max_body: usize,
+    max_http: usize,
+    max_events: usize,
+    event_idle_timeout: Duration,
     max_websocket_frame: usize,
     websocket_establish_timeout: Duration,
     default_timeout: Duration,
@@ -175,6 +200,8 @@ struct Config {
 struct Inner {
     config: Config,
     permits: Arc<Semaphore>,
+    http_permits: Arc<Semaphore>,
+    event_permits: Arc<Semaphore>,
     closed: CancellationToken,
     active: AtomicUsize,
     completion: Notify,
@@ -202,6 +229,8 @@ impl ProxyServer {
         }
         Ok(Self {
             inner: Arc::new(Inner {
+                http_permits: Arc::new(Semaphore::new(config.max_http)),
+                event_permits: Arc::new(Semaphore::new(config.max_events)),
                 config,
                 permits: Arc::new(Semaphore::new(max_concurrent)),
                 closed: CancellationToken::new(),
@@ -256,6 +285,7 @@ impl ProxyServer {
             tokio::pin!(completion);
             completion.as_mut().enable();
             if self.inner.active.load(Ordering::Acquire) == 0 {
+                self.inner.config.network.close().await;
                 return;
             }
             completion.await;
@@ -338,6 +368,7 @@ impl StreamHandler for ProxyHandler {
             }
         };
         close_task.abort();
+        let _ = close_task.await;
         drop(permit);
         if let Err(error) = result {
             report(&self.inner, error);
@@ -369,6 +400,8 @@ fn compile_options(
         .upstream
         .host_str()
         .ok_or(ProxyServerError::InvalidOptions)?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
         .to_ascii_lowercase();
     let allowed_hosts = if options.allowed_upstream_hosts.is_empty() {
         vec!["127.0.0.1".to_owned(), "::1".to_owned()]
@@ -382,6 +415,24 @@ fn compile_options(
         return Err(ProxyServerError::InvalidOptions);
     }
     let max_concurrent = fallback(options.max_concurrent_streams, DEFAULT_MAX_CONCURRENT)?;
+    let max_http = fallback(options.max_concurrent_http_streams, max_concurrent.min(24))?;
+    let max_events = fallback(
+        options.max_concurrent_event_streams,
+        (max_http.saturating_mul(2) / 3).clamp(1, 16),
+    )?;
+    if max_http > max_concurrent || max_events > max_http {
+        return Err(ProxyServerError::InvalidOptions);
+    }
+    let event_idle_timeout =
+        duration_fallback(options.event_stream_idle_timeout, Duration::from_secs(45));
+    if Instant::now().checked_add(event_idle_timeout).is_none() {
+        return Err(ProxyServerError::InvalidOptions);
+    }
+    let network = ProxyNetworkPolicy::compile(
+        &options.upstream,
+        &options.allowed_upstream_addresses,
+        max_concurrent,
+    )?;
     let max_json = fallback(options.max_json_frame_bytes, DEFAULT_MAX_JSON)?;
     let max_chunk = fallback(options.max_chunk_bytes, DEFAULT_MAX_CHUNK)?;
     let max_body = fallback(options.max_body_bytes, DEFAULT_MAX_BODY)?;
@@ -398,7 +449,10 @@ fn compile_options(
     }
     let default_timeout = duration_fallback(options.default_http_request_timeout, DEFAULT_TIMEOUT);
     let max_timeout = duration_fallback(options.max_http_request_timeout, MAX_TIMEOUT);
-    if default_timeout > max_timeout || max_timeout.is_zero() {
+    if default_timeout > max_timeout
+        || max_timeout.is_zero()
+        || Instant::now().checked_add(max_timeout).is_none()
+    {
         return Err(ProxyServerError::InvalidOptions);
     }
     let allowed_origins = if options.allowed_origins.is_empty() {
@@ -417,12 +471,16 @@ fn compile_options(
     Ok((
         Config {
             upstream: options.upstream,
+            network,
             upstream_origin: options.upstream_origin.origin().ascii_serialization(),
             upstream_trust_roots_der: options.upstream_trust_roots_der,
             allowed_origins,
             max_json,
             max_chunk,
             max_body,
+            max_http,
+            max_events,
+            event_idle_timeout,
             max_websocket_frame,
             websocket_establish_timeout: WEBSOCKET_ESTABLISH_TIMEOUT,
             default_timeout,
@@ -566,7 +624,7 @@ struct HttpResponseMeta<'a> {
     error: Option<WireError<'a>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct HeaderOutput {
     name: String,
     value: String,
@@ -590,6 +648,59 @@ struct WebSocketResponse<'a> {
     protocol: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<WireError<'a>>,
+}
+
+trait ProxyDecode {
+    const SCHEMA: &'static str;
+}
+impl ProxyDecode for HttpRequestMeta {
+    const SCHEMA: &'static str = "ProxyHTTPRequest";
+}
+impl ProxyDecode for WebSocketOpen {
+    const SCHEMA: &'static str = "ProxyWebSocketOpen";
+}
+trait ProxyEncode {
+    fn schema(&self) -> &'static str;
+}
+impl ProxyEncode for HttpResponseMeta<'_> {
+    fn schema(&self) -> &'static str {
+        "ProxyHTTPResponse"
+    }
+}
+impl ProxyEncode for WebSocketResponse<'_> {
+    fn schema(&self) -> &'static str {
+        "ProxyWebSocketResponse"
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BodyEnd {
+    v: u8,
+    trailers: Vec<HeaderOutput>,
+}
+impl ProxyEncode for BodyEnd {
+    fn schema(&self) -> &'static str {
+        "ProxyBodyEnd"
+    }
+}
+impl ProxyDecode for BodyEnd {
+    const SCHEMA: &'static str = "ProxyBodyEnd";
+}
+async fn write_body_end(
+    stream: &dyn ByteStream,
+    trailers: Vec<HeaderOutput>,
+    cancellation: &CancellationToken,
+) -> Result<(), ProxyServerError> {
+    write_all(stream, Bytes::from_static(&[0, 0, 0, 0]), cancellation).await?;
+    write_metadata(
+        stream,
+        &BodyEnd {
+            v: WIRE_VERSION,
+            trailers,
+        },
+        cancellation,
+    )
+    .await
 }
 
 struct ProxyReader<'a> {
@@ -623,7 +734,7 @@ impl<'a> ProxyReader<'a> {
     }
 }
 
-async fn read_json<T: DeserializeOwned>(
+async fn read_metadata<T: DeserializeOwned + ProxyDecode>(
     reader: &mut ProxyReader<'_>,
     maximum: usize,
     cancellation: &CancellationToken,
@@ -633,7 +744,7 @@ async fn read_json<T: DeserializeOwned>(
     if length > maximum {
         return Err(ProxyServerError::OperationFailed);
     }
-    serde_json::from_slice(&reader.exact(length, cancellation).await?)
+    crate::proxy_wire::decode(T::SCHEMA, &reader.exact(length, cancellation).await?)
         .map_err(|_| ProxyServerError::OperationFailed)
 }
 
@@ -656,12 +767,13 @@ async fn write_all(
     Ok(())
 }
 
-async fn write_json(
+async fn write_metadata(
     stream: &dyn ByteStream,
-    value: &impl Serialize,
+    value: &(impl Serialize + ProxyEncode),
     cancellation: &CancellationToken,
 ) -> Result<(), ProxyServerError> {
-    let payload = serde_json::to_vec(value).map_err(|_| ProxyServerError::OperationFailed)?;
+    let payload = crate::proxy_wire::encode(value.schema(), value)
+        .map_err(|_| ProxyServerError::OperationFailed)?;
     let length = u32::try_from(payload.len()).map_err(|_| ProxyServerError::OperationFailed)?;
     let mut frame = Vec::with_capacity(4 + payload.len());
     frame.extend_from_slice(&length.to_be_bytes());
@@ -673,13 +785,14 @@ async fn read_body(
     reader: &mut ProxyReader<'_>,
     config: &Config,
     cancellation: &CancellationToken,
-) -> Result<Vec<u8>, ProxyServerError> {
+) -> Result<(Vec<u8>, Vec<HeaderOutput>), ProxyServerError> {
     let mut body = Vec::new();
     loop {
         let mut header = reader.exact(4, cancellation).await?;
         let length = header.get_u32() as usize;
         if length == 0 {
-            return Ok(body);
+            let end: BodyEnd = read_metadata(reader, config.max_json, cancellation).await?;
+            return Ok((body, end.trailers));
         }
         if length > config.max_chunk || body.len().saturating_add(length) > config.max_body {
             return Err(ProxyServerError::OperationFailed);
@@ -706,12 +819,22 @@ async fn serve_http(
     cancellation: CancellationToken,
 ) -> Result<(), ProxyServerError> {
     let started = Instant::now();
-    tokio::time::timeout_at(
-        started + inner.config.max_timeout,
-        serve_http_request(inner, stream, cancellation, started),
-    )
-    .await
-    .map_err(|_| ProxyServerError::OperationFailed)?
+    let (deadline, mut updates) = watch::channel(started + inner.config.max_timeout);
+    let request = serve_http_request(inner, stream, cancellation.clone(), started, &deadline);
+    tokio::pin!(request);
+    loop {
+        let current = *updates.borrow_and_update();
+        if Instant::now() >= current {
+            return Err(ProxyServerError::OperationFailed);
+        }
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
+            result = &mut request => return result,
+            _ = updates.changed() => {},
+            _ = tokio::time::sleep_until(current) => return Err(ProxyServerError::OperationFailed),
+        }
+    }
 }
 
 async fn serve_http_request(
@@ -719,10 +842,11 @@ async fn serve_http_request(
     stream: &dyn ByteStream,
     cancellation: CancellationToken,
     started: Instant,
+    deadline_updates: &watch::Sender<Instant>,
 ) -> Result<(), ProxyServerError> {
     let mut reader = ProxyReader::new(stream);
     let meta: HttpRequestMeta =
-        match read_json(&mut reader, inner.config.max_json, &cancellation).await {
+        match read_metadata(&mut reader, inner.config.max_json, &cancellation).await {
             Ok(meta) => meta,
             Err(_) => {
                 write_http_error(stream, "unknown", "invalid_request_meta", &cancellation).await;
@@ -730,16 +854,15 @@ async fn serve_http_request(
             }
         };
     let request_id = meta.request_id.trim();
-    let method = meta.method.trim().to_ascii_uppercase();
     let Some(path) = normalize_path(&meta.path) else {
         write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
         return Ok(());
     };
-    let Ok(method) = Method::from_bytes(method.as_bytes()) else {
+    let Ok(method) = Method::from_bytes(meta.method.as_bytes()) else {
         write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
         return Ok(());
     };
-    if meta.v != WIRE_VERSION || request_id.is_empty() {
+    if meta.v != WIRE_VERSION || request_id.is_empty() || method == Method::CONNECT {
         write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
         return Ok(());
     }
@@ -764,149 +887,341 @@ async fn serve_http_request(
         Duration::from_millis(meta.timeout_ms).min(inner.config.max_timeout)
     };
     let deadline = started + timeout;
-    tokio::time::timeout_at(deadline, async {
-        let body = match read_body(&mut reader, &inner.config, &cancellation).await {
+    deadline_updates.send_replace(deadline);
+    if Instant::now() >= deadline {
+        return Err(ProxyServerError::OperationFailed);
+    }
+    {
+        let facts = match validate_structured_headers(&meta.headers) {
+            Ok(facts) => facts,
+            Err(_) => {
+                write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
+                return Ok(());
+            }
+        };
+        // The structured body is already delimited. Transfer codings belong
+        // to the prior ingress parser and cannot be interpreted a second time
+        // by this native HTTP adapter.
+        if facts.transfer_encoding {
+            write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
+            return Ok(());
+        }
+        let Ok(_http_permit) = inner.http_permits.clone().try_acquire_owned() else {
+            write_http_error(stream, request_id, "resource_exhausted", &cancellation).await;
+            return Ok(());
+        };
+        let event_requested = meta.headers.iter().any(|field| {
+            field.name.eq_ignore_ascii_case("accept")
+                && field.value.split(',').any(accepts_event_stream)
+        });
+        let mut event_permit = if event_requested {
+            match inner.event_permits.clone().try_acquire_owned() {
+                Ok(permit) => Some(permit),
+                Err(_) => {
+                    write_http_error(stream, request_id, "resource_exhausted", &cancellation).await;
+                    return Ok(());
+                }
+            }
+        } else {
+            None
+        };
+        let (body, input_trailers) = match read_body(&mut reader, &inner.config, &cancellation)
+            .await
+        {
             Ok(body) => body,
             Err(_) => {
                 write_http_error(stream, request_id, "request_body_invalid", &cancellation).await;
                 return Ok(());
             }
         };
-        let target = inner
-            .config
-            .upstream
-            .join(&path)
-            .map_err(|_| ProxyServerError::OperationFailed)?;
-        let uri = if target.query().is_some() {
-            format!("{}?{}", target.path(), target.query().unwrap_or_default())
-        } else {
-            target.path().to_owned()
-        };
-        let uri: Uri = uri.parse().map_err(|_| ProxyServerError::OperationFailed)?;
-        let mut request = Request::builder()
-            .method(method)
-            .uri(uri)
-            .body(Full::new(Bytes::from(body.clone())))
-            .map_err(|_| ProxyServerError::OperationFailed)?;
-        let connect_host = target
-            .host_str()
-            .ok_or(ProxyServerError::OperationFailed)?
-            .to_owned();
-        let port = target
-            .port_or_known_default()
-            .ok_or(ProxyServerError::OperationFailed)?;
-        let authority = target[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
-        request.headers_mut().insert(
-            header::HOST,
-            authority
-                .parse()
-                .map_err(|_| ProxyServerError::OperationFailed)?,
-        );
-        let request_headers = filter_request_headers(&meta.headers, &inner.config);
-        if let Some(origin) = &external_origin {
-            let expected = origin.origin().ascii_serialization();
-            if request_headers.iter().any(|header| {
-                header.name == "origin"
-                    && validate_external_origin(&header.value)
-                        .is_none_or(|value| value.origin().ascii_serialization() != expected)
-            }) {
-                write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
+        if facts
+            .content_length
+            .is_some_and(|length| length != body.len() as u64)
+        {
+            write_http_error(stream, request_id, "request_body_invalid", &cancellation).await;
+            return Ok(());
+        }
+        let trailers = match request_trailers(input_trailers, &inner.config, &facts) {
+            Ok(trailers) => trailers,
+            Err(_) => {
+                write_http_error(stream, request_id, "request_body_invalid", &cancellation).await;
                 return Ok(());
             }
+        };
+        if !reader.buffered.is_empty() {
+            write_http_error(stream, request_id, "request_body_invalid", &cancellation).await;
+            return Ok(());
         }
-        for header in request_headers {
-            let name = header::HeaderName::from_bytes(header.name.as_bytes())
+        let work = async {
+            let is_head = method == Method::HEAD;
+            // Authority is fixed by configuration; submit the validated origin-form
+            // target directly so URL resolution cannot rewrite an authorized route.
+            let target = &inner.config.upstream;
+            let uri: Uri = path
+                .parse()
                 .map_err(|_| ProxyServerError::OperationFailed)?;
-            let value = header::HeaderValue::from_str(&header.value)
+            let mut request = Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(ProxyRequestBody {
+                    data: Some(Bytes::from(body)),
+                    trailers,
+                })
                 .map_err(|_| ProxyServerError::OperationFailed)?;
-            request.headers_mut().append(name, value);
-        }
-        if let Some(origin) = external_origin {
+            if let Some(trailers) = &request.body().trailers {
+                let names = trailers
+                    .keys()
+                    .map(|name| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let value = header::HeaderValue::from_str(&names)
+                    .map_err(|_| ProxyServerError::OperationFailed)?;
+                request.headers_mut().insert(header::TRAILER, value);
+            }
+            let authority = target[url::Position::BeforeHost..url::Position::AfterPort].to_owned();
             request.headers_mut().insert(
-                "x-forwarded-proto",
-                origin
-                    .scheme()
+                header::HOST,
+                authority
                     .parse()
                     .map_err(|_| ProxyServerError::OperationFailed)?,
             );
-        }
-        let (response, connection_task) =
-            match send_http_request(inner, request, connect_host, port, deadline, &cancellation)
-                .await
-            {
-                Ok(response) => response,
-                Err(HttpRequestFailure::Closed) => return Err(ProxyServerError::Closed),
-                Err(HttpRequestFailure::Timeout) => {
-                    write_http_error(stream, request_id, "timeout", &cancellation).await;
-                    return Ok(());
-                }
-                Err(HttpRequestFailure::Dial) => {
-                    write_http_error(stream, request_id, "upstream_dial_failed", &cancellation)
+            let request_headers = filter_request_headers(&meta.headers, &inner.config, &facts);
+            if let Some(origin) = &external_origin {
+                let expected = origin.origin().ascii_serialization();
+                if request_headers.iter().any(|header| {
+                    header.name == "origin"
+                        && validate_external_origin(&header.value)
+                            .is_none_or(|value| value.origin().ascii_serialization() != expected)
+                }) {
+                    write_http_error(stream, request_id, "invalid_request_meta", &cancellation)
                         .await;
                     return Ok(());
                 }
-                Err(HttpRequestFailure::Request) => {
+            }
+            for header in request_headers {
+                let name = header::HeaderName::from_bytes(header.name.as_bytes())
+                    .map_err(|_| ProxyServerError::OperationFailed)?;
+                let value = header::HeaderValue::from_bytes(&header_value_bytes(&header.value)?)
+                    .map_err(|_| ProxyServerError::OperationFailed)?;
+                request.headers_mut().append(name, value);
+            }
+            if let Some(origin) = external_origin {
+                request.headers_mut().insert(
+                    "x-forwarded-proto",
+                    origin
+                        .scheme()
+                        .parse()
+                        .map_err(|_| ProxyServerError::OperationFailed)?,
+                );
+            }
+            let (response, connection_task) =
+                match send_http_request(inner, request, deadline, &cancellation).await {
+                    Ok(response) => response,
+                    Err(HttpRequestFailure::Closed) => return Err(ProxyServerError::Closed),
+                    Err(HttpRequestFailure::Timeout) => {
+                        write_http_error(stream, request_id, "timeout", &cancellation).await;
+                        return Ok(());
+                    }
+                    Err(HttpRequestFailure::Dial) => {
+                        write_http_error(stream, request_id, "upstream_dial_failed", &cancellation)
+                            .await;
+                        return Ok(());
+                    }
+                    Err(HttpRequestFailure::Request) => {
+                        write_http_error(
+                            stream,
+                            request_id,
+                            "upstream_request_failed",
+                            &cancellation,
+                        )
+                        .await;
+                        return Ok(());
+                    }
+                };
+            let (parts, mut body) = response.into_parts();
+            let response_facts = match validate_native_headers(&parts.headers) {
+                Ok(facts) if !parts.status.is_informational() => facts,
+                _ => {
+                    connection_task.abort();
                     write_http_error(stream, request_id, "upstream_request_failed", &cancellation)
                         .await;
                     return Ok(());
                 }
             };
-        let (parts, mut body) = response.into_parts();
-        if parts
-            .headers
-            .get(header::CONTENT_LENGTH)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.parse::<u64>().ok())
-            .is_some_and(|length| length > inner.config.max_body as u64)
-        {
-            connection_task.abort();
-            write_http_error(stream, request_id, "response_body_too_large", &cancellation).await;
-            return Ok(());
-        }
-        let status = parts.status.as_u16();
-        let headers = filter_response_headers(&parts.headers, &inner.config);
-        let result = async {
-            write_json(
-                stream,
-                &HttpResponseMeta {
-                    v: WIRE_VERSION,
-                    request_id,
-                    ok: true,
-                    status: Some(status),
-                    headers,
-                    error: None,
-                },
-                &cancellation,
-            )
-            .await?;
-            let mut total = 0usize;
-            while let Some(frame) = tokio::select! {
-                _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
-                frame = tokio::time::timeout_at(deadline, body.frame()) => frame
-                    .map_err(|_| ProxyServerError::OperationFailed)?,
-            } {
-                let frame = frame.map_err(|_| ProxyServerError::OperationFailed)?;
-                let Some(chunk) = frame.data_ref() else {
-                    continue;
+            let no_body = is_head || matches!(parts.status.as_u16(), 204 | 205 | 304);
+            let persistent = event_requested
+                && !no_body
+                && parts
+                    .headers
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(is_event_stream);
+            if persistent {
+                renew_event_deadline(deadline_updates, inner.config.event_idle_timeout)?;
+            } else {
+                drop(event_permit.take());
+            }
+            if !is_head
+                && matches!(parts.status.as_u16(), 204 | 205)
+                && response_facts
+                    .content_length
+                    .is_some_and(|length| length != 0)
+            {
+                connection_task.abort();
+                write_http_error(stream, request_id, "upstream_request_failed", &cancellation)
+                    .await;
+                return Ok(());
+            }
+            if !no_body
+                && !persistent
+                && response_facts
+                    .content_length
+                    .is_some_and(|length| length > inner.config.max_body as u64)
+            {
+                connection_task.abort();
+                write_http_error(stream, request_id, "response_body_too_large", &cancellation)
+                    .await;
+                return Ok(());
+            }
+            let status = parts.status.as_u16();
+            // Coded bytes must never outlive their representation label. A hop
+            // nomination or local filter cannot turn them into identity content.
+            if parts.headers.contains_key(header::CONTENT_ENCODING)
+                && (response_facts.connection.contains("content-encoding")
+                    || inner
+                        .config
+                        .blocked_response_headers
+                        .contains("content-encoding"))
+            {
+                connection_task.abort();
+                write_http_error(stream, request_id, "upstream_request_failed", &cancellation)
+                    .await;
+                return Ok(());
+            }
+            let headers = filter_response_headers(&parts.headers, &inner.config, &response_facts);
+            let result = async {
+                write_metadata(
+                    stream,
+                    &HttpResponseMeta {
+                        v: WIRE_VERSION,
+                        request_id,
+                        ok: true,
+                        status: Some(status),
+                        headers,
+                        error: None,
+                    },
+                    &cancellation,
+                )
+                .await?;
+                let mut total = 0usize;
+                let mut remaining = if no_body {
+                    None
+                } else {
+                    response_facts.content_length
                 };
-                total = total
-                    .checked_add(chunk.len())
-                    .ok_or(ProxyServerError::OperationFailed)?;
-                if total > inner.config.max_body {
+                let mut terminal_fields = Vec::new();
+                while let Some(frame) = tokio::select! {
+                    _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
+                    frame = body.frame() => frame,
+                } {
+                    let frame = frame.map_err(|_| ProxyServerError::OperationFailed)?;
+                    let Some(chunk) = frame.data_ref() else {
+                        if let Some(trailers) = frame.trailers_ref() {
+                            // Preserve the native terminal as a separate bounded map.
+                            validate_native_trailers(trailers, &response_facts)?;
+                            terminal_fields.extend(filter_response_headers(
+                                trailers,
+                                &inner.config,
+                                &response_facts,
+                            ));
+                        }
+                        continue;
+                    };
+                    if no_body && !chunk.is_empty() {
+                        return Err(ProxyServerError::OperationFailed);
+                    }
+                    if let Some(left) = &mut remaining {
+                        *left = left
+                            .checked_sub(chunk.len() as u64)
+                            .ok_or(ProxyServerError::OperationFailed)?;
+                    }
+                    if !persistent {
+                        total = total
+                            .checked_add(chunk.len())
+                            .ok_or(ProxyServerError::OperationFailed)?;
+                        if total > inner.config.max_body {
+                            return Err(ProxyServerError::OperationFailed);
+                        }
+                    } else if !chunk.is_empty() {
+                        renew_event_deadline(deadline_updates, inner.config.event_idle_timeout)?;
+                    }
+                    for payload in chunk.chunks(inner.config.max_chunk) {
+                        if Instant::now() >= *deadline_updates.borrow() {
+                            return Err(ProxyServerError::OperationFailed);
+                        }
+                        write_chunk(stream, payload, &cancellation).await?;
+                        if persistent {
+                            renew_event_deadline(
+                                deadline_updates,
+                                inner.config.event_idle_timeout,
+                            )?;
+                        }
+                    }
+                }
+                if remaining.is_some_and(|left| left != 0) {
                     return Err(ProxyServerError::OperationFailed);
                 }
-                for payload in chunk.chunks(inner.config.max_chunk) {
-                    write_chunk(stream, payload, &cancellation).await?;
-                }
+                write_body_end(stream, terminal_fields, &cancellation).await
             }
-            write_all(stream, Bytes::from_static(&[0, 0, 0, 0]), &cancellation).await
+            .await;
+            connection_task.abort();
+            result
+        };
+        tokio::pin!(work);
+        // A write FIN is valid after the terminal. A reset or additional bytes
+        // cancel the original upstream even if an event response is idle.
+        tokio::select! {
+            biased;
+            result = &mut work => result,
+            next = stream.read() => match next {
+                Ok(None) => work.await,
+                _ => Err(ProxyServerError::OperationFailed),
+            },
         }
-        .await;
-        connection_task.abort();
-        result
-    })
-    .await
-    .map_err(|_| ProxyServerError::OperationFailed)?
+    }
+}
+
+fn renew_event_deadline(
+    deadline: &watch::Sender<Instant>,
+    idle: Duration,
+) -> Result<(), ProxyServerError> {
+    let now = Instant::now();
+    if now >= *deadline.borrow() {
+        return Err(ProxyServerError::OperationFailed);
+    }
+    deadline.send_replace(now + idle);
+    Ok(())
+}
+
+fn is_event_stream(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .is_some_and(|media| media.trim().eq_ignore_ascii_case("text/event-stream"))
+}
+fn accepts_event_stream(value: &str) -> bool {
+    is_event_stream(value)
+        && !value.split(';').skip(1).any(|parameter| {
+            parameter
+                .trim()
+                .split_once('=')
+                .is_some_and(|(name, value)| {
+                    name.trim().eq_ignore_ascii_case("q")
+                        && value.trim().parse::<f32>().map_or(true, |value| {
+                            !value.is_finite() || value <= 0.0 || value > 1.0
+                        })
+                })
+        })
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -918,8 +1233,8 @@ enum HttpRequestFailure {
 }
 
 enum HttpIo {
-    Plain(TcpStream),
-    Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+    Plain(ProxySocket),
+    Tls(Box<tokio_rustls::client::TlsStream<ProxySocket>>),
 }
 
 impl AsyncRead for HttpIo {
@@ -968,11 +1283,48 @@ impl AsyncWrite for HttpIo {
     }
 }
 
+// The native HTTP encoder receives data and trailers as distinct frames. A
+// trailer-bearing body has no exact size hint, so HTTP/1 generates chunked
+// framing even for an empty body; input Content-Length is only an assertion.
+struct ProxyRequestBody {
+    data: Option<Bytes>,
+    trailers: Option<HeaderMap>,
+}
+
+impl Body for ProxyRequestBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        if let Some(data) = self.data.take().filter(|data| !data.is_empty()) {
+            return Poll::Ready(Some(Ok(Frame::data(data))));
+        }
+        Poll::Ready(
+            self.trailers
+                .take()
+                .map(|trailers| Ok(Frame::trailers(trailers))),
+        )
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.data.as_ref().is_none_or(Bytes::is_empty) && self.trailers.is_none()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        if self.trailers.is_some() {
+            SizeHint::default()
+        } else {
+            SizeHint::with_exact(self.data.as_ref().map_or(0, |data| data.len() as u64))
+        }
+    }
+}
+
 async fn send_http_request(
     inner: &Inner,
-    request: Request<Full<Bytes>>,
-    host: String,
-    port: u16,
+    request: Request<ProxyRequestBody>,
     deadline: Instant,
     cancellation: &CancellationToken,
 ) -> Result<
@@ -982,16 +1334,19 @@ async fn send_http_request(
     ),
     HttpRequestFailure,
 > {
-    let tcp = tokio::select! {
-        _ = cancellation.cancelled() => return Err(HttpRequestFailure::Closed),
-        result = tokio::time::timeout_at(deadline, TcpStream::connect((host.as_str(), port))) => match result {
-            Err(_) => return Err(HttpRequestFailure::Timeout),
-            Ok(Err(_)) => return Err(HttpRequestFailure::Dial),
-            Ok(Ok(tcp)) => tcp,
-        },
-    };
+    let tcp = inner
+        .config
+        .network
+        .connect(deadline, cancellation)
+        .await
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::Interrupted => HttpRequestFailure::Closed,
+            std::io::ErrorKind::TimedOut => HttpRequestFailure::Timeout,
+            _ => HttpRequestFailure::Dial,
+        })?;
     let io = if inner.config.upstream.scheme() == "https" {
-        let server_name = ServerName::try_from(host).map_err(|_| HttpRequestFailure::Dial)?;
+        let server_name = ServerName::try_from(inner.config.network.host.clone())
+            .map_err(|_| HttpRequestFailure::Dial)?;
         let tls = TlsConnector::from(
             websocket_transport::client_tls(inner.config.upstream_trust_roots_der.clone())
                 .map_err(|_| HttpRequestFailure::Dial)?,
@@ -1050,7 +1405,7 @@ async fn write_http_error(
     } else {
         request_id.trim()
     };
-    let _ = write_json(
+    let _ = write_metadata(
         stream,
         &HttpResponseMeta {
             v: WIRE_VERSION,
@@ -1066,7 +1421,7 @@ async fn write_http_error(
         cancellation,
     )
     .await;
-    let _ = write_all(stream, Bytes::from_static(&[0, 0, 0, 0]), cancellation).await;
+    let _ = write_body_end(stream, Vec::new(), cancellation).await;
 }
 
 async fn serve_websocket(
@@ -1090,7 +1445,7 @@ async fn serve_websocket_with_establishment_timeout(
     establishment_timeout: Duration,
 ) -> Result<(), ProxyServerError> {
     let mut reader = ProxyReader::new(stream);
-    let open: WebSocketOpen = match read_json(&mut reader, inner.config.max_json, &cancellation)
+    let open: WebSocketOpen = match read_metadata(&mut reader, inner.config.max_json, &cancellation)
         .await
     {
         Ok(open) => open,
@@ -1108,6 +1463,18 @@ async fn serve_websocket_with_establishment_timeout(
         write_websocket_error(stream, conn_id, "invalid_ws_open_meta", &cancellation).await;
         return Ok(());
     }
+    let facts = match validate_structured_headers(&open.headers) {
+        Ok(facts)
+            if facts.content_length.is_none_or(|length| length == 0)
+                && !facts.transfer_encoding =>
+        {
+            facts
+        }
+        _ => {
+            write_websocket_error(stream, conn_id, "invalid_ws_open_meta", &cancellation).await;
+            return Ok(());
+        }
+    };
     let mut target = inner.config.upstream.clone();
     target
         .set_scheme(if target.scheme() == "https" {
@@ -1116,21 +1483,16 @@ async fn serve_websocket_with_establishment_timeout(
             "ws"
         })
         .map_err(|_| ProxyServerError::OperationFailed)?;
-    let target = target
-        .join(&path)
-        .map_err(|_| ProxyServerError::OperationFailed)?;
-    let mut request = target
-        .as_str()
+    let request_target = format!("{}{}", &target[..url::Position::BeforePath], path);
+    let mut request = request_target
         .into_client_request()
         .map_err(|_| ProxyServerError::OperationFailed)?;
-    for header in filter_websocket_headers(&open.headers, &inner.config) {
+    for header in filter_websocket_headers(&open.headers, &inner.config, &facts) {
         let name: tungstenite::http::HeaderName = header
             .name
             .parse()
             .map_err(|_| ProxyServerError::OperationFailed)?;
-        let value: tungstenite::http::HeaderValue = header
-            .value
-            .parse()
+        let value = tungstenite::http::HeaderValue::from_bytes(&header_value_bytes(&header.value)?)
             .map_err(|_| ProxyServerError::OperationFailed)?;
         request.headers_mut().append(name, value);
     }
@@ -1145,24 +1507,20 @@ async fn serve_websocket_with_establishment_timeout(
     let websocket_config = tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(inner.config.max_websocket_frame))
         .max_frame_size(Some(inner.config.max_websocket_frame));
-    let host = target
-        .host_str()
-        .ok_or(ProxyServerError::OperationFailed)?
-        .to_owned();
-    let port = target
-        .port_or_known_default()
-        .ok_or(ProxyServerError::OperationFailed)?;
     let establishment_deadline = Instant::now() + establishment_timeout;
     let tcp = await_websocket_establishment(
         establishment_deadline,
         &cancellation,
-        TcpStream::connect((host.as_str(), port)),
+        inner
+            .config
+            .network
+            .connect(establishment_deadline, &cancellation),
     )
     .await?
     .map_err(|_| ProxyServerError::OperationFailed)?;
     if target.scheme() == "wss" {
-        let server_name =
-            ServerName::try_from(host).map_err(|_| ProxyServerError::OperationFailed)?;
+        let server_name = ServerName::try_from(inner.config.network.host.clone())
+            .map_err(|_| ProxyServerError::OperationFailed)?;
         let tls = TlsConnector::from(
             websocket_transport::client_tls(inner.config.upstream_trust_roots_der.clone())
                 .map_err(|_| ProxyServerError::OperationFailed)?,
@@ -1245,7 +1603,7 @@ where
         .and_then(|value| value.to_str().ok())
         .unwrap_or("")
         .to_owned();
-    write_json(
+    write_metadata(
         stream,
         &WebSocketResponse {
             v: WIRE_VERSION,
@@ -1334,7 +1692,7 @@ async fn write_websocket_error(
     } else {
         conn_id.trim()
     };
-    let _ = write_json(
+    let _ = write_metadata(
         stream,
         &WebSocketResponse {
             v: WIRE_VERSION,
@@ -1410,62 +1768,34 @@ fn decode_websocket_close(
     Ok(Some(tungstenite::protocol::CloseFrame { code, reason }))
 }
 
+// This is an origin-form transport boundary, not a subtree routing policy.
+// Preserve legal encoded bytes so authorization and upstream serialization agree.
 fn normalize_path(raw: &str) -> Option<String> {
-    if raw.trim() != raw
-        || !raw.starts_with('/')
-        || raw.starts_with("//")
-        || raw.contains("://")
-        || raw.contains('#')
-        || raw.bytes().any(|byte| byte <= 0x20 || byte == 0x7f)
+    if !raw.starts_with('/')
+        || raw.contains(['\\', '#'])
+        || raw.bytes().any(|byte| byte <= 0x20 || byte >= 0x7f)
     {
         return None;
     }
-    let (raw_path, raw_query) = raw
-        .split_once('?')
-        .map_or((raw, None), |(path, query)| (path, Some(query)));
-    let path = normalize_percent_escapes(raw_path, true)?.replace('\\', "/");
-    if path.starts_with("//") {
-        return None;
-    }
-    let path = clean_proxy_path(&path);
-    let query = match raw_query {
-        Some(query) => Some(normalize_percent_escapes(query, false)?),
-        None => None,
-    };
-    let mut canonical = path;
-    if let Some(query) = query {
-        canonical.push('?');
-        canonical.push_str(&query);
-    }
-    Some(canonical)
-}
-
-fn normalize_percent_escapes(raw: &str, reject_encoded_separators: bool) -> Option<String> {
     let bytes = raw.as_bytes();
-    let mut normalized = Vec::with_capacity(bytes.len());
     let mut offset = 0;
     while offset < bytes.len() {
-        if bytes[offset] != b'%' {
-            normalized.push(bytes[offset]);
-            offset += 1;
-            continue;
-        }
-        let high = decode_hex(*bytes.get(offset + 1)?)?;
-        let low = decode_hex(*bytes.get(offset + 2)?)?;
-        let value = high << 4 | low;
-        if reject_encoded_separators && matches!(value, b'/' | b'\\') {
-            return None;
-        }
-        if value.is_ascii_alphanumeric() || matches!(value, b'-' | b'.' | b'_' | b'~') {
-            normalized.push(value);
+        if bytes[offset] == b'%' {
+            decode_hex(*bytes.get(offset + 1)?)?;
+            decode_hex(*bytes.get(offset + 2)?)?;
+            offset += 3;
         } else {
-            normalized.push(b'%');
-            normalized.push(HEX[(value >> 4) as usize]);
-            normalized.push(HEX[(value & 0x0f) as usize]);
+            offset += 1;
         }
-        offset += 3;
     }
-    String::from_utf8(normalized).ok()
+    let parsed: Uri = raw.parse().ok()?;
+    if parsed.scheme().is_some()
+        || parsed.authority().is_some()
+        || parsed.path_and_query()?.as_str() != raw
+    {
+        return None;
+    }
+    Some(raw.to_owned())
 }
 
 fn decode_hex(value: u8) -> Option<u8> {
@@ -1475,28 +1805,6 @@ fn decode_hex(value: u8) -> Option<u8> {
         b'A'..=b'F' => Some(value - b'A' + 10),
         _ => None,
     }
-}
-
-const HEX: &[u8; 16] = b"0123456789ABCDEF";
-
-fn clean_proxy_path(path: &str) -> String {
-    let keep_trailing_slash = path.ends_with('/') || path.ends_with("/.") || path.ends_with("/..");
-    let mut segments = Vec::new();
-    for segment in path.split('/') {
-        match segment {
-            "" | "." => {}
-            ".." => {
-                segments.pop();
-            }
-            _ => segments.push(segment),
-        }
-    }
-    let mut canonical = String::from("/");
-    canonical.push_str(&segments.join("/"));
-    if keep_trailing_slash && canonical != "/" {
-        canonical.push('/');
-    }
-    canonical
 }
 
 fn validate_external_origin(raw: &str) -> Option<Url> {
@@ -1511,12 +1819,202 @@ fn validate_external_origin(raw: &str) -> Option<Url> {
     .then_some(parsed)
 }
 
-fn filter_request_headers(headers: &[Header], config: &Config) -> Vec<HeaderOutput> {
+// The current string boundary uses an exact Latin-1/ByteString projection.
+// Native field bytes are never interpreted as UTF-8, normalized or discarded.
+fn header_value_bytes(value: &str) -> Result<Vec<u8>, ProxyServerError> {
+    value
+        .chars()
+        .map(|character| {
+            u8::try_from(character as u32)
+                .ok()
+                .filter(|byte| valid_field_octet(*byte))
+                .ok_or(ProxyServerError::OperationFailed)
+        })
+        .collect()
+}
+
+fn valid_field_octet(byte: u8) -> bool {
+    byte == b'\t' || (byte >= b' ' && byte != 0x7f)
+}
+
+fn trim_field_ows(value: &[u8]) -> &[u8] {
+    value.trim_ascii_start().trim_ascii_end()
+}
+
+#[derive(Default)]
+struct HeaderFacts {
+    content_length: Option<u64>,
+    transfer_encoding: bool,
+    connection: HashSet<String>,
+    singletons: HashMap<&'static str, Vec<u8>>,
+}
+
+impl HeaderFacts {
+    fn observe(&mut self, name: &str, value: &[u8]) -> Result<(), ProxyServerError> {
+        if !valid_header_name(name) || !value.iter().copied().all(valid_field_octet) {
+            return Err(ProxyServerError::OperationFailed);
+        }
+        let name = name.to_ascii_lowercase();
+        match name.as_str() {
+            "content-length" => {
+                for item in value.split(|byte| *byte == b',') {
+                    let item = trim_field_ows(item);
+                    if item.is_empty() || !item.iter().all(u8::is_ascii_digit) {
+                        return Err(ProxyServerError::OperationFailed);
+                    }
+                    let length = item
+                        .iter()
+                        .try_fold(0u64, |length, digit| {
+                            length.checked_mul(10)?.checked_add(u64::from(digit - b'0'))
+                        })
+                        .ok_or(ProxyServerError::OperationFailed)?;
+                    if self
+                        .content_length
+                        .is_some_and(|previous| previous != length)
+                    {
+                        return Err(ProxyServerError::OperationFailed);
+                    }
+                    self.content_length = Some(length);
+                }
+            }
+            "transfer-encoding" => {
+                // Only the transfer coding actually removed by this HTTP/1
+                // adapter can describe its content-coded representation.
+                if self.transfer_encoding || !trim_field_ows(value).eq_ignore_ascii_case(b"chunked")
+                {
+                    return Err(ProxyServerError::OperationFailed);
+                }
+                self.transfer_encoding = true;
+            }
+            "connection" => {
+                for item in value.split(|byte| *byte == b',') {
+                    let item = std::str::from_utf8(trim_field_ows(item))
+                        .map_err(|_| ProxyServerError::OperationFailed)?;
+                    if !valid_header_name(item) {
+                        return Err(ProxyServerError::OperationFailed);
+                    }
+                    self.connection.insert(item.to_ascii_lowercase());
+                }
+            }
+            _ => {}
+        }
+        const SINGLETONS: &[&str] = &[
+            "host",
+            "origin",
+            "authorization",
+            "proxy-authorization",
+            "content-type",
+            "content-range",
+            "etag",
+            "last-modified",
+            "location",
+        ];
+        if let Some(&singleton) = SINGLETONS.iter().find(|singleton| **singleton == name) {
+            let value = trim_field_ows(value);
+            if let Some(previous) = self.singletons.get(singleton) {
+                if previous != value {
+                    return Err(ProxyServerError::OperationFailed);
+                }
+            } else {
+                self.singletons.insert(singleton, value.to_vec());
+            }
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<Self, ProxyServerError> {
+        if self.transfer_encoding && self.content_length.is_some() {
+            return Err(ProxyServerError::OperationFailed);
+        }
+        self.singletons.clear();
+        Ok(self)
+    }
+}
+
+fn validate_structured_headers(headers: &[Header]) -> Result<HeaderFacts, ProxyServerError> {
+    let mut facts = HeaderFacts::default();
+    for header in headers {
+        facts.observe(&header.name, &header_value_bytes(&header.value)?)?;
+    }
+    facts.finish()
+}
+
+fn validate_native_headers(headers: &HeaderMap) -> Result<HeaderFacts, ProxyServerError> {
+    let mut facts = HeaderFacts::default();
+    for (name, value) in headers {
+        facts.observe(name.as_str(), value.as_bytes())?;
+    }
+    facts.finish()
+}
+
+fn validate_native_trailers(
+    headers: &HeaderMap,
+    initial: &HeaderFacts,
+) -> Result<(), ProxyServerError> {
+    let facts = validate_native_headers(headers)?;
+    if !facts.connection.is_empty()
+        || headers.keys().any(|name| {
+            FORBIDDEN_HEADERS.contains(&name.as_str())
+                || matches!(
+                    name.as_str(),
+                    "content-length"
+                        | "trailer"
+                        | "content-encoding"
+                        | "content-range"
+                        | "content-type"
+                        | "cookie"
+                        | "origin"
+                        | "location"
+                        | "www-authenticate"
+                )
+        })
+        || headers
+            .keys()
+            .any(|name| initial.connection.contains(name.as_str()))
+    {
+        return Err(ProxyServerError::OperationFailed);
+    }
+    Ok(())
+}
+
+fn request_trailers(
+    fields: Vec<HeaderOutput>,
+    config: &Config,
+    original: &HeaderFacts,
+) -> Result<Option<HeaderMap>, ProxyServerError> {
+    let mut native = HeaderMap::new();
+    for field in fields {
+        let name = header::HeaderName::from_bytes(field.name.as_bytes())
+            .map_err(|_| ProxyServerError::OperationFailed)?;
+        let value = header::HeaderValue::from_bytes(&header_value_bytes(&field.value)?)
+            .map_err(|_| ProxyServerError::OperationFailed)?;
+        native.append(name, value);
+    }
+    validate_native_trailers(&native, original)?;
+    let allowed: Vec<_> = native
+        .keys()
+        .filter(|name| {
+            !REQUEST_HEADERS.contains(&name.as_str())
+                && !config.request_headers.contains(name.as_str())
+        })
+        .cloned()
+        .collect();
+    for name in allowed {
+        native.remove(name);
+    }
+    Ok((!native.is_empty()).then_some(native))
+}
+
+fn filter_request_headers(
+    headers: &[Header],
+    config: &Config,
+    facts: &HeaderFacts,
+) -> Vec<HeaderOutput> {
     let mut result = filter_headers(
         headers,
         REQUEST_HEADERS,
         &config.request_headers,
-        &HashSet::new(),
+        &facts.connection,
     );
     for header in &mut result {
         if header.name == "cookie" {
@@ -1525,36 +2023,53 @@ fn filter_request_headers(headers: &[Header], config: &Config) -> Vec<HeaderOutp
     }
     result.retain(|header| !header.value.is_empty());
     result.retain(|header| header.name != "x-forwarded-proto");
+    // The original CL remains an assertion in facts, while the native HTTP
+    // adapter chooses fresh framing from the actual admitted body.
+    result.retain(|header| header.name != "content-length");
     result
 }
 
-fn filter_response_headers(headers: &HeaderMap, config: &Config) -> Vec<HeaderOutput> {
+fn filter_response_headers(
+    headers: &HeaderMap,
+    config: &Config,
+    facts: &HeaderFacts,
+) -> Vec<HeaderOutput> {
     headers
         .iter()
         .filter_map(|(name, value)| {
             let name = name.as_str().to_ascii_lowercase();
             let allowed = RESPONSE_HEADERS.contains(&name.as_str())
                 || config.response_headers.contains(&name);
-            let value = value.to_str().ok()?;
             (allowed
                 && !FORBIDDEN_HEADERS.contains(&name.as_str())
                 && !config.blocked_response_headers.contains(&name)
-                && !value.contains(['\r', '\n']))
+                && !facts.connection.contains(&name))
             .then(|| HeaderOutput {
                 name,
-                value: value.to_owned(),
+                value: value
+                    .as_bytes()
+                    .iter()
+                    .map(|byte| char::from(*byte))
+                    .collect(),
             })
         })
         .collect()
 }
 
-fn filter_websocket_headers(headers: &[Header], config: &Config) -> Vec<HeaderOutput> {
+fn filter_websocket_headers(
+    headers: &[Header],
+    config: &Config,
+    facts: &HeaderFacts,
+) -> Vec<HeaderOutput> {
     filter_headers(
         headers,
         &["sec-websocket-protocol"],
         &config.websocket_headers,
-        &HashSet::new(),
+        &facts.connection,
     )
+    .into_iter()
+    .filter(|header| header.name != "content-length")
+    .collect()
 }
 
 fn filter_headers(
@@ -1566,13 +2081,12 @@ fn filter_headers(
     headers
         .iter()
         .filter_map(|header| {
-            let name = header.name.trim().to_ascii_lowercase();
+            let name = header.name.to_ascii_lowercase();
             let allowed = base.contains(&name.as_str()) || extra.contains(&name);
             (allowed
                 && valid_header_name(&name)
                 && !FORBIDDEN_HEADERS.contains(&name.as_str())
-                && !blocked.contains(&name)
-                && !header.value.contains(['\r', '\n']))
+                && !blocked.contains(&name))
             .then(|| HeaderOutput {
                 name,
                 value: header.value.clone(),
@@ -1584,9 +2098,9 @@ fn filter_headers(
 fn filter_cookies(raw: &str, config: &Config) -> String {
     raw.split(';')
         .filter_map(|part| {
-            let part = part.trim();
+            let part = part.trim_matches([' ', '\t']);
             let (name, _) = part.split_once('=')?;
-            let name = name.trim().to_ascii_lowercase();
+            let name = name.trim_matches([' ', '\t']).to_ascii_lowercase();
             (!config.forbidden_cookies.contains(&name)
                 && !config
                     .forbidden_cookie_prefixes
@@ -1656,11 +2170,21 @@ mod tests {
             None
         }
         async fn read(&self) -> Result<Option<Bytes>, SessionError> {
+            let wake = self.wait.notified();
+            tokio::pin!(wake);
+            wake.as_mut().enable();
+            if self.reset.load(Ordering::Acquire) {
+                return Err(SessionError::StreamReset);
+            }
             if let Some(bytes) = self.reads.lock().expect("reads lock").pop_front() {
                 return Ok(Some(bytes));
             }
-            self.wait.notified().await;
-            Ok(None)
+            wake.await;
+            if self.reset.load(Ordering::Acquire) {
+                Err(SessionError::StreamReset)
+            } else {
+                Ok(None)
+            }
         }
         async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
             self.writes
@@ -1674,6 +2198,7 @@ mod tests {
         }
         async fn reset(&self) -> Result<(), SessionError> {
             self.reset.store(true, Ordering::SeqCst);
+            self.wait.notify_waiters();
             Ok(())
         }
         async fn close(&self) -> Result<(), SessionError> {
@@ -1682,17 +2207,43 @@ mod tests {
         }
     }
 
-    fn frame_json(value: serde_json::Value) -> Vec<u8> {
-        let payload = serde_json::to_vec(&value).expect("serialize frame");
+    fn frame_metadata(mut value: serde_json::Value) -> Vec<u8> {
+        let schema = if value.get("trailers").is_some() {
+            "ProxyBodyEnd"
+        } else if value.get("conn_id").is_some() {
+            "ProxyWebSocketOpen"
+        } else {
+            "ProxyHTTPRequest"
+        };
+        let unknown = value
+            .as_object_mut()
+            .unwrap()
+            .remove("unexpected")
+            .is_some();
+        let mut payload = crate::proxy_wire::encode(schema, &value).expect("encode metadata");
+        if unknown {
+            payload[0] += 1;
+            payload.extend_from_slice(&[23, 0]);
+        }
         let mut framed = Vec::new();
         framed.extend_from_slice(&(payload.len() as u32).to_be_bytes());
         framed.extend_from_slice(&payload);
         framed
     }
 
+    fn body_end_frame() -> Vec<u8> {
+        let mut bytes = vec![0, 0, 0, 0];
+        bytes.extend_from_slice(&frame_metadata(serde_json::json!({"v":2,"trailers":[]})));
+        bytes
+    }
+
     fn response_meta(output: &[u8]) -> serde_json::Value {
         let length = u32::from_be_bytes(output[..4].try_into().expect("response length")) as usize;
-        serde_json::from_slice(&output[4..4 + length]).expect("response metadata")
+        crate::proxy_wire::decode_value("ProxyHTTPResponse", &output[4..4 + length])
+            .or_else(|_| {
+                crate::proxy_wire::decode_value("ProxyWebSocketResponse", &output[4..4 + length])
+            })
+            .expect("response metadata")
     }
 
     #[derive(Debug)]
@@ -1715,8 +2266,12 @@ mod tests {
             upstream_origin: "http://127.0.0.1:8080".parse().expect("origin"),
             upstream_trust_roots_der: Vec::new(),
             allowed_upstream_hosts: vec!["127.0.0.1".into()],
+            allowed_upstream_addresses: Vec::new(),
             allowed_origins: vec!["https://app.example".parse().expect("allowed origin")],
             max_concurrent_streams: 2,
+            max_concurrent_http_streams: 0,
+            max_concurrent_event_streams: 0,
+            event_stream_idle_timeout: Duration::ZERO,
             max_json_frame_bytes: 4096,
             max_chunk_bytes: 1024,
             max_body_bytes: 4096,
@@ -1743,8 +2298,8 @@ mod tests {
             let input = if stage == "metadata" {
                 Vec::new()
             } else {
-                frame_json(serde_json::json!({
-                    "v": 1, "request_id": "stalled", "method": stage,
+                frame_metadata(serde_json::json!({
+                    "v": 2, "request_id": "stalled", "method": stage,
                     "path": "/", "headers": [], "timeout_ms": 20
                 }))
             };
@@ -1760,39 +2315,390 @@ mod tests {
         }
     }
 
+    fn event_request() -> Vec<u8> {
+        let mut input = frame_metadata(serde_json::json!({
+            "v":2, "request_id":"events", "method":"GET", "path":"/events",
+            "headers":[{"name":"accept","value":"text/event-stream"}]
+        }));
+        input.extend_from_slice(&body_end_frame());
+        input
+    }
+
+    #[tokio::test]
+    async fn event_reset_cancels_native_work_without_waiting_for_idle_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (ready, waiting) = tokio::sync::oneshot::channel();
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let n = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(n, 0);
+                request.extend_from_slice(&buffer[..n]);
+            }
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n").await.unwrap();
+            ready.send(()).unwrap();
+            match socket.read(&mut buffer).await {
+                Ok(0) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+                result => panic!("native socket survived reset: {result:?}"),
+            }
+        });
+        let server =
+            ProxyServer::new(test_options(format!("http://{address}").parse().unwrap())).unwrap();
+        let stream = Arc::new(TestStream::new(event_request()));
+        let worker = stream.clone();
+        let inner = server.inner.clone();
+        let running =
+            tokio::spawn(
+                async move { serve_http(&inner, &worker, CancellationToken::new()).await },
+            );
+        waiting.await.unwrap();
+        stream.reset().await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), running)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        tokio::time::timeout(Duration::from_secs(1), upstream)
+            .await
+            .unwrap()
+            .unwrap();
+        server.close().await;
+    }
+
+    #[tokio::test]
+    async fn http_rejects_buffered_data_after_original_body_terminal_before_dial() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server =
+            ProxyServer::new(test_options(format!("http://{address}").parse().unwrap())).unwrap();
+        let mut input = event_request();
+        input.push(1);
+        let stream = Arc::new(TestStream::new(input));
+        serve_http(&server.inner, &stream, CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(
+            response_meta(&stream.output())["error"]["code"],
+            "request_body_invalid"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(5), listener.accept())
+                .await
+                .is_err()
+        );
+        server.close().await;
+    }
+
+    #[tokio::test]
+    async fn event_stream_outlives_finite_limits_with_original_length_integrity() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let n = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(n, 0);
+                request.extend_from_slice(&buffer[..n]);
+            }
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream; charset=utf-8\r\nContent-Length: 104\r\nConnection: close, content-length\r\n\r\n").await.unwrap();
+            for _ in 0..8 {
+                socket.write_all(b"data: alive\n\n").await.unwrap();
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        });
+        let mut options = test_options(format!("http://{address}").parse().unwrap());
+        options.max_body_bytes = 16;
+        options.default_http_request_timeout = Duration::from_millis(100);
+        options.max_http_request_timeout = Duration::from_millis(100);
+        options.event_stream_idle_timeout = Duration::from_secs(1);
+        let server = ProxyServer::new(options).unwrap();
+        let stream = Arc::new(TestStream::new(event_request()));
+        serve_http(&server.inner, &stream, CancellationToken::new())
+            .await
+            .unwrap();
+        let output = stream.output();
+        assert_eq!(response_meta(&output)["ok"], true);
+        let mut at = 4 + u32::from_be_bytes(output[..4].try_into().unwrap()) as usize;
+        let mut total = 0;
+        loop {
+            let n = u32::from_be_bytes(output[at..at + 4].try_into().unwrap()) as usize;
+            at += 4;
+            if n == 0 {
+                break;
+            }
+            total += n;
+            at += n;
+        }
+        assert_eq!(total, 104);
+        let n = u32::from_be_bytes(output[at..at + 4].try_into().unwrap()) as usize;
+        assert!(
+            crate::proxy_wire::decode_value("ProxyBodyEnd", &output[at + 4..at + 4 + n]).is_ok()
+        );
+        upstream.await.unwrap();
+        server.close().await;
+    }
+
+    #[tokio::test]
+    async fn event_capacity_preserves_finite_requests_and_idle_closes_native_socket() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (ready, waiting) = tokio::sync::oneshot::channel();
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1024];
+            while !request.ends_with(b"\r\n\r\n") {
+                let n = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(n, 0);
+                request.extend_from_slice(&buffer[..n]);
+            }
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n").await.unwrap();
+            ready.send(()).unwrap();
+            let (mut finite, _) = listener.accept().await.unwrap();
+            request.clear();
+            while !request.ends_with(b"\r\n\r\n") {
+                let n = finite.read(&mut buffer).await.unwrap();
+                assert_ne!(n, 0);
+                request.extend_from_slice(&buffer[..n]);
+            }
+            finite
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await
+                .unwrap();
+            assert_eq!(socket.read(&mut buffer).await.unwrap(), 0);
+        });
+        let mut options = test_options(format!("http://{address}").parse().unwrap());
+        options.event_stream_idle_timeout = Duration::from_millis(250);
+        options.max_concurrent_http_streams = 2;
+        options.max_concurrent_event_streams = 1;
+        let server = ProxyServer::new(options).unwrap();
+        let stream = Arc::new(TestStream::new(event_request()));
+        let inner = server.inner.clone();
+        let running_stream = stream.clone();
+        let running = tokio::spawn(async move {
+            serve_http(&inner, &running_stream, CancellationToken::new()).await
+        });
+        waiting.await.unwrap();
+        let rejected = Arc::new(TestStream::new(event_request()));
+        serve_http(&server.inner, &rejected, CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(
+            response_meta(&rejected.output())["error"]["code"],
+            "resource_exhausted"
+        );
+        let mut input = frame_metadata(
+            serde_json::json!({"v":2,"request_id":"finite","method":"GET","path":"/","headers":[]}),
+        );
+        input.extend_from_slice(&body_end_frame());
+        let finite = Arc::new(TestStream::new(input));
+        serve_http(&server.inner, &finite, CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(response_meta(&finite.output())["ok"], true);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), running)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        tokio::time::timeout(Duration::from_secs(2), upstream)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(server.inner.event_permits.available_permits(), 1);
+        assert_eq!(server.inner.http_permits.available_permits(), 2);
+        server.close().await;
+    }
+
     #[test]
     fn canonical_proxy_path_closes_policy_bypasses_before_upstream_use() {
-        for (raw, expected) in [
-            ("/safe/../admin?mode=raw", "/admin?mode=raw"),
-            ("/safe/./../admin", "/admin"),
-            ("/safe/%2e%2e/admin?mode=encoded", "/admin?mode=encoded"),
-            ("/safe\\..\\admin?mode=backslash", "/admin?mode=backslash"),
-            ("/%61dmin", "/admin"),
-            ("/safe//child?mode=double", "/safe/child?mode=double"),
-            ("/public/../api//items?q=%7euser", "/api/items?q=~user"),
-            ("/api?q=%2f%5c", "/api?q=%2F%5C"),
-            ("/api/a%20b?q=%2f", "/api/a%20b?q=%2F"),
-        ] {
-            assert_eq!(
-                normalize_path(raw).unwrap_or_else(|| panic!("rejected {raw}")),
-                expected,
-                "{raw}"
-            );
-        }
-
         for raw in [
-            "/%2fadmin",
-            "/%2Fadmin",
-            "/%5cadmin",
-            "/%5Cadmin",
-            "/safe/%2f/admin",
+            "/safe/../admin?mode=raw",
+            "/safe/./../admin",
+            "/safe/%2e%2e/admin?mode=encoded",
+            "/%61dmin",
+            "/safe//child?mode=double",
+            "/public/../api//items?q=%7euser",
+            "/api?q=%2f%5c&x=+&x=%41",
+            "/objects/a%2Fb/literal%25/a;b/%ff",
+            "/api/a%20b?q=%2f",
+            "/?",
+            "/",
+        ] {
+            assert_eq!(normalize_path(raw).as_deref(), Some(raw), "{raw}");
+        }
+        for raw in [
             "/\\evil.example/admin",
+            "/safe\\..\\admin",
             "/invalid%",
             "/invalid%2",
             "/invalid%zz",
             "/admin#fragment",
+            "/a b",
+            "/é",
         ] {
             assert!(normalize_path(raw).is_none(), "accepted unsafe path {raw}");
+        }
+    }
+
+    #[test]
+    fn structured_header_facts_reject_malformed_framing_and_preserve_equal_lengths() {
+        let equal = vec![
+            Header {
+                name: "Content-Length".into(),
+                value: "0005, 5".into(),
+            },
+            Header {
+                name: "content-length".into(),
+                value: "5".into(),
+            },
+            Header {
+                name: "Connection".into(),
+                value: "x-secret, content-length".into(),
+            },
+            Header {
+                name: "X-Secret".into(),
+                value: "é".into(),
+            },
+        ];
+        let facts = validate_structured_headers(&equal).expect("equal content lengths");
+        assert_eq!(facts.content_length, Some(5));
+        assert!(facts.connection.contains("x-secret"));
+        assert!(facts.connection.contains("content-length"));
+        assert_eq!(header_value_bytes("é").unwrap(), vec![0xe9]);
+        assert!(header_value_bytes("€").is_err());
+        for headers in [
+            vec![Header {
+                name: "content-length".into(),
+                value: "4,5".into(),
+            }],
+            vec![Header {
+                name: "content-length".into(),
+                value: "+5".into(),
+            }],
+            vec![Header {
+                name: "content-length".into(),
+                value: "18446744073709551616".into(),
+            }],
+            vec![Header {
+                name: "transfer-encoding".into(),
+                value: "gzip".into(),
+            }],
+            vec![Header {
+                name: "connection".into(),
+                value: "bad token".into(),
+            }],
+            vec![Header {
+                name: "x-test".into(),
+                value: "line\nfeed".into(),
+            }],
+        ] {
+            assert!(validate_structured_headers(&headers).is_err());
+        }
+        assert!(
+            validate_structured_headers(&[
+                Header {
+                    name: "transfer-encoding".into(),
+                    value: "chunked".into()
+                },
+                Header {
+                    name: "content-length".into(),
+                    value: "5".into()
+                },
+            ])
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn http_proxy_delivers_native_request_and_response_trailers() {
+        for body in ["", "hello"] {
+            let listener = TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind upstream");
+            let address = listener.local_addr().expect("address");
+            let upstream = tokio::spawn(async move {
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(3), listener.accept())
+                        .await
+                        .expect("request deadline")
+                        .expect("accept");
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 1024];
+                while !request.ends_with(b"x-check: two\r\n\r\n") {
+                    let n = socket.read(&mut buffer).await.expect("request bytes");
+                    assert_ne!(n, 0);
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                let text = String::from_utf8(request).expect("ASCII request");
+                assert!(
+                    text.starts_with("POST //fixed/path? HTTP/1.1\r\n"),
+                    "{text}"
+                );
+                assert!(
+                    text.contains(&format!("host: localhost:{}\r\n", address.port())),
+                    "{text}"
+                );
+                assert!(text.contains("transfer-encoding: chunked\r\n"), "{text}");
+                assert!(text.contains("trailer: x-check\r\n"), "{text}");
+                assert!(text.contains("x-check: one\r\nx-check: two\r\n"), "{text}");
+                assert!(!text.contains("content-length:"), "{text}");
+                socket.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: X-Check\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\nX-Check: first\r\nX-Check: last\r\n\r\n").await.expect("response");
+            });
+            let mut options = test_options(
+                format!("http://localhost:{}", address.port())
+                    .parse()
+                    .expect("URL"),
+            );
+            options.allowed_upstream_hosts = vec!["localhost".into()];
+            options.allowed_upstream_addresses = vec!["127.0.0.1".into(), "::1".into()];
+            options.extra_request_headers.push("x-check".into());
+            options.extra_response_headers.push("x-check".into());
+            let server = ProxyServer::new(options).expect("proxy");
+            let mut input = frame_metadata(
+                serde_json::json!({ "v":2, "request_id":"trailers", "method":"POST", "path":"//fixed/path?", "headers":[{"name":"content-length","value":body.len().to_string()}] }),
+            );
+            if !body.is_empty() {
+                input.extend_from_slice(&(body.len() as u32).to_be_bytes());
+                input.extend_from_slice(body.as_bytes());
+            }
+            input.extend_from_slice(&[0, 0, 0, 0]);
+            input.extend_from_slice(&frame_metadata(serde_json::json!({"v":2,"trailers":[{"name":"x-check","value":"one"},{"name":"x-check","value":"two"}]})));
+            let stream = Arc::new(TestStream::new(input));
+            serve_http(&server.inner, &stream, CancellationToken::new())
+                .await
+                .expect("proxy HTTP");
+            let output = stream.output();
+            assert_eq!(response_meta(&output)["ok"], true);
+            upstream.await.expect("upstream task");
+            let mut at = 4 + u32::from_be_bytes(output[..4].try_into().unwrap()) as usize;
+            loop {
+                let n = u32::from_be_bytes(output[at..at + 4].try_into().unwrap()) as usize;
+                at += 4;
+                if n == 0 {
+                    break;
+                }
+                at += n;
+            }
+            let n = u32::from_be_bytes(output[at..at + 4].try_into().unwrap()) as usize;
+            let terminal =
+                crate::proxy_wire::decode_value("ProxyBodyEnd", &output[at + 4..at + 4 + n])
+                    .expect("terminal");
+            assert_eq!(
+                terminal["trailers"],
+                serde_json::json!([{"name":"x-check","value":"first"},{"name":"x-check","value":"last"}])
+            );
+            server.close().await;
         }
     }
 
@@ -1816,11 +2722,23 @@ mod tests {
                     break;
                 }
             }
-            let text = String::from_utf8(request)
-                .expect("request utf8")
+            assert!(
+                request
+                    .windows(b"x-visible: \xe9\r\n".len())
+                    .any(|part| part == b"x-visible: \xe9\r\n")
+            );
+            assert!(
+                request
+                    .windows(b"x-visible: \xff\r\n".len())
+                    .any(|part| part == b"x-visible: \xff\r\n")
+            );
+            let text = request
+                .iter()
+                .map(|byte| char::from(*byte))
+                .collect::<String>()
                 .to_ascii_lowercase();
             assert!(
-                text.starts_with("post /api/items?q=~user http/1.1\r\n"),
+                text.starts_with("post /public/../api//items?q=%7euser http/1.1\r\n"),
                 "{text}"
             );
             assert!(text.contains(&format!("host: {address}\r\n")), "{text}");
@@ -1828,27 +2746,36 @@ mod tests {
             assert!(text.contains("cookie: public=ok\r\n"), "{text}");
             assert!(text.contains("x-request-id: visible\r\n"), "{text}");
             assert!(!text.contains("authorization:"), "{text}");
-            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Type: text/plain\r\nLocation: /hidden\r\nX-Visible: yes\r\nSet-Cookie: secret=no\r\nConnection: close\r\n\r\nworld").await.expect("write response");
+            assert!(!text.contains("x-remove:"), "{text}");
+            assert!(text.contains("content-length: 5\r\n"), "{text}");
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Type: text/plain\r\nLocation: /hidden\r\nX-Visible: \xe9\r\nX-Visible: \xff\r\nETag: private\r\nSet-Cookie: secret=no\r\nConnection: close, etag\r\n\r\nworld").await.expect("write response");
         });
 
-        let server = ProxyServer::new(test_options(
-            format!("http://{address}").parse().expect("upstream URL"),
-        ))
-        .expect("proxy server");
+        let mut options = test_options(format!("http://{address}").parse().expect("upstream URL"));
+        options
+            .extra_request_headers
+            .extend(["x-visible".into(), "x-remove".into()]);
+        let server = ProxyServer::new(options).expect("proxy server");
         let stream = Arc::new(TestStream::new({
-            let mut input = frame_json(serde_json::json!({
-                "v": 1, "request_id": "request-1", "method": "POST",
+            let mut input = frame_metadata(serde_json::json!({
+                "v": 2, "request_id": "request-1", "method": "POST",
                 "path": "/public/../api//items?q=%7euser",
                 "headers": [
                     {"name":"cookie", "value":"session=bad; private_key=no; public=ok"},
                     {"name":"authorization", "value":"Bearer secret"},
-                    {"name":"x-request-id", "value":"visible"}
+                    {"name":"x-request-id", "value":"visible"},
+                    {"name":"content-length", "value":"0005, 5"},
+                    {"name":"content-length", "value":"5"},
+                    {"name":"connection", "value":"content-length, x-remove, x-forwarded-proto"},
+                    {"name":"x-remove", "value":"hidden"},
+                    {"name":"x-visible", "value":"é"},
+                    {"name":"x-visible", "value":"ÿ"}
                 ],
                 "external_origin": "https://app.example", "timeout_ms": 1000
             }));
             input.extend_from_slice(&5u32.to_be_bytes());
             input.extend_from_slice(b"hello");
-            input.extend_from_slice(&0u32.to_be_bytes());
+            input.extend_from_slice(&body_end_frame());
             input
         }));
         serve_http(&server.inner, &stream, CancellationToken::new())
@@ -1858,19 +2785,24 @@ mod tests {
 
         let output = stream.output();
         let length = u32::from_be_bytes(output[..4].try_into().expect("response length")) as usize;
-        let meta: serde_json::Value =
-            serde_json::from_slice(&output[4..4 + length]).expect("response meta");
+        let meta: serde_json::Value = response_meta(&output);
         assert_eq!(meta["status"], 200);
         assert_eq!(
             meta["headers"],
             serde_json::json!([
+                {"name":"content-length", "value":"5"},
                 {"name":"content-type", "value":"text/plain"},
-                {"name":"x-visible", "value":"yes"}
+                {"name":"x-visible", "value":"é"},
+                {"name":"x-visible", "value":"ÿ"}
             ])
         );
         assert_eq!(
             &output[4 + length..],
-            &[0, 0, 0, 5, b'w', b'o', b'r', b'l', b'd', 0, 0, 0, 0]
+            [
+                &[0, 0, 0, 5, b'w', b'o', b'r', b'l', b'd'][..],
+                &body_end_frame()
+            ]
+            .concat()
         );
     }
 
@@ -1893,7 +2825,7 @@ mod tests {
                             .path_and_query()
                             .expect("canonical WebSocket target")
                             .as_str(),
-                        "/api/items?q=~user"
+                        "/public/../api//items?q=%7euser"
                     );
                     assert_eq!(
                         request.headers().get("origin").expect("origin"),
@@ -1946,8 +2878,8 @@ mod tests {
         ))
         .expect("proxy server");
         let stream = Arc::new(TestStream::new({
-            let mut input = frame_json(serde_json::json!({
-                "v": 1, "conn_id": "socket-1",
+            let mut input = frame_metadata(serde_json::json!({
+                "v": 2, "conn_id": "socket-1",
                 "path": "/public/../api//items?q=%7euser",
                 "headers": [
                     {"name":"sec-websocket-protocol", "value":"chat"},
@@ -1971,12 +2903,11 @@ mod tests {
 
         let output = stream.output();
         let length = u32::from_be_bytes(output[..4].try_into().expect("response length")) as usize;
-        let meta: serde_json::Value =
-            serde_json::from_slice(&output[4..4 + length]).expect("response meta");
+        let meta: serde_json::Value = response_meta(&output);
         assert_eq!(
             meta,
             serde_json::json!({
-                "v": 1, "conn_id": "socket-1", "ok": true, "protocol": "chat"
+                "v": 2, "conn_id": "socket-1", "ok": true, "protocol": "chat"
             })
         );
         let frames = &output[4 + length..];
@@ -2011,8 +2942,8 @@ mod tests {
         options.max_websocket_frame_bytes = 4;
         let server = ProxyServer::new(options).expect("proxy server");
         let stream = Arc::new(TestStream::new({
-            let mut input = frame_json(serde_json::json!({
-                "v": 1, "conn_id": "socket-limit", "path": "/socket", "headers": []
+            let mut input = frame_metadata(serde_json::json!({
+                "v": 2, "conn_id": "socket-limit", "path": "/socket", "headers": []
             }));
             input.push(2);
             input.extend_from_slice(&5u32.to_be_bytes());
@@ -2093,10 +3024,11 @@ mod tests {
                 .expect("WSS upstream URL"),
         );
         options.allowed_upstream_hosts = vec!["localhost".into()];
+        options.allowed_upstream_addresses = vec!["127.0.0.1".into(), "::1".into()];
         options.upstream_trust_roots_der = vec![STANDARD.decode(TEST_CERT_DER_B64).unwrap()];
         let server = ProxyServer::new(options).expect("proxy server");
-        let stream = Arc::new(TestStream::new(frame_json(serde_json::json!({
-            "v": 1, "conn_id": "tls-blackhole", "path": "/socket", "headers": []
+        let stream = Arc::new(TestStream::new(frame_metadata(serde_json::json!({
+            "v": 2, "conn_id": "tls-blackhole", "path": "/socket", "headers": []
         }))));
 
         let started = Instant::now();
@@ -2148,8 +3080,8 @@ mod tests {
         };
 
         for conn_id in ["upgrade-blackhole-1", "upgrade-blackhole-2"] {
-            let stream = Arc::new(TestStream::new(frame_json(serde_json::json!({
-                "v": 1, "conn_id": conn_id, "path": "/socket", "headers": []
+            let stream = Arc::new(TestStream::new(frame_metadata(serde_json::json!({
+                "v": 2, "conn_id": conn_id, "path": "/socket", "headers": []
             }))));
             let result = tokio::time::timeout(
                 Duration::from_millis(200),
@@ -2250,8 +3182,8 @@ mod tests {
         options.max_chunk_bytes = 8;
         let server = ProxyServer::new(options).expect("proxy server");
 
-        let unknown = Arc::new(TestStream::new(frame_json(serde_json::json!({
-            "v": 1, "request_id": "unknown", "method": "GET", "path": "/",
+        let unknown = Arc::new(TestStream::new(frame_metadata(serde_json::json!({
+            "v": 2, "request_id": "unknown", "method": "GET", "path": "/",
             "headers": [], "unexpected": "rejected"
         }))));
         serve_http(&server.inner, &unknown, CancellationToken::new())
@@ -2263,8 +3195,8 @@ mod tests {
         );
 
         let oversized = Arc::new(TestStream::new({
-            let mut input = frame_json(serde_json::json!({
-                "v": 1, "request_id": "large", "method": "POST", "path": "/",
+            let mut input = frame_metadata(serde_json::json!({
+                "v": 2, "request_id": "large", "method": "POST", "path": "/",
                 "headers": []
             }));
             input.extend_from_slice(&5u32.to_be_bytes());
@@ -2288,12 +3220,12 @@ mod tests {
         origin_options.extra_request_headers = vec!["origin".into()];
         let origin_server = ProxyServer::new(origin_options).expect("proxy server");
         let conflicting_origin = Arc::new(TestStream::new({
-            let mut input = frame_json(serde_json::json!({
-                "v": 1, "request_id": "origin", "method": "GET", "path": "/",
+            let mut input = frame_metadata(serde_json::json!({
+                "v": 2, "request_id": "origin", "method": "GET", "path": "/",
                 "headers": [{"name":"origin", "value":"https://evil.example"}],
                 "external_origin": "https://app.example"
             }));
-            input.extend_from_slice(&0u32.to_be_bytes());
+            input.extend_from_slice(&body_end_frame());
             input
         }));
         serve_http(
@@ -2328,11 +3260,11 @@ mod tests {
         ))
         .expect("proxy server");
         let stream = Arc::new(TestStream::new({
-            let mut input = frame_json(serde_json::json!({
-                "v": 1, "request_id": "cancel", "method": "GET", "path": "/wait",
+            let mut input = frame_metadata(serde_json::json!({
+                "v": 2, "request_id": "cancel", "method": "GET", "path": "/wait",
                 "headers": []
             }));
-            input.extend_from_slice(&0u32.to_be_bytes());
+            input.extend_from_slice(&body_end_frame());
             input
         }));
         let handler = ProxyHandler {

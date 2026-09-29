@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
+	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type queryIntegrationSink struct {
@@ -178,7 +180,7 @@ func TestSessionContractQueriesUseAuthenticatedCurrentLease(t *testing.T) {
 	headerCodec, _ := protocolv4.NewApplicationHeaderCodec()
 	snapshotCodec, _ := protocolv4.NewContractSnapshotCodec()
 	serial := uint64(0)
-	query := func(targets []protocolv4.ContractQueryTarget, known []*protocolv4.ServiceContract) ([]byte, protocolv4.ApplicationHeader, protocolv4.ContractQueryTargets) {
+	query := func(targets []protocolv4.ContractQueryTarget, known []protocolv4.ContractQueryKnown) ([]byte, protocolv4.ApplicationHeader, protocolv4.ContractQueryTargets) {
 		t.Helper()
 		serial++
 		request := make([]byte, 2048)
@@ -249,7 +251,7 @@ func TestSessionContractQueriesUseAuthenticatedCurrentLease(t *testing.T) {
 			t.Fatal(err)
 		}
 		target := plain
-		bodies := []*protocolv4.ServiceContract{nil, nil, nil}
+		bodies := []protocolv4.ContractQueryKnown{nil, nil, nil}
 		if test.known {
 			target.HasKnown, target.Known, bodies[0] = true, policy.Digest, contract
 		}
@@ -292,14 +294,18 @@ func TestSessionContractQueriesUseAuthenticatedCurrentLease(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	session := &EnvironmentSession{environment: env, application: plan, core: &SessionCore{}, delivered: true}
+	session := &EnvironmentSession{environment: env, application: plan, delivered: true}
+	apiServices := &RPCServices{plan: plan, root: root, owner: inputsConfig.Owner, clock: trust.clock, channel: &RPCChannel{publisher: publisher}}
+	apiCore := &SessionCorePlan{rpc: apiServices, config: SessionCoreConfig{Clock: trust.clock, DispatchTimeoutMS: 1000, Session: testSessionContract(t, protocolv4.DHProfileX25519, "services", 4096, 4, 0, 5000)}}
+	session.core = &SessionCore{plan: apiCore}
+	plan.host = session
 	snapshotCharge, err := ContractQuerySnapshotsCharge(1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	first, err := env.BeginContractQuery(ctx, session, publisher, []protocolv4.ContractQueryTarget{plain}, []*protocolv4.ServiceContract{nil}, []uint64{0}, 2000, f.reserve(t, 1, snapshotCharge))
+	first, err := env.BeginContractQuery(ctx, session, publisher, []protocolv4.ContractQueryTarget{plain}, []protocolv4.ContractQueryKnown{nil}, []uint64{0}, 2000, f.reserve(t, 1, snapshotCharge))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,12 +313,12 @@ func TestSessionContractQueriesUseAuthenticatedCurrentLease(t *testing.T) {
 	conditional := plain
 	conditional.HasKnown = true
 	conditional.Known = policy.Digest
-	second, err := env.BeginContractQuery(ctx, session, publisher, []protocolv4.ContractQueryTarget{conditional}, []*protocolv4.ServiceContract{contract}, []uint64{0}, 2000, f.reserve(t, 1, snapshotCharge))
+	second, err := env.BeginContractQuery(ctx, session, publisher, []protocolv4.ContractQueryTarget{conditional}, []protocolv4.ContractQueryKnown{contract}, []uint64{0}, 2000, f.reserve(t, 1, snapshotCharge))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer second.Close()
-	if _, err = env.BeginContractQuery(ctx, session, publisher, []protocolv4.ContractQueryTarget{plain}, []*protocolv4.ServiceContract{nil}, []uint64{0}, 2000, f.reserve(t, 1, snapshotCharge)); !errors.Is(err, cryptov4.ErrCapacity) {
+	if _, err = env.BeginContractQuery(ctx, session, publisher, []protocolv4.ContractQueryTarget{plain}, []protocolv4.ContractQueryKnown{nil}, []uint64{0}, 2000, f.reserve(t, 1, snapshotCharge)); !errors.Is(err, cryptov4.ErrCapacity) {
 		t.Fatal("acquisition cap bypassed", err)
 	}
 	canceled, stop := context.WithCancel(context.Background())
@@ -408,13 +414,170 @@ func TestSessionContractQueriesUseAuthenticatedCurrentLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The public Session seam selects the existing channel and reserves the
+	// complete detached result from the original root. It opens no management
+	// channel and needs neither a business execution nor a completion permit.
+	apiQuery, err := session.beginServiceContractQuery(ctx, []ServiceContractTarget{{Namespace: plain.Namespace, Type: plain.Type, Wanted: policy.Digest, HasWanted: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pumpAcquisitions(apiQuery, nil)
+	if err = apiQuery.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	apiResult, err := apiQuery.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := apiResult.Item(0)
+	if err != nil || info.Policy.Digest != policy.Digest || info.HasOffer {
+		t.Fatal(info, err)
+	}
+	for range 8 {
+		if progressed, err := publisher.Step(ctx); err != nil {
+			t.Fatal(err)
+		} else if !progressed {
+			break
+		}
+	}
+	if err = apiQuery.WaitCleanup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	conditionalQuery, err := session.beginServiceContractQuery(ctx, []ServiceContractTarget{{Namespace: plain.Namespace, Type: plain.Type, HasWanted: true, Wanted: policy.Digest, Known: apiResult}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiResult.Close()
+	apiResult.mu.Lock()
+	retained := apiResult.borrows == 1 && len(apiResult.bodies[0]) != 0
+	apiResult.mu.Unlock()
+	if !retained {
+		t.Fatal("Close refunded an admitted known-body borrow")
+	}
+	if _, err := apiResult.borrowQuery(0, env); !errors.Is(err, cryptov4.ErrClosed) {
+		t.Fatal("closed known body reopened", err)
+	}
+	pumpAcquisitions(conditionalQuery, nil)
+	if err = conditionalQuery.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	conditionalResult, err := conditionalQuery.Take()
+	if err != nil {
+		t.Fatal(err)
+	}
+	conditionalInfo, err := conditionalResult.Item(0)
+	if err != nil || conditionalInfo.Status != "available_unchanged" || conditionalInfo.ContractBytes != uint16(len(contractWire)) {
+		t.Fatal(conditionalInfo, err)
+	}
+	var canonical [8192]byte
+	n, err := conditionalResult.CopyCanonical(0, canonical[:])
+	if err != nil || !bytes.Equal(canonical[:n], contractWire) {
+		t.Fatal("conditional body is not independently owned", err)
+	}
+	// An unchanged response is itself a complete baseline, not just a digest.
+	baseline, err := conditionalResult.borrowQuery(0, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size, err := baseline.CanonicalSize(); err != nil || size != n {
+		t.Fatal(size, err)
+	}
+	conditionalResult.releaseQueryBorrow()
+	conditionalResult.Close()
+	for range 8 {
+		if progressed, err := publisher.Step(ctx); err != nil {
+			t.Fatal(err)
+		} else if !progressed {
+			break
+		}
+	}
+	if err = conditionalQuery.WaitCleanup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	apiResult.mu.Lock()
+	retained = apiResult.borrows != 0 || len(apiResult.bodies[0]) != 0
+	apiResult.mu.Unlock()
+	if retained {
+		t.Fatal("exited conditional query retained closed baseline")
+	}
+
+	for _, targets := range [][]ServiceContractTarget{nil, {{Namespace: strings.Repeat("x", 129), Type: 1}}, {{Namespace: plain.Namespace}}, {{Namespace: plain.Namespace, Type: plain.Type}, {Namespace: plain.Namespace, Type: plain.Type}}} {
+		before := root.Snapshot().Charged
+		if _, err := session.beginServiceContractQuery(ctx, targets); err == nil {
+			t.Fatal("invalid public targets acquired query resources")
+		}
+		if root.Snapshot().Charged != before {
+			t.Fatal("invalid target changed charged resources")
+		}
+	}
+	session.mu.Lock()
+	session.drain = &DrainOperation{}
+	session.mu.Unlock()
+	if _, err := session.beginServiceContractQuery(ctx, []ServiceContractTarget{{Namespace: plain.Namespace, Type: plain.Type}}); err == nil {
+		t.Fatal("draining Session accepted a new contract query")
+	}
+	session.mu.Lock()
+	session.drain = nil
+	session.mu.Unlock()
+
+	// A still-queued query must not publish after its real application
+	// invocation exits, even before the Environment's next timer turn.
+	for _, application := range []bool{false, true} {
+		original, abort := context.WithCancel(context.Background())
+		exit := func() {}
+		if application {
+			original, exit, err = enterApplicationContext(original, f.executor, ordinaryApplicationLane, ApplicationShort, plan.reservation, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		owner, err := env.BeginContractQuery(original, session, publisher, []protocolv4.ContractQueryTarget{plain}, []protocolv4.ContractQueryKnown{nil}, []uint64{0}, 2000, f.reserve(t, 1, snapshotCharge))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			owner.mu.Lock()
+			queued, failure := owner.phase > 0, owner.failure
+			owner.mu.Unlock()
+			if failure != nil || ctx.Err() != nil {
+				t.Fatal("query did not reach publication", failure, ctx.Err())
+			}
+			if queued {
+				break
+			}
+			runtime.Gosched()
+		}
+		want := error(context.Canceled)
+		if application {
+			exit()
+			want = ErrApplicationDependency
+		} else {
+			abort()
+		}
+		writes := sink.writes
+		if _, err = publisher.Step(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if sink.writes != writes {
+			t.Fatal("invalid original invocation published query bytes")
+		}
+		if err = owner.Wait(ctx); !errors.Is(err, want) {
+			t.Fatal("lost original query failure", err, want)
+		}
+		abort()
+		owner.Close()
+		if err = owner.WaitCleanup(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	for _, expire := range []bool{false, true} {
 		original, abort := context.WithCancel(context.Background())
 		cap := uint64(2000)
 		if expire {
 			cap = 1300
 		}
-		owner, err := env.BeginContractQuery(original, session, publisher, []protocolv4.ContractQueryTarget{plain}, []*protocolv4.ServiceContract{nil}, []uint64{0}, cap, f.reserve(t, 1, snapshotCharge))
+		owner, err := env.BeginContractQuery(original, session, publisher, []protocolv4.ContractQueryTarget{plain}, []protocolv4.ContractQueryKnown{nil}, []uint64{0}, cap, f.reserve(t, 1, snapshotCharge))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -455,7 +618,7 @@ func TestSessionContractQueriesUseAuthenticatedCurrentLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan.lease.Revoke()
-	_, header, _ := query([]protocolv4.ContractQueryTarget{plain}, []*protocolv4.ServiceContract{nil})
+	_, header, _ := query([]protocolv4.ContractQueryTarget{plain}, []protocolv4.ContractQueryKnown{nil})
 	if !header.IsSDKError() {
 		t.Fatal("revoked original lease still disclosed a contract")
 	}

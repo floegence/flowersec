@@ -65,7 +65,7 @@ final class TransportV4OracleTests: XCTestCase {
       if vector.object?["pool_derivation"] != nil { pools += 1 }
       if vector["schema"].text == "OPEN_STREAM" { opens += 1 }
     }
-    XCTAssertEqual(positive, 337); XCTAssertEqual(negative, 828)
+    XCTAssertEqual(positive, 348); XCTAssertEqual(negative, 833)
     XCTAssertGreaterThan(pools, 0); XCTAssertGreaterThan(opens, 0)
   }
 

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	flowersec "github.com/floegence/flowersec/flowersec-go/v5"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
 )
 
 func TestProxyServerPublicSurfaceIsApplicationOnly(t *testing.T) {
@@ -12,7 +12,7 @@ func TestProxyServerPublicSurfaceIsApplicationOnly(t *testing.T) {
 	_ = streamRegister
 
 	allowedOptions := map[string]struct{}{
-		"Upstream": {}, "UpstreamOrigin": {}, "AllowedUpstreamHosts": {}, "AllowedOrigins": {},
+		"Upstream": {}, "UpstreamOrigin": {}, "AllowedUpstreamHosts": {}, "AllowedUpstreamAddresses": {}, "AllowedOrigins": {},
 		"MaxConcurrentStreams": {}, "MaxConcurrentHTTPStreams": {}, "MaxConcurrentEventStreams": {}, "EventStreamIdleTimeout": {}, "MaxJSONFrameBytes": {}, "MaxChunkBytes": {},
 		"MaxBodyBytes": {}, "MaxWebSocketFrameBytes": {}, "DefaultHTTPRequestTimeout": {},
 		"MaxHTTPRequestTimeout": {}, "ExtraRequestHeaders": {}, "ExtraResponseHeaders": {},

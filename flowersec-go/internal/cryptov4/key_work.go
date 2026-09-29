@@ -1,6 +1,6 @@
 package cryptov4
 
-import "github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+import "github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 
 // A dynamic scope key job borrows an ordinary work position for its entire
 // lifetime. It cannot borrow either maintenance position or the rekey stage

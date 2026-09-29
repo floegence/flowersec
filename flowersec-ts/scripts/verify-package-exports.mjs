@@ -6,6 +6,7 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(pkgRoot, '..');
@@ -109,7 +110,7 @@ function installTarball(tarballPath) {
   // The Node entrypoint requires the same explicitly pinned ambient types as
   // an ordinary Node consumer; compiler location must not supply them by chance.
   const packageJSON = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'));
-  const nodeTypesVersion = packageJSON.devDependencies['@types/node'];
+  const nodeTypesVersion = packageJSON.dependencies['@types/node'];
   assert.match(nodeTypesVersion, /^\d+\.\d+\.\d+$/u);
   run('npm', ['install', '--ignore-scripts', '--no-package-lock', tarballPath, `@types/node@${nodeTypesVersion}`], consumerDir);
 }
@@ -202,6 +203,33 @@ function verifyInstalledDeclarationClosure() {
     /LegacyUnreliableSessionErrorCode|absoluteUnixMilliseconds|responseFlowControl|flowersec-proxy:|response_flow_control/u,
     'exported declarations leaked removed compatibility or private Service Worker protocol fields',
   );
+}
+
+function verifyInstalledTypeExports() {
+  const installedRoot = path.join(consumerDir, 'node_modules', '@floegence', 'flowersec-core');
+  const installedPackage = JSON.parse(fs.readFileSync(path.join(installedRoot, 'package.json'), 'utf8'));
+  const entries = manifest.ts.subpaths.map((subpath) => ({
+    subpath,
+    file: path.join(installedRoot, installedPackage.exports[subpath.package_json_export].types),
+  }));
+  const program = ts.createProgram(entries.map((entry) => entry.file), {
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    target: ts.ScriptTarget.ES2022,
+    skipLibCheck: true,
+  });
+  const checker = program.getTypeChecker();
+  for (const { subpath, file } of entries) {
+    const source = program.getSourceFile(file);
+    assert.notEqual(source, undefined, `missing installed declaration for ${subpath.specifier}`);
+    const module = checker.getSymbolAtLocation(source);
+    assert.notEqual(module, undefined, `missing declaration module for ${subpath.specifier}`);
+    const actual = checker.getExportsOfModule(module).filter((symbol) => {
+      const target = symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol;
+      return Boolean(target.flags & ts.SymbolFlags.Type);
+    }).map((symbol) => symbol.getName()).sort();
+    assert.deepEqual(actual, [...subpath.type_exports].sort(), `${subpath.specifier} type export set drifted from the API contract manifest`);
+  }
 }
 
 function verifyInstalledPackage() {
@@ -327,6 +355,7 @@ void removed;
 }
 
 function verifyCurrentTypes() {
+  writeV4ConnectionTypeConsumers();
   fs.writeFileSync(
     path.join(consumerDir, 'current-api.ts'),
     `import {
@@ -380,6 +409,47 @@ void parseArtifactV3;
 `
   );
   run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc6'), '-p', 'tsconfig.json'], consumerDir);
+}
+
+function writeV4ConnectionTypeConsumers() {
+  const clients = [
+    { entry: '', runtime: '/node', configure: 'configureV4NodeWSS', config: 'V4NodeWSSClientConfig' },
+    { entry: '/node', runtime: '/node', configure: 'configureV4NodeWSS', config: 'V4NodeWSSClientConfig' },
+    { entry: '/browser', runtime: '/browser', configure: 'configureV4BrowserWSS', config: 'V4BrowserWSSClientConfig' },
+    { entry: '/browser', runtime: '/browser', configure: 'configureV4BrowserWebTransport', config: 'V4BrowserWebTransportClientConfig' },
+  ];
+  for (const [index, client] of clients.entries()) {
+    fs.writeFileSync(path.join(consumerDir, `v4-connection-${index}.ts`), `
+import { createV4ConnectionController } from '@floegence/flowersec-core${client.entry}';
+import type {
+  V4ConnectionMaterialSource, V4ConnectionRequirements, V4ConnectionController,
+  V4NamespaceOptions, V4CredentialPolicy, V4CredentialBuffers,
+  V4CredentialLengths, V4CredentialProvider, V4Session, V4TransportEnvironment,
+} from '@floegence/flowersec-core${client.entry}';
+import { ${client.configure} } from '@floegence/flowersec-core${client.runtime}';
+import type { ${client.config} } from '@floegence/flowersec-core${client.runtime}';
+
+declare function fillCredentials(
+  signal: AbortSignal, requirements: V4ConnectionRequirements, buffers: V4CredentialBuffers,
+): Promise<V4CredentialLengths>;
+
+export async function configure(
+  environment: V4TransportEnvironment, config: ${client.config},
+  namespace: V4NamespaceOptions, policy: V4CredentialPolicy, sourceKind: 'live' | 'pool',
+) {
+  const client = await ${client.configure}(environment, config);
+  client.namespace(namespace);
+  const provider: V4CredentialProvider = ({ signal, requirements }, buffers) =>
+    fillCredentials(signal, requirements, buffers);
+  const source: V4ConnectionMaterialSource = sourceKind === 'live'
+    ? client.registerLiveSource(policy, provider)
+    : client.registerPoolSource(policy, provider);
+  const controller: V4ConnectionController = createV4ConnectionController(environment, { source });
+  const connect = (): Promise<V4Session> => environment.connect(source);
+  return { source, controller, connect };
+}
+`);
+  }
 }
 
 async function verifyPackedBin() {
@@ -521,6 +591,7 @@ try {
   installTarball(tarballPath);
   verifyBrowserDependencyGraph();
   verifyInstalledDeclarationClosure();
+  verifyInstalledTypeExports();
   verifyInstalledPackage();
   await verifyPackedBin();
   verifyArtifactOnlyConnectTypes();

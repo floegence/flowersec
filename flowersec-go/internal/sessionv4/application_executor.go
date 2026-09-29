@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // ApplicationWorkClass is fixed by trusted local registration. Peer metadata,
@@ -28,6 +28,9 @@ const (
 // restriction on arbitrary application allocation. Payload/codec/input owners
 // have their own original full reservations and are never folded into it.
 type ApplicationExecutorConfig struct {
+	// Diagnostics explicitly admits the fixed 2-running/4-ready diagnostic
+	// service. Disabled sinks require no callback service.
+	Diagnostics                           bool
 	Running, ResidentRunning              uint32
 	Ready, ResidentReady                  uint32
 	CompletionRunning, CompletionReserved uint32
@@ -59,12 +62,14 @@ type applicationTaskSlot struct {
 // reservation/running capacity in this same root executor. Management, diagnostics
 // and protocol maintenance never borrow the ordinary or Completion positions.
 type ApplicationExecutor struct {
+	management                         *managementLane
 	availability                       chan struct{}
 	ready                              []applicationReadySlot
 	readyCount, residentReady          uint32
 	readyGroups, readyGroupTails       [2]*applicationGroup
 	queueClass                         ApplicationWorkClass
 	queries                            *sdkQueryLane
+	diagnostics                        *diagnosticLane
 	completions                        []completionSlot
 	completionCount, completionRunning uint32
 	completionClaims                   uint32
@@ -118,7 +123,23 @@ func ApplicationExecutorCharge(config ApplicationExecutorConfig) (resourcev4.Vec
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	return charge.Add(query)
+	charge, err = charge.Add(query)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	diagnostic, err := diagnosticLaneCharge(config)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	charge, err = charge.Add(diagnostic)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	management, err := managementLaneCharge(config)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	return charge.Add(management)
 }
 
 // TaskCharge is acquired by the original invocation's complete admission in
@@ -163,6 +184,13 @@ func NewApplicationExecutor(config ApplicationExecutorConfig, reservation resour
 		return nil, err
 	}
 	e := &ApplicationExecutor{availability: make(chan struct{}), config: config, reservation: owned, slots: make([]applicationTaskSlot, int(config.Running)), ready: make([]applicationReadySlot, config.Ready), completions: make([]completionSlot, config.CompletionReserved), done: make(chan struct{})}
+	// The fixed lane is admitted with the executor, while its two goroutines
+	// start lazily at the first management call. This keeps an unused executor
+	// immediately reclaimable without creating idle worker tails.
+	e.management = &managementLane{wake: make(chan struct{}, 2), stop: make(chan struct{})}
+	if config.Diagnostics {
+		e.diagnostics = &diagnosticLane{closing: make(chan struct{})}
+	}
 	if config.QueryOwners != 0 {
 		e.queries = &sdkQueryLane{slots: make([]sdkQuerySlot, config.QueryOwners), wake: make(chan struct{}, 1), sourceWake: make(chan struct{}, 1), worker: true, lastGroup: -1}
 		go e.runSDKQueries()
@@ -448,6 +476,8 @@ func (e *ApplicationExecutor) Close() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.closed = true
+	e.closeManagementLocked()
+	e.closeDiagnosticsLocked()
 	e.notifyAvailabilityLocked()
 	for i := range e.ready {
 		if e.ready[i].handle != nil && !e.ready[i].cleanup {
@@ -458,6 +488,8 @@ func (e *ApplicationExecutor) Close() {
 		for i := range e.queries.slots {
 			if e.queries.slots[i].registration != nil {
 				e.queries.slots[i].closing = true
+			} else {
+				e.releaseIdleSDKQueryProtectionLocked(i)
 			}
 		}
 		e.wakeSDKQueriesLocked()
@@ -471,13 +503,14 @@ func (e *ApplicationExecutor) Close() {
 }
 
 func (e *ApplicationExecutor) cleanupLocked() {
-	if !e.closed || e.cleaned || e.running != 0 || e.readyCount != 0 || e.completionCount != 0 || e.queries != nil && (e.queries.worker || e.queries.count != 0) {
+	if !e.closed || e.cleaned || e.running != 0 || e.readyCount != 0 || e.completionCount != 0 || e.management != nil && e.management.workers != 0 || e.diagnostics != nil && (e.diagnostics.ready != 0 || e.diagnostics.running != 0) || e.queries != nil && (e.queries.worker || e.queries.count != 0) {
 		return
 	}
 	e.cleaned = true
 	e.slots = nil
 	e.ready = nil
 	e.completions = nil
+	e.diagnostics = nil
 	if e.queries != nil {
 		e.queries.slots = nil
 	}
@@ -493,6 +526,7 @@ func (e *ApplicationExecutor) Done() <-chan struct{} { return e.done }
 // Running counts occupied positions, including preadmitted unstarted permits.
 // Those permits consume the same resident bound and strict short-work floor.
 type ApplicationExecutorSnapshot struct {
+	DiagnosticReady, DiagnosticRunning                      uint32
 	QueryOwners, QueryReady, QueryRunning                   uint32
 	QueryFailed                                             bool
 	CompletionReserved, CompletionRunning, CompletionClaims uint32
@@ -504,7 +538,14 @@ type ApplicationExecutorSnapshot struct {
 func (e *ApplicationExecutor) Snapshot() ApplicationExecutorSnapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	return e.snapshotLocked()
+}
+
+func (e *ApplicationExecutor) snapshotLocked() ApplicationExecutorSnapshot {
 	s := ApplicationExecutorSnapshot{CompletionClaims: e.completionClaims, CompletionReserved: e.completionCount, CompletionRunning: e.completionRunning, Running: e.running, ResidentRunning: e.resident, Ready: e.readyCount, ResidentReady: e.residentReady, Closed: e.closed, CleanupComplete: e.cleaned}
+	if d := e.diagnostics; d != nil {
+		s.DiagnosticReady, s.DiagnosticRunning = d.ready, d.running
+	}
 	if q := e.queries; q != nil {
 		s.QueryOwners, s.QueryReady, s.QueryRunning, s.QueryFailed = q.count, uint32(q.readyCount), q.running, q.failed
 	}

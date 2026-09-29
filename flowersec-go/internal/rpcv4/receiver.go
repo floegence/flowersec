@@ -6,8 +6,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var ErrContractQuerySchema = errors.New("rpcv4: invalid fixed contract query schema")
@@ -142,6 +142,18 @@ func (n *Network) NewReceiver(p *Publisher, admission IncomingAdmission, reserva
 	return r, nil
 }
 func (r *Receiver) Wake() <-chan struct{} { return r.wake }
+
+// Partial reports an ordered application fragment that has started but has
+// not reached its complete boundary. It is used only by the channel reader's
+// bounded progress allowance.
+func (r *Receiver) Partial() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return !r.closed && r.failure == nil && r.parser != nil && r.parser.Pending()
+}
 func (r *Receiver) notifyLocked() {
 	select {
 	case r.wake <- struct{}{}:

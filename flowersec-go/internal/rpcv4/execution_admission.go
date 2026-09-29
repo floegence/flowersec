@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 // ExecutionAdmission protects one original unary execution opportunity before
@@ -29,6 +29,7 @@ type ExecutionAdmission struct {
 	tails                        atomic.Uint32
 	using                        atomic.Bool
 	reusable, closed, cleaned    bool
+	started, authorityAdopted    bool
 	floorIndex                   int
 	floors                       [3]*resourcev4.ProtectedReservation
 	held                         [3]resourcev4.Reference
@@ -302,6 +303,7 @@ func (a *ExecutionAdmission) prepareReuseLocked() error {
 	if err := resourcev4.CheckoutProtectedBatch(a.floors[:], a.held[:]); err != nil {
 		return err
 	}
+	a.started = true
 	a.using.Store(true)
 	return nil
 }

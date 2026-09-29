@@ -1,5 +1,5 @@
 // Generated draft native API types; DO NOT EDIT. Not a qualified SDK runtime.
-enum TransportV4APIResults { static let schemaSHA256 = "7ca8c62b779e721a748461e01d5ed6e4e97437aee7f3bf5e38fbcdc61f3bb959" }
+enum TransportV4APIResults { static let schemaSHA256 = "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af" }
 
 enum V4ApplicationProfile: String {
     case transport = "transport"
@@ -274,12 +274,143 @@ struct V4ResponsePublicationStatus {
     let cause: V4ResponsePublicationCause?
 }
 
+enum V4TopUpWireResult: String {
+    case success = "success"
+    case replay = "replay"
+    case sourceExhausted = "source_exhausted"
+    case sourceUnavailable = "source_unavailable"
+    case sourceContractInvalid = "source_contract_invalid"
+    case sourceStateUnknown = "source_state_unknown"
+    case operationConflict = "operation_conflict"
+    case staleGeneration = "stale_generation"
+    case futureGeneration = "future_generation"
+    case staleOperation = "stale_operation"
+    case futureOperation = "future_operation"
+    case sequenceGap = "sequence_gap"
+    case configurationCapacity = "configuration_capacity"
+    case capacityExhausted = "capacity_exhausted"
+    case relinkRequired = "relink_required"
+    case spentUnknown = "spent_unknown"
+    case topUpRequestExpired = "top_up_request_expired"
+    case sourceResetRequired = "source_reset_required"
+    case permissionDenied = "permission_denied"
+}
+
+enum V4TopUpErrorCode: String {
+    case sourceExhausted = "source_exhausted"
+    case sourceUnavailable = "source_unavailable"
+    case sourceContractInvalid = "source_contract_invalid"
+    case sourceStateUnknown = "source_state_unknown"
+    case operationConflict = "operation_conflict"
+    case staleGeneration = "stale_generation"
+    case futureGeneration = "future_generation"
+    case staleOperation = "stale_operation"
+    case futureOperation = "future_operation"
+    case sequenceGap = "sequence_gap"
+    case configurationCapacity = "configuration_capacity"
+    case capacityExhausted = "capacity_exhausted"
+    case relinkRequired = "relink_required"
+    case spentUnknown = "spent_unknown"
+    case topUpRequestExpired = "top_up_request_expired"
+    case sourceResetRequired = "source_reset_required"
+    case permissionDenied = "permission_denied"
+}
+
+enum V4TopUpErrorScope: String {
+    case source = "source"
+    case operation = "operation"
+    case request = "request"
+}
+
+enum V4TopUpWriteAction: String {
+    case none = "none"
+    case terminal = "terminal"
+}
+
+struct V4TopUpError {
+    let code: V4TopUpErrorCode
+    let scope: V4TopUpErrorScope
+    let writeAction: V4TopUpWriteAction
+}
+
+enum V4LifecycleObjectKind: String {
+    case session = "session"
+    case environment = "environment"
+    case operation = "operation"
+    case subscription = "subscription"
+    case bridge = "bridge"
+    case adapter = "adapter"
+    case stream = "stream"
+    case material = "material"
+    case source = "source"
+    case registration = "registration"
+}
+
+enum V4LifecycleState: String {
+    case active = "active"
+    case closing = "closing"
+    case closed = "closed"
+    case sessionAborted = "session_aborted"
+}
+
+enum V4LifecycleReason: String {
+    case none = "none"
+    case canceled = "canceled"
+    case deadlineExceeded = "deadline_exceeded"
+    case dependencyUnavailable = "dependency_unavailable"
+    case coreCleanupFailed = "core_cleanup_failed"
+}
+
+struct V4LifecycleResult {
+    let objectKind: V4LifecycleObjectKind
+    let lifecycleState: V4LifecycleState
+    let cleanupStatus: V4CleanupStatus
+    let reason: V4LifecycleReason
+}
+
+func topUpErrorProjection(_ code: V4TopUpErrorCode, _ action: V4TopUpWriteAction) -> V4TopUpError? {
+    switch code {
+    case .sourceExhausted: return (action == .none) ? V4TopUpError(code: code, scope: .source, writeAction: action) : nil
+    case .sourceUnavailable: return (action == .none) ? V4TopUpError(code: code, scope: .source, writeAction: action) : nil
+    case .sourceContractInvalid: return (action == .none) ? V4TopUpError(code: code, scope: .source, writeAction: action) : nil
+    case .sourceStateUnknown: return (action == .none) ? V4TopUpError(code: code, scope: .source, writeAction: action) : nil
+    case .operationConflict: return (action == .none) ? V4TopUpError(code: code, scope: .operation, writeAction: action) : nil
+    case .staleGeneration: return (action == .none) ? V4TopUpError(code: code, scope: .request, writeAction: action) : nil
+    case .futureGeneration: return (action == .none) ? V4TopUpError(code: code, scope: .request, writeAction: action) : nil
+    case .staleOperation: return (action == .none) ? V4TopUpError(code: code, scope: .operation, writeAction: action) : nil
+    case .futureOperation: return (action == .none) ? V4TopUpError(code: code, scope: .operation, writeAction: action) : nil
+    case .sequenceGap: return (action == .none) ? V4TopUpError(code: code, scope: .operation, writeAction: action) : nil
+    case .configurationCapacity: return (action == .none || action == .terminal) ? V4TopUpError(code: code, scope: .request, writeAction: action) : nil
+    case .capacityExhausted: return (action == .none || action == .terminal) ? V4TopUpError(code: code, scope: .operation, writeAction: action) : nil
+    case .relinkRequired: return (action == .none || action == .terminal) ? V4TopUpError(code: code, scope: .source, writeAction: action) : nil
+    case .spentUnknown: return (action == .none || action == .terminal) ? V4TopUpError(code: code, scope: .source, writeAction: action) : nil
+    case .topUpRequestExpired: return (action == .none || action == .terminal) ? V4TopUpError(code: code, scope: .operation, writeAction: action) : nil
+    case .sourceResetRequired: return (action == .none || action == .terminal) ? V4TopUpError(code: code, scope: .source, writeAction: action) : nil
+    case .permissionDenied: return (action == .none) ? V4TopUpError(code: code, scope: .source, writeAction: action) : nil
+    }
+}
+
+func validLifecycleResult(_ value: V4LifecycleResult) -> Bool {
+    let cleanup = value.cleanupStatus
+    return (cleanup.status == .complete) == (cleanup.coreCleanup == .complete && cleanup.pendingCallbacks == 0)
+        && (value.lifecycleState != .sessionAborted || value.objectKind == .session)
+        && (cleanup.status != .complete || value.lifecycleState == .closed || value.lifecycleState == .sessionAborted)
+}
+
 func connectionAssurance(_ value: String) -> V4ConnectionGuarantees? {
     switch value {
     case "native_websocket_tls13": return V4ConnectionGuarantees(reliableProgress: .sharedOrdered, boundStreamInputIsolation: .sharedFailureScope, datagram: false, localConsumerTls13Verification: .consumerEnforced, scope: .completeDirectPath, assumptions: .authenticatedPeerWithinTransportProfile)
     case "native_websocket_loopback": return V4ConnectionGuarantees(reliableProgress: .sharedOrdered, boundStreamInputIsolation: .sharedFailureScope, datagram: false, localConsumerTls13Verification: .notApplicable, scope: .completeDirectPath, assumptions: .authenticatedPeerWithinTransportProfile)
     case "accepted_websocket": return V4ConnectionGuarantees(reliableProgress: .sharedOrdered, boundStreamInputIsolation: .sharedFailureScope, datagram: false, localConsumerTls13Verification: .notApplicable, scope: .completeDirectPath, assumptions: .authenticatedPeerWithinTransportProfile)
     case "browser_websocket_terminator": return V4ConnectionGuarantees(reliableProgress: .sharedOrdered, boundStreamInputIsolation: .sharedFailureScope, datagram: false, localConsumerTls13Verification: .controlledTerminator, scope: .completeDirectPath, assumptions: .authenticatedPeerWithinTransportProfile)
+    case "native_quic_tls13": return V4ConnectionGuarantees(reliableProgress: .independentWithinProfile, boundStreamInputIsolation: .boundStreamWithinProfile, datagram: true, localConsumerTls13Verification: .consumerEnforced, scope: .completeDirectPath, assumptions: .authenticatedPeerWithinTransportProfile)
+    case "accepted_quic": return V4ConnectionGuarantees(reliableProgress: .independentWithinProfile, boundStreamInputIsolation: .boundStreamWithinProfile, datagram: true, localConsumerTls13Verification: .notApplicable, scope: .completeDirectPath, assumptions: .authenticatedPeerWithinTransportProfile)
+    case "native_webtransport_tls13": return V4ConnectionGuarantees(reliableProgress: .independentWithinProfile, boundStreamInputIsolation: .boundStreamWithinProfile, datagram: true, localConsumerTls13Verification: .consumerEnforced, scope: .completeDirectPath, assumptions: .authenticatedPeerWithinTransportProfile)
+    case "accepted_webtransport": return V4ConnectionGuarantees(reliableProgress: .independentWithinProfile, boundStreamInputIsolation: .boundStreamWithinProfile, datagram: true, localConsumerTls13Verification: .notApplicable, scope: .completeDirectPath, assumptions: .authenticatedPeerWithinTransportProfile)
+    case "go_relay_native_consumer": return V4ConnectionGuarantees(reliableProgress: .independentWithinProfile, boundStreamInputIsolation: .boundStreamWithinProfile, datagram: true, localConsumerTls13Verification: .consumerEnforced, scope: .completeRelayPath, assumptions: .trustedRelayAndPeersWithinTransportProfile)
+    case "go_relay_native_observer": return V4ConnectionGuarantees(reliableProgress: .independentWithinProfile, boundStreamInputIsolation: .boundStreamWithinProfile, datagram: true, localConsumerTls13Verification: .notApplicable, scope: .completeRelayPath, assumptions: .trustedRelayAndPeersWithinTransportProfile)
+    case "go_relay_shared_consumer": return V4ConnectionGuarantees(reliableProgress: .sharedOrdered, boundStreamInputIsolation: .sharedFailureScope, datagram: false, localConsumerTls13Verification: .consumerEnforced, scope: .completeRelayPath, assumptions: .trustedRelayAndPeersWithinTransportProfile)
+    case "go_relay_shared_observer": return V4ConnectionGuarantees(reliableProgress: .sharedOrdered, boundStreamInputIsolation: .sharedFailureScope, datagram: false, localConsumerTls13Verification: .notApplicable, scope: .completeRelayPath, assumptions: .trustedRelayAndPeersWithinTransportProfile)
     default: return nil
     }
 }

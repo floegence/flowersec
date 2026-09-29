@@ -8,11 +8,11 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/timev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type managementCall struct {
@@ -36,7 +36,11 @@ type ManagementChannel struct {
 	resolver                           rpcv4.ExecutionManagementResolver
 	reservation, parserReservation     resourcev4.Reference
 	buffer                             [16384]byte
-	jobs                               chan rpcv4.ManagementJob
+	executor                           *ApplicationExecutor
+	executorBorrow                     resourcev4.Reference
+	managementTasks                    [2]*managementTask
+	managementWake                     chan struct{}
+	tasks                              sync.WaitGroup
 	workers                            sync.WaitGroup
 	calls                              [2]managementCall
 	waiters                            int
@@ -50,7 +54,7 @@ func ManagementChannelCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
 	if runtimeBytes == 0 {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
-	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(ManagementChannel{})) + 2*uint64(unsafe.Sizeof(rpcv4.ManagementJob{})) + 3*uint64(unsafe.Sizeof(timev4.Deadline{})), resourcev4.Items: 5, resourcev4.Tasks: 3, resourcev4.WorkSlots: 3, resourcev4.Timers: 3}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
+	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(ManagementChannel{})) + 2*(uint64(unsafe.Sizeof(managementTask{}))+256) + 3*uint64(unsafe.Sizeof(timev4.Deadline{})), resourcev4.Items: 8, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2, resourcev4.Timers: 4}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
 }
 func ManagementParserCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
 	if runtimeBytes == 0 {
@@ -62,8 +66,8 @@ func ManagementParserCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
 	}
 	return (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
 }
-func NewManagementChannel(owner *StreamOwnership, clock *timev4.Clock, resolver rpcv4.ExecutionManagementResolver, refs [4]resourcev4.Reference, runtimeBytes uint64) (_ *ManagementChannel, err error) {
-	if owner == nil || clock == nil {
+func NewManagementChannel(owner *StreamOwnership, clock *timev4.Clock, executor *ApplicationExecutor, resolver rpcv4.ExecutionManagementResolver, refs [4]resourcev4.Reference, runtimeBytes uint64) (_ *ManagementChannel, err error) {
+	if owner == nil || clock == nil || executor == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	for _, ref := range refs[1:] {
@@ -79,7 +83,7 @@ func NewManagementChannel(owner *StreamOwnership, clock *timev4.Clock, resolver 
 	if err != nil {
 		return nil, err
 	}
-	c := &ManagementChannel{owner: owner, clock: clock, resolver: resolver, reservation: owned, jobs: make(chan rpcv4.ManagementJob, 2), done: make(chan struct{}), closeDone: make(chan struct{}), waitersDone: make(chan struct{})}
+	c := &ManagementChannel{owner: owner, clock: clock, executor: executor, resolver: resolver, reservation: owned, managementWake: make(chan struct{}, 1), done: make(chan struct{}), closeDone: make(chan struct{}), waitersDone: make(chan struct{})}
 	if c.resolver == nil {
 		c.resolver = rpcv4.ExecutionManagementResolverFunc(nil)
 	}
@@ -93,9 +97,18 @@ func NewManagementChannel(owner *StreamOwnership, clock *timev4.Clock, resolver 
 				_ = c.writer.Retire()
 			}
 			c.parserReservation.Release()
+			c.executorBorrow.Release()
 			owned.Release()
 		}
 	}()
+	executor.mu.Lock()
+	if err = executor.reservation.CheckSameRoot(owned); err == nil {
+		c.executorBorrow, err = executor.reservation.Borrow()
+	}
+	executor.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	c.writer, err = newManagementBatchWriter(owner, refs[1], runtimeBytes)
 	if err != nil {
 		return nil, err
@@ -288,14 +301,13 @@ func (c *ManagementChannel) Run(ctx context.Context) (err error) {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	c.cancel, c.started = cancel, true
-	c.workers.Add(2)
+	c.workers.Add(1)
 	c.mu.Unlock()
-	for i := 0; i < 2; i++ {
-		go c.serve(runCtx)
-	}
+	go c.serve(runCtx)
 	defer func() {
 		c.Close()
 		c.workers.Wait()
+		c.tasks.Wait()
 		close(c.done)
 	}()
 	var job rpcv4.ManagementJob
@@ -355,11 +367,7 @@ func (c *ManagementChannel) Run(ctx context.Context) (err error) {
 				err = c.acceptResponse(wire)
 			} else {
 				if err = job.Admit(wire); err == nil {
-					select {
-					case c.jobs <- job:
-					default:
-						err = rpcv4.ErrCapacity
-					}
+					err = c.queueManagement(runCtx, job)
 				}
 			}
 			if err != nil {
@@ -380,35 +388,99 @@ func (c *ManagementChannel) Run(ctx context.Context) (err error) {
 		}
 	}
 }
+func (c *ManagementChannel) queueManagement(ctx context.Context, job rpcv4.ManagementJob) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return rpcv4.ErrManagementClosed
+	}
+	for i, current := range c.managementTasks {
+		if current != nil {
+			continue
+		}
+		callCtx, cancel := context.WithCancel(ctx)
+		task := &managementTask{channel: c, job: job, ctx: callCtx, cancel: cancel, resolver: c.resolver, done: make(chan struct{})}
+		c.managementTasks[i] = task
+		c.tasks.Add(1)
+		if err := c.executor.submitManagement(task); err != nil {
+			task.err = err
+			close(task.done)
+			c.tasks.Done()
+			c.managementTasks[i] = nil
+			cancel()
+			return err
+		}
+		notifyOpenWait(c.managementWake)
+		return nil
+	}
+	return rpcv4.ErrCapacity
+}
+
 func (c *ManagementChannel) serve(ctx context.Context) {
 	defer c.workers.Done()
 	defer func() { _ = recover(); c.Close() }()
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	defer timer.Stop()
 	for {
-		var job rpcv4.ManagementJob
+		wake := c.writer.ManagementWake()
+		active := false
+		for i := range c.managementTasks {
+			c.mu.Lock()
+			task := c.managementTasks[i]
+			c.mu.Unlock()
+			if task == nil {
+				continue
+			}
+			active = true
+			done := false
+			select {
+			case <-task.done:
+				done = true
+			default:
+			}
+			if !task.published {
+				var err error
+				if task.response == (rpcv4.ManagementReply{}) {
+					if done && task.err == nil {
+						task.response = task.reply
+					} else if _, deadlineErr := task.job.RemainingMS(); done || deadlineErr != nil {
+						task.cancel()
+						task.response, err = task.job.Unavailable()
+					}
+				}
+				if err != nil {
+					return
+				}
+				if task.response != (rpcv4.ManagementReply{}) {
+					err = task.response.Publish(ctx)
+					if err == nil {
+						task.published = true
+					} else if !errors.Is(err, cryptov4.ErrCapacity) {
+						return
+					}
+				}
+			}
+			if task.published && done {
+				task.cancel()
+				c.mu.Lock()
+				c.managementTasks[i] = nil
+				c.mu.Unlock()
+			}
+		}
+		var tick <-chan time.Time
+		if active {
+			timer.Reset(10 * time.Millisecond)
+			tick = timer.C
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case job = <-c.jobs:
+		case <-c.managementWake:
+		case <-wake:
+		case <-tick:
 		}
-		reply, err := job.Run(ctx, c.resolver)
-		if err != nil {
-			return
-		}
-		for {
-			wake := c.writer.ManagementWake()
-			err = reply.Publish(ctx)
-			if err == nil {
-				break
-			}
-			if !errors.Is(err, cryptov4.ErrCapacity) {
-				return
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-wake:
-			}
-		}
+		timer.Stop()
 	}
 }
 func (c *ManagementChannel) Close() {
@@ -502,7 +574,11 @@ func (c *ManagementChannel) WaitCleanup(ctx context.Context) error {
 	defer c.mu.Unlock()
 	clear(c.buffer[:])
 	// All reader, service, waiter and provider aliases have physically exited.
-	c.parser, c.engine, c.writer, c.owner, c.resolver, c.jobs = nil, nil, nil, nil, nil, nil
+	c.parser, c.engine, c.writer, c.owner, c.resolver = nil, nil, nil, nil, nil
+	clear(c.managementTasks[:])
+	c.executor = nil
+	c.executorBorrow.Release()
+	c.executorBorrow = resourcev4.Reference{}
 	c.clock = nil
 	c.parserReservation.Release()
 	c.parserReservation = resourcev4.Reference{}

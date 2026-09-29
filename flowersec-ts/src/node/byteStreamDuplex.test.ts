@@ -48,7 +48,7 @@ describe("createByteStreamDuplex", () => {
 
   it("cancels pending operations and resets exactly once without exposing peer errors", async () => {
     const controller = new AbortController();
-    const stream = fixture({ read: vi.fn((options) => new Promise((_resolve, reject) => {
+    const stream = fixture({ read: vi.fn((options) => new Promise<Uint8Array | null>((_resolve, reject) => {
       options?.signal?.addEventListener("abort", () => reject(new Error("private peer detail")), { once: true });
     })) });
     const duplex = createByteStreamDuplex(stream, controller.signal);

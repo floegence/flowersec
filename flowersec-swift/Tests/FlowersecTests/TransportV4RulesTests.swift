@@ -54,7 +54,7 @@ final class TransportV4RulesTests: XCTestCase {
       XCTAssertEqual(ctx, before, id)
       if error == nil { positive += 1 } else { negative += 1 }
     }
-    XCTAssertEqual(positive, 337); XCTAssertEqual(negative, relations ? 816 : 133)
+    XCTAssertEqual(positive, 348); XCTAssertEqual(negative, relations ? 821 : 134)
     XCTAssertEqual(separate, relations ? 12 : 0)
     print("Swift \(relations ? "relations" : "variants"): \(positive) positive / \(negative) negative / \(separate) separate cases")
   }

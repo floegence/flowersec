@@ -16,9 +16,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/carrier"
-	carrierlife "github.com/floegence/flowersec/flowersec-go/v5/internal/carrier/internal/lifecycle"
-	fsyamux "github.com/floegence/flowersec/flowersec-go/v5/internal/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
+	carrierlife "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/internal/lifecycle"
+	fsyamux "github.com/floegence/flowersec/flowersec-go/v6/internal/mux/yamux"
 	gorillaws "github.com/gorilla/websocket"
 )
 

@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 var ErrCompletionCallbackExit = errors.New("sessionv4: completion callback exited without returning")
@@ -198,6 +198,17 @@ func (e *ApplicationExecutor) releaseCompletionLocked(index int) {
 	}
 	if s.reservation != nil {
 		s.reservation.executor.Store(nil)
+	}
+	if s.floor != nil && s.floor.use != nil {
+		// An item finishing does not finish the accepted stream. Keep the same
+		// result backing and future descriptor between its actual item reads.
+		if s.running {
+			e.completionRunning--
+		}
+		s.retained, s.closing = false, false
+		s.reservation, s.task, s.work = nil, nil, nil
+		s.submitted, s.running = false, false
+		return
 	}
 	if s.floor != nil && !s.floor.closed {
 		// Return only after the actual callback exit (or an unsubmitted cancel).

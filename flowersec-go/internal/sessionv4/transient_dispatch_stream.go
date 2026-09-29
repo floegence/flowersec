@@ -3,9 +3,9 @@ package sessionv4
 import (
 	"context"
 
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/cryptov4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/resourcev4"
-	"github.com/floegence/flowersec/flowersec-go/v5/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 // TransientStreamDispatch uses the same bounded stream and ordinary callback
@@ -16,13 +16,14 @@ type TransientStreamDispatch struct {
 	Executor        *ApplicationExecutor
 	Class           ApplicationWorkClass
 	TaskReservation resourcev4.Reference
+	DependencyFloor *resourcev4.BorrowPool
 }
 
 func (d TransientStreamDispatch) Dispatch(ctx context.Context, stream *StreamMessages, handler StreamExecutionHandler) (err error) {
 	if ctx == nil || stream == nil || handler == nil || d.Executor == nil || d.Class != ApplicationResident {
 		return cryptov4.ErrConfiguration
 	}
-	i, err := stream.claimInvocation(ctx, ExecutionDispatch{Executor: d.Executor, Class: d.Class}, handler)
+	i, err := stream.claimInvocation(ctx, ExecutionDispatch{Executor: d.Executor, Class: d.Class, DependencyFloor: d.DependencyFloor}, handler)
 	if err != nil {
 		return err
 	}
@@ -40,7 +41,7 @@ func (d TransientStreamDispatch) Dispatch(ctx context.Context, stream *StreamMes
 			i.release()
 		}
 	}()
-	i.dependencies, err = captureApplicationDependencies(ctx)
+	i.dependencies, err = captureApplicationDependenciesWithFloor(ctx, d.DependencyFloor)
 	if err != nil {
 		return err
 	}

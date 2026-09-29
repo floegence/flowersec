@@ -24,7 +24,7 @@ func (m *SignedMap) CheckAcceptedWebSocket(index uint64, endpoint AcceptedWebSoc
 	if err != nil {
 		return err
 	}
-	if policy.BindingMode != registry.authenticated || len(policy.Exporter) != 0 {
+	if !validAcceptedBinding(policy, registry, endpoint.TLS13) {
 		return CBORFailure("accepted_listener_binding")
 	}
 	c := m.codec
@@ -85,7 +85,7 @@ func (m *SignedMap) CheckAcceptedWebSocket(index uint64, endpoint AcceptedWebSoc
 		}
 		host, err := netip.ParseAddr(endpoint.Host)
 		origin, ok := get("origin").Text()
-		if access != local || err != nil || !host.IsLoopback() || endpoint.TLS13 || !endpoint.Local.IsValid() || !endpoint.Remote.IsValid() || !endpoint.Local.Addr().IsLoopback() || !endpoint.Remote.Addr().IsLoopback() || endpoint.Local.Addr().Unmap() != host.Unmap() || endpoint.Local.Port() != endpoint.Port || !ok || !endpoint.OriginPresent || endpoint.Origin != origin {
+		if access != local || err != nil || !host.IsLoopback() || endpoint.TLS13 || !endpoint.Local.IsValid() || !endpoint.Remote.IsValid() || !endpoint.Local.Addr().IsLoopback() || !endpoint.Remote.Addr().IsLoopback() || endpoint.Local.Addr() != host || endpoint.Local.Port() != endpoint.Port || !ok || !endpoint.OriginPresent || endpoint.Origin != origin {
 			return CBORFailure("accepted_listener_binding")
 		}
 	}

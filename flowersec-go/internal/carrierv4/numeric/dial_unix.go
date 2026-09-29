@@ -71,7 +71,7 @@ func Connect(ctx context.Context, address netip.AddrPort, deadline time.Time) (n
 	if err := CheckPlatform(address); err != nil {
 		return nil, err
 	}
-	ip := address.Addr().Unmap()
+	ip := address.Addr()
 	family := unix.AF_INET6
 	var sockaddr unix.Sockaddr
 	if ip.Is4() {
@@ -160,17 +160,23 @@ func Connect(ctx context.Context, address netip.AddrPort, deadline time.Time) (n
 	if err != nil {
 		return nil, err
 	}
+	adopted := false
+	defer func() {
+		// A supplied context can panic or Goexit after the descriptor has
+		// become a net.Conn. Keep the actual connection until handoff succeeds.
+		if !adopted {
+			_ = conn.Close()
+		}
+	}()
 	if closeErr != nil {
-		_ = conn.Close()
 		return nil, closeErr
 	}
 	if err := connectCheck(ctx, deadline); err != nil {
-		_ = conn.Close()
 		return nil, err
 	}
 	if err := conn.SetDeadline(deadline); err != nil {
-		_ = conn.Close()
 		return nil, err
 	}
+	adopted = true
 	return conn, nil
 }

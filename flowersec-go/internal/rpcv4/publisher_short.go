@@ -1,6 +1,6 @@
 package rpcv4
 
-import "github.com/floegence/flowersec/flowersec-go/v5/internal/protocolv4"
+import "github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 
 // ReserveShortRequest binds the trusted local short call to this original
 // channel. It grants no publication or payload/result reservation by itself.
@@ -12,6 +12,21 @@ func (p *Publisher) ReserveShortRequest(h protocolv4.ApplicationHeader) (Ticket,
 // preserving any unused local short-call opportunity.
 func (p *Publisher) ReserveRequest(h protocolv4.ApplicationHeader) (Ticket, error) {
 	return p.reserveRequest(h, false)
+}
+
+// ReserveProtectedRequest consumes the composing workload's original position
+// on this publisher. The caller still supplies its full preadmitted vector.
+func (p *Publisher) ReserveProtectedRequest(h protocolv4.ApplicationHeader, protection OutgoingProtection, short bool) (Ticket, error) {
+	if p == nil || protection.network != p.network {
+		return Ticket{}, ErrOwner
+	}
+	n := p.network
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if err := p.liveLocked(); err != nil {
+		return Ticket{}, err
+	}
+	return protection.reserveLocked(h, Association{Channel: p.channel}, short)
 }
 
 func (p *Publisher) reserveRequest(h protocolv4.ApplicationHeader, short bool) (Ticket, error) {
