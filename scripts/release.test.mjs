@@ -3670,3 +3670,49 @@ test("browser compatibility remains explicit and separate from Chromium smoke", 
   assert.match(packageManifest, /"test:browser:firefox": "npm run ensure:browser:firefox && npm run build && playwright test --project=firefox-compat"/);
   assert.match(packageManifest, /"test:browser:webkit": "npm run ensure:browser:webkit && npm run build && playwright test --project=webkit-smoke"/);
 });
+
+test("maintenance source exception is restricted to the reviewed v5.6.0 ancestry", async (t) => {
+  const base = "6f646fe4a20f9fdee55232a445e7c16fc133442c";
+  const sha = "a".repeat(40);
+  const main = "b".repeat(40);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-maintenance-ref-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bin = path.join(root, "bin");
+  fs.mkdirSync(bin);
+  writeExecutable(path.join(bin, "git"), `#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+ fetch) exit 0 ;;
+ ls-remote) printf '%s refs/heads/main\\n' "$TEST_MAIN" ;;
+ merge-base) [[ "$3" == "${base}" && "$4" == "$TEST_SHA" && "$TEST_ANCESTRY" == yes ]] ;;
+ rev-parse)
+   case "\${*: -1}" in
+     HEAD) printf '%s\\n' "$TEST_SHA" ;;
+     refs/remotes/origin/main) printf '%s\\n' "$TEST_MAIN" ;;
+     'refs/tags/flowersec-go/v5.6.0^{commit}') printf '%s\\n' "$TEST_TAG" ;;
+     'refs/tags/flowersec-go/v5.5.0^{commit}') printf '%s\\n' "$TEST_BASE" ;;
+     *) exit 1 ;;
+   esac ;;
+ *) exit 1 ;;
+esac
+`);
+  for (const [workflow, job] of [["release.yml", "release"], ["rust-release.yml", "publish"]]) {
+    const run = extractWorkflowStepRun(path.join(sourceRoot, ".github/workflows", workflow), job, "Verify release source authority");
+    for (const scenario of [
+      { name: "approved ancestry", success: true },
+      { name: "different tag", tag: main, success: false },
+      { name: "changed base tag", base: main, success: false },
+      { name: "unrelated source", ancestry: "no", success: false },
+      { name: "ordinary main", main: sha, tag: main, ancestry: "no", success: true },
+    ]) {
+      await t.test(`${workflow}: ${scenario.name}`, () => {
+        const result = spawnSync("bash", ["-c", run], { cwd: root, encoding: "utf8", env: {
+          ...isolatedEnvironment(), PATH: `${bin}:${process.env.PATH}`, RELEASE_SHA: sha,
+          TEST_SHA: sha, TEST_MAIN: scenario.main ?? main, TEST_TAG: scenario.tag ?? sha,
+          TEST_BASE: scenario.base ?? base, TEST_ANCESTRY: scenario.ancestry ?? "yes",
+        } });
+        assert.equal(result.status === 0, scenario.success, `${result.stdout}${result.stderr}`);
+      });
+    }
+  }
+});

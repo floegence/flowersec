@@ -60,7 +60,7 @@ jobs:
             scripts/verify-crates-release-consumer.mjs
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify tagged commit is the remote main tip
+      - name: Verify release source authority
         run: |
           set -euo pipefail
           release_sha="$(git rev-parse HEAD)"
@@ -68,6 +68,15 @@ jobs:
           local_main_sha="$(git rev-parse refs/remotes/origin/main)"
           remote_main_sha="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
           test -n "$remote_main_sha"
+          # Approved one-time v5.6.0 maintenance release; v6 remains on main.
+          maintenance_base="6f646fe4a20f9fdee55232a445e7c16fc133442c"
+          maintenance_tag="$(git rev-parse --verify 'refs/tags/flowersec-go/v5.6.0^{commit}' 2>/dev/null || true)"
+          if [[ "$release_sha" == "$maintenance_tag" ]] &&
+             [[ "$(git rev-parse --verify 'refs/tags/flowersec-go/v5.5.0^{commit}')" == "$maintenance_base" ]] &&
+             git merge-base --is-ancestor "$maintenance_base" "$release_sha"; then
+            echo "verified approved v5.6.0 maintenance release source"
+            exit 0
+          fi
           if [[ "$release_sha" != "$local_main_sha" || "$release_sha" != "$remote_main_sha" ]]; then
             echo "release tag must point at the current remote main tip" >&2
             echo "tag=$release_sha local_main=$local_main_sha remote_main=$remote_main_sha" >&2

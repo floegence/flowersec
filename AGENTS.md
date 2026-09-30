@@ -117,6 +117,14 @@
 - A version release uses matching Go `flowersec-go/v<version>`, SwiftPM
   `<version>`, and Rust `flowersec-rust/v<version>` tags.
 - Run `scripts/release.sh <version>` only from a clean `main` synchronized with `origin/main`.
+- The approved one-time v5.6.0 maintenance release is based on published
+  `flowersec-go/v5.5.0` at `6f646fe4a20f9fdee55232a445e7c16fc133442c`.
+  Publish its three coordinated tags atomically from the clean maintenance
+  worktree after the normal precommit and acceptance gates. Do not merge v5
+  source into v6 main or move main for this exception. The release workflows
+  verify the exact v5.6.0 tag and pinned ancestry; all other versions retain
+  the main-tip rule. Version checks, signing, publication and registry readback
+  remain required.
 - Release runs no tests and consumes no test artifacts, evidence, signatures, closures, attestations, or receipts.
 - Release performs only version and ref validation, packaging, release-artifact signing, publication, and registry readback.
 - GitHub Release notes must contain a human-readable summary.
