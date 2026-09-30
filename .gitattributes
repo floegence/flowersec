@@ -1,0 +1,3 @@
+# Hash-bound protocol fixtures must retain their canonical bytes on Windows.
+*.json text eol=lf
+*.txt text eol=lf

@@ -359,6 +359,8 @@ require_exact_value(precommit_job["runs-on"], "macos-26", "the hosted CI precomm
 require_exact_value(precommit_job["timeout-minutes"], 60, "the hosted CI precommit timeout")
 require_exact_value(precommit_job["env"], {
   "DEVELOPER_DIR" => xcode_directory,
+  "CARGO_BUILD_JOBS" => "2",
+  "GOMAXPROCS" => "2",
 }, "the hosted CI precommit Xcode selection")
 require_exact_value(node_minimum_job["name"], "Node #{node_minimum.split('.').first} minimum compatibility", "the hosted CI Node minimum job name")
 require_exact_value(node_minimum_job["runs-on"], "ubuntu-latest", "the hosted CI Node minimum runner")

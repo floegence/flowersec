@@ -61,6 +61,8 @@ jobs:
     timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+      CARGO_BUILD_JOBS: "2"
+      GOMAXPROCS: "2"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
