@@ -4610,7 +4610,15 @@ async fn idle_timeout_drops_a_hanging_carrier_close_future() {
         .expect("idle timeout did not terminate the session");
     assert_eq!(termination.error, SessionError::Timeout);
     tokio::time::sleep(Duration::from_millis(40)).await;
-    assert_eq!(active_closes.load(Ordering::Acquire), 0);
+    // Windows timer granularity may schedule the observer before close cleanup.
+    // Bound actual cleanup completion instead of assuming a fixed wakeup order.
+    tokio::time::timeout(Duration::from_millis(250), async {
+        while active_closes.load(Ordering::Acquire) != 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("idle close future remained alive after its cleanup deadline");
     let _ = server.close().await;
 }
 
