@@ -116,6 +116,15 @@ func waitBridge(t *testing.T, d *DuplexBridge) (DuplexObservation, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	r, err := d.Wait(ctx)
+	if !r.Final {
+		// Cleanup expiry may return counters before both pumps freeze their tails.
+		// Stable-result assertions wait for publication within the original bound.
+		select {
+		case <-d.ready:
+			r, err = d.Wait(ctx)
+		case <-ctx.Done():
+		}
+	}
 	if !r.Final || r.Result == nil {
 		t.Fatal("bridge did not publish stable result", r, err)
 	}
