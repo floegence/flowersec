@@ -3671,22 +3671,26 @@ test("browser compatibility remains explicit and separate from Chromium smoke", 
   assert.match(packageManifest, /"test:browser:webkit": "npm run ensure:browser:webkit && npm run build && playwright test --project=webkit-smoke"/);
 });
 
-test("maintenance source exception is restricted to the reviewed v5.6.0 ancestry", async (t) => {
+test("maintenance release authority requires the reviewed ancestry and exact remote tip", async (t) => {
   const base = "6f646fe4a20f9fdee55232a445e7c16fc133442c";
   const sha = "a".repeat(40);
   const main = "b".repeat(40);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-maintenance-ref-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "flowersec-ts"));
+  fs.writeFileSync(path.join(root, "flowersec-ts/package.json"), JSON.stringify({ version: "5.7.0" }));
   const bin = path.join(root, "bin");
   fs.mkdirSync(bin);
   writeExecutable(path.join(bin, "git"), `#!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
  fetch) exit 0 ;;
- ls-remote) printf '%s refs/heads/main\\n' "$TEST_MAIN" ;;
- merge-base) [[ "$3" == "${base}" && "$4" == "$TEST_SHA" && "$TEST_ANCESTRY" == yes ]] ;;
+ ls-remote) if [[ "$*" == *release/5.x* ]]; then printf '%s refs/heads/release/5.x\\n' "$TEST_MAINTENANCE"; exit 0; fi; printf '%s refs/heads/main\\n' "$TEST_MAIN" ;;
+ merge-base) [[ ( "$3" == "${base}" || "$3" == "74e6ae7d5d2a992f4a33bf05259d1b786c386f81" ) && "$4" == "$TEST_SHA" && "$TEST_ANCESTRY" == yes ]] ;;
  rev-parse)
    case "\${*: -1}" in
+     'refs/tags/5.6.0^{commit}') printf '%s\\n' "$TEST_MAINTENANCE_BASE" ;;
+     refs/remotes/origin/release/5.x) printf '%s\\n' "$TEST_MAINTENANCE" ;;
      HEAD) printf '%s\\n' "$TEST_SHA" ;;
      refs/remotes/origin/main) printf '%s\\n' "$TEST_MAIN" ;;
      'refs/tags/flowersec-go/v5.6.0^{commit}') printf '%s\\n' "$TEST_TAG" ;;
@@ -3700,6 +3704,9 @@ esac
     const run = extractWorkflowStepRun(path.join(sourceRoot, ".github/workflows", workflow), job, "Verify release source authority");
     for (const scenario of [
       { name: "approved ancestry", success: true },
+      { name: "current maintenance tip", tag: main, maintenance: sha, maintenanceBase: "74e6ae7d5d2a992f4a33bf05259d1b786c386f81", success: true },
+      { name: "stale maintenance tip", tag: main, maintenance: main, maintenanceBase: "74e6ae7d5d2a992f4a33bf05259d1b786c386f81", success: false },
+      { name: "wrong maintenance baseline", tag: main, maintenance: sha, maintenanceBase: main, success: false },
       { name: "different tag", tag: main, success: false },
       { name: "changed base tag", base: main, success: false },
       { name: "unrelated source", ancestry: "no", success: false },
@@ -3708,6 +3715,7 @@ esac
       await t.test(`${workflow}: ${scenario.name}`, () => {
         const result = spawnSync("bash", ["-c", run], { cwd: root, encoding: "utf8", env: {
           ...isolatedEnvironment(), PATH: `${bin}:${process.env.PATH}`, RELEASE_SHA: sha,
+          TEST_MAINTENANCE: scenario.maintenance ?? main, TEST_MAINTENANCE_BASE: scenario.maintenanceBase ?? main,
           TEST_SHA: sha, TEST_MAIN: scenario.main ?? main, TEST_TAG: scenario.tag ?? sha,
           TEST_BASE: scenario.base ?? base, TEST_ANCESTRY: scenario.ancestry ?? "yes",
         } });

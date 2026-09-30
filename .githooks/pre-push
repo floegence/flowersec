@@ -15,7 +15,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   esac
 done
 
-main_line=$(awk '$3 == "refs/heads/main" && $2 !~ /^0+$/ { print; exit }' "$push_lines")
+main_line=$(awk '($3 == "refs/heads/main" || $3 == "refs/heads/release/5.x") && $2 !~ /^0+$/ { print; exit }' "$push_lines")
 if [ -n "$main_line" ]; then
   main_sha=$(printf '%s\n' "$main_line" | awk '{ print $2 }')
   repo_root=$(git rev-parse --show-toplevel)
@@ -35,7 +35,7 @@ if [ ! -s "$release_lines" ]; then
 fi
 
 if [ -z "${FLOWERSEC_RELEASE_PUSH_SHA:-}" ]; then
-  printf '%s\n' '[flowersec] release tags must be pushed with scripts/release.sh from synchronized main.' >&2
+  printf '%s\n' '[flowersec] release tags must be pushed with scripts/release.sh from a synchronized release branch.' >&2
   exit 1
 fi
 

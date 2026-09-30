@@ -78,10 +78,20 @@ public func connectHTTPDirectV1(
   lease: HTTPDirectArtifactLeaseV1,
   options: ConnectorOptions
 ) async throws -> any Session {
+  try await connectHTTPDirectV1(lease: lease, options: options, channelProvider: nil)
+}
+
+/// Connects using an authenticated application transport bound to the exact endpoint.
+public func connectHTTPDirectV1(
+  lease: HTTPDirectArtifactLeaseV1,
+  options: ConnectorOptions,
+  channelProvider: HTTPDirectChannelProvider?
+) async throws -> any Session {
   #if os(macOS) || os(iOS)
     return try await SessionConnectorV3(
       lease: lease.inner, options: options,
-      runtime: AppleWebSocketRuntimeAdapterV3(httpDirectEndpoint: lease.endpoint)
+      runtime: AppleWebSocketRuntimeAdapterV3(
+        httpDirectEndpoint: lease.endpoint, httpDirectChannelProvider: channelProvider)
     ).connect()
   #else
     let claimed: ClaimedArtifactLeaseV3

@@ -70,6 +70,23 @@ struct HTTPDirectV1Tests {
     }
     #expect(await counter.spent == 0)
     #expect(await counter.retired == 1)
+
+    let provider = try HTTPDirectChannelProvider(
+      endpoint: URL(string: "ws://192.168.31.43:23998/flowersec/v3/direct")!
+    ) { _ in
+      Issue.record("a mismatched external channel must never open")
+      throw CancellationError()
+    }
+    let externalLease = HTTPDirectArtifactLeaseV1(
+      artifact: try parseHTTPDirectArtifactV1(envelope()),
+      commitSpend: { await counter.spend() }, retire: { await counter.retire() })
+    await #expect(throws: ConnectError.artifactInvalid) {
+      try await connectHTTPDirectV1(
+        lease: externalLease, options: ConnectorOptions(origin: "http://192.168.31.42:23998"),
+        channelProvider: provider)
+    }
+    #expect(await counter.spent == 0)
+    #expect(await counter.retired == 2)
   }
 
   @Test func ordinaryAppleAdapterKeepsTLSRequired() throws {

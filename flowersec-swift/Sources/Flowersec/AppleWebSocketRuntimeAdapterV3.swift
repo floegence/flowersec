@@ -11,9 +11,14 @@ import Foundation
 
   struct AppleWebSocketRuntimeAdapterV3: RuntimeCarrierAdapterV3 {
     let httpDirectEndpoint: String?
+    let httpDirectChannelProvider: HTTPDirectChannelProvider?
 
-    init(httpDirectEndpoint: String? = nil) {
+    init(
+      httpDirectEndpoint: String? = nil,
+      httpDirectChannelProvider: HTTPDirectChannelProvider? = nil
+    ) {
       self.httpDirectEndpoint = httpDirectEndpoint
+      self.httpDirectChannelProvider = httpDirectChannelProvider
     }
 
     #if os(iOS)
@@ -23,6 +28,11 @@ import Foundation
     #endif
 
     func validate(options: ConnectorOptions) throws {
+      if let provider = httpDirectChannelProvider {
+        guard provider.endpoint == httpDirectEndpoint else {
+          throw SwiftRuntimeErrorV3.invalidConfiguration
+        }
+      }
       guard validOrigin(options.origin) else {
         throw SwiftRuntimeErrorV3.invalidConfiguration
       }
@@ -129,7 +139,8 @@ import Foundation
           ProxyHeader(name: "Origin", value: options.origin),
         ],
         maxFrameBytes: FlowersecSDKDefaults.Yamux.maxFrameBytes + 12,
-        timeout: options.connectTimeout)
+        timeout: options.connectTimeout,
+        channelProvider: httpDirectChannelProvider)
       guard socket.selectedProtocol == subprotocol else {
         await socket.close()
         throw SwiftRuntimeErrorV3.protocolNegotiationFailed

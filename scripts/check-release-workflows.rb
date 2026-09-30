@@ -241,8 +241,8 @@ require_exact_keys(release_workflow, ["name", true, "env", "permissions", "concu
   require_exact_value(workflow["env"], expected_env, "workflow #{workflow["name"].inspect} environment")
 end
 require_exact_value(ci_workflow[true], {
-  "push" => { "branches" => ["main"] },
-  "pull_request" => { "branches" => ["main"] },
+  "push" => { "branches" => ["main", "release/5.x"] },
+  "pull_request" => { "branches" => ["main", "release/5.x"] },
 }, "hosted CI triggers")
 require_exact_value(codeql_workflow[true], {
   "workflow_dispatch" => {},
@@ -759,7 +759,7 @@ validate_step_contracts(release_steps, [
   }, run_sha256: "479845d981a22d9aa135c767fed353641737e1c73587d14d188562b5d5fa06f9" },
   { name: "Verify release source authority", keys: ["name", "env", "run"], values: {
     "env" => { "RELEASE_SHA" => "${{ steps.vars.outputs.sha }}" },
-  }, run_sha256: "baf2f4a4c533ea0e3c3256e66720be108b1103c73b5e1d63071aa40fe041a4f2" },
+  }, run_sha256: "11eea9821f6a373b6e9d114d5515c0d1fffad263b47b8a148390414d5cb7ab6a" },
   { name: "Setup Go", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "with" => { "go-version-file" => "flowersec-go/go.mod", "cache" => true, "cache-dependency-path" => "flowersec-go/go.sum" } } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: { "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", "with" => { "node-version" => node_version, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" } } },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => rust_version } } },
@@ -905,7 +905,7 @@ validate_step_contracts(npm_recovery_steps, [
 validate_step_contracts(rust_steps, [
   { name: nil, keys: ["uses", "with"], values: checkout },
   { name: "Checkout release commit", keys: ["name", "id", "env", "run"], values: { "id" => "version", "env" => { "RELEASE_VERSION_INPUT" => "${{ inputs.version }}" } }, run_sha256: "5d68a3db64a236498aee55916814fc9d89875553f6ef470b683d96b78b62a336" },
-  { name: "Verify release source authority", keys: ["name", "run"], run_sha256: "8d977de5bef3f36484b1703f9fe0395cf0ba5d2230736891f86358be1959bff5" },
+  { name: "Verify release source authority", keys: ["name", "run"], run_sha256: "9bc328359c8eb5869f3eda1f039e5bf133cc3ba00c83759204452a83e6ea5439" },
   { name: "Setup Rust", keys: ["name", "uses", "with"], values: { "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4", "with" => { "toolchain" => rust_version } } },
   { name: "Setup Node", keys: ["name", "uses", "with"], values: {
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",

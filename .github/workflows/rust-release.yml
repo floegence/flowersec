@@ -77,6 +77,22 @@ jobs:
             echo "verified approved v5.6.0 maintenance release source"
             exit 0
           fi
+          # Major 5 maintenance is isolated from the next-major main branch.
+          maintenance_baseline="74e6ae7d5d2a992f4a33bf05259d1b786c386f81"
+          version=$(node -p "require('./flowersec-ts/package.json').version")
+          if [[ "$version" == 5.* ]] &&
+             [[ "$(git rev-parse 'refs/tags/5.6.0^{commit}')" == "$maintenance_baseline" ]] &&
+             git merge-base --is-ancestor "$maintenance_baseline" "$release_sha"; then
+            git fetch --no-tags origin release/5.x
+            local_maintenance=$(git rev-parse refs/remotes/origin/release/5.x)
+            remote_maintenance=$(git ls-remote origin refs/heads/release/5.x | awk '{print $1}')
+            if [[ "$release_sha" == "$local_maintenance" && "$release_sha" == "$remote_maintenance" ]]; then
+              echo "verified current release/5.x maintenance source"
+              exit 0
+            fi
+            echo "maintenance tag must point at the current remote release/5.x tip" >&2
+            exit 1
+          fi
           if [[ "$release_sha" != "$local_main_sha" || "$release_sha" != "$remote_main_sha" ]]; then
             echo "release tag must point at the current remote main tip" >&2
             echo "tag=$release_sha local_main=$local_main_sha remote_main=$remote_main_sha" >&2

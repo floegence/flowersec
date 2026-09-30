@@ -63,3 +63,13 @@ See the [API contract](../docs/API_CONTRACT.md),
 [Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md),
 [wire contract](../docs/TRANSPORT_V3_WIRE.md), and
 [error model](../docs/ERROR_MODEL.md).
+
+## Application-owned HTTPDirect channels
+
+`connectHTTPDirectV1` accepts an optional `HTTPDirectChannelProvider` for an
+explicit authenticated outer transport. Its endpoint must exactly match the
+HTTPDirect envelope. The provider initializes a NIO byte channel before delivery,
+honors cancellation, and closes partial opens. Flowersec owns WebSocket upgrade,
+admission, lease spending, framing and session lifetime. Closing that channel
+must release only its byte stream. This does not change ordinary TLS connectors
+or permit endpoint rewriting, fallback, or transport-security downgrades.

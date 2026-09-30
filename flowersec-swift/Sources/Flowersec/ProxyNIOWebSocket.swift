@@ -35,11 +35,17 @@
       maxFrameBytes: Int,
       timeout: Duration?,
       trustRoots: [NIOSSLCertificate]? = nil,
-      tlsHandler: ProxyTLSClientHandler? = nil
+      tlsHandler: ProxyTLSClientHandler? = nil,
+      channelProvider: HTTPDirectChannelProvider? = nil
     ) async throws -> any ProxyUpstreamWebSocket {
       guard let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "wss",
         let host = url.host
       else { throw ProxyError.invalidConfiguration("invalid WebSocket upstream URL") }
+      if let provider = channelProvider {
+        guard scheme == "ws", provider.endpoint == url.absoluteString,
+          trustRoots == nil, tlsHandler == nil
+        else { throw ProxyError.invalidConfiguration("invalid HTTPDirect channel binding") }
+      }
       let port = url.port ?? (scheme == "wss" ? 443 : 80)
       let group = MultiThreadedEventLoopGroup.singleton
       let timeoutMilliseconds = try timeout.map(proxyDurationMilliseconds)
@@ -50,11 +56,7 @@
       let path = url.path.isEmpty ? "/" : url.path
       let requestHeaders = HTTPHeaders(headers.map { ($0.name, $0.value) })
 
-      var bootstrap = ClientBootstrap(group: group)
-      if let timeout {
-        bootstrap = bootstrap.connectTimeout(.milliseconds(try proxyDurationMilliseconds(timeout)))
-      }
-      bootstrap = bootstrap.channelInitializer { channel in
+      let initialize: HTTPDirectChannelProvider.Initializer = { channel in
         let requestHandler = ProxyWebSocketUpgradeRequestHandler(
           authority: authority,
           path: path,
@@ -131,7 +133,16 @@
 
       let channel: any Channel
       do {
-        channel = try await bootstrap.connect(host: host, port: port).get()
+        if let provider = channelProvider {
+          channel = try await provider.connect(initialize)
+        } else {
+          var bootstrap = ClientBootstrap(group: group).channelInitializer(initialize)
+          if let timeout {
+            bootstrap = bootstrap.connectTimeout(
+              .milliseconds(try proxyDurationMilliseconds(timeout)))
+          }
+          channel = try await bootstrap.connect(host: host, port: port).get()
+        }
       } catch let error as ChannelError {
         connection.fail(error)
         if case .connectTimeout = error {
@@ -153,7 +164,13 @@
         }
       }
       do {
-        let socket = try await connection.promise.futureResult.get()
+        let socket = try await withTaskCancellationHandler {
+          try Task.checkCancellation()
+          return try await connection.promise.futureResult.get()
+        } onCancel: {
+          connection.fail(CancellationError())
+          channel.close(promise: nil)
+        }
         scheduledTimeout?.cancel()
         return socket
       } catch {

@@ -11,27 +11,30 @@ import XCTest
 
 final class ProxyNIOWebSocketTests: XCTestCase {
   func testConnectCompletesSuccessfulUpgrade() async throws {
-    let server = try LocalWebSocketServer(
-      behavior: .upgrade(
-        selectedProtocol: "flowersec-test",
-        initialPayloads: [],
-        closeAfterPayloads: false
-      )
-    )
-    defer { server.stop() }
-
-    let socket = try await ProxyNIOWebSocketConnector.connect(
-      url: URL(string: "ws://127.0.0.1:\(server.port)/socket?token=test")!,
-      headers: [ProxyHeader(name: "Sec-WebSocket-Protocol", value: "flowersec-test")],
-      maxFrameBytes: 64,
-      timeout: .seconds(1)
-    )
-    defer { Task { await socket.close() } }
-
-    XCTAssertEqual(socket.selectedProtocol, "flowersec-test")
-    let request = try XCTUnwrap(server.request)
-    XCTAssertEqual(request.uri, "/socket?token=test")
-    XCTAssertEqual(request.protocolHeader, "flowersec-test")
+    for external in [false, true] {
+      let server = try LocalWebSocketServer(
+        behavior: .upgrade(
+          selectedProtocol: "flowersec-test", initialPayloads: [], closeAfterPayloads: false))
+      defer { server.stop() }
+      let path = external ? "/flowersec/v3/direct" : "/socket?token=test"
+      let endpoint = URL(string: "ws://127.0.0.1:\(server.port)\(path)")!
+      let port = Int(server.port)
+      let provider =
+        external
+        ? try HTTPDirectChannelProvider(endpoint: endpoint) { initialize in
+          try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .channelInitializer(initialize).connect(host: "127.0.0.1", port: port).get()
+        } : nil
+      let socket = try await ProxyNIOWebSocketConnector.connect(
+        url: endpoint,
+        headers: [ProxyHeader(name: "Sec-WebSocket-Protocol", value: "flowersec-test")],
+        maxFrameBytes: 64, timeout: .seconds(1), channelProvider: provider)
+      XCTAssertEqual(socket.selectedProtocol, "flowersec-test")
+      let request = try XCTUnwrap(server.request)
+      XCTAssertEqual(request.uri, path)
+      XCTAssertEqual(request.protocolHeader, "flowersec-test")
+      await socket.close()
+    }
   }
 
   func testConnectReportsRejectedUpgrade() async throws {
