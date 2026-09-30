@@ -85,7 +85,7 @@
     "@typescript-eslint/eslint-plugin": "8.68.0",
     "@typescript-eslint/parser": "8.68.0",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/coverage-v8": "5.0.2",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "ajv-formats-draft2019": "1.6.1",
