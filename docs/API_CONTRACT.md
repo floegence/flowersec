@@ -139,9 +139,17 @@ Its optional `WebSocketHTTPServerOptions.AuthorizeWebSocketRequest` callback
 adds application-owned request admission for the direct and tunnel paths before
 upgrade or session authorization. A rejection returns HTTP 403; application
 routes are unaffected. A nil callback preserves existing admission behavior.
-The callback can only restrict admission: TLS policy, configured allowed
-Origins, and session authorization remain independently required. It does not
-change the transport protocol or the carrier-neutral Acceptor interface.
+The callback can only restrict admission: TLS policy, configured Origin policy,
+and session authorization remain independently required. It does not change
+the transport protocol or the carrier-neutral Acceptor interface.
+
+`AcceptorOptions.CheckOrigin` optionally evaluates the current application
+Origin policy for each direct TLS WebSocket upgrade. It is mutually exclusive
+with static `AllowedOrigins` and must be safe for concurrent calls. Rejected
+Origins return HTTP 403. TLS, protocol, application admission, and artifact
+session authorization remain independently required. Updating Origin policy
+does not terminate sessions that are already established.
+
 Both reserve the direct and tunnel protocol paths and preserve server-owned
 connection shutdown. See `docs/HTTP_DIRECT_V1.md` for the admission and security
 contract. Standard v3 connectors remain TLS-only.

@@ -48,6 +48,10 @@ type PrivateLoopbackHandlerOptions struct {
 // an allow response. Release is called exactly once for every accepted lease.
 type AcceptorOptions struct {
 	AllowedOrigins []string
+	// CheckOrigin optionally authorizes each public TLS WebSocket upgrade from
+	// current application policy. It is mutually exclusive with AllowedOrigins,
+	// must be safe for concurrent calls, and does not replace session authorization.
+	CheckOrigin func(*http.Request) bool
 	// Listeners declares the native carrier/path adapters owned by this
 	// acceptor. WebSocket adapters are served by Handler; raw QUIC and
 	// WebTransport adapters are served by Serve.
@@ -70,7 +74,7 @@ type Acceptor struct {
 }
 
 func NewAcceptor(options AcceptorOptions) (*Acceptor, error) {
-	if options.Authorize == nil || options.OnSession == nil {
+	if options.Authorize == nil || options.OnSession == nil || (options.CheckOrigin != nil && len(options.AllowedOrigins) > 0) {
 		return nil, ErrInvalidAcceptor
 	}
 	if options.MaxInboundStreams == 0 {
@@ -286,7 +290,7 @@ func (acceptor *Acceptor) Handler() http.Handler {
 		}
 		direct = direct || listener.acceptorPath() == carrier.PathDirect
 	}
-	direct = direct && len(acceptor.options.AllowedOrigins) > 0
+	direct = direct && (len(acceptor.options.AllowedOrigins) > 0 || acceptor.options.CheckOrigin != nil)
 	if direct {
 		mux.HandleFunc(WebSocketDirectPath, acceptor.handleDirect)
 	}
@@ -378,6 +382,9 @@ func validateDirectUpgradeHeaders(request *http.Request) bool {
 func (acceptor *Acceptor) allowedOrigin(request *http.Request) bool {
 	if request == nil {
 		return false
+	}
+	if acceptor.options.CheckOrigin != nil {
+		return acceptor.options.CheckOrigin(request)
 	}
 	origin := request.Header.Get("Origin")
 	for _, allowed := range acceptor.options.AllowedOrigins {

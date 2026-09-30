@@ -215,7 +215,7 @@ func TestAcceptorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 			if field.PkgPath != "" {
 				continue
 			}
-			if field.Name == "AllowedOrigins" || field.Name == "Listeners" || field.Name == "MaxInboundStreams" || field.Name == "MaxDirectSessions" || field.Name == "Authorize" || field.Name == "Release" || field.Name == "ResolveHandlers" || field.Name == "OnSession" {
+			if field.Name == "AllowedOrigins" || field.Name == "CheckOrigin" || field.Name == "Listeners" || field.Name == "MaxInboundStreams" || field.Name == "MaxDirectSessions" || field.Name == "Authorize" || field.Name == "Release" || field.Name == "ResolveHandlers" || field.Name == "OnSession" {
 				continue
 			}
 			t.Fatalf("%s exposes an unexpected implementation field %s", typeOf, field.Name)
