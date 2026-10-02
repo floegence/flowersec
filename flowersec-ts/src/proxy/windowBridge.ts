@@ -1,5 +1,6 @@
 import { enableResponseFlowControl, usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
 import { fetchProxyPort, prepareProxyFetch } from "./fetch.js";
+import { writeAll } from "./stream.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
 
@@ -82,11 +83,14 @@ export class MessagePortByteStream implements ByteStream {
     if (this.writeClosed) throw new SessionError("operation_failed");
     if (options.signal?.aborted === true) throw new SessionError("canceled");
     if (data.length === 0) return 0;
-    if (data.length > MAX_BRIDGE_CHUNK_BYTES || this.buffered + data.length > MAX_BRIDGE_BUFFER_BYTES) {
+    const length = Math.min(data.length, MAX_BRIDGE_CHUNK_BYTES, MAX_BRIDGE_BUFFER_BYTES - this.buffered);
+    if (length <= 0) {
       throw new SessionError("resource_exhausted");
     }
     const id = this.nextWrite++;
-    const copy = data.slice();
+    // ByteStream writes may be partial. Bound the bridge message, not the
+    // caller's application frame, and report the acknowledged byte count.
+    const copy = data.slice(0, length);
     this.buffered += copy.length;
     await new Promise<void>((resolve, reject) => {
       const onAbort = () => this.settleWrite(id, new SessionError("canceled"));
@@ -103,7 +107,7 @@ export class MessagePortByteStream implements ByteStream {
         this.settleWrite(id, new SessionError("operation_failed"));
       }
     });
-    return data.length;
+    return length;
   }
 
   async closeWrite(): Promise<void> {
@@ -373,15 +377,14 @@ async function bridgeStreams(runtimeStream: ByteStream, port: MessagePort, signa
     while (true) {
       const chunk = await runtimeStream.read({ signal: controller.signal });
       if (chunk === null) { await bridge.closeWrite(); return; }
-      await bridge.write(chunk, { signal: controller.signal });
+      await writeAll(bridge, chunk, { signal: controller.signal });
     }
   })().catch((error) => { controller.abort(error); void resetBoth(); throw error; });
   const right = (async () => {
     while (true) {
       const chunk = await bridge.read({ signal: controller.signal });
       if (chunk === null) { await runtimeStream.closeWrite(); return; }
-      let offset = 0;
-      while (offset < chunk.length) offset += await runtimeStream.write(chunk.subarray(offset), { signal: controller.signal });
+      await writeAll(runtimeStream, chunk, { signal: controller.signal });
     }
   })().catch((error) => { controller.abort(error); void resetBoth(); throw error; });
   try {
