@@ -768,8 +768,8 @@
     {
       "path": "flowersec-swift/Sources/Flowersec/TLSChannelProvider.swift",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 26,
-      "matching_lines": 3
+      "first_matching_line": 30,
+      "matching_lines": 4
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/Transport.swift",

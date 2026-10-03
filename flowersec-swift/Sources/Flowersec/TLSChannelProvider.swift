@@ -1,6 +1,10 @@
 import Foundation
 import NIOCore
 
+#if os(macOS) || os(iOS)
+  import NIOSSL
+#endif
+
 /// Supplies application-owned byte streams bound to one canonical HTTPS origin.
 ///
 /// The application authenticates and binds its outer transport before creating
@@ -40,7 +44,8 @@ public struct TLSChannelProvider: Sendable, CustomStringConvertible, CustomRefle
   /// Opens a CA-verified TLS 1.3 channel for same-origin application HTTP requests.
   ///
   /// The initializer installs application handlers after TLS and before activation.
-  /// TLS errors arrive through the pipeline; callers must close on completion,
+  /// TLS errors arrive as `ConnectError.transportSecurityFailed` through the
+  /// pipeline; callers must close on completion,
   /// failure, cancellation, or timeout. No plaintext or direct-network fallback is
   /// performed. Empty roots use platform trust; supplied PEM roots replace it.
   public func openChannel(
@@ -49,7 +54,11 @@ public struct TLSChannelProvider: Sendable, CustomStringConvertible, CustomRefle
     #if os(macOS) || os(iOS)
       let handler = try NativeTLSPolicyAdapterV3.makeCAClientHandlerFactory(
         serverHostname: hostname, trustRootsPEM: trustRootsPEM)
-      return try await openChannel(tlsHandler: handler, initializer: initializer)
+      return try await openChannel(tlsHandler: handler) { channel in
+        channel.pipeline.addHandler(TLSChannelErrorHandler()).flatMap {
+          initializer(channel)
+        }
+      }
     #else
       throw ConnectError.transportSecurityUnsupported
     #endif
@@ -89,3 +98,19 @@ public struct TLSChannelProvider: Sendable, CustomStringConvertible, CustomRefle
     return parts.url?.absoluteString == origin
   }
 }
+
+#if os(macOS) || os(iOS)
+  private final class TLSChannelErrorHandler: ChannelInboundHandler, Sendable {
+    typealias InboundIn = ByteBuffer
+
+    func errorCaught(context: ChannelHandlerContext, error: any Error) {
+      if error is NIOSSLError || error is NIOSSLExtraError || error is BoringSSLError
+        || error is TransportSecurityFailureV3
+      {
+        context.fireErrorCaught(ConnectError.transportSecurityFailed)
+      } else {
+        context.fireErrorCaught(error)
+      }
+    }
+  }
+#endif
