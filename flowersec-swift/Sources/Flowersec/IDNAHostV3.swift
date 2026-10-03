@@ -269,6 +269,7 @@ enum IDNAHostV3 {
   // RFC 3492 bootstring implementation. Keeping it in the package avoids
   // reaching ICU's internal u_strToPunycode/u_strFromPunycode symbols.
   static func punycodeDecode(_ input: String) throws -> String {
+    guard input.utf8.count <= 1_024 else { throw IDNAHostErrorV3.invalidHost }
     let bytes = Array(input.utf8)
     guard bytes.allSatisfy({ $0 < 128 }) else { throw IDNAHostErrorV3.invalidHost }
     var output: [UInt32] = []
@@ -319,10 +320,13 @@ enum IDNAHostV3 {
     guard output.allSatisfy({ UnicodeScalar($0) != nil }) else {
       throw IDNAHostErrorV3.invalidHost
     }
-    return String(String.UnicodeScalarView(output.compactMap(UnicodeScalar.init)))
+    let result = String(String.UnicodeScalarView(output.compactMap(UnicodeScalar.init)))
+    guard result.utf16.count <= 1_024 else { throw IDNAHostErrorV3.invalidHost }
+    return result
   }
 
   static func punycodeEncode(_ input: String) throws -> String {
+    guard input.utf16.count <= 1_024 else { throw IDNAHostErrorV3.invalidHost }
     let scalars = input.unicodeScalars.map(\.value)
     guard scalars.allSatisfy({ UnicodeScalar($0) != nil }) else {
       throw IDNAHostErrorV3.invalidHost
@@ -365,6 +369,7 @@ enum IDNAHostV3 {
       delta += 1
       n += 1
     }
+    guard output.count <= 1_024 else { throw IDNAHostErrorV3.invalidHost }
     return String(decoding: output, as: UTF8.self)
   }
 

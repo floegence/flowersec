@@ -727,7 +727,7 @@
       "path": "flowersec-swift/Sources/Flowersec/IDNAHostV3.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 4,
-      "matching_lines": 34
+      "matching_lines": 38
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/JSONPreflightV3.swift",
