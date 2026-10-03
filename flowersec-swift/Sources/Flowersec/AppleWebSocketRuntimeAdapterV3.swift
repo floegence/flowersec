@@ -12,13 +12,16 @@ import Foundation
   struct AppleWebSocketRuntimeAdapterV3: RuntimeCarrierAdapterV3 {
     let httpDirectEndpoint: String?
     let httpDirectChannelProvider: HTTPDirectChannelProvider?
+    let tlsChannelProvider: TLSChannelProvider?
 
     init(
       httpDirectEndpoint: String? = nil,
-      httpDirectChannelProvider: HTTPDirectChannelProvider? = nil
+      httpDirectChannelProvider: HTTPDirectChannelProvider? = nil,
+      tlsChannelProvider: TLSChannelProvider? = nil
     ) {
       self.httpDirectEndpoint = httpDirectEndpoint
       self.httpDirectChannelProvider = httpDirectChannelProvider
+      self.tlsChannelProvider = tlsChannelProvider
     }
 
     #if os(iOS)
@@ -28,6 +31,9 @@ import Foundation
     #endif
 
     func validate(options: ConnectorOptions) throws {
+      if tlsChannelProvider != nil, httpDirectEndpoint != nil || httpDirectChannelProvider != nil {
+        throw SwiftRuntimeErrorV3.invalidConfiguration
+      }
       if let provider = httpDirectChannelProvider {
         guard provider.endpoint == httpDirectEndpoint else {
           throw SwiftRuntimeErrorV3.invalidConfiguration
@@ -66,6 +72,9 @@ import Foundation
         url.query == nil, url.fragment == nil, url.user == nil, url.password == nil,
         let host = url.host
       else { throw ConnectorBoundaryErrorV3.runtimeUnsupported }
+      if let provider = tlsChannelProvider, !provider.matches(url) {
+        throw ConnectorBoundaryErrorV3.artifactInvalid
+      }
       if let endpoint = httpDirectEndpoint {
         let binding = try HTTPDirectEndpointV1(endpoint)
         guard path == .direct, candidate.id == "http-direct", candidate.tls.mode == "ca",
@@ -109,7 +118,8 @@ import Foundation
           headers: headers,
           maxFrameBytes: FlowersecSDKDefaults.Yamux.maxFrameBytes + 12,
           timeout: options.connectTimeout,
-          tlsHandler: handler
+          tlsHandler: handler,
+          tlsChannelProvider: tlsChannelProvider
         )
       } catch let failure as ProxyUpstreamFailure {
         if failure.tlsLocated { throw ConnectorBoundaryErrorV3.securityFailed }

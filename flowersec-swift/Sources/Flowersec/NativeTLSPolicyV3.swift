@@ -14,6 +14,20 @@
   /// Pin verification is performed during the TLS handshake; the resulting
   /// carrier is not exposed until NIOSSL has also completed its TLS proof.
   enum NativeTLSPolicyAdapterV3 {
+    static func makeCAClientHandlerFactory(
+      serverHostname: String, trustRootsPEM: [Data]
+    ) throws -> ProxyTLSClientHandler {
+      let roots = try trustRootsPEM.flatMap { pem in
+        let certificates = try NIOSSLCertificate.fromPEMBytes(Array(pem))
+        guard !certificates.isEmpty else { throw NativeTLSPolicyErrorV3.invalidPolicy }
+        return certificates
+      }
+      return try makeClientHandlerFactory(
+        policy: .ca(
+          serverName: serverHostname, rootsSource: roots.isEmpty ? .platform : .configured),
+        serverHostname: serverHostname, configuredRoots: roots)
+    }
+
     static func makeClientHandlerFactory(
       policy: TransportSecurityPolicyV3,
       serverHostname: String,

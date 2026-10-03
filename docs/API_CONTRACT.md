@@ -362,3 +362,11 @@ bounded Node Duplex with half-close, 64 KiB write chunks, partial-write progress
 read backpressure, and abort/reset propagation. It never decodes HTTP or WebSocket
 frames, reconnects, or replays application bytes. These embedding helpers do not
 change wire identifiers, artifacts, or carrier selection.
+
+The Swift `TLSChannelProvider` binds application-owned byte streams to a canonical
+HTTPS origin. `connect(lease:options:channelProvider:)` preserves artifact TLS
+policy and uses only those streams, without direct-network fallback. The SDK
+owns TLS, WebSocket upgrade, admission, and session protocol. Its
+`openChannel(trustRootsPEM:initializer:)` boundary also provides CA-verified TLS
+for same-origin application HTTP exchanges. It does not mint artifacts, bypass
+certificate validation, or change the Transport v3 wire contract.

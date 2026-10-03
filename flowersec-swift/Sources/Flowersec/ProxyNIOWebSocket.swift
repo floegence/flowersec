@@ -36,15 +36,21 @@
       timeout: Duration?,
       trustRoots: [NIOSSLCertificate]? = nil,
       tlsHandler: ProxyTLSClientHandler? = nil,
-      channelProvider: HTTPDirectChannelProvider? = nil
+      channelProvider: HTTPDirectChannelProvider? = nil,
+      tlsChannelProvider: TLSChannelProvider? = nil
     ) async throws -> any ProxyUpstreamWebSocket {
       guard let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "wss",
         let host = url.host
       else { throw ProxyError.invalidConfiguration("invalid WebSocket upstream URL") }
       if let provider = channelProvider {
         guard scheme == "ws", provider.endpoint == url.absoluteString,
-          trustRoots == nil, tlsHandler == nil
+          trustRoots == nil, tlsHandler == nil, tlsChannelProvider == nil
         else { throw ProxyError.invalidConfiguration("invalid HTTPDirect channel binding") }
+      }
+      if let provider = tlsChannelProvider {
+        guard scheme == "wss", provider.matches(url), tlsHandler != nil else {
+          throw ProxyError.invalidConfiguration("invalid TLS channel binding")
+        }
       }
       let port = url.port ?? (scheme == "wss" ? 443 : 80)
       let group = MultiThreadedEventLoopGroup.singleton
@@ -103,7 +109,7 @@
           }
         )
         do {
-          if scheme == "wss" {
+          if scheme == "wss", tlsChannelProvider == nil {
             if let tlsHandler {
               try channel.pipeline.syncOperations.addHandler(tlsHandler.make())
             } else {
@@ -135,6 +141,9 @@
       do {
         if let provider = channelProvider {
           channel = try await provider.connect(initialize)
+        } else if let provider = tlsChannelProvider {
+          channel = try await provider.openChannel(
+            tlsHandler: tlsHandler!, initializer: initialize)
         } else {
           var bootstrap = ClientBootstrap(group: group).channelInitializer(initialize)
           if let timeout {

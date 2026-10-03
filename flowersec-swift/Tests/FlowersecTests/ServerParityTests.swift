@@ -1,4 +1,5 @@
 import Foundation
+import NIOPosix
 import XCTest
 
 @testable import Flowersec
@@ -19,13 +20,24 @@ final class ServerParityTests: XCTestCase {
         throw XCTSkip("server parity input is supplied by the parity runner")
       }
 
+      let artifact = try parseArtifact(Data(artifactJSON.utf8))
+      let endpoint = try XCTUnwrap(URL(string: artifact.canonicalCandidates[0].normalizedURL))
+      var boundOrigin = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)!
+      boundOrigin.scheme = "https"
+      boundOrigin.path = ""
+      let host = try XCTUnwrap(endpoint.host)
+      let port = endpoint.port ?? 443
+      let provider = try TLSChannelProvider(origin: boundOrigin.url!) { initialize in
+        try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+          .channelInitializer(initialize).connect(host: host, port: port).get()
+      }
       let session = try await connect(
-        lease: ArtifactLease(artifact: try parseArtifact(Data(artifactJSON.utf8))) {},
+        lease: ArtifactLease(artifact: artifact) {},
         options: ConnectorOptions(
           origin: origin,
           connectTimeout: .seconds(5),
           trustRootsPEM: [Data(trustPEM.utf8)]
-        )
+        ), channelProvider: provider
       )
       let echo: [String: String] = try await session.rpc.call(
         7001,

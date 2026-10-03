@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -467,7 +468,18 @@ func TestSwiftBuildModulePathsIncludesDependencyModuleMaps(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	paths, err := swiftBuildModulePaths(repoRoot, binPath)
+	description, err := json.Marshal(map[string]any{"swiftCommands": map[string]any{
+		"Flowersec": map[string]any{"moduleName": "Flowersec", "otherArguments": []string{
+			"-Xcc", "-fmodule-map-file=" + filepath.Join(shimDir, "module.modulemap"),
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binPath, "description.json"), description, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := swiftBuildModulePaths(binPath, "Flowersec")
 	if err != nil {
 		t.Fatal(err)
 	}

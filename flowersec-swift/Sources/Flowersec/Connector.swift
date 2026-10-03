@@ -85,6 +85,24 @@ private func connectOneShotV3(
   #endif
 }
 
+/// Establishes TLS inside application-owned streams without direct-network fallback.
+/// Artifact TLS policy, admission, and single-use lease semantics remain unchanged.
+public func connect(
+  lease: ArtifactLease, options: ConnectorOptions, channelProvider: TLSChannelProvider
+) async throws -> any Session {
+  #if os(macOS) || os(iOS)
+    return try await SessionConnectorV3(
+      lease: lease, options: options,
+      runtime: AppleWebSocketRuntimeAdapterV3(tlsChannelProvider: channelProvider)
+    ).connect()
+  #else
+    let claimed: ClaimedArtifactLeaseV3
+    do { claimed = try await lease.claim() } catch { throw ConnectError.artifactInvalid }
+    try? await claimed.retire()
+    throw ConnectError.transportSecurityUnsupported
+  #endif
+}
+
 func connectV3ForController(
   lease: ArtifactLease,
   options: ConnectorOptions

@@ -590,7 +590,7 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 	if err != nil {
 		return nil, err
 	}
-	modulePaths, err := swiftBuildModulePaths(repoRoot, binPath)
+	modulePaths, err := swiftBuildModulePaths(binPath, module)
 	if err != nil {
 		return nil, err
 	}
@@ -706,7 +706,7 @@ func swiftBuildArguments(repoRoot string, arguments ...string) []string {
 	}, arguments...)
 }
 
-func swiftBuildModulePaths(repoRoot, binPath string) ([]string, error) {
+func swiftBuildModulePaths(binPath, module string) ([]string, error) {
 	candidates := []string{
 		filepath.Join(binPath, "Modules"),
 		binPath,
@@ -722,27 +722,49 @@ func swiftBuildModulePaths(repoRoot, binPath string) ([]string, error) {
 			return nil, err
 		}
 	}
-	for _, root := range []string{binPath, filepath.Join(repoRoot, ".build", "checkouts")} {
-		if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+	// SwiftPM has already selected the target's dependency headers and binary
+	// slices. Scanning all checkouts would import mutually exclusive XCFramework
+	// slices and redefine their Clang modules during symbol extraction.
+	data, err := os.ReadFile(filepath.Join(binPath, "description.json"))
+	if err != nil {
+		return nil, err
+	}
+	var description struct {
+		SwiftCommands map[string]struct {
+			ModuleName     string   `json:"moduleName"`
+			OtherArguments []string `json:"otherArguments"`
+		} `json:"swiftCommands"`
+	}
+	if err := json.Unmarshal(data, &description); err != nil {
+		return nil, fmt.Errorf("parse Swift build description: %w", err)
+	}
+	selected := 0
+	for _, command := range description.SwiftCommands {
+		if command.ModuleName != module {
 			continue
-		} else if err != nil {
-			return nil, err
 		}
-		if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
+		selected++
+		for index, argument := range command.OtherArguments {
+			var path string
+			if argument == "-I" {
+				next := index + 1
+				if next < len(command.OtherArguments) && command.OtherArguments[next] == "-Xcc" {
+					next++
+				}
+				if next >= len(command.OtherArguments) {
+					return nil, fmt.Errorf("Swift build description has incomplete -I for %s", module)
+				}
+				path = command.OtherArguments[next]
+			} else if value, ok := strings.CutPrefix(argument, "-fmodule-map-file="); ok {
+				path = filepath.Dir(value)
 			}
-			if entry.IsDir() || entry.Name() != "module.modulemap" {
-				return nil
+			if path != "" && !slices.Contains(paths, path) {
+				paths = append(paths, path)
 			}
-			dir := filepath.Dir(path)
-			if !slices.Contains(paths, dir) {
-				paths = append(paths, dir)
-			}
-			return nil
-		}); err != nil {
-			return nil, err
 		}
+	}
+	if selected != 1 {
+		return nil, fmt.Errorf("Swift build description has %d commands for %s, want one", selected, module)
 	}
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("swift build output %s does not contain module search paths", binPath)

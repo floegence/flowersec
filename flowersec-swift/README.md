@@ -73,3 +73,22 @@ honors cancellation, and closes partial opens. Flowersec owns WebSocket upgrade,
 admission, lease spending, framing and session lifetime. Closing that channel
 must release only its byte stream. This does not change ordinary TLS connectors
 or permit endpoint rewriting, fallback, or transport-security downgrades.
+
+## Application-owned TLS channels
+
+`connect(lease:options:channelProvider:)` accepts a `TLSChannelProvider` bound to
+one canonical HTTPS origin. Each candidate must retain that origin; the provider
+opens only the application's byte transport and Flowersec installs TLS 1.3,
+verifies the artifact's CA or pin policy, and performs WebSocket negotiation and
+admission. Origin headers, subprotocols, lease spending, cancellation and session
+semantics remain unchanged. A rejected or unavailable channel never falls back
+to a direct connection or plaintext.
+
+`TLSChannelProvider.openChannel(trustRootsPEM:initializer:)` uses the same byte
+transport with CA-verified TLS for application HTTP requests before a session
+exists. Its initializer installs application handlers after TLS and before
+channel activation. Requests must retain the bound origin. The application owns
+request timeouts and cancellation and closes each channel after use. The
+provider must honor cancellation and close partial opens. Empty PEM roots use
+platform trust; supplied roots replace it. Certificate errors are delivered
+through the channel pipeline and must never trigger plaintext retries.

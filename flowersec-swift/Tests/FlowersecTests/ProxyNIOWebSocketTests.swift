@@ -4,6 +4,7 @@ import Foundation
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import NIOSSL
 import NIOWebSocket
 import XCTest
 
@@ -11,29 +12,66 @@ import XCTest
 
 final class ProxyNIOWebSocketTests: XCTestCase {
   func testConnectCompletesSuccessfulUpgrade() async throws {
-    for external in [false, true] {
+    let fixtures = Bundle.module.resourceURL!.appendingPathComponent("Fixtures")
+    let pem = try Data(contentsOf: fixtures.appendingPathComponent("self_signed_cert.pem"))
+    let certificate = try XCTUnwrap(NIOSSLCertificate.fromPEMBytes(Array(pem)).first)
+    let ca = try NIOSSLCertificate.fromPEMFile(fixtures.appendingPathComponent("self_signed_ca.pem").path)
+    let key = try NIOSSLPrivateKey(
+      file: fixtures.appendingPathComponent("self_signed_key.pem").path, format: .pem)
+    let configuration = TLSConfiguration.makeServerConfiguration(
+      certificateChain: [.certificate(certificate)], privateKey: .privateKey(key))
+    let tlsContext = try NIOSSLContext(configuration: configuration)
+    for mode in ["direct", "http", "tls-ca", "tls-untrusted", "tls-wrong-host", "tls-wrong-pin"] {
+      let tls = mode.hasPrefix("tls-")
+      let rejects = ["tls-untrusted", "tls-wrong-host", "tls-wrong-pin"].contains(mode)
       let server = try LocalWebSocketServer(
         behavior: .upgrade(
-          selectedProtocol: "flowersec-test", initialPayloads: [], closeAfterPayloads: false))
+          selectedProtocol: "flowersec-test", initialPayloads: [], closeAfterPayloads: false),
+        tlsContext: tls ? tlsContext : nil)
       defer { server.stop() }
-      let path = external ? "/flowersec/v3/direct" : "/socket?token=test"
-      let endpoint = URL(string: "ws://127.0.0.1:\(server.port)\(path)")!
+      let path = mode == "direct" ? "/socket?token=test" : "/flowersec/v3/direct"
+      let host = mode == "tls-wrong-host" ? "wrong.invalid" : "localhost"
+      let endpoint = URL(
+        string: "\(tls ? "wss" : "ws")://\(tls ? host : "127.0.0.1"):\(server.port)\(path)")!
       let port = Int(server.port)
+      let dial: TLSChannelProvider.Connect = { initialize in
+        try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+          .channelInitializer(initialize).connect(host: "127.0.0.1", port: port).get()
+      }
       let provider =
-        external
-        ? try HTTPDirectChannelProvider(endpoint: endpoint) { initialize in
-          try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
-            .channelInitializer(initialize).connect(host: "127.0.0.1", port: port).get()
-        } : nil
-      let socket = try await ProxyNIOWebSocketConnector.connect(
-        url: endpoint,
-        headers: [ProxyHeader(name: "Sec-WebSocket-Protocol", value: "flowersec-test")],
-        maxFrameBytes: 64, timeout: .seconds(1), channelProvider: provider)
-      XCTAssertEqual(socket.selectedProtocol, "flowersec-test")
-      let request = try XCTUnwrap(server.request)
-      XCTAssertEqual(request.uri, path)
-      XCTAssertEqual(request.protocolHeader, "flowersec-test")
-      await socket.close()
+        mode == "http" ? try HTTPDirectChannelProvider(endpoint: endpoint, connect: dial) : nil
+      let tlsProvider =
+        tls
+        ? try TLSChannelProvider(
+          origin: URL(string: "https://\(host):\(server.port)")!, connect: dial) : nil
+      let policy: TransportSecurityPolicyV3
+      if mode == "tls-wrong-pin" {
+        policy = .pin(serverName: host, activeLeafDERSHA256: [Data(repeating: 1, count: 32)])
+      } else {
+        policy = .ca(
+          serverName: host, rootsSource: mode == "tls-untrusted" ? .platform : .configured)
+      }
+      let handler =
+        tls
+        ? try NativeTLSPolicyAdapterV3.makeClientHandlerFactory(
+          policy: policy, serverHostname: host, configuredRoots: ca) : nil
+      do {
+        let socket = try await ProxyNIOWebSocketConnector.connect(
+          url: endpoint,
+          headers: [ProxyHeader(name: "Sec-WebSocket-Protocol", value: "flowersec-test")],
+          maxFrameBytes: 64, timeout: .seconds(2), tlsHandler: handler,
+          channelProvider: provider, tlsChannelProvider: tlsProvider)
+        XCTAssertFalse(rejects, "\(mode) must reject TLS")
+        XCTAssertEqual(socket.selectedProtocol, "flowersec-test")
+        let request = try XCTUnwrap(server.request)
+        XCTAssertEqual(request.uri, path)
+        XCTAssertEqual(request.protocolHeader, "flowersec-test")
+        await socket.close()
+      } catch {
+        guard rejects else { XCTFail("\(mode): \(error)"); continue }
+        XCTAssertTrue((error as? ProxyUpstreamFailure)?.tlsLocated == true, "\(mode): \(error)")
+        XCTAssertNil(server.request, "TLS rejection must precede HTTP delivery")
+      }
     }
   }
 
@@ -244,7 +282,7 @@ private final class LocalWebSocketServer: @unchecked Sendable {
 
   var request: LocalWebSocketRequest? { state.request }
 
-  init(behavior: Behavior) throws {
+  init(behavior: Behavior, tlsContext: NIOSSLContext? = nil) throws {
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     let state = LocalWebSocketServerState()
     do {
@@ -252,11 +290,12 @@ private final class LocalWebSocketServer: @unchecked Sendable {
         .serverChannelOption(ChannelOptions.backlog, value: 1)
         .childChannelInitializer { channel in
           state.setChildChannel(channel)
-          return configureWebSocketTestChannel(
-            channel,
-            behavior: behavior,
-            state: state
-          )
+          let tls =
+            tlsContext.map { channel.pipeline.addHandler(NIOSSLServerHandler(context: $0)) }
+            ?? channel.eventLoop.makeSucceededVoidFuture()
+          return tls.flatMap {
+            configureWebSocketTestChannel(channel, behavior: behavior, state: state)
+          }
         }
         .bind(host: "127.0.0.1", port: 0)
         .wait()

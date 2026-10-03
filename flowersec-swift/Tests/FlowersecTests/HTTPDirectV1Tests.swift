@@ -90,6 +90,27 @@ struct HTTPDirectV1Tests {
   }
 
   @Test func ordinaryAppleAdapterKeepsTLSRequired() throws {
+    for origin in ["https://localhost", "https://127.0.0.1:9443", "https://example.com"] {
+      let provider = try TLSChannelProvider(origin: URL(string: origin)!) { _ in
+        throw CancellationError()
+      }
+      #expect(
+        provider.matches(
+          URL(
+            string: origin.replacingOccurrences(of: "https:", with: "wss:") + "/flowersec/v3/direct"
+          )!))
+      #expect(!provider.matches(URL(string: "wss://other.invalid/flowersec/v3/direct")!))
+      #expect(Mirror(reflecting: provider).children.isEmpty)
+    }
+    for origin in [
+      "http://localhost", "https://localhost/", "https://localhost/path", "https://user@localhost",
+      "https://localhost?token=x", "https://localhost#x", "https://localhost:443",
+      "https://LOCALHOST",
+    ] {
+      #expect(throws: ArtifactError.self) {
+        try TLSChannelProvider(origin: URL(string: origin)!) { _ in throw CancellationError() }
+      }
+    }
     let adapter = AppleWebSocketRuntimeAdapterV3()
     #expect(adapter.httpDirectEndpoint == nil)
     let http = AppleWebSocketRuntimeAdapterV3(

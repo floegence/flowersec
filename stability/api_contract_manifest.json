@@ -1895,29 +1895,29 @@
           "ArtifactLeaseError",
           "ConnectError",
           "ConnectionControllerError",
+          "HTTPDirectArtifactErrorV1",
+          "HTTP_DIRECT_PROFILE_V1",
           "HandlerRegistrationError",
           "PRIVATE_LOOPBACK_PROFILE_V1",
-          "HTTP_DIRECT_PROFILE_V1",
           "PrivateLoopbackArtifactErrorV1",
-          "HTTPDirectArtifactErrorV1",
           "SessionError",
           "StreamHandlers",
           "StreamMetadataError",
           "UnreliableMessageError",
           "connect",
-          "connectPrivateLoopbackV1",
           "connectHTTPDirectV1",
+          "connectPrivateLoopbackV1",
           "connectionDiagnostic",
           "createArtifactLease",
           "createConnectionController",
-          "createPrivateLoopbackArtifactLeaseV1",
           "createHTTPDirectArtifactLeaseV1",
-          "createPrivateLoopbackConnectionControllerV1",
           "createHTTPDirectConnectionControllerV1",
+          "createPrivateLoopbackArtifactLeaseV1",
+          "createPrivateLoopbackConnectionControllerV1",
           "createStreamMetadata",
           "parseArtifact",
-          "parsePrivateLoopbackArtifactV1",
-          "parseHTTPDirectArtifactV1"
+          "parseHTTPDirectArtifactV1",
+          "parsePrivateLoopbackArtifactV1"
         ],
         "type_exports": [
           "Artifact",
@@ -1937,6 +1937,12 @@
           "ConnectionDiagnostic",
           "ConnectionSnapshot",
           "ConnectionState",
+          "HTTPDirectArtifactLeaseV1",
+          "HTTPDirectArtifactSourceResultV1",
+          "HTTPDirectArtifactSourceV1",
+          "HTTPDirectArtifactV1",
+          "HTTPDirectConnectionControllerOptionsV1",
+          "HTTPDirectSessionOptionsV1",
           "HandlerRegistrationError",
           "IncomingStream",
           "JsonObject",
@@ -1944,17 +1950,11 @@
           "JsonValue",
           "OperationOptions",
           "PrivateLoopbackArtifactLeaseV1",
-          "HTTPDirectArtifactLeaseV1",
           "PrivateLoopbackArtifactSourceResultV1",
-          "HTTPDirectArtifactSourceResultV1",
           "PrivateLoopbackArtifactSourceV1",
-          "HTTPDirectArtifactSourceV1",
           "PrivateLoopbackArtifactV1",
-          "HTTPDirectArtifactV1",
           "PrivateLoopbackConnectionControllerOptionsV1",
-          "HTTPDirectConnectionControllerOptionsV1",
           "PrivateLoopbackSessionOptionsV1",
-          "HTTPDirectSessionOptionsV1",
           "RetryDisposition",
           "RpcPeer",
           "RpcResult",
@@ -2067,7 +2067,7 @@
       "`StreamHandlers`",
       "`RetryDisposition`"
     ],
-    "signature_sha256": "ce9bf897d7334deac4463ebe1f58e3d94e0659500904240e4ac760c4fec67d97",
+    "signature_sha256": "52a0168cbfcc04a284543463b038469baab829924f820b6a8fc1f72a89c82f20",
     "symbols": [
       {
         "kind": "swift.class",
@@ -2077,6 +2077,11 @@
       {
         "kind": "swift.class",
         "name": "ConnectionController",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.class",
+        "name": "HTTPDirectArtifactV1",
         "doc_token": ""
       },
       {
@@ -2401,7 +2406,27 @@
       },
       {
         "kind": "swift.func",
+        "name": "connect(lease:options:channelProvider:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.func",
+        "name": "connectHTTPDirectV1(lease:options:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.func",
+        "name": "connectHTTPDirectV1(lease:options:channelProvider:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.func",
         "name": "parseArtifact(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.func",
+        "name": "parseHTTPDirectArtifactV1(_:)",
         "doc_token": ""
       },
       {
@@ -2446,6 +2471,16 @@
       },
       {
         "kind": "swift.init",
+        "name": "HTTPDirectArtifactLeaseV1.init(artifact:commitSpend:retire:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "HTTPDirectChannelProvider.init(endpoint:connect:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
         "name": "IncomingStream.init(kind:metadata:stream:)",
         "doc_token": ""
       },
@@ -2477,6 +2512,11 @@
       {
         "kind": "swift.init",
         "name": "StreamMetadata.init(_:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "TLSChannelProvider.init(origin:connect:)",
         "doc_token": ""
       },
       {
@@ -2607,6 +2647,11 @@
       {
         "kind": "swift.method",
         "name": "StreamHandlers.serve(session:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "TLSChannelProvider.openChannel(trustRootsPEM:initializer:)",
         "doc_token": ""
       },
       {
@@ -2776,6 +2821,41 @@
       },
       {
         "kind": "swift.property",
+        "name": "HTTPDirectArtifactLeaseV1.customMirror",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "HTTPDirectArtifactLeaseV1.debugDescription",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "HTTPDirectArtifactLeaseV1.description",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "HTTPDirectArtifactV1.customMirror",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "HTTPDirectArtifactV1.debugDescription",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "HTTPDirectArtifactV1.description",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "HTTPDirectChannelProvider.description",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "IncomingStream.kind",
         "doc_token": ""
       },
@@ -2845,6 +2925,16 @@
         "doc_token": ""
       },
       {
+        "kind": "swift.property",
+        "name": "TLSChannelProvider.customMirror",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TLSChannelProvider.description",
+        "doc_token": ""
+      },
+      {
         "kind": "swift.protocol",
         "name": "ArtifactSource",
         "doc_token": ""
@@ -2911,6 +3001,16 @@
       },
       {
         "kind": "swift.struct",
+        "name": "HTTPDirectArtifactLeaseV1",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "HTTPDirectChannelProvider",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
         "name": "IncomingStream",
         "doc_token": ""
       },
@@ -2932,6 +3032,11 @@
       {
         "kind": "swift.struct",
         "name": "StreamMetadata",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
+        "name": "TLSChannelProvider",
         "doc_token": ""
       },
       {
@@ -2966,7 +3071,27 @@
       },
       {
         "kind": "swift.typealias",
+        "name": "HTTPDirectChannelProvider.Connect",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "HTTPDirectChannelProvider.Initializer",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
         "name": "StreamHandler",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "TLSChannelProvider.Connect",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "TLSChannelProvider.Initializer",
         "doc_token": ""
       }
     ]
