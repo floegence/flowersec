@@ -22,6 +22,27 @@ struct IDNAHostV3Tests {
   }
 
   @Test func unicode151DeltaFallbackMatchesFrozenVectors() throws {
+    // RFC 3492 multilingual labels exercise the package-owned bootstring codec.
+    for (unicode, ascii) in [
+      ("bücher", "bcher-kva"), ("mañana", "maana-pta"),
+      ("例え", "r8jz45g"), ("他们为什么不说中文", "ihqwcrb4cv8a8dqg056pqjye"),
+      ("abc", "abc-"), ("", ""), ("\u{10ffff}", "dn32g"),
+    ] {
+      #expect(try IDNAHostV3.punycodeEncode(unicode) == ascii)
+      #expect(try IDNAHostV3.punycodeDecode(ascii) == unicode)
+    }
+    for invalid in ["!", "é", "9999999999999999999999999", "a-!", "a-0"] {
+      #expect(throws: IDNAHostErrorV3.invalidHost) {
+        try IDNAHostV3.punycodeDecode(invalid)
+      }
+    }
+    for codePoint in UInt32(0x2EBF0)...UInt32(0x2EE5D) {
+      let label = "a" + String(UnicodeScalar(codePoint)!) + "中"
+      let ascii = "xn--" + (try IDNAHostV3.punycodeEncode(label)) + ".example"
+      #expect(try IDNAHostV3.punycodeDecode(String(ascii.dropFirst(4).dropLast(8))) == label)
+      #expect(try IDNAHostV3.lookupUnicode151DeltaASCII(label + ".example") == ascii)
+      #expect(try IDNAHostV3.lookupUnicode151DeltaASCII(ascii) == ascii)
+    }
     for vector in try loadFixture().positive where vector.id.hasPrefix("unicode-15-1-extension-i") {
       #expect(
         try IDNAHostV3.lookupUnicode151DeltaASCII(vector.input) == vector.ascii,

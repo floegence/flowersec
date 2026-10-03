@@ -20,8 +20,17 @@ let package = Package(
   ],
   targets: [
     .target(
+      name: "CFlowersecIDNA",
+      path: "flowersec-swift/Sources/CFlowersecIDNA",
+      linkerSettings: [
+        .linkedLibrary("icucore", .when(platforms: [.macOS, .iOS])),
+        .linkedLibrary("icuuc", .when(platforms: [.linux])),
+      ]
+    ),
+    .target(
       name: "Flowersec",
       dependencies: [
+        "CFlowersecIDNA",
         .product(name: "Clibsodium", package: "swift-sodium"),
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "NIOCore", package: "swift-nio"),

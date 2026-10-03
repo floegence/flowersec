@@ -1,10 +1,5 @@
+import CFlowersecIDNA
 import Foundation
-
-#if canImport(Darwin)
-  import Darwin
-#elseif canImport(Glibc)
-  import Glibc
-#endif
 
 enum IDNAHostErrorV3: Error, Equatable, Sendable {
   case invalidHost
@@ -26,34 +21,29 @@ enum IDNAHostV3 {
     }
     try requireUnicode151(host)
 
-    guard let icu = FlowersecICU.load() else {
-      throw IDNAHostErrorV3.invalidHost
-    }
-    defer { icu.unload() }
-
     var errorCode: Int32 = 0
-    guard let processor = icu.open(profileOptions, &errorCode), errorCode <= 0 else {
+    guard let processor = FSECIDNAOpen(profileOptions, &errorCode), errorCode <= 0 else {
       throw IDNAHostErrorV3.invalidHost
     }
-    defer { icu.close(processor) }
+    defer { FSECIDNAClose(processor) }
 
     do {
       let ascii = try transform(
         host,
         processor: processor,
         maximumOutputBytes: 253,
-        operation: icu.toASCII
+        operation: FSECIDNAToASCII
       )
       let unicode = try transform(
         ascii,
         processor: processor,
         maximumOutputBytes: 1_024,
-        operation: icu.toUnicode
+        operation: FSECIDNAToUnicode
       )
       try requireUnicode151(unicode)
       return try validateASCII(ascii)
     } catch {
-      return try lookupUnicode151DeltaASCII(host, icu: icu, processor: processor)
+      return try lookupUnicode151DeltaASCII(host, processor: processor)
     }
   }
 
@@ -63,23 +53,17 @@ enum IDNAHostV3 {
     }
     try requireUnicode151(host)
 
-    guard let icu = FlowersecICU.load() else {
-      throw IDNAHostErrorV3.invalidHost
-    }
-    defer { icu.unload() }
-
     var errorCode: Int32 = 0
-    guard let processor = icu.open(profileOptions, &errorCode), errorCode <= 0 else {
+    guard let processor = FSECIDNAOpen(profileOptions, &errorCode), errorCode <= 0 else {
       throw IDNAHostErrorV3.invalidHost
     }
-    defer { icu.close(processor) }
+    defer { FSECIDNAClose(processor) }
 
-    return try lookupUnicode151DeltaASCII(host, icu: icu, processor: processor)
+    return try lookupUnicode151DeltaASCII(host, processor: processor)
   }
 
   private static func lookupUnicode151DeltaASCII(
     _ host: String,
-    icu: FlowersecICU,
     processor: OpaquePointer
   ) throws -> String {
     var decodedLabels =
@@ -96,7 +80,7 @@ enum IDNAHostV3 {
         guard !payload.isEmpty, payload.utf8.allSatisfy({ $0 < 0x80 }) else {
           throw IDNAHostErrorV3.invalidHost
         }
-        decodedLabels[index] = try punycodeTransform(payload, operation: icu.fromPunycode)
+        decodedLabels[index] = try punycodeDecode(payload)
         originalALabels[index] = lowercased
       }
       deltaCount += decodedLabels[index].unicodeScalars.filter(isUnicode151Delta).count
@@ -124,7 +108,7 @@ enum IDNAHostV3 {
       substituted,
       processor: processor,
       maximumOutputBytes: 1_024,
-      operation: icu.toUnicode
+      operation: FSECIDNAToUnicode
     )
     guard mapped.unicodeScalars.filter({ $0 == placeholder }).count == originalDelta.count else {
       throw IDNAHostErrorV3.invalidHost
@@ -159,7 +143,7 @@ enum IDNAHostV3 {
       if label.utf8.allSatisfy({ $0 < 0x80 }) {
         asciiLabel = label.lowercased()
       } else {
-        let payload = try punycodeTransform(label, operation: icu.toPunycode).lowercased()
+        let payload = try punycodeEncode(label).lowercased()
         guard !payload.isEmpty, payload.utf8.allSatisfy({ $0 < 0x80 }) else {
           throw IDNAHostErrorV3.invalidHost
         }
@@ -234,9 +218,9 @@ enum IDNAHostV3 {
     let source = input.utf8CString
     let sourceLength = Int32(source.count - 1)
 
-    var preflightInfo = FlowersecUIDNAInfo()
+    var preflightErrors: UInt32 = 0
     var preflightError: Int32 = 0
-    let required = withUnsafeMutablePointer(to: &preflightInfo) { infoPointer in
+    let required = withUnsafeMutablePointer(to: &preflightErrors) { infoPointer in
       source.withUnsafeBufferPointer { sourceBuffer in
         operation(
           processor,
@@ -244,7 +228,7 @@ enum IDNAHostV3 {
           sourceLength,
           nil,
           0,
-          UnsafeMutableRawPointer(infoPointer),
+          infoPointer,
           &preflightError
         )
       }
@@ -258,9 +242,9 @@ enum IDNAHostV3 {
     }
 
     var destination = [CChar](repeating: 0, count: Int(required) + 1)
-    var info = FlowersecUIDNAInfo()
+    var errors: UInt32 = 0
     var errorCode: Int32 = 0
-    let written = withUnsafeMutablePointer(to: &info) { infoPointer in
+    let written = withUnsafeMutablePointer(to: &errors) { infoPointer in
       source.withUnsafeBufferPointer { sourceBuffer in
         destination.withUnsafeMutableBufferPointer { destinationBuffer in
           operation(
@@ -269,166 +253,144 @@ enum IDNAHostV3 {
             sourceLength,
             destinationBuffer.baseAddress,
             Int32(destinationBuffer.count),
-            UnsafeMutableRawPointer(infoPointer),
+            infoPointer,
             &errorCode
           )
         }
       }
     }
-    guard errorCode <= 0, info.errors == 0, written == required else {
+    guard errorCode <= 0, errors == 0, written == required else {
       throw IDNAHostErrorV3.invalidHost
     }
     return String(
       decoding: destination.prefix(Int(written)).map(UInt8.init(bitPattern:)), as: UTF8.self)
   }
 
-  private static func punycodeTransform(
-    _ input: String,
-    operation: FlowersecPunycodeTransform
-  ) throws -> String {
-    let source = Array(input.utf16)
-    var preflightError: Int32 = 0
-    let required = source.withUnsafeBufferPointer { sourceBuffer in
-      operation(
-        sourceBuffer.baseAddress,
-        Int32(sourceBuffer.count),
-        nil,
-        0,
-        nil,
-        &preflightError
-      )
+  // RFC 3492 bootstring implementation. Keeping it in the package avoids
+  // reaching ICU's internal u_strToPunycode/u_strFromPunycode symbols.
+  static func punycodeDecode(_ input: String) throws -> String {
+    let bytes = Array(input.utf8)
+    guard bytes.allSatisfy({ $0 < 128 }) else { throw IDNAHostErrorV3.invalidHost }
+    var output: [UInt32] = []
+    var index = 0
+    if let dash = bytes.lastIndex(of: 45), dash > 0 {
+      output = bytes[..<dash].map(UInt32.init)
+      index = dash + 1
     }
-    guard required >= 0, required <= 1_024, preflightError <= 0 || preflightError == 15 else {
-      throw IDNAHostErrorV3.invalidHost
-    }
-
-    var destination = [UInt16](repeating: 0, count: Int(required) + 1)
-    var errorCode: Int32 = 0
-    let written = source.withUnsafeBufferPointer { sourceBuffer in
-      destination.withUnsafeMutableBufferPointer { destinationBuffer in
-        operation(
-          sourceBuffer.baseAddress,
-          Int32(sourceBuffer.count),
-          destinationBuffer.baseAddress,
-          Int32(destinationBuffer.count),
-          nil,
-          &errorCode
-        )
+    var n: UInt64 = 128
+    var i: UInt64 = 0
+    var bias: UInt64 = 72
+    while index < bytes.count {
+      let old = i
+      var weight: UInt64 = 1
+      var k: UInt64 = 36
+      while true {
+        guard index < bytes.count else { throw IDNAHostErrorV3.invalidHost }
+        let byte = bytes[index]
+        index += 1
+        let digit: UInt64
+        switch byte {
+        case 97...122: digit = UInt64(byte - 97)
+        case 65...90: digit = UInt64(byte - 65)
+        case 48...57: digit = UInt64(byte - 48 + 26)
+        default: throw IDNAHostErrorV3.invalidHost
+        }
+        guard digit <= (0x7fff_ffff - i) / weight else { throw IDNAHostErrorV3.invalidHost }
+        i += digit * weight
+        let threshold = punycodeThreshold(k, bias)
+        if digit < threshold { break }
+        guard weight <= 0x7fff_ffff / (36 - threshold) else {
+          throw IDNAHostErrorV3.invalidHost
+        }
+        weight *= 36 - threshold
+        k += 36
       }
+      let count = UInt64(output.count) + 1
+      bias = punycodeAdapt(i - old, count, old == 0)
+      guard i / count <= 0x7fff_ffff - n else { throw IDNAHostErrorV3.invalidHost }
+      n += i / count
+      i %= count
+      guard n <= 0x10ffff, let scalar = UnicodeScalar(UInt32(n)) else {
+        throw IDNAHostErrorV3.invalidHost
+      }
+      output.insert(scalar.value, at: Int(i))
+      i += 1
     }
-    guard errorCode <= 0, written == required else {
+    guard output.allSatisfy({ UnicodeScalar($0) != nil }) else {
       throw IDNAHostErrorV3.invalidHost
     }
-    return String(decoding: destination.prefix(Int(written)), as: UTF16.self)
+    return String(String.UnicodeScalarView(output.compactMap(UnicodeScalar.init)))
+  }
+
+  static func punycodeEncode(_ input: String) throws -> String {
+    let scalars = input.unicodeScalars.map(\.value)
+    guard scalars.allSatisfy({ UnicodeScalar($0) != nil }) else {
+      throw IDNAHostErrorV3.invalidHost
+    }
+    var output = scalars.filter { $0 < 128 }.map(UInt8.init)
+    let basic = UInt64(output.count)
+    var handled = basic
+    var n: UInt64 = 128
+    var delta: UInt64 = 0
+    var bias: UInt64 = 72
+    if basic > 0 { output.append(45) }
+    while handled < UInt64(scalars.count) {
+      guard let next = scalars.map(UInt64.init).filter({ $0 >= n }).min(),
+        next - n <= (0x7fff_ffff - delta) / (handled + 1)
+      else { throw IDNAHostErrorV3.invalidHost }
+      delta += (next - n) * (handled + 1)
+      n = next
+      for scalar in scalars {
+        let value = UInt64(scalar)
+        if value < n {
+          guard delta < 0x7fff_ffff else { throw IDNAHostErrorV3.invalidHost }
+          delta += 1
+        }
+        guard value == n else { continue }
+        var q = delta
+        var k: UInt64 = 36
+        while true {
+          let threshold = punycodeThreshold(k, bias)
+          if q < threshold { break }
+          output.append(punycodeDigit(threshold + (q - threshold) % (36 - threshold)))
+          q = (q - threshold) / (36 - threshold)
+          k += 36
+        }
+        output.append(punycodeDigit(q))
+        bias = punycodeAdapt(delta, handled + 1, handled == basic)
+        delta = 0
+        handled += 1
+      }
+      guard delta < 0x7fff_ffff else { throw IDNAHostErrorV3.invalidHost }
+      delta += 1
+      n += 1
+    }
+    return String(decoding: output, as: UTF8.self)
+  }
+
+  private static func punycodeThreshold(_ k: UInt64, _ bias: UInt64) -> UInt64 {
+    min(26, max(1, k > bias ? k - bias : 0))
+  }
+
+  private static func punycodeAdapt(_ original: UInt64, _ count: UInt64, _ first: Bool) -> UInt64 {
+    var delta = original / (first ? 700 : 2)
+    delta += delta / count
+    var k: UInt64 = 0
+    while delta > 455 {
+      delta /= 35
+      k += 36
+    }
+    return k + 36 * delta / (delta + 38)
+  }
+
+  private static func punycodeDigit(_ value: UInt64) -> UInt8 {
+    UInt8(value < 26 ? value + 97 : value - 26 + 48)
   }
 }
-
-private struct FlowersecUIDNAInfo {
-  var size = Int16(MemoryLayout<FlowersecUIDNAInfo>.size)
-  var isTransitionalDifferent: Int8 = 0
-  var reservedB3: Int8 = 0
-  var errors: UInt32 = 0
-  var reservedI2: Int32 = 0
-  var reservedI3: Int32 = 0
-}
-
-private typealias FlowersecUIDNAOpen =
-  @convention(c) (
-    UInt32,
-    UnsafeMutablePointer<Int32>?
-  ) -> OpaquePointer?
-
-private typealias FlowersecUIDNAClose = @convention(c) (OpaquePointer?) -> Void
 
 private typealias FlowersecUIDNATransform =
   @convention(c) (
-    OpaquePointer?,
-    UnsafePointer<CChar>?,
-    Int32,
-    UnsafeMutablePointer<CChar>?,
-    Int32,
-    UnsafeMutableRawPointer?,
-    UnsafeMutablePointer<Int32>?
+    OpaquePointer?, UnsafePointer<CChar>?, Int32,
+    UnsafeMutablePointer<CChar>?, Int32,
+    UnsafeMutablePointer<UInt32>?, UnsafeMutablePointer<Int32>?
   ) -> Int32
-
-private typealias FlowersecPunycodeTransform =
-  @convention(c) (
-    UnsafePointer<UInt16>?,
-    Int32,
-    UnsafeMutablePointer<UInt16>?,
-    Int32,
-    UnsafePointer<Int8>?,
-    UnsafeMutablePointer<Int32>?
-  ) -> Int32
-
-private struct FlowersecICU {
-  let handle: UnsafeMutableRawPointer
-  let open: FlowersecUIDNAOpen
-  let close: FlowersecUIDNAClose
-  let toASCII: FlowersecUIDNATransform
-  let toUnicode: FlowersecUIDNATransform
-  let toPunycode: FlowersecPunycodeTransform
-  let fromPunycode: FlowersecPunycodeTransform
-
-  static func load() -> FlowersecICU? {
-    for libraryName in libraryNames {
-      guard let handle = dlopen(libraryName, RTLD_LAZY | RTLD_LOCAL) else {
-        continue
-      }
-      if let icu = loadSymbols(handle: handle) {
-        return icu
-      }
-      dlclose(handle)
-    }
-    return nil
-  }
-
-  private static func loadSymbols(handle: UnsafeMutableRawPointer) -> FlowersecICU? {
-    for suffix in symbolSuffixes {
-      guard
-        let openSymbol = dlsym(handle, "uidna_openUTS46\(suffix)"),
-        let closeSymbol = dlsym(handle, "uidna_close\(suffix)"),
-        let toASCIISymbol = dlsym(handle, "uidna_nameToASCII_UTF8\(suffix)"),
-        let toUnicodeSymbol = dlsym(handle, "uidna_nameToUnicodeUTF8\(suffix)"),
-        let toPunycodeSymbol = dlsym(handle, "u_strToPunycode\(suffix)"),
-        let fromPunycodeSymbol = dlsym(handle, "u_strFromPunycode\(suffix)")
-      else {
-        continue
-      }
-      return FlowersecICU(
-        handle: handle,
-        open: unsafeBitCast(openSymbol, to: FlowersecUIDNAOpen.self),
-        close: unsafeBitCast(closeSymbol, to: FlowersecUIDNAClose.self),
-        toASCII: unsafeBitCast(toASCIISymbol, to: FlowersecUIDNATransform.self),
-        toUnicode: unsafeBitCast(toUnicodeSymbol, to: FlowersecUIDNATransform.self),
-        toPunycode: unsafeBitCast(toPunycodeSymbol, to: FlowersecPunycodeTransform.self),
-        fromPunycode: unsafeBitCast(fromPunycodeSymbol, to: FlowersecPunycodeTransform.self)
-      )
-    }
-    return nil
-  }
-
-  private static var libraryNames: [String] {
-    #if canImport(Darwin)
-      ["/usr/lib/libicucore.dylib"]
-    #elseif canImport(Glibc)
-      ["libicuuc.so"] + (40...199).reversed().map { "libicuuc.so.\($0)" }
-    #else
-      []
-    #endif
-  }
-
-  private static var symbolSuffixes: [String] {
-    #if canImport(Darwin)
-      [""]
-    #elseif canImport(Glibc)
-      [""] + (40...199).reversed().map { "_\($0)" }
-    #else
-      []
-    #endif
-  }
-
-  func unload() {
-    dlclose(handle)
-  }
-}

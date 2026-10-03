@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-ts",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/2adaa8e12286ab8176da9b1d34ccae1a4f85945573a7847da3bc4acd5c71fcec",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/bf19c51838f8776d250ab0722472cc9e7619d7f565fc33405c9bf3342e30f12e",
   "creationInfo": {
     "created": "2026-09-17T15:04:20Z",
     "creators": [
@@ -13,26 +13,26 @@
   "packages": [
     {
       "name": "@floegence/flowersec-core",
-      "SPDXID": "SPDXRef-Package-5bc93b15cf2f8e43ad67",
-      "versionInfo": "5.8.0",
+      "SPDXID": "SPDXRef-Package-f3f823871d785b34acd7",
+      "versionInfo": "5.8.1",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: 2adaa8e12286ab8176da9b1d34ccae1a4f85945573a7847da3bc4acd5c71fcec",
+      "comment": "Flowersec source inventory SHA-256: bf19c51838f8776d250ab0722472cc9e7619d7f565fc33405c9bf3342e30f12e",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40floegence/flowersec-core@5.8.0"
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-core@5.8.1"
         }
       ]
     },
     {
       "name": "@floegence/flowersec-node-native",
-      "SPDXID": "SPDXRef-Package-0d7c2a27d56bc3e5920b",
-      "versionInfo": "5.8.0",
+      "SPDXID": "SPDXRef-Package-9bf90965d5b50a7eaf48",
+      "versionInfo": "5.8.1",
       "downloadLocation": "https://github.com/floegence/flowersec.git",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -42,14 +42,14 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native@5.8.0"
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native@5.8.1"
         }
       ]
     },
     {
       "name": "@floegence/flowersec-node-native-darwin-arm64",
-      "SPDXID": "SPDXRef-Package-9f8e50633104a32fc130",
-      "versionInfo": "5.8.0",
+      "SPDXID": "SPDXRef-Package-55e188b03b2c5b7dd5f3",
+      "versionInfo": "5.8.1",
       "downloadLocation": "https://github.com/floegence/flowersec.git",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -59,14 +59,14 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@5.8.0"
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-darwin-arm64@5.8.1"
         }
       ]
     },
     {
       "name": "@floegence/flowersec-node-native-darwin-x64",
-      "SPDXID": "SPDXRef-Package-2ca13986e4b62d64c39a",
-      "versionInfo": "5.8.0",
+      "SPDXID": "SPDXRef-Package-f58664dfc9f3d630f6cd",
+      "versionInfo": "5.8.1",
       "downloadLocation": "https://github.com/floegence/flowersec.git",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -76,14 +76,14 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@5.8.0"
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-darwin-x64@5.8.1"
         }
       ]
     },
     {
       "name": "@floegence/flowersec-node-native-linux-arm64-gnu",
-      "SPDXID": "SPDXRef-Package-371e85e8195d7d31fe59",
-      "versionInfo": "5.8.0",
+      "SPDXID": "SPDXRef-Package-468186fa182edbfce7ca",
+      "versionInfo": "5.8.1",
       "downloadLocation": "https://github.com/floegence/flowersec.git",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -93,14 +93,14 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@5.8.0"
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-linux-arm64-gnu@5.8.1"
         }
       ]
     },
     {
       "name": "@floegence/flowersec-node-native-linux-x64-gnu",
-      "SPDXID": "SPDXRef-Package-dfa7b3a83241f2708632",
-      "versionInfo": "5.8.0",
+      "SPDXID": "SPDXRef-Package-e264f10df2af4466ef48",
+      "versionInfo": "5.8.1",
       "downloadLocation": "https://github.com/floegence/flowersec.git",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -110,7 +110,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@5.8.0"
+          "referenceLocator": "pkg:npm/%40floegence/flowersec-node-native-linux-x64-gnu@5.8.1"
         }
       ]
     },
@@ -255,62 +255,62 @@
     {
       "spdxElementId": "SPDXRef-DOCUMENT",
       "relationshipType": "DESCRIBES",
-      "relatedSpdxElement": "SPDXRef-Package-5bc93b15cf2f8e43ad67"
+      "relatedSpdxElement": "SPDXRef-Package-f3f823871d785b34acd7"
     },
     {
-      "spdxElementId": "SPDXRef-Package-5bc93b15cf2f8e43ad67",
+      "spdxElementId": "SPDXRef-Package-f3f823871d785b34acd7",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-0d7c2a27d56bc3e5920b"
+      "relatedSpdxElement": "SPDXRef-Package-9bf90965d5b50a7eaf48"
     },
     {
-      "spdxElementId": "SPDXRef-Package-5bc93b15cf2f8e43ad67",
+      "spdxElementId": "SPDXRef-Package-f3f823871d785b34acd7",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-6cdb8b3664bfb0d67b6a"
     },
     {
-      "spdxElementId": "SPDXRef-Package-5bc93b15cf2f8e43ad67",
+      "spdxElementId": "SPDXRef-Package-f3f823871d785b34acd7",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-e0e2cb449dffb239a794"
     },
     {
-      "spdxElementId": "SPDXRef-Package-5bc93b15cf2f8e43ad67",
+      "spdxElementId": "SPDXRef-Package-f3f823871d785b34acd7",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-2e6e3840217975457b7a"
     },
     {
-      "spdxElementId": "SPDXRef-Package-5bc93b15cf2f8e43ad67",
+      "spdxElementId": "SPDXRef-Package-f3f823871d785b34acd7",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-f155265b0db97b607227"
     },
     {
-      "spdxElementId": "SPDXRef-Package-5bc93b15cf2f8e43ad67",
+      "spdxElementId": "SPDXRef-Package-f3f823871d785b34acd7",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-5b9d78698ec0a5c8f86f"
     },
     {
-      "spdxElementId": "SPDXRef-Package-5bc93b15cf2f8e43ad67",
+      "spdxElementId": "SPDXRef-Package-f3f823871d785b34acd7",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-b779412f685822663496"
     },
     {
-      "spdxElementId": "SPDXRef-Package-0d7c2a27d56bc3e5920b",
+      "spdxElementId": "SPDXRef-Package-9bf90965d5b50a7eaf48",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-9f8e50633104a32fc130"
+      "relatedSpdxElement": "SPDXRef-Package-55e188b03b2c5b7dd5f3"
     },
     {
-      "spdxElementId": "SPDXRef-Package-0d7c2a27d56bc3e5920b",
+      "spdxElementId": "SPDXRef-Package-9bf90965d5b50a7eaf48",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-2ca13986e4b62d64c39a"
+      "relatedSpdxElement": "SPDXRef-Package-f58664dfc9f3d630f6cd"
     },
     {
-      "spdxElementId": "SPDXRef-Package-0d7c2a27d56bc3e5920b",
+      "spdxElementId": "SPDXRef-Package-9bf90965d5b50a7eaf48",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-371e85e8195d7d31fe59"
+      "relatedSpdxElement": "SPDXRef-Package-468186fa182edbfce7ca"
     },
     {
-      "spdxElementId": "SPDXRef-Package-0d7c2a27d56bc3e5920b",
+      "spdxElementId": "SPDXRef-Package-9bf90965d5b50a7eaf48",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-dfa7b3a83241f2708632"
+      "relatedSpdxElement": "SPDXRef-Package-e264f10df2af4466ef48"
     },
     {
       "spdxElementId": "SPDXRef-Package-e0e2cb449dffb239a794",
