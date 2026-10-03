@@ -1,5 +1,6 @@
 #if os(macOS) || os(iOS)
 
+import Darwin
 import Foundation
 import NIOCore
 import NIOHTTP1
@@ -21,7 +22,7 @@ final class ProxyNIOWebSocketTests: XCTestCase {
     let configuration = TLSConfiguration.makeServerConfiguration(
       certificateChain: [.certificate(certificate)], privateKey: .privateKey(key))
     let tlsContext = try NIOSSLContext(configuration: configuration)
-    for mode in ["direct", "http", "tls-ca", "tls-untrusted", "tls-wrong-host", "tls-wrong-pin"] {
+    for mode in ["direct", "http", "tls-ca", "tls-ca-pipe", "tls-untrusted", "tls-wrong-host", "tls-wrong-pin"] {
       let tls = mode.hasPrefix("tls-")
       let rejects = ["tls-untrusted", "tls-wrong-host", "tls-wrong-pin"].contains(mode)
       let server = try LocalWebSocketServer(
@@ -35,7 +36,26 @@ final class ProxyNIOWebSocketTests: XCTestCase {
         string: "\(tls ? "wss" : "ws")://\(tls ? host : "127.0.0.1"):\(server.port)\(path)")!
       let port = Int(server.port)
       let dial: TLSChannelProvider.Connect = { initialize in
-        try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+        if mode == "tls-ca-pipe" {
+          let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+          let address = try SocketAddress(ipAddress: "127.0.0.1", port: port)
+          guard descriptor >= 0 else { throw ChannelError.ioOnClosedChannel }
+          guard address.withSockAddr({ Darwin.connect(descriptor, $0, socklen_t($1)) }) == 0 else {
+            Darwin.close(descriptor)
+            throw ChannelError.ioOnClosedChannel
+          }
+          let output = Darwin.dup(descriptor)
+          guard output >= 0 else {
+            Darwin.close(descriptor)
+            throw ChannelError.ioOnClosedChannel
+          }
+          let channel = try await NIOPipeBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+            .channelInitializer(initialize)
+            .takingOwnershipOfDescriptors(input: descriptor, output: output).get()
+          XCTAssertNil(channel.remoteAddress)
+          return channel
+        }
+        return try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
           .channelInitializer(initialize).connect(host: "127.0.0.1", port: port).get()
       }
       let provider =
@@ -290,11 +310,11 @@ private final class LocalWebSocketServer: @unchecked Sendable {
         .serverChannelOption(ChannelOptions.backlog, value: 1)
         .childChannelInitializer { channel in
           state.setChildChannel(channel)
-          let tls =
-            tlsContext.map { channel.pipeline.addHandler(NIOSSLServerHandler(context: $0)) }
-            ?? channel.eventLoop.makeSucceededVoidFuture()
-          return tls.flatMap {
-            configureWebSocketTestChannel(channel, behavior: behavior, state: state)
+          do {
+            if let tlsContext { try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: tlsContext)) }
+            return configureWebSocketTestChannel(channel, behavior: behavior, state: state)
+          } catch {
+            return channel.eventLoop.makeFailedFuture(error)
           }
         }
         .bind(host: "127.0.0.1", port: 0)

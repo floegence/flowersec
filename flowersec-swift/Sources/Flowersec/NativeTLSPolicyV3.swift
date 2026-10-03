@@ -43,7 +43,10 @@
 
       switch policy {
       case .ca(_, let rootsSource):
-        configuration.certificateVerification = .fullVerification
+        // Verify the chain normally, then check the bound DNS/IP SAN below.
+        // Application byte channels may have no TCP remoteAddress; NIOSSL's
+        // built-in hostname check would reject them before this callback.
+        configuration.certificateVerification = .noHostnameVerification
         switch rootsSource {
         case .platform:
           configuration.trustRoots = .default
