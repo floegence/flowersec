@@ -36,6 +36,12 @@ try {
     },
     {
       name: "rust",
+      // Compile before starting the peer's bounded network lifetime. A cold
+      // Cargo build must not consume the time reserved for protocol assertions.
+      prepare: async () => await runProcess("rustup", [
+        "run", toolchains.rust.version, "cargo", "build", "--quiet", "--locked",
+        "--manifest-path", "examples/rust/Cargo.toml",
+      ], repositoryRoot, process.env),
       run: async (fixture) => await runProcess("rustup", [
         "run", toolchains.rust.version, "cargo", "run", "--quiet", "--locked",
         "--manifest-path", "examples/rust/Cargo.toml", "--", "connect-v3",
