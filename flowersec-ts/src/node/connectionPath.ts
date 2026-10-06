@@ -1,3 +1,4 @@
+import type { ClientRequest } from "node:http";
 import { Agent, type RequestOptions } from "node:https";
 import { Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
@@ -61,10 +62,62 @@ export function createConnectionPathAgent(options: ConnectionPathAgentOptions): 
   return new ConnectionPathAgent(options, timeout);
 }
 
+// Node invokes this Agent hook for each ClientRequest; @types/node omits it.
+const nativeAddRequest = (Agent.prototype as Agent & {
+  addRequest(request: ClientRequest, options: RequestOptions): void;
+}).addRequest;
+
+function rejectUnassignedRequest(request: ClientRequest, error: Error): void {
+  // An unassigned ClientRequest defers destroy errors until its Agent supplies
+  // the completion callback, including when no socket could be constructed.
+  (request as ClientRequest & { onSocket(socket: undefined, error: Error): void }).onSocket(undefined, error);
+}
+
 class ConnectionPathAgent extends Agent {
   readonly #options: ConnectionPathAgentOptions;
   readonly #timeout: number;
   readonly #lifetime = new AbortController();
+  readonly #requests: Array<{ request: ClientRequest; options: RequestOptions }> = [];
+  #admitting = false;
+
+  // Node accounts asynchronous factories only after their callback. Admit the
+  // next request once its predecessor has an assigned socket, so native pool
+  // limits include every in-flight route without constructing TLS prematurely.
+  addRequest(request: ClientRequest, options: RequestOptions): void {
+    if (this.#lifetime.signal.aborted || this.#options.signal?.aborted) {
+      rejectUnassignedRequest(request, new Error("Connection path canceled"));
+      return;
+    }
+    this.#requests.push({ request, options });
+    this.#drain();
+  }
+
+  #drain(): void {
+    if (this.#admitting) return;
+    let next = this.#requests.shift();
+    while (next?.request.destroyed) {
+      rejectUnassignedRequest(next.request, new Error("Connection path canceled"));
+      next = this.#requests.shift();
+    }
+    if (next === undefined) return;
+    const { request, options } = next;
+    this.#admitting = true;
+    let settled = false;
+    const advance = (): void => {
+      if (settled) return;
+      settled = true;
+      request.off("socket", advance);
+      request.off("close", advance);
+      request.off("error", advance);
+      this.#admitting = false;
+      queueMicrotask(() => this.#drain());
+    };
+    request.once("socket", advance);
+    request.once("close", advance);
+    request.once("error", advance);
+    try { nativeAddRequest.call(this, request, options); }
+    catch (error) { rejectUnassignedRequest(request, error instanceof Error ? error : new Error("Connection path failed")); advance(); }
+  }
 
   constructor(options: ConnectionPathAgentOptions, timeout: number) {
     super({ keepAlive: true, maxCachedSessions: 0 });
@@ -87,65 +140,33 @@ class ConnectionPathAgent extends Agent {
     if (this.#options.signal !== undefined) signals.push(this.#options.signal);
     if (options.signal !== undefined) signals.push(options.signal);
     const signal = AbortSignal.any(signals);
-    // Register a real socket synchronously. Node only counts an asynchronous
-    // factory result after its callback, which otherwise bypasses maxSockets
-    // while many routes are still dialing.
-    const transport = new DeferredPath(this.#options.connectionPath, hostname, port, signal);
-    const socket = tlsConnect({
-      host: hostname, port, socket: transport,
-      ...(hostname.includes(":") || /^\d+\.\d+\.\d+\.\d+$/u.test(hostname) ? {} : { servername: hostname }),
-      minVersion: "TLSv1.3", rejectUnauthorized: true,
-      ...(this.#options.ca === undefined ? {} : { ca: this.#options.ca }),
-    });
-    // TLS may detach its own listener before asynchronous construction settles.
-    transport.on("error", (error: Error) => socket.destroy(error));
-    const abort = (): void => { socket.destroy(new Error("Connection path canceled")); };
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) queueMicrotask(abort);
-    socket.once("secureConnect", () => { clearTimeout(timer); signal.removeEventListener("abort", abort); });
-    socket.once("close", () => { clearTimeout(timer); signal.removeEventListener("abort", abort); transport.destroy(); });
-    return socket;
+    void openConnectionPath(this.#options.connectionPath, hostname, port, signal).then((transport) => {
+      if (signal.aborted) { clearTimeout(timer); transport.destroy(); fail(new Error("Connection path canceled")); return; }
+      // Only SDK-owned TLS options are accepted. Agent request overrides cannot
+      // turn off verification or replace the connection factory.
+      let socket;
+      try { socket = tlsConnect({
+        host: hostname, port, socket: transport,
+        ...(hostname.includes(":") || /^\d+\.\d+\.\d+\.\d+$/u.test(hostname) ? {} : { servername: hostname }),
+        minVersion: "TLSv1.3", rejectUnauthorized: true,
+        ...(this.#options.ca === undefined ? {} : { ca: this.#options.ca }),
+      }); } catch {
+        clearTimeout(timer); transport.destroy(); fail(new Error("Connection path TLS failed")); return;
+      }
+      transport.on("error", (error: Error) => socket.destroy(error));
+      const abort = (): void => { socket.destroy(new Error("Connection path canceled")); };
+      signal.addEventListener("abort", abort, { once: true });
+      socket.once("secureConnect", () => { clearTimeout(timer); signal.removeEventListener("abort", abort); });
+      socket.once("close", () => { clearTimeout(timer); signal.removeEventListener("abort", abort); transport.destroy(); });
+      callback(null, socket);
+    }, () => { clearTimeout(timer); fail(new Error("Connection path failed")); });
+    // Node's asynchronous Agent factory reports exclusively via callback.
+    return undefined;
   }
 
-  override destroy(): void { this.#lifetime.abort(); super.destroy(); }
-}
-
-/** Buffer only stream high-water marks while the explicit route is pending. */
-class DeferredPath extends Duplex {
-  #transport?: Duplex;
-  readonly #lifetime = new AbortController();
-
-  constructor(readonly path: NodeConnectionPath, readonly hostname: string, readonly port: number, readonly signal: AbortSignal) {
-    super({ allowHalfOpen: true, readableHighWaterMark: 64 * 1024, writableHighWaterMark: 64 * 1024 });
-  }
-
-  override _construct(callback: (error?: Error | null) => void): void {
-    const signal = AbortSignal.any([this.signal, this.#lifetime.signal]);
-    void openConnectionPath(this.path, this.hostname, this.port, signal).then(transport => {
-      this.#transport = transport;
-      transport.on("data", (data: Buffer) => { if (!this.push(data)) transport.pause(); });
-      transport.once("end", () => this.push(null));
-      transport.once("error", () => this.destroy(new Error("Connection path failed")));
-      transport.once("close", () => { if (!transport.readableEnded) this.destroy(new Error("Connection path closed")); });
-      transport.pause();
-      callback();
-    }, () => callback(this.destroyed ? null : new Error("Connection path failed")));
-  }
-
-  override _read(): void { this.#transport?.resume(); }
-  override _write(chunk: Buffer, encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
-    this.#transport!.write(chunk, encoding, callback);
-  }
-  override _final(callback: (error?: Error | null) => void): void { this.#transport!.end(callback); }
-  override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+  override destroy(): void {
     this.#lifetime.abort();
-    this.#transport?.destroy();
-    callback(error);
-  }
-
-  override destroy(error?: Error): this {
-    // _destroy waits for _construct; cancel route acquisition before that wait.
-    this.#lifetime.abort();
-    return super.destroy(error);
+    for (const { request } of this.#requests.splice(0)) rejectUnassignedRequest(request, new Error("Connection path canceled"));
+    super.destroy();
   }
 }

@@ -163,6 +163,26 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
     } finally { agent.destroy(); untrusted.destroy(); await closeServer(server); }
   });
 
+  test("samples authenticated trust only after the explicit route is ready", async () => {
+    const server = createHTTPSServer({ cert: leafCertificate, key: leafKey }, (_req, res) => res.end("refreshed"));
+    const port = await listen(server);
+    const roots: string[] = [];
+    const agent = createConnectionPathAgent({ ca: roots, connectionPath: { connect: async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      roots.splice(0, roots.length, rootCertificate);
+      return connectTCP({ host: "127.0.0.1", port });
+    } } });
+    try {
+      const body = await new Promise<string>((resolve, reject) => {
+        httpsGet("https://localhost:1/", { agent }, res => {
+          let text = ""; res.on("data", chunk => { text += chunk; });
+          res.on("end", () => resolve(text)); res.once("error", reject);
+        }).once("error", reject);
+      });
+      expect(body).toBe("refreshed");
+    } finally { agent.destroy(); await closeServer(server); }
+  });
+
   test("counts pending explicit routes against the HTTPS connection pool", async () => {
     const server = createHTTPSServer({ cert: leafCertificate, key: leafKey }, (_req, res) => res.end("bounded"));
     const port = await listen(server);
@@ -194,12 +214,12 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
       attempted();
       return await new Promise<Duplex>(resolve => { deliver = resolve; });
     } } });
-    const failed = new Promise<Error>(resolve => {
+    const failed = Array.from({ length: 8 }, () => new Promise<Error>(resolve => {
       httpsGet("https://localhost:1/", { agent }).once("error", resolve);
-    });
+    }));
     await started;
     agent.destroy();
-    expect(await failed).toBeInstanceOf(Error);
+    for (const error of await Promise.all(failed)) expect(error).toBeInstanceOf(Error);
     const late = new Duplex({ read() {}, write(_chunk, _encoding, done) { done(); } });
     deliver(late);
     await new Promise(resolve => setImmediate(resolve));
