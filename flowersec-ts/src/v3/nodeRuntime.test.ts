@@ -163,6 +163,49 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
     } finally { agent.destroy(); untrusted.destroy(); await closeServer(server); }
   });
 
+  test("counts pending explicit routes against the HTTPS connection pool", async () => {
+    const server = createHTTPSServer({ cert: leafCertificate, key: leafKey }, (_req, res) => res.end("bounded"));
+    const port = await listen(server);
+    let routes = 0;
+    const agent = createConnectionPathAgent({ ca: rootCertificate, connectionPath: { connect: async () => {
+      routes++;
+      await new Promise(resolve => setTimeout(resolve, 20));
+      return connectTCP({ host: "127.0.0.1", port });
+    } } });
+    agent.maxSockets = 2;
+    agent.maxTotalSockets = 2;
+    const read = (): Promise<string> => new Promise((resolve, reject) => {
+      httpsGet("https://localhost:1/", { agent }, res => {
+        let body = ""; res.on("data", part => { body += part; });
+        res.on("end", () => resolve(body)); res.on("error", reject);
+      }).on("error", reject);
+    });
+    try {
+      expect(await Promise.all(Array.from({ length: 32 }, read))).toEqual(Array(32).fill("bounded"));
+      expect(routes).toBeLessThanOrEqual(2);
+    } finally { agent.destroy(); await closeServer(server); }
+  });
+
+  test("cancels pending HTTPS admission and destroys a late route", async () => {
+    let deliver!: (stream: Duplex) => void;
+    let attempted!: () => void;
+    const started = new Promise<void>(resolve => { attempted = resolve; });
+    const agent = createConnectionPathAgent({ connectionPath: { connect: async () => {
+      attempted();
+      return await new Promise<Duplex>(resolve => { deliver = resolve; });
+    } } });
+    const failed = new Promise<Error>(resolve => {
+      httpsGet("https://localhost:1/", { agent }).once("error", resolve);
+    });
+    await started;
+    agent.destroy();
+    expect(await failed).toBeInstanceOf(Error);
+    const late = new Duplex({ read() {}, write(_chunk, _encoding, done) { done(); } });
+    deliver(late);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(late.destroyed).toBe(true);
+  });
+
   test("accepts a deployment CA and rejects the same server without its trust root", async () => {
     const server = createTLSServer({ cert: leafCertificate, key: leafKey });
     const port = await listen(server);
