@@ -1194,6 +1194,130 @@
             "expr": "(flowersec.ConnectorOptions{}).HTTPSProxy",
             "doc_token": "`flowersec.ConnectorOptions.HTTPSProxy`",
             "signature": "*egress.HTTPSProxy"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ByteStreamConn",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewByteStreamConn",
+            "doc_token": "`flowersec.NewByteStreamConn(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.ByteStreamListener",
+            "doc_token": "`flowersec.ByteStreamListener`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewByteStreamListener",
+            "doc_token": "`flowersec.NewByteStreamListener(...)`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.DuplexStream",
+            "doc_token": "`flowersec.DuplexStream`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.RelayStreams",
+            "doc_token": "`flowersec.RelayStreams(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).Read",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).Write",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).Close",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).CloseWrite",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).LocalAddr",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).RemoteAddr",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).SetDeadline",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).SetReadDeadline",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).SetWriteDeadline",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamListener).Accept",
+            "doc_token": "`flowersec.ByteStreamListener`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamListener).Close",
+            "doc_token": "`flowersec.ByteStreamListener`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamListener).Addr",
+            "doc_token": "`flowersec.ByteStreamListener`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).String",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.ByteStreamConn).GoString",
+            "doc_token": "`flowersec.ByteStreamConn`"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.DuplexStream.CloseWrite",
+            "doc_token": "`flowersec.DuplexStream`",
+            "signature": "func(flowersec.DuplexStream) error"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.DuplexStream.Read",
+            "doc_token": "`flowersec.DuplexStream`",
+            "signature": "func(flowersec.DuplexStream, []byte) (int, error)"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.DuplexStream.Write",
+            "doc_token": "`flowersec.DuplexStream`",
+            "signature": "func(flowersec.DuplexStream, []byte) (int, error)"
+          },
+          {
+            "kind": "interface_method",
+            "expr": "flowersec.DuplexStream.Close",
+            "doc_token": "`flowersec.DuplexStream`",
+            "signature": "func(flowersec.DuplexStream) error"
           }
         ]
       },
@@ -1836,7 +1960,10 @@
           "`HandlerRegistrationError`",
           "`AcceptedSession`",
           "`ProxyServer`",
-          "`createByteStreamDuplex(...)`"
+          "`createByteStreamDuplex(...)`",
+          "`createConnectionPathAgent(...)`",
+          "`NodeConnectionPath`",
+          "`ConnectionPathAgentOptions`"
         ],
         "runtime_exports": [
           "AcceptedSession",
@@ -1865,6 +1992,7 @@
           "createArtifactLease",
           "createByteStreamDuplex",
           "createConnectionController",
+          "createConnectionPathAgent",
           "createStreamMetadata",
           "createTunnelRuntime",
           "parseArtifact",
@@ -1892,6 +2020,7 @@
           "ConnectionControllerFailure",
           "ConnectionControllerOptions",
           "ConnectionDiagnostic",
+          "ConnectionPathAgentOptions",
           "ConnectionSnapshot",
           "ConnectionState",
           "HandlerRegistrationError",
@@ -1899,6 +2028,7 @@
           "JsonObject",
           "JsonPrimitive",
           "JsonValue",
+          "NodeConnectionPath",
           "NodeTLSRoots",
           "NotificationHandler",
           "OperationOptions",

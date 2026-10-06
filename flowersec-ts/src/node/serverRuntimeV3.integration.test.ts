@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
+import { connect as connectTCP } from "node:net";
 import { connect as connectTLS } from "node:tls";
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -71,7 +72,7 @@ describe("Node production server runtime v3", () => {
     });
   });
 
-  test("accepts a production v3 WSS direct session through FSB3 and FSH3", async () => {
+  test.each([false, true])("accepts a production v3 WSS direct session through FSB3 and FSH3 (routed=%s)", async (routed) => {
     let artifact: ArtifactV3;
     const rpcHandlers = new RPCHandlers();
     rpcHandlers.handleRPC(9_100, async (payload) => ({ payload: { handled: payload } }));
@@ -93,7 +94,7 @@ describe("Node production server runtime v3", () => {
       },
     });
     const port = acceptor.addresses()[0]!.port;
-    artifact = directArtifact(port);
+    artifact = directArtifact(routed ? 1 : port);
     try {
       const accepting = acceptor.accept();
       const connecting = connectV3(lease(artifact), {
@@ -101,6 +102,10 @@ describe("Node production server runtime v3", () => {
         roots: rootCertificate,
         connectTimeoutMs: 3_000,
         rpcHandlers,
+        ...(routed ? { connectionPath: { connect: async ({ hostname, port: targetPort, signal }: { hostname: string; port: number; signal: AbortSignal }) => {
+          expect(hostname).toBe("localhost"); expect(targetPort).toBe(1);
+          return connectTCP({ host: "127.0.0.1", port, signal });
+        } } } : {}),
       });
       const [accepted, client] = await Promise.all([accepting, connecting]);
       expect(await accepted.session.rpc.call(9_100, { mode: "one-shot" }, (payload) => payload))

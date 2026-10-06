@@ -54,3 +54,6 @@ export type {
 export { ProxyServer, ProxyServerError } from "./proxyServer.js";
 export type { ProxyServerOptions } from "./proxyServer.js";
 export { createByteStreamDuplex } from "./byteStreamDuplex.js";
+
+export { createConnectionPathAgent } from "./connectionPath.js";
+export type { NodeConnectionPath, ConnectionPathAgentOptions } from "./connectionPath.js";

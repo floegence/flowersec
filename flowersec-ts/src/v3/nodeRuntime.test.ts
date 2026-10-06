@@ -2,7 +2,10 @@ import { X509Certificate, createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer as createHTTPSServer } from "node:https";
+import { createServer as createHTTPSServer, get as httpsGet } from "node:https";
+import { connect as connectTCP } from "node:net";
+import { Duplex } from "node:stream";
+import { createConnectionPathAgent, type NodeConnectionPath } from "../node/connectionPath.js";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,6 +83,84 @@ describe("transport v3 Node TLS verifier and WebSocket production path", () => {
 
   afterAll(() => {
     if (directory !== "") rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("routes target TLS through an explicit path and still checks the target name", async () => {
+    const server = createTLSServer({ cert: leafCertificate, key: leafKey });
+    const port = await listen(server);
+    const targets: string[] = [];
+    const connectionPath: NodeConnectionPath = {
+      connect: async ({ hostname, port: targetPort, signal }) => {
+        targets.push(`${hostname}:${targetPort}`);
+        return connectTCP({ host: "127.0.0.1", port, signal });
+      },
+    };
+    try {
+      // Port 1 has no server: success proves the requested route was used.
+      const socket = await connectNodeTLSSocketV3(websocketCandidate(1, { mode: "ca" }), nowSeconds(), {
+        roots: rootCertificate, connectionPath, timeoutMilliseconds: 2_000,
+      });
+      expect(socket.authorized).toBe(true);
+      socket.destroy();
+      expect(targets).toEqual(["localhost:1"]);
+      await expect(connectNodeTLSSocketV3(websocketCandidateForHost(1, "wrong.invalid", { mode: "ca" }), nowSeconds(), {
+        roots: rootCertificate, connectionPath, timeoutMilliseconds: 2_000,
+      })).rejects.toMatchObject({ code: "tls_failed", detail: "ca_untrusted" });
+    } finally { await closeServer(server); }
+  });
+
+  test("never falls back to a reachable direct target after path rejection", async () => {
+    const server = createTLSServer({ cert: leafCertificate, key: leafKey });
+    let direct = 0;
+    server.on("connection", () => { direct += 1; });
+    const port = await listen(server);
+    try {
+      await expect(connectNodeTLSSocketV3(websocketCandidate(port, { mode: "ca" }), nowSeconds(), {
+        roots: rootCertificate, connectionPath: { connect: async () => { throw new Error("private route detail"); } },
+      })).rejects.toMatchObject({ code: "connection_failed" });
+      expect(direct).toBe(0);
+    } finally { await closeServer(server); }
+  });
+
+  test("cancels a stuck path and destroys its late stream", async () => {
+    let deliver!: (stream: Duplex) => void;
+    let signal!: AbortSignal;
+    const operation = connectNodeTLSSocketV3(websocketCandidate(1, { mode: "ca" }), nowSeconds(), {
+      timeoutMilliseconds: 20,
+      connectionPath: { connect: async (target) => { signal = target.signal; return await new Promise<Duplex>((resolve) => { deliver = resolve; }); } },
+    });
+    await expect(operation).rejects.toMatchObject({ code: "connection_failed" });
+    expect(signal.aborted).toBe(true);
+    const stream = new Duplex({ read() {}, write(_chunk, _encoding, done) { done(); } });
+    deliver(stream);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(stream.destroyed).toBe(true);
+  });
+
+  test("uses the same path for HTTPS bootstrap without accepting TLS overrides", async () => {
+    const server = createHTTPSServer({ cert: leafCertificate, key: leafKey }, (req, res) => {
+      expect(req.headers.host).toBe("localhost:1");
+      res.end("bootstrap");
+    });
+    const port = await listen(server);
+    let routes = 0;
+    const connectionPath: NodeConnectionPath = { connect: async ({ signal }) => { routes += 1; return connectTCP({ host: "127.0.0.1", port, signal }); } };
+    const agent = createConnectionPathAgent({ connectionPath, ca: rootCertificate, connectTimeoutMs: 100 });
+    const untrusted = createConnectionPathAgent({ connectionPath });
+    const read = (selected: typeof agent, url = "https://localhost:1/"): Promise<string> => new Promise((resolve, reject) => {
+      httpsGet(url, { agent: selected, rejectUnauthorized: false }, (res) => {
+        let body = ""; res.on("data", (part) => { body += part; }); res.on("end", () => resolve(body));
+      }).on("error", reject);
+    });
+    try {
+      expect(await read(agent)).toBe("bootstrap");
+      // Admission timeout cannot terminate an established reusable connection.
+      await new Promise((resolve) => setTimeout(resolve, 130));
+      expect(await read(agent)).toBe("bootstrap");
+      expect(routes).toBe(1);
+      await expect(read(untrusted)).rejects.toBeInstanceOf(Error);
+      await expect(read(agent, "https://wrong.invalid:1/")).rejects.toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID" });
+    } finally { agent.destroy(); untrusted.destroy(); await closeServer(server); }
   });
 
   test("accepts a deployment CA and rejects the same server without its trust root", async () => {

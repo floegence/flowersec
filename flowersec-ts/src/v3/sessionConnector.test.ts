@@ -51,6 +51,22 @@ const raceArtifact = {
 } as ArtifactV3;
 
 describe("transport v3 session connector", () => {
+  test("excludes every non-WebSocket candidate before path dialing and artifact spend", async () => {
+    const spend = vi.fn(async () => undefined);
+    const retire = vi.fn(async () => undefined);
+    const nativeOnly = { ...artifact, path: { ...artifact.path,
+      candidates: artifact.path.candidates.filter((candidate) => candidate.carrier !== "websocket"),
+    } } as ArtifactV3;
+    expect(nativeOnly.path.candidates.length).toBeGreaterThan(0);
+    const route = vi.fn(async () => { throw new Error("must not dial"); });
+    const lease = createArtifactLeaseV3Internal(nativeOnly, spend, retire);
+    await expect(connectNodeV3(lease, { origin: "https://client.example", connectionPath: { connect: route } }))
+      .rejects.toMatchObject({ code: "transport_security_unsupported" });
+    expect(route).not.toHaveBeenCalled();
+    expect(spend).not.toHaveBeenCalled();
+    expect(retire).toHaveBeenCalledOnce();
+  });
+
   test("completes FSB3, durable spend, FSA3, and FSH3 before carrying session data", async () => {
     const [clientCarrier, serverCarrier] = createMemoryCarrierPairV3({
       kind: "websocket",

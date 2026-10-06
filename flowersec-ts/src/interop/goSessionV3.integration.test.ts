@@ -1,3 +1,4 @@
+import { connect as connectTCP } from "node:net";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -17,8 +18,8 @@ const artifactFixture = JSON.parse(
 }>;
 
 describe("TypeScript-Go v3 production interoperability", () => {
-  test("runs direct FSB3/FSH3 and Session semantics over Go WSS", async () => {
-    await runGoWSSSessionV3("direct");
+  test.each([false, true])("runs direct FSB3/FSH3 and Session semantics over Go WSS (routed=%s)", async (routed) => {
+    await runGoWSSSessionV3("direct", routed);
   }, 30_000);
 
   test("runs tunnel-role FSB3/FSH3 and Session semantics over Go WSS", async () => {
@@ -26,7 +27,7 @@ describe("TypeScript-Go v3 production interoperability", () => {
   }, 30_000);
 });
 
-async function runGoWSSSessionV3(sessionPath: "direct" | "tunnel"): Promise<void> {
+async function runGoWSSSessionV3(sessionPath: "direct" | "tunnel", routed = false): Promise<void> {
   const goRoot = fileURLToPath(new URL("../../../flowersec-go", import.meta.url));
   const peer = spawn("go", [
     "run", "./internal/cmd/ts-session-peer-v3", "--path", sessionPath, "--server-notify",
@@ -52,13 +53,21 @@ async function runGoWSSSessionV3(sessionPath: "direct" | "tunnel"): Promise<void
     const webSocket = raw.path.candidates.find((candidate) => candidate.carrier === "websocket" &&
       candidate.tls !== undefined && (candidate.tls as { mode?: unknown }).mode === "ca");
     if (webSocket === undefined) throw new Error(`${sessionPath} v3 CA WebSocket candidate is missing`);
-    webSocket.url = endpoint.url;
+    const destination = new URL(endpoint.url);
+    const logical = new URL(endpoint.url);
+    if (routed) logical.port = "1";
+    webSocket.url = logical.href;
     raw.path.candidates = [webSocket];
 
     phase = "connect";
     const session = await connect(
       createArtifactLease(parseArtifact(JSON.stringify(raw)), async () => undefined),
-      { origin: "https://client.example", roots: endpoint.ca_pem },
+      { origin: "https://client.example", roots: endpoint.ca_pem,
+        ...(routed ? { connectionPath: { connect: async ({ hostname, port, signal }: { hostname: string; port: number; signal: AbortSignal }) => {
+          expect(hostname).toBe(destination.hostname); expect(port).toBe(1);
+          return connectTCP({ host: destination.hostname, port: Number(destination.port), signal });
+        } } } : {}),
+      },
     );
     phase = "liveness";
     expect(await session.probeLiveness()).toBeGreaterThanOrEqual(0);

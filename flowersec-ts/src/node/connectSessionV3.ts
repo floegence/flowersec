@@ -1,3 +1,4 @@
+import type { NodeConnectionPath } from "./connectionPath.js";
 import type { Session } from "../public/contract.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 import type { ArtifactLeaseV3 } from "../v3/artifactLease.js";
@@ -36,6 +37,7 @@ export type NodeTLSRootsV3 = string | Uint8Array | readonly (string | Uint8Array
 export type SessionOptionsV3 = Readonly<{
   origin?: string;
   roots?: NodeTLSRootsV3;
+  connectionPath?: NodeConnectionPath;
   signal?: AbortSignal;
   connectTimeoutMs?: number;
   rpcHandlers?: RPCHandlers;
@@ -44,6 +46,7 @@ export type SessionOptionsV3 = Readonly<{
 export type ConnectionControllerOptionsV3 = Readonly<{
   origin?: string;
   roots?: NodeTLSRootsV3;
+  connectionPath?: NodeConnectionPath;
   connectTimeoutMs?: number;
   maximumAttempts?: number;
   rpcHandlers?: RPCHandlers;
@@ -75,6 +78,7 @@ export function createConnectionControllerV3(
 function nodeRuntime(options: Readonly<{
   origin?: string;
   roots?: NodeTLSRootsV3;
+  connectionPath?: NodeConnectionPath;
   connectTimeoutMs?: number;
   rpcHandlers?: RPCHandlers;
 }>): SessionConnectorRuntimeV3 {
@@ -82,7 +86,10 @@ function nodeRuntime(options: Readonly<{
   if (!Number.isSafeInteger(connectTimeoutMilliseconds) || connectTimeoutMilliseconds < 1) {
     throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
   }
-  const addon = tryLoadNativeTransportAddon();
+  if (options.connectionPath !== undefined && typeof options.connectionPath.connect !== "function") {
+    throw new ConnectErrorV3("artifact_invalid", { kind: "terminal" });
+  }
+  const addon = options.connectionPath === undefined ? tryLoadNativeTransportAddon() : undefined;
   const rawQuic = addon === undefined ? undefined : createNativeRawQuicDriver(addon);
   const capability = detectNodeRuntimeCapabilityV3(rawQuic !== undefined, options.origin !== undefined);
   let rpcSnapshot: FrozenRPCHandlers | undefined;
@@ -93,7 +100,9 @@ function nodeRuntime(options: Readonly<{
   }
   return {
     capabilitySnapshot: () => capability,
-    candidateEligible: (candidate) => candidate.carrier !== "websocket" || options.origin !== undefined,
+    candidateEligible: (candidate) =>
+      (options.connectionPath === undefined || candidate.carrier === "websocket") &&
+      (candidate.carrier !== "websocket" || options.origin !== undefined),
     connectTimeoutMilliseconds,
     protocolRuntime: nodeSessionRuntimeV3,
     ...(rpcSnapshot === undefined ? {} : { createRPCRouter: () => createRPCRouter(rpcSnapshot) }),
@@ -103,6 +112,7 @@ function nodeRuntime(options: Readonly<{
         const socket = await connectNodeWebSocketV3(candidate, attemptNow, {
           origin: options.origin,
           signal,
+          ...(options.connectionPath === undefined ? {} : { connectionPath: options.connectionPath }),
           ...(options.roots === undefined ? {} : { roots: options.roots }),
           timeoutMilliseconds: connectTimeoutMilliseconds,
         });

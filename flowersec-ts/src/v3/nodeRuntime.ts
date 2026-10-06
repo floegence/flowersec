@@ -1,3 +1,4 @@
+import { openConnectionPath, type NodeConnectionPath } from "../node/connectionPath.js";
 import { X509Certificate, constants, createHash, timingSafeEqual } from "node:crypto";
 import { createRequire } from "node:module";
 import {
@@ -51,6 +52,7 @@ export async function connectNodeTLSSocketV3(
   attemptNowUnixSeconds: number,
   options: Readonly<{
     roots?: NodeTLSRootsV3;
+    connectionPath?: NodeConnectionPath;
     signal?: AbortSignal;
     timeoutMilliseconds?: number;
     nowUnixMilliseconds?: () => number;
@@ -108,14 +110,35 @@ export async function connectNodeTLSSocketV3(
   if (!Number.isSafeInteger(timeout) || timeout < 1) {
     throw new TransportFailureV3("invalid_artifact");
   }
-  const socket = tlsConnect(tlsOptions);
+  const routeAbort = new AbortController();
+  const routeSignal = options.signal === undefined ? routeAbort.signal : AbortSignal.any([routeAbort.signal, options.signal]);
+  const routeTimer = setTimeout(() => routeAbort.abort(), timeout);
+  let transport;
+  try {
+    transport = options.connectionPath === undefined ? undefined : await openConnectionPath(options.connectionPath, host, port, routeSignal);
+  } catch {
+    clearTimeout(routeTimer);
+    throw new TransportFailureV3("connection_failed");
+  }
+  if (routeSignal.aborted) {
+    clearTimeout(routeTimer);
+    transport?.destroy();
+    throw new TransportFailureV3("connection_failed");
+  }
+  let socket: TLSSocket;
+  try { socket = tlsConnect({ ...tlsOptions, ...(transport === undefined ? {} : { socket: transport }) }); }
+  catch {
+    clearTimeout(routeTimer); transport?.destroy();
+    throw new TransportFailureV3("connection_failed");
+  }
+  socket.once("close", () => transport?.destroy());
   return await new Promise<TLSSocket>((resolve, reject) => {
     let settled = false;
-    const timer = setTimeout(() => fail(new TransportFailureV3("connection_failed")), timeout);
+
     const abort = () => fail(options.signal?.reason ?? new Error("aborted"));
     const cleanup = () => {
-      clearTimeout(timer);
-      options.signal?.removeEventListener("abort", abort);
+      clearTimeout(routeTimer);
+      routeSignal.removeEventListener("abort", abort);
       socket.removeListener("error", onError);
     };
     const fail = (error: unknown) => {
@@ -157,8 +180,8 @@ export async function connectNodeTLSSocketV3(
       socket.once("close", () => socket.removeListener("error", onError));
       resolve(socket);
     });
-    if (options.signal?.aborted === true) abort();
-    else options.signal?.addEventListener("abort", abort, { once: true });
+    if (routeSignal.aborted) abort();
+    else routeSignal.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -168,6 +191,7 @@ export async function connectNodeWebSocketV3(
   options: Readonly<{
     origin: string;
     roots?: NodeTLSRootsV3;
+    connectionPath?: NodeConnectionPath;
     signal?: AbortSignal;
     timeoutMilliseconds?: number;
     maxPayload?: number;
@@ -180,6 +204,7 @@ export async function connectNodeWebSocketV3(
   }
   const socket = await connectNodeTLSSocketV3(candidate, attemptNowUnixSeconds, {
     ...(options.roots === undefined ? {} : { roots: options.roots }),
+    ...(options.connectionPath === undefined ? {} : { connectionPath: options.connectionPath }),
     ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.timeoutMilliseconds === undefined ? {} : { timeoutMilliseconds: options.timeoutMilliseconds }),
   });

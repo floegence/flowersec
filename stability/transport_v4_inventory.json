@@ -1,76 +1,76 @@
 {
   "target_version": "6.0.0",
   "target_wire": "flowersec/4",
-  "current_version": "5.9.0",
+  "current_version": "5.10.0",
   "scan_scope": "Tracked and unignored SDK source candidates; text hits require reachability review, not a runtime proof",
   "release_coordinates": [
     {
       "label": "flowersec-go/go.mod",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-ts/package.json",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-ts/package-lock.json",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-rust/Cargo.toml",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-rust/Cargo.lock",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-rust/fuzz/Cargo.lock",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "examples/rust/Cargo.lock",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "Package.swift",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-native-transport/Cargo.toml",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-native-transport/Cargo.lock",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-node-native/Cargo.toml",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-node-native/Cargo.lock",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-node-native/package.json",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-node-native/npm/darwin-arm64/package.json",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-node-native/npm/darwin-x64/package.json",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-node-native/npm/linux-arm64-gnu/package.json",
-      "version": "5.9.0"
+      "version": "5.10.0"
     },
     {
       "label": "flowersec-node-native/npm/linux-x64-gnu/package.json",
-      "version": "5.9.0"
+      "version": "5.10.0"
     }
   ],
   "go_module": "github.com/floegence/flowersec/flowersec-go/v5",
@@ -882,8 +882,8 @@
     {
       "path": "flowersec-ts/src/node/connectSessionV3.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 3,
-      "matching_lines": 45
+      "first_matching_line": 4,
+      "matching_lines": 46
     },
     {
       "path": "flowersec-ts/src/node/index.ts",
@@ -1032,8 +1032,8 @@
     {
       "path": "flowersec-ts/src/v3/nodeRuntime.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 11,
-      "matching_lines": 65
+      "first_matching_line": 12,
+      "matching_lines": 67
     },
     {
       "path": "flowersec-ts/src/v3/nodeSessionRuntime.ts",

@@ -343,12 +343,33 @@ If a persistence commit has an uncertain outcome, fail closed and treat the arti
 
 ## Version Scope
 
-The maintained tree uses the v3 module path and the current Flowersec transport,
+The maintained tree uses the v5 module path and the current Flowersec transport,
 session, control-plane, and proxy contracts.
 
 Public changes follow `docs/API_CHANGE_POLICY.md`; stable failures follow `docs/ERROR_MODEL.md`, and the reviewed symbol inventory is `stability/api_contract_manifest.json`.
 
 ## Native HTTP application streams
+
+`flowersec.NewByteStreamConn(...)` transfers one authorized encrypted stream to
+`flowersec.ByteStreamConn`, a `net.Conn` with logical addresses, serialized writes,
+real read/write deadlines, and context cancellation. Its bounded reader keeps at
+most one unread 64 KiB result plus the application's current chunk. Read deadlines
+can be extended or cleared without discarding data. An expired write deadline
+before a write starts is reversible; expiry during a write closes the stream,
+since partial encrypted-record delivery cannot safely resume. `CloseWrite` sends
+FIN and retains the read direction. Cancellation interrupts application I/O even
+while the underlying protocol completes its reset.
+
+`flowersec.NewByteStreamListener(...)` creates a `flowersec.ByteStreamListener`
+that accepts that connection exactly once. Listener close also closes the accepted
+connection, including HTTP upgrades. `tls.NewListener` and `tls.Client` can wrap
+these adapters without a TCP listener or any change to application Host/Origin.
+The embedding application owns TLS identity and authorization.
+
+`flowersec.RelayStreams(...)` owns two `flowersec.DuplexStream` endpoints and
+copies both directions with fixed 32 KiB buffers. Each EOF propagates a half-close;
+both directions must finish before success. Cancellation or a copy failure closes
+both sides and joins the workers. The relay neither inspects nor replays bytes.
 
 `flowersec.ServeHTTPStream(...)` serves a single already-authorized ByteStream with
 `flowersec.HTTPStreamOptions` header and idle admission limits. It owns HTTP
@@ -362,6 +383,22 @@ bounded Node Duplex with half-close, 64 KiB write chunks, partial-write progress
 read backpressure, and abort/reset propagation. It never decodes HTTP or WebSocket
 frames, reconnects, or replays application bytes. These embedding helpers do not
 change wire identifiers, artifacts, or carrier selection.
+
+Node `SessionOptions` and `ConnectionControllerOptions` accept an explicit
+`NodeConnectionPath`. Its `connect` callback receives the original hostname, port
+and abort signal and returns an owned Duplex carrying raw target bytes. The SDK
+performs target TLS, certificate checks, WebSocket admission and session setup
+above that stream. Only WebSocket candidates are eligible when a path is supplied;
+native transports are excluded before dialing or spending an artifact. A route
+failure cannot fall back to direct TCP or local DNS. Cancellation bounds a stuck
+route callback and destroys any stream returned after cancellation.
+
+`createConnectionPathAgent(...)`, configured with `ConnectionPathAgentOptions`,
+provides the same mandatory path for Node HTTPS bootstrap and trusted host bridges.
+It retains target Host, SNI and CA validation; per-request TLS bypasses cannot
+override its trust configuration. Its timeout covers route establishment and TLS,
+and stops after the handshake, without limiting the resulting application session.
+Destroying the Agent cancels pending routes and closes established connections.
 
 The Swift `TLSChannelProvider` binds application-owned byte streams to a canonical
 HTTPS origin. `connect(lease:options:channelProvider:)` preserves artifact TLS
