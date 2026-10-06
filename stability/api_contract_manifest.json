@@ -1188,6 +1188,12 @@
             "kind": "func",
             "expr": "flowersec.NewHTTPDirectServer",
             "doc_token": "`flowersec.NewHTTPDirectServer(...)`"
+          },
+          {
+            "kind": "field",
+            "expr": "(flowersec.ConnectorOptions{}).HTTPSProxy",
+            "doc_token": "`flowersec.ConnectorOptions.HTTPSProxy`",
+            "signature": "*egress.HTTPSProxy"
           }
         ]
       },
@@ -1656,6 +1662,69 @@
             "kind": "method",
             "expr": "controlplane.TunnelAuthorizationResponse.MarshalJSON",
             "doc_token": "`controlplane.TunnelAuthorizationResponse.MarshalJSON()`"
+          }
+        ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/v5/egress",
+        "alias": "egress",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v5/egress`",
+        "stability_group": "transport_v3",
+        "entries": [
+          {
+            "kind": "type",
+            "expr": "egress.HTTPSProxyOptions",
+            "doc_token": "`egress.HTTPSProxyOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "egress.HTTPSProxy",
+            "doc_token": "`egress.HTTPSProxy`"
+          },
+          {
+            "kind": "func",
+            "expr": "egress.NewHTTPSProxy",
+            "doc_token": "`egress.NewHTTPSProxy(...)`"
+          },
+          {
+            "kind": "var",
+            "expr": "egress.ErrInvalidProxy",
+            "doc_token": "`egress.ErrInvalidProxy`"
+          },
+          {
+            "kind": "var",
+            "expr": "egress.ErrProxyConnection",
+            "doc_token": "`egress.ErrProxyConnection`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).DialContext",
+            "doc_token": "`egress.HTTPSProxy.DialContext(...)`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).HTTPTransport",
+            "doc_token": "`egress.HTTPSProxy.HTTPTransport()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).String",
+            "doc_token": "`egress.HTTPSProxy.String()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).GoString",
+            "doc_token": "`egress.HTTPSProxy.GoString()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).MarshalJSON",
+            "doc_token": "`egress.HTTPSProxy.MarshalJSON()`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).Valid",
+            "doc_token": "`egress.HTTPSProxy.Valid()`"
           }
         ]
       }

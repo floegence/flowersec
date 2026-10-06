@@ -1,20 +1,20 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:7ca6b2e0-8187-5b43-89c2-3f58cd7c74ba",
+  "serialNumber": "urn:uuid:5fab7de7-80d6-5a8f-8aca-417d81eb4740",
   "version": 1,
   "metadata": {
     "component": {
       "type": "library",
       "name": "Flowersec",
-      "version": "5.8.1",
-      "purl": "pkg:swift/Flowersec@5.8.1",
-      "bom-ref": "pkg:swift/Flowersec@5.8.1"
+      "version": "5.9.0",
+      "purl": "pkg:swift/Flowersec@5.9.0",
+      "bom-ref": "pkg:swift/Flowersec@5.9.0"
     },
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "bf19c51838f8776d250ab0722472cc9e7619d7f565fc33405c9bf3342e30f12e"
+        "value": "1d6fd9446ce43ac2469f488869e08e11674f24eee7404ec59b361c3e4f753142"
       }
     ]
   },
@@ -246,7 +246,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:swift/Flowersec@5.8.1",
+      "ref": "pkg:swift/Flowersec@5.9.0",
       "dependsOn": [
         "pkg:swift/swift-crypto@4.5.1",
         "pkg:swift/swift-nio-ssl@2.37.2",

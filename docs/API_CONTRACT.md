@@ -370,3 +370,37 @@ owns TLS, WebSocket upgrade, admission, and session protocol. Its
 `openChannel(trustRootsPEM:initializer:)` boundary also provides CA-verified TLS
 for same-origin application HTTP exchanges. It does not mint artifacts, bypass
 certificate validation, or change the Transport v3 wire contract.
+
+## Explicit Go HTTPS egress
+
+`github.com/floegence/flowersec/flowersec-go/v5/egress` owns the Go-native
+network route. `egress.NewHTTPSProxy(...)` constructs an opaque
+`egress.HTTPSProxy` from `egress.HTTPSProxyOptions`: an HTTPS origin, a separate
+proxy TLS configuration (including optional client certificates), and a bounded
+connect timeout. Proxy TLS requires TLS 1.3 and hostname validation. Proxy
+credentials in URLs, custom server-name overrides and insecure verification are
+rejected with `egress.ErrInvalidProxy`.
+
+`flowersec.ConnectorOptions.HTTPSProxy` applies that route to one-shot and
+controller connections. It excludes non-WebSocket candidates before attempts
+and durable spend. It never changes signed candidates, destination TLS policy,
+origin, artifact authority or retry ownership. Proxy denial or unavailability
+cannot fall back to direct access, environment proxies or unsupported carriers.
+The capability is Go-native configuration and changes no application wire.
+
+`egress.HTTPSProxy.DialContext(...)` obtains a TCP stream through authenticated
+HTTPS CONNECT; only the proxy hostname is resolved locally. The caller still
+owns inner destination TLS. `egress.HTTPSProxy.HTTPTransport()` creates an
+independently owned HTTP transport using the same explicit route and normal
+destination certificate verification. Failed setup closes its socket and
+returns `egress.ErrProxyConnection`, preserving cancellation and deadline
+matching without exposing proxy responses or addresses. Response headers are
+bounded and bytes buffered after CONNECT are retained.
+
+`egress.HTTPSProxy.String()`, `egress.HTTPSProxy.GoString()` and
+`egress.HTTPSProxy.MarshalJSON()` expose no route or credentials. Deployments own
+proxy trust, client identity provisioning, destination allowlists and revocation;
+this package grants no authority to connect to a product environment.
+
+`egress.HTTPSProxy.Valid()` reports successful construction; zero-value routes
+are rejected before connection attempts.

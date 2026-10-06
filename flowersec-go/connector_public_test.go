@@ -18,7 +18,7 @@ import (
 
 func TestConnectorPublicSurfaceIsCarrierNeutral(t *testing.T) {
 	optionsType := reflect.TypeOf(flowersec.ConnectorOptions{})
-	wantFields := []string{"TrustRoots", "Origin", "ConnectTimeout", "RPCHandlers"}
+	wantFields := []string{"TrustRoots", "Origin", "ConnectTimeout", "RPCHandlers", "HTTPSProxy"}
 	if optionsType.NumField() != len(wantFields) {
 		t.Fatalf("ConnectorOptions has %d fields, want %d", optionsType.NumField(), len(wantFields))
 	}

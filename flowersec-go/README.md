@@ -168,3 +168,14 @@ go test ./...
 ```
 
 See the [API contract](../docs/API_CONTRACT.md), [Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).
+
+## Explicit HTTPS egress
+
+Set `ConnectorOptions.HTTPSProxy` to an `egress.NewHTTPSProxy` instance when all
+connections must use one HTTPS CONNECT proxy. The proxy TLS configuration may
+include a client certificate; destination TLS and signed artifact policy remain
+unchanged. Unsupported carriers are excluded before attempting a connection, and
+proxy failure never falls back to direct access. Use the same instance's
+`HTTPTransport()` for application-owned HTTPS bootstrap requests. Applications
+continue to own HTTP redirect policy and transport cleanup. See
+[the public contract](../docs/API_CONTRACT.md#explicit-go-https-egress).

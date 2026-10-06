@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v5/egress"
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3"
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/candidatev3"
@@ -46,6 +47,9 @@ type ConnectorOptions struct {
 	Origin         string
 	ConnectTimeout time.Duration
 	RPCHandlers    *RPCHandlers
+	// HTTPSProxy enforces an explicit network route without changing peer trust.
+	// Unsupported transports are excluded before any connection attempt.
+	HTTPSProxy *egress.HTTPSProxy
 }
 
 type connector struct {
@@ -337,6 +341,7 @@ func newConnectorWithFilter(lease ArtifactLease, options ConnectorOptions, filte
 	factory, err := candidatev3.NewGoNativeFactory(candidatev3.GoNativeConfig{
 		TrustRoots: options.TrustRoots,
 		Origin:     options.Origin,
+		HTTPSProxy: options.HTTPSProxy,
 	})
 	if err != nil {
 		return nil, &ConnectError{
@@ -347,6 +352,12 @@ func newConnectorWithFilter(lease ArtifactLease, options ConnectorOptions, filte
 	connectorOptions := make([]connectv3.ConnectorOption, 0, 2)
 	if options.RPCHandlers != nil {
 		connectorOptions = append(connectorOptions, connectv3.WithRPCRouter(newRPCRouter(options.RPCHandlers.freeze())))
+	}
+	if options.HTTPSProxy != nil {
+		previous := filter
+		filter = func(candidate artifactv3.Candidate) bool {
+			return candidate.Carrier == artifactv3.CarrierWebSocket && (previous == nil || previous(candidate))
+		}
 	}
 	if filter != nil {
 		connectorOptions = append(connectorOptions, connectv3.WithCandidateFilter(filter))
@@ -364,6 +375,7 @@ func validConnectorOptions(options ConnectorOptions) bool {
 func validConnectorPolicy(options ConnectorOptions) bool {
 	return (options.TrustRoots == nil || len(options.TrustRoots.Subjects()) != 0) &&
 		options.ConnectTimeout >= 0 && validOrigin(options.Origin) &&
+		(options.HTTPSProxy == nil || options.HTTPSProxy.Valid()) &&
 		(options.RPCHandlers == nil || options.RPCHandlers.valid())
 }
 

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v5/egress"
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3"
 	websocketadmission "github.com/floegence/flowersec/flowersec-go/v5/internal/admissionv3/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v5/internal/artifactv3"
@@ -57,6 +58,7 @@ type GoNativeConfig struct {
 	TrustRoots                 *x509.CertPool
 	Origin                     string
 	RootlessLoopbackDirectOnly bool
+	HTTPSProxy                 *egress.HTTPSProxy
 }
 
 // NewGoNativeFactory composes the production adapters available in one Go
@@ -66,6 +68,10 @@ func NewGoNativeFactory(config GoNativeConfig) (*Factory, error) {
 		return nil, ErrInvalidCarrierDialConfig
 	}
 	webSocketClient := *gorillaws.DefaultDialer
+	if config.HTTPSProxy != nil {
+		webSocketClient.Proxy = nil
+		webSocketClient.NetDialContext = config.HTTPSProxy.DialContext
+	}
 	webSocketClient.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13}
 	if config.TrustRoots != nil {
 		webSocketClient.TLSClientConfig.RootCAs = config.TrustRoots.Clone()
@@ -80,6 +86,9 @@ func NewGoNativeFactory(config GoNativeConfig) (*Factory, error) {
 	}
 	dialers := map[artifactv3.Carrier]Dial{
 		artifactv3.CarrierWebSocket: webSocketDial,
+	}
+	if config.HTTPSProxy != nil {
+		return NewFactory(dialers)
 	}
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13}
 	if config.TrustRoots != nil {
