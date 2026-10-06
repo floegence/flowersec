@@ -7,10 +7,12 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const byteStreamBufferBytes = 64 * 1024
+const byteStreamCloseTimeout = 5 * time.Second
 
 // ByteStreamConn owns one encrypted stream and adapts it for TLS and net/http.
 // It has one bounded reader and writer. Read deadlines are reversible. A write
@@ -22,6 +24,10 @@ type ByteStreamConn struct {
 	done          chan struct{}
 	stop          func() bool
 	closeOnce     sync.Once
+	resetOnce     sync.Once
+	writeDone     chan struct{}
+	writeFinished atomic.Bool
+	readTimedOut  atomic.Bool
 	workers       sync.WaitGroup
 	closed        chan struct{}
 	reads         chan streamReadResult
@@ -61,11 +67,11 @@ func NewByteStreamConn(ctx context.Context, stream ByteStream) (*ByteStreamConn,
 	if ctx == nil || stream == nil {
 		return nil, errors.New("invalid byte stream connection")
 	}
-	c := &ByteStreamConn{stream: stream, done: make(chan struct{}), closed: make(chan struct{}), reads: make(chan streamReadResult), writes: make(chan streamWriteRequest), readChanged: make(chan struct{}), writeChanged: make(chan struct{})}
+	c := &ByteStreamConn{stream: stream, done: make(chan struct{}), closed: make(chan struct{}), reads: make(chan streamReadResult), writes: make(chan streamWriteRequest), writeDone: make(chan struct{}), readChanged: make(chan struct{}), writeChanged: make(chan struct{})}
 	c.workers.Add(2)
 	// Hold mu until stop is installed; an already canceled context may run it immediately.
 	c.mu.Lock()
-	c.stop = context.AfterFunc(ctx, func() { _ = c.Close() })
+	c.stop = context.AfterFunc(ctx, func() { _ = c.abort() })
 	c.mu.Unlock()
 	go c.readLoop()
 	go c.writeLoop()
@@ -86,7 +92,11 @@ func (c *ByteStreamConn) readLoop() {
 		select {
 		case c.reads <- streamReadResult{buffer[:n], err}:
 		case <-c.done:
-			return
+			// A normal net.Conn close drains encrypted FIN without exposing more data
+			// to the caller. The close timer or context cancellation bounds this drain.
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			c.reset()
 		}
 		if err != nil {
 			return
@@ -96,6 +106,7 @@ func (c *ByteStreamConn) readLoop() {
 
 func (c *ByteStreamConn) writeLoop() {
 	defer c.workers.Done()
+	defer close(c.writeDone)
 	for {
 		select {
 		case <-c.done:
@@ -108,6 +119,9 @@ func (c *ByteStreamConn) writeLoop() {
 			default:
 				if request.finish {
 					result.err = c.stream.CloseWrite()
+					if result.err == nil {
+						c.writeFinished.Store(true)
+					}
 				} else {
 					result.n, result.err = c.stream.Write(request.data)
 				}
@@ -126,8 +140,12 @@ func (c *ByteStreamConn) Read(p []byte) (int, error) {
 	for {
 		deadline, changed := c.deadline(false)
 		if err := c.operationError(deadline); err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				c.readTimedOut.Store(true)
+			}
 			return 0, err
 		}
+		c.readTimedOut.Store(false)
 		if len(c.pending.data) > 0 {
 			n := copy(p, c.pending.data)
 			c.pending.data = c.pending.data[n:]
@@ -179,8 +197,9 @@ func (c *ByteStreamConn) write(request streamWriteRequest) streamWriteResult {
 	for {
 		deadline, changed := c.deadline(true)
 		if err := c.operationError(deadline); err != nil {
-			if result != nil {
+			if result != nil && errors.Is(err, os.ErrDeadlineExceeded) {
 				c.beginClose()
+				c.reset()
 			}
 			return streamWriteResult{err: err}
 		}
@@ -220,24 +239,52 @@ func (c *ByteStreamConn) CloseWrite() error {
 	return err
 }
 
-// Close interrupts local I/O and joins both adapter workers. The stream owns
-// bounded protocol reset completion; pending reads and writes return immediately
-// even while Close waits for that cleanup.
+// Close interrupts local I/O, sends FIN after accepted writes, and drains the
+// peer's FIN before releasing the encrypted stream. A bounded five-second
+// close deadline resets an unresponsive peer. Canceling the owner context
+// skips the graceful drain and interrupts all workers immediately.
+// In particular, Close never follows a clean FIN exchange with a reset that
+// could overtake unread response records on a different carrier stream.
 func (c *ByteStreamConn) Close() error {
 	c.beginClose()
 	<-c.closed
 	return nil
 }
 
+// abort forcibly releases the stream and joins the adapter workers. Use it for
+// cancellation and failures, not ordinary HTTP/TLS connection completion.
+func (c *ByteStreamConn) abort() error {
+	c.beginClose()
+	c.reset()
+	<-c.closed
+	return nil
+}
+
+func (c *ByteStreamConn) reset() {
+	c.resetOnce.Do(func() { _ = c.stream.Close() })
+}
+
 func (c *ByteStreamConn) beginClose() {
 	c.closeOnce.Do(func() {
 		c.mu.Lock()
+		closeTimeout := byteStreamCloseTimeout
+		if c.readTimedOut.Load() {
+			closeTimeout = 0
+		}
 		close(c.done)
-		c.stop()
 		c.mu.Unlock()
 		go func() {
-			_ = c.stream.Close()
+			timeout := time.AfterFunc(closeTimeout, c.reset)
+			<-c.writeDone
+			if !c.writeFinished.Load() {
+				if err := c.stream.CloseWrite(); err != nil {
+					c.reset()
+				}
+			}
 			c.workers.Wait()
+			_ = c.stream.Close()
+			timeout.Stop()
+			c.stop()
 			close(c.closed)
 		}()
 	})
@@ -282,6 +329,9 @@ func (c *ByteStreamConn) setDeadline(t time.Time, read, write bool) error {
 	}
 	if read {
 		c.readDeadline = t
+		if t.IsZero() || time.Now().Before(t) {
+			c.readTimedOut.Store(false)
+		}
 		close(c.readChanged)
 		c.readChanged = make(chan struct{})
 	}

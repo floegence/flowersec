@@ -197,3 +197,94 @@ func TestRelayStreamsCancellationInterruptsBothDirections(t *testing.T) {
 		t.Fatal("relay did not join workers")
 	}
 }
+
+func TestRelayStreamsCancellationAbortsNetworkAdapters(t *testing.T) {
+	left, peerLeft := net.Pipe()
+	right, peerRight := net.Pipe()
+	defer peerLeft.Close()
+	defer peerRight.Close()
+	a, _ := NewByteStreamConn(context.Background(), httpTestByteStream{left})
+	b, _ := NewByteStreamConn(context.Background(), httpTestByteStream{right})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- RelayStreams(ctx, a, b) }()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("relay cancellation waited for graceful-close drain")
+	}
+}
+
+func TestByteStreamConnCancellationInterruptsGracefulDrain(t *testing.T) {
+	left, right := net.Pipe()
+	defer right.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	conn, err := NewByteStreamConn(ctx, httpTestByteStream{left})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan struct{})
+	go func() { _ = conn.Close(); close(closed) }()
+	<-conn.done
+	cancel()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("cancellation waited for the graceful-close timeout")
+	}
+	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, net.ErrClosed) {
+		t.Fatal(err)
+	}
+}
+
+type delayedWriteStream struct {
+	tcpByteStream
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *delayedWriteStream) Write(p []byte) (int, error) {
+	close(s.started)
+	<-s.release
+	return s.tcpByteStream.Write(p)
+}
+
+func TestByteStreamConnCloseDeliversAcceptedWriteBeforeFIN(t *testing.T) {
+	left, right := tcpPair(t)
+	stream := &delayedWriteStream{tcpByteStream{left}, make(chan struct{}), make(chan struct{})}
+	conn, err := NewByteStreamConn(context.Background(), stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written := make(chan error, 1)
+	go func() { _, err := conn.Write([]byte("accepted response")); written <- err }()
+	<-stream.started
+	closed := make(chan struct{})
+	go func() { _ = conn.Close(); close(closed) }()
+	<-conn.done
+	select {
+	case err := <-written:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("interrupted application write: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not interrupt application I/O")
+	}
+	close(stream.release)
+	body, err := io.ReadAll(right)
+	if err != nil || string(body) != "accepted response" {
+		t.Fatalf("peer response: %q %v", body, err)
+	}
+	_ = right.CloseWrite()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("clean FIN exchange did not finish Close")
+	}
+}

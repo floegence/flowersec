@@ -3,9 +3,11 @@ package flowersec_test
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +16,16 @@ import (
 )
 
 func TestByteStreamListenerServesTLSOnReverseEncryptedStream(t *testing.T) {
+	for _, closeResponse := range []bool{false, true} {
+		name := "keepalive"
+		if closeResponse {
+			name = "server_close"
+		}
+		t.Run(name, func(t *testing.T) { testByteStreamListenerTLS(t, closeResponse) })
+	}
+}
+
+func testByteStreamListenerTLS(t *testing.T, closeResponse bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var record controlplane.AuthorizationRecord
@@ -70,10 +82,25 @@ func TestByteStreamListenerServesTLSOnReverseEncryptedStream(t *testing.T) {
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
-			_, _ = io.Copy(w, r.Body)
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, "request failed", http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write(body)
 		})}
 		defer httpServer.Close()
-		served <- httpServer.Serve(tls.NewListener(listener, serverTLS.Clone()))
+		err = httpServer.Serve(tls.NewListener(listener, serverTLS.Clone()))
+		_ = listener.Close()
+		if closeResponse && errors.Is(err, net.ErrClosed) {
+			// Stream handlers finish successful callbacks with CloseWrite. A normal
+			// HTTP connection close must remain safe under that ownership pattern.
+			err = incoming.Stream.CloseWrite()
+			if err == nil {
+				err = incoming.Stream.Close()
+			}
+		}
+		served <- err
 	}()
 	stream, err := gateway.OpenStream(ctx, "application.https", flowersec.StreamMetadata{})
 	if err != nil {
@@ -87,18 +114,37 @@ func TestByteStreamListenerServesTLSOnReverseEncryptedStream(t *testing.T) {
 	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}, DialContext: func(context.Context, string, string) (net.Conn, error) { return connection, nil }}
 	defer transport.CloseIdleConnections()
 	httpClient := &http.Client{Transport: transport}
-	for range 2 {
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://localhost/", nil)
+	for iteration := range 2 {
+		payload := strings.Repeat("response-content-", 16384)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://localhost/", strings.NewReader(payload))
+		if closeResponse && iteration == 1 {
+			req.Close = true
+		}
 		req.Header.Set("Origin", "https://consumer.example")
 		res, err := httpClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _ = io.Copy(io.Discard, res.Body)
+		time.Sleep(20 * time.Millisecond)
+		body, readErr := io.ReadAll(res.Body)
+		if readErr != nil || string(body) != payload {
+			t.Fatalf("response truncated: bytes=%d err=%v", len(body), readErr)
+		}
 		_ = res.Body.Close()
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("status %d", res.StatusCode)
 		}
+	}
+	if closeResponse {
+		select {
+		case err := <-served:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+		return
 	}
 	cancel()
 	select {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 )
 
 // DuplexStream supports independent read and write completion. ByteStream,
@@ -21,7 +22,23 @@ func RelayStreams(ctx context.Context, left, right DuplexStream) error {
 		return errors.New("invalid stream relay")
 	}
 	closeBoth := func() { _ = left.Close(); _ = right.Close() }
-	stop := context.AfterFunc(ctx, closeBoth)
+	abortBoth := func() {
+		var workers sync.WaitGroup
+		for _, stream := range []DuplexStream{left, right} {
+			workers.Go(func() {
+				switch current := stream.(type) {
+				case *ByteStreamConn:
+					_ = current.abort()
+				case interface{ Reset() error }:
+					_ = current.Reset()
+				default:
+					_ = current.Close()
+				}
+			})
+		}
+		workers.Wait()
+	}
+	stop := context.AfterFunc(ctx, abortBoth)
 	defer stop()
 	defer closeBoth()
 	results := make(chan error, 2)
@@ -37,7 +54,7 @@ func RelayStreams(ctx context.Context, left, right DuplexStream) error {
 	go copyOne(right, left)
 	first := <-results
 	if first != nil {
-		closeBoth()
+		abortBoth()
 	}
 	second := <-results
 	if ctx.Err() != nil {

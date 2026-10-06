@@ -921,7 +921,16 @@ func (s *encryptedStream) CloseWrite() error {
 	if err := s.lockSendReady(); err != nil {
 		return err
 	}
+	if err := s.TerminalError(); err != nil {
+		s.sendMu.Unlock()
+		return err
+	}
 	s.stateMu.Lock()
+	if s.state.LocalHalfClosed() {
+		s.stateMu.Unlock()
+		s.sendMu.Unlock()
+		return nil
+	}
 	err := s.state.SendRecord(protocolv3.InnerFIN)
 	s.stateMu.Unlock()
 	if err != nil {
@@ -1205,7 +1214,16 @@ func (s *encryptedStream) Reset() error {
 	return nil
 }
 
-func (s *encryptedStream) Close() error { return s.Reset() }
+func (s *encryptedStream) Close() error {
+	s.stateMu.Lock()
+	clean := s.state.CleanClosed() && s.remoteCarrierEOF.Load()
+	s.stateMu.Unlock()
+	if clean {
+		s.releaseIfClean()
+		return nil
+	}
+	return s.Reset()
+}
 
 func (s *encryptedStream) TerminalError() error {
 	s.terminalMu.RLock()
