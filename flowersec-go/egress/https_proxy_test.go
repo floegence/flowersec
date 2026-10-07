@@ -99,6 +99,37 @@ func TestHTTPSProxyPreservesTargetTLSAndResolvesAtProxy(t *testing.T) {
 	}
 }
 
+func TestHTTPSProxyFailsOverToTheNextConfiguredRoute(t *testing.T) {
+	var attempts atomic.Int32
+	proxy, trust := proxyFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		if r.Method != http.MethodConnect || r.Host != "runtime-cloud.invalid:443" {
+			t.Errorf("unexpected CONNECT: %s %s", r.Method, r.Host)
+			return
+		}
+		client, buffered, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer client.Close()
+		_, _ = buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+		_ = buffered.Flush()
+	})
+	route, err := egress.NewHTTPSProxy(egress.HTTPSProxyOptions{URLs: []string{"https://127.0.0.1:1", proxy.URL}, TLSConfig: trust, ConnectTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := route.DialContext(t.Context(), "tcp", "runtime-cloud.invalid:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+	if attempts.Load() != 1 {
+		t.Fatalf("successful route attempts = %d, want 1", attempts.Load())
+	}
+}
+
 func TestHTTPSProxyRejectsInvalidPolicy(t *testing.T) {
 	var zero egress.HTTPSProxy
 	if zero.Valid() {

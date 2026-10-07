@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,16 +26,23 @@ var (
 // policy. URL must be an HTTPS origin without credentials, queries or fragments.
 type HTTPSProxyOptions struct {
 	URL            string
+	URLs           []string
 	TLSConfig      *tls.Config
 	ConnectTimeout time.Duration
 }
 
-// HTTPSProxy is an immutable explicit route. Every dial goes through this
-// proxy; proxy failures never fall back to a direct connection or environment.
-type HTTPSProxy struct {
+type proxyRoute struct {
 	address string
 	trust   *tls.Config
+}
+
+// HTTPSProxy is an explicit route set. Every dial goes through one of the
+// configured proxies; failures never fall back to a direct connection or
+// environment proxy.
+type HTTPSProxy struct {
+	routes  []proxyRoute
 	timeout time.Duration
+	last    atomic.Uint32
 }
 
 func (p *HTTPSProxy) String() string               { return "Flowersec.HTTPSProxy" }
@@ -43,44 +51,66 @@ func (p *HTTPSProxy) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 
 // Valid reports whether the proxy was successfully constructed.
 func (p *HTTPSProxy) Valid() bool {
-	return p != nil && p.trust != nil && p.address != "" && p.timeout > 0
+	if p == nil || len(p.routes) == 0 || p.timeout <= 0 {
+		return false
+	}
+	for _, route := range p.routes {
+		if route.trust == nil || route.address == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func NewHTTPSProxy(options HTTPSProxyOptions) (*HTTPSProxy, error) {
-	endpoint, err := url.Parse(options.URL)
-	if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() == "" || endpoint.User != nil ||
-		(endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawPath != "" || endpoint.Opaque != "" ||
-		endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" || endpoint.RawFragment != "" || options.ConnectTimeout < 0 {
-		return nil, ErrInvalidProxy
-	}
-	port := endpoint.Port()
-	if port == "" {
-		port = "443"
-	}
-	if !validPort(port) {
-		return nil, ErrInvalidProxy
-	}
-	trust := &tls.Config{}
-	if options.TLSConfig != nil {
-		trust = options.TLSConfig.Clone()
-		if trust.InsecureSkipVerify || trust.ServerName != "" ||
-			(trust.MinVersion != 0 && trust.MinVersion < tls.VersionTLS13) ||
-			(trust.MaxVersion != 0 && trust.MaxVersion < tls.VersionTLS13) {
+	urls := append([]string(nil), options.URLs...)
+	if options.URL != "" {
+		if len(urls) != 0 {
 			return nil, ErrInvalidProxy
 		}
-		if trust.RootCAs != nil {
-			trust.RootCAs = trust.RootCAs.Clone()
-		}
-		trust.Certificates = append([]tls.Certificate(nil), trust.Certificates...)
+		urls = []string{options.URL}
 	}
-	trust.MinVersion = tls.VersionTLS13
-	trust.ServerName = endpoint.Hostname()
-	trust.NextProtos = []string{"http/1.1"}
+	if len(urls) == 0 || options.ConnectTimeout < 0 {
+		return nil, ErrInvalidProxy
+	}
 	timeout := options.ConnectTimeout
 	if timeout == 0 {
 		timeout = 15 * time.Second
 	}
-	return &HTTPSProxy{address: net.JoinHostPort(endpoint.Hostname(), port), trust: trust, timeout: timeout}, nil
+	routes := make([]proxyRoute, 0, len(urls))
+	for _, raw := range urls {
+		endpoint, err := url.Parse(raw)
+		if err != nil || endpoint.Scheme != "https" || endpoint.Hostname() == "" || endpoint.User != nil ||
+			(endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawPath != "" || endpoint.Opaque != "" ||
+			endpoint.RawQuery != "" || endpoint.ForceQuery || endpoint.Fragment != "" || endpoint.RawFragment != "" {
+			return nil, ErrInvalidProxy
+		}
+		port := endpoint.Port()
+		if port == "" {
+			port = "443"
+		}
+		if !validPort(port) {
+			return nil, ErrInvalidProxy
+		}
+		trust := &tls.Config{}
+		if options.TLSConfig != nil {
+			trust = options.TLSConfig.Clone()
+			if trust.InsecureSkipVerify || trust.ServerName != "" ||
+				(trust.MinVersion != 0 && trust.MinVersion < tls.VersionTLS13) ||
+				(trust.MaxVersion != 0 && trust.MaxVersion < tls.VersionTLS13) {
+				return nil, ErrInvalidProxy
+			}
+			if trust.RootCAs != nil {
+				trust.RootCAs = trust.RootCAs.Clone()
+			}
+			trust.Certificates = append([]tls.Certificate(nil), trust.Certificates...)
+		}
+		trust.MinVersion = tls.VersionTLS13
+		trust.ServerName = endpoint.Hostname()
+		trust.NextProtos = []string{"http/1.1"}
+		routes = append(routes, proxyRoute{address: net.JoinHostPort(endpoint.Hostname(), port), trust: trust})
+	}
+	return &HTTPSProxy{routes: routes, timeout: timeout}, nil
 }
 
 func validPort(port string) bool {
@@ -101,10 +131,26 @@ func (p *HTTPSProxy) DialContext(ctx context.Context, network, address string) (
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithTimeout(ctx, p.timeout)
+	start := int(p.last.Load()) % len(p.routes)
+	for offset := range p.routes {
+		index := (start + offset) % len(p.routes)
+		conn, err := p.dialRoute(ctx, address, p.routes[index])
+		if err == nil {
+			p.last.Store(uint32(index))
+			return conn, nil
+		}
+		if ctx.Err() != nil {
+			return nil, proxyError(ctx)
+		}
+	}
+	return nil, ErrProxyConnection
+}
+
+func (p *HTTPSProxy) dialRoute(parent context.Context, address string, route proxyRoute) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(parent, p.timeout)
 	defer cancel()
-	dialer := tls.Dialer{Config: p.trust}
-	conn, err := dialer.DialContext(ctx, "tcp", p.address)
+	dialer := tls.Dialer{Config: route.trust}
+	conn, err := dialer.DialContext(ctx, "tcp", route.address)
 	if err != nil {
 		return nil, proxyError(ctx)
 	}
