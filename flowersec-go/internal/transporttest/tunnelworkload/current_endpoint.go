@@ -39,6 +39,7 @@ type Endpoint struct {
 	constructionDone                  chan struct{}
 	closed                            bool
 	preparedTunnels                   []*preparedTunnel
+	pendingPreparedTunnels            []*preparedTunnel
 	capacityPreparing                 bool
 	capacityPrepared                  bool
 }
@@ -175,6 +176,49 @@ func (prepared *preparedTunnel) close(cleanup context.Context) error {
 	return result
 }
 
+// retainPreparedCleanup moves a prepared deployment out of the connectable
+// queue while any physical owner is still live. The original finite position
+// remains occupied until a later close retry observes actual cleanup.
+func (e *Endpoint) retainPreparedCleanup(prepared *preparedTunnel) {
+	if e == nil || prepared == nil || prepared.isCleaned() {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for index, current := range e.preparedTunnels {
+		if current == prepared {
+			e.preparedTunnels = append(e.preparedTunnels[:index], e.preparedTunnels[index+1:]...)
+			break
+		}
+	}
+	for _, current := range e.pendingPreparedTunnels {
+		if current == prepared {
+			return
+		}
+	}
+	e.pendingPreparedTunnels = append(e.pendingPreparedTunnels, prepared)
+}
+
+func (e *Endpoint) removePrepared(prepared *preparedTunnel) {
+	if e == nil || prepared == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for index, current := range e.preparedTunnels {
+		if current == prepared {
+			e.preparedTunnels = append(e.preparedTunnels[:index], e.preparedTunnels[index+1:]...)
+			break
+		}
+	}
+	for index, current := range e.pendingPreparedTunnels {
+		if current == prepared {
+			e.pendingPreparedTunnels = append(e.pendingPreparedTunnels[:index], e.pendingPreparedTunnels[index+1:]...)
+			break
+		}
+	}
+}
+
 type Pair struct {
 	Client, Server tunnelSession
 	echo           *fs.ServiceClient
@@ -275,7 +319,7 @@ func (e *Endpoint) PrepareCapacity(ctx context.Context, sessions int) error {
 		e.mu.Unlock()
 		return errEndpointClosed
 	}
-	if sessions > len(e.slots) || e.capacityPreparing || e.capacityPrepared {
+	if sessions > len(e.slots) || e.capacityPreparing || e.capacityPrepared || len(e.pendingPreparedTunnels) != 0 {
 		e.mu.Unlock()
 		return errors.New("tunnel capacity preparation requires unused finite positions")
 	}
@@ -459,9 +503,9 @@ func (e *Endpoint) PrepareCapacity(ctx context.Context, sessions int) error {
 			}
 		}
 		if len(retained) != 0 {
-			e.mu.Lock()
-			e.preparedTunnels = append(e.preparedTunnels, retained...)
-			e.mu.Unlock()
+			for _, item := range retained {
+				e.retainPreparedCleanup(item)
+			}
 		}
 		return preparationErr
 	}
@@ -479,13 +523,16 @@ func (e *Endpoint) PrepareCapacity(ctx context.Context, sessions int) error {
 			}
 		}
 		if len(retained) != 0 {
-			e.mu.Lock()
-			e.preparedTunnels = append(e.preparedTunnels, retained...)
-			e.mu.Unlock()
+			for _, item := range retained {
+				e.retainPreparedCleanup(item)
+			}
 		}
 		return errors.Join(errEndpointClosed, preparationErr)
 	}
-	e.preparedTunnels = prepared
+	// Keep any cleanup-only entries separate and never replace them with a
+	// newly successful queue. The entry check above normally makes this list
+	// empty, but append preserves ownership if a close raced this call.
+	e.preparedTunnels = append(e.preparedTunnels, prepared...)
 	e.capacityPrepared = true
 	e.mu.Unlock()
 	return nil
@@ -532,7 +579,7 @@ func (e *Endpoint) Connect(ctx context.Context) (_ *Pair, resultErr error) {
 		e.mu.Unlock()
 		return nil, errEndpointClosed
 	}
-	if e.capacityPreparing || (e.capacityPrepared && len(e.preparedTunnels) == 0) {
+	if e.capacityPreparing || (e.capacityPrepared && len(e.preparedTunnels) == 0) || (!e.capacityPrepared && len(e.pendingPreparedTunnels) != 0) {
 		e.mu.Unlock()
 		return nil, errors.New("original prepared tunnel positions are unavailable")
 	}
@@ -567,9 +614,7 @@ func (e *Endpoint) Connect(ctx context.Context) (_ *Pair, resultErr error) {
 			cancelCleanup()
 			resultErr = errors.Join(resultErr, preparedErr)
 			if !prepared.isCleaned() {
-				e.mu.Lock()
-				e.preparedTunnels = append(e.preparedTunnels, prepared)
-				e.mu.Unlock()
+				e.retainPreparedCleanup(prepared)
 			}
 		}
 		if !committed {
@@ -912,6 +957,7 @@ func (e *Endpoint) Close(ctx context.Context) error {
 	}
 	e.mu.Lock()
 	prepared := append([]*preparedTunnel(nil), e.preparedTunnels...)
+	prepared = append(prepared, e.pendingPreparedTunnels...)
 	e.mu.Unlock()
 	for _, item := range prepared {
 		itemErr := item.close(ctx)
@@ -921,14 +967,11 @@ func (e *Endpoint) Close(ctx context.Context) error {
 		// physical cleanup is complete; retaining a closed pointer would make a
 		// later endpoint close retry a refunded position forever.
 		if item.isCleaned() {
-			e.mu.Lock()
-			for index, current := range e.preparedTunnels {
-				if current == item {
-					e.preparedTunnels = append(e.preparedTunnels[:index], e.preparedTunnels[index+1:]...)
-					break
-				}
-			}
-			e.mu.Unlock()
+			e.removePrepared(item)
+		} else {
+			// A failed endpoint close must not leave a still-closing deployment
+			// available to a later Connect call or be overwritten by preparation.
+			e.retainPreparedCleanup(item)
 		}
 	}
 	return err

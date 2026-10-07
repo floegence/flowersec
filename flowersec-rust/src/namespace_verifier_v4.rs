@@ -564,6 +564,30 @@ impl NamespaceVerifier {
             }
             return Err(error);
         }
+        // A pending candidate carries the exact TrustConfig that authenticated
+        // its original Head/State bytes.  Once that document's issuance lower
+        // bound is proven, publish the same authenticated bytes before the
+        // candidate can complete.  This makes the mature trust revision (and
+        // its independent issuer/signer retirements) visible to all later
+        // credential checks even when the caller has no reason to retransmit
+        // the TrustConfig.  update_trust also enforces the monotonic revision
+        // fence, so an old retained candidate cannot roll a newer history back.
+        if pending_candidate && let Some(pending_trust) = pending_trust.as_deref() {
+            // A newer independently authenticated TrustConfig may already be
+            // serving while this original candidate was pending.  Keep that
+            // higher revision as the serving authority; the candidate still
+            // verifies against its own retained bytes below, and the current
+            // history remains the independent rejection gate.
+            if !self.pending_trust_is_older(pending_trust)?
+                && let Err(error) = self.update_trust(pending_trust, &mut timing)
+            {
+                // A retained candidate that cannot be published is no longer
+                // a valid completion path. Release its charge and replay
+                // fence while leaving active State and denial evidence intact.
+                self.retire_pending_refresh();
+                return Err(error);
+            }
+        }
         let pair_trust = if pending_candidate {
             pending_trust
         } else if let Some(trust) = trust {
@@ -591,7 +615,14 @@ impl NamespaceVerifier {
         ) {
             Ok(value) => value,
             Err(error) => {
-                if self.owner.load(Ordering::Acquire) {
+                if pending_candidate && !timing.pending() {
+                    // Once the retained TrustConfig/Head pair is mature, an
+                    // authentication failure (including its signer being
+                    // independently revoked) permanently invalidates this
+                    // candidate.  Release its pin immediately while keeping
+                    // the active pair and denial history in the registry.
+                    self.retire_pending_refresh();
+                } else if self.owner.load(Ordering::Acquire) {
                     self.retire_pending_refresh();
                 }
                 return Err(error);
@@ -605,9 +636,11 @@ impl NamespaceVerifier {
             && let Some(current) = self.history.last().map(|value| value.as_ref())
             && let Err(error) = self.check_current_trust(current, update.head)
         {
-            if self.owner.load(Ordering::Acquire) {
-                self.retire_pending_refresh();
-            }
+            // The candidate's own signer may be revoked while the active Head
+            // remains valid.  Retire this candidate immediately so its pin
+            // cannot block future progress; the active pair and all denial
+            // evidence already published in the registry are preserved.
+            self.retire_pending_refresh();
             return Err(error);
         }
         if Instant::now() >= deadline {
@@ -711,6 +744,24 @@ impl NamespaceVerifier {
             return Err(EnvironmentError::AuthorizationDenied);
         }
         Ok(())
+    }
+    fn pending_trust_is_older(&self, bytes: &[u8]) -> Result<bool, EnvironmentError> {
+        let Some(current) = self.history.last() else {
+            return Ok(false);
+        };
+        let pending = decode(bytes, "TrustConfig", TRUST_BYTES, self.node_cap, None)?;
+        let current = decode(current, "TrustConfig", TRUST_BYTES, self.node_cap, None)?;
+        if pending
+            .u("TrustConfig", "authority_generation")
+            .map_err(invalid)?
+            != current
+                .u("TrustConfig", "authority_generation")
+                .map_err(invalid)?
+        {
+            return Ok(false);
+        }
+        Ok(pending.u("TrustConfig", "revision").map_err(invalid)?
+            < current.u("TrustConfig", "revision").map_err(invalid)?)
     }
     fn update_trust(
         &mut self,
@@ -1175,14 +1226,11 @@ impl NamespaceVerifier {
         let signer = head
             .b::<16>("FreshnessHead", "signing_key_id")
             .map_err(invalid)?;
-        if trust
+        let signer_rejected = trust
             .field("TrustConfig", "rejected_head_signers")
             .and_then(Value::children)
             .map_err(invalid)?
-            .any(|v| v.and_then(Value::bytes) == Ok(signer.as_slice()))
-        {
-            return Err(EnvironmentError::AuthorizationDenied);
-        }
+            .any(|v| v.and_then(Value::bytes) == Ok(signer.as_slice()));
         let delegation = trust
             .field("TrustConfig", "head_delegations")
             .and_then(Value::children)
@@ -1225,6 +1273,14 @@ impl NamespaceVerifier {
                 .max(trust.u("TrustConfig", "issued_at_ms").map_err(invalid)?),
             end,
         )?;
+        // A TrustConfig may itself still be proving its issuance lower bound.
+        // Its signer-revocation list is authenticated, but must not reject a
+        // retained candidate before that TrustConfig becomes mature.  The
+        // mature retry re-runs this check after publishing the exact pending
+        // TrustConfig and retires any now-invalid candidate immediately.
+        if signer_rejected && !timing.pending() {
+            return Err(EnvironmentError::AuthorizationDenied);
+        }
         if issued < delegation_issued
             || issued >= delegation_end
             || next - issued
@@ -2047,6 +2103,273 @@ mod tests {
             verifier.refresh(None, &missing, &state3),
             Err(EnvironmentError::AuthorizationDenied)
         );
+    }
+
+    #[test]
+    fn mature_pending_trust_is_published_without_retransmission_and_retirement_is_visible() {
+        use crate::environment_v4::tests::bounds;
+
+        let clock = crate::environment_v4::tests::TestClock::new(1_000, 1_500);
+        let environment =
+            crate::TransportEnvironment::with_options(crate::TransportEnvironmentOptions {
+                clock: Some(clock.clone()),
+                time_profile: crate::environment_v4::TrustedTimeProfile {
+                    rate_numerator: 0,
+                    quantization_ms: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .unwrap();
+        let (root, _, _, _) = fixture([0; 32], 1, false);
+        let namespace = environment.namespace(root, 4096, 16384).unwrap();
+        let (_, response, head, state) = fixture(namespace.bootstrap_nonce(), 1, false);
+        namespace.bootstrap(&response, &state).unwrap();
+
+        let account = environment.root().admit(key("tenant"), bounds()).unwrap();
+        account
+            .bind_namespaces(&[super::super::NamespaceBinding {
+                namespace: super::super::NamespaceKey {
+                    tenant: key("tenant"),
+                    authority: key("authority"),
+                },
+                generation: 1,
+                kind: CredentialKind::Certificate,
+                cohort: 8,
+                issuer: [4; 16],
+                credential: [8; 32],
+                lease: None,
+                max_staleness_ms: 10_000,
+                max_head_signer_lifetime_ms: 20_000,
+            }])
+            .unwrap();
+        account.check().unwrap();
+
+        let trust = decode(
+            &response,
+            "TrustBootstrapResponse",
+            RESPONSE_BYTES,
+            16384,
+            None,
+        )
+        .unwrap()
+        .field("TrustBootstrapResponse", "trust_config")
+        .unwrap()
+        .bytes()
+        .unwrap()
+        .to_vec();
+        // T2 becomes valid at 1_300ms and independently retires the active
+        // credential issuer.  Its bytes are retained by the first pending
+        // refresh and are deliberately omitted from the mature retry.
+        let trust2 = revise(
+            &trust,
+            "TrustConfig",
+            &[(4, u(2)), (5, u(1_300)), (14, array(&[b(&[4; 16])]))],
+            Some(7),
+        );
+        let head2 = revise(&head, "FreshnessHead", &[(8, u(2)), (9, u(1_300))], Some(9));
+        assert_eq!(
+            namespace.refresh(Some(&trust2), &head2, &state),
+            Err(EnvironmentError::TimePending)
+        );
+
+        {
+            let mut sample = clock.value.lock().unwrap();
+            sample.lower_ms = 1_300;
+            sample.upper_ms = 1_500;
+            sample.monotonic_sample = tokio::time::Instant::now();
+        }
+        namespace.refresh(None, &head2, &state).unwrap();
+        assert_eq!(account.check(), Err(EnvironmentError::Closed));
+    }
+
+    #[test]
+    fn mature_revocation_of_pending_signer_retires_only_the_candidate_pin() {
+        use crate::environment_v4::tests::bounds;
+
+        let clock = crate::environment_v4::tests::TestClock::new(1_000, 1_500);
+        let environment =
+            crate::TransportEnvironment::with_options(crate::TransportEnvironmentOptions {
+                clock: Some(clock.clone()),
+                time_profile: crate::environment_v4::TrustedTimeProfile {
+                    rate_numerator: 0,
+                    quantization_ms: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .unwrap();
+        let (root, _, _, _) = fixture([0; 32], 1, false);
+        let namespace = environment.namespace(root, 4096, 16384).unwrap();
+        let (_, response, head, state) = fixture(namespace.bootstrap_nonce(), 1, false);
+        namespace.bootstrap(&response, &state).unwrap();
+
+        let account = environment.root().admit(key("tenant"), bounds()).unwrap();
+        account
+            .bind_namespaces(&[super::super::NamespaceBinding {
+                namespace: super::super::NamespaceKey {
+                    tenant: key("tenant"),
+                    authority: key("authority"),
+                },
+                generation: 1,
+                kind: CredentialKind::Certificate,
+                cohort: 8,
+                issuer: [4; 16],
+                credential: [8; 32],
+                lease: None,
+                max_staleness_ms: 10_000,
+                max_head_signer_lifetime_ms: 20_000,
+            }])
+            .unwrap();
+        account.check().unwrap();
+
+        let trust = decode(
+            &response,
+            "TrustBootstrapResponse",
+            RESPONSE_BYTES,
+            16384,
+            None,
+        )
+        .unwrap()
+        .field("TrustBootstrapResponse", "trust_config")
+        .unwrap()
+        .bytes()
+        .unwrap()
+        .to_vec();
+        let trust_value = decode(&trust, "TrustConfig", TRUST_BYTES, 16384, None).unwrap();
+        let delegation_a = trust_value
+            .field("TrustConfig", "head_delegations")
+            .unwrap()
+            .at(0)
+            .unwrap()
+            .raw()
+            .to_vec();
+        let signer_b = Ed25519KeyPair::from_seed_unchecked(&[10; 32]).unwrap();
+        let delegation_b = revise(
+            &delegation_a,
+            "HeadSignerDelegation",
+            &[
+                (5, b(&[4; 16])),
+                (6, b(&[4; 16])),
+                (7, b(signer_b.public_key().as_ref())),
+            ],
+            None,
+        );
+        // T2 initially authorizes B, but its independently authenticated
+        // rejection is not effective until T2's issuance lower bound is
+        // proven.  H2 therefore remains retained as the exact candidate.
+        let trust2 = revise(
+            &trust,
+            "TrustConfig",
+            &[
+                (4, u(2)),
+                (5, u(1_300)),
+                (11, array(&[delegation_a, delegation_b.clone()])),
+                (15, array(&[b(&[4; 16])])),
+            ],
+            Some(7),
+        );
+        let head2 = revise(
+            &head,
+            "FreshnessHead",
+            &[
+                (8, u(2)),
+                (9, u(1_300)),
+                (13, b(&[4; 16])),
+                (
+                    14,
+                    b(&digest(
+                        "head_signer_delegation_digest",
+                        &delegation_b,
+                        "HeadSignerDelegation",
+                    )),
+                ),
+            ],
+            Some(10),
+        );
+        assert_eq!(
+            namespace.refresh(Some(&trust2), &head2, &state),
+            Err(EnvironmentError::TimePending)
+        );
+
+        {
+            let mut sample = clock.value.lock().unwrap();
+            sample.lower_ms = 1_400;
+            sample.upper_ms = 1_500;
+            sample.monotonic_sample = tokio::time::Instant::now();
+        }
+        assert_eq!(
+            namespace.refresh(None, &head2, &state),
+            Err(EnvironmentError::AuthorizationDenied)
+        );
+        // A remains active and B's failed candidate no longer pins the slot;
+        // an independently signed A head can advance immediately afterward.
+        account.check().unwrap();
+        let head3 = revise(&head, "FreshnessHead", &[(8, u(3)), (9, u(1_400))], Some(9));
+        namespace.refresh(None, &head3, &state).unwrap();
+        account.check().unwrap();
+    }
+
+    #[test]
+    fn older_pending_trust_does_not_roll_back_a_newer_published_revision() {
+        let clock = crate::environment_v4::tests::TestClock::new(1_000, 1_500);
+        let environment =
+            crate::TransportEnvironment::with_options(crate::TransportEnvironmentOptions {
+                clock: Some(clock.clone()),
+                time_profile: crate::environment_v4::TrustedTimeProfile {
+                    rate_numerator: 0,
+                    quantization_ms: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .unwrap();
+        let (root, _, _, _) = fixture([0; 32], 1, false);
+        let mut verifier =
+            NamespaceVerifier::new(environment.root().clone(), root, 4096, 16384).unwrap();
+        let (_, response, head, state) = fixture(verifier.bootstrap_nonce(), 1, false);
+        verifier.bootstrap(&response, &state).unwrap();
+        let trust = decode(
+            &response,
+            "TrustBootstrapResponse",
+            RESPONSE_BYTES,
+            16384,
+            None,
+        )
+        .unwrap()
+        .field("TrustBootstrapResponse", "trust_config")
+        .unwrap()
+        .bytes()
+        .unwrap()
+        .to_vec();
+        let trust2 = revise(&trust, "TrustConfig", &[(4, u(2)), (5, u(1_300))], Some(7));
+        let head2 = revise(&head, "FreshnessHead", &[(8, u(2)), (9, u(1_300))], Some(9));
+        assert_eq!(
+            verifier.refresh(Some(&trust2), &head2, &state),
+            Err(EnvironmentError::TimePending)
+        );
+
+        // A newer T3 is independently published while H2 remains pinned.
+        let trust3 = revise(&trust, "TrustConfig", &[(4, u(3)), (5, u(1_000))], Some(7));
+        let head3 = revise(&head, "FreshnessHead", &[(8, u(3)), (9, u(1_000))], Some(9));
+        assert_eq!(
+            verifier.refresh(Some(&trust3), &head3, &state),
+            Err(EnvironmentError::TimePending)
+        );
+        assert_eq!(verifier.history.len(), 2);
+        assert_eq!(verifier.history.last().unwrap().as_ref(), trust3.as_slice());
+
+        {
+            let mut sample = clock.value.lock().unwrap();
+            sample.lower_ms = 1_400;
+            sample.upper_ms = 1_500;
+            sample.monotonic_sample = tokio::time::Instant::now();
+        }
+        // H2 is still verified against its original T2 bytes, but publishing
+        // T2 is skipped because T3 is already the higher serving revision.
+        verifier.refresh(None, &head2, &state).unwrap();
+        assert_eq!(verifier.history.len(), 2);
+        assert_eq!(verifier.history.last().unwrap().as_ref(), trust3.as_slice());
     }
     #[test]
     fn bootstrap_nonce_and_full_state_binding_are_required() {

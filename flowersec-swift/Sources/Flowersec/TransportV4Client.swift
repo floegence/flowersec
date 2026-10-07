@@ -729,13 +729,13 @@
         try Self.installTime(trustedTime, foundation: foundation)
       }
     }
-    func refreshNamespace(authority: String, head: Data, state: Data) throws {
+    func refreshNamespace(authority: String, trust: Data? = nil, head: Data, state: Data) throws {
       try foundation.gate.withLock {
         guard !closed else { throw TransportConnectError.closed }
         guard let namespace = namespaces.first(where: { $0.authority == authority }) else {
           throw TransportConnectError.unsupported
         }
-        try namespace.refresh(head: head, state: state)
+        try namespace.refresh(trust: trust, head: head, state: state)
       }
     }
   }

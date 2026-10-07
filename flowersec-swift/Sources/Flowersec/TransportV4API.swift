@@ -287,8 +287,14 @@ public actor TransportEnvironment {
       try client.refreshTrustedTime()
     }
     public func refreshNamespace(authority: String, head: Data, state: Data) throws {
+      try refreshNamespace(authority: authority, trust: nil, head: head, state: state)
+    }
+    /// Applies an independently root-signed TrustConfig revision through the
+    /// original live namespace owner and verifies the complete Head/State pair.
+    /// Mature trust rejection takes effect even if the replacement pair fails.
+    public func refreshNamespace(authority: String, trust: Data?, head: Data, state: Data) throws {
       guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
-      do { try client.refreshNamespace(authority: authority, head: head, state: state) }
+      do { try client.refreshNamespace(authority: authority, trust: trust, head: head, state: state) }
       catch { throw TransportConnectError.namespaceFailure(error) }
     }
   #endif

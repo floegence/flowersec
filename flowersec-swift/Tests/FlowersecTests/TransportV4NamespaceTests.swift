@@ -441,6 +441,37 @@ final class TransportNamespaceTests: XCTestCase {
       try owner.checkCurrent()
     }
 
+    func testPublicTrustRevisionPublishesBeforeInvalidReplacement() async throws {
+      let fixture = try NamespaceFixture()
+      let owner = fixture.owner!
+      let state = fixture.state()
+      try owner.bootstrap(response: fixture.response(state: state), state: state)
+      let client = try V4ClientEnvironment(
+        foundation: fixture.environment, namespaces: [owner],
+        credentials: V4CredentialConfiguration(
+          namespaces: [owner], tenant: "tenant", audience: "service",
+          clientSubject: "client", serverSubject: "server", cryptoProfiles: []),
+        endpoints: [], roots: [], backing: nil, store: nil,
+        provider: fixture.environment.clientProviderStorage(bytes: 1 << 20))
+      let environment = TransportEnvironment(owner: client)
+      let revision = try fixture.trustRevision(
+        revision: 2, rejected: [Data(repeating: 3, count: 16)])
+      let replacement = try fixture.head(state: state, sequence: 2)
+      do {
+        try await environment.refreshNamespace(
+          authority: "authority", trust: revision, head: replacement, state: Data([0xa0]))
+        XCTFail("invalid replacement State was accepted")
+      } catch { XCTAssertEqual(error as? TransportConnectError, .securityFailed) }
+      do {
+        try await environment.refreshNamespace(
+          authority: "authority", head: replacement, state: state)
+        XCTFail("revoked signer was accepted after trust publication")
+      } catch { XCTAssertEqual(error as? TransportConnectError, .securityFailed) }
+      try owner.checkCurrent()
+      XCTAssertEqual(owner.currentSequence, 1)
+      try await environment.close()
+    }
+
     func testPublicFactoryFetchesOriginalNonceOnceWhileWaitingForProof() async throws {
       let fixture = try NamespaceFixture()
       let state = fixture.state()
@@ -729,6 +760,16 @@ final class NamespaceFixture {
         8: .bytes(pin.keyID),
       ],
       signature: 9, label: "trust-bootstrap/signature", seed: responseSeed)
+  }
+  func trustRevision(revision: UInt64, rejected: [Data]) throws -> Data {
+    try Self.signed([
+      0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
+      3: .uint(1), 4: .uint(revision), 5: .uint(900), 6: .uint(5000), 7: capacity,
+      8: Self.map([0: .text("publication"), 1: .uint(1), 2: .uint(4000), 3: .uint(5000)]),
+      9: .array([]), 10: .array([]), 11: .array([delegation]), 12: .array([]),
+      13: .array([]), 14: .array([]), 15: .array(rejected.map(V4CBORValue.bytes)),
+      16: .bytes(pin.keyID),
+    ], signature: 17, label: "trust-config/signature", seed: 7)
   }
 }
 
