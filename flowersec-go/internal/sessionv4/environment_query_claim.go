@@ -9,11 +9,12 @@ import (
 // candidates. Transfer to the query worker preserves that same position; a
 // blocked authorization adapter cannot create an uncounted fifth acquisition.
 type contractQueryClaim struct {
-	environment *Environment
-	index       int
-	acquisition *ContractQueryAcquisition
-	protection  *contractQueryProtection
-	destination resourcev4.Reference
+	environment         *Environment
+	index               int
+	acquisition         *ContractQueryAcquisition
+	protection          *contractQueryProtection
+	destination         resourcev4.Reference
+	diagnosticOperation *DiagnosticOperation
 }
 
 func (e *Environment) reserveContractQuery() (*contractQueryClaim, error) {

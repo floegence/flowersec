@@ -89,7 +89,8 @@ export async function prepareProxyFetch(input: RequestInfo | URL, init?: Request
   }
 
   return { request: enableResponseFlowControl({ id: "", method: request.method, path,
-    headers: headersOf(request.headers),
+    headers: headersOf(request.headers), credentials: request.credentials,
+    ...(externalOrigin === undefined ? {} : { requestOrigin: externalOrigin }),
     ...(body === undefined ? {} : { body }),
   }), signal: request.signal };
 }

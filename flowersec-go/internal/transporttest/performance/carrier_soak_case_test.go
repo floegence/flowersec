@@ -191,7 +191,7 @@ func holdCarrierSoakSession(ctx context.Context, pair *transporttest.ProductDire
 	for {
 		select {
 		case <-ticker.C:
-			if _, err := pair.Client.ProbeLiveness(ctx); err != nil {
+			if _, err := pair.Client.ProbeLiveness(ctx, 5000); err != nil {
 				return fmt.Errorf("carrier soak liveness: %w", err)
 			}
 		case <-timer.C:

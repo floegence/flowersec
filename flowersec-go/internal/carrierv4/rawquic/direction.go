@@ -36,8 +36,11 @@ func (s *OwnedStream) WriteContext() context.Context {
 	s.owner.mu.Lock()
 	defer s.owner.mu.Unlock()
 	slot, err := s.slotLocked()
-	if err != nil || slot.native == nil {
+	if err != nil || slot.closed || s.owner.closed {
 		return deadStreamContext
+	}
+	if slot.native == nil {
+		return s.owner.session.conn.Context()
 	}
 	stream := slot.native.(*Stream)
 	return stream.stream.Context()
@@ -50,8 +53,11 @@ func (s *OwnedStream) WriteStopReason() error {
 	s.owner.mu.Lock()
 	defer s.owner.mu.Unlock()
 	slot, err := s.slotLocked()
-	if err != nil || slot.native == nil {
+	if err != nil {
 		return resourcev4.ErrOwner
+	}
+	if slot.native == nil {
+		return streamDirectionFailure(context.Cause(s.owner.session.conn.Context()))
 	}
 	stream := slot.native.(*Stream)
 	reason := streamDirectionFailure(context.Cause(stream.stream.Context()))
@@ -80,7 +86,7 @@ func (s *OwnedStream) CloseDirections() error {
 	if slot.closed {
 		return nil
 	}
-	if slot.calls != 0 || !slot.native.(*Stream).lifecycle.DirectionsEnded() {
+	if slot.calls != 0 || slot.native == nil || !slot.native.(*Stream).lifecycle.DirectionsEnded() {
 		return resourcev4.ErrCapacity
 	}
 	slot.closed, slot.closeReturned = true, true

@@ -11,43 +11,43 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
-type V4DirectIssueRequest = protocolv4.DirectIssueRequest
-type V4DirectIssueFacts = protocolv4.DirectIssueFacts
-type V4DirectIssueAuthority = protocolv4.DirectIssueAuthority
-type V4DirectIssuePermit = protocolv4.DirectIssuePermit
-type V4DirectIssuerConfig = protocolv4.DirectIssuerConfig
-type V4DirectIssuePolicyConfig = protocolv4.DirectIssuePolicyConfig
-type V4DirectIssuePolicyLimits = protocolv4.DirectIssuePolicyLimits
-type V4SQLiteDirectIssueHost = ledgerv4.SQLiteDirectIssueHost
-type V4SQLiteDirectIssueAccess = ledgerv4.SQLiteDirectIssueAccess
-type V4SQLiteDirectIssueConfig = ledgerv4.SQLiteDirectIssueConfig
-type V4SQLiteDirectIssueStatus = ledgerv4.SQLiteDirectIssueStatus
-type V4SQLiteDirectIssuePublication = ledgerv4.SQLiteDirectIssuePublication
-type V4DirectIssueObligationState = ledgerv4.DirectIssueObligationState
+type DirectIssueRequest = protocolv4.DirectIssueRequest
+type DirectIssueFacts = protocolv4.DirectIssueFacts
+type DirectIssueAuthority = protocolv4.DirectIssueAuthority
+type DirectIssuePermit = protocolv4.DirectIssuePermit
+type DirectIssuerConfig = protocolv4.DirectIssuerConfig
+type DirectIssuePolicyConfig = protocolv4.DirectIssuePolicyConfig
+type DirectIssuePolicyLimits = protocolv4.DirectIssuePolicyLimits
+type SQLiteDirectIssueHost = ledgerv4.SQLiteDirectIssueHost
+type SQLiteDirectIssueAccess = ledgerv4.SQLiteDirectIssueAccess
+type SQLiteDirectIssueConfig = ledgerv4.SQLiteDirectIssueConfig
+type SQLiteDirectIssueStatus = ledgerv4.SQLiteDirectIssueStatus
+type SQLiteDirectIssuePublication = ledgerv4.SQLiteDirectIssuePublication
+type DirectIssueObligationState = ledgerv4.DirectIssueObligationState
 
 const (
-	V4DirectIssueReserved  = ledgerv4.DirectIssueReserved
-	V4DirectIssueCommitted = ledgerv4.DirectIssueCommitted
-	V4DirectIssueRetired   = ledgerv4.DirectIssueRetired
+	DirectIssueReserved  = ledgerv4.DirectIssueReserved
+	DirectIssueCommitted = ledgerv4.DirectIssueCommitted
+	DirectIssueRetired   = ledgerv4.DirectIssueRetired
 )
 
-type V4SQLiteDirectIssueAuthority = ledgerv4.SQLiteDirectIssueAuthority
+type SQLiteDirectIssueAuthority = ledgerv4.SQLiteDirectIssueAuthority
 
-func V4SQLiteDirectIssueCharge(c V4SQLiteDirectIssueConfig) (resourcev4.Vector, error) {
+func SQLiteDirectIssueCharge(c SQLiteDirectIssueConfig) (resourcev4.Vector, error) {
 	charge, err := ledgerv4.SQLiteDirectIssueCharge(c)
 	return charge, v4IssueFailure(err)
 }
 
-func NewV4SQLiteDirectIssueAuthority(ctx context.Context, store *ledgerv4.SQLiteStore, c V4SQLiteDirectIssueConfig, reservation, dependencies resourcev4.Reference) (*V4SQLiteDirectIssueAuthority, error) {
+func NewSQLiteDirectIssueAuthority(ctx context.Context, store *ledgerv4.SQLiteStore, c SQLiteDirectIssueConfig, reservation, dependencies resourcev4.Reference) (*SQLiteDirectIssueAuthority, error) {
 	a, err := ledgerv4.NewSQLiteDirectIssueAuthority(ctx, store, c, reservation, dependencies)
 	return a, v4IssueFailure(err)
 }
 
-// V4IssueFailure contains only bounded public categories, never provider text,
+// IssueFailure contains only bounded public categories, never provider text,
 // caller authentication, secret material, signed documents or storage details.
-type V4IssueFailure string
+type IssueFailure string
 
-func (e V4IssueFailure) Error() string { return string(e) }
+func (e IssueFailure) Error() string { return string(e) }
 
 func v4IssueFailure(err error) error {
 	if err == nil {
@@ -55,36 +55,36 @@ func v4IssueFailure(err error) error {
 	}
 	switch {
 	case errors.Is(err, context.Canceled):
-		return V4IssueFailure("cancelled")
+		return IssueFailure("cancelled")
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, timev4.ErrExpired):
-		return V4IssueFailure("expired")
+		return IssueFailure("expired")
 	case errors.Is(err, resourcev4.ErrCapacity):
-		return V4IssueFailure("capacity_exhausted")
+		return IssueFailure("capacity_exhausted")
 	case errors.Is(err, resourcev4.ErrClosed):
-		return V4IssueFailure("closed")
+		return IssueFailure("closed")
 	case errors.Is(err, resourcev4.ErrConfiguration):
-		return V4IssueFailure("configuration_invalid")
+		return IssueFailure("configuration_invalid")
 	default:
-		return V4IssueFailure("issuance_refused")
+		return IssueFailure("issuance_refused")
 	}
 }
 
-// V4DirectIssuer is an embeddable reference issuer for canonical direct/local
+// DirectIssuer is an embeddable reference issuer for canonical direct/local
 // v4 Artifacts. Host configuration fixes verified identities and route policy;
 // a separate authenticated authority must durably reserve each original lease
 // obligation before signing. It does not create activation or spend material.
-type V4DirectIssuer struct{ inner *protocolv4.DirectIssuer }
+type DirectIssuer struct{ inner *protocolv4.DirectIssuer }
 
-func V4DirectIssuerCharge(c V4DirectIssuerConfig) (resourcev4.Vector, error) {
+func DirectIssuerCharge(c DirectIssuerConfig) (resourcev4.Vector, error) {
 	charge, err := protocolv4.DirectIssuerCharge(c)
 	if err == nil {
-		charge, err = charge.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(V4DirectIssuer{}))})
+		charge, err = charge.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(DirectIssuer{}))})
 	}
 	return charge, v4IssueFailure(err)
 }
 
-func NewV4DirectIssuer(c V4DirectIssuerConfig, reservation, dependencies resourcev4.Reference) (*V4DirectIssuer, error) {
-	charge, err := V4DirectIssuerCharge(c)
+func NewDirectIssuer(c DirectIssuerConfig, reservation, dependencies resourcev4.Reference) (*DirectIssuer, error) {
+	charge, err := DirectIssuerCharge(c)
 	if err != nil {
 		return nil, err
 	}
@@ -97,32 +97,32 @@ func NewV4DirectIssuer(c V4DirectIssuerConfig, reservation, dependencies resourc
 	if err != nil {
 		return nil, v4IssueFailure(err)
 	}
-	return &V4DirectIssuer{inner: issuer}, nil
+	return &DirectIssuer{inner: issuer}, nil
 }
 
 // IssueArtifactBytes requires a caller-reserved 65536-byte response buffer.
 // Only the returned prefix is valid on success. The host delivers and erases
 // these secret-bearing bytes through its independently authenticated channel.
-func (s *V4DirectIssuer) IssueArtifactBytes(ctx context.Context, request V4DirectIssueRequest, dst []byte) (int, error) {
+func (s *DirectIssuer) IssueArtifactBytes(ctx context.Context, request DirectIssueRequest, dst []byte) (int, error) {
 	if s == nil || s.inner == nil {
-		return 0, V4IssueFailure("closed")
+		return 0, IssueFailure("closed")
 	}
 	n, err := s.inner.IssueArtifactBytes(ctx, request, dst)
 	return n, v4IssueFailure(err)
 }
 
-func (s *V4DirectIssuer) Close() {
+func (s *DirectIssuer) Close() {
 	if s != nil && s.inner != nil {
 		s.inner.Close()
 	}
 }
 
-func (s *V4DirectIssuer) WaitCleanup(ctx context.Context) error {
+func (s *DirectIssuer) WaitCleanup(ctx context.Context) error {
 	if s == nil || s.inner == nil {
-		return V4IssueFailure("closed")
+		return IssueFailure("closed")
 	}
 	return v4IssueFailure(s.inner.WaitCleanup(ctx))
 }
 
-func (*V4DirectIssuer) String() string   { return "V4DirectIssuer(<redacted>)" }
-func (*V4DirectIssuer) GoString() string { return "V4DirectIssuer(<redacted>)" }
+func (*DirectIssuer) String() string   { return "DirectIssuer(<redacted>)" }
+func (*DirectIssuer) GoString() string { return "DirectIssuer(<redacted>)" }

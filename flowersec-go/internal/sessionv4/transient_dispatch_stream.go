@@ -50,7 +50,7 @@ func (d TransientStreamDispatch) Dispatch(ctx context.Context, stream *StreamMes
 		queued, err = d.Executor.prepareApplication(d.group, d.Class, d.TaskReservation, stream.reservation)
 		i.queued.Store(queued)
 	} else {
-		permit, err = d.Executor.TryAcquire(d.Class, d.TaskReservation, stream.reservation)
+		permit, err = d.Executor.tryAcquireInGroup(d.group, d.Class, d.TaskReservation, stream.reservation)
 	}
 	if err != nil {
 		return err

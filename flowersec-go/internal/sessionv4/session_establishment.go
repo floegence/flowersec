@@ -442,10 +442,10 @@ func (p *SessionEstablishment) guard() error {
 // ConnectPool runs the complete original consumer path. It returns only after
 // both READY flights authenticate; no intermediate transport escapes to users.
 func (p *SessionEstablishment) ConnectPool(a *SessionAdmissionReservation, store *ledgerv4.SQLiteStore, authority ledgerv4.SQLitePoolAuthority, consume resourcev4.Reference, allow ...TunnelServerAllowConfig) (core *SessionCore, err error) {
-	return p.connectPool(a, store, authority, consume, nil, allow...)
+	return p.connectPool(a, store, authority, consume, nil, nil, allow...)
 }
 
-func (p *SessionEstablishment) connectPool(a *SessionAdmissionReservation, store *ledgerv4.SQLiteStore, authority ledgerv4.SQLitePoolAuthority, consume resourcev4.Reference, host *EnvironmentSession, allow ...TunnelServerAllowConfig) (core *SessionCore, err error) {
+func (p *SessionEstablishment) connectPool(a *SessionAdmissionReservation, store *ledgerv4.SQLiteStore, authority ledgerv4.SQLitePoolAuthority, consume resourcev4.Reference, host *EnvironmentSession, observation *ledgerv4.PoolSpendObservation, allow ...TunnelServerAllowConfig) (core *SessionCore, err error) {
 	if a == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -469,24 +469,37 @@ func (p *SessionEstablishment) connectPool(a *SessionAdmissionReservation, store
 	if len(allow) == 1 {
 		allowConfig = allow[0]
 	}
-	if err = p.prepareTunnelServerAllow(allowConfig); err != nil {
-		return nil, err
+	// The original Connect fixes the publication before TxA-P. Issuer COMMIT,
+	// installation acknowledgement and a runner command grant no dispatch right.
+	// A tunnel cannot spend without its exact server Allow publication owner.
+	publishAllow := p.material.Grant != nil
+	if !publishAllow && allowConfig != (TunnelServerAllowConfig{}) {
+		return nil, cryptov4.ErrConfiguration
+	}
+	if publishAllow {
+		if err = p.prepareTunnelServerAllow(allowConfig); err != nil {
+			return nil, err
+		}
+		defer p.serverAllow.dispatch.Close()
 	}
 	proof, err := p.material.Proof.Bytes()
 	if err != nil {
 		return nil, err
 	}
-	x, err := a.ConsumePoolSQLite(store, authority, p.material.Authority, proof, consume)
+	x, err := a.ConsumePoolSQLite(store, authority, p.material.Authority, proof, consume, observation)
 	if err != nil {
 		return nil, err
 	}
-	if err = p.publishTunnelServerAllow(a.ctx); err != nil {
-		return nil, err
+	if publishAllow {
+		if err = p.publishTunnelServerAllow(a.ctx); err != nil {
+			return nil, err
+		}
 	}
 	return p.connectActivated(a, x)
 }
 
 func (p *SessionEstablishment) connectActivated(a *SessionAdmissionReservation, x *InitialExchange) (*SessionCore, error) {
+	p.recordAdmissionState("not_started")
 	if err := x.authenticateHop(); err != nil {
 		return nil, err
 	}
@@ -494,7 +507,7 @@ func (p *SessionEstablishment) connectActivated(a *SessionAdmissionReservation, 
 	if err != nil {
 		return nil, err
 	}
-	p.fsb, _, err = x.SendAdmission(p.material.Activation, p.material.Proof, p.material.ClientCertificate, p.codecs[4], p.material.Signer, p.guard)
+	p.fsb, _, err = x.sendAdmission(p.material.Activation, p.material.Proof, p.material.ClientCertificate, p.codecs[4], p.material.Signer, p.guard, func() { p.recordAdmissionState("in_flight") })
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +527,22 @@ func (p *SessionEstablishment) connectActivated(a *SessionAdmissionReservation, 
 	if err != nil {
 		return nil, err
 	}
+	p.recordAdmissionState("admitted")
 	return p.authenticate(a, hello)
+}
+
+func (p *SessionEstablishment) recordAdmissionState(state string) {
+	p.mu.Lock()
+	host := p.host
+	p.mu.Unlock()
+	if host == nil {
+		return
+	}
+	host.mu.Lock()
+	if host.admissionState != "admitted" {
+		host.admissionState = state
+	}
+	host.mu.Unlock()
 }
 
 // Accept continues the original entrance after material lookup has consumed

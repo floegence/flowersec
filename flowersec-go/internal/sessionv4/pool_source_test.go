@@ -64,7 +64,7 @@ func (a *poolSourceControl) TopUp(ctx context.Context, wire, dst []byte) (TopUpE
 	if err != nil {
 		return TopUpExchangeResult{}, err
 	}
-	now, err := a.f.admissionIntegrationFixture.trust.clock.Sample()
+	now, err := a.f.authorityFixture.trust.clock.Sample()
 	if err != nil {
 		return TopUpExchangeResult{}, err
 	}
@@ -114,7 +114,7 @@ func (a *poolSourceControl) Ack(ctx context.Context, wire []byte) (TopUpExchange
 	if err != nil {
 		return TopUpExchangeResult{}, err
 	}
-	now, err := a.f.admissionIntegrationFixture.trust.clock.Sample()
+	now, err := a.f.authorityFixture.trust.clock.Sample()
 	if err != nil {
 		return TopUpExchangeResult{}, err
 	}
@@ -128,7 +128,7 @@ func newPoolSource(t *testing.T, f *materialPoolFixture) (*PreauthorizedPoolSour
 	key := ed25519.NewKeyFromSeed(makeSeed(7))
 	a := &poolSourceControl{f: f, t: t, key: protocolv4.TopUpFenceAuthority{KeyID: [16]byte{8}, PublicKey: [32]byte(key.Public().(ed25519.PublicKey))}, request: f.request}
 	a.response, _ = f.batch.Facts()
-	c := PoolSourceConfig{Pool: f.pool, Access: a, Identities: a, Proofs: a, Transport: a, FenceKey: a.key, Clock: f.admissionIntegrationFixture.trust.clock, RequestLifetimeMS: 100, RecoveryWindowMS: 5000, CallMS: 2000, RuntimeBytes: 65536, MaxWaiters: 8}
+	c := PoolSourceConfig{Pool: f.pool, Access: a, Identities: a, Proofs: a, Transport: a, FenceKey: a.key, Clock: f.authorityFixture.trust.clock, RequestLifetimeMS: 100, RecoveryWindowMS: 5000, CallMS: 2000, RuntimeBytes: 65536, MaxWaiters: 8}
 	cost, err := PoolSourceCharge(c)
 	if err != nil {
 		t.Fatal(err)

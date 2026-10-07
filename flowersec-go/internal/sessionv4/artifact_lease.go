@@ -506,6 +506,32 @@ func (l *ArtifactLease) endpointCredentialMaps(index uint64, role protocolv4.Dir
 	return entry.maps[0], entry.maps[1], true, nil
 }
 
+// PoolSpendFacts returns the original authenticated pool projection for one
+// signed candidate. A caller can bind an independently provisioned SQLite
+// authority to these facts before Connect; the result cannot recreate the
+// activation proof or authorize another consumption.
+func (l *ArtifactLease) PoolSpendFacts(index uint64) (protocolv4.PoolSpendFacts, error) {
+	if l == nil {
+		return protocolv4.PoolSpendFacts{}, cryptov4.ErrConfiguration
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed || l.maps[1] == nil {
+		return protocolv4.PoolSpendFacts{}, cryptov4.ErrClosed
+	}
+	_, authority, err := l.activation(index)
+	if err != nil {
+		return protocolv4.PoolSpendFacts{}, err
+	}
+	proof, err := l.maps[1].Bytes()
+	if err != nil {
+		return protocolv4.PoolSpendFacts{}, err
+	}
+	// Bytes borrows the signed document. Keep the lease pinned while hashing
+	// and leave its original proof intact for subsequent preflight and Connect.
+	return authority.PoolSpendFacts(proof)
+}
+
 func (l *ArtifactLease) activation(index uint64) (*protocolv4.ActivationBinding, *protocolv4.ActivationAuthority, error) {
 	b, err := l.selection.BindActivation(l.maps[0], l.maps[1], l.source, index)
 	if err != nil {
@@ -687,4 +713,15 @@ func (l *ArtifactLease) WaitCleanup(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// CleanupComplete observes actual original lease retirement. It is neither a
+// durable spend claim nor authority to create or reuse another material.
+func (l *ArtifactLease) CleanupComplete() bool {
+	if l == nil {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.cleaned
 }

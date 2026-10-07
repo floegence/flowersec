@@ -11,7 +11,7 @@ import (
 
 // Caller owns the sole factory method position. No secret-bearing map or
 // decoder alias escapes this invocation; output contains public projections.
-func (f *PoolRelayFactory) verifyMaterial(ctx context.Context, request protocolv4.TopUpRequestFacts, entry protocolv4.TopUpEntryFacts, wire []byte, out []ledgerv4.SQLitePoolRelayParent) (int, error) {
+func (f *poolBatchVerifier) verifyMaterial(ctx context.Context, request protocolv4.TopUpRequestFacts, entry protocolv4.TopUpEntryFacts, wire []byte, out []ledgerv4.SQLitePoolRelayParent) (int, error) {
 	doc, err := f.material.DecodeShape(wire, "", protocolv4.DecodeContext{})
 	if err != nil {
 		return 0, err
@@ -167,7 +167,7 @@ func (f *PoolRelayFactory) verifyMaterial(ctx context.Context, request protocolv
 	return matched, f.check(ctx)
 }
 
-func (f *PoolRelayFactory) verifyPair(maps [4]*protocolv4.SignedMap, common [3]protocolv4.CredentialValidation, activation *protocolv4.ActivationAuthority, index, sessionEnd, expiry uint64, pair [2]protocolv4.Value, route PoolRelayRouteConfig) (*protocolv4.RelayParentProjection, error) {
+func (f *poolBatchVerifier) verifyPair(maps [4]*protocolv4.SignedMap, common [3]protocolv4.CredentialValidation, activation *protocolv4.ActivationAuthority, index, sessionEnd, expiry uint64, pair [2]protocolv4.Value, route PoolRelayRouteConfig) (*protocolv4.RelayParentProjection, error) {
 	var signed [3]*protocolv4.SignedMap
 	defer func() {
 		for _, m := range signed {

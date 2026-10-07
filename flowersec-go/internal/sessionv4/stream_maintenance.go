@@ -398,7 +398,9 @@ func cleanupFlow(ctx context.Context, flow *StreamFlow, queue *SendQueue, bootst
 			flow.receive.Abandon()
 			err = flow.receive.waitCleanup(ctx)
 		} else {
-			err = flow.receive.Cleanup()
+			// Authenticated terminal proof can precede an already admitted
+			// read/assembly return, including before application owner binding.
+			err = flow.receive.waitCleanup(ctx)
 		}
 	}
 	return err

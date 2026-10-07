@@ -1,6 +1,7 @@
 package rpcv4
 
 import (
+	"context"
 	"math"
 	"sync"
 	"unsafe"
@@ -53,6 +54,7 @@ type ContractRoutes struct {
 	entries         []contractRouteEntry
 	captures        uint32
 	closed, cleaned bool
+	done            chan struct{}
 	clock           *timev4.Clock
 	offerDecoder    *protocolv4.Decoder
 	generation      uint64
@@ -94,7 +96,7 @@ func ContractRoutesCharge(c ContractRoutesConfig) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	size := uint64(unsafe.Sizeof(ContractRoutes{})) + count*(bytes+uint64(unsafe.Sizeof(contractRouteEntry{}))+128)
+	size := uint64(unsafe.Sizeof(ContractRoutes{})) + 128 + count*(bytes+uint64(unsafe.Sizeof(contractRouteEntry{}))+128)
 	return (resourcev4.Vector{resourcev4.SDKBytes: size + offerBytes, resourcev4.Items: count + 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 }
 func NewContractRoutes(c ContractRoutesConfig, reservation resourcev4.Reference) (_ *ContractRoutes, err error) {
@@ -110,7 +112,7 @@ func NewContractRoutes(c ContractRoutesConfig, reservation resourcev4.Reference)
 	for _, m := range c.Methods {
 		count += len(m.Contracts)
 	}
-	r := &ContractRoutes{reservation: owned, entries: make([]contractRouteEntry, 0, count), clock: c.Clock}
+	r := &ContractRoutes{reservation: owned, entries: make([]contractRouteEntry, 0, count), clock: c.Clock, done: make(chan struct{})}
 	defer func() {
 		if err != nil {
 			r.Close()
@@ -510,6 +512,24 @@ func (r *ContractRoutes) cleanupLocked() {
 	r.reservation.Release()
 	r.reservation = resourcev4.Reference{}
 	r.cleaned = true
+	close(r.done)
+}
+
+// WaitCleanup joins the original semantic captures after Close. The registry's
+// precharged completion signal creates no replacement cleanup owner.
+func (r *ContractRoutes) WaitCleanup(ctx context.Context) error {
+	if r == nil {
+		return nil
+	}
+	if ctx == nil {
+		return ErrConfiguration
+	}
+	select {
+	case <-r.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 func (r *ContractRoutes) CleanupComplete() bool {
 	if r == nil {

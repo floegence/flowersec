@@ -154,7 +154,7 @@ async fn production_listener_durable_admission_and_original_serve_children() {
             let environment = f.environment;
             stage.set("start listener");
             let handle = environment
-                .serve_pool_wss(
+                .serve_wss(
                     vec![namespace.clone()],
                     server_keys,
                     source,
@@ -270,6 +270,9 @@ async fn production_listener_durable_admission_and_original_serve_children() {
             if pin {
                 // Drain seals new publication immediately but preserves this
                 // previously published stream until its actual FIN/retirement.
+                let terminal_probe = crate::TerminalPublicationProbe::new();
+                let _terminal_probe_guard =
+                    crate::install_terminal_publication_probe(&server, terminal_probe.clone());
                 stage.set("drain");
                 handle.drain(Duration::from_secs(2)).unwrap();
                 outgoing
@@ -286,6 +289,58 @@ async fn production_listener_durable_admission_and_original_serve_children() {
                 assert!(outgoing.read().await.unwrap().is_none());
                 stage.set("finish stream");
                 outgoing.finish().await.unwrap();
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    tokio::task::spawn_blocking({
+                        let terminal_probe = terminal_probe.clone();
+                        move || terminal_probe.wait_entered()
+                    }),
+                )
+                .await
+                .expect("Serve terminal publication entered")
+                .expect("Serve terminal publication probe task");
+                // Arm the maintenance receive probe only after terminal
+                // publication has entered its pre-provider hook. Earlier
+                // liveness traffic is outside the closing window and must not
+                // satisfy the two-frame retention assertion.
+                let receive_probe = crate::MaintenanceReceiveProbe::new(2);
+                let _receive_probe_guard =
+                    crate::install_maintenance_receive_probe(&server, receive_probe.clone());
+                let first_probe = tokio::spawn({
+                    let client = client.clone();
+                    async move { client.probe_liveness(Duration::from_secs(2)).await }
+                });
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    tokio::task::spawn_blocking({
+                        let receive_probe = receive_probe.clone();
+                        move || receive_probe.wait_for(1)
+                    }),
+                )
+                .await
+                .expect("Serve first maintenance frame reached reader")
+                .expect("Serve first receive probe task");
+                assert!(server.termination_cause().is_none());
+                assert!(!server.cleanup_status().complete);
+                let second_probe = tokio::spawn({
+                    let client = client.clone();
+                    async move { client.probe_liveness(Duration::from_secs(2)).await }
+                });
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    tokio::task::spawn_blocking({
+                        let receive_probe = receive_probe.clone();
+                        move || receive_probe.wait_for(2)
+                    }),
+                )
+                .await
+                .expect("Serve second maintenance frame reached reader")
+                .expect("Serve second receive probe task");
+                assert!(server.termination_cause().is_none());
+                assert!(!server.cleanup_status().complete);
+                terminal_probe.release();
+                let _ = tokio::time::timeout(Duration::from_secs(3), first_probe).await;
+                let _ = tokio::time::timeout(Duration::from_secs(3), second_probe).await;
             } else {
                 handle.close();
             }

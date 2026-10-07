@@ -1,3 +1,4 @@
+import { UnreliablePreparation, unreliableCharges } from "./unreliable.js";
 import { RawStreamPreparation, type CapturedRawStreamDeclaration } from "./rawStreamPreparation.js";
 import { RPCCallCapacity, type RPCCallPosition } from "./rpcCallCapacity.js";
 import { closeRPCApplicationServices, reserveRPCApplicationServices, type RPCApplicationServices } from "./rpcApplicationServices.js";
@@ -11,7 +12,7 @@ import type { ApplicationWorkClass } from "./applicationExecutor.js";
 import type { V4EnvironmentSessionSpec } from "./environment.js";
 import type { ResourceVector} from "./resources.js";
 import { type ResourceReference, type ResourceRoot, type ResourceOwner, type ResourceAccount, type ProtectedResourceAccounts } from "./resources.js";
-import { captureRPCApplication, rpcApplicationPlan } from "./rpcApplication.js";
+import { captureRPCApplication, rpcApplicationPlan, type RPCApplicationPlan } from "./rpcApplication.js";
 import { captureSendQueueBytes, captureStreamSendQueueBytes, checkSendQueueCapacity, sendAccountPoolCapacity, createSendAccount, createStreamSendAccounts } from "./sendBudget.js";
 import { authenticatedSessionCharge, sessionBootstrapCharges, sessionIngressCharge, sessionOutputCharge, sessionControlCharge, sessionControlDecoderCharge } from "./session.js";
 import { recordEpochCharge, recordCipherCharge } from "./recordCrypto.js";
@@ -34,10 +35,10 @@ import { protectedAccountPoolCharge } from "./resources.js";
 import { envelopePrefixBytes } from "./wireRegistry.js";
 
 /** Cost-bearing projection only: no credential, provider handle or deadline. */
-export interface SessionResourceSpec extends Pick<V4EnvironmentSessionSpec, "maxFrame" | "maxReceiveDirections" | "streams" | "crypto" | "application"> {
+export interface SessionResourceSpec extends Pick<V4EnvironmentSessionSpec, "maxFrame" | "maxReceiveDirections" | "streams" | "crypto" | "application" | "initialRawStreams"> {
   readonly noise: Pick<V4EnvironmentSessionSpec["noise"], "role" | "profile">;
   readonly info: Pick<V4EnvironmentSessionSpec["info"], "application_profile">;
-  readonly transport: { readonly mode: "message" | "stream"; readonly nativeStreams?: { readonly capacity: number } };
+  readonly transport: { readonly mode: "message" | "stream"; readonly nativeStreams?: { readonly capacity: number }; readonly nativeDatagrams?: object };
 }
 function fail(code: string): never { throw new Error(code); }
 /** Shared by pre-Acquire planning and actual Session assembly. */
@@ -71,15 +72,21 @@ export function sessionAdmissionPlan(spec: SessionResourceSpec, runtimeBytes: bi
     const outputFrame = nativeOutputFrame(spec.maxFrame, stream.receive.maxDataBytes);
     costs.push(["native_send_crypto", recordWorkspaceCharge(outputFrame, runtimeBytes)]);
     costs.push(["native_send_encode", nativeSendEncodeCharge(outputFrame, runtimeBytes)]);
-    nativePositionCount = required; nativeOpeningCount = stream.limits.maxPending + stream.limits.ingressItems + 1;
-    nativePositionIndex = costs.length;
-    costs.push(["native_protocol_positions", nativePositionPoolCharge(required, nativeOpeningCount, runtimeBytes)]);
-    const positionCosts = nativePositionCharges(runtimeBytes);
-    for (let index = 0; index < required; index++) {
-      for (let part = 0; part < positionCosts.length; part++) costs.push([`native_position_${part}`, positionCosts[part]!]);
+    const internalOpeners = spec.info.application_profile === "transport" ? 0 : 5 + Number(spec.info.application_profile === "execution" && noise.role === "client");
+    nativePositionCount = required; nativeOpeningCount = stream.limits.maxPending + stream.limits.ingressItems + 1 + internalOpeners;
+    if (!reservedAccounts) {
+      // Client admission owns this pool before credential acquisition. The
+      // Session assembly takes that original pool once instead of requesting
+      // the same references again from the admission reservation.
+      nativePositionIndex = costs.length;
+      costs.push(["native_protocol_positions", nativePositionPoolCharge(required, nativeOpeningCount, runtimeBytes)]);
+      const positionCosts = nativePositionCharges(runtimeBytes);
+      for (let index = 0; index < required; index++) {
+        for (let part = 0; part < positionCosts.length; part++) costs.push([`native_position_${part}`, positionCosts[part]!]);
+      }
+      nativeOpeningIndex = costs.length;
+      for (let index = 0; index < nativeOpeningCount; index++) costs.push(["native_opening_position", nativeOpeningCharge()]);
     }
-    nativeOpeningIndex = costs.length;
-    for (let index = 0; index < nativeOpeningCount; index++) costs.push(["native_opening_position", nativeOpeningCharge()]);
   }
   const maintenanceConfig = { ...cipher, maxScopes: stream.rekeyMaxScopes ?? 1035 }, maintenanceIndex = costs.length;
   if (maintenanceConfig.maxScopes < spec.maxReceiveDirections) fail("configuration_capacity");
@@ -89,9 +96,15 @@ export function sessionAdmissionPlan(spec: SessionResourceSpec, runtimeBytes: bi
   const bootstrapIndex = costs.length, bootstrapCosts = sessionBootstrapCharges(spec.info.application_profile, spec.maxFrame, runtimeBytes, stream.receive);
   if (bootstrapCosts.length !== 0) {
     checkBootstrapCapacity(stream.limits);
-    if (crypto.keys < 8) fail("configuration_capacity");
+    const internal = spec.info.application_profile === "execution" ? 11 : 10;
+    if (stream.limits.maxActive < internal || spec.maxReceiveDirections < internal || stream.limits.perClass[1] < 10 ||
+        stream.limits.perOpener.some(row => row[1] < 5) || stream.limits.protected.some(row => row[1] < 5) ||
+        stream.limits.terminalCapacity - stream.limits.rejectionReserve < internal || crypto.keys < 4 * (internal + 1)) fail("configuration_capacity");
   }
   for (const [index, charge] of bootstrapCosts.entries()) costs.push([`bootstrap_${index}`, charge]);
+  const rpcStreamsIndex = costs.length;
+  for (let position = 1; position < (bootstrapCosts.length === 0 ? 1 : 8); position++)
+    for (const [index, charge] of bootstrapCosts.entries()) costs.push([`rpc_stream_${position}_${index}`, charge]);
   const managementIndex = costs.length, managementCosts = spec.info.application_profile === "execution" ? bootstrapCosts : [];
   if (managementCosts.length !== 0) {
     if (stream.limits.perClass[2] !== 1 || stream.limits.perOpener[0][2] !== 1 || stream.limits.perOpener[1][2] !== 0 || stream.limits.protected[0][2] !== 1 ||
@@ -108,8 +121,10 @@ export function sessionAdmissionPlan(spec: SessionResourceSpec, runtimeBytes: bi
   if (rpcPlan !== undefined && stream.maxWriteBytes < 16384) fail("configuration_capacity");
   const rpcIndex = costs.length;
   for (const [index, charge] of (rpcPlan?.charges ?? []).entries()) costs.push([`rpc_application_${index}`, charge]);
-  return { costs, streamOpenCosts: streamOpenCharges(spec.maxFrame, runtimeBytes, stream.receive, spec.transport.nativeStreams === undefined ? spec.maxFrame : nativeOutputFrame(spec.maxFrame, stream.receive.maxDataBytes)), sendQueueBytes, streamSendQueueBytes, nativePositionIndex, nativeOpeningIndex, nativePositionCount, nativeOpeningCount,
-    maintenanceConfig, maintenanceIndex, sendAccountCount, sendAccountIndex, bootstrapIndex, bootstrapCosts, managementIndex, managementCosts,
+  const datagramIndex = costs.length;
+  if (spec.transport.nativeDatagrams !== undefined && !reservedAccounts) for (const [index, charge] of unreliableCharges(runtimeBytes).entries()) costs.push([`unreliable_${index}`, charge]);
+  return { costs, datagramIndex, streamOpenCosts: streamOpenCharges(spec.maxFrame, runtimeBytes, stream.receive, spec.transport.nativeStreams === undefined ? spec.maxFrame : nativeOutputFrame(spec.maxFrame, stream.receive.maxDataBytes)), sendQueueBytes, streamSendQueueBytes, nativePositionIndex, nativeOpeningIndex, nativePositionCount, nativeOpeningCount,
+    maintenanceConfig, maintenanceIndex, sendAccountCount, sendAccountIndex, bootstrapIndex, bootstrapCosts, rpcStreamsIndex, managementIndex, managementCosts,
     notifyIndex, applicationProfile, rpcConfig, rpcPlan, rpcIndex };
 }
 
@@ -125,13 +140,19 @@ export class ClientSessionAdmission {
   #services: RPCApplicationServices | undefined;
   #queryReference: ResourceReference | undefined;
   #streams: RPCStreamPreparation | undefined;
+  #unreliable: UnreliablePreparation | undefined;
+  #initialRawStreams: RawStreamPreparation | undefined;
+  #initialRawDeclarations: readonly CapturedRawStreamDeclaration[] | undefined;
   #streamOpenCosts: readonly ResourceVector[] | undefined;
   #nativePositions: NativeProtocolPositions | undefined;
   #nativeLimits: readonly [number, number] | undefined;
   #sendAccount: ResourceAccount | undefined;
   #sendAccounts: ProtectedResourceAccounts | undefined;
   #accountLimits: Readonly<{ count: number; sessionBytes: number; streamBytes: number }> | undefined;
-  constructor(costs: readonly (readonly [string, ResourceVector])[], references: readonly ResourceReference[], private readonly onClose: () => void = () => undefined) {
+  readonly #reservedRPCPlan: Pick<RPCApplicationPlan, "inputs" | "queries"> | undefined;
+  constructor(costs: readonly (readonly [string, ResourceVector])[], references: readonly ResourceReference[], private readonly onClose: () => void = () => undefined,
+    reservedRPCPlan?: Pick<RPCApplicationPlan, "inputs" | "queries">) {
+    this.#reservedRPCPlan = reservedRPCPlan === undefined ? undefined : Object.freeze({ inputs: reservedRPCPlan.inputs, queries: reservedRPCPlan.queries });
     this.#parts = new Map();
     for (let index = 0; index < costs.length; index++) {
       const [kind, charge] = costs[index]!;
@@ -218,17 +239,42 @@ export class ClientSessionAdmission {
   }
   prepareRawStreams(root: ResourceRoot, accounts: readonly ResourceAccount[], owner: ResourceOwner, runtimeBytes: bigint,
     declarations: readonly CapturedRawStreamDeclaration[]): RawStreamPreparation {
-    if (this.#closed || this.#peerOpens !== undefined || this.#ledger === undefined || this.#streamOpenCosts === undefined || this.#sendAccounts === undefined) throw new Error("configuration_capacity");
+    if (this.#closed || declarations.length === 0 || this.#ledger === undefined || this.#streamOpenCosts === undefined || this.#sendAccounts === undefined) throw new Error("configuration_capacity");
     if (declarations.some(declaration => declaration.options.resume !== undefined) && this.#services === undefined) throw new Error("resume_binding");
     const prepared = new RawStreamPreparation(root, accounts, owner, runtimeBytes, declarations, this.#streamOpenCosts, this.#sendAccounts, this.#ledger);
     try {
-      this.#peerOpens = new PeerOpenPreparation(root, accounts, owner, this.#ledger,
-        declarations.reduce((count, declaration) => count + declaration.options.maxActive, 0), this.#streamOpenCosts.slice(0, 2));
+      const count = declarations.reduce((total, declaration) => total + declaration.options.maxActive, 0);
+      if (this.#peerOpens === undefined) this.#peerOpens = new PeerOpenPreparation(root, accounts, owner, this.#ledger, count, this.#streamOpenCosts.slice(0, 2));
+      else this.#peerOpens.extend(root, accounts, owner, this.#ledger, count, this.#streamOpenCosts.slice(0, 2));
       return prepared;
     } catch (error) { prepared.close(); throw error; }
   }
+  reserveInitialRawStreams(root: ResourceRoot, accounts: readonly ResourceAccount[], owner: ResourceOwner, runtimeBytes: bigint,
+    declarations: readonly CapturedRawStreamDeclaration[]): void {
+    if (this.#closed || this.#initialRawDeclarations !== undefined) throw new Error("owner_unavailable");
+    this.#initialRawStreams = this.prepareRawStreams(root, accounts, owner, runtimeBytes, declarations);
+    this.#initialRawDeclarations = declarations;
+  }
+  takeInitialRawStreams(declarations: readonly CapturedRawStreamDeclaration[] | undefined): RawStreamPreparation | undefined {
+    if (this.#closed) throw new Error("owner_unavailable");
+    if ((this.#initialRawDeclarations !== undefined && declarations !== this.#initialRawDeclarations) ||
+        (this.#initialRawDeclarations === undefined && declarations !== undefined && declarations.length !== 0)) throw new Error("configuration_capacity");
+    const streams = this.#initialRawStreams;
+    this.#initialRawStreams = undefined; this.#initialRawDeclarations = undefined; return streams;
+  }
   takeStreams(): RPCStreamPreparation | undefined {
     if (this.#closed) throw new Error("owner_unavailable"); const streams = this.#streams; this.#streams = undefined; return streams;
+  }
+  reserveUnreliable(root: ResourceRoot, runtimeBytes: bigint): void {
+    if (this.#closed || this.#unreliable !== undefined || this.#ledger === undefined) throw new Error("owner_unavailable");
+    const costs = unreliableCharges(runtimeBytes).map((charge, index) => [`unreliable_${index}`, charge] as const);
+    const references = this.take(costs);
+    try { this.#unreliable = new UnreliablePreparation(root, runtimeBytes, references, this.#ledger); }
+    finally { for (const reference of references) reference.release(); }
+  }
+  takeUnreliable(): UnreliablePreparation {
+    if (this.#closed || this.#unreliable === undefined) throw new Error("owner_unavailable");
+    const prepared = this.#unreliable; this.#unreliable = undefined; return prepared;
   }
   reserveNativePositions(root: ResourceRoot, plan: ReturnType<typeof sessionAdmissionPlan>, runtimeBytes: bigint): void {
     if (this.#closed || this.#nativeLimits !== undefined) throw new Error("owner_unavailable");
@@ -244,7 +290,9 @@ export class ClientSessionAdmission {
   }
 
   takeNativePositions(positions: number, openings: number): NativeProtocolPositions {
-    if (this.#closed || this.#nativePositions === undefined || this.#nativeLimits?.[0] !== positions || this.#nativeLimits[1] !== openings) throw new Error("configuration_capacity");
+    if (this.#closed || this.#nativePositions === undefined || this.#nativeLimits === undefined ||
+        !Number.isSafeInteger(positions) || positions < 1 || positions > this.#nativeLimits[0] ||
+        !Number.isSafeInteger(openings) || openings < 1 || openings > this.#nativeLimits[1]) throw new Error("configuration_capacity");
     const pool = this.#nativePositions; this.#nativePositions = undefined; return pool;
   }
   reserveAccounts(root: ResourceRoot, owner: ResourceOwner, plan: ReturnType<typeof sessionAdmissionPlan>, runtimeBytes: bigint): void {
@@ -265,25 +313,36 @@ export class ClientSessionAdmission {
     const result = Object.freeze({ session: this.#sendAccount, directions: this.#sendAccounts });
     this.#sendAccount = undefined; this.#sendAccounts = undefined; return result;
   }
-  take(costs: readonly (readonly [string, ResourceVector])[]): ResourceReference[] {
+  take(costs: readonly (readonly [string, ResourceVector])[], finalRPCPlan?: Pick<RPCApplicationPlan, "inputs" | "queries">): ResourceReference[] {
     if (this.#closed) throw new Error("owner_unavailable");
+    const reserved = this.#reservedRPCPlan, final = finalRPCPlan;
+    const mappedCosts = costs.map(([kind, charge]) => {
+      if (reserved === undefined || final === undefined || !kind.startsWith("rpc_application_")) return [kind, charge] as const;
+      const index = Number(kind.slice("rpc_application_".length));
+      if (!Number.isSafeInteger(index) || index < 0) throw new Error("configuration_capacity");
+      const reservedIndex = index >= final.queries ? index + (reserved.queries - reserved.inputs) - (final.queries - final.inputs) : index;
+      return [`rpc_application_${reservedIndex}`, charge] as const;
+    });
+    const selected: { cost: ResourceVector; part: { charge: ResourceVector; reference: ResourceReference; borrowed?: boolean } }[] = [];
     const next = new Map<string, number>();
-    const selected = costs.map(([kind, charge]) => {
+    for (const [kind, charge] of mappedCosts) {
       const index = next.get(kind) ?? 0, part = this.#parts.get(kind)?.[index]; next.set(kind, index + 1);
       if (part === undefined || !part.charge.contains(charge)) throw new Error("configuration_capacity");
-      part.reference.check(); return part;
-    });
+      part.reference.check(); selected.push({ cost: charge, part });
+    }
     // All limits and ownership checks precede the move. No allocation replaces
     // the prepaid root backing during this transfer.
     const result: ResourceReference[] = [];
     try {
-      for (let index = 0; index < selected.length; index++) result.push(selected[index]!.borrowed ? selected[index]!.reference.takeBorrow() : selected[index]!.reference.take(costs[index]![1]));
+      for (const { cost, part } of selected) result.push(part.borrowed ? part.reference.takeBorrow() : part.reference.take(cost));
       for (const [kind, count] of next) this.#parts.get(kind)!.splice(0, count);
       return result;
     } catch (error) { for (const reference of result) reference.release(); this.close(); throw error; }
   }
   close(): void {
     if (this.#closed) return; this.#closed = true;
+    this.#unreliable?.close(); this.#unreliable = undefined;
+    this.#initialRawStreams?.close(); this.#initialRawStreams = undefined; this.#initialRawDeclarations = undefined;
     this.#internalKeys?.close(); this.#internalKeys = undefined;
     this.#peerOpens?.close(); this.#peerOpens = undefined; this.#ledger?.close(); this.#ledger = undefined;
     this.#calls?.close(); this.#calls = undefined;

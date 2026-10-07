@@ -1,4 +1,4 @@
-import type { V4ConnectionRequirements } from "../generated/transportV4APIResults.js";
+import type { V4ConnectionRequirements, V4SessionInfo } from "../generated/transportV4APIResults.js";
 
 /** Capture optional local requirements without choosing the material's profile. */
 export function captureConnectionRequirements(input: Partial<V4ConnectionRequirements> = {}): V4ConnectionRequirements {
@@ -19,4 +19,16 @@ export function captureConnectionRequirements(input: Partial<V4ConnectionRequire
     local_consumer_tls13_verification: boolean(input.local_consumer_tls13_verification),
     ...(applicationProfile === undefined ? {} : { application_profile: applicationProfile }),
   });
+}
+
+/** Check original caller requirements against the actual assembled path. */
+export function requireConnectionGuarantees(request: V4ConnectionRequirements, info: V4SessionInfo): void {
+  const guarantees = info.guarantees;
+  if (request.application_profile !== undefined && request.application_profile !== info.application_profile ||
+      request.independent_reliable_read_progress && guarantees.reliable_progress !== "independent_within_profile" ||
+      request.bound_stream_input_isolation && guarantees.bound_stream_input_isolation !== "bound_stream_within_profile" ||
+      request.datagram && !guarantees.datagram ||
+      request.local_consumer_tls13_verification && guarantees.local_consumer_tls13_verification !== "consumer_enforced") {
+    throw new Error("connection_requirement_unavailable");
+  }
 }

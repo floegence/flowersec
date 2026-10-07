@@ -124,7 +124,7 @@ func (r *SQLiteReferences) nextKey(after [32]byte) (key [32]byte, found bool, er
 	return key, true, nil
 }
 
-func (r *SQLiteReferences) openSchema() (err error) {
+func (r *SQLiteReferences) openSchema(readOnly bool) (err error) {
 	s := r.store.sqliteStore
 	if err = r.verifySchema(); err != nil {
 		return err
@@ -171,6 +171,9 @@ func (r *SQLiteReferences) openSchema() (err error) {
 	}
 	// This is local namespace/owner continuity only; the resulting objects are
 	// query locators, never evidence that an execution was absent or completed.
+	if readOnly {
+		return nil
+	}
 	if err = s.continuity.Check(s.identity, epoch, false); err != nil {
 		return err
 	}

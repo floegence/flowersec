@@ -26,6 +26,7 @@ import (
 // and preauth account generations before UDP/TLS admission. Private signing keys
 // and CA roots are independently admitted immutable host dependencies.
 type QUICServerConfig struct {
+	AcceptedRouteCapacity uint16
 	// Side names the tunnel endpoint; Relay selects the relay listener.
 	// Direct listeners keep the zero values and are logical servers.
 	Side                               protocolv4.Direction
@@ -47,6 +48,7 @@ type QUICServerConfig struct {
 }
 
 type QUICServer struct {
+	acceptedRoutes      acceptedRoutePolicies
 	mu                  sync.Mutex
 	c                   QUICServerConfig
 	reservation, shared resourcev4.Reference
@@ -106,11 +108,15 @@ func QUICServerCharge(c QUICServerConfig) (resourcev4.Vector, error) {
 	if certificateBytes > 262144 {
 		return resourcev4.Vector{}, resourcev4.ErrConfiguration
 	}
+	alternateBytes, err := acceptedRoutePoliciesBacking(c.AcceptedRouteCapacity, quicFactoryRouteBytes, quicFactoryRouteNodes)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
 	decoder, err := protocolv4.DecoderBackingBytes(quicFactoryRouteBytes, quicFactoryRouteNodes)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	bytes := uint64(unsafe.Sizeof(QUICServer{})) + decoder + certificateBytes*16 + 8192 +
+	bytes := uint64(unsafe.Sizeof(QUICServer{})) + alternateBytes + decoder + certificateBytes*16 + 8192 +
 		uint64(c.Connections)*(uint64(unsafe.Sizeof(QUICIngress{}))+uint64(unsafe.Sizeof(acceptedQUIC{}))+uint64(unsafe.Sizeof((*QUICIngress)(nil)))+4096)
 	return (resourcev4.Vector{resourcev4.SDKBytes: bytes, resourcev4.Items: 1 + 2*uint64(c.Connections),
 		resourcev4.WorkSlots: 1 + uint64(c.Connections), resourcev4.Tasks: 1 + uint64(c.Connections), resourcev4.Timers: uint64(c.Connections)}).
@@ -150,6 +156,10 @@ func NewQUICServer(c QUICServerConfig, reservation, environment resourcev4.Refer
 			_ = s.WaitCleanup(context.Background())
 		}
 	}()
+	s.acceptedRoutes, err = newAcceptedRoutePolicies(c.AcceptedRouteCapacity, quicFactoryRouteBytes, quicFactoryRouteNodes)
+	if err != nil {
+		return nil, err
+	}
 	decoder, err := protocolv4.NewDecoder(quicFactoryRouteBytes, quicFactoryRouteNodes)
 	if err != nil {
 		return nil, err
@@ -337,9 +347,9 @@ func (s *QUICServer) accept(ctx context.Context, c sessionv4.AcceptedEntranceCon
 			_ = f.retireUnstarted()
 		}
 	}()
-	acceptCtx, cancel := context.WithCancelCause(ctx)
+	acceptCtx, cancel := newCarrierPreparationContext(ctx)
 	stop, stopped := make(chan struct{}), make(chan struct{})
-	go watchQUICPreparation(acceptCtx, cancel, c.Initial.Deadline, stop, stopped)
+	go watchCarrierPreparation(ctx, acceptCtx, cancel, c.Initial.Deadline, stop, stopped)
 	watching := true
 	finishWatch := func() {
 		if watching {
@@ -482,7 +492,11 @@ func (s *QUICServer) checkAcceptedRoute(connection *rawquic.OwnedConnection, art
 		return err
 	}
 	if !bytes.Equal(route, s.document.Bytes()) {
-		return protocolv4.CBORFailure("accepted_listener_binding")
+		now, err := s.sampleLocked()
+		if err != nil {
+			return err
+		}
+		return s.acceptedRoutes.check(route, s.certificates, s.host, s.c.Roots, now.Interval)
 	}
 	return nil
 }
@@ -577,6 +591,7 @@ func (s *QUICServer) cleanupLocked() {
 	}
 	s.cleaned = true
 	if s.document != nil {
+		s.acceptedRoutes.release()
 		s.document.Release()
 		s.document = nil
 	}
@@ -729,7 +744,7 @@ func (f *QUICIngress) PrepareAccepted(ctx context.Context, deadline *timev4.Dead
 			_ = provider.Retire()
 		}
 	}()
-	prepareCtx, cancel := context.WithCancelCause(ctx)
+	prepareCtx, cancel := newCarrierPreparationContext(ctx)
 	defer cancel(context.Canceled)
 	f.mu.Lock()
 	f.cancel = func() { cancel(context.Canceled) }
@@ -739,7 +754,7 @@ func (f *QUICIngress) PrepareAccepted(ctx context.Context, deadline *timev4.Dead
 		return nil, resourcev4.ErrClosed
 	}
 	stop, stopped := make(chan struct{}), make(chan struct{})
-	go watchQUICPreparation(prepareCtx, cancel, deadline, stop, stopped)
+	go watchCarrierPreparation(ctx, prepareCtx, cancel, deadline, stop, stopped)
 	watching := true
 	finishWatch := func() {
 		if watching {

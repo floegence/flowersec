@@ -42,6 +42,7 @@ type OwnedListener struct {
 	listener            *quic.Listener
 	server              *Server
 	ready               chan *OwnedConnection
+	failures            chan error
 	serving             bool
 	transport           *quic.Transport
 	packet              *net.UDPConn
@@ -63,6 +64,7 @@ type ownedListenerSlot struct {
 	owner                 *ownedConnection
 	used, handed, claimed bool
 	observing             bool
+	failureReported       bool
 }
 
 type ownedListenerKey struct{}
@@ -92,7 +94,7 @@ func OwnedListenerCharge(c OwnedListenerConfig) (resourcev4.Vector, error) {
 		len(certificate.SignedCertificateTimestamps) != 0 {
 		return resourcev4.Vector{}, resourcev4.ErrConfiguration
 	}
-	bytes := uint64(unsafe.Sizeof(OwnedListener{})) + uint64(c.Connections)*(uint64(unsafe.Sizeof(ownedListenerSlot{}))+uint64(unsafe.Sizeof(ownedListenerIdentity{})))
+	bytes := uint64(unsafe.Sizeof(OwnedListener{})) + uint64(c.Connections)*(uint64(unsafe.Sizeof(ownedListenerSlot{}))+uint64(unsafe.Sizeof(ownedListenerIdentity{}))+uint64(unsafe.Sizeof(error(nil))))
 	for _, der := range certificate.Certificate {
 		if len(der) == 0 || len(der) > 65536 {
 			return resourcev4.Vector{}, resourcev4.ErrConfiguration
@@ -128,7 +130,7 @@ func ListenOwned(c OwnedListenerConfig, reservation, environment resourcev4.Refe
 		shared.Release()
 		return nil, err
 	}
-	l := &OwnedListener{c: c, reservation: owned, shared: shared, environment: environment, slots: make([]ownedListenerSlot, c.Connections), done: make(chan struct{}), stop: make(chan struct{}), ready: make(chan *OwnedConnection, c.Connections)}
+	l := &OwnedListener{c: c, reservation: owned, shared: shared, environment: environment, slots: make([]ownedListenerSlot, c.Connections), done: make(chan struct{}), stop: make(chan struct{}), ready: make(chan *OwnedConnection, c.Connections), failures: make(chan error, c.Connections)}
 	copy(l.accounts[:], c.Accounts)
 	l.c.Accounts = l.accounts[:len(c.Accounts)]
 	l.c.TLS, err = prepareTLS(c.TLS, true)
@@ -290,7 +292,7 @@ func (l *OwnedListener) serve() {
 
 func (l *OwnedListener) upgrade(w http.ResponseWriter, r *http.Request) {
 	guard, ok := r.Context().Value(connectionKey{}).(*connectionGuard)
-	if !ok || guard.conn == nil || !l.c.CheckRequest(r) {
+	if !ok || guard.conn == nil {
 		http.Error(w, "invalid endpoint", http.StatusForbidden)
 		return
 	}
@@ -299,34 +301,48 @@ func (l *OwnedListener) upgrade(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid owner", http.StatusForbidden)
 		return
 	}
-	if err := l.server.checkNativeTuple(w, r); err != nil || !l.c.CheckOrigin(r) {
+	if !l.c.CheckRequest(r) {
+		l.reportUpgradeFailure(id, ErrInvalidURL)
+		http.Error(w, "invalid endpoint", http.StatusForbidden)
+		_ = guard.conn.CloseWithError(0, "invalid endpoint")
+		return
+	}
+	if err := l.server.checkNativeTuple(w, r); err != nil {
+		l.reportUpgradeFailure(id, err)
+		_ = guard.conn.CloseWithError(0, "upgrade rejected")
+		return
+	}
+	if !l.c.CheckOrigin(r) {
+		l.reportUpgradeFailure(id, ErrOriginPolicyRequired)
 		_ = guard.conn.CloseWithError(0, "upgrade rejected")
 		return
 	}
 	endpoint, err := acceptedEndpoint(guard.conn, r)
 	if err != nil {
+		l.reportUpgradeFailure(id, err)
 		_ = guard.conn.CloseWithError(0, "invalid endpoint")
 		return
 	}
 	stream, ok := w.(http3.HTTPStreamer)
 	if !ok {
+		l.reportUpgradeFailure(id, ErrNativeTuple)
 		_ = guard.conn.CloseWithError(0, "invalid HTTP stream")
 		return
 	}
 	request := stream.HTTPStream()
 	// The same actual CONNECT stream supplies both reliable association and
 	// RFC HTTP/3 datagram context; no guessed Session ID is installed.
-	// Chromium's WebTransport tuple owns the CONNECT association and exposes
-	// raw bidirectional streams. Native Go peers use the private
-	// 0x41+CONNECT-ID association prefix instead. requestTuple has already
-	// validated the complete HTTP/3 tuple and its required headers/settings.
-	browserRaw := requestTuple(r).ID == "chromium_h3_draft02"
-	if err = id.owner.session.install(request, browserRaw); err != nil {
+	// The native provider adds/removes the standard 0x41 + CONNECT-ID
+	// association prefix for both browsers and Go. JavaScript sees only
+	// application bytes; the original CONNECT still owns each QUIC stream.
+	if err = id.owner.session.install(request); err != nil {
+		l.reportUpgradeFailure(id, err)
 		_ = guard.conn.CloseWithError(0, "invalid association")
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 	if err = http.NewResponseController(w).Flush(); err != nil {
+		l.reportUpgradeFailure(id, err)
 		_ = guard.conn.CloseWithError(0, "response failed")
 		return
 	}
@@ -345,6 +361,29 @@ func (l *OwnedListener) upgrade(w http.ResponseWriter, r *http.Request) {
 	slot.handed = true
 	l.ready <- &OwnedConnection{p}
 	l.mu.Unlock()
+}
+
+// One original native connection may report at most one pre-admission
+// failure. The finite queue wakes Accept with the actual upgrade cause without
+// selecting or completing any installed Flowersec material.
+func (l *OwnedListener) reportUpgradeFailure(id ownedListenerIdentity, err error) {
+	if err == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed || id.listener != l || int(id.slot) >= len(l.slots) {
+		return
+	}
+	slot := &l.slots[id.slot]
+	if slot.owner != id.owner || slot.handed || slot.failureReported {
+		return
+	}
+	slot.failureReported = true
+	select {
+	case l.failures <- err:
+	default:
+	}
 }
 
 // Accept transfers the once-only native owner installed before TLS. A queued
@@ -366,6 +405,8 @@ func (l *OwnedListener) Accept(ctx context.Context) (*OwnedConnection, error) {
 		return nil, ctx.Err()
 	case <-l.listenerContext():
 		return nil, resourcev4.ErrClosed
+	case err := <-l.failures:
+		return nil, err
 	case p := <-l.ready:
 		l.mu.Lock()
 		slot := &l.slots[p.listenerSlot]

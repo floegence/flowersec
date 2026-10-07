@@ -1,25 +1,23 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { once } from 'node:events';
 import fs from 'node:fs';
-import { createServer } from 'node:net';
-import os from 'node:os';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(pkgRoot, '..');
-const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'flowersec-package-verify-'));
+const artifactRoot = process.env.FLOWERSEC_TASK_ARTIFACT_DIR ?? path.join(path.dirname(repoRoot), 'flowersec-package-check-artifacts');
+fs.mkdirSync(artifactRoot, { recursive: true });
+const tmpRoot = fs.mkdtempSync(path.join(artifactRoot, 'package-consumer-'));
+const commandLogs = [];
+let completed = false;
 const packDir = path.join(tmpRoot, 'pack');
 const consumerDir = path.join(tmpRoot, 'consumer');
 const manifest = JSON.parse(
   fs.readFileSync(path.join(repoRoot, 'stability', 'api_contract_manifest.json'), 'utf8')
 );
-const artifactFixture = JSON.parse(
-  fs.readFileSync(path.join(repoRoot, 'testdata', 'transport_v3', 'artifact_vectors.json'), 'utf8')
-).positive[0].artifact_json;
-const rejectedArtifactFixture = JSON.stringify({ v: 2, profile: 'flowersec/2' });
 const forbiddenRuntimeExportsBySubpath = new Map([
   ['@floegence/flowersec-core/proxy', [
     'resolveNamedProxyPreset', 'CODESERVER_PROXY_PRESET_MANIFEST',
@@ -41,7 +39,8 @@ const removedRuntimeExports = new Set([
   'FlowersecError',
   'connectV3', 'createConnectionControllerV3', 'createArtifactLeaseV3', 'parseArtifactV3',
   'createAcceptorV3', 'createTunnelRuntimeV3', 'verifyTunnelAuthorizationGrantV3',
-  'v2',
+  'v2', 'parseArtifact', 'createArtifactLease', 'Artifact', 'ArtifactLease',
+  'ConnectError', 'ByteStream',
 ]);
 const removedImplementationSubpaths = [
   'framing',
@@ -82,12 +81,15 @@ function isRemovedLegacyPackageExport(subpath) {
 }
 
 function run(cmd, args, cwd, input) {
-  return execFileSync(cmd, args, {
+  try { return execFileSync(cmd, args, {
     cwd,
     encoding: 'utf8',
     stdio: 'pipe',
     ...(input == null ? {} : { input }),
-  });
+  }); } catch (error) {
+    commandLogs.push(`${cmd} ${args.join(' ')}\n${String(error.stdout ?? '').slice(0, 1048576)}\n${String(error.stderr ?? '').slice(0, 1048576)}`);
+    throw error;
+  }
 }
 
 function packTarball() {
@@ -143,6 +145,7 @@ function verifyBrowserDependencyGraph() {
     }
   }
   assert.equal(bareSpecifiers.includes('tr46'), false, 'browser dependency graph must bundle tr46');
+  assert.equal(bareSpecifiers.some(specifier => specifier.startsWith('node:') || ['ws', 'fs', 'net', 'tls'].includes(specifier)), false, 'browser dependency graph must not load Node transports');
 }
 
 function verifyPackageJSONExports() {
@@ -276,177 +279,135 @@ ${checks}
 
     const browser = await import('@floegence/flowersec-core/browser');
     const root = await import('@floegence/flowersec-core');
-    assert.equal(root.ConnectError, browser.ConnectError);
-    const redacted = new root.ConnectError('connection_failed', { kind: 'terminal' });
-    assert.deepEqual(
-      { name: redacted.name, code: redacted.code },
-      { name: 'ConnectError', code: 'connection_failed' },
-    );
-    assert.equal('path' in redacted, false);
-    assert.equal('stage' in redacted, false);
-    assert.equal('diagnostics' in redacted, false);
-    assert.equal('candidateId' in redacted, false);
-    assert.equal('carrier' in redacted, false);
-    assert.equal('cause' in redacted, false);
-    assert.equal('disposition' in redacted, false);
-    assert.deepEqual(redacted.retryDisposition, { kind: 'terminal' });
-    const artifact = root.parseArtifact(${JSON.stringify(artifactFixture)});
-    assert.deepEqual(Object.keys(artifact), []);
-    assert.equal(JSON.stringify(artifact), '{}');
-    assert.throws(
-      () => root.createArtifactLease({}, async () => {}),
-      (error) => error?.name === 'ArtifactError' && error?.code === 'invalid_artifact',
-    );
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(root.createArtifactLease(artifact, async () => {}), 'artifact'),
-      false,
-      'ArtifactLease must not expose its artifact',
-    );
-    assert.throws(
-      () => root.parseArtifact(${JSON.stringify(rejectedArtifactFixture)}),
-      (error) => error?.name === 'ArtifactError' && error?.code === 'invalid_artifact',
-    );
-    assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestConnectArtifact'), false);
-    assert.equal(Object.prototype.hasOwnProperty.call(browser, 'requestEntryConnectArtifact'), false);
-
     const node = await import('@floegence/flowersec-core/node');
-    assert.equal(typeof node.ProxyServer, 'function');
-    assert.equal(typeof node.ProxyServerError, 'function');
+    const proxy = await import('@floegence/flowersec-core/proxy');
+    for (const name of ['TransportEnvironment', 'ResourceRoot', 'ResourceVector', 'Session', 'connect', 'createConnectionController', 'createStreamMetadata']) {
+      assert.equal(root[name], browser[name], 'browser must share the current original owner: ' + name);
+      assert.equal(root[name], node[name], 'Node must share the current original owner: ' + name);
+    }
+    for (const entry of [root, browser, node, proxy]) {
+      for (const name of ['PreauthorizedPoolSource', 'TopUpHandle', 'createSessionPoolControl']) assert.equal(entry[name], root[name], 'pool operation owner differs across entrypoints: ' + name);
+      for (const name of ['createOriginalPoolSource', 'registerPoolJournalStore', 'proxyRequestAssociation', 'serviceWorkerPublicationOwner']) assert.equal(Object.prototype.hasOwnProperty.call(entry, name), false, 'private operation authority escaped: ' + name);
+    }
+    for (const name of ['status', 'cleanupStatus', 'waitCleanup']) assert.equal(typeof root.TopUpHandle.prototype[name], 'function');
+    for (const name of ['id', 'operationID', 'operation_id']) assert.equal(name in root.TopUpHandle.prototype, false, 'wire operation identity escaped through TopUpHandle: ' + name);
+    assert.equal(typeof proxy.createProxySurface, 'function');
+    for (const entry of [root, browser, node]) assert.equal(Object.prototype.hasOwnProperty.call(entry, 'createProxySurface'), false, 'surface composition belongs to the proxy entrypoint');
+    for (const name of ['configureBrowserWSS', 'configureBrowserWebTransport', 'createIndexedDBPoolBacking', 'createBrowserLiveHTTPS']) assert.equal(typeof browser[name], 'function');
+    for (const name of ['createAcceptor', 'createGrantIssuer', 'createTunnelRuntime', 'createRegisteredPoolTunnelServer', 'createRegisteredLiveTunnelServer', 'createRegisteredLiveTunnelControlAuthority', 'createRegisteredLiveTunnelClientAuthorization']) assert.equal(typeof node[name], 'function');
+    const limit = new root.ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 1000n, 1000n, 1000n, 1000n, 1000n, 1000n]);
+    const budget = new root.ResourceRoot({ profileRevision: '1'.repeat(64), limit, accounts: 128, reservations: 256, references: 512,
+      rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
+    const now = BigInt(Date.now()), start = performance.now();
+    const environment = root.createTransportEnvironment({ root: budget, limit, tenantLimit: limit, tenantID: '1'.repeat(32), environmentID: '2'.repeat(32),
+      runtimeBytes: 1024n, namespaces: 1, sources: 1, acquisitions: 1, materials: 1, sessions: 1, dependencies: 8, acquireMS: 10000n, cleanupMS: 10000,
+      random: destination => crypto.getRandomValues(destination), clock: { profile: { rate: new root.ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 60000n, maxRoundTripMS: 100n },
+        tick: () => ({ milliseconds: BigInt(Math.floor(performance.now() - start)), incarnation: '3'.repeat(32) }), initial: () => ({ lowerMS: now, upperMS: now }) } });
+    try { await assert.rejects(root.connect(environment, {})); }
+    finally { await environment.close(); assert.equal((await environment.waitCleanup()).status, 'complete'); assert.equal(budget.snapshot().reservations, 0); budget.close(); }
   `;
 
   run(process.execPath, ['--input-type=module', '-'], consumerDir, script);
 }
 
-function verifyArtifactOnlyConnectTypes() {
-  fs.writeFileSync(
-    path.join(consumerDir, 'tsconfig.json'),
-    JSON.stringify({
-      compilerOptions: {
-        module: 'NodeNext',
-        moduleResolution: 'NodeNext',
-        noEmit: true,
-        strict: true,
-        target: 'ES2022',
-        types: ['node'],
-      },
-      include: ['*.ts'],
-    }, null, 2)
-  );
-  fs.writeFileSync(
-    path.join(consumerDir, 'artifact-only.ts'),
-    `// @ts-expect-error Transport v1 root connect is removed.
-import { connect, connectDirect, connectTunnel } from '@floegence/flowersec-core';
-// @ts-expect-error raw Transport v1 artifacts are removed.
-import type { ConnectArtifact } from '@floegence/flowersec-core';
-// @ts-expect-error Transport v1 browser connects are removed.
-import { connectBrowser, connectDirectBrowser, connectTunnelBrowser } from '@floegence/flowersec-core/browser';
-// @ts-expect-error Transport v1 controlplane artifact requests are removed.
-import { requestConnectArtifact, requestEntryConnectArtifact } from '@floegence/flowersec-core/browser';
-// @ts-expect-error Transport v1 Node connects are removed.
-import { connectNode, connectDirectNode, connectTunnelNode } from '@floegence/flowersec-core/node';
-void [connect, connectDirect, connectTunnel, connectBrowser, connectDirectBrowser, connectTunnelBrowser,
-  requestConnectArtifact, requestEntryConnectArtifact, connectNode, connectDirectNode, connectTunnelNode];
-type Removed = ConnectArtifact;
-declare const removed: Removed;
-void removed;
-`
-  );
-  run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc6'), '-p', 'tsconfig.json'], consumerDir);
+function writeConsumerTypeConfiguration() {
+  fs.writeFileSync(path.join(consumerDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: {
+    module: 'NodeNext', moduleResolution: 'NodeNext', noEmit: true, strict: true, target: 'ES2022', types: ['node'],
+  }, include: ['*.ts'] }, null, 2));
+  fs.writeFileSync(path.join(consumerDir, 'removed-api.ts'), `
+// @ts-expect-error artifacts are opaque provider material, never public lease owners.
+import { parseArtifact, createArtifactLease, connectDirect, connectTunnel } from '@floegence/flowersec-core';
+void [parseArtifact, createArtifactLease, connectDirect, connectTunnel];
+`);
 }
 
 function verifyCurrentTypes() {
-  writeV4ConnectionTypeConsumers();
-  fs.writeFileSync(
-    path.join(consumerDir, 'current-api.ts'),
-    `import {
-  Artifact,
-  ArtifactLease,
-  ByteStream,
-  ConnectError,
-  ConnectionController,
-  Session,
-  StreamMetadata,
-  createArtifactLease,
-  createStreamMetadata,
-  parseArtifact,
-} from '@floegence/flowersec-core';
-import {
-  ProxyServer,
-  ProxyServerError,
-  connect,
-  createAcceptor,
-  createConnectionController,
-} from '@floegence/flowersec-core/node';
-import type {
-  ProxyServerOptions,
-  SessionOptions,
-} from '@floegence/flowersec-core/node';
-// @ts-expect-error versioned namespaces and aliases are not public in Flowersec 4.
-import { v2, parseArtifactV3 } from '@floegence/flowersec-core';
-
-declare const rawArtifact: string;
-declare const session: Session;
-declare const stream: ByteStream;
-declare const options: SessionOptions;
-declare const proxyOptions: ProxyServerOptions;
-const artifact: Artifact = parseArtifact(rawArtifact);
-const lease: ArtifactLease = createArtifactLease(artifact, async () => undefined);
-const metadata: StreamMetadata = createStreamMetadata({ purpose: 'package-check' });
-const controller: ConnectionController = createConnectionController({
-  acquire: async () => ({ kind: 'lease', lease }),
-}, options);
-void connect(lease, options);
-void createAcceptor;
-void new ProxyServer(proxyOptions);
-void ProxyServerError;
-void ConnectError;
-void controller;
-void metadata;
-void stream.closeWrite();
-void stream.reset();
-void v2;
-void parseArtifactV3;
-`
-  );
+  writeConsumerTypeConfiguration();
+  writeConnectionTypeConsumers();
+  fs.writeFileSync(path.join(consumerDir, 'current-api.ts'), `
+import { connect, connectMaterial, createConnectionController, createStreamMetadata } from '@floegence/flowersec-core';
+import type { TransportEnvironment, Session, Stream, ConnectionMaterial, ConnectionMaterialSource, ConnectionRequirements } from '@floegence/flowersec-core';
+import { createAcceptor, createRegisteredPoolTunnelServer, createRegisteredLiveTunnelServer, createRegisteredLiveTunnelControlAuthority, createRegisteredLiveTunnelClientAuthorization } from '@floegence/flowersec-core/node';
+import type { AcceptorOptions, RegisteredPoolTunnelServerOptions, RegisteredLiveTunnelServerOptions, RegisteredLiveTunnelControlAuthorityOptions, RegisteredLiveTunnelClientOptions } from '@floegence/flowersec-core/node';
+declare const environment: TransportEnvironment, source: ConnectionMaterialSource, material: ConnectionMaterial, requirements: ConnectionRequirements, stream: Stream;
+declare const acceptor: AcceptorOptions, pool: RegisteredPoolTunnelServerOptions, live: RegisteredLiveTunnelServerOptions, authority: RegisteredLiveTunnelControlAuthorityOptions, authorization: RegisteredLiveTunnelClientOptions;
+const connected: Promise<Session> = connect(environment, source, requirements);
+const prepared: Promise<Session> = connectMaterial(environment, material);
+const controller = createConnectionController(environment, { source, requirements });
+void createAcceptor(acceptor); void createRegisteredPoolTunnelServer(pool); void createRegisteredLiveTunnelServer(live);
+void createRegisteredLiveTunnelControlAuthority(authority); void createRegisteredLiveTunnelClientAuthorization(environment, authorization);
+void createStreamMetadata({ purpose: 'package-check' }); void stream.closeWrite(); void connected; void prepared; void controller;
+// @ts-expect-error connection requires an original Environment and configured source.
+void connect({ artifact_json: '{}' });
+`);
+  fs.writeFileSync(path.join(consumerDir, 'pool-surface-api.ts'), `
+import { createSessionPoolControl } from '@floegence/flowersec-core';
+import type { PreauthorizedPoolSource, TopUpHandle, PoolSourceConfiguration, TopUpOptions, TopUpState, TopUpResult, TopUpControlTransport, TopUpExchangeResult, PoolControlReplyDecoder, CleanupStatus, OperationOptions, ServiceClient, MethodDefinition } from '@floegence/flowersec-core';
+import { createProxySurface } from '@floegence/flowersec-core/proxy';
+import type { ProxySurface, ProxySurfaceOptions, ProxySurfaceMode, ProxySessionBinding, ProxySurfaceRequestPolicy, ProxyPublicationOwner, ProxyClearResult } from '@floegence/flowersec-core/proxy';
+import type { ProxyCredentialPolicy, ProxyCookieScope, ProxyCredentialAuthentication, NodeWSSClient } from '@floegence/flowersec-core/node';
+import type { BrowserWSSClient, BrowserWebTransportClient } from '@floegence/flowersec-core/browser';
+declare const source: PreauthorizedPoolSource, handle: TopUpHandle, configuration: PoolSourceConfiguration, options: TopUpOptions, wait: OperationOptions;
+declare const topUpMethod: MethodDefinition<Uint8Array, Uint8Array, 'unary', 'transient'>, ackMethod: MethodDefinition<Uint8Array, Uint8Array, 'unary', 'transient'>;
+declare const client: ServiceClient<{ topUp: typeof topUpMethod; ack: typeof ackMethod }>, decoder: PoolControlReplyDecoder;
+const control: TopUpControlTransport = createSessionPoolControl(client, topUpMethod, ackMethod, decoder, 1000n);
+const observed: Promise<TopUpResult> = source.topUp(options, wait), status: Promise<TopUpResult> = handle.status(wait);
+const originalCleanup: Promise<CleanupStatus> = handle.waitCleanup(wait), sourceCleanup: Promise<CleanupStatus> = source.waitCleanup(wait);
+const cleanup: CleanupStatus = handle.cleanupStatus();
+// @ts-expect-error Wire operation IDs stay behind the opaque observation owner.
+void handle.id;
+declare const nodeClient: NodeWSSClient, browserClient: BrowserWSSClient, webTransportClient: BrowserWebTransportClient;
+declare const credentialPolicy: import('@floegence/flowersec-core').CredentialPolicy;
+for (const configured of [nodeClient, browserClient, webTransportClient]) {
+  const registered: Promise<PreauthorizedPoolSource> = configured.registerDurablePoolSource(credentialPolicy, configuration);
+  void registered;
+}
+const state: TopUpState = 'installed';
+declare const exchange: TopUpExchangeResult, surface: ProxySurface, surfaceOptions: ProxySurfaceOptions, mode: ProxySurfaceMode, binding: ProxySessionBinding;
+declare const requestPolicy: ProxySurfaceRequestPolicy, publication: ProxyPublicationOwner, credentials: ProxyCredentialPolicy, scope: ProxyCookieScope, authentication: ProxyCredentialAuthentication;
+const created: Promise<ProxySurface> = createProxySurface(surfaceOptions);
+const cleared: Promise<ProxyClearResult> = surface.clearUpstreamCredentials({ reuseAfterClear: true, signal: wait.signal });
+void [configuration, control, observed, status, originalCleanup, sourceCleanup, cleanup, state, exchange, created, cleared, mode, binding, requestPolicy, publication, credentials, scope, authentication];
+`);
   run(process.execPath, [path.join(pkgRoot, 'node_modules', 'typescript', 'bin', 'tsc6'), '-p', 'tsconfig.json'], consumerDir);
 }
 
-function writeV4ConnectionTypeConsumers() {
+function writeConnectionTypeConsumers() {
   const clients = [
-    { entry: '', runtime: '/node', configure: 'configureV4NodeWSS', config: 'V4NodeWSSClientConfig' },
-    { entry: '/node', runtime: '/node', configure: 'configureV4NodeWSS', config: 'V4NodeWSSClientConfig' },
-    { entry: '/browser', runtime: '/browser', configure: 'configureV4BrowserWSS', config: 'V4BrowserWSSClientConfig' },
-    { entry: '/browser', runtime: '/browser', configure: 'configureV4BrowserWebTransport', config: 'V4BrowserWebTransportClientConfig' },
+    { entry: '', runtime: '/node', configure: 'configureNodeWSS', config: 'NodeWSSClientConfig' },
+    { entry: '/node', runtime: '/node', configure: 'configureNodeWSS', config: 'NodeWSSClientConfig' },
+    { entry: '/browser', runtime: '/browser', configure: 'configureBrowserWSS', config: 'BrowserWSSClientConfig' },
+    { entry: '/browser', runtime: '/browser', configure: 'configureBrowserWebTransport', config: 'BrowserWebTransportClientConfig' },
   ];
   for (const [index, client] of clients.entries()) {
-    fs.writeFileSync(path.join(consumerDir, `v4-connection-${index}.ts`), `
-import { createV4ConnectionController } from '@floegence/flowersec-core${client.entry}';
+    fs.writeFileSync(path.join(consumerDir, `connection-${index}.ts`), `
+import { connect, createConnectionController } from '@floegence/flowersec-core${client.entry}';
 import type {
-  V4ConnectionMaterialSource, V4ConnectionRequirements, V4ConnectionController,
-  V4NamespaceOptions, V4CredentialPolicy, V4CredentialBuffers,
-  V4CredentialLengths, V4CredentialProvider, V4Session, V4TransportEnvironment,
+  ConnectionMaterialSource, ConnectionRequirements, ConnectionController,
+  NamespaceOptions, CredentialPolicy, CredentialBuffers,
+  CredentialLengths, CredentialProvider, Session, TransportEnvironment,
 } from '@floegence/flowersec-core${client.entry}';
 import { ${client.configure} } from '@floegence/flowersec-core${client.runtime}';
 import type { ${client.config} } from '@floegence/flowersec-core${client.runtime}';
 
 declare function fillCredentials(
-  signal: AbortSignal, requirements: V4ConnectionRequirements, buffers: V4CredentialBuffers,
-): Promise<V4CredentialLengths>;
+  signal: AbortSignal, requirements: ConnectionRequirements, buffers: CredentialBuffers,
+): Promise<CredentialLengths>;
 
 export async function configure(
-  environment: V4TransportEnvironment, config: ${client.config},
-  namespace: V4NamespaceOptions, policy: V4CredentialPolicy, sourceKind: 'live' | 'pool',
+  environment: TransportEnvironment, config: ${client.config},
+  namespace: NamespaceOptions, policy: CredentialPolicy, sourceKind: 'live' | 'pool',
 ) {
   const client = await ${client.configure}(environment, config);
   client.namespace(namespace);
-  const provider: V4CredentialProvider = ({ signal, requirements }, buffers) =>
+  const provider: CredentialProvider = ({ signal, requirements }, buffers) =>
     fillCredentials(signal, requirements, buffers);
-  const source: V4ConnectionMaterialSource = sourceKind === 'live'
+  const source: ConnectionMaterialSource = sourceKind === 'live'
     ? client.registerLiveSource(policy, provider)
     : client.registerPoolSource(policy, provider);
-  const controller: V4ConnectionController = createV4ConnectionController(environment, { source });
-  const connect = (): Promise<V4Session> => environment.connect(source);
-  return { source, controller, connect };
+  const controller: ConnectionController = createConnectionController(environment, { source });
+  const open = (): Promise<Session> => connect(environment, source);
+  return { source, controller, open };
 }
 `);
   }
@@ -454,93 +415,24 @@ export async function configure(
 
 async function verifyPackedBin() {
   const installedRoot = path.join(consumerDir, 'node_modules', '@floegence', 'flowersec-core');
-  const installedPackage = JSON.parse(fs.readFileSync(path.join(installedRoot, 'package.json'), 'utf8'));
-  assert.deepEqual(installedPackage.bin, { 'flowersec-ts-cli': './dist/cli.js' });
   const cliPath = path.join(installedRoot, 'dist', 'cli.js');
-  const cli = fs.readFileSync(cliPath, 'utf8');
-  assert.equal(cli.startsWith('#!/usr/bin/env node\n'), true, 'CLI must retain its Node shebang');
+  assert.match(fs.readFileSync(cliPath, 'utf8'), /^#!\/usr\/bin\/env node/u);
   assert.equal((fs.statSync(cliPath).mode & 0o111) !== 0, true, 'CLI must be executable');
-  const rejected = path.join(consumerDir, 'rejected-artifact.json');
-  fs.writeFileSync(rejected, rejectedArtifactFixture);
   for (const mode of ['client', 'server']) {
-    assert.throws(
-      () => run(process.execPath, [cliPath, mode, '--transport', 'websocket', '--artifact', rejected], consumerDir),
-      (error) => error?.status === 1 && error?.stderr === 'invalid_artifact\n',
-      `${mode} CLI must reject v2 artifacts without fallback`,
-    );
+    assert.deepEqual(await runCLI([cliPath, mode]), { code: 1, stdout: '', stderr: 'missing_option:config\n' });
+    assert.deepEqual(await runCLI([cliPath, mode, '--artifact', 'untrusted.json']), { code: 1, stdout: '', stderr: 'missing_option:config\n' });
+    const config = path.join(consumerDir, `trusted-${mode}.mjs`);
+    fs.writeFileSync(config, `import assert from 'node:assert/strict';
+export default { ${mode}(values, operation) {
+  assert.equal(Object.isFrozen(values), true);
+  assert.equal(values.message, 'consumer-value');
+  assert.equal(operation.signal instanceof AbortSignal, true);
+  throw new Error('installed_configuration_called');
+} };
+`);
+    assert.deepEqual(await runCLI([cliPath, mode, '--config', config, '--message', 'consumer-value']), { code: 1, stdout: '', stderr: 'installed_configuration_called\n' });
+    assert.deepEqual(await runCLI([cliPath, mode, '--config', config, '--config', config]), { code: 1, stdout: '', stderr: 'duplicate_option\n' });
   }
-
-  const certificate = path.join(consumerDir, 'cli-cert.pem');
-  const privateKey = path.join(consumerDir, 'cli-key.pem');
-  run('openssl', [
-    'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
-    '-sha256', '-nodes', '-days', '2', '-subj', '/CN=localhost',
-    '-addext', 'basicConstraints=critical,CA:FALSE',
-    '-addext', 'keyUsage=critical,digitalSignature',
-    '-addext', 'extendedKeyUsage=serverAuth',
-    '-addext', 'subjectAltName=DNS:localhost',
-    '-keyout', privateKey, '-out', certificate,
-  ], consumerDir);
-
-  const origin = 'https://cli.example';
-  const port = await reservePort();
-  const artifact = JSON.parse(artifactFixture);
-  artifact.path.candidates = [{
-    ...artifact.path.candidates.find((candidate) => candidate.carrier === 'websocket'),
-    url: `wss://localhost:${port}/flowersec/v3/direct`,
-  }];
-  const artifactPath = path.join(consumerDir, 'cli-artifact.json');
-  const spendMarker = path.join(consumerDir, 'cli-spend.marker');
-  fs.writeFileSync(artifactPath, JSON.stringify(artifact));
-
-  const serverArguments = [
-    cliPath, 'server', '--transport', 'websocket', '--artifact', artifactPath,
-    '--certificate', certificate, '--private-key', privateKey,
-    '--host', '127.0.0.1', '--port', String(port), '--origin', origin,
-    '--max-inbound-streams', String(artifact.session.max_inbound_streams),
-  ];
-  const clientArguments = [
-    cliPath, 'client', '--transport', 'websocket', '--artifact', artifactPath,
-    '--ca', certificate, '--origin', origin, '--spend-marker', spendMarker,
-  ];
-
-  const firstServer = await startCLIServer(serverArguments, port);
-  const firstClient = await runCLI(clientArguments);
-  assert.deepEqual(firstClient, { code: 0, stdout: 'GREEN\n', stderr: '' });
-  assert.equal(fs.existsSync(spendMarker), true, 'CLI must commit the artifact spend exactly once');
-  assert.equal(await waitForExit(firstServer.child), 0, firstServer.stderr.join(''));
-
-  const secondServer = await startCLIServer(serverArguments, port);
-  const secondClient = await runCLI(clientArguments);
-  assert.equal(secondClient.code, 1, 'a spent artifact must not be reusable');
-  assert.equal(secondClient.stderr, 'connection_failed\n');
-  assert.equal(await waitForExit(secondServer.child), 1, secondServer.stderr.join(''));
-
-  const signalServer = await startCLIServer(serverArguments, port);
-  signalServer.child.kill('SIGTERM');
-  assert.equal(await waitForExit(signalServer.child), 0, signalServer.stderr.join(''));
-}
-
-async function reservePort() {
-  const server = createServer();
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  assert.equal(typeof address, 'object');
-  const port = address.port;
-  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  return port;
-}
-
-async function startCLIServer(arguments_, expectedPort) {
-  const child = spawn(process.execPath, arguments_, { cwd: consumerDir, stdio: ['ignore', 'pipe', 'pipe'] });
-  const stderr = [];
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk) => stderr.push(chunk));
-  const line = await firstLine(child.stdout, child);
-  const address = JSON.parse(line);
-  assert.equal(address.port, expectedPort);
-  return { child, stderr };
 }
 
 async function runCLI(arguments_) {
@@ -551,18 +443,9 @@ async function runCLI(arguments_) {
   let stderr = '';
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
-  return { code: await waitForExit(child), stdout, stderr };
-}
-
-async function firstLine(stream, child) {
-  stream.setEncoding('utf8');
-  let buffered = '';
-  for await (const chunk of stream) {
-    buffered += chunk;
-    const newline = buffered.indexOf('\n');
-    if (newline >= 0) return buffered.slice(0, newline);
-  }
-  throw new Error(`CLI server exited before reporting its address (status ${child.exitCode})`);
+  const result = { code: await waitForExit(child), stdout, stderr };
+  commandLogs.push(`CLI ${arguments_.slice(1).join(' ')}\n${stdout.slice(0, 1048576)}\n${stderr.slice(0, 1048576)}`);
+  return result;
 }
 
 async function waitForExit(child) {
@@ -578,7 +461,7 @@ async function waitForExit(child) {
     });
     child.once('error', (error) => {
       clearTimeout(timeout);
-      reject(error);
+      clearTimeout(timeout); reject(error);
     });
   });
 }
@@ -594,8 +477,16 @@ try {
   verifyInstalledTypeExports();
   verifyInstalledPackage();
   await verifyPackedBin();
-  verifyArtifactOnlyConnectTypes();
   verifyCurrentTypes();
+  completed = true;
 } finally {
+  if (!completed && commandLogs.length > 0) {
+    const log = Buffer.from(commandLogs.join('\n'));
+    const digest = createHash('sha256').update(log).digest('hex');
+    const retained = path.join(artifactRoot, `package-failure-${digest}.log`);
+    fs.writeFileSync(retained, log); fs.writeFileSync(`${retained}.sha256`, `${digest}  ${path.basename(retained)}\n`);
+    assert.equal(createHash('sha256').update(fs.readFileSync(retained)).digest('hex'), digest);
+    log.fill(0);
+  }
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 }

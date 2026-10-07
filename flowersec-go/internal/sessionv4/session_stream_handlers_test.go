@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
@@ -21,7 +22,14 @@ func handlerCorePairBeforeRun(t *testing.T, framing string, handler func(role in
 	role := 0
 	prepare := initialCorePrepareConfig(t, &fixtures, framing == "messages", func(c *SessionCoreConfig) {
 		f := &fixtures[role]
+		registration := handler(role)
 		executorConfig := ApplicationExecutorConfig{Running: 4, ResidentRunning: 3, RuntimeBytes: 8192, RuntimeBytesPerTask: 16384}
+		if registration.Messages != nil {
+			// Typed external sends use the ordinary ready service; typed receive
+			// owns a dormant future and only then uses protected Completion.
+			executorConfig.Ready, executorConfig.ResidentReady = 8, 6
+			executorConfig.CompletionRunning, executorConfig.CompletionReserved = 2, 16
+		}
 		charge, err := ApplicationExecutorCharge(executorConfig)
 		if err != nil {
 			t.Fatal(err)
@@ -30,7 +38,7 @@ func handlerCorePairBeforeRun(t *testing.T, framing string, handler func(role in
 		if err != nil {
 			t.Fatal(err)
 		}
-		config := StreamHandlerPlanConfig{Handlers: []RawStreamHandlerConfig{handler(role)}, ApplicationContext: role, RuntimeBytes: 8192}
+		config := StreamHandlerPlanConfig{Handlers: []RawStreamHandlerConfig{registration}, ApplicationContext: role, RuntimeBytes: 8192}
 		charge, err = StreamHandlerPlanCharge(config)
 		if err != nil {
 			t.Fatal(err)
@@ -59,7 +67,12 @@ func handlerCorePairBeforeRun(t *testing.T, framing string, handler func(role in
 		}
 		role++
 	})
-	pair, configs := initialTestPairPrepared(t, protocolv4.DHProfileX25519, framing, 4, prepare)
+	pair, configs := initialTestPairPrepared(t, protocolv4.DHProfileX25519, framing, 4, func(h *cryptov4.HandshakeConfig, initial *InitialConfig) {
+		prepare(h, initial)
+		if fixtures[h.Role].plan.config.Handlers.Plan != nil && fixtures[h.Role].plan.config.Handlers.Plan.registrations[0].config.Messages != nil {
+			installCoreDeliveryAuthority(t, &fixtures[h.Role], h, initial)
+		}
+	})
 	results := startInitialCorePair(pair, configs, &fixtures)
 	var cores [2]*SessionCore
 	for role := range 2 {
@@ -102,6 +115,9 @@ func handlerCorePairBeforeRun(t *testing.T, framing string, handler func(role in
 			}
 			if err := pair[role].WaitCleanup(cleanup); err != nil {
 				t.Error(role, err)
+			}
+			if fixtures[role].deliveryCleanup != nil {
+				fixtures[role].deliveryCleanup()
 			}
 			if got := fixtures[role].root.Snapshot().Reservations; got != 1 {
 				t.Error("handler assembly retained non-Environment owners", role, got)

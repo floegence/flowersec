@@ -154,6 +154,7 @@ final class V4RekeyCoordinator {
   private var intent: V4LocalWorkWindow?
   private var deadline: V4LocalWorkWindow?
   private var requested = false
+  private var timeoutRecorded = false
   private var clock: V4TrustedClock { access.environment.clock }
   init(
     _ access: V4ReliableSessionAdmission, registry: V4NamespaceRegistry, liveness: V4LivenessState
@@ -182,13 +183,25 @@ final class V4RekeyCoordinator {
         blocks: (bytes + 15) / 16 + calls * 9, ciphertextBytes: bytes + calls * 16))
   }
   func check() throws {
-    try intent?.check()
-    try deadline?.check()
+    do { try intent?.check(); try deadline?.check() }
+    catch {
+      if (error as? V4TimeFailure) == .expired && !timeoutRecorded {
+        timeoutRecorded = true
+        let counter: TransportDiagnosticCounter
+        if let round {
+          counter = round.stage <= 1 ? .rekeyReplyTimeout : round.stage == 2 ? .rekeyCommitTimeout : .rekeyAckTimeout
+        } else { counter = requested ? .rekeyInitTimeout : .rekeyRequestTimeout }
+        access.environment.root.diagnosticCounters.increment(counter)
+      }
+      throw error
+    }
   }
   var frozen: Bool { round != nil }
   func rememberIntent() throws {
     if intent == nil && round == nil {
       intent = try V4LocalWorkWindow(clock: clock, durationMS: credit.period + credit.startBudget)
+      timeoutRecorded = false
+      access.environment.root.diagnosticCounters.increment(.rekeyStarted)
       liveness.beginRekey()
     }
   }
@@ -306,6 +319,8 @@ final class V4RekeyCoordinator {
     try access.channel.rekeyFreeze(access)
     result.outgoing = try owner.rekeySnapshot(access, epoch: state.epoch)
     deadline = try V4LocalWorkWindow(clock: clock, durationMS: 10_000)
+    if intent == nil { access.environment.root.diagnosticCounters.increment(.rekeyStarted) }
+    timeoutRecorded = false
     intent?.cancel()
     intent = nil
     return result
@@ -328,6 +343,7 @@ final class V4RekeyCoordinator {
     deadline?.cancel()
     deadline = nil
     liveness.completeRekey()
+    access.environment.root.diagnosticCounters.increment(.rekeySucceeded)
   }
   @discardableResult func poll(owner: V4ReliableSession, to publisher: any V4RecordPublisher) throws
     -> Bool

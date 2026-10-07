@@ -35,6 +35,9 @@ type managementTask struct {
 }
 
 func managementLaneCharge(c ApplicationExecutorConfig) (resourcev4.Vector, error) {
+	if c.DisableManagement {
+		return resourcev4.Vector{}, nil
+	}
 	// Both protected workers consume the same root task and work dimensions as
 	// the other executor services, even while their lazy startup is deferred.
 	charge := resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(managementLane{})) + 2*128, resourcev4.Items: 3, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2}
@@ -44,6 +47,12 @@ func managementLaneCharge(c ApplicationExecutorConfig) (resourcev4.Vector, error
 		if err != nil {
 			return resourcev4.Vector{}, err
 		}
+	}
+	if c.Profile != ApplicationProfileCustom {
+		if charge[resourcev4.SDKBytes] > 256*1024 {
+			return resourcev4.Vector{}, cryptov4.ErrConfiguration
+		}
+		charge[resourcev4.SDKBytes] = 256 * 1024
 	}
 	return charge, nil
 }

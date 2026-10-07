@@ -220,12 +220,22 @@ func (n *nativeStreamTransport) open(ctx context.Context) (*nativeStreamSlot, er
 }
 
 func (n *nativeStreamTransport) openProtected(ctx context.Context, protection *nativeStreamProtection) (*nativeStreamSlot, error) {
+	return n.openProtectedObserved(ctx, protection, nil)
+}
+
+// The original initializer can retain a scalar observation of the physical
+// slot before provider creation. Observation does not pin retirement or grant
+// another caller authority over that slot.
+func (n *nativeStreamTransport) openProtectedObserved(ctx context.Context, protection *nativeStreamProtection, observe func(*nativeStreamSlot, uint64)) (*nativeStreamSlot, error) {
 	if ctx == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	s, err := n.claimProtected(false, protection)
 	if err != nil {
 		return nil, err
+	}
+	if observe != nil {
+		observe(s, s.generation)
 	}
 	var stream native.Stream
 	if protection != nil {
@@ -247,14 +257,30 @@ func (n *nativeStreamTransport) openProtected(ctx context.Context, protection *n
 	return s, nil
 }
 
+func (n *nativeStreamTransport) slotRetired(s *nativeStreamSlot, generation uint64) bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return !s.used || s.generation != generation
+}
+
 func (n *nativeStreamTransport) finishOpen(s *nativeStreamSlot) {
 	n.mu.Lock()
 	// The original caller pins this generation until all of its cleanup work
 	// returns. Releasing it before Close/Read completion would permit slot ABA.
 	generation := s.generation
 	s.association.mu.Lock()
-	unbound := s.association.scope == 0
+	scope := s.association.scope
 	s.association.mu.Unlock()
+	unbound := scope == 0
+	if !unbound {
+		// A local pre-ticket failure burns its ordinal and removes the
+		// logical preparation. Its native reader must not keep waiting for
+		// an outcome for an OPEN that was never published.
+		n.admission.mu.Lock()
+		logical, err := n.admission.slot(OpenHandle{n.admission, scope})
+		unbound = err != nil || logical.carrier != &s.association
+		n.admission.mu.Unlock()
+	}
 	closed := n.closed
 	if (closed || unbound) && !s.readyClosed {
 		close(s.ready)
@@ -455,6 +481,13 @@ func (n *nativeStreamTransport) progress(s *nativeStreamSlot) {
 	if bound && slot.bootstrap {
 		decided = decided && a.bootstrap.complete && a.bootstrap.materialized && !slot.deciding
 	}
+	if decided {
+		// Admission completed for this original native generation. Its logical
+		// proof can later compact or retire before this physical slot is released;
+		// that must not reactivate the already completed OPEN deadline. Stream
+		// termination and provider cleanup retain their independent owners.
+		s.deadline = nil
+	}
 	if decided && !s.readyClosed {
 		close(s.ready)
 		s.readyClosed = true
@@ -566,11 +599,15 @@ func (n *nativeStreamTransport) dispose(s *nativeStreamSlot, generation uint64) 
 			_ = n.admission.CarrierClosed(OpenHandle{n.admission, scope})
 		}
 	}
+	n.mu.Lock()
 	n.admission.mu.Lock()
 	slot, err := n.admission.slot(OpenHandle{n.admission, scope})
 	retained := scope != 0 && err == nil && slot.carrier == &s.association && !n.admission.closed
-	n.admission.mu.Unlock()
-	n.mu.Lock()
+	if err == nil && slot.carrier == &s.association && (!retained || n.closed) {
+		// Admission cleanup readers use this alias after native Close too.
+		// Detach it under their lock before clearing the original slot.
+		slot.carrier = nil
+	}
 	s.carrierDone = true
 	s.retiring = false
 	if !retained || n.closed {
@@ -583,6 +620,7 @@ func (n *nativeStreamTransport) dispose(s *nativeStreamSlot, generation uint64) 
 		}
 		*s = nativeStreamSlot{protection: protection}
 	}
+	n.admission.mu.Unlock()
 	n.finishLocked()
 	n.mu.Unlock()
 	n.notify()

@@ -2,6 +2,7 @@
 // retries, GC-based refunds or Node dependency. One root must be shared by all
 // participating Environments for a deployment-wide bound to mean anything.
 
+import type { DiagnosticCounters } from "./diagnosticCounters.js";
 const maximum = (1n << 64n) - 1n;
 const scopeLimit = 8;
 const capability = Symbol("resource capability");
@@ -85,8 +86,40 @@ export interface ResourceOwner {
   readonly kind: string;
   readonly backing: string;
 }
+/** Trusted local admission only, independent of the signed application profile. */
+export type ApplicationResourceProfile = "" | "client" | "server" | "constrained";
+export interface ApplicationResourceLimits {
+  readonly bytes: bigint;
+  readonly running: number;
+  readonly ready: number;
+  readonly residentRunning: number;
+  readonly residentReady: number;
+  readonly queryOwners: number;
+}
+function applicationResourceLimits(profile: ApplicationResourceProfile, custom: ApplicationResourceLimits | undefined): Readonly<ApplicationResourceLimits> {
+  if (profile === "client" || profile === "server") {
+    if (custom !== undefined) fail("configuration_capacity");
+    return Object.freeze({ bytes: 7n * 1024n * 1024n, running: 26, ready: 52, residentRunning: 18, residentReady: 36, queryOwners: 12 });
+  }
+  if (profile === "constrained") {
+    if (custom !== undefined) fail("configuration_capacity");
+    return Object.freeze({ bytes: 3n * 1024n * 1024n, running: 8, ready: 16, residentRunning: 6, residentReady: 12, queryOwners: 6 });
+  }
+  if (profile !== "" || custom === undefined) fail("configuration_capacity");
+  const value = Object.freeze({ bytes: custom.bytes, running: custom.running, ready: custom.ready,
+    residentRunning: custom.residentRunning, residentReady: custom.residentReady, queryOwners: custom.queryOwners });
+  if (typeof value.bytes !== "bigint" || value.bytes < 262144n || value.bytes > 1n << 30n ||
+      [value.running, value.ready, value.residentRunning, value.residentReady, value.queryOwners].some(n => !Number.isSafeInteger(n) || n < 1) ||
+      value.running > 128 || value.ready > 256 || value.residentRunning >= value.running || value.residentReady >= value.ready ||
+      value.queryOwners < 3 || value.queryOwners > 128) fail("configuration_capacity");
+  return value;
+}
 export interface ResourceRootConfig {
   readonly profileRevision: string;
+  /** Fixed on the shared budget authority; every Environment on this root
+   * uses the same application execution service envelope. */
+  readonly applicationResourceProfile?: ApplicationResourceProfile;
+  readonly applicationResources?: ApplicationResourceLimits;
   readonly limit: ResourceVector;
   readonly accounts: number;
   readonly reservations: number;
@@ -225,6 +258,12 @@ export class ProtectedResourceAccounts {
 
 interface Handle { root: ResourceRoot | undefined; index: number; generation: bigint }
 const accounts = new WeakMap<ResourceAccount, Handle>();
+const accountDiagnostics = new WeakMap<ResourceAccount, DiagnosticCounters>();
+/** Original Environment-owned counter storage; no application callback. */
+export function bindResourceDiagnostics(account: ResourceAccount, counters: DiagnosticCounters): void {
+  if (!accounts.has(account) || accountDiagnostics.has(account)) fail("invalid_resource_owner");
+  accountDiagnostics.set(account, counters);
+}
 const references = new WeakMap<ResourceReference, Handle>();
 
 /** A single shared runtime service is charged at its actual budget root.
@@ -282,6 +321,13 @@ export class ResourceReference {
   /** Move unique backing responsibility without refunding it between owners. */
   moveBytesTo(destination: ResourceReference, bytes: bigint): void { referenceRoot(this).moveBytes(this, destination, bytes); }
   borrow(): ResourceReference { return referenceRoot(this).borrow(this); }
+  /** Retain one original backing through another same-Environment owner's
+   * account scopes without refunding or double charging the shared root. */
+  borrowInScopesOf(other: ResourceReference): ResourceReference {
+    const root = referenceRoot(this);
+    if (root !== referenceRoot(other)) fail("invalid_resource_owner");
+    return root.borrowInScopesOf(this,other);
+  }
   transfer(owner: ResourceOwner, eventID: string, scopes: readonly ResourceAccount[]): ResourceReference {
     return referenceRoot(this).transfer(this, owner, eventID, scopes);
   }
@@ -317,6 +363,8 @@ export interface ResourceSnapshot {
 
 export class ResourceRoot {
   readonly profileRevision: string;
+  readonly applicationResourceProfile: ApplicationResourceProfile;
+  readonly applicationResources: Readonly<ApplicationResourceLimits>;
   readonly #limit: BigUint64Array;
   readonly #used: BigUint64Array;
   readonly #peak: BigUint64Array;
@@ -359,7 +407,8 @@ export class ResourceRoot {
 
   constructor(config: ResourceRootConfig) {
     // Capture all caller properties before constructing or charging the root.
-    const profileRevision = identity(config.profileRevision, 64);
+    const profileRevision = identity(config.profileRevision, 64), profile = config.applicationResourceProfile ?? "client";
+    const applicationResources = applicationResourceLimits(profile, config.applicationResources);
     const limit = data(config.limit).slice(), a = positiveSize(config.accounts), c = positiveSize(config.reservations), r = positiveSize(config.references);
     const runtime = [config.rootRuntimeBytes, config.accountRuntimeBytes, config.reservationRuntimeBytes, config.referenceRuntimeBytes];
     for (const n of runtime) if (quantity(n) === 0n) fail("configuration_capacity");
@@ -373,6 +422,8 @@ export class ResourceRoot {
     }
     if (backing > limit[0]!) fail("configuration_capacity");
     this.profileRevision = profileRevision;
+    this.applicationResourceProfile = profile;
+    this.applicationResources = applicationResources;
     this.#limit = limit;
     this.#used = new BigUint64Array(dimensions); this.#used[0] = backing;
     this.#peak = this.#used.slice();
@@ -563,6 +614,24 @@ export class ResourceRoot {
       captured.push({ owner, vector, handles });
     }
     // Everything below uses only captured primitive values and SDK objects.
+    try { return this.#reserveCaptured(captured); }
+    catch (error) {
+      if (error instanceof ResourceError && (error.code === "resource_exhausted" || error.code === "invalid_resource_owner")) {
+        const observed = new Set<DiagnosticCounters>();
+        for (const request of captured) for (const handle of request.handles) {
+          const counters = accountDiagnostics.get(handle);
+          if (counters !== undefined && !observed.has(counters)) {
+            observed.add(counters);
+            counters.observe(error.code === "resource_exhausted" ? "resource_rejection" : "reservation_conflict",
+              { code: error.code === "resource_exhausted" ? "resource_exhausted" : "reservation_conflict" });
+          }
+        }
+      }
+      throw error;
+    }
+  }
+  #reserveCaptured(captured: readonly { owner: ResourceOwner; vector: BigUint64Array; handles: ResourceAccount[] }[]): ResourceReference[] {
+    const count = captured.length;
     if (this.#closed) fail("admission_closed");
     const requests = captured.map(r => ({ ...r, scopes: this.#scopes(r.owner, r.handles) }));
     this.#pending.fill(0n);
@@ -687,6 +756,35 @@ export class ResourceRoot {
     }
     return this.#alias(source, charge, source.owner!, Array.from(source.accounts.subarray(0, source.count)), false);
   }
+  borrowInScopesOf(ref: ResourceReference, other: ResourceReference): ResourceReference {
+    const [source,charge] = this.#reference(ref), [destination] = this.#reference(other);
+    if (!source.primary || source.transferID !== "" ||
+        source.owner!.tenant !== destination.owner!.tenant || source.owner!.environment !== destination.owner!.environment) fail("invalid_resource_owner");
+    const scopes = Array.from(source.accounts.subarray(0,source.count));
+    for (const index of destination.accounts.subarray(0,destination.count)) if (!scopes.includes(index)) scopes.push(index);
+    const protection = charge.protection;
+    if (protection !== undefined) {
+      const index = protection.indices.slice(1).find(at => this.#refs[at]!.idle && this.#refs[at]!.generation < maximum);
+      if (index === undefined) fail("resource_exhausted");
+      const union = Array.from(charge.accounts.subarray(0, charge.count));
+      for (const scope of scopes) if (!union.includes(scope)) union.push(scope);
+      if (union.length > scopeLimit) fail("resource_exhausted");
+      const alias = this.#refs[index]!;
+      const extra = scopes.filter(scope => !alias.accounts.subarray(0, alias.count).includes(scope));
+      for (const scope of extra) if (!charge.accounts.subarray(0, charge.count).includes(scope) && !fits(this.#accounts[scope]!.used, this.#accounts[scope]!.limit, charge.vector)) fail("resource_exhausted");
+      const result = new ResourceReference(capability, this, index, alias.generation + 1n);
+      for (const scope of extra) {
+        let at = charge.accounts.subarray(0, charge.count).indexOf(scope);
+        if (at < 0) {
+          at = charge.count++; charge.accounts[at] = scope; charge.accountRefs[at] = 0;
+          increase(this.#accounts[scope]!.used, charge.vector); this.#accounts[scope]!.charges++;
+        }
+        charge.accountRefs[at] = charge.accountRefs[at]! + 1; alias.accounts[alias.count++] = scope;
+      }
+      alias.generation++; alias.idle = false; alias.primary = false; alias.owner = source.owner; return result;
+    }
+    return this.#alias(source,charge,source.owner!,scopes,false);
+  }
   #alias(source: ReferenceSlot, charge: ChargeSlot, owner: ResourceOwner, scopes: number[], primary: boolean): ResourceReference {
     // Preflight the union as well as each new account before mutating anything.
     const union = Array.from(charge.accounts.subarray(0, charge.count));
@@ -738,6 +836,21 @@ export class ResourceRoot {
     if (s === undefined || !s.active || s.generation !== h.generation) return;
     const c = this.#charges[s.charge]!;
     if (c.protection?.indices.includes(h.index)) {
+      if (h.index !== c.protection.indices[0]) {
+        const primary = this.#refs[c.protection.indices[0]!]!;
+        for (let i = s.count - 1; i >= 0; i--) {
+          const account = s.accounts[i]!;
+          if (primary.accounts.subarray(0, primary.count).includes(account)) continue;
+          const at = c.accounts.subarray(0, c.count).indexOf(account);
+          c.accountRefs[at] = c.accountRefs[at]! - 1;
+          if (c.accountRefs[at] === 0) {
+            const scope = this.#accounts[account]!; decrease(scope.used, c.vector); scope.charges--; this.#collectAccount(scope);
+            c.count--; c.accounts[at] = c.accounts[c.count]!; c.accountRefs[at] = c.accountRefs[c.count]!;
+            c.accounts[c.count] = -1; c.accountRefs[c.count] = 0;
+          }
+          s.count--; s.accounts[i] = s.accounts[s.count]!; s.accounts[s.count] = -1;
+        }
+      }
       s.idle = true;
       this.#finishProtection(c);
       this.#changed();
@@ -841,8 +954,9 @@ export class ResourceRoot {
     const [original] = this.#protection(handle), owner = this.#refs[original.indices[0]!]!.owner!;
     const scopes = this.#scopes(owner, inputScopes);
     const [p, c] = this.#protection(handle), s = this.#refs[p.indices[0]!]!, state = p.bytes;
-    if (state === undefined || state.active || state.scopes.some(index => !scopes.includes(index))) fail("invalid_resource_owner");
+    if (state === undefined || state.scopes.some(index => !scopes.includes(index))) fail("invalid_resource_owner");
     this.#checkProtectedCheckout(p, c, s);
+    if (state.active) fail("resource_exhausted");
     const total = add(state.floor, bytes);
     if (bytes > this.#limit[0]! - this.#used[0]!) fail("resource_exhausted");
     const extra = scopes.filter(index => !state.scopes.includes(index));

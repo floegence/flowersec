@@ -4,7 +4,7 @@ import XCTest
 
 @testable import Flowersec
 
-final class TransportV4CryptoVectorTests: XCTestCase {
+final class TransportCryptoVectorTests: XCTestCase {
   func testProductionNoiseMatchesBothSharedTranscriptsAndAllNegativeFlights() throws {
     let corpus = try cryptoCorpus("noise")
     let input = corpus["inputs"]

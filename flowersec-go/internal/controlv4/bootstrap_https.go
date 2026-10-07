@@ -190,6 +190,16 @@ func (p *HTTPSBootstrapProvider) read(ctx context.Context, path string, bootstra
 // ambient credentials. Pool application errors use HTTP 409 with the same
 // explicit CBOR content contract; a status alone never proves a terminal.
 func (p *HTTPSBootstrapProvider) exchange(ctx context.Context, method, path string, query url.Values, body, out []byte, exact, poolResult bool) (n int, applicationError bool, err error) {
+	return p.exchangeContent(ctx, method, path, query, body, out, exact, poolResult, "application/cbor")
+}
+
+// Registered application control uses bounded JSON over the same physical
+// request owner. Its HTTP response may have chunked framing; credential CBOR
+// exchanges keep the existing explicit-length requirement.
+func (p *HTTPSBootstrapProvider) exchangeContent(ctx context.Context, method, path string, query url.Values, body, out []byte, exact, poolResult bool, contentType string) (n int, applicationError bool, err error) {
+	if contentType != "application/cbor" && contentType != "application/json" {
+		return 0, false, resourcev4.ErrConfiguration
+	}
 	if p == nil || ctx == nil {
 		return 0, false, resourcev4.ErrConfiguration
 	}
@@ -254,13 +264,13 @@ func (p *HTTPSBootstrapProvider) exchange(ctx context.Context, method, path stri
 		err = call.start(ctx)
 	}
 	if err == nil {
-		n, applicationError, err = p.exchangeBody(call, cfg, endpoint, tlsConfig, method, path, query, body, out, exact, poolResult)
+		n, applicationError, err = p.exchangeBody(call, cfg, endpoint, tlsConfig, method, path, query, body, out, exact, poolResult, contentType)
 	}
 	returned = true
 	return n, applicationError, err
 }
 
-func (p *HTTPSBootstrapProvider) exchangeBody(call *controlCallContext, cfg HTTPSBootstrapConfig, endpoint url.URL, tlsConfig *tls.Config, method, path string, query url.Values, body, out []byte, exact, poolResult bool) (n int, applicationError bool, err error) {
+func (p *HTTPSBootstrapProvider) exchangeBody(call *controlCallContext, cfg HTTPSBootstrapConfig, endpoint url.URL, tlsConfig *tls.Config, method, path string, query url.Values, body, out []byte, exact, poolResult bool, contentType string) (n int, applicationError bool, err error) {
 	var conn net.Conn
 	var response *http.Response
 	// These defers run before the outer call's final ownership gate, including
@@ -307,9 +317,9 @@ func (p *HTTPSBootstrapProvider) exchangeBody(call *controlCallContext, cfg HTTP
 	}
 	request.Close = true
 	if body != nil {
-		request.Header.Set("Content-Type", "application/cbor")
+		request.Header.Set("Content-Type", contentType)
 	}
-	request.Header.Set("Accept", "application/cbor")
+	request.Header.Set("Accept", contentType)
 	request.Header.Set("Cache-Control", "no-store")
 	// A TLS policy callback can outlive Close or caller cancellation. Observe
 	// the original gate before starting HTTP publication; the cancellation
@@ -350,7 +360,38 @@ func (p *HTTPSBootstrapProvider) exchangeBody(call *controlCallContext, cfg HTTP
 		return 0, false, err
 	}
 	header.active = false
-	if response.ProtoMajor != 1 || response.ProtoMinor != 1 || (response.StatusCode != http.StatusOK && (!poolResult || response.StatusCode != http.StatusConflict)) || len(response.TransferEncoding) != 0 || response.ContentLength <= 0 || response.ContentLength > int64(len(out)) || exact && response.ContentLength != int64(len(out)) || response.Header.Get("Content-Encoding") != "" || response.Header.Get("Content-Type") != "application/cbor" {
+	if response.ProtoMajor != 1 || response.ProtoMinor != 1 || (response.StatusCode != http.StatusOK && (!poolResult || response.StatusCode != http.StatusConflict)) || response.Header.Get("Content-Encoding") != "" || response.Header.Get("Content-Type") != contentType {
+		return 0, false, ErrResponse
+	}
+	if contentType == "application/json" {
+		if exact || poolResult || response.ContentLength == 0 || response.ContentLength > int64(len(out)) || len(response.TransferEncoding) > 1 || len(response.TransferEncoding) == 1 && response.TransferEncoding[0] != "chunked" {
+			return 0, false, ErrResponse
+		}
+		for n < len(out) {
+			if err = call.Err(); err != nil {
+				return 0, false, err
+			}
+			var count int
+			count, err = response.Body.Read(out[n:])
+			n += count
+			if err == io.EOF {
+				if n == 0 || len(response.Trailer) != 0 {
+					return 0, false, ErrResponse
+				}
+				return n, false, call.Err()
+			}
+			if err != nil {
+				return 0, false, err
+			}
+		}
+		var extra [1]byte
+		count, readErr := response.Body.Read(extra[:])
+		if count != 0 || readErr != io.EOF || len(response.Trailer) != 0 {
+			return 0, false, ErrResponse
+		}
+		return n, false, call.Err()
+	}
+	if len(response.TransferEncoding) != 0 || response.ContentLength <= 0 || response.ContentLength > int64(len(out)) || exact && response.ContentLength != int64(len(out)) {
 		return 0, false, ErrResponse
 	}
 	applicationError = response.StatusCode == http.StatusConflict

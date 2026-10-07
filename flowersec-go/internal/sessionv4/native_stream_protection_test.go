@@ -47,8 +47,11 @@ func TestNativeCallerFloorAdoptsOriginalProviderAtFullCapacity(t *testing.T) {
 	if err != nil {
 		t.Fatal("installation requested a second provider position", err)
 	}
-	if floor.native == nil || floor.native.provider != original[0] || floor.provider != nil || floor.connection != nil || floor.plan != p || p.root.Snapshot() != before {
+	if floor.native == nil || floor.native.provider != original[0] || floor.provider != nil || floor.connection != nil || floor.plan != p {
 		t.Fatal("installation replaced the original transport vector")
+	}
+	if after := p.root.Snapshot(); after != before {
+		t.Fatalf("installation changed root resources: before=%+v after=%+v", before, after)
 	}
 	if err := floor.checkAvailable(); err != nil {
 		t.Fatal(err)

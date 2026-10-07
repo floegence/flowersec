@@ -327,6 +327,7 @@ func (ref Reference) ClaimApplicationExecutor() error {
 		return ErrOwner
 	}
 	r.applicationExecutorClaimed = true
+	c.applicationService = true
 	return nil
 }
 
@@ -409,6 +410,117 @@ func (ref Reference) Borrow() (Reference, error) {
 	borrow := &r.refs[index]
 	*borrow = referenceSlot{generation: borrow.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: s.owner, accounts: s.accounts, count: s.count, active: true}
 	r.attachScopes(c, s.accounts[:s.count])
+	c.refs++
+	r.referenceCount++
+	return Reference{r, uint32(index), borrow.generation}, nil
+}
+
+// BorrowInScopesOf retains the same physical backing in the union of its
+// original scopes and another live owner's scopes in this Environment. It
+// preserves the original owner identity and grants no ownership-transfer right.
+// Each account is charged once until its last actual reference exits.
+func (ref Reference) BorrowInScopesOf(other Reference) (Reference, error) {
+	if ref.root == nil || ref.root != other.root {
+		return Reference{}, ErrOwner
+	}
+	r := ref.root
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, c := ref.slotsLocked()
+	input, inputCharge := other.slotsLocked()
+	if s == nil || input == nil || !s.primary || s.transferID != [16]byte{} || c.protected != nil ||
+		s.owner.Environment != input.owner.Environment {
+		return Reference{}, ErrOwner
+	}
+	if err := r.checkCharge(s, c); err != nil {
+		return Reference{}, err
+	}
+	if err := r.checkCharge(input, inputCharge); err != nil {
+		return Reference{}, err
+	}
+	// The original trusted tenant and Environment account generations must
+	// agree. Unioning Session/direction scopes must never widen ancestry.
+	for _, pair := range [...]struct{ source, destination *referenceSlot }{{s, input}, {input, s}} {
+		for _, account := range pair.source.accounts[:pair.source.count] {
+			kind := account.slotLocked(r).key.Kind
+			if (kind == TenantAccount || kind == EnvironmentAccount) &&
+				accountIndex(pair.destination.accounts[:pair.destination.count], account) < 0 {
+				return Reference{}, ErrOwner
+			}
+		}
+	}
+	var accounts [MaxAccountsPerCharge]Account
+	count := copy(accounts[:], s.accounts[:s.count])
+	for _, account := range input.accounts[:input.count] {
+		if accountIndex(accounts[:count], account) >= 0 {
+			continue
+		}
+		if count == len(accounts) {
+			return Reference{}, ErrCapacity
+		}
+		accounts[count], count = account, count+1
+	}
+	scopes, count, err := r.scopeSet(s.owner, c.value, accounts[:count], c)
+	if err != nil {
+		return Reference{}, err
+	}
+	index := r.freeReference()
+	if index < 0 {
+		return Reference{}, ErrCapacity
+	}
+	borrow := &r.refs[index]
+	*borrow = referenceSlot{generation: borrow.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: s.owner, accounts: scopes, count: count, active: true}
+	r.attachScopes(c, scopes[:count])
+	c.refs++
+	r.referenceCount++
+	return Reference{r, uint32(index), borrow.generation}, nil
+}
+
+// BorrowApplicationService attaches the unique root service to the exact
+// tenant/Environment ancestors of a real invocation. Shared capacity is charged
+// once in each scope and once physically in the root, even across borrowers.
+// It adds no callback or protocol authority and cannot attach arbitrary backing.
+func (ref Reference) BorrowApplicationService(invocation Reference) (Reference, error) {
+	if ref.root == nil || ref.root != invocation.root {
+		return Reference{}, ErrOwner
+	}
+	r := ref.root
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, c := ref.slotsLocked()
+	input, inputCharge := invocation.slotsLocked()
+	if s == nil || input == nil || !s.primary || !c.applicationService {
+		return Reference{}, ErrOwner
+	}
+	if err := r.checkCharge(s, c); err != nil {
+		return Reference{}, err
+	}
+	if err := r.checkCharge(input, inputCharge); err != nil {
+		return Reference{}, err
+	}
+	var accounts [MaxAccountsPerCharge]Account
+	count := copy(accounts[:], s.accounts[:s.count])
+	for _, account := range input.accounts[:input.count] {
+		kind := account.slotLocked(r).key.Kind
+		if kind != TenantAccount && kind != EnvironmentAccount || accountIndex(accounts[:count], account) >= 0 {
+			continue
+		}
+		if count == len(accounts) {
+			return Reference{}, ErrCapacity
+		}
+		accounts[count], count = account, count+1
+	}
+	scopes, count, err := r.scopeSet(input.owner, c.value, accounts[:count], c)
+	if err != nil {
+		return Reference{}, err
+	}
+	index := r.freeReference()
+	if index < 0 {
+		return Reference{}, ErrCapacity
+	}
+	borrow := &r.refs[index]
+	*borrow = referenceSlot{generation: borrow.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: input.owner, accounts: scopes, count: count, active: true}
+	r.attachScopes(c, scopes[:count])
 	c.refs++
 	r.referenceCount++
 	return Reference{r, uint32(index), borrow.generation}, nil

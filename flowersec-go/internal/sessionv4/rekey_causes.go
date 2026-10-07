@@ -31,16 +31,16 @@ type RekeyCauses struct {
 	liveness  *Liveness
 }
 type RekeyIntent struct {
-	causes                                           *RekeyCauses
-	epoch                                            uint32
-	manual                                           int
-	peer, submitted, cancelled, completed, preparing bool
-	peerAt, startAt                                  timev4.Sample
-	startFixed                                       bool
-	securityDeadline                                 uint64
-	securityGate                                     *timev4.Deadline
-	exchange                                         *RekeyExchange
-	failure                                          error
+	causes                                                     *RekeyCauses
+	epoch                                                      uint32
+	manual                                                     int
+	peer, submitted, cancelled, completed, preparing, switched bool
+	peerAt, startAt                                            timev4.Sample
+	startFixed                                                 bool
+	securityDeadline                                           uint64
+	securityGate                                               *timev4.Deadline
+	exchange                                                   *RekeyExchange
+	failure                                                    error
 }
 type ManualRekeyRef struct {
 	intent     *RekeyIntent
@@ -217,15 +217,25 @@ func (c *RekeyCauses) Peer(record *ReceivedRecord) (intent *RekeyIntent, err err
 }
 
 func (c *RekeyCauses) Safety(deadline uint64) (*RekeyIntent, error) {
-	if deadline == 0 {
-		return nil, cryptov4.ErrConfiguration
-	}
 	frontier, err := c.admission.engine.ScopeFrontier(0, c.admission.direction)
 	if err != nil {
 		return nil, err
 	}
+	return c.safety(frontier.Epoch, deadline)
+}
+
+// safety binds the sampled deadline to its original epoch. A completed switch
+// must not attach an old root's delayed safety observation to a new round.
+func (c *RekeyCauses) safety(epoch uint32, deadline uint64) (*RekeyIntent, error) {
+	if deadline == 0 {
+		return nil, cryptov4.ErrConfiguration
+	}
 	c.mu.Lock()
-	i, err := c.intent(frontier.Epoch)
+	if c.current != nil && c.current.switched {
+		c.mu.Unlock()
+		return nil, cryptov4.ErrTransition
+	}
+	i, err := c.intent(epoch)
 	if err != nil {
 		c.mu.Unlock()
 		return nil, err
@@ -351,7 +361,7 @@ func (c *RekeyCauses) Prepare(i *RekeyIntent, b *Barriers, w *RecordWriter, hard
 func (i *RekeyIntent) LockTicket() error {
 	c := i.causes
 	c.mu.Lock()
-	if c.closed || c.current != i || i.cancelled || i.completed || i.submitted || i.manual == 0 && !i.peer && i.securityDeadline == 0 {
+	if c.closed || c.current != i || i.cancelled || i.completed || i.switched || i.submitted || i.manual == 0 && !i.peer && i.securityDeadline == 0 {
 		c.mu.Unlock()
 		return ErrRekeyCancelled
 	}
@@ -397,6 +407,42 @@ func (i *RekeyIntent) isCancelled() bool {
 	defer i.causes.mu.Unlock()
 	return i.cancelled
 }
+func (i *RekeyIntent) isSwitched() bool {
+	if i == nil || i.causes == nil {
+		return false
+	}
+	i.causes.mu.Lock()
+	defer i.causes.mu.Unlock()
+	return i.switched
+}
+
+// The Engine acquires this original cause gate before changing its root. The
+// lock order matches INIT ticket publication: Engine, then cause owner.
+func (i *RekeyIntent) LockEpochSwitch() error {
+	c := i.causes
+	c.mu.Lock()
+	if c.closed || c.current != i || i.cancelled || i.completed || i.switched {
+		c.mu.Unlock()
+		return cryptov4.ErrTransition
+	}
+	if i.securityGate != nil {
+		if err := i.securityGate.Check(); err != nil {
+			c.mu.Unlock()
+			return rekeyTimeError(err)
+		}
+	}
+	return nil
+}
+
+func (i *RekeyIntent) UnlockEpochSwitch(switched bool) {
+	if switched {
+		i.switched = true
+		i.securityGate = nil
+		i.securityDeadline = 0
+	}
+	i.causes.mu.Unlock()
+}
+
 func (i *RekeyIntent) complete() {
 	c := i.causes
 	c.mu.Lock()

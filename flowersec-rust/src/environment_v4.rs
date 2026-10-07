@@ -2,14 +2,14 @@
 //! No system wall-clock fallback or caller-supplied authorization grant exists.
 
 use crate::namespace_v4::{
-    NamespaceAnchor, NamespaceBinding, NamespaceKey, NamespaceRegistry, SubscriptionId,
-    VerifiedNamespaceUpdate,
+    NamespaceAnchor, NamespaceBinding, NamespaceKey, NamespaceRegistry, PendingNamespaceCandidate,
+    SubscriptionId, VerifiedNamespaceHead, VerifiedNamespaceUpdate,
 };
 use std::{
     fmt,
     sync::{
         Arc, Mutex, Weak,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -27,6 +27,14 @@ pub enum EnvironmentError {
     TimeUnavailable,
     #[error("Flowersec trusted time has not proved the required lower bound")]
     TimePending,
+    #[error("Flowersec trusted time was not proven within the original wait window")]
+    TimeNotProven,
+    #[error("Flowersec signed issuance is later than the trusted time upper bound")]
+    FutureTimestamp,
+    #[error("Flowersec original bootstrap acquisition window expired")]
+    BootstrapDeadline,
+    #[error("Flowersec signed namespace material expired")]
+    MaterialExpired,
     #[error("Flowersec authorization is no longer valid")]
     AuthorizationDenied,
 }
@@ -179,6 +187,9 @@ impl AutomaticLivenessPolicy {
 
 #[derive(Clone, Debug)]
 pub struct TransportEnvironmentOptions {
+    pub application_executor: crate::application_profile_v4::ApplicationExecutorConfig,
+    /// Optional detailed production observations on an independent bounded lane.
+    pub diagnostics: Option<crate::DiagnosticSinkConfiguration>,
     pub root_limits: ResourceLimits,
     pub tenant_limits: ResourceLimits,
     pub session_limits: ResourceLimits,
@@ -195,6 +206,8 @@ pub struct TransportEnvironmentOptions {
 impl Default for TransportEnvironmentOptions {
     fn default() -> Self {
         Self {
+            application_executor: crate::application_profile_v4::ApplicationExecutorConfig::default(
+            ),
             root_limits: ResourceLimits {
                 sdk_bytes: 67108864,
                 provider_bytes: 134217728,
@@ -243,6 +256,7 @@ impl Default for TransportEnvironmentOptions {
             clock: None,
             time_profile: TrustedTimeProfile::default(),
             automatic_liveness: None,
+            diagnostics: None,
         }
     }
 }
@@ -311,7 +325,7 @@ impl TrustedTimeProfile {
                 .map_err(|_| EnvironmentError::TimeUnavailable)?,
         ))
     }
-    fn project(
+    pub(crate) fn project(
         self,
         sample: TrustedTimeSample,
         now: Instant,
@@ -396,6 +410,16 @@ pub(crate) struct EnvironmentRoot {
     pub(crate) changed: Notify,
     pool_backings: Mutex<Vec<Arc<crate::pool_v4::Backing>>>,
     pool_stores: Mutex<Vec<Weak<crate::pool_v4::SQLitePoolStore>>>,
+    execution_services: Mutex<Vec<Arc<crate::execution_history::HistoryOwner>>>,
+    reference_stores: Mutex<Vec<Arc<crate::sqlite_reference_store_v4::ReferenceOwner>>>,
+    execution_stores: Mutex<Vec<Arc<crate::sqlite_execution_store_v4::ExecutionStoreOwner>>>,
+    application_service: Mutex<Weak<crate::application_executor_v4::ApplicationServices>>,
+    material_controllers: Mutex<Vec<Weak<crate::connection_controller_v4::Owner>>>,
+    material_sources: Mutex<Vec<Weak<crate::material_source_v4::Owner>>>,
+    diagnostic_sinks: Mutex<Vec<Weak<crate::diagnostics_v4::Inner>>>,
+    production_diagnostics: Mutex<Option<crate::DiagnosticSink>>,
+    diagnostic_counters: Arc<crate::diagnostics_v4::DiagnosticCounters>,
+    cleanup_timeout_reported: AtomicBool,
 }
 #[derive(Debug)]
 struct RootState {
@@ -419,12 +443,15 @@ struct AccountLease {
     generation: u64,
     source: Mutex<Option<ResourceAccount>>,
     subscriptions: Mutex<Option<Arc<NamespaceSubscriptions>>>,
+    business_work: AtomicUsize,
 }
 #[derive(Debug)]
+// Candidate namespace closures contain at most eight references. These fixed
+// positions are included in the Environment account backing prepayment.
 struct NamespaceSubscriptions {
     root: Arc<EnvironmentRoot>,
-    ids: [Option<SubscriptionId>; 5],
-    wakes: [Option<Arc<Notify>>; 5],
+    ids: [Option<SubscriptionId>; 8],
+    wakes: [Option<Arc<Notify>>; 8],
 }
 impl Drop for NamespaceSubscriptions {
     fn drop(&mut self) {
@@ -490,13 +517,65 @@ pub(crate) struct EnvironmentCharge {
     transferred: bool,
 }
 impl EnvironmentCharge {
+    /// Reduce the original root reservation to its verified exact geometry.
+    /// The retained dimensions never leave the original reservation and are
+    /// not reacquired, so another owner cannot consume them between stages.
+    pub(crate) fn shrink_to(&mut self, value: ResourceLimits) -> Result<(), EnvironmentError> {
+        if self.transferred || !value.fits(self.value) {
+            return Err(EnvironmentError::Configuration);
+        }
+        let mut released = self.value;
+        released.subtract(value);
+        let mut state = self
+            .root
+            .state
+            .lock()
+            .expect("original backing contraction");
+        state.accounts[0].used.subtract(released);
+        self.value = value;
+        drop(state);
+        self.root.changed.notify_waiters();
+        Ok(())
+    }
+    /// Replace speculative preauth backing with the exact original account
+    /// reservation made before native preparation. The physical owner keeps
+    /// that reservation; only duplicate root prepayment is removed here.
+    pub(crate) fn attach_prepaid(
+        &mut self,
+        account: &ResourceAccount,
+        prepaid: ResourceCharge,
+    ) -> Result<ResourceCharge, EnvironmentError> {
+        if self.transferred
+            || !Arc::ptr_eq(&self.root, &account.root)
+            || !Arc::ptr_eq(&prepaid.account.root, &account.root)
+            || prepaid.account.index != account.index
+            || prepaid.account.generation != account.generation
+            || !self.value.fits(prepaid.value)
+            || !prepaid.value.fits(self.value)
+        {
+            return Err(EnvironmentError::Configuration);
+        }
+        let sample = self.root.sample()?;
+        let mut state = self
+            .root
+            .state
+            .lock()
+            .expect("original prepared backing transfer");
+        account.validate_locked(&mut state, sample)?;
+        state.accounts[0].used.subtract(self.value);
+        state.accounts[0].references -= 1;
+        self.transferred = true;
+        drop(state);
+        self.root.changed.notify_waiters();
+        Ok(prepaid)
+    }
     /// Transfer actual preauth backing into the authenticated tenant/Session
     /// chain without refunding or reacquiring its existing root charge.
     pub(crate) fn attach(
         &mut self,
         account: &ResourceAccount,
     ) -> Result<ResourceCharge, EnvironmentError> {
-        if !Arc::ptr_eq(&self.root, &account.root) {
+        if self.transferred || !Arc::ptr_eq(&self.root, &account.root) {
             return Err(EnvironmentError::Configuration);
         }
         let sample = self.root.sample()?;
@@ -539,8 +618,169 @@ impl Drop for EnvironmentCharge {
         self.root.changed.notify_waiters();
     }
 }
+#[derive(Debug)]
+pub(crate) struct ApplicationServiceBacking {
+    physical: EnvironmentCharge,
+}
+#[derive(Debug)]
+pub(crate) struct ApplicationServiceCharge {
+    account: Option<ResourceAccount>,
+    value: ResourceLimits,
+    _backing: Arc<ApplicationServiceBacking>,
+}
+impl ApplicationServiceBacking {
+    pub(crate) fn new(
+        root: &Arc<EnvironmentRoot>,
+        value: ResourceLimits,
+    ) -> Result<Arc<Self>, EnvironmentError> {
+        Ok(Arc::new(Self {
+            physical: root.reserve_environment(value)?,
+        }))
+    }
+    pub(crate) fn borrow(
+        self: &Arc<Self>,
+        account: &ResourceAccount,
+        value: ResourceLimits,
+    ) -> Result<ApplicationServiceCharge, EnvironmentError> {
+        if !Arc::ptr_eq(&self.physical.root, &account.root) || !value.fits(self.physical.value) {
+            return Err(EnvironmentError::Configuration);
+        }
+        let sample = account.root.sample()?;
+        let mut state = account
+            .root
+            .state
+            .lock()
+            .expect("application service attachment");
+        let chain = account.validate_locked(&mut state, sample)?;
+        for index in chain.into_iter().flatten().filter(|index| *index != 0) {
+            state.accounts[index]
+                .used
+                .checked_add(value)
+                .filter(|used| used.fits(state.accounts[index].limit))
+                .ok_or(EnvironmentError::Capacity)?;
+            state.accounts[index]
+                .references
+                .checked_add(1)
+                .ok_or(EnvironmentError::Capacity)?;
+        }
+        for index in chain.into_iter().flatten().filter(|index| *index != 0) {
+            state.accounts[index].used = state.accounts[index]
+                .used
+                .checked_add(value)
+                .expect("checked service attachment");
+            state.accounts[index].references += 1;
+        }
+        drop(state);
+        Ok(ApplicationServiceCharge {
+            account: Some(account.clone()),
+            value,
+            _backing: self.clone(),
+        })
+    }
+    /// Local metadata callbacks borrow the same prepaid executor capacity,
+    /// without creating an authenticated Session or granting network authority.
+    pub(crate) fn borrow_local(
+        self: &Arc<Self>,
+        root: &Arc<EnvironmentRoot>,
+        value: ResourceLimits,
+    ) -> Result<ApplicationServiceCharge, EnvironmentError> {
+        if !Arc::ptr_eq(&self.physical.root, root) || !value.fits(self.physical.value) {
+            return Err(EnvironmentError::Configuration);
+        }
+        if root.is_closed() {
+            return Err(EnvironmentError::Closed);
+        }
+        Ok(ApplicationServiceCharge {
+            account: None,
+            value,
+            _backing: self.clone(),
+        })
+    }
+    pub(crate) fn attach_prepaid(
+        self: &Arc<Self>,
+        account: &ResourceAccount,
+        mut prepaid: ResourceCharge,
+    ) -> Result<ApplicationServiceCharge, EnvironmentError> {
+        let value = prepaid.value;
+        if !prepaid.belongs_to(account)
+            || !Arc::ptr_eq(&self.physical.root, &account.root)
+            || !value.fits(self.physical.value)
+        {
+            return Err(EnvironmentError::Configuration);
+        }
+        let sample = account.root.sample()?;
+        let mut state = account
+            .root
+            .state
+            .lock()
+            .expect("prepaid service attachment");
+        let chain = account.validate_locked(&mut state, sample)?;
+        for index in chain.into_iter().flatten().filter(|index| *index != 0) {
+            state.accounts[index]
+                .references
+                .checked_add(1)
+                .ok_or(EnvironmentError::Capacity)?;
+        }
+        for index in chain.into_iter().flatten().filter(|index| *index != 0) {
+            state.accounts[index].references += 1;
+        }
+        state.accounts[0].used.subtract(value);
+        prepaid.value = ResourceLimits::default();
+        drop(state);
+        drop(prepaid);
+        Ok(ApplicationServiceCharge {
+            account: Some(account.clone()),
+            value,
+            _backing: self.clone(),
+        })
+    }
+}
+impl ApplicationServiceCharge {
+    pub(crate) fn matches(&self, account: &ResourceAccount, value: ResourceLimits) -> bool {
+        self.account
+            .as_ref()
+            .is_some_and(|owner| owner.same_owner(account))
+            && self.value.fits(value)
+            && value.fits(self.value)
+    }
+}
+impl Drop for ApplicationServiceCharge {
+    fn drop(&mut self) {
+        let Some(account) = &self.account else { return };
+        let mut state = account
+            .root
+            .state
+            .lock()
+            .expect("application service return");
+        assert_eq!(state.accounts[account.index].generation, account.generation);
+        for index in account_chain(&state, account.index)
+            .into_iter()
+            .flatten()
+            .filter(|index| *index != 0)
+        {
+            state.accounts[index].used.subtract(self.value);
+            state.accounts[index].references -= 1;
+        }
+        drop(state);
+        account.root.changed.notify_waiters();
+    }
+}
+
 impl EnvironmentRoot {
-    pub(crate) fn new(options: TransportEnvironmentOptions) -> Result<Arc<Self>, EnvironmentError> {
+    pub(crate) fn security_time_profile(&self) -> TrustedTimeProfile {
+        self.options.time_profile
+    }
+    pub(crate) fn new(
+        mut options: TransportEnvironmentOptions,
+    ) -> Result<Arc<Self>, EnvironmentError> {
+        let diagnostics = options.diagnostics.take();
+        if diagnostics
+            .as_ref()
+            .is_some_and(|config| config.options.sampling_basis_points > 100)
+        {
+            return Err(EnvironmentError::Configuration);
+        }
+        options.application_executor.validate()?;
         options.time_profile.validate()?;
         if let Some(policy) = options.automatic_liveness {
             policy.validate(options.time_profile)?;
@@ -564,33 +804,42 @@ impl EnvironmentRoot {
                 .ok_or(EnvironmentError::Configuration)?,
         )
         .map_err(|_| EnvironmentError::Configuration)?;
-        let backing = backing
-            .checked_add(
-                std::mem::size_of::<Self>() as u64
-                    + 64 * (std::mem::size_of::<Arc<crate::pool_v4::Backing>>()
-                        + std::mem::size_of::<Weak<crate::pool_v4::SQLitePoolStore>>())
-                        as u64,
-            )
-            .and_then(|n| n.checked_add(crate::codec_v4::registry_backing_bound()))
-            .and_then(|n| {
-                n.checked_add(
-                    (slots
-                        * (std::mem::size_of::<AccountLease>()
-                            + std::mem::size_of::<NamespaceSubscriptions>()
-                            + 4 * std::mem::size_of::<usize>())) as u64,
+        let backing =
+            backing
+                .checked_add(
+                    std::mem::size_of::<Self>() as u64
+                        + std::mem::size_of::<crate::diagnostics_v4::DiagnosticCounters>() as u64
+                        + 64 * std::mem::size_of::<Weak<crate::diagnostics_v4::Inner>>() as u64
+                        + 64 * (std::mem::size_of::<Arc<crate::pool_v4::Backing>>()
+                            + std::mem::size_of::<Weak<crate::pool_v4::SQLitePoolStore>>()
+                            + std::mem::size_of::<Arc<crate::execution_history::HistoryOwner>>()
+                            + std::mem::size_of::<
+                                Arc<crate::sqlite_reference_store_v4::ReferenceOwner>,
+                            >()
+                            + std::mem::size_of::<Weak<crate::connection_controller_v4::Owner>>()
+                            + std::mem::size_of::<Weak<crate::material_source_v4::Owner>>())
+                            as u64,
                 )
-            })
-            .and_then(|n| {
-                n.checked_add(
-                    NamespaceRegistry::backing_bytes(
-                        options.max_namespaces,
-                        options.max_namespace_subscribers,
-                        options.max_namespace_state_bytes,
+                .and_then(|n| n.checked_add(crate::codec_v4::registry_backing_bound()))
+                .and_then(|n| {
+                    n.checked_add(
+                        (slots
+                            * (std::mem::size_of::<AccountLease>()
+                                + std::mem::size_of::<NamespaceSubscriptions>()
+                                + 4 * std::mem::size_of::<usize>())) as u64,
                     )
-                    .ok()?,
-                )
-            })
-            .ok_or(EnvironmentError::Configuration)?;
+                })
+                .and_then(|n| {
+                    n.checked_add(
+                        NamespaceRegistry::backing_bytes(
+                            options.max_namespaces,
+                            options.max_namespace_subscribers,
+                            options.max_namespace_state_bytes,
+                        )
+                        .ok()?,
+                    )
+                })
+                .ok_or(EnvironmentError::Configuration)?;
         let backing_charge = ResourceLimits {
             sdk_bytes: backing,
             items: (slots
@@ -630,7 +879,7 @@ impl EnvironmentRoot {
         pool_stores
             .try_reserve_exact(64)
             .map_err(|_| EnvironmentError::Capacity)?;
-        Ok(Arc::new(Self {
+        let root = Arc::new(Self {
             state: Mutex::new(RootState {
                 accounts,
                 closed: false,
@@ -646,7 +895,303 @@ impl EnvironmentRoot {
             changed: Notify::new(),
             pool_backings: Mutex::new(pool_backings),
             pool_stores: Mutex::new(pool_stores),
-        }))
+            execution_services: Mutex::new(Vec::with_capacity(64)),
+            reference_stores: Mutex::new(Vec::with_capacity(64)),
+            execution_stores: Mutex::new(Vec::with_capacity(64)),
+            application_service: Mutex::new(Weak::new()),
+            material_controllers: Mutex::new(Vec::with_capacity(64)),
+            material_sources: Mutex::new(Vec::with_capacity(64)),
+            diagnostic_sinks: Mutex::new(Vec::with_capacity(64)),
+            production_diagnostics: Mutex::new(None),
+            diagnostic_counters: Arc::new(crate::diagnostics_v4::DiagnosticCounters::default()),
+            cleanup_timeout_reported: AtomicBool::new(false),
+        });
+        if let Some(config) = diagnostics {
+            let sink = root.create_diagnostic_sink(config.options, config.callback)?;
+            *root
+                .production_diagnostics
+                .lock()
+                .expect("production diagnostics") = Some(sink);
+        }
+        Ok(root)
+    }
+    pub(crate) fn register_material_source(
+        &self,
+        source: &Arc<crate::material_source_v4::Owner>,
+    ) -> Result<(), EnvironmentError> {
+        let mut sources = self
+            .material_sources
+            .lock()
+            .expect("material source registry");
+        if self.is_closed() {
+            return Err(EnvironmentError::Closed);
+        }
+        sources.retain(|owner| owner.strong_count() != 0);
+        if sources.len() >= 64 {
+            return Err(EnvironmentError::Capacity);
+        }
+        sources.push(Arc::downgrade(source));
+        Ok(())
+    }
+    pub(crate) fn register_material_controller(
+        &self,
+        controller: &Arc<crate::connection_controller_v4::Owner>,
+    ) -> Result<(), EnvironmentError> {
+        let mut controllers = self
+            .material_controllers
+            .lock()
+            .expect("material controller registry");
+        if self.is_closed() {
+            return Err(EnvironmentError::Closed);
+        }
+        controllers.retain(|owner| owner.strong_count() != 0);
+        if controllers.len() >= 64 {
+            return Err(EnvironmentError::Capacity);
+        }
+        controllers.push(Arc::downgrade(controller));
+        Ok(())
+    }
+    pub(crate) fn diagnostic_sink(
+        self: &Arc<Self>,
+        options: crate::DiagnosticSinkOptions,
+        callback: crate::DiagnosticCallback,
+    ) -> Result<crate::DiagnosticSink, EnvironmentError> {
+        self.create_diagnostic_sink(options, Arc::new(move |event, _| callback(event)))
+    }
+    fn create_diagnostic_sink(
+        self: &Arc<Self>,
+        options: crate::DiagnosticSinkOptions,
+        callback: crate::CancellableDiagnosticCallback,
+    ) -> Result<crate::DiagnosticSink, EnvironmentError> {
+        if options.sampling_basis_points > 100 {
+            return Err(EnvironmentError::Configuration);
+        }
+        if self.is_closed() {
+            return Err(EnvironmentError::Closed);
+        }
+        let charge = self.reserve_environment(ResourceLimits {
+            sdk_bytes: (2 << 20) + 128 * 1024,
+            items: 5120,
+            work_slots: 1,
+            tasks: 2,
+            timers: 1,
+            ..ResourceLimits::default()
+        })?;
+        let sink = crate::diagnostics_v4::DiagnosticSink::new(
+            options,
+            callback,
+            charge,
+            self.diagnostic_counters.clone(),
+        )
+        .map_err(|error| match error {
+            crate::DiagnosticSinkError::InvalidSampling => EnvironmentError::Configuration,
+            crate::DiagnosticSinkError::Closed | crate::DiagnosticSinkError::Capacity => {
+                EnvironmentError::Capacity
+            }
+        })?;
+        let mut sinks = self
+            .diagnostic_sinks
+            .lock()
+            .expect("diagnostic sink registry");
+        sinks.retain(|entry| entry.strong_count() != 0);
+        if self.is_closed() || sinks.len() >= 64 {
+            sink.close();
+            return Err(EnvironmentError::Capacity);
+        }
+        sinks.push(Arc::downgrade(&sink.inner));
+        Ok(sink)
+    }
+    pub(crate) fn diagnostic_activity(
+        &self,
+        phase: crate::DiagnosticPhase,
+        ordinal: u32,
+    ) -> Arc<crate::diagnostics_v4::DiagnosticActivity> {
+        let sink = self
+            .production_diagnostics
+            .lock()
+            .expect("production diagnostics");
+        crate::diagnostics_v4::DiagnosticActivity::new(
+            sink.as_ref(),
+            self.diagnostic_counters.clone(),
+            phase,
+            ordinal,
+        )
+    }
+    pub(crate) fn diagnostic_count(&self, counter: crate::diagnostics_v4::DiagnosticCounter) {
+        self.diagnostic_counters.increment(counter);
+    }
+    pub(crate) fn diagnostic_metric(
+        &self,
+        metric: crate::DiagnosticMetric,
+    ) -> crate::DiagnosticMetricCounts {
+        self.diagnostic_counters.metric(metric)
+    }
+    pub(crate) fn diagnostic_counts(&self) -> crate::TransportDiagnosticCounts {
+        self.diagnostic_counters.snapshot()
+    }
+    #[cfg(test)]
+    pub(crate) fn install_test_diagnostics(&self, sink: crate::DiagnosticSink) {
+        *self
+            .production_diagnostics
+            .lock()
+            .expect("production diagnostics") = Some(sink);
+    }
+    pub(crate) fn configured_diagnostic_sink(&self) -> Option<crate::DiagnosticSink> {
+        self.production_diagnostics
+            .lock()
+            .expect("production diagnostics")
+            .clone()
+    }
+    pub(crate) fn diagnostic_pending_callbacks(&self) -> u64 {
+        self.diagnostic_sinks
+            .lock()
+            .expect("diagnostic sink registry")
+            .iter()
+            .filter_map(Weak::upgrade)
+            .map(|sink| sink.cleanup_status().pending_callbacks as u64)
+            .sum()
+    }
+
+    pub(crate) fn application_config(
+        &self,
+    ) -> &crate::application_profile_v4::ApplicationExecutorConfig {
+        &self.options.application_executor
+    }
+    pub(crate) fn application_snapshot(&self) -> crate::ApplicationExecutorSnapshot {
+        let service = self
+            .application_service
+            .lock()
+            .expect("application service registry")
+            .upgrade();
+        match service {
+            Some(service) => service.snapshot(),
+            None => {
+                crate::ApplicationExecutorSnapshot::empty(self.options.application_executor.profile)
+            }
+        }
+    }
+    pub(crate) fn application_services(
+        self: &Arc<Self>,
+    ) -> Result<Arc<crate::application_executor_v4::ApplicationServices>, EnvironmentError> {
+        let mut slot = self
+            .application_service
+            .lock()
+            .expect("application service registry");
+        if self.is_closed() {
+            return Err(EnvironmentError::Closed);
+        }
+        if let Some(service) = slot.upgrade() {
+            return Ok(service);
+        }
+        let service = crate::application_executor_v4::ApplicationServices::new(self.clone())?;
+        *slot = Arc::downgrade(&service);
+        Ok(service)
+    }
+
+    pub(crate) fn execution_service(
+        self: &Arc<Self>,
+        options: crate::execution_history::ExecutionServiceOptions,
+        store: Option<crate::SQLiteExecutionStoreOptions>,
+    ) -> std::result::Result<
+        crate::execution_history::ExecutionService,
+        crate::service_contract::ServiceError,
+    > {
+        use crate::{
+            execution_history::ExecutionService,
+            service_contract::{ServiceError, ServiceFailure},
+        };
+        let mut services = self
+            .execution_services
+            .lock()
+            .expect("execution service registry");
+        if self.is_closed() {
+            return Err(ServiceError(ServiceFailure::Closed));
+        }
+        if let Some(owner) = services.iter().find(|owner| owner.matches(&options)) {
+            if !owner.configured(&options, store.as_ref()) {
+                return Err(ServiceError(ServiceFailure::ConfigurationCapacity));
+            }
+            return Ok(ExecutionService(owner.clone()));
+        }
+        if services.len() >= 64 {
+            return Err(ServiceError(ServiceFailure::ResourceExhausted));
+        }
+        let service = ExecutionService::create(self.clone(), options, store)?;
+        services.push(service.0.clone());
+        Ok(service)
+    }
+    pub(crate) fn register_execution_store(
+        &self,
+        store: Arc<crate::sqlite_execution_store_v4::ExecutionStoreOwner>,
+    ) -> std::result::Result<(), crate::ServiceError> {
+        let mut stores = self
+            .execution_stores
+            .lock()
+            .expect("execution database registry");
+        if self.is_closed() {
+            return Err(crate::ServiceError(crate::ServiceFailure::Closed));
+        }
+        if stores.len() >= 64 {
+            return Err(crate::ServiceError(
+                crate::ServiceFailure::ResourceExhausted,
+            ));
+        }
+        if stores.iter().any(|old| old.path() == store.path()) {
+            return Err(crate::ServiceError(
+                crate::ServiceFailure::ConfigurationCapacity,
+            ));
+        }
+        stores.push(store);
+        Ok(())
+    }
+    pub(crate) fn release_execution_store(
+        &self,
+        store: &Arc<crate::sqlite_execution_store_v4::ExecutionStoreOwner>,
+    ) {
+        self.execution_stores
+            .lock()
+            .expect("execution database registry")
+            .retain(|old| !Arc::ptr_eq(old, store));
+    }
+    pub(crate) fn register_reference_store(
+        &self,
+        store: Arc<crate::sqlite_reference_store_v4::ReferenceOwner>,
+    ) -> Result<(), EnvironmentError> {
+        let mut stores = self
+            .reference_stores
+            .lock()
+            .expect("reference store registry");
+        if self.is_closed() {
+            return Err(EnvironmentError::Closed);
+        }
+        if stores.len() >= 64 {
+            return Err(EnvironmentError::Capacity);
+        }
+        if stores.iter().any(|old| old.path() == store.path()) {
+            return Err(EnvironmentError::Configuration);
+        }
+        stores.push(store);
+        Ok(())
+    }
+    pub(crate) fn reference_store(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<Arc<crate::sqlite_reference_store_v4::ReferenceOwner>> {
+        self.reference_stores
+            .lock()
+            .expect("reference store registry")
+            .iter()
+            .find(|store| store.path() == path)
+            .cloned()
+    }
+    pub(crate) fn release_reference_store(
+        &self,
+        store: &Arc<crate::sqlite_reference_store_v4::ReferenceOwner>,
+    ) {
+        self.reference_stores
+            .lock()
+            .expect("reference store registry")
+            .retain(|old| !Arc::ptr_eq(old, store));
     }
     pub(crate) fn register_pool_backing(
         &self,
@@ -702,11 +1247,14 @@ impl EnvironmentRoot {
             .used
             .checked_add(value)
             .filter(|v| v.fits(account.limit))
-            .ok_or(EnvironmentError::Capacity)?;
-        let refs = account
-            .references
-            .checked_add(1)
-            .ok_or(EnvironmentError::Capacity)?;
+            .ok_or_else(|| {
+                self.diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::ResourceRejections);
+                EnvironmentError::Capacity
+            })?;
+        let refs = account.references.checked_add(1).ok_or_else(|| {
+            self.diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::ResourceRejections);
+            EnvironmentError::Capacity
+        })?;
         account.used = used;
         account.references = refs;
         Ok(EnvironmentCharge {
@@ -727,6 +1275,69 @@ impl EnvironmentRoot {
         }
         drop(state);
         self.changed.notify_waiters();
+        let sinks: Vec<_> = self
+            .diagnostic_sinks
+            .lock()
+            .expect("diagnostic sink registry")
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        for sink in sinks {
+            sink.close();
+        }
+        // Break the root -> configured sink -> original charge cycle on Close.
+        drop(
+            self.production_diagnostics
+                .lock()
+                .expect("production diagnostics")
+                .take(),
+        );
+        if let Some(service) = self
+            .application_service
+            .lock()
+            .expect("application service registry")
+            .upgrade()
+        {
+            service.close();
+        }
+        let controllers: Vec<_> = self
+            .material_controllers
+            .lock()
+            .expect("material controller registry")
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        for controller in controllers {
+            controller.close();
+        }
+        let sources: Vec<_> = self
+            .material_sources
+            .lock()
+            .expect("material source registry")
+            .iter()
+            .filter_map(Weak::upgrade)
+            .collect();
+        for source in sources {
+            source.close();
+        }
+
+        let histories = std::mem::take(
+            &mut *self
+                .execution_services
+                .lock()
+                .expect("execution service registry"),
+        );
+        for history in histories {
+            history.close();
+        }
+        for store in self
+            .reference_stores
+            .lock()
+            .expect("reference store registry")
+            .iter()
+        {
+            store.close();
+        }
         for store in self
             .pool_stores
             .lock()
@@ -744,6 +1355,9 @@ impl EnvironmentRoot {
         let state = self.state.lock().expect("environment root lock");
         let complete = state.closed && state.accounts.iter().all(|a| a.references == 0);
         let incomplete = !complete && state.close_deadline.is_some_and(|d| Instant::now() >= d);
+        if incomplete && !self.cleanup_timeout_reported.swap(true, Ordering::AcqRel) {
+            self.diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::CleanupTimeouts);
+        }
         (complete, incomplete)
     }
     pub(crate) fn cleanup_deadline(&self) -> Option<Instant> {
@@ -828,6 +1442,17 @@ impl EnvironmentRoot {
         state.clock_sample = Some(sample);
         Ok(sample)
     }
+    pub(crate) fn check_namespace_binding(
+        &self,
+        binding: NamespaceBinding,
+    ) -> Result<(), EnvironmentError> {
+        let now = self.sample()?;
+        self.state
+            .lock()
+            .expect("configured namespace dependency")
+            .namespaces
+            .check_binding(binding, now)
+    }
     pub(crate) fn claim_namespace_verifier(
         &self,
         key: NamespaceKey,
@@ -839,7 +1464,67 @@ impl EnvironmentRoot {
             .namespaces
             .claim_verifier(key, owner)
     }
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn install_verified_namespace(
+        &self,
+        update: &VerifiedNamespaceUpdate,
+        owner: &Arc<AtomicBool>,
+        time_pending: bool,
+        security_cap: u64,
+        security_deadline: Instant,
+        head_deadline: Instant,
+        work_deadline: Option<(Instant, EnvironmentError)>,
+        pending_candidate: Option<PendingNamespaceCandidate>,
+    ) -> Result<(), EnvironmentError> {
+        let sample = self.sample()?;
+        let mut state = self.state.lock().expect("environment root lock");
+        let now = self.options.time_profile.project(sample, Instant::now())?;
+        if now.upper_ms >= security_cap {
+            return Err(EnvironmentError::MaterialExpired);
+        }
+        if Instant::now() >= security_deadline || Instant::now() >= head_deadline {
+            return Err(EnvironmentError::MaterialExpired);
+        }
+        if let Some((deadline, failure)) = work_deadline
+            && Instant::now() >= deadline
+        {
+            return Err(failure);
+        }
+        let result = state.namespaces.install_verified(
+            update,
+            owner,
+            now,
+            time_pending,
+            head_deadline,
+            pending_candidate,
+        );
+        drop(state);
+        self.changed.notify_waiters();
+        result
+    }
+    pub(crate) fn observe_verified_namespace_head(
+        &self,
+        proof: &VerifiedNamespaceHead,
+        owner: &Arc<AtomicBool>,
+        time_pending: bool,
+        security_cap: u64,
+        security_deadline: Instant,
+    ) -> Result<Instant, EnvironmentError> {
+        let sample = self.sample()?;
+        let mut state = self.state.lock().expect("environment root lock");
+        let now = self.options.time_profile.project(sample, Instant::now())?;
+        if now.upper_ms >= security_cap || Instant::now() >= security_deadline {
+            return Err(EnvironmentError::MaterialExpired);
+        }
+        let result =
+            state
+                .namespaces
+                .observe_verified(proof, owner, now, time_pending, security_deadline);
+        drop(state);
+        self.changed.notify_waiters();
+        result
+    }
+    pub(crate) fn observe_verified_namespace_denials(
         &self,
         update: &VerifiedNamespaceUpdate,
         owner: &Arc<AtomicBool>,
@@ -847,7 +1532,9 @@ impl EnvironmentRoot {
         let sample = self.sample()?;
         let mut state = self.state.lock().expect("environment root lock");
         let now = self.options.time_profile.project(sample, Instant::now())?;
-        let result = state.namespaces.install_verified(update, owner, now);
+        let result = state
+            .namespaces
+            .observe_verified_denials(update, owner, now);
         drop(state);
         self.changed.notify_waiters();
         result
@@ -1037,6 +1724,7 @@ impl EnvironmentRoot {
                 generation,
                 source: Mutex::new(None),
                 subscriptions: Mutex::new(None),
+                business_work: AtomicUsize::new(0),
             }),
         })
     }
@@ -1053,7 +1741,58 @@ fn check_bounds(
     }
     Ok(())
 }
+#[derive(Debug)]
+pub(crate) struct BusinessActivity {
+    lease: Arc<AccountLease>,
+}
+impl Drop for BusinessActivity {
+    fn drop(&mut self) {
+        self.lease.business_work.fetch_sub(1, Ordering::AcqRel);
+        self.lease.root.changed.notify_waiters();
+    }
+}
+
 impl ResourceAccount {
+    pub(crate) fn begin_business_work(&self) -> BusinessActivity {
+        self._lease.business_work.fetch_add(1, Ordering::AcqRel);
+        BusinessActivity {
+            lease: self._lease.clone(),
+        }
+    }
+    pub(crate) fn business_work_pending(&self) -> bool {
+        self._lease.business_work.load(Ordering::Acquire) != 0
+    }
+    pub(crate) fn diagnostic_activity(
+        &self,
+        phase: crate::DiagnosticPhase,
+        ordinal: u32,
+    ) -> Arc<crate::diagnostics_v4::DiagnosticActivity> {
+        self.root.diagnostic_activity(phase, ordinal)
+    }
+    pub(crate) fn diagnostic_count(&self, counter: crate::diagnostics_v4::DiagnosticCounter) {
+        self.root.diagnostic_count(counter);
+    }
+    pub(crate) fn environment_root(&self) -> &Arc<EnvironmentRoot> {
+        &self.root
+    }
+    pub(crate) fn application_group(
+        &self,
+    ) -> Result<crate::application_executor_v4::ApplicationGroup, EnvironmentError> {
+        crate::application_executor_v4::ApplicationGroup::new(
+            self.clone(),
+            self.root.application_services()?,
+        )
+    }
+    pub(crate) fn application_group_prepaid(
+        &self,
+        charge: ResourceCharge,
+    ) -> Result<crate::application_executor_v4::ApplicationGroup, EnvironmentError> {
+        crate::application_executor_v4::ApplicationGroup::new_prepaid(
+            self.clone(),
+            self.root.application_services()?,
+            charge,
+        )
+    }
     pub(crate) fn belongs_to(&self, environment: &Arc<EnvironmentRoot>) -> bool {
         Arc::ptr_eq(&self.root, environment)
     }
@@ -1093,6 +1832,105 @@ impl ResourceAccount {
         }
         Ok(account_chain(state, self.index))
     }
+    /// Complete the prepared live owner with its one additional independently
+    /// verified activation dependency. Bounds and monotonic expiry only tighten;
+    /// the account and its original native reservations are never replaced.
+    pub(crate) fn install_live_activation(
+        &self,
+        binding: NamespaceBinding,
+        bounds: AuthorizationBounds,
+    ) -> Result<(), EnvironmentError> {
+        let sample = self.root.sample()?;
+        let mut state = self
+            .root
+            .state
+            .lock()
+            .expect("original live activation installation");
+        self.validate_locked(&mut state, sample)?;
+        let current = self
+            .root
+            .options
+            .time_profile
+            .project(sample, Instant::now())?;
+        let old = state.accounts[self.index]
+            .authorization
+            .ok_or(EnvironmentError::AuthorizationDenied)?;
+        let tightened = AuthorizationBounds {
+            not_before_ms: old.not_before_ms.max(bounds.not_before_ms),
+            not_after_ms: old.not_after_ms.min(bounds.not_after_ms),
+            freshness_not_after_ms: old
+                .freshness_not_after_ms
+                .min(bounds.freshness_not_after_ms),
+        };
+        check_bounds(tightened, current)?;
+        if state.accounts[self.index].is_result
+            || binding.namespace.tenant
+                != state.accounts[state.accounts[self.index].parent]
+                    .tenant_key
+                    .ok_or(EnvironmentError::Configuration)?
+        {
+            return Err(EnvironmentError::Configuration);
+        }
+        let mut subscriptions = self
+            ._lease
+            .subscriptions
+            .lock()
+            .expect("original live namespace dependencies");
+        let original = subscriptions
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or(EnvironmentError::Configuration)?;
+        let index = original
+            .ids
+            .iter()
+            .position(Option::is_none)
+            .ok_or(EnvironmentError::Capacity)?;
+        let closed = state.accounts[self.index]
+            .security_closed
+            .as_ref()
+            .ok_or(EnvironmentError::Configuration)?
+            .clone();
+        let (id, wake) = state.namespaces.subscribe(binding, &closed, current)?;
+        let remaining = tightened
+            .not_after_ms
+            .checked_sub(current.upper_ms)
+            .ok_or(EnvironmentError::AuthorizationDenied)?;
+        let profile = self.root.options.time_profile;
+        let duration = u128::from(
+            remaining
+                .saturating_sub(profile.quantization_ms)
+                .saturating_sub(1),
+        ) * u128::from(profile.rate_denominator - profile.rate_numerator)
+            / u128::from(profile.rate_denominator);
+        let duration = match u64::try_from(duration) {
+            Ok(duration) => duration,
+            Err(_) => {
+                state.namespaces.release(id);
+                return Err(EnvironmentError::TimeUnavailable);
+            }
+        };
+        let deadline = match Instant::now().checked_add(Duration::from_millis(duration)) {
+            Some(deadline) if deadline > Instant::now() => deadline,
+            _ => {
+                state.namespaces.release(id);
+                return Err(EnvironmentError::AuthorizationDenied);
+            }
+        };
+        original.ids[index] = Some(id);
+        original.wakes[index] = Some(wake);
+        let account = &mut state.accounts[self.index];
+        account.authorization = Some(tightened);
+        account.authorization_deadline = Some(
+            account
+                .authorization_deadline
+                .ok_or(EnvironmentError::AuthorizationDenied)?
+                .min(deadline),
+        );
+        drop(subscriptions);
+        drop(state);
+        self.root.changed.notify_waiters();
+        Ok(())
+    }
     /// Attach a bounded set of original namespace dependencies before any
     /// operation/result allocation. Binding never creates or refreshes State.
     #[allow(dead_code)]
@@ -1100,7 +1938,7 @@ impl ResourceAccount {
         &self,
         bindings: &[NamespaceBinding],
     ) -> Result<(), EnvironmentError> {
-        if bindings.is_empty() || bindings.len() > 5 {
+        if bindings.is_empty() || bindings.len() > 8 {
             return Err(EnvironmentError::Configuration);
         }
         let sample = self.root.sample()?;
@@ -1130,7 +1968,7 @@ impl ResourceAccount {
             .as_ref()
             .expect("authorization gate")
             .clone();
-        let mut ids = [None; 5];
+        let mut ids = [None; 8];
         let mut wakes = std::array::from_fn(|_| None);
         for (i, binding) in bindings.iter().enumerate() {
             match state.namespaces.subscribe(*binding, &closed, sample) {
@@ -1228,6 +2066,7 @@ impl ResourceAccount {
                         .expect("namespace subscription lock")
                         .clone(),
                 ),
+                business_work: AtomicUsize::new(0),
             }),
         })
     }
@@ -1258,6 +2097,25 @@ impl ResourceAccount {
             .take();
         drop(source);
         self.root.changed.notify_waiters();
+    }
+    pub(crate) fn retirement_deadline(
+        &self,
+        maximum: Duration,
+    ) -> Result<Instant, EnvironmentError> {
+        self.check()?;
+        let state = self
+            .root
+            .state
+            .lock()
+            .expect("original authorization retirement deadline");
+        let _ = self.chain(&state)?;
+        let authorization = state.accounts[self.index]
+            .authorization_deadline
+            .ok_or(EnvironmentError::AuthorizationDenied)?;
+        let requested = Instant::now()
+            .checked_add(maximum)
+            .ok_or(EnvironmentError::Configuration)?;
+        Ok(authorization.min(requested))
     }
     pub(crate) fn check(&self) -> Result<(), EnvironmentError> {
         self.with_security(|| ())
@@ -1319,6 +2177,38 @@ impl ResourceAccount {
         }
         Ok(chain)
     }
+    pub(crate) fn with_security_time<T>(
+        &self,
+        action: impl FnOnce(TrustedTimeSample) -> T,
+    ) -> Result<T, EnvironmentError> {
+        let sample = self.root.sample()?;
+        let mut state = self.root.state.lock().expect("environment root lock");
+        self.validate_locked(&mut state, sample)?;
+        let current = self
+            .root
+            .options
+            .time_profile
+            .project(sample, Instant::now())?;
+        Ok(action(current))
+    }
+    pub(crate) fn with_security_pair<T>(
+        &self,
+        other: &Self,
+        action: impl FnOnce() -> T,
+    ) -> Result<T, EnvironmentError> {
+        if !Arc::ptr_eq(&self.root, &other.root) {
+            return Err(EnvironmentError::AuthorizationDenied);
+        }
+        let sample = self.root.sample()?;
+        let mut state = self
+            .root
+            .state
+            .lock()
+            .expect("paired original security publication");
+        self.validate_locked(&mut state, sample)?;
+        other.validate_locked(&mut state, sample)?;
+        Ok(action())
+    }
     pub(crate) fn with_security<T>(
         &self,
         action: impl FnOnce() -> T,
@@ -1340,11 +2230,17 @@ impl ResourceAccount {
                 .used
                 .checked_add(value)
                 .filter(|v| v.fits(state.accounts[i].limit))
-                .ok_or(EnvironmentError::Capacity)?;
-            state.accounts[i]
-                .references
-                .checked_add(1)
-                .ok_or(EnvironmentError::Capacity)?;
+                .ok_or_else(|| {
+                    self.root.diagnostic_count(
+                        crate::diagnostics_v4::DiagnosticCounter::ResourceRejections,
+                    );
+                    EnvironmentError::Capacity
+                })?;
+            state.accounts[i].references.checked_add(1).ok_or_else(|| {
+                self.root
+                    .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::ResourceRejections);
+                EnvironmentError::Capacity
+            })?;
         }
         for i in chain.into_iter().flatten() {
             state.accounts[i].used = state.accounts[i]
@@ -1386,11 +2282,12 @@ impl ResourceAccount {
             .as_ref()
             .map(|subscriptions| subscriptions.wakes.clone())
             .unwrap_or_else(|| std::array::from_fn(|_| None));
-        let [a, b, c, d, e] = wakes;
+        let [a, b, c, d, e, f, g, h] = wakes;
         tokio::select! {
             _ = self.root.changed.notified() => {},
             _ = wait(a) => {}, _ = wait(b) => {}, _ = wait(c) => {},
             _ = wait(d) => {}, _ = wait(e) => {},
+            _ = wait(f) => {}, _ = wait(g) => {}, _ = wait(h) => {},
         }
     }
     pub(crate) fn next_security_check(&self) -> Duration {
@@ -1400,6 +2297,27 @@ impl ResourceAccount {
     }
 }
 impl ResourceCharge {
+    /// Charge physical work to this original Account and environment. A
+    /// retained control owner cannot fund a replacement or foreign Account.
+    pub(crate) fn reserve_related(
+        &self,
+        root: &Arc<EnvironmentRoot>,
+        value: ResourceLimits,
+    ) -> Result<Self, EnvironmentError> {
+        if !Arc::ptr_eq(&self.account.root, root) {
+            return Err(EnvironmentError::Configuration);
+        }
+        self.account.reserve(value)
+    }
+    pub(crate) fn belongs_to(&self, account: &ResourceAccount) -> bool {
+        self.account.same_owner(account)
+    }
+    pub(crate) fn covers(&self, account: &ResourceAccount, value: ResourceLimits) -> bool {
+        self.account.same_owner(account) && value.fits(self.value)
+    }
+    pub(crate) fn matches(&self, account: &ResourceAccount, value: ResourceLimits) -> bool {
+        self.account.same_owner(account) && self.value.fits(value) && value.fits(self.value)
+    }
     pub(crate) fn split(&mut self, value: ResourceLimits) -> Result<Self, EnvironmentError> {
         if !value.fits(self.value) {
             return Err(EnvironmentError::Configuration);

@@ -75,6 +75,7 @@ export class ContractQueryClient implements RPCPublicationGuard {
   #reader: ContractSnapshotReader | undefined;
   #root: ResourceRoot | undefined;
   readonly #positionReferences: ResourceReference[][] = [];
+  readonly #sendAliases: ResourceReference[] = [];
   readonly #positions: ProtectedResourceReservation[][] = [];
   readonly #slots: Slot[] = [slot(), slot()];
   readonly #renewal = new QueryRenewalPosition(2, index => this.#slots[index]!.call === undefined && this.#slots[index]!.generation < maximum &&
@@ -95,6 +96,7 @@ export class ContractQueryClient implements RPCPublicationGuard {
       for (let index = 0; index < 2; index++) {
         const positions: ResourceReference[] = []; this.#positionReferences.push(positions);
         for (let item = 0; item < 4; item++) { const at = 5 + index * 4 + item; positions.push(references[at]!.take(costs[at]!)); }
+        this.#sendAliases.push(positions[2]!.borrow());
       }
       this.#observer = root.observeAvailability(this.#reference, () => this.#collect()); Object.freeze(this);
     } catch (error) { this.close(); throw error; }
@@ -106,9 +108,10 @@ export class ContractQueryClient implements RPCPublicationGuard {
       const costs = contractQueryClientCharges(this.#runtimeBytes);
       for (const [index, references] of this.#positionReferences.entries()) {
         const positions: ProtectedResourceReservation[] = []; this.#positions.push(positions);
-        for (const [item, reference] of references.entries()) positions.push(this.#root!.protect(reference, costs[5 + index * 4 + item]!));
+        for (const [item, reference] of references.entries()) positions.push(this.#root!.protect(reference, costs[5 + index * 4 + item]!, item === 2 ? [this.#sendAliases[index]!] : []));
       }
       this.#positionReferences.length = 0;
+      this.#sendAliases.length = 0;
       this.#network = network; this.#deadline = deadline; this.#delivery = delivery;
       this.#codecLease = codecs.claim(network, 1, this.#reference!);
       this.#codec = this.#codecLease.targets; this.#headers = this.#codecLease.headers;
@@ -255,6 +258,7 @@ export class ContractQueryClient implements RPCPublicationGuard {
     if (this.#closed) return; this.#closed = true;
     this.#renewal.close();
     for (const references of this.#positionReferences) for (const reference of references) reference.release(); this.#positionReferences.length = 0;
+    for (const alias of this.#sendAliases) alias.release(); this.#sendAliases.length = 0;
     for (const slot of this.#slots) { slot.closed = true; slot.exchange?.close(); slot.wake?.(); }
     for (const positions of this.#positions) for (const position of positions) position.closeAfterUse();
     this.#collect();

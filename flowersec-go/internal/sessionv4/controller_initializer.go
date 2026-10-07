@@ -232,7 +232,7 @@ func (p *controllerInitializerPlan) checkMethod(i int, candidate *EnvironmentSes
 	if err != nil {
 		return err
 	}
-	r, routing, err := candidate.controllerRPCIdentity()
+	r, routing, err := candidate.controllerRPCIdentity(m.routing.peers)
 	if err != nil {
 		return err
 	}

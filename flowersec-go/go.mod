@@ -11,7 +11,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	modernc.org/libc v1.75.7 // indirect
+	modernc.org/libc v1.75.7
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
@@ -20,7 +20,6 @@ require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/flynn/noise v1.1.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/libp2p/go-yamux/v5 v5.1.0
 	github.com/quic-go/quic-go v0.62.0
 	github.com/quic-go/webtransport-go v0.13.0
 	golang.org/x/crypto v0.55.0

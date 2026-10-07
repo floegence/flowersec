@@ -1,3 +1,4 @@
+import { DiagnosticActivity, type DiagnosticObserver } from "./diagnosticObservation.js";
 import { RPCOutputInterest } from "./rpcOutputInterest.js";
 import type { V4StreamOwner } from "../public.js";
 import type { V4AuthenticatedContext } from "../streamHandlers.js";
@@ -17,7 +18,6 @@ import type { ResumeCodec, ResumeOutcome, ResumeTargetFacts } from "./resumeCode
 import type { ServiceInputs } from "./serviceInputs.js";
 import type { SessionCleanup } from "./sessionCleanup.js";
 import type { RPCExecutionIdentity, VolatileExecutionAttempt } from "./volatileExecutions.js";
-
 export function rpcResumeDispatchCharge(runtimeBytes: bigint): ResourceVector {
   return new ResourceVector([8192n + 8n * runtimeBytes, 0n, 0n, 16n, 1n, 4n, 2n, 0n, 0n, 0n, 0n]);
 }
@@ -36,6 +36,7 @@ export class RPCResumeDispatch {
   #started = false;
   #closed = false;
   #cleaned = false;
+  #diagnostic: DiagnosticActivity | undefined;
   #finished: (() => void) | undefined;
   readonly #abort = new AbortController();
   constructor(readonly messages: RPCStreamMessages, readonly adapter: ResourceReference, readonly codec: ResumeCodec,
@@ -44,15 +45,16 @@ export class RPCResumeDispatch {
     readonly group: ApplicationGroup, readonly authentication: V4AuthenticatedContext, readonly identity: RPCExecutionIdentity,
     readonly policy: CheckpointSessionPolicy, readonly clock: TrustedClock, readonly cleanup: SessionCleanup,
     runtimeBytes: bigint, output: ResourceReference, interest: ResourceReference, work: ResourceReference,
-    readonly reserveAuthorization: (bytes: bigint) => ResourceReference) {
+    readonly reserveAuthorization: (bytes: bigint) => ResourceReference, diagnostics?: DiagnosticObserver) {
     this.#work = work.take(rpcResumeDispatchCharge(runtimeBytes));
     try { this.#output = new RPCPayload(4248, runtimeBytes, output); }
     catch (error) { this.#work.release(); throw error; }
     try { this.#interest = new RPCOutputInterest(runtimeBytes, interest); }
     catch (error) { this.#output.close(); this.#work.release(); throw error; }
     let job = false;
-    try { cleanup.startJob(); job = true; messages.onChange(() => this.#collect()); }
+    try { this.#diagnostic = new DiagnosticActivity(diagnostics, "application"); cleanup.startJob(); job = true; messages.onChange(() => this.#collect()); }
     catch (error) {
+      this.#diagnostic?.failure(error);
       this.#interest.lose("owner_unavailable", true); this.#interest.flush(); this.#interest.endInvocation();
       this.#output.close(); this.#work.release(); if (job) cleanup.finishJob(); throw error;
     }
@@ -61,6 +63,7 @@ export class RPCResumeDispatch {
   attach(stream: V4StreamOwner, session: object): void {
     if (this.#closed || this.#target !== undefined) throw new RPCProtocolError("resume_binding");
     try { this.#target = this.messages.attachResume(stream, session, this.kind, this.adapter); }
+    catch (error) { this.#diagnostic?.failure(error); throw error; }
     finally { this.adapter.release(); }
   }
   async run(parent: TrustedDeadline, signal: AbortSignal): Promise<Readonly<{ outcome: ResumeOutcome; dispatch: boolean }>> {
@@ -68,7 +71,8 @@ export class RPCResumeDispatch {
     this.#started = this.#working = true;
     let deadline = parent, timer: ReturnType<typeof setTimeout> | undefined;
     let permit: ApplicationPermit | undefined, borrow: RPCPayloadBorrow | undefined;
-    const abort = (): void => this.close(); signal.addEventListener("abort", abort, { once: true });
+    const abort = (): void => this.close();
+    signal.addEventListener("abort", abort, { once: true });
     const check = (): void => {
       if (this.#closed || signal.aborted) throw new RPCProtocolError("service_unavailable");
       deadline.check(); this.messages.check(); this.#route?.handler?.check();
@@ -83,12 +87,15 @@ export class RPCResumeDispatch {
         return this.#input = this.inputs.openInput(this.ticket, request);
       }, this.#abort.signal);
       if (header === undefined) throw new RPCProtocolError("rpc_stream_incomplete");
-      this.network.completeStreamRequest(this.ticket, this.messages); this.network.inputComplete(this.ticket, this.#input!.state === "complete");
-      this.messages.consume(); check();
+      this.network.completeStreamRequest(this.ticket, this.messages);
+      this.network.inputComplete(this.ticket, this.#input!.state === "complete");
+      this.messages.consume();
+      check();
       if (this.#input!.refusal !== undefined) throw new RPCProtocolError(this.#input!.refusal);
-      this.#route = this.#input!.takeRoute(); const route = this.#route, handler = route.handler;
+      this.#route = this.#input!.takeRoute();
+      const route = this.#route, handler = route.handler;
       if (route.namespace !== this.namespace || route.method !== this.method || handler?.execution === undefined ||
-          route.contract.optionalUint(13) !== 1n || route.definition.request.implementation !== "bytes" || route.definition.response?.implementation !== "bytes") throw new RPCProtocolError("permission_denied");
+        route.contract.optionalUint(13) !== 1n || route.definition.request.implementation !== "bytes" || route.definition.response?.implementation !== "bytes") throw new RPCProtocolError("permission_denied");
       handler.admit();
       deadline = deadline.forkAgeAt(this.clock.sample(), route.contract.uint(18));
       if (handler.options.authorization !== "authenticated") {
@@ -100,15 +107,18 @@ export class RPCResumeDispatch {
           if (allowed !== true) throw new RPCProtocolError("permission_denied");
         } finally { this.#interest.endInvocation(); invocation.release(); permit.release(); permit = undefined; this.cleanup.exitCallback(); }
       }
-      this.#execution = handler.execution.admit(this.#input!, route, this.routes, this.authentication, this.identity,
-        { check, current: () => !this.#closed && handler.current() }, () => this.close());
+      this.#execution = (await handler.execution.admit(this.#input!, route, this.routes, this.authentication, this.identity, { check, current: () => !this.#closed && handler.current() }, () => this.close()));
       const execution = this.#execution;
       let outcome: ResumeOutcome;
       if (execution.created) {
-        execution.enter(); borrow = this.#input!.borrow();
-        outcome = execution.finishResume(borrow.bytes, this.#target!, this.policy, deadline.cap, check);
-        borrow.release(); borrow = undefined; execution.exit();
-      } else {
+        (await execution.enter(check));
+        borrow = this.#input!.borrow();
+        outcome = (await execution.finishResume(borrow.bytes, this.#target!, this.policy, deadline.cap, check));
+        borrow.release();
+        borrow = undefined;
+        execution.exit();
+      }
+      else {
         await execution.wait(this.#abort.signal); check();
         // A join observes history only; it cannot run the recovered handler.
         outcome = { status: "unknown" };
@@ -118,11 +128,17 @@ export class RPCResumeDispatch {
       borrow = this.#output.borrow(result.bytes);
       if (!execution.created) outcome = this.codec.result(borrow.bytes);
       const response = this.messages.codec().response(header, "resume_response", result.bytes);
-      await this.messages.send(response, borrow.bytes, check); borrow.release(); borrow = undefined;
-      check(); this.messages.returnResumeBoundary();
-      this.#interest.lose("response_complete", true); this.#interest.flush();
+      await this.messages.send(response, borrow.bytes, check);
+      borrow.release();
+      borrow = undefined;
+      check();
+      this.messages.returnResumeBoundary();
+      this.#interest.lose("response_complete", true);
+      this.#interest.flush();
+      this.#diagnostic?.event({ state: "ready", code: "ok" });
       return Object.freeze({ outcome, dispatch: execution.created && outcome.status === "accepted" });
-    } catch (error) { this.#execution?.fail("service_unavailable"); throw error; }
+    }
+    catch (error) { this.#diagnostic?.failure(error); this.#execution?.fail("service_unavailable"); throw error; }
     finally {
       if (timer !== undefined) clearTimeout(timer); signal.removeEventListener("abort", abort);
       borrow?.release(); permit?.release(); this.#execution?.release(); this.#execution = undefined;
@@ -137,6 +153,7 @@ export class RPCResumeDispatch {
   #collect(): void {
     if (!this.#closed || this.#working || this.#cleaned || !this.messages.cleanupComplete()) return;
     this.#cleaned = true; this.#interest.endInvocation(); this.#target = undefined; this.#output.close(); this.codec.close(); this.#authorization?.release(); this.#authorization = undefined; this.#work.release(); this.cleanup.finishJob();
+    this.#diagnostic?.close(); this.#diagnostic = undefined;
     const finished = this.#finished; this.#finished = undefined; finished?.();
   }
 }

@@ -148,7 +148,22 @@ function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWork
 
 function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () => BrotliDecoder, brotliBody: typeof decodeBrotliBody): void {
   const worker = self as any;
-  let runtimeClientId = "";
+  let runtimeClientId = "", runtimeClaim = "";
+  let runtimeClaimSequence = 0;
+  let publicationSequence = 0, publicationOwnerSequence = 0, publicationGeneration = 0;
+  let publicationContext = "", publicationClosed = false, publicationBound = false, publicationOwnerID = "";
+  let publicationOwnerClaim = "", publicationOwnerClaimSequence = 0;
+  const publicationTails = new Set<() => void>();
+  let publicationObserver: MessagePort | undefined;
+  const observeCleanup = (): void => {
+    try { publicationObserver?.postMessage({ type: "flowersec-proxy:publication-cleanup", sequence: publicationOwnerSequence,
+      context: publicationContext, pending_callbacks: publicationTails.size }); } catch { /* The host may have closed its observer. */ }
+  };
+  const addPublicationTail = (stop: () => void): void => { publicationTails.add(stop); observeCleanup(); };
+  const removePublicationTail = (stop: () => void): void => { publicationTails.delete(stop); observeCleanup(); };
+  const checkPublication = (generation: number): void => {
+    if (publicationBound && (publicationClosed || generation !== publicationGeneration)) throw new Error("surface_publication_fenced");
+  };
 
   const pathMatchesPrefix = (path: string, prefix: string) => {
     const pathname = path.split("?", 1)[0] ?? path;
@@ -157,10 +172,13 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
     return pathname === prefix || pathname.startsWith(`${prefix}/`);
   };
   const pathMatches = (path: string, values: readonly string[]) => values.some((value) => pathMatchesPrefix(path, value));
+  const failureResponse = (message: string, status: number): Response => new Response(message, { status,
+    ...(publicationBound ? { headers: { "cache-control": "no-store, no-transform" } } : {}) });
   const safeMessage = (error: unknown) => error instanceof Error && error.name === "AbortError"
     ? "proxy request canceled"
     : "proxy request failed";
-  const readRequestBody = async (request: Request, limit: number): Promise<ArrayBuffer | undefined> => {
+  const readRequestBody = async (request: Request, limit: number, ownerSignal?: AbortSignal): Promise<ArrayBuffer | undefined> => {
+    const requestSignal = ownerSignal === undefined ? request.signal : AbortSignal.any([request.signal, ownerSignal]);
     const source = request.body;
     const declaredHeader = request.headers.get("content-length");
     let declaredLength: number | undefined;
@@ -195,38 +213,43 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
     let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
     let released = false;
     let cancelRequested = false;
-    let streamDone = false;
+    let naturalEOF = false;
     let abortHandler: (() => void) | undefined;
     const abortError = () => new DOMException("proxy request canceled", "AbortError");
     const abort = new Promise<never>((_, reject) => {
       abortHandler = () => {
-        // Reject the owner immediately. The underlying reader is canceled
-        // cooperatively, and its eventual settlement releases the lock below.
-        void reader.cancel().catch(() => undefined);
+        // Reject before canceling: cancel can synchronously settle a pending
+        // read with done=true, which must not become a successful natural EOF.
         reject(abortError());
+        cancel();
       };
-      request.signal.addEventListener("abort", abortHandler, { once: true });
+      requestSignal.addEventListener("abort", abortHandler, { once: true });
     });
     const release = () => {
       if (released) return;
       released = true;
       try { reader.releaseLock(); } catch { /* a provider may release it first */ }
+      removePublicationTail(physicalRead);
     };
     const cancel = () => {
       if (!cancelRequested) {
         cancelRequested = true;
-        void reader.cancel().catch(() => undefined);
+        const cancellation = reader.cancel();
+        void Promise.allSettled(pendingRead === undefined ? [cancellation] : [cancellation, pendingRead]).then(release);
       }
-      if (pendingRead === undefined) release();
-      else void pendingRead.then(release, release);
     };
+    const physicalRead = () => cancel(); addPublicationTail(physicalRead);
     try {
       for (;;) {
-        if (request.signal.aborted) throw abortError();
+        if (requestSignal.aborted) throw abortError();
         pendingRead = reader.read();
         const next = await Promise.race([pendingRead, abort]) as ReadableStreamReadResult<Uint8Array>;
+        // The signal or publication fence may win after read resolves but
+        // before this continuation runs. Cancellation retains its own physical
+        // tail even when the read has already returned done=true.
+        if (requestSignal.aborted || cancelRequested) throw abortError();
         pendingRead = undefined;
-        if (next.done) { streamDone = true; break; }
+        if (next.done) { naturalEOF = true; break; }
         const chunk = next.value;
         if (!(chunk instanceof Uint8Array)) throw new TypeError("proxy request body is not bytes");
         if (chunk.byteLength > limit - total) throw new RangeError("proxy request body exceeds limit");
@@ -244,8 +267,10 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
       if (declaredLength !== undefined && total !== declaredLength) throw new TypeError("proxy request body length mismatch");
       return total === 0 ? undefined : bytes.slice(0, total).buffer;
     } finally {
-      if (abortHandler !== undefined) request.signal.removeEventListener("abort", abortHandler);
-      if (streamDone) release();
+      if (abortHandler !== undefined) requestSignal.removeEventListener("abort", abortHandler);
+      // Only natural EOF has no underlying cancellation left to join. Once
+      // cancel is requested, its read+cancel join alone removes physicalRead.
+      if (naturalEOF && !cancelRequested) release();
       else cancel();
     }
   };
@@ -256,6 +281,37 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
   worker.addEventListener("message", (event: any) => {
     const data = event.data as Record<string, unknown> | null;
     if (data === null || typeof data !== "object") return;
+    if (data.type === "flowersec-proxy:publication-control") {
+      const source = event.source, port = event.ports[0];
+      const ownerID = typeof data.owner_id === "string" ? data.owner_id : "";
+      const ownerEpoch = typeof data.owner_epoch === "number" ? data.owner_epoch : NaN;
+      const ownerClaim = typeof data.owner_claim === "string" ? data.owner_claim : "";
+      const sameOwner = publicationBound && ownerID === publicationOwnerID && ownerClaim === publicationOwnerClaim &&
+        runtimeClaim !== "" && ownerClaim === runtimeClaim && runtimeClaimSequence === publicationOwnerClaimSequence;
+      const replacingOwner = publicationBound && ownerID !== "" && Number.isSafeInteger(ownerEpoch) && ownerEpoch >= 1 && ownerClaim !== "" &&
+        ownerClaim === runtimeClaim && runtimeClaimSequence > publicationOwnerClaimSequence && publicationTails.size === 0 &&
+        !sameOwner;
+      const valid = config.runtimeRegistrationToken !== "" && data.token === config.runtimeRegistrationToken &&
+        source?.id === runtimeClientId && ownerID !== "" && Number.isSafeInteger(ownerEpoch) && ownerEpoch >= 1 && ownerClaim !== "" && ownerClaim === runtimeClaim &&
+        Number.isSafeInteger(data.sequence) && (replacingOwner ? Number(data.sequence) >= 1 : Number(data.sequence) > publicationOwnerSequence) &&
+        typeof data.context === "string" && (data.context === "" || /^[A-Za-z0-9_-]{43}$/u.test(data.context)) &&
+        (data.action === "fence" || data.action === "install") &&
+        (!publicationBound || sameOwner || replacingOwner);
+      if (valid) {
+        publicationSequence = Math.max(publicationSequence + 1, Number(data.sequence));
+        publicationOwnerSequence = Number(data.sequence); publicationOwnerID = ownerID;
+        publicationOwnerClaim = ownerClaim; publicationOwnerClaimSequence = runtimeClaimSequence;
+        publicationGeneration++; publicationBound = true;
+        publicationClosed = true;
+        for (const stop of [...publicationTails]) { try { stop(); } catch { /* Continue sealing every original owner. */ } }
+        publicationContext = String(data.context);
+        if (data.action === "install") publicationClosed = false;
+      }
+      if (valid) { publicationObserver?.close(); publicationObserver = port; }
+      port?.postMessage({ type: "flowersec-proxy:publication-ack", ok: valid, action: data.action,
+        context: data.context, sequence: data.sequence, pending_callbacks: publicationTails.size });
+      if (!valid) port?.close(); return;
+    }
     if (data.type === "flowersec-proxy:register-runtime") {
       const port = event.ports[0];
       const source = event.source as any;
@@ -268,11 +324,42 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
           ok = false;
         }
       }
-      if (ok) runtimeClientId = source!.id;
-      port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok });
+      const requestedOwnerID = typeof data.owner_id === "string" ? data.owner_id : "";
+      const requestedOwnerEpoch = typeof data.owner_epoch === "number" ? data.owner_epoch : NaN;
+      const ownerRegistration = requestedOwnerID !== "" || Number.isSafeInteger(requestedOwnerEpoch);
+      // A reused worker may move to a new document client only after the
+      // previous publication is fenced and every physical tail has drained.
+      // A delayed registration from the old document still carries the old
+      // owner association and cannot rotate the worker claim.
+      if (ok && publicationBound && runtimeClientId !== source!.id &&
+        !(publicationClosed && publicationTails.size === 0 &&
+          (!ownerRegistration || requestedOwnerID !== publicationOwnerID))) ok = false;
+      if (ownerRegistration) {
+        ok = ok && requestedOwnerID !== "" && Number.isSafeInteger(requestedOwnerEpoch) && requestedOwnerEpoch >= 1;
+        if (ok && publicationBound) {
+          ok = publicationClosed && publicationTails.size === 0
+            ? true
+            : requestedOwnerID === publicationOwnerID;
+        }
+      }
+      if (ok) {
+        const rotateClaim = !publicationBound || (ownerRegistration && publicationClosed && publicationTails.size === 0) || runtimeClientId !== source!.id;
+        if (rotateClaim) {
+          if (runtimeClaimSequence >= Number.MAX_SAFE_INTEGER) ok = false;
+          else {
+            runtimeClientId = source!.id;
+            runtimeClaimSequence++;
+            const bytes = new Uint8Array(16);
+            globalThis.crypto.getRandomValues(bytes);
+            runtimeClaim = `${runtimeClaimSequence}.${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
+          }
+        }
+      }
+      port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok, ...(ok ? { owner_claim: runtimeClaim } : {}) });
       port?.close();
       return;
     }
+    if (data.type === config.windowClientMessageType || data.type === "flowersec-proxy:fetch") return;
     if (!config.forwardFetchMessageTypes.includes(String(data.type ?? ""))) return;
     event.waitUntil((async () => {
       const target = runtimeClientId === "" ? null : await worker.clients.get(runtimeClientId);
@@ -282,6 +369,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
 
   worker.addEventListener("fetch", (event: any) => {
     event.respondWith((async () => {
+      const capturedGeneration = publicationGeneration, capturedContext = publicationContext, capturedRuntime = runtimeClientId;
       const request = event.request;
       const url = new URL(request.url);
       if (config.sameOriginOnly && url.origin !== worker.location.origin) return await fetch(request);
@@ -299,31 +387,41 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
         }
       }
 
+      if (publicationBound && publicationClosed) return failureResponse("proxy runtime unavailable", 503);
+      checkPublication(capturedGeneration);
+      if (publicationTails.size >= 128) return failureResponse("proxy capacity unavailable", 503);
+      const admission = new AbortController(), admissionSeal = () => admission.abort();
+      addPublicationTail(admissionSeal);
+      try {
       const source = event.clientId === "" ? null : await worker.clients.get(event.clientId);
       const target = config.windowTarget === "request_client"
         ? source
         : runtimeClientId === "" ? null : await worker.clients.get(runtimeClientId);
       if (target === null) {
         if (config.windowTarget === "registered_runtime") runtimeClientId = "";
-        return new Response("proxy runtime unavailable", { status: 503 });
+        return failureResponse("proxy runtime unavailable", 503);
       }
 
       let body: ArrayBuffer | undefined;
-      if (request.signal.aborted) return new Response("proxy request canceled", { status: 499 });
+      if (request.signal.aborted) return failureResponse("proxy request canceled", 499);
       if (request.method !== "GET" && request.method !== "HEAD") {
         try {
-          body = await readRequestBody(request, config.maxRequestBodyBytes);
+          body = await readRequestBody(request, config.maxRequestBodyBytes, admission.signal);
         } catch (error) {
-          if (error instanceof RangeError) return new Response("proxy request too large", { status: 413 });
-          if (request.signal.aborted || error instanceof DOMException && error.name === "AbortError") return new Response("proxy request canceled", { status: 499 });
-          return new Response("proxy request body unavailable", { status: 400 });
+          if (error instanceof RangeError) return failureResponse("proxy request too large", 413);
+          if (request.signal.aborted || error instanceof DOMException && error.name === "AbortError") return failureResponse("proxy request canceled", 499);
+          return failureResponse("proxy request body unavailable", 400);
         }
       }
+      checkPublication(capturedGeneration);
+      if (capturedRuntime !== runtimeClientId || capturedContext !== publicationContext) throw new Error("surface_publication_fenced");
+      if (publicationTails.size >= 128) return failureResponse("proxy capacity unavailable", 503);
       const channel = new MessageChannel();
       const response = await new Promise<Response>((resolve) => {
         let metadata: Readonly<{ status: number; headers: Headers }> | null = null;
         let controller: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>> | null = null;
         let finished = false;
+        let outputStop: (() => void) | undefined;
         let remoteAbortSent = false;
         let responseCreditOutstanding = false;
         let encodedBodyBytes = 0;
@@ -339,15 +437,18 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
           clearInterval(runtimeWatchdog);
           request.signal.removeEventListener("abort", requestAborted);
           channel.port1.close();
+          if (outputStop === undefined) removePublicationTail(stopPublication);
         };
         const finishError = (status: number, message: string, cancelRemote = false) => {
           if (finished) return;
           finished = true;
           if (cancelRemote) abortRemote();
           if (controller !== null) controller.error(new Error(message));
-          else resolve(new Response(message, { status }));
+          else resolve(new Response(message, { status, headers: { "cache-control": "no-store, no-transform" } }));
           cleanup();
         };
+        const stopPublication = () => { outputStop?.(); finishError(503, "surface publication fenced", true); };
+        addPublicationTail(stopPublication);
         const requestAborted = () => finishError(499, "proxy request canceled", true);
         const sendResponseCredit = () => {
           if (finished || controller === null || responseCreditOutstanding) return;
@@ -382,6 +483,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
         channel.port1.onmessage = (message) => {
           const value = message.data as Record<string, unknown> | null;
           if (value === null || typeof value !== "object" || finished) return;
+          if (publicationBound && (publicationClosed || capturedGeneration !== publicationGeneration)) return stopPublication();
           if (value.type === "flowersec-proxy:response_meta") {
             if (!Number.isInteger(value.status) || (value.status as number) < 200 || (value.status as number) > 599 || metadata !== null) return finishError(502, "invalid proxy response", true);
             const headers = new Headers();
@@ -419,6 +521,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
               // HEAD/204/205/304 have no body. Do not create a decoder,
               // stream or credit window for an impossible payload.
               finished = true;
+              checkPublication(capturedGeneration);
               resolve(new Response(null, { status: metadata.status, headers: metadata.headers }));
               abortRemote();
               cleanup();
@@ -463,7 +566,32 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
             }));
             // Synthetic Response does not decode. This is the sole final
             // presentation boundary; origin representation metadata stays intact.
-            resolve(new Response(nullBody ? null : decoded, { status: metadata.status, headers: metadata.headers }));
+            const presented = decoded.getReader();
+            let output: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>> | undefined;
+            let outputClosed = false;
+            const releaseOutput = () => { removePublicationTail(stopPublication); try { presented.releaseLock(); } catch { /* already released */ } };
+            outputStop = () => {
+              if (outputClosed) return; outputClosed = true;
+              output?.error(new Error("surface_publication_fenced"));
+              void presented.cancel().then(releaseOutput, releaseOutput);
+            };
+            const guarded = new ReadableStream<Uint8Array<ArrayBuffer>>({
+              start(controller) { output = controller; },
+              async pull(controller) {
+                try {
+                  checkPublication(capturedGeneration);
+                  const physicalRead = () => {}; addPublicationTail(physicalRead);
+                  let next: ReadableStreamReadResult<Uint8Array<ArrayBuffer>>;
+                  try { next = await presented.read(); } finally { removePublicationTail(physicalRead); }
+                  checkPublication(capturedGeneration);
+                  if (next.done) { outputClosed = true; controller.close(); releaseOutput(); }
+                  else controller.enqueue(next.value);
+                } catch (error) { if (!outputClosed) { outputClosed = true; controller.error(error); } await presented.cancel().catch(() => undefined); releaseOutput(); }
+              },
+              async cancel() { outputClosed = true; await presented.cancel().catch(() => undefined); releaseOutput(); },
+            });
+            checkPublication(capturedGeneration);
+            resolve(new Response(guarded, { status: metadata.status, headers: metadata.headers }));
             return;
           }
           if (value.type === "flowersec-proxy:response_chunk") {
@@ -504,7 +632,8 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
               id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
               method: request.method,
               path,
-              headers,
+              headers, credentials: request.credentials, request_origin: url.origin,
+              ...(publicationBound && capturedContext !== "" ? { association_context: capturedContext, association_generation: capturedGeneration } : {}),
               response_flow_control: "chunk_credit_v2",
               ...(body === undefined ? {} : { body }),
             },
@@ -528,7 +657,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
           if (next.done) break;
           if (next.value.byteLength > config.maxInjectHTMLBytes - size) {
             await htmlReader.cancel();
-            return new Response("proxy HTML response too large", { status: 502 });
+            return failureResponse("proxy HTML response too large", 502);
           }
           htmlBytes.set(next.value, size);
           size += next.value.byteLength;
@@ -549,8 +678,10 @@ function serviceWorkerMain(config: ServiceWorkerConfig, createBrotliDecoder: () 
       const headers = new Headers(response.headers);
       for (const name of ["content-encoding", "content-length", "etag", "last-modified", "content-digest", "repr-digest", "digest", "content-md5", "content-range", "accept-ranges"]) headers.delete(name);
       if (injection.setNoStore !== false) headers.set("cache-control", "no-store");
+      checkPublication(capturedGeneration);
       return new Response(html, { status: response.status, statusText: response.statusText, headers });
-    })().catch((error) => new Response(safeMessage(error), { status: 502 })));
+      } finally { removePublicationTail(admissionSeal); }
+    })().catch((error) => failureResponse(safeMessage(error), 502)));
   });
 }
 

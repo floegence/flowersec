@@ -39,7 +39,7 @@ private struct V4CryptoUsageReference {
     return ["calls":"1","authentication_blocks":String(total),"ciphertext_bytes":String(ciphertext)]
   }
 }
-final class TransportV4CryptoUsageTests: XCTestCase {
+final class TransportCryptoUsageTests: XCTestCase {
   func testSharedCorpus() throws {
     let reference = try V4CryptoUsageReference()
     let corpus = try JSONDecoder().decode(V4JSON.self, from: Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/crypto_usage.json")))

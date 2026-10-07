@@ -110,7 +110,7 @@ func (d ExecutionDispatch) dispatchApplicationStream(ctx context.Context, stream
 			return err
 		}
 		var err error
-		permit, err = d.Executor.TryAcquire(d.Class, task, backing)
+		permit, err = d.Executor.tryAcquireInGroup(d.group, d.Class, task, backing)
 		return err
 	}
 	if d.DurableHistory != nil {

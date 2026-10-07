@@ -26,9 +26,17 @@ use zeroize::Zeroizing;
 
 const PAGE: u64 = 4096;
 const RETENTION: u64 = 604_800_000;
-const MANIFEST: &str = "CREATE TABLE manifest (id INTEGER PRIMARY KEY CHECK(id=1), format TEXT NOT NULL CHECK(format='flowersec-v4-rust-pool'), revision INTEGER NOT NULL CHECK(revision=2), authority TEXT NOT NULL CHECK(length(CAST(authority AS BLOB)) BETWEEN 1 AND 128), instance BLOB NOT NULL CHECK(length(instance)=32), generation BLOB NOT NULL CHECK(length(generation)=8), epoch BLOB NOT NULL CHECK(length(epoch)=8), max_pages INTEGER NOT NULL, max_records INTEGER NOT NULL, max_record_bytes INTEGER NOT NULL, spend_rows INTEGER NOT NULL CHECK(spend_rows>=0), winner_rows INTEGER NOT NULL CHECK(winner_rows>=0), admission_rows INTEGER NOT NULL CHECK(admission_rows>=0)) STRICT, WITHOUT ROWID";
+const MANIFEST: &str = "CREATE TABLE manifest (id INTEGER PRIMARY KEY CHECK(id=1), format TEXT NOT NULL CHECK(format='flowersec-v4-rust-pool'), revision INTEGER NOT NULL CHECK(revision=3), authority TEXT NOT NULL CHECK(length(CAST(authority AS BLOB)) BETWEEN 1 AND 128), instance BLOB NOT NULL CHECK(length(instance)=32), generation BLOB NOT NULL CHECK(length(generation)=8), epoch BLOB NOT NULL CHECK(length(epoch)=8), max_pages INTEGER NOT NULL, max_records INTEGER NOT NULL, max_record_bytes INTEGER NOT NULL, spend_rows INTEGER NOT NULL CHECK(spend_rows>=0), winner_rows INTEGER NOT NULL CHECK(winner_rows>=0), admission_rows INTEGER NOT NULL CHECK(admission_rows>=0)) STRICT, WITHOUT ROWID";
 #[path = "admission_v4.rs"]
 pub(crate) mod admission;
+#[path = "parent_winner_v4.rs"]
+pub(crate) mod parent;
+#[path = "pool_storage_records_v4.rs"]
+mod records;
+#[path = "relay_ledger_v4.rs"]
+pub(crate) mod relay;
+#[path = "pool_top_up_v4.rs"]
+pub(crate) mod top_up;
 const SPEND: &str = "CREATE TABLE spend (lease BLOB PRIMARY KEY CHECK(length(lease) BETWEEN 34 AND 161), source INTEGER NOT NULL CHECK(source=1), state INTEGER NOT NULL CHECK(state=1), version BLOB NOT NULL CHECK(length(version)=8), fence BLOB NOT NULL CHECK(length(fence)=8), retained_until BLOB NOT NULL CHECK(length(retained_until)=8), projection BLOB NOT NULL CHECK(length(projection) BETWEEN 1 AND 1048576)) STRICT, WITHOUT ROWID";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PoolStoreFailure {
@@ -39,6 +47,9 @@ pub enum PoolStoreFailure {
     Fenced,
     SpendConflict,
     AdmissionConflict,
+    RelayPublicationConflict,
+    RelayClaimConflict,
+    RelayClaimUnknown,
     WinnerConflict,
     SpentUnknown,
     Capacity,
@@ -51,17 +62,106 @@ pub enum PoolWriteState {
     Committed,
     Unknown,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum StorageFormatTransactionGroup {
+    Pool,
+    Relay,
+    ExecutionHistory,
+    OperationReference,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum StorageWireFormat {
+    FlowersecV4RustPool,
+    FlowersecV4RustRelay,
+    FlowersecExecution2,
+    FlowersecOperationReference1,
+    Other,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum StorageFormatMismatchReason {
+    BackendConfiguration,
+    MissingManifest,
+    WireFormat,
+    Revision,
+    IdentityMismatch,
+    RevisionConflict,
+    OlderRevision,
+    NewerRevision,
+    Schema,
+    Configuration,
+    Value,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum StorageFormatConversion {
+    Never,
+    ExactOnly,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StorageFormatIncompatibility {
+    pub transaction_group: StorageFormatTransactionGroup,
+    pub observed_wire: Option<StorageWireFormat>,
+    pub required_wire: StorageWireFormat,
+    pub observed_revision: Option<u32>,
+    pub required_revision: u32,
+    pub reason: StorageFormatMismatchReason,
+    pub conversion: StorageFormatConversion,
+}
+impl StorageFormatIncompatibility {
+    pub(crate) fn new(
+        group: StorageFormatTransactionGroup,
+        wire: StorageWireFormat,
+        required: u32,
+        observed: Option<u32>,
+        reason: StorageFormatMismatchReason,
+    ) -> Self {
+        Self {
+            transaction_group: group,
+            observed_wire: observed.map(|_| wire),
+            required_wire: wire,
+            observed_revision: observed,
+            required_revision: required,
+            reason,
+            conversion: StorageFormatConversion::Never,
+        }
+    }
+    pub const fn code(&self) -> &'static str {
+        "storage_format_incompatible"
+    }
+    pub const fn wire_profile(&self) -> &'static str {
+        "flowersec-v4-transport-security"
+    }
+    pub const fn exact_conversion_available(&self) -> bool {
+        false
+    }
+}
+/// Detached evidence of this store's original irreversible consume attempt.
+/// It grants no spend, connection, retry or replay authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PoolSpendState {
+    NotSubmitted,
+    CommitKnown,
+    Unknown,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PoolSpendObservation {
+    pub state: PoolSpendState,
+    pub artifact_digest: [u8; 32],
+    pub activation_digest: [u8; 32],
+    pub attempt_id: [u8; 16],
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error("Flowersec pool storage {code:?} ({write_state:?})")]
 pub struct PoolStoreError {
     pub code: PoolStoreFailure,
     pub write_state: PoolWriteState,
+    pub format: Option<StorageFormatIncompatibility>,
 }
 type Result<T> = std::result::Result<T, PoolStoreError>;
 fn fail(code: PoolStoreFailure) -> PoolStoreError {
     PoolStoreError {
         code,
         write_state: PoolWriteState::NotSubmitted,
+        format: None,
     }
 }
 impl From<EnvironmentError> for PoolStoreError {
@@ -244,6 +344,14 @@ impl SQLitePoolBacking {
     pub fn open(&self, options: SQLitePoolOptions) -> Result<Arc<SQLitePoolStore>> {
         SQLitePoolStore::open(self.inner.clone(), options)
     }
+    /// A relay ledger has its own protected format and history. It shares the
+    /// backing protection and continuity machinery, never the consumer table.
+    pub fn open_relay(
+        &self,
+        options: relay::SQLiteRelayOptions,
+    ) -> Result<Arc<relay::SQLiteRelayLedger>> {
+        relay::SQLiteRelayLedger::open(self.inner.clone(), options)
+    }
     pub fn close(&self) {
         self.inner.state.lock().expect("pool backing").closed = true;
     }
@@ -285,8 +393,10 @@ struct StoreState {
     charge: Option<EnvironmentCharge>,
     epoch: u64,
     inode: Option<(u64, u64)>,
+    spend_observation: Option<PoolSpendObservation>,
 }
 pub struct SQLitePoolStore {
+    relay_format: bool,
     backing: Arc<Backing>,
     identity: SQLitePoolIdentity,
     continuity: Arc<dyn SQLitePoolContinuity>,
@@ -296,7 +406,7 @@ pub struct SQLitePoolStore {
 }
 impl fmt::Debug for SQLitePoolStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("V4SQLitePoolStore { <opaque> }")
+        f.write_str("SQLitePoolStore { <opaque> }")
     }
 }
 fn security_id(value: &str) -> bool {
@@ -307,7 +417,7 @@ fn security_id(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"._:/@-".contains(&b))
         && value.as_bytes()[0].is_ascii_alphanumeric()
 }
-fn nonzero<const N: usize>(v: &[u8; N]) -> bool {
+fn nonzero(v: &[u8]) -> bool {
     v.iter().any(|b| *b != 0)
 }
 fn scalar<T: rusqlite::types::FromSql>(db: &Connection, sql: &str) -> Result<T> {
@@ -321,7 +431,17 @@ fn read_u64(value: Vec<u8>) -> Result<u64> {
     ))
 }
 impl SQLitePoolStore {
+    pub(crate) fn belongs_to(&self, root: &Arc<EnvironmentRoot>) -> bool {
+        Arc::ptr_eq(&self.backing.environment, root) && !self.closed.load(Ordering::Acquire)
+    }
     fn open(backing: Arc<Backing>, options: SQLitePoolOptions) -> Result<Arc<Self>> {
+        Self::open_format(backing, options, false)
+    }
+    fn open_format(
+        backing: Arc<Backing>,
+        options: SQLitePoolOptions,
+        relay_format: bool,
+    ) -> Result<Arc<Self>> {
         if !security_id(&options.identity.authority)
             || !nonzero(&options.identity.store_id)
             || options.identity.generation == 0
@@ -340,7 +460,9 @@ impl SQLitePoolStore {
             return Err(fail(PoolStoreFailure::OwnerUnavailable));
         }
         let charge = backing.environment.reserve_environment(ResourceLimits {
-            sdk_bytes: 32_768,
+            // Current-record inspection owns bounded projection/hash scratch
+            // independently of the provider's two simultaneous row buffers.
+            sdk_bytes: 32_768 + records::SCRATCH_BYTES,
             provider_bytes: backing.limits.runtime()?,
             items: 1,
             work_slots: 1,
@@ -351,6 +473,7 @@ impl SQLitePoolStore {
         owner.active = true;
         drop(owner);
         let store = Arc::new(Self {
+            relay_format,
             backing,
             identity: options.identity,
             continuity: options.continuity,
@@ -360,6 +483,7 @@ impl SQLitePoolStore {
                 charge: Some(charge),
                 epoch: 0,
                 inode: None,
+                spend_observation: None,
             }),
             closed: AtomicBool::new(false),
         });
@@ -370,6 +494,18 @@ impl SQLitePoolStore {
                 .register_pool_store(&store)
                 .map_err(Into::into)
         }) {
+            if matches!(
+                e.code,
+                PoolStoreFailure::StorageFormat
+                    | PoolStoreFailure::StorageUnavailable
+                    | PoolStoreFailure::HistoryUnknown
+                    | PoolStoreFailure::Fenced
+            ) {
+                store
+                    .backing
+                    .environment
+                    .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::StoreFailures);
+            }
             store.close();
             return Err(e);
         }
@@ -421,6 +557,16 @@ impl SQLitePoolStore {
         self.continuity.check(&self.identity, state.epoch, false)
     }
     fn initialize(&self, create: bool) -> Result<()> {
+        self.initialize_current(create).map_err(|mut error| {
+            if error.code == PoolStoreFailure::StorageFormat && error.format.is_none() {
+                error.format = self
+                    .format_error(None, StorageFormatMismatchReason::BackendConfiguration)
+                    .format;
+            }
+            error
+        })
+    }
+    fn initialize_current(&self, create: bool) -> Result<()> {
         let mut state = self.state.lock().expect("pool store");
         let c = self.backing.limits;
         if create {
@@ -450,6 +596,8 @@ impl SQLitePoolStore {
         )?;
         db.busy_timeout(Duration::ZERO)?;
         db.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
+        db.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true)?;
+        db.execute_batch("PRAGMA locking_mode=EXCLUSIVE")?;
         for (limit, bound) in [
             (
                 Limit::SQLITE_LIMIT_LENGTH,
@@ -463,6 +611,23 @@ impl SQLitePoolStore {
         ] {
             db.set_limit(limit, bound)?;
         }
+        // Only connection-local defensive controls precede format inspection.
+        // A rejected group must not checkpoint, change journal mode or fence
+        // its epoch before the complete current reader accepts it.
+        db.execute_batch("PRAGMA trusted_schema=OFF;")?;
+        let inspected_epoch = if !create {
+            db.execute_batch("PRAGMA query_only=ON; BEGIN")?;
+            let inspected = self.validate_format(&db);
+            let rolled_back = db.execute_batch("ROLLBACK");
+            let epoch = inspected?;
+            rolled_back?;
+            self.continuity.check(&self.identity, epoch, false)?;
+            self.files(&mut state)?;
+            db.execute_batch("PRAGMA query_only=OFF")?;
+            Some(epoch)
+        } else {
+            None
+        };
         if create {
             db.execute_batch("PRAGMA page_size=4096; PRAGMA journal_mode=WAL;")?;
         }
@@ -517,14 +682,20 @@ impl SQLitePoolStore {
         let result = (|| {
             let db = state.database.as_ref().expect("opened database");
             db.execute_batch("BEGIN IMMEDIATE")?;
-            let epoch = if create {
+            let epoch = if create && self.relay_format {
+                relay::initialize(db, &self.identity, c)?;
+                1
+            } else if create {
                 db.execute_batch(MANIFEST)?;
                 db.execute_batch(SPEND)?;
                 db.execute_batch(admission::WINNER)?;
                 db.execute_batch(admission::ADMISSION)?;
-                db.execute_batch("PRAGMA user_version=2")?;
+                db.execute_batch(top_up::SOURCE)?;
+                db.execute_batch(top_up::PENDING)?;
+                db.execute_batch(top_up::MATERIAL)?;
+                db.execute_batch("PRAGMA user_version=3")?;
                 db.execute(
-                    "INSERT INTO manifest VALUES(1,'flowersec-v4-rust-pool',2,?,?,?,?,?,?,?,0,0,0)",
+                    "INSERT INTO manifest VALUES(1,'flowersec-v4-rust-pool',3,?,?,?,?,?,?,?,0,0,0)",
                     params![
                         self.identity.authority,
                         &self.identity.store_id,
@@ -537,8 +708,7 @@ impl SQLitePoolStore {
                 )?;
                 1
             } else {
-                let old = self.validate(db)?;
-                self.continuity.check(&self.identity, old, false)?;
+                let old = inspected_epoch.ok_or(fail(PoolStoreFailure::StorageUnavailable))?;
                 let next = old.checked_add(1).ok_or(fail(PoolStoreFailure::Fenced))?;
                 if db.execute(
                     "UPDATE manifest SET epoch=? WHERE id=1 AND epoch=?",
@@ -554,8 +724,13 @@ impl SQLitePoolStore {
                 return Err(fail(PoolStoreFailure::Closed));
             }
             db.execute_batch("COMMIT").map_err(|_| PoolStoreError {
-                code: PoolStoreFailure::SpentUnknown,
+                code: if self.relay_format {
+                    PoolStoreFailure::RelayClaimUnknown
+                } else {
+                    PoolStoreFailure::SpentUnknown
+                },
                 write_state: PoolWriteState::Unknown,
+                format: None,
             })?;
             state.epoch = epoch;
             if create {
@@ -568,6 +743,11 @@ impl SQLitePoolStore {
                 .sync_all()?;
             }
             self.check(&mut state)?;
+            state
+                .database
+                .as_ref()
+                .expect("admitted database")
+                .set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, false)?;
             Ok(())
         })();
         if result.is_err()
@@ -577,10 +757,153 @@ impl SQLitePoolStore {
         }
         result
     }
+    fn format_error(
+        &self,
+        observed: Option<u32>,
+        reason: StorageFormatMismatchReason,
+    ) -> PoolStoreError {
+        let (group, wire, revision) = if self.relay_format {
+            (
+                StorageFormatTransactionGroup::Relay,
+                StorageWireFormat::FlowersecV4RustRelay,
+                1,
+            )
+        } else {
+            (
+                StorageFormatTransactionGroup::Pool,
+                StorageWireFormat::FlowersecV4RustPool,
+                3,
+            )
+        };
+        PoolStoreError {
+            code: PoolStoreFailure::StorageFormat,
+            write_state: PoolWriteState::NotSubmitted,
+            format: Some(StorageFormatIncompatibility::new(
+                group, wire, revision, observed, reason,
+            )),
+        }
+    }
+    fn observe_transaction_failure(&self, error: PoolStoreError) {
+        use crate::diagnostics_v4::DiagnosticCounter;
+        let metric = match error.code {
+            PoolStoreFailure::SpentUnknown | PoolStoreFailure::RelayClaimUnknown => {
+                Some(DiagnosticCounter::SpendUnknown)
+            }
+            PoolStoreFailure::SpendConflict
+            | PoolStoreFailure::AdmissionConflict
+            | PoolStoreFailure::WinnerConflict
+            | PoolStoreFailure::RelayClaimConflict
+            | PoolStoreFailure::RelayPublicationConflict => {
+                Some(DiagnosticCounter::ReservationConflicts)
+            }
+            PoolStoreFailure::StorageUnavailable
+            | PoolStoreFailure::StorageFormat
+            | PoolStoreFailure::HistoryUnknown
+            | PoolStoreFailure::Fenced => Some(DiagnosticCounter::StoreFailures),
+            _ => None,
+        };
+        if let Some(metric) = metric {
+            self.backing.environment.diagnostic_count(metric);
+        }
+    }
+    fn inspect_format(&self, db: &Connection) -> Result<u32> {
+        let unknown = || self.format_error(None, StorageFormatMismatchReason::MissingManifest);
+        let read_error = |error: rusqlite::Error| {
+            if matches!(
+                error.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+            ) {
+                fail(PoolStoreFailure::StorageUnavailable)
+            } else {
+                unknown()
+            }
+        };
+        let (manifest, name, required) = if self.relay_format {
+            (relay::MANIFEST, "flowersec-v4-rust-relay", 1u32)
+        } else {
+            (MANIFEST, "flowersec-v4-rust-pool", 3u32)
+        };
+        let prefix: Vec<u8> = db.query_row(
+            "SELECT substr(CAST(sql AS BLOB),1,768) FROM sqlite_schema WHERE type='table' AND name='manifest'",
+            [], |row| row.get(0)).map_err(read_error)?;
+        let prefix = std::str::from_utf8(&prefix).map_err(|_| unknown())?;
+        let marker = format!("CHECK(revision={required})");
+        let (before, after) = manifest.split_once(&marker).ok_or_else(unknown)?;
+        let after = after
+            .split_once("epoch BLOB NOT NULL CHECK(length(epoch)=8),")
+            .ok_or_else(unknown)?
+            .0;
+        let remaining = prefix
+            .strip_prefix(before)
+            .and_then(|s| s.strip_prefix("CHECK(revision="))
+            .ok_or_else(unknown)?;
+        let (digits, remaining) = remaining.split_once(')').ok_or_else(unknown)?;
+        if digits.is_empty()
+            || digits.len() > 10
+            || digits.starts_with('0')
+            || !digits.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(unknown());
+        }
+        let declared = digits.parse::<u32>().map_err(|_| unknown())?;
+        if !remaining
+            .strip_prefix(after)
+            .is_some_and(|s| s.starts_with("epoch BLOB NOT NULL CHECK(length(epoch)=8),"))
+        {
+            return Err(unknown());
+        }
+        // SQL comparisons expose only bounded booleans, the declared revision
+        // and the fixed eight-byte fence. No untrusted provider text escapes.
+        let row = db.query_row(
+            "SELECT (SELECT count(*) FROM (SELECT 1 FROM manifest LIMIT 2)),id=1,typeof(format)='text' AND format=?1,CASE WHEN typeof(revision)='integer' AND revision BETWEEN 1 AND 4294967295 THEN revision END,typeof(authority)='text' AND authority=?2,typeof(instance)='blob' AND instance=?3,typeof(generation)='blob' AND generation=?4,CASE WHEN typeof(epoch)='blob' AND length(epoch)=8 THEN epoch END FROM manifest LIMIT 1",
+            params![name, self.identity.authority, self.identity.store_id, self.identity.generation.to_be_bytes()],
+            |row| Ok((row.get::<_, u64>(0)?, row.get::<_, bool>(1)?, row.get::<_, bool>(2)?, row.get::<_, Option<u32>>(3)?,
+                row.get::<_, bool>(4)?, row.get::<_, bool>(5)?, row.get::<_, bool>(6)?, row.get::<_, Option<Vec<u8>>>(7)?)))
+            .map_err(read_error)?;
+        let epoch = row
+            .7
+            .and_then(|v| <[u8; 8]>::try_from(v).ok())
+            .map(u64::from_be_bytes);
+        if row.0 != 1 || !row.1 || !row.2 || epoch.is_none_or(|v| v == 0 || v == u64::MAX) {
+            return Err(unknown());
+        }
+        if !row.4 || !row.5 || !row.6 {
+            return Err(self.format_error(None, StorageFormatMismatchReason::IdentityMismatch));
+        }
+        let hint = db
+            .query_row("PRAGMA user_version", [], |row| row.get::<_, u32>(0))
+            .ok();
+        if row.3 != Some(declared) || hint != Some(declared) {
+            return Err(self.format_error(None, StorageFormatMismatchReason::RevisionConflict));
+        }
+        if declared != required {
+            return Err(self.format_error(
+                Some(declared),
+                if declared < required {
+                    StorageFormatMismatchReason::OlderRevision
+                } else {
+                    StorageFormatMismatchReason::NewerRevision
+                },
+            ));
+        }
+        Ok(declared)
+    }
+    fn validate_format(&self, db: &Connection) -> Result<u64> {
+        let observed = self.inspect_format(db)?;
+        self.validate(db).map_err(|error| match error.code {
+            PoolStoreFailure::StorageFormat | PoolStoreFailure::StorageUnavailable => {
+                self.format_error(Some(observed), StorageFormatMismatchReason::Schema)
+            }
+            _ => error,
+        })
+    }
     fn validate(&self, db: &Connection) -> Result<u64> {
         let c = self.backing.limits;
-        if scalar::<u64>(db, "PRAGMA user_version")? != 2
-            || scalar::<u64>(db, "SELECT count(*) FROM sqlite_schema")? != 4
+        if self.relay_format {
+            return relay::validate(db, &self.identity, c);
+        }
+        if scalar::<u64>(db, "PRAGMA user_version")? != 3
+            || scalar::<u64>(db, "SELECT count(*) FROM sqlite_schema")? != 7
         {
             return Err(fail(PoolStoreFailure::StorageFormat));
         }
@@ -589,6 +912,9 @@ impl SQLitePoolStore {
             ("spend", SPEND),
             ("parent_winner", admission::WINNER),
             ("admission", admission::ADMISSION),
+            ("top_up_source", top_up::SOURCE),
+            ("top_up_pending", top_up::PENDING),
+            ("top_up_material", top_up::MATERIAL),
         ] {
             let actual: Option<String> = db
                 .query_row(
@@ -607,7 +933,7 @@ impl SQLitePoolStore {
         let row=db.query_row("SELECT format,revision,authority,instance,generation,epoch,max_pages,max_records,max_record_bytes,spend_rows FROM manifest WHERE id=1",[],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u64>(1)?,r.get::<_,String>(2)?,r.get::<_,Vec<u8>>(3)?,r.get::<_,Vec<u8>>(4)?,r.get::<_,Vec<u8>>(5)?,r.get::<_,u32>(6)?,r.get::<_,u32>(7)?,r.get::<_,u32>(8)?,r.get::<_,u32>(9)?)))?;
         let epoch = read_u64(row.5)?;
         if row.0 != "flowersec-v4-rust-pool"
-            || row.1 != 2
+            || row.1 != 3
             || row.2 != self.identity.authority
             || row.3 != self.identity.store_id
             || read_u64(row.4)? != self.identity.generation
@@ -624,7 +950,28 @@ impl SQLitePoolStore {
         if bad != 0 {
             return Err(fail(PoolStoreFailure::StorageFormat));
         }
-        admission::validate(db, c, epoch)?;
+        records::validate_spend(db, &self.identity, c, epoch)?;
+        let bad_top_up_sources: u64 = db.query_row(
+            "SELECT count(*) FROM top_up_source WHERE length(tenant)=0 OR length(incarnation)<>16 OR length(generation)<>8 OR generation=zeroblob(8) OR length(next_sequence)<>8 OR next_sequence=zeroblob(8) OR length(artifact_frontier)<>8",
+            [], |r| r.get(0))?;
+        let bad_top_up_pending: u64 = db.query_row(
+            "SELECT count(*) FROM top_up_pending p WHERE length(p.tenant)=0 OR length(p.incarnation)<>16 OR length(p.operation)<>16 OR length(p.request) NOT BETWEEN 1 AND 524288 OR length(p.request)>? OR length(p.request_digest)<>32 OR length(p.identity_digest)<>32 OR length(p.created_generation)<>8 OR p.created_generation=zeroblob(8) OR length(p.generation)<>8 OR (p.state IN (2,3) AND p.generation=zeroblob(8)) OR p.state NOT BETWEEN 1 AND 4 OR (p.state=1 AND (p.response IS NOT NULL OR p.applied_entries IS NOT NULL OR p.terminal IS NOT NULL)) OR (p.state IN (2,3) AND (p.response IS NULL OR length(p.response)=0 OR length(p.response)>? OR p.applied_entries IS NULL OR length(p.applied_entries) NOT BETWEEN 1 AND 1024 OR p.terminal IS NOT NULL)) OR (p.state=4 AND (p.terminal IS NULL OR p.terminal NOT IN ('top_up_request_expired','source_reset_required','capacity_exhausted','configuration_capacity','relink_required','spent_unknown') OR (p.response IS NULL)<>(p.applied_entries IS NULL) OR (p.response IS NOT NULL AND (p.terminal<>'source_reset_required' OR length(p.response) NOT BETWEEN 1 AND ? OR length(p.applied_entries) NOT BETWEEN 1 AND 1024)))) OR NOT EXISTS (SELECT 1 FROM top_up_source s WHERE s.tenant=p.tenant AND s.incarnation=p.incarnation)",
+            params![c.max_record_bytes,c.max_record_bytes,c.max_record_bytes], |r| r.get(0))?;
+        let bad_top_up_material: u64 = db.query_row(
+            "SELECT count(*) FROM top_up_material m WHERE length(m.tenant)=0 OR length(m.incarnation)<>16 OR length(m.sequence)<>8 OR m.sequence=zeroblob(8) OR length(m.expiry)<>8 OR m.expiry=zeroblob(8) OR length(m.artifact_digest)<>32 OR length(m.material) NOT BETWEEN 1 AND 65536 OR length(m.material)>? OR NOT EXISTS (SELECT 1 FROM top_up_source s WHERE s.tenant=m.tenant AND s.incarnation=m.incarnation AND m.sequence<=s.artifact_frontier)",
+            params![c.max_record_bytes], |r| r.get(0))?;
+        let top_up_sources: u64 = scalar(db, "SELECT count(*) FROM top_up_source")?;
+        let top_up_material: u64 = scalar(db, "SELECT count(*) FROM top_up_material")?;
+        if bad_top_up_sources != 0
+            || bad_top_up_pending != 0
+            || bad_top_up_material != 0
+            || top_up_sources > 8
+            || top_up_material > 128
+        {
+            return Err(fail(PoolStoreFailure::StorageFormat));
+        }
+        top_up::validate_terminal_applied(db)?;
+        admission::validate(db, &self.identity, c, epoch)?;
         Ok(epoch)
     }
     pub fn close(&self) {
@@ -641,6 +988,12 @@ impl SQLitePoolStore {
         }
         state.charge = None;
         self.backing.state.lock().expect("pool backing").active = false;
+    }
+    pub fn spend_observation(&self) -> Option<PoolSpendObservation> {
+        self.state
+            .lock()
+            .expect("original spend observation")
+            .spend_observation
     }
     pub fn cleanup_complete(&self) -> bool {
         let state = self.state.lock().expect("pool store");
@@ -932,7 +1285,7 @@ impl SQLitePoolStore {
             }
             if scalar::<u64>(
                 db,
-                "SELECT spend_rows+winner_rows+admission_rows FROM manifest WHERE id=1",
+                "SELECT spend_rows+winner_rows+admission_rows+(SELECT count(*) FROM top_up_material) FROM manifest WHERE id=1",
             )? >= u64::from(self.backing.limits.max_records)
             {
                 return Err(fail(PoolStoreFailure::Capacity));
@@ -963,6 +1316,12 @@ impl SQLitePoolStore {
                 .expect("original database")
                 .execute_batch("COMMIT")?;
             committed = true;
+            state.spend_observation = Some(PoolSpendObservation {
+                state: PoolSpendState::CommitKnown,
+                artifact_digest: admission.artifact_digest,
+                activation_digest: admission.activation_digest,
+                attempt_id: admission.attempt_id,
+            });
             uncertain = false;
             check(&mut state)?;
             self.fence(&state)?;
@@ -976,10 +1335,17 @@ impl SQLitePoolStore {
                 self.closed.store(true, Ordering::Release);
             }
             if uncertain {
+                state.spend_observation = Some(PoolSpendObservation {
+                    state: PoolSpendState::Unknown,
+                    artifact_digest: admission.artifact_digest,
+                    activation_digest: admission.activation_digest,
+                    attempt_id: admission.attempt_id,
+                });
                 self.closed.store(true, Ordering::Release);
                 error = PoolStoreError {
                     code: PoolStoreFailure::SpentUnknown,
                     write_state: PoolWriteState::Unknown,
+                    format: None,
                 };
             } else if committed {
                 error.write_state = PoolWriteState::Committed;
@@ -987,6 +1353,7 @@ impl SQLitePoolStore {
             if self.closed.load(Ordering::Acquire) {
                 self.cleanup(&mut state);
             }
+            self.observe_transaction_failure(error);
             return Err(error);
         }
         let epoch = state.epoch;

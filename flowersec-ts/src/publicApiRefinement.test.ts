@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import * as core from "./facade.js";
 import * as browser from "./browser/index.js";
 import * as node from "./node/index.js";
+import * as proxy from "./proxy/index.js";
 
 describe("final public SDK names", () => {
   test("declaration closure does not check file access before reading", async () => {
@@ -13,14 +14,36 @@ describe("final public SDK names", () => {
   test("browser and node subpaths expose environment-neutral operations", () => {
     expect(typeof browser.connect).toBe("function");
     expect(typeof browser.createConnectionController).toBe("function");
-    expect(typeof browser.StreamHandlers).toBe("function");
+    expect(typeof browser.createHandlerPlan).toBe("function");
+    expect("StreamHandlers" in browser).toBe(false);
     expect(typeof node.connect).toBe("function");
     expect(typeof node.createConnectionController).toBe("function");
-    expect(typeof node.StreamHandlers).toBe("function");
+    expect(typeof node.createHandlerPlan).toBe("function");
+    expect("StreamHandlers" in node).toBe(false);
     expect("connectBrowserSession" in browser).toBe(false);
     expect("createBrowserConnectionController" in browser).toBe(false);
     expect("connectNodeSession" in node).toBe(false);
     expect("createNodeConnectionController" in node).toBe(false);
+  });
+
+  test("pool operations share original opaque owners across every public entrypoint", () => {
+    for (const entry of [core, browser, node, proxy]) {
+      expect(entry.PreauthorizedPoolSource).toBe(core.PreauthorizedPoolSource);
+      expect(entry.TopUpHandle).toBe(core.TopUpHandle);
+      expect(entry.createSessionPoolControl).toBe(core.createSessionPoolControl);
+      expect("createOriginalPoolSource" in entry).toBe(false);
+      expect("registerPoolJournalStore" in entry).toBe(false);
+      expect("proxyRequestAssociation" in entry).toBe(false);
+      expect("serviceWorkerPublicationOwner" in entry).toBe(false);
+    }
+    expect(typeof core.TopUpHandle.prototype.status).toBe("function");
+    expect(typeof core.TopUpHandle.prototype.cleanupStatus).toBe("function");
+    expect(typeof core.TopUpHandle.prototype.waitCleanup).toBe("function");
+    expect("id" in core.TopUpHandle.prototype).toBe(false);
+    expect("operationID" in core.TopUpHandle.prototype).toBe(false);
+    expect("operation_id" in core.TopUpHandle.prototype).toBe(false);
+    expect(typeof proxy.createProxySurface).toBe("function");
+    for (const entry of [core, browser, node]) expect("createProxySurface" in entry).toBe(false);
   });
 
   test("v2 namespaces and deprecated versioned aliases are absent", () => {
@@ -87,53 +110,45 @@ describe("final public SDK names", () => {
     expect(publicSource).not.toMatch(/(?:^|["'\/])utils\/errors(?:["'\/]|\.)/u);
   });
 
-  test("Node v3 server callbacks expose only the opaque authorization lookup", async () => {
-    const fs = await import("node:fs/promises");
-    const path = await import("node:path");
-    const root = path.resolve(process.cwd(), "dist/node");
-    const publicServerDeclarations = await Promise.all([
-      "acceptorV3.d.ts",
-      "runtimeAuthorizationV3.d.ts",
-      "tunnelRuntimeV3.d.ts",
-    ].map((file) => fs.readFile(path.join(root, file), "utf8")));
-    const source = publicServerDeclarations.join("\n");
-    expect(source).toContain("RuntimeAuthorizationRequestV3");
-    expect(source).toContain("lookupKey(): string");
-    expect(source).not.toContain("DecodedFSB3RequestV3");
-    expect(source).not.toContain("nowUnixSeconds");
-    for (const secretField of [
-      "localAdmissionBinding",
-      "routing_token",
-      "attach_token",
-      "candidates",
-      "pins",
-    ]) {
-      expect(source).not.toContain(secretField);
-    }
-  });
-
-  test("public Controller acquisition and options hide runtime capabilities and clocks", async () => {
+  test("ordinary server callbacks retain current Environment and application ownership", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const root = path.resolve(process.cwd(), "dist");
-    const core = await fs.readFile(path.join(root, "v3/connectionController.d.ts"), "utf8");
-    const artifactSource = core.slice(
-      core.indexOf("export type ArtifactSourceV3"),
-      core.indexOf("export type ManagedSessionV3"),
-    );
-    expect(artifactSource).toContain("signal: AbortSignal");
-    expect(artifactSource).not.toContain("RuntimeCapabilityDescriptorV3");
-    expect(artifactSource).not.toContain("capability:");
+    const declarations = await Promise.all([
+      "node/acceptorCurrent.d.ts", "v4/serve.d.ts", "v4/handlerPlan.d.ts",
+    ].map(file => fs.readFile(path.join(root, file), "utf8")));
+    const source = declarations.join("\n");
+    expect(source).toContain("V4TransportEnvironment");
+    expect(source).toContain("authorizeApplication");
+    expect(source).toContain("ApplicationAuthorizationLease");
+    expect(source).toContain("ServeReleaseContext");
+    expect(source).not.toContain("DecodedFSB3RequestV3");
+    expect(source).not.toContain("ArtifactV3");
+    expect("parseArtifact" in node).toBe(false);
+    expect("createArtifactLease" in node).toBe(false);
+    expect("SessionHandlers" in node).toBe(false);
+  });
 
-    const facade = await fs.readFile(path.join(root, "facade.d.ts"), "utf8");
-    const publicOptions = facade.slice(
-      facade.indexOf("export type ConnectionControllerOptions ="),
-      facade.indexOf("export { ConnectionControllerV3Error"),
-    );
-    expect(publicOptions).toContain("maximumAttempts?: number");
-    expect(publicOptions).not.toContain("ControllerClockV3");
-    expect(publicOptions).not.toContain("nowUnixSeconds");
-    expect(publicOptions).not.toContain("capabilitySnapshot");
-    expect(publicOptions).not.toContain("projectSessionFailure");
+  test("ordinary Controller uses an original source and preserves bounded initialization", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const root = path.resolve(process.cwd(), "dist");
+    const controller = await fs.readFile(path.join(root, "v4/controller.d.ts"), "utf8");
+    const options = controller.slice(controller.indexOf("export interface V4ControllerConfig"), controller.indexOf("export type V4ControllerReplaceOptions"));
+    expect(options).toContain("source: V4ConnectionMaterialSource");
+    expect(options).toContain("attemptTimeoutMS?: bigint");
+    expect(options).toContain("initializeServices?: Dependencies");
+    expect(options).toContain("initializeApplicationBytes?: bigint");
+    expect(options).not.toContain("ControllerClockV3");
+    expect(options).not.toContain("nowUnixSeconds");
+    expect(options).not.toContain("capabilitySnapshot");
+    for (const entry of [core, browser, node]) {
+      expect(entry.connect).toBe(core.connect);
+      expect(entry.createConnectionController).toBe(core.createConnectionController);
+      expect(entry.Session).toBe(core.Session);
+      expect(entry.TransportEnvironment).toBe(core.TransportEnvironment);
+      expect("parseArtifact" in entry).toBe(false);
+      expect("createArtifactLease" in entry).toBe(false);
+    }
   });
 });

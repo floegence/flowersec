@@ -17,6 +17,7 @@ final class SourceGuardTests: XCTestCase {
       "TransportV2Handshake.swift",
       "TransportV2Open.swift",
       "TransportV2Session.swift",
+      "HKDF.swift",
     ] {
       XCTAssertFalse(FileManager.default.fileExists(atPath: sourceRoot.appendingPathComponent(name).path))
     }
@@ -39,8 +40,9 @@ final class SourceGuardTests: XCTestCase {
     for file in try swiftFiles(under: sourceRoot) {
       let lines = try String(contentsOf: file, encoding: .utf8).split(separator: "\n")
       for line in lines {
-        if line.contains("flowersec.rpc.v2") { continue }
-        for token in ["TransportV2", "ArtifactV2", "SessionConnectorV2", "FSB2", "FSA2"] {
+        for token in ["TransportV2", "ArtifactV2", "SessionConnectorV2", "FSB2", "FSA2",
+          "TransportV3", "ArtifactV3", "FSB3", "FSA3", "flowersec.rpc.v2",
+          "flowersec.session.v3", "/flowersec/v3/"] {
           XCTAssertFalse(line.contains(token), "\(file.lastPathComponent) contains \(token)")
         }
       }

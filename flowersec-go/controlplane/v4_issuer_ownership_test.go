@@ -14,11 +14,11 @@ import (
 // These adapters fail the test if construction invokes application authority.
 type unconfiguredIssueAuthority struct{ t *testing.T }
 
-func (a unconfiguredIssueAuthority) BeginDirectIssue(context.Context, controlplane.V4DirectIssueRequest, controlplane.V4DirectIssueFacts) (controlplane.V4DirectIssuePermit, error) {
+func (a unconfiguredIssueAuthority) BeginDirectIssue(context.Context, controlplane.DirectIssueRequest, controlplane.DirectIssueFacts) (controlplane.DirectIssuePermit, error) {
 	a.t.Error("construction invoked the durable authority")
 	return nil, context.Canceled
 }
-func (a unconfiguredIssueAuthority) BeginArtifactIssue(context.Context, controlplane.V4ArtifactIssueRequest, controlplane.V4ArtifactIssueFacts) (controlplane.V4ArtifactIssuePermit, error) {
+func (a unconfiguredIssueAuthority) BeginArtifactIssue(context.Context, controlplane.ArtifactIssueRequest, controlplane.ArtifactIssueFacts) (controlplane.ArtifactIssuePermit, error) {
 	a.t.Error("construction invoked the durable authority")
 	return nil, context.Canceled
 }
@@ -34,7 +34,7 @@ func (s unconfiguredIssueSigner) Sign([]byte) ([]byte, error) {
 	return nil, context.Canceled
 }
 
-func TestV4IssuerConstructionRetainsCallerOwnershipAndRefundsRefusal(t *testing.T) {
+func TestIssuerConstructionRetainsCallerOwnershipAndRefundsRefusal(t *testing.T) {
 	f := newControlResources(t)
 	seed := [32]byte{23}
 	signer := unconfiguredIssueSigner{t, ed25519.NewKeyFromSeed(seed[:])}
@@ -57,7 +57,7 @@ func TestV4IssuerConstructionRetainsCallerOwnershipAndRefundsRefusal(t *testing.
 			t.Error(err)
 		}
 	})
-	base := controlplane.V4DirectIssuerConfig{
+	base := controlplane.DirectIssuerConfig{
 		Clock: f.clock, Trust: [3]*protocolv4.NamespaceTrustStore{trust, trust, trust}, Signer: signer,
 		IssuerKeyID: [16]byte{1}, Tenant: "tenant", Audience: "service", CryptoProfile: "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", RevocationPolicyID: "online",
 		Generation: 1, RevocationPolicyRevision: 1, ClientCertificate: []byte{0xa0}, ServerCertificate: []byte{0xa0}, Candidates: [][]byte{{0xa0}}, SessionContract: []byte{0xa0}, ResumePolicy: []byte{0xa0},
@@ -66,21 +66,21 @@ func TestV4IssuerConstructionRetainsCallerOwnershipAndRefundsRefusal(t *testing.
 	authority := unconfiguredIssueAuthority{t}
 	direct := base
 	direct.Authority = authority
-	artifact := controlplane.V4ArtifactIssuerConfig{Base: base, Authority: authority}
+	artifact := controlplane.ArtifactIssuerConfig{Base: base, Authority: authority}
 	for _, tc := range []struct {
 		name      string
 		charge    func() (resourcev4.Vector, error)
 		construct func(resourcev4.Reference) error
 	}{
-		{"direct", func() (resourcev4.Vector, error) { return controlplane.V4DirectIssuerCharge(direct) }, func(ref resourcev4.Reference) error {
-			issuer, err := controlplane.NewV4DirectIssuer(direct, ref, f.environment)
+		{"direct", func() (resourcev4.Vector, error) { return controlplane.DirectIssuerCharge(direct) }, func(ref resourcev4.Reference) error {
+			issuer, err := controlplane.NewDirectIssuer(direct, ref, f.environment)
 			if issuer != nil {
 				t.Fatal("empty trust configuration authorized issuer")
 			}
 			return err
 		}},
-		{"artifact", func() (resourcev4.Vector, error) { return controlplane.V4ArtifactIssuerCharge(artifact) }, func(ref resourcev4.Reference) error {
-			issuer, err := controlplane.NewV4ArtifactIssuer(artifact, ref, f.environment)
+		{"artifact", func() (resourcev4.Vector, error) { return controlplane.ArtifactIssuerCharge(artifact) }, func(ref resourcev4.Reference) error {
+			issuer, err := controlplane.NewArtifactIssuer(artifact, ref, f.environment)
 			if issuer != nil {
 				t.Fatal("empty trust configuration authorized issuer")
 			}
@@ -98,7 +98,7 @@ func TestV4IssuerConstructionRetainsCallerOwnershipAndRefundsRefusal(t *testing.
 			short[resourcev4.SDKBytes]--
 			ref := f.reserve(short)
 			before := f.root.Snapshot()
-			if err := tc.construct(ref); err != controlplane.V4IssueFailure("capacity_exhausted") {
+			if err := tc.construct(ref); err != controlplane.IssueFailure("capacity_exhausted") {
 				t.Fatal(err)
 			}
 			if after := f.root.Snapshot(); after != before || ref.Check() != nil {
@@ -109,7 +109,7 @@ func TestV4IssuerConstructionRetainsCallerOwnershipAndRefundsRefusal(t *testing.
 			// the transferred owner and every intermediate trust borrow.
 			before = f.root.Snapshot()
 			ref = f.reserve(charge)
-			if err := tc.construct(ref); err != controlplane.V4IssueFailure("issuance_refused") {
+			if err := tc.construct(ref); err != controlplane.IssueFailure("issuance_refused") {
 				t.Fatal("untrusted issuance was not refused", err)
 			}
 			if after := f.root.Snapshot(); after != before {
@@ -122,22 +122,22 @@ func TestV4IssuerConstructionRetainsCallerOwnershipAndRefundsRefusal(t *testing.
 	}
 }
 
-func TestV4LiveAuthorizationCodecPreservesOriginalInvocation(t *testing.T) {
+func TestLiveAuthorizationCodecPreservesOriginalInvocation(t *testing.T) {
 	f := newControlResources(t)
-	backing, err := controlplane.V4LiveAuthorizationCodecBackingBytes()
+	backing, err := controlplane.LiveAuthorizationCodecBackingBytes()
 	if err != nil || backing == 0 {
 		t.Fatal(backing, err)
 	}
 	f.reserve(resourcev4.Vector{resourcev4.SDKBytes: backing})
-	codec, err := controlplane.NewV4LiveAuthorizationCodec()
+	codec, err := controlplane.NewLiveAuthorizationCodec()
 	if err != nil {
 		t.Fatal(err)
 	}
-	q := controlplane.V4LiveAuthorizationRequest{Tenant: "tenant", Audience: "listener", CryptoProfile: "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", Issuer: [16]byte{1}, Lease: [16]byte{2}, Attempt: [16]byte{3}, Artifact: [32]byte{4}, ClientIdentity: [32]byte{5}, ServerIdentity: [32]byte{6}, Winner: protocolv4.PoolMember{Index: 15, CandidateID: [16]byte{7}, RouteDigest: [32]byte{8}}, ActivationNotAfterMS: 10000, AttemptNo: 1}
+	q := controlplane.LiveAuthorizationRequest{Tenant: "tenant", Audience: "listener", CryptoProfile: "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", Issuer: [16]byte{1}, Lease: [16]byte{2}, Attempt: [16]byte{3}, Artifact: [32]byte{4}, ClientIdentity: [32]byte{5}, ServerIdentity: [32]byte{6}, Winner: protocolv4.PoolMember{Index: 15, CandidateID: [16]byte{7}, RouteDigest: [32]byte{8}}, ActivationNotAfterMS: 10000, AttemptNo: 1}
 	for _, profile := range []string{"fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1"} {
 		q.CryptoProfile = profile
 		buffer := make([]byte, 1024)
-		n, err := controlplane.EncodeV4LiveAuthorizationRequest(buffer, q)
+		n, err := controlplane.EncodeLiveAuthorizationRequest(buffer, q)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -148,7 +148,7 @@ func TestV4LiveAuthorizationCodecPreservesOriginalInvocation(t *testing.T) {
 			t.Fatal("trailing bytes accepted")
 		}
 		q.AttemptNo = 2
-		if n, err := controlplane.EncodeV4LiveAuthorizationRequest(buffer, q); err == nil || n != 0 {
+		if n, err := controlplane.EncodeLiveAuthorizationRequest(buffer, q); err == nil || n != 0 {
 			t.Fatal("new attempt represented as original invocation", n, err)
 		}
 		q.AttemptNo = 1

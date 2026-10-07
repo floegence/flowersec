@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { u16be, u32be } from "../utils/bin.js";
-import type { ByteStream, OperationOptions } from "../public/contract.js";
+import type { OperationOptions } from "../public/contract.js";
+import type { ProxyStream } from "./stream.js";
 import type { ProxyRuntimeLimits } from "./types.js";
 import { installWebSocketPatch } from "./wsPatch.js";
 
@@ -33,7 +34,7 @@ class TestCloseEvent extends Event {
   }
 }
 
-class ControlledStream implements ByteStream {
+class ControlledStream implements ProxyStream {
   readonly kind = "test";
   terminalError = undefined;
   readonly writes: Uint8Array[] = [];
@@ -98,7 +99,7 @@ class ControlledStream implements ByteStream {
 }
 
 const limits: ProxyRuntimeLimits = {
-  maxJsonFrameBytes: 1024,
+  maxMetadataBytes: 1024,
   maxChunkBytes: 1024,
   maxBodyBytes: 4096,
   maxWsFrameBytes: 1024,

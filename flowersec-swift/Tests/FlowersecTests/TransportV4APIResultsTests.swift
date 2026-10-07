@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportV4APIResultsTests: XCTestCase {
+final class TransportAPIResultsTests: XCTestCase {
   func testTopUpErrorsPreserveSchemaScopeAndAuthorizedWriteActions() throws {
     let data = try Data(contentsOf: packageRoot().appendingPathComponent("stability/transport_v4_schema.json"))
     let schema = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

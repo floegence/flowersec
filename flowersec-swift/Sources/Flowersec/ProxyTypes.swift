@@ -1,11 +1,5 @@
 import Foundation
 
-internal enum ProxyProtocol {
-  internal static let version = 1
-  internal static let http1Kind = "flowersec-proxy/http1"
-  internal static let webSocketKind = "flowersec-proxy/ws"
-}
-
 internal struct ProxyHeader: Codable, Equatable, Sendable {
   internal var name: String
   internal var value: String
@@ -13,195 +7,6 @@ internal struct ProxyHeader: Codable, Equatable, Sendable {
   internal init(name: String, value: String) {
     self.name = name
     self.value = value
-  }
-}
-
-internal struct ProxyRemoteError: Codable, Equatable, Sendable {
-  internal var code: String
-  internal var message: String
-
-  internal init(code: String, message: String) {
-    self.code = code
-    self.message = message
-  }
-}
-
-internal struct ProxyHTTPRequestMeta: Codable, Equatable, Sendable {
-  internal var version: Int
-  internal var requestID: String
-  internal var method: String
-  internal var path: String
-  internal var headers: [ProxyHeader]
-  internal var externalOrigin: String?
-  internal var timeoutMilliseconds: Int64?
-
-  internal init(
-    version: Int = ProxyProtocol.version,
-    requestID: String,
-    method: String,
-    path: String,
-    headers: [ProxyHeader],
-    externalOrigin: String? = nil,
-    timeoutMilliseconds: Int64? = nil
-  ) {
-    self.version = version
-    self.requestID = requestID
-    self.method = method
-    self.path = path
-    self.headers = headers
-    self.externalOrigin = externalOrigin
-    self.timeoutMilliseconds = timeoutMilliseconds
-  }
-
-  private enum CodingKeys: String, CodingKey {
-    case version = "v"
-    case requestID = "request_id"
-    case method
-    case path
-    case headers
-    case externalOrigin = "external_origin"
-    case timeoutMilliseconds = "timeout_ms"
-  }
-}
-
-internal struct ProxyHTTPResponseMeta: Codable, Equatable, Sendable {
-  internal var version: Int
-  internal var requestID: String
-  internal var ok: Bool
-  internal var status: Int?
-  internal var headers: [ProxyHeader]
-  internal var error: ProxyRemoteError?
-
-  internal init(
-    version: Int = ProxyProtocol.version,
-    requestID: String,
-    ok: Bool,
-    status: Int? = nil,
-    headers: [ProxyHeader] = [],
-    error: ProxyRemoteError? = nil
-  ) {
-    self.version = version
-    self.requestID = requestID
-    self.ok = ok
-    self.status = status
-    self.headers = headers
-    self.error = error
-  }
-
-  private enum CodingKeys: String, CodingKey {
-    case version = "v"
-    case requestID = "request_id"
-    case ok
-    case status
-    case headers
-    case error
-  }
-
-  internal init(from decoder: any Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    version = try container.decode(Int.self, forKey: .version)
-    requestID = try container.decode(String.self, forKey: .requestID)
-    ok = try container.decode(Bool.self, forKey: .ok)
-    status = try container.decodeIfPresent(Int.self, forKey: .status)
-    headers = try container.decodeIfPresent([ProxyHeader].self, forKey: .headers) ?? []
-    error = try container.decodeIfPresent(ProxyRemoteError.self, forKey: .error)
-  }
-}
-
-internal struct ProxyWebSocketOpenMeta: Codable, Equatable, Sendable {
-  internal var version: Int
-  internal var connectionID: String
-  internal var path: String
-  internal var headers: [ProxyHeader]
-
-  internal init(
-    version: Int = ProxyProtocol.version,
-    connectionID: String,
-    path: String,
-    headers: [ProxyHeader]
-  ) {
-    self.version = version
-    self.connectionID = connectionID
-    self.path = path
-    self.headers = headers
-  }
-
-  private enum CodingKeys: String, CodingKey {
-    case version = "v"
-    case connectionID = "conn_id"
-    case path
-    case headers
-  }
-}
-
-internal struct ProxyWebSocketOpenResponse: Codable, Equatable, Sendable {
-  internal var version: Int
-  internal var connectionID: String
-  internal var ok: Bool
-  internal var selectedProtocol: String?
-  internal var error: ProxyRemoteError?
-
-  internal init(
-    version: Int = ProxyProtocol.version,
-    connectionID: String,
-    ok: Bool,
-    selectedProtocol: String? = nil,
-    error: ProxyRemoteError? = nil
-  ) {
-    self.version = version
-    self.connectionID = connectionID
-    self.ok = ok
-    self.selectedProtocol = selectedProtocol
-    self.error = error
-  }
-
-  private enum CodingKeys: String, CodingKey {
-    case version = "v"
-    case connectionID = "conn_id"
-    case ok
-    case selectedProtocol = "protocol"
-    case error
-  }
-}
-
-internal struct ProxyHTTPRequest: Equatable, Sendable {
-  internal var method: String
-  internal var path: String
-  internal var headers: [ProxyHeader]
-  internal var externalOrigin: String?
-  internal var timeout: Duration?
-  internal var body: Data
-
-  internal init(
-    method: String,
-    path: String,
-    headers: [ProxyHeader] = [],
-    externalOrigin: String? = nil,
-    timeout: Duration? = nil,
-    body: Data = Data()
-  ) {
-    self.method = method
-    self.path = path
-    self.headers = headers
-    self.externalOrigin = externalOrigin
-    self.timeout = timeout
-    self.body = body
-  }
-
-  internal static func get(_ path: String, headers: [ProxyHeader] = []) -> ProxyHTTPRequest {
-    ProxyHTTPRequest(method: "GET", path: path, headers: headers)
-  }
-}
-
-internal struct ProxyHTTPResponse: Equatable, Sendable {
-  internal var status: Int
-  internal var headers: [ProxyHeader]
-  internal var body: Data
-
-  internal init(status: Int, headers: [ProxyHeader], body: Data) {
-    self.status = status
-    self.headers = headers
-    self.body = body
   }
 }
 
@@ -239,73 +44,19 @@ internal struct ProxyWebSocketFrame: Equatable, Sendable {
   }
 }
 
-internal struct ProxyContractOptions: Equatable, Sendable {
-  internal var maxJSONFrameBytes: Int
-  internal var maxChunkBytes: Int
-  internal var maxBodyBytes: Int
-  internal var maxWebSocketFrameBytes: Int
-  internal var defaultHTTPRequestTimeout: Duration?
-  internal var extraRequestHeaders: [String]
-  internal var extraResponseHeaders: [String]
-  internal var blockedResponseHeaders: [String]
-  internal var extraWebSocketHeaders: [String]
-  internal var forbiddenCookieNames: [String]
-  internal var forbiddenCookieNamePrefixes: [String]
-
-  internal init(
-    maxJSONFrameBytes: Int = FlowersecSDKDefaults.Proxy.maxJSONFrameBytes,
-    maxChunkBytes: Int = FlowersecSDKDefaults.Proxy.maxChunkBytes,
-    maxBodyBytes: Int = FlowersecSDKDefaults.Proxy.maxBodyBytes,
-    maxWebSocketFrameBytes: Int = FlowersecSDKDefaults.Proxy.maxWSFrameBytes,
-    defaultHTTPRequestTimeout: Duration? = nil,
-    extraRequestHeaders: [String] = [],
-    extraResponseHeaders: [String] = [],
-    blockedResponseHeaders: [String] = [],
-    extraWebSocketHeaders: [String] = [],
-    forbiddenCookieNames: [String] = [],
-    forbiddenCookieNamePrefixes: [String] = []
-  ) {
-    self.maxJSONFrameBytes = maxJSONFrameBytes
-    self.maxChunkBytes = maxChunkBytes
-    self.maxBodyBytes = maxBodyBytes
-    self.maxWebSocketFrameBytes = maxWebSocketFrameBytes
-    self.defaultHTTPRequestTimeout = defaultHTTPRequestTimeout
-    self.extraRequestHeaders = extraRequestHeaders
-    self.extraResponseHeaders = extraResponseHeaders
-    self.blockedResponseHeaders = blockedResponseHeaders
-    self.extraWebSocketHeaders = extraWebSocketHeaders
-    self.forbiddenCookieNames = forbiddenCookieNames
-    self.forbiddenCookieNamePrefixes = forbiddenCookieNamePrefixes
-  }
-}
-
-internal struct ProxyServerOptions: Equatable, Sendable {
-  internal var upstream: URL
-  internal var upstreamOrigin: String
-  internal var allowedUpstreamHosts: [String]
-  internal var contract: ProxyContractOptions
-  internal var defaultTimeout: Duration?
-  internal var maxTimeout: Duration?
-  internal var maxConcurrentStreams: Int
-
-  internal init(
-    upstream: URL,
-    upstreamOrigin: String,
-    allowedUpstreamHosts: [String] = [],
-    contract: ProxyContractOptions = ProxyContractOptions(),
-    defaultTimeout: Duration? = .milliseconds(
-      FlowersecSDKDefaults.Proxy.defaultTimeoutMilliseconds
-    ),
-    maxTimeout: Duration? = .milliseconds(FlowersecSDKDefaults.Proxy.maxTimeoutMilliseconds),
-    maxConcurrentStreams: Int = FlowersecSDKDefaults.Proxy.maxConcurrentStreams
-  ) {
-    self.upstream = upstream
-    self.upstreamOrigin = upstreamOrigin
-    self.allowedUpstreamHosts = allowedUpstreamHosts
-    self.contract = contract
-    self.defaultTimeout = defaultTimeout
-    self.maxTimeout = maxTimeout
-    self.maxConcurrentStreams = maxConcurrentStreams
+internal struct ProxyForwardingOptions: Equatable, Sendable {
+  var extraRequestHeaders: [String]
+  var extraResponseHeaders: [String]
+  var blockedResponseHeaders: [String]
+  var extraWebSocketHeaders: [String]
+  var forbiddenCookieNames: [String]
+  var forbiddenCookieNamePrefixes: [String]
+  init(extraRequestHeaders: [String] = [], extraResponseHeaders: [String] = [],
+    blockedResponseHeaders: [String] = [], extraWebSocketHeaders: [String] = [],
+    forbiddenCookieNames: [String] = [], forbiddenCookieNamePrefixes: [String] = []) {
+    self.extraRequestHeaders = extraRequestHeaders; self.extraResponseHeaders = extraResponseHeaders
+    self.blockedResponseHeaders = blockedResponseHeaders; self.extraWebSocketHeaders = extraWebSocketHeaders
+    self.forbiddenCookieNames = forbiddenCookieNames; self.forbiddenCookieNamePrefixes = forbiddenCookieNamePrefixes
   }
 }
 
@@ -365,10 +116,6 @@ struct ProxyUpstreamFailure: LocalizedError, Sendable {
   var errorDescription: String? { message }
 }
 
-internal protocol ProxyStreamRoute: Sendable {
-  func openStream(kind: String) async throws -> any FlowersecByteStream
-}
-
 internal struct ProxyHeaderPolicy: Sendable {
   private enum Direction { case request, response, webSocket }
 
@@ -398,7 +145,7 @@ internal struct ProxyHeaderPolicy: Sendable {
   private let forbiddenCookieNames: Set<String>
   private let forbiddenCookieNamePrefixes: [String]
 
-  internal init(options: ProxyContractOptions = ProxyContractOptions()) throws {
+  internal init(options: ProxyForwardingOptions = ProxyForwardingOptions()) throws {
     requestHeaders = Self.requestHeaders.union(try proxyHeaderNameSet(options.extraRequestHeaders))
     responseHeaders = Self.responseHeaders.union(
       try proxyHeaderNameSet(options.extraResponseHeaders))
@@ -502,6 +249,16 @@ internal struct ProxyCookieJar: Sendable {
     }
   }
 
+  internal mutating func captureBounded(requestPath: String, headers: [ProxyHeader]) throws {
+    var next = self
+    next.capture(requestPath: requestPath, headers: headers)
+    let bytes = next.cookies.reduce(0) { total, pair in
+      total + pair.key.utf8.count + pair.value.name.utf8.count + pair.value.value.utf8.count + pair.value.path.utf8.count + 128
+    }
+    guard next.cookies.count <= 128, bytes <= 65_536 else { throw ProxyClientFailure.resourceExhausted }
+    self = next
+  }
+
   internal func requestHeader(for path: String) -> ProxyHeader? {
     let values = cookies.values
       .filter { proxyCookiePathMatches(cookiePath: $0.path, requestPath: path) }
@@ -512,130 +269,6 @@ internal struct ProxyCookieJar: Sendable {
       value: values.map { "\($0.name)=\($0.value)" }.joined(separator: "; ")
     )
   }
-}
-
-enum ProxyFraming {
-  static func writeJSON<Value: Encodable>(
-    _ value: Value,
-    to stream: any FlowersecByteStream,
-    maxBytes: Int
-  ) async throws {
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.sortedKeys]
-    let data = try encoder.encode(value)
-    guard data.count <= maxBytes, data.count <= Int(UInt32.max) else {
-      throw ProxyError.frameTooLarge
-    }
-    var frame = Data()
-    frame.appendUInt32BE(UInt32(data.count))
-    frame.append(data)
-    try await stream.write(frame)
-  }
-
-  static func readJSON<Value: Decodable>(
-    _ type: Value.Type,
-    from stream: any FlowersecByteStream,
-    maxBytes: Int
-  ) async throws -> Value {
-    let header = try await stream.readExact(4)
-    guard header.count == 4 else { throw ProxyError.stream("truncated JSON frame header") }
-    let length = Int(header.readUInt32BE(at: 0))
-    guard length <= maxBytes else { throw ProxyError.frameTooLarge }
-    let payload = try await stream.readExact(length)
-    guard payload.count == length else { throw ProxyError.stream("truncated JSON frame") }
-    do { return try JSONDecoder().decode(type, from: payload) } catch {
-      throw ProxyError.invalidMetadata(error.localizedDescription)
-    }
-  }
-
-  static func writeBody(
-    _ body: Data,
-    to stream: any FlowersecByteStream,
-    options: ProxyContractOptions
-  ) async throws {
-    guard body.count <= options.maxBodyBytes else { throw ProxyError.bodyTooLarge }
-    try await writeBodyChunk(body, to: stream, maxChunkBytes: options.maxChunkBytes)
-    try await writeBodyTerminator(to: stream)
-  }
-
-  static func writeBodyChunk(
-    _ chunk: Data,
-    to stream: any FlowersecByteStream,
-    maxChunkBytes: Int
-  ) async throws {
-    var offset = 0
-    while offset < chunk.count {
-      let count = min(maxChunkBytes, chunk.count - offset)
-      var frame = Data()
-      frame.appendUInt32BE(UInt32(count))
-      frame.append(chunk.subdata(in: offset..<(offset + count)))
-      try await stream.write(frame)
-      offset += count
-    }
-  }
-
-  static func writeBodyTerminator(to stream: any FlowersecByteStream) async throws {
-    try await stream.write(Data(repeating: 0, count: 4))
-  }
-
-  static func readBody(
-    from stream: any FlowersecByteStream,
-    options: ProxyContractOptions
-  ) async throws -> Data {
-    var body = Data()
-    while true {
-      let header = try await stream.readExact(4)
-      guard header.count == 4 else { throw ProxyError.stream("truncated body chunk header") }
-      let length = Int(header.readUInt32BE(at: 0))
-      if length == 0 { return body }
-      guard length <= options.maxChunkBytes else { throw ProxyError.frameTooLarge }
-      guard body.count <= options.maxBodyBytes - length else { throw ProxyError.bodyTooLarge }
-      let chunk = try await stream.readExact(length)
-      guard chunk.count == length else { throw ProxyError.stream("truncated body chunk") }
-      body.append(chunk)
-    }
-  }
-
-  static func writeWebSocketFrame(
-    _ frame: ProxyWebSocketFrame,
-    to stream: any FlowersecByteStream,
-    maxBytes: Int
-  ) async throws {
-    guard frame.payload.count <= maxBytes, frame.payload.count <= Int(UInt32.max) else {
-      throw ProxyError.frameTooLarge
-    }
-    var data = Data([frame.operation.rawValue])
-    data.appendUInt32BE(UInt32(frame.payload.count))
-    data.append(frame.payload)
-    try await stream.write(data)
-  }
-
-  static func readWebSocketFrame(
-    from stream: any FlowersecByteStream,
-    maxBytes: Int
-  ) async throws -> ProxyWebSocketFrame {
-    let header = try await stream.readExact(5)
-    guard header.count == 5 else { throw ProxyError.stream("truncated WebSocket frame header") }
-    guard let operation = ProxyWebSocketOperation(rawValue: header[0]) else {
-      throw ProxyError.invalidWebSocketOperation(header[0])
-    }
-    let length = Int(header.readUInt32BE(at: 1))
-    guard length <= maxBytes else { throw ProxyError.frameTooLarge }
-    let payload = try await stream.readExact(length)
-    guard payload.count == length else { throw ProxyError.stream("truncated WebSocket frame") }
-    return ProxyWebSocketFrame(operation: operation, payload: payload)
-  }
-}
-
-func proxyValidateContract(_ options: ProxyContractOptions) throws {
-  guard options.maxJSONFrameBytes > 0, options.maxChunkBytes > 0,
-    options.maxBodyBytes > 0, options.maxWebSocketFrameBytes > 0,
-    options.maxChunkBytes <= Int(UInt32.max)
-  else { throw ProxyError.invalidConfiguration("proxy limits must be positive") }
-  if let timeout = options.defaultHTTPRequestTimeout, timeout < .zero {
-    throw ProxyError.invalidConfiguration("default HTTP timeout must be non-negative")
-  }
-  _ = try ProxyHeaderPolicy(options: options)
 }
 
 func proxyValidatePath(_ path: String) throws {

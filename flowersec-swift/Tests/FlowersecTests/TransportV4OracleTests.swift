@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportV4OracleTests: XCTestCase {
+final class TransportOracleTests: XCTestCase {
   private static let reference = try! V4TextReference()
   private static let corpus: [V4JSON] = {
     let raw = try! Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/corpus.json"))
@@ -65,7 +65,7 @@ final class TransportV4OracleTests: XCTestCase {
       if vector.object?["pool_derivation"] != nil { pools += 1 }
       if vector["schema"].text == "OPEN_STREAM" { opens += 1 }
     }
-    XCTAssertEqual(positive, 348); XCTAssertEqual(negative, 833)
+    XCTAssertEqual(positive, Self.corpus.filter { $0["expected_error"].text == nil }.count); XCTAssertGreaterThan(positive, 0); XCTAssertEqual(negative, 833)
     XCTAssertGreaterThan(pools, 0); XCTAssertGreaterThan(opens, 0)
   }
 

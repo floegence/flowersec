@@ -2,6 +2,7 @@ package sessionv4
 
 import (
 	"context"
+	"errors"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
@@ -22,11 +23,15 @@ func (c *ConnectionController) BindMethods(ctx context.Context, definition Servi
 	if err != nil {
 		return nil, err
 	}
-	r, routing, err := s.controllerRPCIdentity()
+	peers, err := captureControllerPeerMapping(options.PeerReplicas)
 	if err != nil {
 		return nil, err
 	}
-	return r.bindMethodsSource(ctx, definition, options, c, s, routing)
+	r, routing, err := s.controllerRPCIdentity(peers)
+	if err != nil {
+		return nil, err
+	}
+	return r.bindMethodsSource(ctx, definition, options, c, s, routing, true)
 }
 
 func (c *ConnectionController) BindUnaryMethods(ctx context.Context, definition UnaryServiceDefinition, options UnaryServiceBindOptions) (*UnaryServiceClient, error) {
@@ -54,8 +59,19 @@ func (c *UnaryServiceClient) checkControllerSource(s *EnvironmentSession) (*RPCS
 }
 
 func (c *UnaryServiceClient) checkControllerSourceIdentity(s *EnvironmentSession, seal bool) (*RPCServices, error) {
-	r, identity, err := s.controllerRPCIdentity()
+	c.mu.Lock()
+	peers, closed := c.source.routing.peers, c.closed || c.cleaned
+	c.mu.Unlock()
+	if closed {
+		return nil, cryptov4.ErrClosed
+	}
+	r, identity, err := s.controllerRPCIdentity(peers)
 	if err != nil {
+		if seal && errors.Is(err, ErrApplicationAuthorization) {
+			c.mu.Lock()
+			c.closeLocked()
+			c.mu.Unlock()
+		}
 		return nil, err
 	}
 	c.mu.Lock()

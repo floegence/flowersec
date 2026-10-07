@@ -109,7 +109,7 @@ export class ResponsePublication {
       this.#transferred = position.checkout(); this.#owner = state; this.#didTransfer = true; state.observations.add(this); return "success";
     } catch { return "owner_unavailable"; }
   }
-  endHandler(): void { this.#handler = false; if (this.#owner === undefined) this.closeObserver(); }
+  endHandler(): void { this.#handler = false; if (this.#owner === undefined) this.closeObserver(); this.#collect(); }
   select(deadline: TrustedDeadline, clock: TrustedClock, duration: bigint): void {
     if (this.#selected) throw new RPCProtocolError("rpc_publication_owner");
     this.#selected = true; this.#deadline = deadline.forkAgeAt(clock.sample(), duration); this.#tick();
@@ -129,7 +129,16 @@ export class ResponsePublication {
     if (this.#status.state !== "pending") return;
     this.#status = value; if (this.#timer !== undefined) clearTimeout(this.#timer); this.#timer = undefined; this.#deadline = undefined;
     for (const waiter of this.#waiters) { this.#remove(waiter); waiter.resolve(value); }
+    // A settled publication no longer needs a maintenance observation slot.
+    // Keep the original publication reference until the physical response and
+    // handler have both retired, but return the transferred slot immediately
+    // so a bounded owner can observe later responses in the same Session.
+    this.#transferred?.release(); this.#transferred = undefined;
     this.#collect();
+  }
+  #releaseTransfer(): void {
+    this.#transferred?.release(); this.#transferred = undefined;
+    if (this.#owner !== undefined) { const owner = this.#owner; this.#owner = undefined; owner.observations.delete(this); collectOwner(owner); }
   }
   physicalDone(): void { this.#physical = true; this.unknown("owner_unavailable"); this.#collect(); }
   closeObserver(): void {
@@ -140,15 +149,13 @@ export class ResponsePublication {
   #collect(): void {
     if (!this.#physical || this.#handler || this.#waiters.size !== 0) return;
     this.#reference?.release(); this.#reference = undefined;
-    if (!this.#observerClosed) return;
-    this.#transferred?.release(); this.#transferred = undefined;
-    if (this.#owner !== undefined) { const owner = this.#owner; this.#owner = undefined; owner.observations.delete(this); collectOwner(owner); }
+    this.#releaseTransfer();
   }
   #remove(waiter: Waiter): void { this.#waiters.delete(waiter); waiter.signal?.removeEventListener("abort", waiter.cancel); }
   #wait(signal: AbortSignal | undefined): Promise<V4ResponsePublicationStatus> {
+    if (this.#status.state !== "pending") return Promise.resolve(this.#status);
     if (this.#observerClosed || this.#owner?.closed) return Promise.reject(new RPCProtocolError("owner_unavailable"));
     if (signal?.aborted) return Promise.reject(new RPCProtocolError("wait_canceled"));
-    if (this.#status.state !== "pending") return Promise.resolve(this.#status);
     if (this.#waiters.size >= 4) return Promise.reject(new RPCProtocolError("resource_exhausted"));
     return new Promise((resolve, reject) => {
       const waiter: Waiter = { resolve, reject, signal, cancel: () => {

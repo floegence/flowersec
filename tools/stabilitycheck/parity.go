@@ -30,19 +30,19 @@ var requiredPortableCapabilityIDs = []string{
 }
 
 var requiredSharedFixtureIDs = []string{
-	"artifact_admission_v3",
-	"capability_v3",
-	"controller_v3",
-	"crypto_v3",
-	"datagram_v3",
-	"handshake_v3",
-	"idna_v3",
-	"open_unicode_v3",
-	"rpc_error_v3",
-	"rpc_malformed_envelopes_v3",
-	"rpc_notifications_v3",
-	"session_handlers_v3",
-	"session_wire_v3",
+	"transport_v4_corpus",
+	"transport_v4_signatures",
+	"transport_v4_profile_dh",
+	"transport_v4_noise",
+	"transport_v4_ready",
+	"transport_v4_records",
+	"transport_v4_rekey",
+	"transport_v4_resources",
+	"transport_v4_api_results",
+	"idna",
+	"rpc_error",
+	"rpc_malformed_envelopes",
+	"rpc_notifications",
 }
 
 var retiredProductionCarrierCapabilityIDs = []string{
@@ -452,7 +452,7 @@ func verifyParity(repoRoot string) error {
 		for _, language := range m.Languages {
 			implementation := capability.Implementations[language]
 			if implementation.Status == "supported" {
-				if err := requireRegistryConsumers(registryIDs, "capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
+				if err := requireCapabilityConsumers(registryIDs, "capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
 					return err
 				}
 			}
@@ -462,7 +462,7 @@ func verifyParity(repoRoot string) error {
 		return err
 	}
 	for _, capability := range m.RuntimeSpecificCapabilities {
-		if err := requireRegistryConsumers(registryIDs, "runtime-specific capability "+capability.ID, capability.TestIDs); err != nil {
+		if err := requireCapabilityConsumers(registryIDs, "runtime-specific capability "+capability.ID, capability.TestIDs); err != nil {
 			return err
 		}
 	}
@@ -484,7 +484,7 @@ func verifyParity(repoRoot string) error {
 	if err := verifyConnectionControllerRecovery(repoRoot); err != nil {
 		return err
 	}
-	fmt.Printf("language parity OK: %d capabilities across %d languages on Transport v3\n", len(m.PortableCapabilities), len(m.Languages))
+	fmt.Printf("language parity OK: %d capabilities across %d languages on %s\n", len(m.PortableCapabilities), len(m.Languages), m.DeploymentProfiles.ApplicationWire)
 	return nil
 }
 
@@ -548,7 +548,7 @@ func loadRegistryIDs(repoRoot string) (map[string]struct{}, error) {
 		return nil, fmt.Errorf("read test registry: %w", err)
 	}
 	ids := make(map[string]struct{})
-	pattern := regexp.MustCompile(`(?:commandEntry|commandEntryWithEnvironment|vitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry)\("([^"]+)"`)
+	pattern := regexp.MustCompile(`(?:commandEntry|commandEntryWithEnvironment|vitestEntry|installedVitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry|nativeTunnelEntry)\("([^"]+)"`)
 	for _, match := range pattern.FindAllStringSubmatch(string(source), -1) {
 		ids[match[1]] = struct{}{}
 	}
@@ -556,6 +556,34 @@ func loadRegistryIDs(repoRoot string) (map[string]struct{}, error) {
 		return nil, errors.New("test registry has no stable IDs")
 	}
 	return ids, nil
+}
+
+// A capability can require independent runtime checks, such as macOS and iOS.
+func requireCapabilityTestIDs(owner string, ids []string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("%s requires at least one stable test_id", owner)
+	}
+	if err := requireUnique(owner+" test_ids", ids); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			return fmt.Errorf("%s has an empty test_id", owner)
+		}
+	}
+	return nil
+}
+
+func requireCapabilityConsumers(registryIDs map[string]struct{}, owner string, ids []string) error {
+	if err := requireCapabilityTestIDs(owner, ids); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, ok := registryIDs[id]; !ok {
+			return fmt.Errorf("%s references unknown registry test_id %q", owner, id)
+		}
+	}
+	return nil
 }
 
 func requireRegistryConsumers(registryIDs map[string]struct{}, owner string, consumers []string) error {
@@ -753,7 +781,7 @@ func verifyInteropMatrix(repoRoot string, capabilities *capabilityManifest) erro
 	if len(matrix.CapabilityCoverage) != len(requiredPortableCapabilityIDs) {
 		return errors.New("interop capability coverage must contain every portable capability exactly once")
 	}
-	fmt.Printf("Transport v3 interop matrix OK: %d direct cells, %d client profiles, %d tunnel topologies, %d cases\n", len(matrix.DirectCells), len(matrix.ClientProfiles), len(matrix.TunnelTopologies), len(matrix.Cases))
+	fmt.Printf("%s interop matrix OK: %d direct cells, %d client profiles, %d tunnel topologies, %d cases\n", capabilities.DeploymentProfiles.ApplicationWire, len(matrix.DirectCells), len(matrix.ClientProfiles), len(matrix.TunnelTopologies), len(matrix.Cases))
 	return nil
 }
 
@@ -883,7 +911,7 @@ func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[strin
 			}
 		}
 		expectedCases := slices.Clone(tunnelInteropCases)
-		if topology.IngressCarrierA != "websocket" {
+		if topology.IngressCarrierA == "raw-quic" && topology.IngressCarrierB == "raw-quic" {
 			expectedCases = append(expectedCases, "datagram", "datagram-forwarding")
 		}
 		if !slices.Equal(topology.Cases, expectedCases) {
@@ -938,17 +966,18 @@ func validateTunnelInteropTopologies(matrix interopMatrix, registryIDs map[strin
 }
 
 func generatedTunnelTopologyDimensions(runtimes, carriers []string) map[string]tunnelInteropTopology {
-	topologies := make(map[string]tunnelInteropTopology, len(runtimes)*len(runtimes)*len(carriers))
-	for _, carrier := range carriers {
-		for endpointAIndex, endpointA := range runtimes {
-			for relayIndex, relay := range runtimes {
-				endpointB := runtimes[(endpointAIndex+relayIndex)%len(runtimes)]
-				id := strings.Join([]string{
-					parityRuntimeID(endpointA), "via", parityRuntimeID(relay), "to", parityRuntimeID(endpointB), parityCarrierID(carrier), "tunnel",
-				}, "_")
-				topologies[id] = tunnelInteropTopology{
-					ID: id, EndpointA: endpointA, IngressCarrierA: carrier,
-					TunnelRuntime: relay, EndpointB: endpointB, IngressCarrierB: carrier,
+	topologies := make(map[string]tunnelInteropTopology, len(runtimes)*len(runtimes)*len(carriers)*len(carriers))
+	for _, carrierA := range carriers {
+		for _, carrierB := range carriers {
+			for endpointAIndex, endpointA := range runtimes {
+				for relayIndex, relay := range runtimes {
+					endpointB := runtimes[(endpointAIndex+relayIndex)%len(runtimes)]
+					carrierPair := parityCarrierID(carrierA)
+					if carrierA != carrierB {
+						carrierPair += "_to_" + parityCarrierID(carrierB)
+					}
+					id := strings.Join([]string{parityRuntimeID(endpointA), "via", parityRuntimeID(relay), "to", parityRuntimeID(endpointB), carrierPair, "tunnel"}, "_")
+					topologies[id] = tunnelInteropTopology{ID: id, EndpointA: endpointA, IngressCarrierA: carrierA, TunnelRuntime: relay, EndpointB: endpointB, IngressCarrierB: carrierB}
 				}
 			}
 		}
@@ -1153,8 +1182,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 			}
 			switch implementation.Status {
 			case "supported":
-				if len(implementation.TestIDs) != 1 {
-					return nil, fmt.Errorf("capability %s language %s supported status requires exactly one test_id", capability.ID, language)
+				if err := requireCapabilityTestIDs("capability "+capability.ID+" language "+language, implementation.TestIDs); err != nil {
+					return nil, err
 				}
 				if capability.Layer != "portable_core" && strings.TrimSpace(implementation.Entrypoint) == "" {
 					return nil, fmt.Errorf("capability %s language %s supported status requires an entrypoint", capability.ID, language)
@@ -1210,8 +1239,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 		if _, ok := knownLanguages[capability.Owner]; !ok {
 			return nil, fmt.Errorf("runtime-specific capability %s has unknown owner %s", capability.ID, capability.Owner)
 		}
-		if len(capability.TestIDs) != 1 {
-			return nil, fmt.Errorf("runtime-specific capability %s requires exactly one test_id", capability.ID)
+		if err := requireCapabilityTestIDs("runtime-specific capability "+capability.ID, capability.TestIDs); err != nil {
+			return nil, err
 		}
 	}
 	if err := requireUnique("runtime-specific capability ids", runtimeIDs); err != nil {
@@ -1226,9 +1255,8 @@ func loadCapabilityManifest(repoRoot string) (*capabilityManifest, error) {
 			return nil, errors.New("shared fixture id and path must not be empty")
 		}
 		fixtureIDs = append(fixtureIDs, fixture.ID)
-		for _, language := range m.Languages {
-			consumers, ok := fixture.Consumers[language]
-			if !ok || len(consumers) != 1 {
+		for language, consumers := range fixture.Consumers {
+			if len(consumers) != 1 {
 				return nil, fmt.Errorf("shared fixture %s must name exactly one test_id consumer for %s", fixture.ID, language)
 			}
 			if err := requireUnique("shared fixture consumers ("+fixture.ID+":"+language+")", consumers); err != nil {
@@ -1319,8 +1347,8 @@ func validateServerParityContract(contract *serverParityContract) error {
 }
 
 func validateDeploymentProfiles(contract deploymentProfilesContract, parity *serverParityContract) error {
-	if contract.Version != 3 || contract.ApplicationWire != "flowersec/3" {
-		return errors.New("deployment_profiles must declare version 3 and the flowersec/3 application wire")
+	if contract.Version != 3 || contract.ApplicationWire != "flowersec/4" {
+		return errors.New("deployment_profiles must declare version 3 and the flowersec/4 application wire")
 	}
 	expected := []deploymentProfile{
 		{
@@ -1433,8 +1461,8 @@ func validateDeploymentProfileCapabilityBindings(contract deploymentProfilesCont
 }
 
 func validateDeploymentProfileTransportBindings(contract deploymentProfilesContract, parity *serverParityContract) error {
-	if contract.Version != 3 || contract.ApplicationWire != "flowersec/3" {
-		return errors.New("deployment profiles must use the current flowersec/3 application wire")
+	if contract.Version != 3 || contract.ApplicationWire != "flowersec/4" {
+		return errors.New("deployment profiles must use the current flowersec/4 application wire")
 	}
 	runtimeOwners := map[string]string{
 		"go/native":          "go",

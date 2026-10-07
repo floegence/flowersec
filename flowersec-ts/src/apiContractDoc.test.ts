@@ -16,6 +16,7 @@ type APIContractManifest = {
   };
   ts: {
     subpaths: Array<{
+      specifier: string;
       doc_tokens: string[];
     }>;
   };
@@ -53,17 +54,33 @@ describe("docs/API_CONTRACT.md", () => {
     }
   });
 
-  it("documents the cross-language RPC application error boundary", () => {
+  it("documents original TypeScript pool observation and surface ownership", () => {
+    const repoRoot = path.join(process.cwd(), "..");
+    const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, "stability", "api_contract_manifest.json"), "utf8")) as APIContractManifest;
+    const doc = fs.readFileSync(path.join(repoRoot, manifest.docs.api_contract), "utf8");
+    const start = doc.indexOf("## TypeScript\n"), end = doc.indexOf("\n## Swift", start);
+    expect(start).toBeGreaterThanOrEqual(0); expect(end).toBeGreaterThan(start);
+    const section = doc.slice(start, end);
+    for (const name of ["PreauthorizedPoolSource", "TopUpHandle", "PoolSourceConfiguration", "TopUpOptions", "TopUpState", "TopUpResult", "TopUpControlTransport", "TopUpExchangeResult", "PoolControlReplyDecoder", "createSessionPoolControl",
+      "ProxyCredentialPolicy", "ProxyCookieScope", "ProxyCredentialAuthentication", "createProxySurface", "ProxySurface", "ProxySurfaceOptions", "ProxySurfaceMode", "ProxySessionBinding", "ProxySurfaceRequestPolicy", "ProxyPublicationOwner", "ProxyClearResult"]) {
+      expect(section).toContain("`" + name + "`");
+    }
+    expect(section).toContain("A stale handle never observes a later");
+    expect(section).toContain("proof, control and persistence tails");
+    expect(section).toContain("preserves the independent `server_invalidated` fact");
+  });
+
+  it("documents the current cross-language service error boundary", () => {
     const repoRoot = path.join(process.cwd(), "..");
     const manifest = JSON.parse(
       fs.readFileSync(path.join(repoRoot, "stability", "api_contract_manifest.json"), "utf8")
     ) as APIContractManifest;
     const doc = fs.readFileSync(path.join(repoRoot, manifest.docs.api_contract), "utf8");
 
-    expect(doc).toContain("Remote application RPC failures are semantically separate");
-    expect(doc).toContain("TypeScript uses typed `RpcResult<Response>`");
-    expect(doc).toContain("Go returns `flowersec.RPCError`");
-    expect(doc).toContain("Swift throws `RPCError`");
-    expect(doc).toContain("Rust returns `RpcCallError::Application`");
+    expect(doc).toContain("Remote application failures are semantically separate");
+    expect(doc).toContain("TypeScript declares bounded `ApplicationErrorDefinition`");
+    expect(doc).toContain("its handlers throw `ServiceError`");
+    expect(doc).toContain("Swift exposes `ServiceApplicationError`");
+    expect(doc).toContain("Rust exposes `ServiceError`");
   });
 });

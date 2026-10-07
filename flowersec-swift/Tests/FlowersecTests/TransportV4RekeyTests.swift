@@ -5,7 +5,7 @@ import XCTest
 
 // Public fixed transactions only. Expected-byte matching is not a receiver
 // codec, barrier proof, epoch installation, clock or single-publisher gate.
-final class TransportV4RekeyTests: XCTestCase {
+final class TransportRekeyTests: XCTestCase {
   private typealias Object = [String: Any]
   private enum Invalid: Error { case fixture }
   private func object(_ value: Any?) throws -> Object { guard let v = value as? Object else { throw Invalid.fixture }; return v }

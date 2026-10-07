@@ -26,13 +26,15 @@ design.
 | Schema gate | `not_frozen` |
 
 The v4 schema, registry, vectors, provider qualifications and independent
+WebTransport provider qualification remain explicit optional coverage alongside
+WebSocket and raw QUIC carriers.
 cryptographic qualification are separate implementation gates. The repository
 now records a reproducible draft schema and vector manifest; these artifacts
 are still non-authoritative until independently reviewed and promoted to
 `frozen`. Until then, no v4 codec, handshake, carrier or public SDK
-implementation may be declared production-ready. Existing v3 implementation
-files remain the active baseline; this binding does not add a compatibility path
-or change runtime behavior.
+implementation may be declared production-ready. Current source availability
+and each original provider's qualification remain separately reviewable; this
+binding does not by itself establish runtime support.
 
 The Go ordinary service dispatcher accepts volatile execution unary requests
 through the original authenticated Session identity, installed contract routes
@@ -1394,8 +1396,11 @@ current wire profile, observed and required revisions, a finite reason and
 bounded fixed manifest header, configured identity, epoch, declared revision,
 stored revision and `user_version` hint agree. Known header metadata does not
 validate the records or authorize access: Open still requires the exact current
-schema and complete normal state validation. Older and newer headers are refused
-before record decoding. The error and projection contain no stored authority,
+schema and complete normal state validation. Existing groups are first inspected
+in a read transaction on a read-only connection, then checked again on the same
+backing through the sole writable connection. Storage configuration, epoch
+advancement and execution recovery begin only after admission. Older and newer
+headers are refused before record decoding. The error and projection contain no stored authority,
 database contents, provider messages, filesystem paths, commands or executable
 URLs. No trusted exact revision-pair converter is shipped, so conversion
 availability is always false; the host must keep the affected store unavailable

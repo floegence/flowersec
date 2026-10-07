@@ -9,7 +9,11 @@ export function rpcPayloadCharge(capacity: number, runtimeBytes: bigint): Resour
   // one bounded borrow and a fixed SDK error workspace retained in late mode.
   return new ResourceVector([BigInt(capacity) + 2304n + runtimeBytes, 0n, 0n, 4n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
 }
-export interface RPCPayloadBorrow { readonly bytes: Uint8Array; release(): void }
+export interface RPCPayloadBorrow {
+  readonly bytes: Uint8Array;
+  retainSend(reference: ResourceReference): ResourceReference;
+  release(): void;
+}
 
 /** Actual backing ownership shared by request input and completion. Borrowing
  * never refunds the full allocation behind a view. Only one decoder/consumer
@@ -45,7 +49,10 @@ export class RPCPayload {
     this.check();
     if (!shared && this.#borrowed !== 0 || !Number.isSafeInteger(length) || length < 0 || length > this.#bytes.length) throw new RPCProtocolError("rpc_payload_borrow");
     this.#borrowed++; let held = true;
-    return Object.freeze({ bytes: byteSlice(this.#bytes, 0, length), release: () => {
+    return Object.freeze({ bytes: byteSlice(this.#bytes, 0, length), retainSend: (reference: ResourceReference) => {
+      if (!held || this.#reference === undefined) throw new RPCProtocolError("rpc_payload_closed");
+      return this.#reference.borrowInScopesOf(reference);
+    }, release: () => {
       if (!held) return; held = false; this.#borrowed--; this.#collect();
     } });
   }

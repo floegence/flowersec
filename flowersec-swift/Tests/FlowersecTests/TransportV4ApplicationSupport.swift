@@ -3,7 +3,7 @@ import Foundation
 
 // Independent test-only byte relations. Real authentication, channel/serial
 // owners, admission, codec execution and publication remain external gates.
-struct V4ApplicationHeader: Sendable {
+struct V4ApplicationReferenceHeader: Sendable {
   let kind: String, value: V4CBORValue, bytes: Data
 }
 struct V4ApplicationBusinessResult: Equatable, Sendable {
@@ -34,7 +34,7 @@ struct V4ApplicationReference: Sendable {
   func hash(_ name: String, args: [String: V4DomainArgument]) throws -> Data {
     guard let output = try text.evaluateDomain(name, args: args, cap: bound("ServiceContract")).output else { throw V4CBORFailure("registry_unresolved") }; return output
   }
-  func header(_ input: Data) throws -> V4ApplicationHeader {
+  func header(_ input: Data) throws -> V4ApplicationReferenceHeader {
     let bytes = try capture(input, cap: bound("ApplicationHeader")), value = try text.wireMap(bytes, schema: "ApplicationHeader", cap: bound("ApplicationHeader"))
     let code = try uint(field("ApplicationHeader", value, "message_kind"))
     guard let (kind, variant) = kinds.first(where: { $0.value["code"].uint == code }) else { throw V4CBORFailure("application_kind") }
@@ -49,7 +49,7 @@ struct V4ApplicationReference: Sendable {
     }
     return .init(kind: kind, value: value, bytes: bytes)
   }
-  func response(_ original: Data, _ input: Data) throws -> V4ApplicationHeader {
+  func response(_ original: Data, _ input: Data) throws -> V4ApplicationReferenceHeader {
     let request = try header(original), result = try header(input), variant = kinds[result.kind]!
     guard variant["request"].text == request.kind else { throw V4CBORFailure("application_response_kind") }
     for key in ["operation_id", "type_id", "request_digest", "service_contract_digest", "control_serial"] {
@@ -60,7 +60,7 @@ struct V4ApplicationReference: Sendable {
     }
     return result
   }
-  private func contract(_ header: V4ApplicationHeader, requestKind: String, input: Data) throws -> (Data, V4CBORValue) {
+  private func contract(_ header: V4ApplicationReferenceHeader, requestKind: String, input: Data) throws -> (Data, V4CBORValue) {
     let bytes = try capture(input, cap: bound("ServiceContract")), value = try map("ServiceContract", bytes)
     guard try same(field("ApplicationHeader", header.value, "service_contract_digest"), .bytes(hash("service_contract_digest", args: ["contract": .bytes(bytes)]))),
           try same(field("ApplicationHeader", header.value, "type_id"), field("ServiceContract", value, "type_id")) else { throw V4CBORFailure("application_contract_binding") }

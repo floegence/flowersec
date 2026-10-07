@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"strings"
+	"time"
 	"unsafe"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // LiveAuthorizationRequest is the frozen public projection of one original
@@ -71,6 +73,56 @@ type TunnelServerAllowProvider interface {
 	PublishServerAllow(context.Context, TunnelServerAllowRequest, []byte, func() error) error
 }
 
+// TunnelServerAllowPublication owns one exact encoded body and the provider's
+// actual dispatch position. Preparation performs no I/O; Close releases an
+// unpublished position or cancels the original call without detaching cleanup.
+// PublishServerAllow is single-use and joins all physical work before return.
+type TunnelServerAllowPublication interface {
+	PublishServerAllow(context.Context, func() error) error
+	Close()
+}
+
+// PreparedTunnelServerAllowProvider fixes body custody and exclusive physical
+// dispatch capacity before the original pool Connect consumes TxA-P. A generic
+// publication callback alone cannot promise that capacity after the spend.
+type PreparedTunnelServerAllowProvider interface {
+	TunnelServerAllowProvider
+	PrepareServerAllow(TunnelServerAllowRequest, []byte) (TunnelServerAllowPublication, error)
+}
+
+// OriginalLiveTunnelServerAllowProvider transports the exact Activation and
+// server Grant returned by the original TxB publication callback. Registered
+// live recipients need both bytes to bind native preparation to that committed
+// winner. The borrowed material must not be retained after return or rebuilt
+// from a request projection, a read receipt, or historical durable rows.
+// Grant-only providers retain their existing direct publication contract.
+type OriginalLiveTunnelServerAllowProvider interface {
+	TunnelServerAllowProvider
+	PublishOriginalLiveServerAllow(context.Context, TunnelServerAllowRequest, [2][]byte, func() error) error
+}
+
+// PublishOriginalLiveServerAllow selects the authenticated original publication
+// contract without granting a material reader permission to dispatch an allow.
+func PublishOriginalLiveServerAllow(ctx context.Context, provider TunnelServerAllowProvider, request TunnelServerAllowRequest, material [2][]byte, guard func() error) error {
+	if provider == nil || guard == nil || len(material[0]) == 0 || len(material[1]) == 0 {
+		return cryptov4.ErrConfiguration
+	}
+	if err := request.Check(); err != nil {
+		return err
+	}
+	if err := guard(); err != nil {
+		return err
+	}
+	if original, ok := provider.(OriginalLiveTunnelServerAllowProvider); ok {
+		if err := original.PublishOriginalLiveServerAllow(ctx, request, material, guard); err != nil {
+			return err
+		}
+	} else if err := provider.PublishServerAllow(ctx, request, material[1], guard); err != nil {
+		return err
+	}
+	return guard()
+}
+
 type TunnelServerAllowConfig struct {
 	Provider               TunnelServerAllowProvider
 	Recipient, Incarnation [16]byte
@@ -81,7 +133,7 @@ type TunnelServerAllowConfig struct {
 }
 
 type tunnelServerPublication struct {
-	provider   TunnelServerAllowProvider
+	dispatch   TunnelServerAllowPublication
 	request    TunnelServerAllowRequest
 	grant      *protocolv4.SignedMap
 	credential *protocolv4.Credential
@@ -255,7 +307,8 @@ func (p *SessionEstablishment) tunnelServerAllowRequest(c TunnelServerAllowConfi
 }
 
 // prepareTunnelServerAllow fixes the recipient, exact server material and
-// one publication slot before TxA-P. Missing configuration cannot burn a lease.
+// encoded body and actual provider dispatch slot before TxA-P. Missing
+// configuration or capacity cannot burn a lease.
 func (p *SessionEstablishment) prepareTunnelServerAllow(c TunnelServerAllowConfig) error {
 	if p.material.Grant == nil {
 		return nil
@@ -280,11 +333,25 @@ func (p *SessionEstablishment) prepareTunnelServerAllow(c TunnelServerAllowConfi
 	if _, err = c.Validation.CheckMaterialCredential(credential, p.session.SessionNotAfterMS, p.reservation); err != nil {
 		return err
 	}
-	request, _, err := p.tunnelServerAllowRequest(c)
+	request, bodyGrant, err := p.tunnelServerAllowRequest(c)
 	if err != nil {
 		return err
 	}
-	p.serverAllow = tunnelServerPublication{provider: c.Provider, request: request, grant: grant, credential: credential, validation: c.Validation}
+	provider, ok := c.Provider.(PreparedTunnelServerAllowProvider)
+	if !ok {
+		return cryptov4.ErrConfiguration
+	}
+	publication, err := provider.PrepareServerAllow(request, bodyGrant)
+	if err != nil || publication == nil {
+		if publication != nil {
+			publication.Close()
+		}
+		if err != nil {
+			return err
+		}
+		return cryptov4.ErrConfiguration
+	}
+	p.serverAllow = tunnelServerPublication{dispatch: publication, request: request, grant: grant, credential: credential, validation: c.Validation}
 	return nil
 }
 
@@ -297,17 +364,13 @@ func (p *SessionEstablishment) publishTunnelServerAllow(ctx context.Context) err
 	}
 	p.mu.Lock()
 	publication := &p.serverAllow
-	if publication.provider == nil || publication.grant == nil || publication.started {
+	if publication.dispatch == nil || publication.grant == nil || publication.started {
 		p.mu.Unlock()
 		return cryptov4.ErrTransition
 	}
 	publication.started = true
 	p.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return err
-	}
-	grant, err := publication.grant.Bytes()
-	if err != nil {
 		return err
 	}
 	guard := func() error {
@@ -326,10 +389,29 @@ func (p *SessionEstablishment) publishTunnelServerAllow(ctx context.Context) err
 		_, err := publication.validation.CheckMaterialCredential(publication.credential, publication.request.NotAfterMS, p.reservation)
 		return err
 	}
+	// One nonrecoverable monotonic window belongs to this original dispatch.
+	window, err := timev4.NewWindow(p.admission.config.Core.Clock, 2000)
+	if err != nil {
+		return err
+	}
+	defer window.Cancel()
+	remaining, err := window.RemainingMS()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(remaining)*time.Millisecond)
+	defer cancel()
+	originalGuard := guard
+	guard = func() error {
+		if err := window.Check(); err != nil {
+			return err
+		}
+		return originalGuard()
+	}
 	if err = guard(); err != nil {
 		return err
 	}
-	if err = publication.provider.PublishServerAllow(ctx, publication.request, grant, guard); err != nil {
+	if err = publication.dispatch.PublishServerAllow(ctx, guard); err != nil {
 		return err
 	}
 	return guard()

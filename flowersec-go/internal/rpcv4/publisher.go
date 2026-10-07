@@ -24,6 +24,31 @@ type BatchSink interface {
 	Wake() <-chan struct{}
 }
 
+// AuthorizedRequestBatchSink belongs to the original SDK channel writer.
+// CheckRequestAcceptance runs before the caller's publication gate. Copying
+// then remains inside that gate without recursively entering authorization.
+// The Publisher calls TryAcceptAuthorizedRequest only during stepRequest.
+type AuthorizedRequestBatchSink interface {
+	CheckRequestAcceptance(context.Context) error
+	TryAcceptAuthorizedRequest(context.Context, [][]byte) (uint64, error)
+}
+
+// AuthorizedResultReadBatchSink is the original result reader's finite copy
+// attachment. Its caller holds the result authorization gate while the bytes
+// are copied, so the sink must not reacquire endpoint or lease authority.
+type AuthorizedResultReadBatchSink interface {
+	CheckRequestAcceptance(context.Context) error
+	TryAcceptAuthorizedResponse(context.Context, [][]byte, *Publication) (uint64, error)
+}
+
+// BatchPublicationSink orders ordinary response/SDK publication outside the
+// Network gate, then copies under that original authorization gate without
+// recursively acquiring Engine or endpoint locks.
+type BatchPublicationSink interface {
+	WithBatchPublication(context.Context, func() error) error
+	TryAcceptAuthorizedResponse(context.Context, [][]byte, *Publication) (uint64, error)
+}
+
 // ResponseBatchSink attaches the original response observation atomically to
 // the final fragment. The sink records provider handoff before physical cleanup.
 type ResponseBatchSink interface {
@@ -360,6 +385,34 @@ func (p *Publisher) unlinkLocked(t Ticket) {
 	m.nextReady = -1
 }
 func (p *Publisher) Wake() <-chan struct{} { return p.wake }
+
+// DrainIfIdle seals completed traffic under the original Session network gate.
+// Reserved, unstarted positions cannot submit new requests after Session Drain;
+// every started request, retained response and publisher tail must still finish.
+// seal must be the SDK's bounded local send-queue transition, without I/O or
+// application callbacks, following the normal network-to-queue lock order.
+func (p *Publisher) DrainIfIdle(seal func() bool) bool {
+	n := p.network
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if p.closed || p.retired || p.batchPending || p.pendingPublication != nil || p.pendingRequestCleanup != nil {
+		return false
+	}
+	for direction := range n.slots {
+		for i := range n.slots[direction] {
+			s := &n.slots[direction][i]
+			if s.state != networkFree && s.state != networkReserved {
+				return false
+			}
+		}
+	}
+	for _, head := range p.head {
+		if head >= 0 {
+			return false
+		}
+	}
+	return seal()
+}
 func (p *Publisher) notifyLocked() {
 	select {
 	case p.wake <- struct{}{}:
@@ -732,6 +785,25 @@ func (p *Publisher) Step(ctx context.Context) (bool, error) {
 		locked = false
 		return p.stepResultRead(ctx, t, read)
 	}
+	if sink, ok := p.sink.(BatchPublicationSink); ok {
+		n.mu.Unlock()
+		locked = false
+		var progress bool
+		err := sink.WithBatchPublication(ctx, func() error {
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			if err := p.liveLocked(); err != nil {
+				return err
+			}
+			current, err := n.slotLocked(t)
+			if err != nil || p.batchPending || !current.message.queued || current.message.publisher != p {
+				return nil
+			}
+			progress, err = p.stepLocked(ctx, t, current, int(current.message.lane), current.message.payload)
+			return err
+		})
+		return progress, err
+	}
 	return p.stepLocked(ctx, t, s, lane, s.message.payload)
 }
 
@@ -778,7 +850,21 @@ func (p *Publisher) stepLocked(ctx context.Context, t Ticket, s *networkSlot, la
 	lastResponse := t.direction == incoming && m.publication != nil && !m.sdk &&
 		(f.Kind == protocolv4.RPCBegin && m.header.Fields().PayloadBytes == 0 ||
 			f.Kind == protocolv4.RPCData && m.next+uint32(len(f.Payload)) == m.header.Fields().PayloadBytes)
-	if sink, ok := p.sink.(ResponseBatchSink); ok && lastResponse {
+	if sink, ok := p.sink.(AuthorizedRequestBatchSink); ok && m.requestGuard != nil && !m.abort && !m.stop {
+		tail, err = sink.TryAcceptAuthorizedRequest(ctx, p.views[:])
+	} else if sink, ok := p.sink.(AuthorizedResultReadBatchSink); ok && m.readSource != nil {
+		var publication *Publication
+		if lastResponse {
+			publication = m.publication
+		}
+		tail, err = sink.TryAcceptAuthorizedResponse(ctx, p.views[:], publication)
+	} else if sink, ok := p.sink.(BatchPublicationSink); ok {
+		var publication *Publication
+		if lastResponse {
+			publication = m.publication
+		}
+		tail, err = sink.TryAcceptAuthorizedResponse(ctx, p.views[:], publication)
+	} else if sink, ok := p.sink.(ResponseBatchSink); ok && lastResponse {
 		tail, err = sink.TryAcceptResponse(ctx, p.views[:], m.publication)
 	} else {
 		tail, err = p.sink.TryAccept(ctx, p.views[:])

@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 flowersec-native-transport = { path = "../flowersec-native-transport", version = "=6.0.0" }
 napi = { version = "=3.12.2", features = ["napi8", "tokio_rt"] }
 napi-derive = "=3.6.3"
+libsqlite3-sys = { version = "=0.38.2", features = ["loadable_extension"] }
 
 [build-dependencies]
 napi-build = "=2.4.1"

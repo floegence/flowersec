@@ -3,6 +3,7 @@ import type { V4ApplicationContext, V4AuthenticatedContext } from "../streamHand
 import type { V4OutputInterest, V4UnaryContext } from "../serviceHandlers.js";
 import type { ResourceRoot} from "./resources.js";
 import { ResourceError, ResourceVector, type ResourceReference, type ResourceServiceReference, type ResourceAccount, type ResourceOwner } from "./resources.js";
+import { FixedManagementExecutor, type ManagementPermit } from "./fixedManagementExecutor.js";
 import { FixedQueryExecutor, type FixedQueryProtection } from "./fixedQueryExecutor.js";
 import { TimeError } from "./timeArithmetic.js";
 import { V4ReadMethodError } from "../public.js";
@@ -10,7 +11,13 @@ import { V4ReadMethodError } from "../public.js";
 export type ApplicationWorkClass = "short" | "resident";
 type Lane = ApplicationWorkClass | "completion";
 const enqueue = queueMicrotask;
-const ordinaryRunning = 26, residentRunning = 18, ordinaryReady = 52, residentReady = 36;
+interface OrdinaryEnvelope {
+  readonly bytes: bigint;
+  readonly running: number;
+  readonly ready: number;
+  readonly residentRunning: number;
+  readonly residentReady: number;
+}
 const completionRunning = 2, completionReady = 4, completionOwners = 4096, maximumDepth = 8;
 const services = new WeakMap<ResourceRoot, ApplicationExecutor>();
 const contexts = new WeakMap<V4ApplicationContext, Invocation>();
@@ -157,6 +164,7 @@ export class ApplicationGroup {
   closed = false;
   #retired = false;
   users = 0;
+  ordinaryRunning = 0;
   readonly ordinary: Pending[] = [];
   readonly completions: Pending[] = [];
   readonly #shared = new Map<ResourceServiceReference, () => void>();
@@ -166,6 +174,8 @@ export class ApplicationGroup {
     if (this.#retired) this.reference.checkRetained(); else this.reference.check(); this.executor.check();
   }
   sameEnvironment(reference: ResourceReference): boolean { this.check(); return this.reference!.sameEnvironment(reference); }
+  enableManagement(): void { this.check(); this.executor.enableManagement(); }
+  management(signal: AbortSignal, check: () => void): Promise<ManagementPermit> { return this.executor.management(this, signal, check); }
   protectQueries(reference: ResourceReference): FixedQueryProtection { this.check(); return this.executor.protectQueries(this, reference); }
   protectQueryAcquisition(reference: ResourceReference): FixedQueryProtection { this.check(); return this.executor.protectQueries(this, reference, 1); }
   attachService(service: ResourceServiceReference): void {
@@ -182,6 +192,7 @@ export class ApplicationGroup {
     this.executor.cancelGroup(this, false); this.cleanup();
   }
   cleanupComplete(): boolean { this.cleanup(); return this.reference === undefined; }
+  businessPending(): boolean { return this.ordinaryRunning !== 0 || this.ordinary.length !== 0; }
   cleanup(): void {
     if (!this.closed && !this.#retired || this.users !== 0 || this.reference === undefined || this.ordinary.length !== 0 || this.completions.length !== 0) return;
     for (const detach of this.#shared.values()) detach(); this.#shared.clear();
@@ -208,8 +219,9 @@ export class ApplicationGroup {
     const state = invocation(context);
     if (state === undefined || state.permit.executor !== this.executor || state.permit.lane === "completion") return { used: false };
     if (state.depth >= maximumDepth) unavailable();
-    this.check(); check(); state.depth++;
-    try { return { used: true, value: action() }; } finally { state.depth--; }
+    this.check(); check(); this.retain(); this.ordinaryRunning++; state.depth++;
+    try { return { used: true, value: action() }; }
+    finally { state.depth--; this.ordinaryRunning--; this.release(); }
   }
   context(permit: ApplicationPermit, authentication: V4AuthenticatedContext, signal: AbortSignal, outputInterest: V4OutputInterest, publication?: ResponsePublication): Readonly<{ context: V4UnaryContext; release(): void }>;
   context(permit: ApplicationPermit, authentication: V4AuthenticatedContext, signal: AbortSignal): Readonly<{ context: V4ApplicationContext; release(): void }>;
@@ -250,9 +262,14 @@ export class ApplicationExecutor {
   #ordinaryReference: ResourceServiceReference | undefined;
   #completionReference: ResourceServiceReference | undefined;
   #fixedQueries: FixedQueryExecutor | undefined;
+  #management: FixedManagementExecutor | undefined;
+  readonly #envelope: OrdinaryEnvelope;
   constructor(private readonly root: ResourceRoot) {
-    this.#ordinaryReference = root.reserveService(new ResourceVector([7n * 1024n * 1024n, 0n, 0n, 79n, 26n, 26n, 0n, 0n, 0n, 0n, 0n]));
+    this.#envelope = root.applicationResources;
+    const e = this.#envelope;
+    this.#ordinaryReference = root.reserveService(new ResourceVector([e.bytes, 0n, 0n, BigInt(e.running + e.ready + 1), BigInt(e.running), BigInt(e.running), 0n, 0n, 0n, 0n, 0n]));
   }
+  envelope(): Readonly<OrdinaryEnvelope> { return this.#envelope; }
   workload(): Readonly<{ ordinaryRunning: number; residentRunning: number; ordinaryReady: number; residentReady: number; completionRunning: number }> {
     return Object.freeze({ ordinaryRunning: this.#ordinary, residentRunning: this.#resident, ordinaryReady: this.#ready,
       residentReady: this.#residentReady, completionRunning: this.#completion });
@@ -265,6 +282,7 @@ export class ApplicationExecutor {
       group.attachService(this.#ordinaryReference!);
       if (this.#completionReference !== undefined) group.attachService(this.#completionReference);
       if (this.#fixedQueries !== undefined) group.attachService(this.#fixedQueries.reference);
+      if (this.#management !== undefined) group.attachService(this.#management.reference);
       this.#groups.add(group); return group;
     } catch (error) { group.close(); throw error; }
   }
@@ -274,6 +292,18 @@ export class ApplicationExecutor {
     const reference = this.root.reserveService(new ResourceVector([256n * 1024n, 0n, 0n, 7n, 2n, 2n, 0n, 0n, 0n, 0n, 0n]));
     try { for (const group of this.#groups) group.attachService(reference); this.#completionReference = reference; }
     catch (error) { for (const group of this.#groups) group.detachService(reference); reference.release(); throw error; }
+  }
+  enableManagement(): void {
+    this.check(); if (this.#management !== undefined) return;
+    const lane = new FixedManagementExecutor(this.root), attached: ApplicationGroup[] = [];
+    try {
+      for (const group of this.#groups) { group.attachService(lane.reference); attached.push(group); }
+      this.#management = lane;
+    } catch (error) { for (const group of attached) group.detachService(lane.reference); lane.close(); throw error; }
+  }
+  management(group: ApplicationGroup, signal: AbortSignal, check: () => void): Promise<ManagementPermit> {
+    if (group.executor !== this || this.#management === undefined) return Promise.reject(new Error("owner_unavailable"));
+    return this.#management.acquire(group, signal, check);
   }
   protectQueries(group: ApplicationGroup, reference: ResourceReference, direction: 0 | 1 = 0): FixedQueryProtection {
     this.check();
@@ -299,7 +329,7 @@ export class ApplicationExecutor {
   }
   #available(lane: Lane, claim?: CompletionClaim): boolean {
     if (lane === "completion") return claim?.active === true || this.#completion + this.#claims < completionRunning;
-    return this.#ordinary + this.#reserved < ordinaryRunning && (lane === "short" || this.#resident + this.#residentReserved < residentRunning);
+    return this.#ordinary + this.#reserved < this.#envelope.running && (lane === "short" || this.#resident + this.#residentReserved < this.#envelope.residentRunning);
   }
   reserveStart(group: ApplicationGroup, lane: ApplicationWorkClass): ApplicationStartPosition {
     group.check(); applicationWorkClass(lane);
@@ -312,7 +342,7 @@ export class ApplicationExecutor {
     if (!position.active || !this.#startPositions.has(position)) throw new Error("owner_unavailable");
     position.group.check();
     const permit = new ApplicationPermit(this, position.group, position.lane, []);
-    position.active = false; this.#startPositions.delete(position); this.#reserved--; this.#ordinary++;
+    position.active = false; this.#startPositions.delete(position); this.#reserved--; this.#ordinary++; position.group.ordinaryRunning++;
     if (position.lane === "resident") { this.#residentReserved--; this.#resident++; }
     return permit;
   }
@@ -328,7 +358,7 @@ export class ApplicationExecutor {
     if (!this.#available(lane, claim)) throw new Error(lane === "completion" ? "completion_dependency_unavailable" : "would_block");
     const permit = new ApplicationPermit(this, group, lane, ancestors);
     if (claim !== undefined) { claim.active = false; claim.detachParent?.(); claim.detachParent = undefined; this.#claims--; this.#claimOwners.delete(claim); }
-    if (lane === "completion") this.#completion++; else { this.#ordinary++; if (lane === "resident") this.#resident++; }
+    if (lane === "completion") this.#completion++; else { this.#ordinary++; group.ordinaryRunning++; if (lane === "resident") this.#resident++; }
     // A converted claim transfers its existing group reference to the permit.
     if (claim === undefined) group.retain(lane); return permit;
   }
@@ -342,7 +372,7 @@ export class ApplicationExecutor {
         return Promise.resolve(this.tryAcquire(group, lane, parent, claim));
       }
       if (state !== undefined && (lane !== "completion" || applicationHasCompletionAncestor(parent))) unavailable();
-      if (lane === "completion" ? this.#completionPending >= completionOwners : this.#ready >= ordinaryReady || lane === "resident" && this.#residentReady >= residentReady) throw new ResourceError("resource_exhausted");
+      if (lane === "completion" ? this.#completionPending >= completionOwners : this.#ready >= this.#envelope.ready || lane === "resident" && this.#residentReady >= this.#envelope.residentReady) throw new ResourceError("resource_exhausted");
       return new Promise<ApplicationPermit>((resolve, reject) => {
         const job: Pending = { group, lane, signal, check, resolve, reject, claim, parent, cancel: () => this.#remove(job, new Error("canceled")) };
         if (lane === "completion") { group.completions.push(job); this.#completionPending++; }
@@ -389,7 +419,7 @@ export class ApplicationExecutor {
   }
   returnClaim(claim: CompletionClaim): void { this.#claimOwners.delete(claim); this.#claims--; claim.group.release(); this.#schedule(); }
   returnPermit(permit: ApplicationPermit): void {
-    if (permit.lane === "completion") this.#completion--; else { this.#ordinary--; if (permit.lane === "resident") this.#resident--; }
+    if (permit.lane === "completion") this.#completion--; else { this.#ordinary--; permit.group.ordinaryRunning--; if (permit.lane === "resident") this.#resident--; }
     permit.group.release(); this.#schedule();
   }
   #remove(job: Pending, error?: Error): boolean {
@@ -430,7 +460,7 @@ export class ApplicationExecutor {
     for (let n = 0; n < completionReady && this.#available("completion"); n++) {
       const job = this.#next("completion"); if (job === undefined) break; this.#start(job);
     }
-    for (let n = 0; n < ordinaryReady && this.#ordinary < ordinaryRunning; n++) {
+    for (let n = 0; n < this.#envelope.ready && this.#ordinary < this.#envelope.running; n++) {
       const first = this.#nextClass, second = first === "short" ? "resident" : "short";
       const job = (this.#available(first) ? this.#next(first) : undefined) ?? (this.#available(second) ? this.#next(second) : undefined);
       if (job === undefined) break; this.#nextClass = job.lane === "short" ? "resident" : "short"; this.#start(job);
@@ -438,7 +468,7 @@ export class ApplicationExecutor {
     if (this.#completionPending > 0 && this.#available("completion")) this.#schedule();
   }
   cancelGroup(group: ApplicationGroup, completions = true): void {
-    this.#fixedQueries?.cancelGroup(group);
+    this.#fixedQueries?.cancelGroup(group); this.#management?.cancelGroup(group);
     for (const position of this.#startPositions) if (position.group === group) position.close();
     for (const job of [...group.ordinary, ...(completions ? group.completions : [])]) this.#remove(job, new Error("closed"));
     if (completions) for (const claim of this.#claimOwners) if (claim.group === group) claim.release();
@@ -449,6 +479,7 @@ export class ApplicationExecutor {
     this.#ordinaryReference?.release(); this.#ordinaryReference = undefined;
     this.#completionReference?.release(); this.#completionReference = undefined; services.delete(this.root);
     this.#fixedQueries?.close(); this.#fixedQueries = undefined;
+    this.#management?.close(); this.#management = undefined;
   }
 }
 
@@ -469,3 +500,5 @@ export function applicationGroup(root: ResourceRoot, accounts: readonly Resource
 
 /** Internal snapshot of the original root service, never a reservation. */
 export function applicationWorkload(root: ResourceRoot): ReturnType<ApplicationExecutor["workload"]> | undefined { return services.get(root)?.workload(); }
+/** The selected local envelope is fixed on the original budget root. */
+export function applicationEnvelope(root: ResourceRoot): ReturnType<ApplicationExecutor["envelope"]> | undefined { return services.get(root)?.envelope(); }

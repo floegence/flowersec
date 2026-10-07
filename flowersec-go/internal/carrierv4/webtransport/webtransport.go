@@ -758,7 +758,10 @@ func parseURL(rawURL string) (*url.URL, error) {
 
 func validateOrigin(origin string) error {
 	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+	// Origin names the application document, not the TLS-protected carrier.
+	// Secure browser contexts also include HTTP loopback origins. The original
+	// signed OriginPolicy still authorizes the exact serialized origin.
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.User != nil ||
 		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return ErrInvalidURL
 	}

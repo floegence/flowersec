@@ -23,9 +23,10 @@ func poolSQLiteOriginal(t *testing.T, f *sqliteFixture, s *SQLiteStore) *SQLiteP
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := &SQLitePoolSpend{&sqlitePoolSpend{ctx: context.Background(), store: s.sqliteStore, deadline: i.deadline, guard: func() error { return nil }, reservation: held, storeReference: ref, projection: []byte("fixed original signed pool material and owner"), fence: s.epoch, keySize: 34}}
-	p.key[0], p.key[1], p.key[2], p.key[18] = 1, 't', 1, 2
-	p.projectionSize = len(p.projection)
+	p := &SQLitePoolSpend{&sqlitePoolSpend{ctx: context.Background(), store: s.sqliteStore, deadline: i.deadline, guard: func() error { return nil }, reservation: held, storeReference: ref, fence: s.epoch}}
+	key, projection := storedPoolFixture(t, s)
+	p.keySize = copy(p.key[:], key)
+	p.projection, p.projectionSize = projection, len(projection)
 	t.Cleanup(func() {
 		if err := p.Cleanup(); err != nil {
 			t.Error(err)

@@ -497,7 +497,18 @@ func (c *ownedConn) Write(p []byte) (int, error) {
 }
 
 func (c *ownedConn) Close() error {
-	c.once.Do(func() { c.closeErr = c.Conn.Close() })
+	c.once.Do(func() {
+		c.closeErr = c.Conn.Close()
+		if _, tlsTransport := c.Conn.(*tls.Conn); tlsTransport {
+			// tls.Conn.Close returns its alert write error only after the
+			// underlying Close succeeds. A socket Close error takes precedence.
+			// Keep physical close failures; an unsent alert has no cleanup tail.
+			var operation *net.OpError
+			if errors.As(c.closeErr, &operation) && operation.Op == "write" {
+				c.closeErr = nil
+			}
+		}
+	})
 	return c.closeErr
 }
 

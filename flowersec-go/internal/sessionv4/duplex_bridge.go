@@ -30,7 +30,7 @@ type DuplexOptions struct {
 // already includes its pump/lifecycle worker) and the two ownership charges.
 // Only the supervisor and one bounded result waiter are added here.
 func DuplexBridgeCharge(options DuplexOptions) (resourcev4.Vector, error) {
-	fixed := uint64(unsafe.Sizeof(DuplexBridge{})) + uint64(unsafe.Sizeof(duplexResultOwner{})) + uint64(unsafe.Sizeof(duplexContext{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + uint64(unsafe.Sizeof(timev4.Window{}))
+	fixed := uint64(unsafe.Sizeof(DuplexBridge{})) + uint64(unsafe.Sizeof(duplexResultOwner{})) + 2*uint64(unsafe.Sizeof(duplexContext{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + uint64(unsafe.Sizeof(timev4.Window{}))
 	if _, err := CopyCharge(options.ChunkBytes); err != nil {
 		return resourcev4.Vector{}, err
 	}
@@ -73,11 +73,19 @@ type duplexResultOwner struct {
 type duplexContext struct {
 	context.Context
 	operation context.Context
+	parents   [2]context.Context
 }
 
 func (c *duplexContext) Err() error {
 	if err := c.operation.Err(); err != nil {
 		return err
+	}
+	for _, parent := range c.parents {
+		if parent != nil {
+			if err := parent.Err(); err != nil {
+				return err
+			}
+		}
 	}
 	return c.Context.Err()
 }
@@ -100,6 +108,7 @@ type DuplexBridge struct {
 	cleanup                        *timev4.Window
 	cleanupMS                      uint64
 	operationContext               context.Context
+	parentContexts                 [2]context.Context
 	cancel                         context.CancelFunc
 	first                          error
 	outcome                        protocolv4.V4DuplexOutcome
@@ -155,6 +164,10 @@ func newDuplexBridge(ctx context.Context, a, b OpenHandle, native *NativeTCP, op
 // Separate admission from launching the three fixed SDK tasks. No production
 // callback or substitute endpoint can be installed through this private seam.
 func prepareDuplexBridge(ctx context.Context, a, b OpenHandle, native *NativeTCP, options DuplexOptions, reservation resourcev4.Reference, ownership, chunks [2]resourcev4.Reference) (_ *DuplexBridge, tasks duplexTasks, err error) {
+	return prepareDuplexBridgeMode(ctx, a, b, native, options, reservation, ownership, chunks, [2]*StreamOwnership{})
+}
+
+func prepareDuplexBridgeMode(ctx context.Context, a, b OpenHandle, native *NativeTCP, options DuplexOptions, reservation resourcev4.Reference, ownership, chunks [2]resourcev4.Reference, original [2]*StreamOwnership) (_ *DuplexBridge, tasks duplexTasks, err error) {
 	charge, err := DuplexBridgeCharge(options)
 	if err != nil || ctx == nil || a.owner == nil || native == nil && (b.owner == nil || a.owner.engine == b.owner.engine && a.scope == b.scope) {
 		return nil, tasks, cryptov4.ErrConfiguration
@@ -189,9 +202,16 @@ func prepareDuplexBridge(ctx context.Context, a, b OpenHandle, native *NativeTCP
 	if err != nil {
 		return nil, tasks, err
 	}
-	d := &DuplexBridge{reservation: owned, clock: clock, cleanupMS: options.CleanupTimeoutMS, operationContext: ctx, start: make(chan struct{}), abort: make(chan struct{}), fault: make(chan struct{}), finishStart: make(chan struct{}), cleanupStart: make(chan struct{}), ready: make(chan struct{}), incompleteReady: make(chan struct{}), done: make(chan struct{}), events: make(chan duplexEvent, 4)}
+	var parents [2]context.Context
+	for i, o := range original {
+		if o != nil {
+			parents[i] = o.operationContext
+		}
+	}
+	operationCtx := &duplexContext{Context: ctx, operation: ctx, parents: parents}
+	d := &DuplexBridge{parentContexts: parents, reservation: owned, clock: clock, cleanupMS: options.CleanupTimeoutMS, operationContext: operationCtx, start: make(chan struct{}), abort: make(chan struct{}), fault: make(chan struct{}), finishStart: make(chan struct{}), cleanupStart: make(chan struct{}), ready: make(chan struct{}), incompleteReady: make(chan struct{}), done: make(chan struct{}), events: make(chan duplexEvent, 4)}
 	pumpBase, cancel := context.WithCancel(context.Background())
-	pumpCtx := &duplexContext{Context: pumpBase, operation: ctx}
+	pumpCtx := &duplexContext{Context: pumpBase, operation: operationCtx}
 	d.cancel = cancel
 	d.result = &duplexResultOwner{}
 	var workerRefs [2]resourcev4.Reference
@@ -227,6 +247,33 @@ func prepareDuplexBridge(ctx context.Context, a, b OpenHandle, native *NativeTCP
 	d.deadline, err = options.HardDeadline.ForkAgeAt(start, options.TimeoutMS)
 	if err != nil {
 		return nil, tasks, err
+	}
+	if original[0] != nil {
+		for i := range 2 {
+			d.copies[i], err = prepareCopy(options.ChunkBytes, chunks[i])
+			if err != nil {
+				return nil, tasks, err
+			}
+			workerRefs[i], err = d.copies[i].reservation.Borrow()
+			if err != nil {
+				return nil, tasks, err
+			}
+			d.workerDone[i], d.pumpExited[i] = make(chan struct{}), make(chan struct{})
+		}
+		// Acquire the unused native claim first. Failed Stream handoff can
+		// release this claim without performing I/O or closing the endpoint.
+		if native != nil {
+			d.natives[1], err = native.own(ownership[1], d.deadline, pumpCtx)
+			if err != nil {
+				return nil, tasks, err
+			}
+			d.nativeEndpoint[1] = true
+		}
+		d.owners, err = handoffDuplexOwners(original, ownership, d.deadline, pumpCtx, d.abort)
+		if err != nil {
+			return nil, tasks, err
+		}
+		return d, duplexTasks{context: pumpCtx, workers: workerRefs, supervisor: supervisorRef}, nil
 	}
 	for i, h := range [2]OpenHandle{a, b} {
 		var ownerRef resourcev4.Reference
@@ -361,6 +408,12 @@ func (d *DuplexBridge) supervise(ctx context.Context, clock *timev4.Clock, clean
 	}
 	defer func() { reference.Release(); d.finish(engines) }()
 	sessionDone := [2]<-chan struct{}{engines[0].Done(), engines[1].Done()}
+	var parentDone [2]<-chan struct{}
+	for i, parent := range d.parentContexts {
+		if parent != nil {
+			parentDone[i] = parent.Done()
+		}
+	}
 	workerDone := [2]<-chan struct{}{d.workerDone[0], d.workerDone[1]}
 	pumpDone := [2]<-chan struct{}{d.pumpExited[0], d.pumpExited[1]}
 	pumps := 0
@@ -472,6 +525,12 @@ func (d *DuplexBridge) supervise(ctx context.Context, clock *timev4.Clock, clean
 		case <-ctx.Done():
 			d.fail(ctx.Err(), protocolv4.V4DuplexOutcomeAborted)
 			ctx = context.Background()
+		case <-parentDone[0]:
+			d.fail(d.parentContexts[0].Err(), protocolv4.V4DuplexOutcomeAborted)
+			parentDone[0] = nil
+		case <-parentDone[1]:
+			d.fail(d.parentContexts[1].Err(), protocolv4.V4DuplexOutcomeAborted)
+			parentDone[1] = nil
 		case <-sessionDone[0]:
 			d.fail(cryptov4.ErrClosed, protocolv4.V4DuplexOutcomeFailed)
 			sessionDone[0] = nil
@@ -639,6 +698,7 @@ func (d *DuplexBridge) finish(engines [2]*cryptov4.Engine) {
 	d.cancel, d.owners[0], d.owners[1] = nil, nil, nil
 	d.natives = [2]*nativeTCPOwnership{}
 	d.deadline, d.operationContext, d.clock = nil, nil, nil
+	d.parentContexts = [2]context.Context{}
 	if d.delivered {
 		d.reservation.Release()
 		d.reservation = resourcev4.Reference{}

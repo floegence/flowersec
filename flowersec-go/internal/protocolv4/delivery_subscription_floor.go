@@ -200,13 +200,13 @@ func newDeliverySubscriptionFloor(closure *EndpointCredentials, bindings []Crede
 
 // caller holds the original endpoint authorization gate; this only attaches
 // already admitted namespace slots to its one freshly checked result owner.
-func (f *DeliverySubscriptionFloor) attach(s *CredentialSubscriptions) error {
+func (f *DeliverySubscriptionFloor) attach(s *CredentialSubscriptions, deliveryOrigin *EndpointCredentials) error {
 	if f == nil || f.self != f {
 		return CBORFailure("credential_authorization_owner")
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.closed || f.cleaned || f.active != nil || f.closure != s.closure {
+	if f.closed || f.cleaned || f.active != nil || (f.closure != s.closure && (deliveryOrigin == nil || f.closure != deliveryOrigin)) {
 		return CBORFailure("revocation_subscription_capacity")
 	}
 	if err := f.reservation.CheckSameEnvironment(s.reservation); err != nil {

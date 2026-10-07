@@ -131,7 +131,7 @@ func (p *SessionEstablishment) connectLiveSQLite(a *SessionAdmissionReservation,
 	var initial *InitialExchange
 	if issuance.IsTunnel() {
 		err = durable.AuthorizeMaterial(policy, func(ctx context.Context, material [3][]byte) error {
-			if err := p.publishLiveServerAllow(ctx, issuance, publication, serverRequest, material[2], guard); err != nil {
+			if err := p.publishLiveServerAllow(ctx, issuance, publication, serverRequest, [2][]byte{material[0], material[2]}, guard); err != nil {
 				return err
 			}
 			var err error

@@ -1,7 +1,7 @@
 {
   "schema_revision": "flowersec-v4.0.0-draft.74",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
-  "schema_sha256": "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af",
+  "schema_sha256": "9d2322a4755f74a1744e9ff5688b2ef95c3e22bf511d12c4083c96f2fe16813f",
   "coverage": "draft_cbor_fields_only",
   "unverified": [
     "Four-SDK NFC/IDNA/host/Origin consumption and actual signed-route provider/deployment validation",
@@ -2397,6 +2397,12 @@
         "max_proxy_fields": 65535
       },
       "hex": "a200020181a2004a782d636865636b73756d01426f6b"
+    },
+    {
+      "id": "credential_issuer_authorization_relay_role",
+      "kind": "cbor_fields",
+      "schema": "CredentialIssuerAuthorization",
+      "hex": "b2005001010101010101010101010101010101016874656e616e742d31026c7265766f636174696f6e2d31035820bf9a89701463d97f3363b0efe8eb763b6f9cfbccdae54bd3e7f42d2322b9b7fa0401050006501212121212121212121212121212121207582021212121212121212121212121212121212121212121212121212121212121210869736572766963652d31091903e80a1907d00b000c18640d1913880e6a656e64706f696e742d310f782d6673342d6b6b70736b302d7832353531392d636861636861706f6c792d656432353531392d7368613235362d3110021818821864f6"
     },
     {
       "id": "error_session_protocol_violation",

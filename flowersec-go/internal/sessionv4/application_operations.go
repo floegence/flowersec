@@ -31,6 +31,14 @@ func (e *ApplicationExecutor) OperationsSnapshot() ExecutorOperationsSnapshot {
 	limits := ApplicationExecutorSnapshot{Running: c.Running, ResidentRunning: c.ResidentRunning,
 		Ready: c.Ready, ResidentReady: c.ResidentReady, CompletionReserved: c.CompletionReserved,
 		CompletionRunning: c.CompletionRunning, CompletionClaims: c.CompletionRunning, QueryOwners: c.QueryOwners}
+	if c.CompletionRunning != 0 {
+		limits.CompletionReady, limits.CompletionEligible = 4, c.CompletionReserved
+	}
+	limits.Profile = c.Profile
+	limits.OrdinaryServiceBytes, limits.ResidentServiceBytes, _ = c.profileServiceBytes()
+	if c.Profile != ApplicationProfileCustom {
+		limits.CompletionServiceBytes = 256 * 1024
+	}
 	if c.Diagnostics {
 		limits.DiagnosticReady, limits.DiagnosticRunning = diagnosticReady, diagnosticRunning
 	}

@@ -101,6 +101,7 @@ func (c *UnaryCall) finish(outcome UnaryCallOutcome) {
 }
 
 type unaryInvocation struct {
+	diagnosticOperation                    *DiagnosticOperation
 	operation                              *UnaryOperation
 	routeRevoked                           bool
 	relocating                             bool
@@ -114,7 +115,7 @@ type unaryInvocation struct {
 	mu                                     sync.Mutex
 	result                                 *UnaryCall
 	metadata                               resourcev4.Reference
-	legacyResult                           resourcev4.Reference
+	inlineResult                           resourcev4.Reference
 	completion                             *rpcv4.Completion
 	future                                 *CompletionReservation
 	task                                   *CompletionTask
@@ -135,6 +136,7 @@ type unaryInvocation struct {
 	header                                 protocolv4.ApplicationHeader
 	preparing, canceled, finished, cleaned bool
 	inputDelivered                         bool
+	diagnosticOperationOwned               bool
 }
 
 func shortUnaryMetadataCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
@@ -182,10 +184,10 @@ func (r *RPCServices) BeginUnaryContext(ctx context.Context, route rpcv4.Contrac
 }
 
 func (r *RPCServices) beginUnary(ctx context.Context, route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte, class ApplicationWorkClass, protected, prepared bool, inherited *applicationDependencies, resultPlan *unaryResultPlan, decode UnaryDecoder, fixedReads ...bool) (_ *UnaryCall, err error) {
-	return r.beginUnaryController(ctx, route, h, header, payload, class, protected, prepared, inherited, resultPlan, decode, nil, nil, nil, fixedReads...)
+	return r.beginUnaryController(ctx, route, h, header, payload, class, protected, prepared, inherited, resultPlan, decode, nil, nil, nil, nil, fixedReads...)
 }
 
-func (r *RPCServices) beginUnaryController(ctx context.Context, route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte, class ApplicationWorkClass, protected, prepared bool, inherited *applicationDependencies, resultPlan *unaryResultPlan, decode UnaryDecoder, controller *controllerDispatch, original *rpcv4.PreparedRequest, workload *unaryWorkloadSlot, fixedReads ...bool) (_ *UnaryCall, err error) {
+func (r *RPCServices) beginUnaryController(ctx context.Context, route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte, class ApplicationWorkClass, protected, prepared bool, inherited *applicationDependencies, resultPlan *unaryResultPlan, decode UnaryDecoder, controller *controllerDispatch, original *rpcv4.PreparedRequest, workload *unaryWorkloadSlot, owner *UnaryOperation, fixedReads ...bool) (_ *UnaryCall, err error) {
 	fixedRead := len(fixedReads) == 1 && fixedReads[0]
 	if len(fixedReads) > 1 {
 		return nil, cryptov4.ErrConfiguration
@@ -267,6 +269,10 @@ func (r *RPCServices) beginUnaryController(ctx context.Context, route rpcv4.Cont
 		refs[4].Release()
 		refs[5].Release()
 		if err != nil {
+			if i.diagnosticOperationOwned {
+				finishApplicationDiagnosticError(i.diagnosticOperation, err)
+				i.diagnosticOperation = nil
+			}
 			i.controller.close()
 			if i.ticket != (rpcv4.Ticket{}) {
 				_ = network.Release(i.ticket)
@@ -283,7 +289,7 @@ func (r *RPCServices) beginUnaryController(ctx context.Context, route rpcv4.Cont
 				call.advanceResult()
 			}
 			i.route.Release()
-			i.legacyResult.Release()
+			i.inlineResult.Release()
 			refs[0].Release()
 			r.mu.Lock()
 			r.removeUnaryLocked(i)
@@ -299,7 +305,7 @@ func (r *RPCServices) beginUnaryController(ctx context.Context, route rpcv4.Cont
 		if e != nil {
 			return nil, e
 		}
-		i.legacyResult, err = refs[4].Take(minimum)
+		i.inlineResult, err = refs[4].Take(minimum)
 		if err != nil {
 			return nil, err
 		}
@@ -431,7 +437,7 @@ func (r *RPCServices) beginUnaryController(ctx context.Context, route rpcv4.Cont
 	if resultPlan != nil {
 		i.completion, err = network.NewOwnedTimedCompletion(i.ticket, unaryResponseLimit(h), refs[2], call.deferred.metadata, runtimeBytes, completionDeadline)
 	} else if protected {
-		i.completion, err = network.NewOwnedTimedCompletion(i.ticket, unaryResponseLimit(h), refs[2], i.legacyResult, runtimeBytes, completionDeadline)
+		i.completion, err = network.NewOwnedTimedCompletion(i.ticket, unaryResponseLimit(h), refs[2], i.inlineResult, runtimeBytes, completionDeadline)
 	} else {
 		i.completion, err = network.NewTimedCompletion(i.ticket, unaryResponseLimit(h), refs[2], runtimeBytes, completionDeadline)
 	}
@@ -441,6 +447,13 @@ func (r *RPCServices) beginUnaryController(ctx context.Context, route rpcv4.Cont
 	i.publication, err = i.publisher.QueueGuardedRequest(i.ticket, header, payload, refs[1], runtimeBytes, i)
 	if err != nil {
 		return nil, err
+	}
+	// Transfer the operation owner before clearing preparing and publishing the
+	// invocation through call.invocation. The caller holds owner.mu for the
+	// prepared operation path, so old cleanup cannot race this handoff.
+	if owner != nil && owner.diagnosticOperationOwned && owner.diagnosticOperation == i.diagnosticOperation {
+		i.diagnosticOperationOwned = true
+		owner.diagnosticOperationOwned = false
 	}
 	i.mu.Lock()
 	i.preparing = false
@@ -600,7 +613,21 @@ func (r *RPCServices) reserveUnaryLocked(ctx context.Context, h protocolv4.Appli
 	if err != nil {
 		return nil, refs, err
 	}
-	i := &unaryInvocation{index: index, protected: protected, preparationDone: make(chan struct{}), result: &UnaryCall{done: make(chan struct{})}, metadata: refs[0], future: future, ctx: ctx, decode: decode, preparing: true, publisher: publisher, plan: r.plan, services: r}
+	diagnosticOperation := diagnosticOperationFromContext(ctx)
+	if !diagnosticOperationOwnedFromContext(ctx) {
+		diagnosticOperation = nil
+	}
+	// Context ownership is consumed by the invocation only at the final
+	// publication handoff. Until then the prepared operation remains the
+	// borrowed source owner, so an unsubmitted construction failure cannot
+	// close it twice.
+	diagnosticOperationOwned := false
+	if diagnosticOperation == nil && r.plan != nil {
+		diagnosticOperation = r.plan.beginApplicationDiagnostic()
+		diagnosticOperationOwned = true
+	}
+	ctx = withDiagnosticOperation(ctx, diagnosticOperation)
+	i := &unaryInvocation{index: index, protected: protected, preparationDone: make(chan struct{}), result: &UnaryCall{done: make(chan struct{})}, metadata: refs[0], future: future, ctx: ctx, decode: decode, preparing: true, publisher: publisher, plan: r.plan, diagnosticOperation: diagnosticOperation, diagnosticOperationOwned: diagnosticOperationOwned, services: r}
 	if protected {
 		r.localCall = i
 	} else {
@@ -734,12 +761,13 @@ func (i *unaryInvocation) advance(closed bool) bool {
 	i.route.Release()
 	i.route = rpcv4.ContractRoute{}
 	i.metadata.Release()
-	i.legacyResult.Release()
-	i.metadata, i.legacyResult = resourcev4.Reference{}, resourcev4.Reference{}
+	i.inlineResult.Release()
+	i.metadata, i.inlineResult = resourcev4.Reference{}, resourcev4.Reference{}
 	// All call kinds keep the original invocation until its actual provider
 	// and Completion tails exit. Detach only after releasing their ownership;
 	// observation cancellation alone is not cleanup evidence.
 	i.result.mu.Lock()
+	resultOutcome := i.result.outcome
 	i.result.invocation = nil
 	i.result.mu.Unlock()
 	i.result, i.completion, i.task, i.publisher, i.publication = nil, nil, nil, nil, nil
@@ -748,6 +776,10 @@ func (i *unaryInvocation) advance(closed bool) bool {
 	i.plan = nil
 	i.services = nil
 	i.operation = nil
+	if i.diagnosticOperationOwned {
+		finishApplicationDiagnosticError(i.diagnosticOperation, resultOutcome.Error)
+		i.diagnosticOperation = nil
+	}
 	i.cleaned = true
 	return true
 }

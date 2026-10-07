@@ -108,14 +108,15 @@ func (c *ConnectionController) WaitForSession(ctx context.Context) (*Environment
 		}
 		failed := (c.attempt == nil || c.attempt.finished) && c.lastError != nil && !willRetry
 		failure := c.lastError
+		settled := c.attempt == nil
 		c.mu.Unlock()
 		if closed {
 			return nil, cryptov4.ErrClosed
 		}
-		if err == ErrControllerInitialization && !initializing {
+		if err == ErrControllerInitialization && !initializing && settled {
 			return nil, err
 		}
-		if failed {
+		if failed && settled {
 			return nil, failure
 		}
 		select {
@@ -161,6 +162,7 @@ func (c *ConnectionController) run() {
 		case <-timer.C:
 		}
 		c.advanceDispatches()
+		c.advanceNotifications()
 		c.mu.Lock()
 		closed, current, retired, a := c.closed, c.current, c.retired, c.attempt
 		pending := a != nil && !a.finished
@@ -207,21 +209,27 @@ func (c *ConnectionController) run() {
 		}
 		currentDone := controllerSessionDone(current)
 		var currentFailure error
-		var transportFailure bool
+		var currentTransport bool
+		var currentDiagnostic ConnectionDiagnostic
 		if current != nil && currentDone {
+			currentDiagnostic = current.ConnectionDiagnostic()
 			current.mu.Lock()
 			currentFailure = current.result
-			transportFailure = current.controllerTransportFailure
+			currentTransport = current.controllerTransportFailure && controllerNetworkRetry(currentFailure)
 			current.mu.Unlock()
 		}
 		c.mu.Lock()
-		retry, notBefore := false, uint64(0)
-		if current != nil && c.current == current && currentDone {
-			c.current = nil
-			c.lastError = currentFailure
-			retry = transportFailure
-			c.signalLocked()
+		var failedCandidate *EnvironmentSession
+		if a != nil && c.attempt == a && a.exited && !a.result.CurrentSwitched {
+			failedCandidate = a.candidate
 		}
+		c.mu.Unlock()
+		var candidateDiagnostic ConnectionDiagnostic
+		if failedCandidate != nil {
+			candidateDiagnostic = failedCandidate.ConnectionDiagnostic()
+		}
+		c.mu.Lock()
+		retry, notBefore := false, uint64(0)
 		if c.retired != nil && controllerSessionDone(c.retired) {
 			c.retired = nil
 			c.retention = nil
@@ -234,12 +242,35 @@ func (c *ConnectionController) run() {
 					notBefore = a.sourceFailure.notBeforeMS
 				}
 			}
+			if !a.result.CurrentSwitched && failedCandidate != nil && a.candidate == failedCandidate {
+				c.lastDiagnostic, c.hasLastDiagnostic = candidateDiagnostic, true
+			}
 			c.attempt = nil
+			c.signalLocked()
+		}
+		// A published current can finish before its successful attempt exits.
+		// Keep that original Session and failure until its same attempt tail is
+		// removed above; otherwise the only network retry source would be lost.
+		publicationTail := c.attempt != nil && c.attempt.result.CurrentSwitched && c.attempt.result.Current == current
+		if current != nil && c.current == current && currentDone && !publicationTail {
+			c.current = nil
+			// An older current Session may finish while a later replacement is
+			// establishing or has failed. Retiring it cannot overwrite the newer
+			// attempt's failure or its spend/publication facts.
+			if currentDiagnostic.Attempt == c.serial {
+				c.lastError = currentFailure
+				c.lastDiagnostic, c.hasLastDiagnostic = currentDiagnostic, true
+			}
+			// A new acquisition uses the configured Source after original cleanup;
+			// the consumed material and its spend facts remain terminal.
+			if currentDiagnostic.Attempt == c.serial && c.attempt == nil && c.retryWindow == nil && !c.retryPending && currentTransport {
+				retry = true
+			}
 			c.signalLocked()
 		}
 		serial := c.serial
 		c.retryPending = retry && c.retryEligibleLocked(serial)
-		ready := c.closed && c.current == nil && c.retired == nil && c.attempt == nil && c.dispatches == 0
+		ready := c.closed && c.current == nil && c.retired == nil && c.attempt == nil && c.dispatches == 0 && c.notificationsCleanedLocked()
 		if ready {
 			if c.task != nil {
 				c.task.Close()

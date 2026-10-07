@@ -398,7 +398,7 @@ func (s *DirectIssuer) checkArtifactCandidate(index int, candidate Value) error 
 	return nil
 }
 
-func (s *DirectIssuer) checkArtifactTunnels(parent *Credential) error {
+func (s *DirectIssuer) checkArtifactTunnels(parent *Credential) (err error) {
 	t := s.tunnels
 	if t == nil {
 		return nil

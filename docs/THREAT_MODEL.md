@@ -1,93 +1,73 @@
-# Flowersec v3 Threat Model
+# Flowersec Threat Model
 
-## Protected Assets
+Flowersec protects application payloads, endpoint identity, single-use
+connection authority and bounded execution ownership. Credentials, private
+keys, artifact bytes and provider details remain behind opaque SDK objects.
+Public errors and progress contain only their explicitly defined bounded
+fields.
 
-Flowersec protects artifact credentials, endpoint authentication policy,
-session keys, RPC payloads, and byte-stream contents. Public SDK objects are
-opaque and errors are redacted so logging and generic serialization do not
-reveal artifacts, URLs, pins, certificates, credentials, lease identities, or
-native TLS diagnostics.
+## Trust boundaries
 
-## Trust Boundaries
+Applications configure independent namespace trust, authenticated control
+routes, identity custody, durable stores and finite resource budgets. A peer
+Artifact cannot install its own trust anchor. Online bootstrap and durable
+restore preserve their distinct freshness and rollback requirements.
 
-- Applications own artifact acquisition and the durable pending-to-spent
-  transition.
-- Deployment systems own certificate issuance, CA installation, pin
-  derivation, certificate publication, overlap windows, and rollout order.
-- Flowersec control planes bind a structured endpoint URL and TLS policy into
-  every candidate; SDKs do not fetch pins or implement trust on first use.
-- Endpoints terminate Flowersec session encryption.
-- Tunnel relays coordinate and forward opaque carrier streams. They do not
-  receive the application Session contract or E2EE key, run the session engine,
-  or expose application handlers.
-- WSS, raw QUIC, and WebTransport use TLS 1.3. Production v3 has no plaintext
-  WebSocket exception.
+Network carriers use TLS 1.3 without early data or plaintext fallback. CA and
+complete leaf-DER pin policies remain distinct signed choices. A failed pin
+cannot be bypassed with a CA retry at the same endpoint. Browser APIs provide
+only their actual guarantees; a browser WebSocket does not independently prove
+its TLS version. Explicit `local_loopback` admission uses the same current
+session protocol with strict numeric-loopback, Origin and application
+authentication checks and reports outer TLS verification as not applicable.
 
-## Endpoint Authentication
+TLS deployment operators own certificate issuance and trust distribution.
+Flowersec does not infer trust from an unverified URL, silently accept a new
+certificate, or turn application identity digests into certificate pins.
 
-Every candidate declares exactly one TLS mode. CA mode uses platform or
-deployment-provided roots and performs chain, signature, validity, key-usage,
-security-policy, revocation-policy, and DNS-ID or IP SAN verification. Pin mode
-uses SHA-256 of the complete leaf X.509 DER as the sole certificate identity
-decision while retaining the TLS provider's key exchange, CertificateVerify,
-Finished, transcript, cipher-suite, signature-scheme, and ALPN proof.
+## Admission and encryption
 
-TLS policy participates in candidate canonicalization, candidate-set hashing,
-FSB3, admission binding, endpoint identity, and deduplication. A CA failure
-never becomes pin, a pin failure never becomes CA, and the same endpoint cannot
-be retried with a blocked pin policy. Active pins are sampled once before
-transport construction; an empty set creates no socket.
+Carrier preparation does not consume a connection lease. The original winner,
+authenticated activation and durable once-only spend/admission transitions
+precede their corresponding disclosures. An uncertain irreversible transition
+cannot make a credential reusable. FSB4, FSA4, the Noise transcript and both
+READY messages bind the same original identities, candidate, route, attempt,
+cryptographic profile and authorization.
 
-Browser WebTransport passes active pins only through the production
-`serverCertificateHashes` constructor option. Browser WebSocket is CA-only.
-Native Go, Rust, Node.js, and Swift adapters perform pin verification within
-their TLS boundary. No HTTP Upgrade, CONNECT, carrier, credential, or FSB3 is
-exposed before the relevant TLS proof succeeds.
+Authenticated encrypted control and data become usable only after all READY
+requirements complete. The two supported cryptographic profiles have distinct
+key and usage bounds. Streams, flow control, rekey, revocation, liveness and
+cleanup retain their actual resource charges until original work exits.
 
-Browser JavaScript cannot inspect the peer leaf SPKI or independently prove
-the native P-256-only certificate profile. Browser policy may accept another
-non-RSA algorithm, so P-256-only endpoints reached through JavaScript have no
-cross-runtime profile or interoperability guarantee. The SDK does not claim
-that browser JavaScript verified P-256-only; deployments requiring that proof
-must use a native verifier or an explicitly browser-supported profile.
+Relays forward opaque encrypted application traffic. They can observe routing,
+timing, lengths and public admission or hop-authorization metadata, including
+identity certificates and digests. End-to-end encryption does not claim to
+hide those metadata fields from a relay. Relays do not receive endpoint
+session secrets or application handlers.
 
-## Admission and Session Security
+## Application ownership
 
-The application durably commits a lease only after TLS establishes a candidate
-winner and before the connector writes FSB3 or any credential byte. A failed or
-uncertain post-commit write never makes the artifact reusable. The receiver
-revalidates FSB3 canonical bytes, candidate membership and ordering, TLS
-policy, hashes, role, expiry, and its authorization record before admission.
+A ConnectionController acquires fresh material for an allowed retry. Candidate
+initialization precedes publication to new work. Replacement does not replay
+RPCs, notifications or writes, and previously accepted work retains its
+original Session. Drain stops new admission; cleanup completes only after
+actual sockets, callbacks, retained results and application leases retire.
 
-The authenticated FSH3 session handshake derives independent directional and
-epoch keys using v3-only domains. Control, RPC, streams, and unreliable
-messages use the FS*3 frame family and v3-only authentication domains. Rekey,
-liveness, cancellation, deadlines, FIN, reset, and cleanup are bounded; late
-or duplicate setup cannot revive terminal stream state.
+Serve authenticates the transport context before application authorization,
+freezes the accepted handler plan before READY and retains the returned lease
+through actual Session cleanup. Structured service contracts distinguish
+execution from observation, cancellation from completion, and application
+errors from transport failures. Proxy upstream authorization applies to the
+final request target; controlled Cookie ownership is explicit.
 
-## Refresh and Failure Policy
+## Outside the protection boundary
 
-Runtime capability is sampled before each artifact race. Unsupported security
-modes are skipped before transport construction. A connection cycle has one
-scheduler, deterministic bounded backoff, a shared acquisition attempt budget,
-and at most one policy-sensitive replacement lease. A pin trigger immediately
-blocks its endpoint and complete declared policy digest. Replacement requires a
-changed pin policy for the same endpoint and never permits pin-to-CA downgrade.
+A compromised endpoint process or authorized malicious application can access
+its own plaintext. Flowersec does not prevent traffic analysis or protect
+plaintext deliberately terminated by an application gateway. Durable store,
+clock, identity and native-provider guarantees require their configured host
+adapters to satisfy the published contract.
 
-All TLS failures remain before admission and are separate from FSA3 reasons.
-Public failures are closed and redacted. Browser APIs may justify only an
-opaque connection failure; native runtimes classify a TLS detail only when the
-verifier has evidence for it.
-
-## Out of Scope
-
-Flowersec does not protect a compromised endpoint process, malicious
-application code holding a valid artifact, traffic analysis from packet size or
-timing, or plaintext deliberately terminated outside Flowersec by an
-application-owned gateway. It does not issue certificates, distribute trust
-roots, decide rollout batches, or treat certificate pins as peer identity,
-admission credentials, or E2EE keys.
-
-The normative transport security and lifecycle requirements are defined in
-[`TRANSPORT_V3_WIRE.md`](TRANSPORT_V3_WIRE.md) and
-[`TRANSPORT_V3_ARCHITECTURE.md`](TRANSPORT_V3_ARCHITECTURE.md).
+Current allocations and qualification boundaries are recorded in
+[TRANSPORT_V4_BINDING.md](TRANSPORT_V4_BINDING.md); public ownership is described
+in [API_CONTRACT.md](API_CONTRACT.md).

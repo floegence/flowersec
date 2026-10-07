@@ -18,7 +18,7 @@ func (t *NamespaceTrustStore) ReferenceFor(clock *timev4.Clock, environment reso
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.clock != clock {
+	if t.clock != clock || t.retirementOnly {
 		return resourcev4.Reference{}, resourcev4.ErrConfiguration
 	}
 	if err := t.checkCurrentLockedAt(sample); err != nil {

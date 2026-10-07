@@ -20,6 +20,28 @@ enum V4CredentialText {
     }
   }
 
+  static func addressBytes(_ text: String) -> Data? {
+    var ipv4 = in_addr()
+    if text.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1 {
+      return withUnsafeBytes(of: &ipv4) { Data($0) }
+    }
+    var ipv6 = in6_addr()
+    guard text.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1 else { return nil }
+    return withUnsafeBytes(of: &ipv6) { Data($0) }
+  }
+
+  static func isLoopbackAddress(_ text: String) -> Bool {
+    var ipv4 = in_addr()
+    if text.withCString({ inet_pton(AF_INET, $0, &ipv4) }) == 1 {
+      return withUnsafeBytes(of: &ipv4) { $0.first == 127 }
+    }
+    var ipv6 = in6_addr()
+    guard text.withCString({ inet_pton(AF_INET6, $0, &ipv6) }) == 1 else { return false }
+    return withUnsafeBytes(of: &ipv6) { bytes in
+      bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
+    }
+  }
+
   private static func host(_ text: String) throws -> Bool {
     guard !text.isEmpty, text.utf8.count <= 253, text.utf8.allSatisfy({ (33...126).contains($0) }),
       text == text.lowercased(), !text.contains("%"), !text.contains("["), !text.contains("]")
@@ -72,7 +94,7 @@ enum V4CredentialText {
     guard let last = text.split(separator: ".").last,
       !last.utf8.allSatisfy({ (48...57).contains($0) }),
       !(last.hasPrefix("0x") && last.dropFirst(2).allSatisfy({ $0.isHexDigit })),
-      try IDNAHostV3.lookupASCII(text) == text
+      try IDNAHost.lookupASCII(text) == text
     else { throw V4NamespaceFailure.schema }
     return false
   }

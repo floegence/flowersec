@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::environment_v4::{
@@ -11,8 +8,9 @@ use crate::environment_v4::{
 use bytes::Bytes;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::time::{Instant, sleep_until};
+use tokio_util::sync::CancellationToken;
 
-const MAX_PREPARED_WRITE_BYTES: usize = 1_048_576;
+const MAX_PREPARED_WRITE_BYTES: usize = 2_162_688;
 const MAX_PREPARED_WRITE_OPERATIONS: usize = 128;
 const PREPARED_WRITE_LIFETIME: Duration = Duration::from_secs(60);
 
@@ -61,22 +59,27 @@ impl WriteStagingOwner {
         self.changed.notify_waiters();
     }
     fn reserve(self: &Arc<Self>, bytes: usize) -> Result<WriteReservations, SessionError> {
-        let mut charge = self
-            .account
-            .as_ref()
-            .map(|account| {
-                account.reserve(ResourceLimits {
-                    sdk_bytes: bytes as u64 + std::mem::size_of::<WriteOwner>() as u64,
-                    items: 1,
-                    work_slots: 1,
-                    tasks: 2,
-                    timers: 1,
-                    sessions: 0,
-                    ..ResourceLimits::default()
-                })
-            })
-            .transpose()
-            .map_err(environment_session_error)?;
+        self.reserve_with_backing(bytes, None)
+    }
+    fn reserve_with_backing(
+        self: &Arc<Self>,
+        bytes: usize,
+        prepaid: Option<ResourceCharge>,
+    ) -> Result<WriteReservations, SessionError> {
+        let limits = WriteOperation::preparation_limits(bytes)?;
+        let mut charge = if let Some(charge) = prepaid {
+            let account = self.account.as_ref().ok_or(SessionError::OperationFailed)?;
+            if !charge.matches(account, limits) {
+                return Err(SessionError::OperationFailed);
+            }
+            Some(charge)
+        } else {
+            self.account
+                .as_ref()
+                .map(|account| account.reserve(limits))
+                .transpose()
+                .map_err(environment_session_error)?
+        };
         let data_charge = charge
             .as_mut()
             .map(|charge| {
@@ -142,6 +145,12 @@ impl WriteStagingOwner {
         })
     }
 }
+/// An original staging vector acquired before a bridge source read.  Moving
+/// it into a WriteOperation preserves the same slot and physical charges.
+pub(crate) struct BridgeWriteReservation {
+    reservations: WriteReservations,
+    maximum_bytes: usize,
+}
 struct WriteReservations {
     staging: WriteStagingReservation,
     metadata: WriteMetadataReservation,
@@ -188,6 +197,11 @@ pub struct ConnectionRequirements {
 pub struct TransportEnvironment {
     root: Arc<EnvironmentRoot>,
 }
+impl Drop for TransportEnvironment {
+    fn drop(&mut self) {
+        self.root.close();
+    }
+}
 impl Default for TransportEnvironment {
     fn default() -> Self {
         Self::with_options(TransportEnvironmentOptions::default())
@@ -205,6 +219,18 @@ impl TransportEnvironment {
         Ok(Self {
             root: EnvironmentRoot::new(options)?,
         })
+    }
+    /// Bind the fixed live tunnel authority controls to this environment.
+    /// The returned owner keeps both control transports on the same resource and
+    /// namespace root as every source or session created from this environment.
+    pub fn live_tunnel_authority_control(
+        &self,
+        configuration: crate::LiveTunnelAuthorityControlConfiguration,
+    ) -> Result<Arc<crate::LiveTunnelAuthorityControl>, crate::MaterialSourceError> {
+        crate::live_material_source_v4::LiveTunnelAuthorityControl::new(
+            self.root.clone(),
+            configuration,
+        )
     }
     // The transport assembly owns this verifier until all namespace users exit.
     // Construction alone does not bootstrap trust or publish a live Session.
@@ -248,19 +274,116 @@ impl TransportEnvironment {
     ) -> Result<crate::crypto_v4::Session, SessionError> {
         crate::crypto_v4::Session::adopt(&self.root, engine, transport, None)
     }
-    pub(crate) fn adopt_ready_session_reserved(
+    pub fn import_message_stream_definition(
         &self,
-        engine: crate::crypto_v4::RecordEngine,
-        transport: Box<dyn crate::crypto_v4::SessionTransport>,
-        charge: crate::environment_v4::ResourceCharge,
-    ) -> Result<crate::crypto_v4::Session, SessionError> {
-        crate::crypto_v4::Session::adopt(&self.root, engine, transport, Some(charge))
+        canonical: &[u8],
+    ) -> Result<crate::MessageStreamDefinition, crate::ServiceError> {
+        crate::typed_message_stream_v4::MessageStreamDefinition::import(&self.root, canonical)
+    }
+    pub fn define_message_stream(
+        &self,
+        kind: &str,
+        revision: &str,
+        opener_to_acceptor: crate::MessageDefinition,
+        acceptor_to_opener: crate::MessageDefinition,
+    ) -> Result<crate::MessageStreamDefinition, crate::ServiceError> {
+        crate::typed_message_stream_v4::MessageStreamDefinition::define(
+            &self.root,
+            kind,
+            revision,
+            opener_to_acceptor,
+            acceptor_to_opener,
+        )
+    }
+    pub fn sqlite_operation_reference_store(
+        &self,
+        options: crate::SQLiteReferenceStoreOptions,
+    ) -> Result<crate::SQLiteOperationReferenceStore, crate::ServiceError> {
+        crate::sqlite_reference_store_v4::SQLiteOperationReferenceStore::open(
+            self.root.clone(),
+            options,
+        )
+    }
+    /// Discharge a failed-open backing only after the host has removed its
+    /// retained database and journals under the declared retention policy.
+    pub fn release_removed_reference_store(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<(), crate::ServiceError> {
+        let owner = self.root.reference_store(path).ok_or(crate::ServiceError(
+            crate::ServiceFailure::ConfigurationCapacity,
+        ))?;
+        crate::SQLiteOperationReferenceStore(owner).release_removed()
+    }
+    pub fn operation_reference_codec(
+        &self,
+        target_domain: String,
+    ) -> Result<crate::OperationReferenceCodec, crate::ServiceError> {
+        crate::operation_reference_v4::OperationReferenceCodec::new(
+            self.root.clone(),
+            target_domain,
+        )
+    }
+    /// Install an opt-in detailed diagnostic callback. Events are projected to
+    /// the finite public whitelist and delivered by a dedicated sink worker.
+    pub fn diagnostic_sink(
+        &self,
+        options: crate::DiagnosticSinkOptions,
+        callback: crate::DiagnosticCallback,
+    ) -> Result<crate::DiagnosticSink, EnvironmentError> {
+        self.root.diagnostic_sink(options, callback)
+    }
+    /// Unsampled finite counters are available even with detailed diagnostics disabled.
+    pub fn diagnostic_counts(&self) -> crate::TransportDiagnosticCounts {
+        self.root.diagnostic_counts()
+    }
+    /// Finite marginal histograms for an unsampled metric; snapshots have no labels supplied by applications.
+    pub fn diagnostic_metric(
+        &self,
+        metric: crate::DiagnosticMetric,
+    ) -> crate::DiagnosticMetricCounts {
+        self.root.diagnostic_metric(metric)
+    }
+    /// Observe or close the sink configured for production events on this Environment.
+    pub fn configured_diagnostic_sink(&self) -> Option<crate::DiagnosticSink> {
+        self.root.configured_diagnostic_sink()
+    }
+    pub fn application_executor_config(&self) -> &crate::ApplicationExecutorConfig {
+        self.root.application_config()
+    }
+    pub fn application_executor_snapshot(&self) -> crate::ApplicationExecutorSnapshot {
+        self.root.application_snapshot()
+    }
+    /// One continuous execution history per exact service configuration.
+    /// Durable admission is selected by the service binding/provider; this
+    /// owner implements the Environment-local volatile execution profile.
+    pub fn execution_service(
+        &self,
+        options: crate::execution_history::ExecutionServiceOptions,
+    ) -> Result<crate::execution_history::ExecutionService, crate::service_contract::ServiceError>
+    {
+        self.root.execution_service(options, None)
     }
     pub fn identity_keys(
         &self,
         profile: &str,
     ) -> Result<crate::crypto_v4::IdentityKeys, crate::crypto_v4::ConnectError> {
         crate::crypto_v4::IdentityKeys::new(self.root.clone(), profile)
+    }
+    /// Import original application-provisioned identity keys. These keys do
+    /// not assert certificate trust, namespace authorization or carrier policy.
+    pub fn import_identity_keys(
+        &self,
+        profile: &str,
+        signing_seed: [u8; 32],
+        noise_private: [u8; 32],
+    ) -> Result<crate::crypto_v4::IdentityKeys, crate::crypto_v4::ConnectError> {
+        crate::crypto_v4::IdentityKeys::import(
+            self.root.clone(),
+            profile,
+            signing_seed,
+            noise_private,
+        )
     }
     pub fn namespace(
         &self,
@@ -281,6 +404,17 @@ impl TransportEnvironment {
         crate::crypto_v4::PoolConnectionMaterial::new(self.root.clone(), namespaces, keys, bytes)
     }
     pub async fn connect_pool_wss(
+        &self,
+        material: crate::crypto_v4::PoolConnectionMaterial,
+        store: Arc<crate::pool_v4::SQLitePoolStore>,
+        options: crate::crypto_v4::WssConnectOptions,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<crate::crypto_v4::Session, crate::crypto_v4::ConnectError> {
+        crate::crypto_v4::connect::connect(self, material, store, options, cancellation).await
+    }
+    /// Connect the fixed current direct carrier selected by the signed route.
+    /// Both WSS and raw QUIC use the same original spend and READY owner.
+    pub async fn connect_pool_direct(
         &self,
         material: crate::crypto_v4::PoolConnectionMaterial,
         store: Arc<crate::pool_v4::SQLitePoolStore>,
@@ -310,7 +444,645 @@ impl TransportEnvironment {
         )
         .await
     }
-    pub async fn serve_pool_wss(
+    pub fn live_accepted_material_source(
+        &self,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        maximum: usize,
+    ) -> Result<
+        Arc<crate::crypto_v4::connect::serve::OriginalLiveAcceptedSource>,
+        crate::TransportConnectError,
+    > {
+        crate::crypto_v4::connect::serve::OriginalLiveAcceptedSource::new(
+            self.root.clone(),
+            namespaces,
+            keys,
+            maximum,
+        )
+    }
+    pub fn wss_relay_host(
+        &self,
+        keys: crate::crypto_v4::IdentityKeys,
+        ledger: Arc<crate::pool_v4::relay::SQLiteRelayLedger>,
+        options: crate::crypto_v4::connect::WssRelayHostOptions,
+    ) -> Result<crate::crypto_v4::connect::WssRelayHost, crate::TransportConnectError> {
+        crate::crypto_v4::connect::WssRelayHost::new(self.root.clone(), keys, ledger, options)
+    }
+    /// Construct a relay host that takes ownership of its already-bound
+    /// WebSocket listener leg. Its address must match the listener leg's
+    /// `listen_address`; any unused prebound socket is rejected.
+    pub fn wss_relay_host_on_listener(
+        &self,
+        listener: std::net::TcpListener,
+        keys: crate::crypto_v4::IdentityKeys,
+        ledger: Arc<crate::pool_v4::relay::SQLiteRelayLedger>,
+        options: crate::crypto_v4::connect::WssRelayHostOptions,
+    ) -> Result<crate::crypto_v4::connect::WssRelayHost, crate::TransportConnectError> {
+        crate::crypto_v4::connect::WssRelayHost::new_with_listener(
+            self.root.clone(),
+            keys,
+            ledger,
+            options,
+            listener,
+        )
+    }
+    /// Construct a relay host that takes ownership of an already-bound UDP
+    /// listener leg for raw QUIC or WebTransport ingress.
+    pub fn wss_relay_host_on_udp_socket(
+        &self,
+        socket: std::net::UdpSocket,
+        keys: crate::crypto_v4::IdentityKeys,
+        ledger: Arc<crate::pool_v4::relay::SQLiteRelayLedger>,
+        options: crate::crypto_v4::connect::WssRelayHostOptions,
+    ) -> Result<crate::crypto_v4::connect::WssRelayHost, crate::TransportConnectError> {
+        crate::crypto_v4::connect::WssRelayHost::new_with_udp_socket(
+            self.root.clone(),
+            keys,
+            ledger,
+            options,
+            socket,
+        )
+    }
+    /// Original issuer-side projection of one verified pool selection. The
+    /// resulting public object contains no parent Artifact or Session secrets.
+    /// Capture one original live relay publication with its own verified
+    /// issuance context and trusted winner authority.
+    pub fn relay_live_publication(
+        &self,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        input: crate::crypto_v4::connect::RelayPoolPublicationInput,
+        winner_authority: String,
+    ) -> Result<crate::crypto_v4::connect::OriginalRelayPoolPublication, crate::TransportConnectError>
+    {
+        crate::crypto_v4::connect::relay_publication::capture_live(
+            self.root.clone(),
+            namespaces,
+            input,
+            winner_authority,
+        )
+    }
+    pub fn relay_pool_publication(
+        &self,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        input: crate::crypto_v4::connect::RelayPoolPublicationInput,
+    ) -> Result<crate::crypto_v4::connect::OriginalRelayPoolPublication, crate::TransportConnectError>
+    {
+        crate::crypto_v4::connect::relay_publication::capture_pool(
+            self.root.clone(),
+            namespaces,
+            input,
+        )
+    }
+    /// Host a finite original issued batch of logical server tunnel legs.
+    /// Each server leg prepares and authenticates its own relay hop, then uses
+    /// the configured shared admission authority before publishing a Session.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_tunnel_pool(
+        &self,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        credentials: Vec<crate::crypto_v4::TunnelPoolCredentialBytes>,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::TunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        crate::crypto_v4::connect::serve::serve_tunnel_pool(
+            self.root.clone(),
+            namespaces,
+            keys,
+            credentials,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+        )
+        .await
+        .map_err(Into::into)
+    }
+    /// Consume the next original live delivery and start its exact server leg.
+    /// The delivery ACK retains the verified material in a bounded queue;
+    /// this call waits separately for that same material's carrier Prepare.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_live_tunnel_publication(
+        &self,
+        delivery: &crate::crypto_v4::connect::serve::LiveServerDeliveryHandle,
+        timeout: Duration,
+        cancellation: CancellationToken,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::TunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        let material = delivery
+            .next_tunnel_publication(timeout, &cancellation)
+            .await?;
+        self.serve_original_live_tunnel_material(
+            material,
+            namespaces,
+            keys,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+        )
+        .await
+    }
+    /// Transfer a locally published or received live server-leg owner into
+    /// Serve without rebuilding its verified Account from detached bytes.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_original_live_tunnel_material(
+        &self,
+        material: crate::crypto_v4::connect::serve::OriginalLiveTunnelServerMaterial,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::TunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        let prepare_timeout = options.provider.timeout;
+        let prepare_cancellation = options.cancellation.clone();
+        let handle = crate::crypto_v4::connect::serve::serve_live_tunnel(
+            self.root.clone(),
+            namespaces,
+            keys,
+            material,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+        )
+        .await?;
+        if let Err(error) = handle
+            .wait_prepared(prepare_timeout, &prepare_cancellation)
+            .await
+        {
+            handle.close();
+            let _ = handle.wait_cleanup().await;
+            return Err(error.into());
+        }
+        Ok(handle)
+    }
+    /// Prepare the original physical listener before live tunnel publication.
+    /// The bound listener awaits the original publication's account and Grant.
+    pub fn prepare_live_reverse_tunnel_listener(
+        &self,
+        provider: crate::crypto_v4::connect::ReverseTunnelProviderOptions,
+        carrier: crate::LiveAuthorityCarrier,
+        host: String,
+        maximum_publications: usize,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::LiveReverseTunnelListener,
+        crate::TransportConnectError,
+    > {
+        let carrier = match carrier {
+            crate::LiveAuthorityCarrier::RawQuic => 0,
+            crate::LiveAuthorityCarrier::WebSocket => 1,
+            crate::LiveAuthorityCarrier::WebTransport => 2,
+        };
+        crate::crypto_v4::connect::serve::prepare_live_reverse_listener(
+            self.root.clone(),
+            provider,
+            carrier,
+            host,
+            maximum_publications,
+        )
+    }
+    /// Consume one original live publication on its already-bound listener.
+    /// Return the Serve handle after that same listener reaches readiness.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_live_tunnel_publication_on_original_listener(
+        &self,
+        delivery: &crate::crypto_v4::connect::serve::LiveServerDeliveryHandle,
+        timeout: Duration,
+        cancellation: CancellationToken,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::LiveReverseTunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        let material = match delivery
+            .next_tunnel_publication(timeout, &cancellation)
+            .await
+        {
+            Ok(material) => material,
+            Err(error) => {
+                options.listener.close();
+                let _ = options.listener.wait_cleanup().await;
+                return Err(error.into());
+            }
+        };
+        self.serve_original_live_tunnel_material_on_original_listener(
+            material,
+            namespaces,
+            keys,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+        )
+        .await
+    }
+    /// Move a verified original live publication onto its already bound B
+    /// listener. The same physical listener and Account survive the handoff.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_original_live_tunnel_material_on_original_listener(
+        &self,
+        material: crate::crypto_v4::connect::serve::OriginalLiveTunnelServerMaterial,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::LiveReverseTunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        let prepare_timeout = options.listener.preparation_timeout();
+        let prepare_cancellation = options.cancellation.clone();
+        let handle = crate::crypto_v4::connect::serve::serve_live_tunnel_on_original_listener(
+            self.root.clone(),
+            namespaces,
+            keys,
+            material,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+        )
+        .await?;
+        if let Err(error) = handle
+            .wait_reverse_listener_ready(prepare_timeout, &prepare_cancellation)
+            .await
+        {
+            handle.close();
+            let _ = handle.wait_cleanup().await;
+            return Err(error.into());
+        }
+        Ok(handle)
+    }
+    /// Consume one original live reverse publication and expose its exact
+    /// listener only after the bounded native or WSS listener is ready.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_reverse_live_tunnel_publication(
+        &self,
+        delivery: &crate::crypto_v4::connect::serve::LiveServerDeliveryHandle,
+        timeout: Duration,
+        cancellation: CancellationToken,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::ReverseTunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        let material = delivery
+            .next_tunnel_publication(timeout, &cancellation)
+            .await?;
+        self.serve_original_reverse_live_tunnel_material(
+            material,
+            namespaces,
+            keys,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+        )
+        .await
+    }
+    /// Consume one original verified live server leg as a physical listener.
+    /// A failed Prepare retires this owner rather than recreating its material.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_original_reverse_live_tunnel_material(
+        &self,
+        material: crate::crypto_v4::connect::serve::OriginalLiveTunnelServerMaterial,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::ReverseTunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        let prepare_timeout = options.provider.timeout;
+        let prepare_cancellation = options.cancellation.clone();
+        let handle = crate::crypto_v4::connect::serve::serve_reverse_live_tunnel(
+            self.root.clone(),
+            namespaces,
+            keys,
+            material,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+        )
+        .await?;
+        if let Err(error) = handle
+            .wait_reverse_listener_ready(prepare_timeout, &prepare_cancellation)
+            .await
+        {
+            handle.close();
+            let _ = handle.wait_cleanup().await;
+            return Err(error.into());
+        }
+        Ok(handle)
+    }
+    /// Host one original logical server leg as the physical tunnel listener.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_reverse_tunnel_pool(
+        &self,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        credentials: Vec<crate::crypto_v4::TunnelPoolCredentialBytes>,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::ReverseTunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        crate::crypto_v4::connect::serve::serve_reverse_tunnel_pool(
+            self.root.clone(),
+            namespaces,
+            keys,
+            credentials,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+        )
+        .await
+        .map_err(Into::into)
+    }
+    /// Host reverse tunnel ingress on a TCP listener already bound by the
+    /// deployment owner. This handoff currently applies to WebSocket relay
+    /// ingress; the bound address must match `options.provider.listen_address`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_reverse_tunnel_pool_on_listener(
+        &self,
+        listener: std::net::TcpListener,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        credentials: Vec<crate::crypto_v4::TunnelPoolCredentialBytes>,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::ReverseTunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        crate::crypto_v4::connect::serve::serve_reverse_pool_on_listener(
+            self.root.clone(),
+            namespaces,
+            keys,
+            credentials,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+            listener,
+        )
+        .await
+        .map_err(Into::into)
+    }
+    /// Host reverse tunnel ingress on a UDP socket already bound by the
+    /// deployment owner. The actual address must match `provider.listen_address`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_reverse_tunnel_pool_on_udp_socket(
+        &self,
+        socket: std::net::UdpSocket,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        credentials: Vec<crate::crypto_v4::TunnelPoolCredentialBytes>,
+        relay_service: String,
+        relay_audience: String,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        options: crate::crypto_v4::connect::serve::ReverseTunnelServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::TunnelServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        crate::crypto_v4::connect::serve::serve_reverse_pool_on_udp_socket(
+            self.root.clone(),
+            namespaces,
+            keys,
+            credentials,
+            relay_service,
+            relay_audience,
+            admission,
+            options,
+            socket,
+        )
+        .await
+        .map_err(Into::into)
+    }
+    /// Host current raw QUIC with the same application callbacks, durable
+    /// admission, configured services and bounded Drain used by the WSS host.
+    pub async fn serve_raw_quic(
+        &self,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        source: Arc<dyn crate::crypto_v4::connect::serve::AcceptedMaterialSource>,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        identity: crate::crypto_v4::connect::serve::WssServerIdentity,
+        options: crate::crypto_v4::connect::serve::WssServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::ServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        crate::crypto_v4::connect::serve::serve_raw_quic(
+            self.root.clone(),
+            namespaces,
+            keys,
+            source,
+            admission,
+            identity,
+            options,
+        )
+        .await
+        .map_err(Into::into)
+    }
+    /// Host the fixed HTTP/3 WebTransport mapping on a dedicated connection.
+    /// CONNECT Origin is checked by the native listener before Flowersec HELLO.
+    /// Serve raw QUIC on a UDP socket already bound by the deployment owner.
+    /// Its address must match `options.listen_address`; Serve owns the socket
+    /// through cancellation and provider cleanup.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_raw_quic_on_socket(
+        &self,
+        socket: std::net::UdpSocket,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        source: Arc<dyn crate::crypto_v4::connect::serve::AcceptedMaterialSource>,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        identity: crate::crypto_v4::connect::serve::WssServerIdentity,
+        options: crate::crypto_v4::connect::serve::WssServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::ServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        crate::crypto_v4::connect::serve::serve_raw_quic_on_socket(
+            self.root.clone(),
+            namespaces,
+            keys,
+            source,
+            admission,
+            identity,
+            options,
+            socket,
+        )
+        .await
+        .map_err(Into::into)
+    }
+    /// Serve WebTransport on a UDP socket already bound by the deployment
+    /// owner. Its address must match `options.listen_address`; Serve owns the
+    /// socket through cancellation and provider cleanup.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_webtransport_on_socket(
+        &self,
+        socket: std::net::UdpSocket,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        source: Arc<dyn crate::crypto_v4::connect::serve::AcceptedMaterialSource>,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        identity: crate::crypto_v4::connect::serve::WssServerIdentity,
+        options: crate::crypto_v4::connect::serve::WssServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::ServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        crate::crypto_v4::connect::serve::serve_webtransport_on_socket(
+            self.root.clone(),
+            namespaces,
+            keys,
+            source,
+            admission,
+            identity,
+            options,
+            socket,
+        )
+        .await
+        .map_err(Into::into)
+    }
+    pub async fn serve_webtransport(
+        &self,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        source: Arc<dyn crate::crypto_v4::connect::serve::AcceptedMaterialSource>,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        identity: crate::crypto_v4::connect::serve::WssServerIdentity,
+        options: crate::crypto_v4::connect::serve::WssServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::ServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        crate::crypto_v4::connect::serve::serve_webtransport(
+            self.root.clone(),
+            namespaces,
+            keys,
+            source,
+            admission,
+            identity,
+            options,
+        )
+        .await
+        .map_err(Into::into)
+    }
+    /// Serve WSS on a listener already bound by the deployment owner. The
+    /// listener address must match `options.listen_address`; ownership moves
+    /// into Serve and remains there through cancellation and cleanup.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Public Serve entry points keep namespaces, identity, admission and physical listener ownership explicit."
+    )]
+    pub async fn serve_wss_on_listener(
+        &self,
+        listener: std::net::TcpListener,
+        namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
+        keys: crate::crypto_v4::IdentityKeys,
+        source: Arc<dyn crate::crypto_v4::connect::serve::AcceptedMaterialSource>,
+        admission: Arc<crate::pool_v4::admission::SQLiteAdmissionAuthority>,
+        identity: crate::crypto_v4::connect::serve::WssServerIdentity,
+        options: crate::crypto_v4::connect::serve::WssServeOptions,
+    ) -> Result<
+        crate::crypto_v4::connect::serve::ServeHandle,
+        crate::crypto_v4::connect::serve::ServeError,
+    > {
+        crate::crypto_v4::connect::serve::serve_wss_on_listener(
+            self.root.clone(),
+            namespaces,
+            keys,
+            source,
+            admission,
+            identity,
+            options,
+            listener,
+        )
+        .await
+        .map_err(Into::into)
+    }
+    pub async fn serve_wss(
         &self,
         namespaces: Vec<Arc<crate::crypto_v4::Namespace>>,
         keys: crate::crypto_v4::IdentityKeys,
@@ -368,7 +1140,7 @@ impl TransportEnvironment {
         CleanupStatus {
             complete,
             cleanup_incomplete,
-            pending_callbacks: 0,
+            pending_callbacks: self.root.diagnostic_pending_callbacks(),
         }
     }
     pub async fn wait_cleanup(&self) -> CleanupStatus {
@@ -627,6 +1399,18 @@ pub struct StreamReadPermit {
 impl StreamReadPermit {
     pub fn start_offset(&self) -> u64 {
         self.start_offset
+    }
+    pub(crate) fn belongs_to(&self, owner: &Arc<StreamReadOwner>) -> bool {
+        Arc::ptr_eq(&self.owner, owner)
+    }
+    pub(crate) fn can_advance(&self, bytes: usize) -> bool {
+        self.owner
+            .state
+            .lock()
+            .expect("read direction lock")
+            .offset
+            .checked_add(bytes as u64)
+            .is_some()
     }
     /// Commit only the byte range actually removed from the receive queue.
     /// Call while holding that queue's transfer gate, before exposing its capacity.
@@ -1135,7 +1919,32 @@ pub struct WriteProgress {
     pub cleanup: CleanupStatus,
 }
 
+/// Opaque original Stream qualification.  Only the provider owner creates
+/// it; dropping one permit releases precisely that permit's responsibility.
+pub struct StreamWritePreparationPermit {
+    release: Option<Box<dyn FnOnce() + Send + Sync>>,
+}
+impl StreamWritePreparationPermit {
+    pub(crate) fn new(release: impl FnOnce() + Send + Sync + 'static) -> Self {
+        Self {
+            release: Some(Box::new(release)),
+        }
+    }
+}
+impl std::fmt::Debug for StreamWritePreparationPermit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StreamWritePreparationPermit { <opaque> }")
+    }
+}
+impl Drop for StreamWritePreparationPermit {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            release();
+        }
+    }
+}
 struct PreparedWrite {
+    preparation: Option<StreamWritePreparationPermit>,
     stream: Arc<dyn ByteStream>,
     payload: Bytes,
     staging: WriteStagingReservation,
@@ -1152,14 +1961,33 @@ struct WriteState {
     waiters: usize,
 }
 
+pub(crate) type FirstByteGate =
+    Arc<dyn Fn(crate::environment_v4::TrustedTimeSample) -> Result<(), SessionError> + Send + Sync>;
 struct WriteOwner {
+    diagnostics: Mutex<Option<Arc<crate::diagnostics_v4::DiagnosticActivity>>>,
     state: Mutex<WriteState>,
+    first_byte_gate: Option<FirstByteGate>,
     changed: Notify,
     // Results, waiters and the one timer keep the original finite metadata
     // slot. This owner has no reference back to the Session or its keys.
     metadata: Option<WriteMetadataReservation>,
 }
 impl WriteOwner {
+    fn finish_diagnostics(&self) {
+        let progress = self.state.lock().expect("operation lock").progress.clone();
+        if progress.phase != "terminal" {
+            return;
+        }
+        if let Some(diagnostics) = self.diagnostics.lock().expect("write diagnostics").as_ref() {
+            match progress.terminal_reason.as_deref() {
+                Some("complete") => diagnostics.succeed(),
+                Some("canceled") => diagnostics.session_failure(SessionError::Canceled),
+                Some("deadline_exceeded") => diagnostics.session_failure(SessionError::Timeout),
+                Some("stream_terminated") => diagnostics.session_failure(SessionError::Closed),
+                _ => diagnostics.session_failure(SessionError::OperationFailed),
+            }
+        }
+    }
     fn stop(&self, error: SessionError) {
         let input = {
             let mut state = self.state.lock().expect("operation lock");
@@ -1186,6 +2014,7 @@ impl WriteOwner {
             state.progress.terminal_reason = Some(write_reason(error).into());
             state.progress.cleanup.complete = true;
         }
+        self.finish_diagnostics();
         self.changed.notify_waiters();
     }
     async fn monitor(self: Arc<Self>, _timer_charge: Option<ResourceCharge>) {
@@ -1275,12 +2104,16 @@ impl WriteRequestAdmission {
         let root = &self.owner.metadata.as_ref().expect("write metadata").owner;
         if let Some(account) = &root.account {
             return account
-                .with_security(|| self.accept_local(bytes))
+                .with_security_time(|now| self.accept_local(bytes, Some(now)))
                 .map_err(environment_session_error)?;
         }
-        self.accept_local(bytes)
+        self.accept_local(bytes, None)
     }
-    fn accept_local(&self, bytes: usize) -> Result<(), SessionError> {
+    fn accept_local(
+        &self,
+        bytes: usize,
+        now: Option<crate::environment_v4::TrustedTimeSample>,
+    ) -> Result<(), SessionError> {
         let root = &self.owner.metadata.as_ref().expect("write metadata").owner;
         // Lock order is original session staging gate, then this request.
         let root_state = root.state.lock().expect("write staging lock");
@@ -1291,14 +2124,32 @@ impl WriteRequestAdmission {
         if bytes == 0 {
             return Ok(());
         }
+        let accepted = state
+            .progress
+            .accepted_bytes
+            .checked_add(bytes as u64)
+            .filter(|total| *total <= state.progress.requested_bytes)
+            .ok_or(SessionError::OperationFailed)?;
         let error = state.stopped.or_else(|| {
             if root_state.closed {
-                Some(SessionError::Closed)
-            } else if Instant::now() >= state.deadline {
-                Some(SessionError::Timeout)
-            } else {
-                None
+                return Some(SessionError::Closed);
             }
+            if Instant::now() >= state.deadline {
+                return Some(SessionError::Timeout);
+            }
+            if state.progress.accepted_bytes == 0
+                && let Some(gate) = &self.owner.first_byte_gate
+            {
+                match now {
+                    Some(now) => {
+                        if let Err(error) = gate(now) {
+                            return Some(error);
+                        }
+                    }
+                    None => return Some(SessionError::OperationFailed),
+                }
+            }
+            None
         });
         if let Some(error) = error {
             state.stopped = Some(error);
@@ -1307,12 +2158,7 @@ impl WriteRequestAdmission {
             self.owner.changed.notify_waiters();
             return Err(error);
         }
-        state.progress.accepted_bytes = state
-            .progress
-            .accepted_bytes
-            .checked_add(bytes as u64)
-            .filter(|total| *total <= state.progress.requested_bytes)
-            .ok_or(SessionError::OperationFailed)?;
+        state.progress.accepted_bytes = accepted;
         drop(state);
         drop(root_state);
         self.owner.changed.notify_waiters();
@@ -1357,10 +2203,12 @@ impl std::fmt::Debug for WriteOperation {
 impl WriteOperation {
     pub fn prepare(stream: Arc<dyn ByteStream>, payload: Bytes) -> Self {
         let requested = payload.len() as u64;
-        match Self::try_prepare(stream, payload) {
+        match Self::try_prepare_public(stream, payload) {
             Ok(operation) => operation,
             Err(error) => Self {
                 owner: Arc::new(WriteOwner {
+                    diagnostics: Mutex::new(None),
+                    first_byte_gate: None,
                     state: Mutex::new(WriteState {
                         input: None,
                         progress: WriteProgress {
@@ -1386,13 +2234,145 @@ impl WriteOperation {
             },
         }
     }
-    fn try_prepare(stream: Arc<dyn ByteStream>, payload: Bytes) -> Result<Self, SessionError> {
+    fn try_prepare_public(
+        stream: Arc<dyn ByteStream>,
+        payload: Bytes,
+    ) -> Result<Self, SessionError> {
+        let diagnostics = stream.write_staging_owner().and_then(|owner| {
+            owner
+                .account
+                .as_ref()
+                .map(|account| account.diagnostic_activity(crate::DiagnosticPhase::Application, 1))
+        });
+        let result = Self::try_prepare(stream, payload);
+        match &result {
+            Ok(operation) => {
+                *operation
+                    .owner
+                    .diagnostics
+                    .lock()
+                    .expect("write diagnostics") = diagnostics;
+                operation.owner.finish_diagnostics();
+            }
+            Err(error) => {
+                if let Some(diagnostics) = diagnostics {
+                    diagnostics.session_failure(*error);
+                }
+            }
+        }
+        result
+    }
+    pub(crate) fn try_prepare(
+        stream: Arc<dyn ByteStream>,
+        payload: Bytes,
+    ) -> Result<Self, SessionError> {
+        Self::try_prepare_guarded(stream, payload, None)
+    }
+    pub(crate) fn preparation_limits(bytes: usize) -> Result<ResourceLimits, SessionError> {
+        if bytes > MAX_PREPARED_WRITE_BYTES {
+            return Err(SessionError::ResourceExhausted);
+        }
+        Ok(ResourceLimits {
+            sdk_bytes: (bytes as u64)
+                .checked_add(std::mem::size_of::<WriteOwner>() as u64)
+                .ok_or(SessionError::ResourceExhausted)?,
+            items: 1,
+            work_slots: 1,
+            tasks: 2,
+            timers: 1,
+            ..ResourceLimits::default()
+        })
+    }
+    pub(crate) fn try_prepare_guarded(
+        stream: Arc<dyn ByteStream>,
+        payload: Bytes,
+        first_byte_gate: Option<FirstByteGate>,
+    ) -> Result<Self, SessionError> {
+        Self::try_prepare_guarded_with_backing(stream, payload, first_byte_gate, None)
+    }
+    pub(crate) fn try_prepare_guarded_prepaid(
+        stream: Arc<dyn ByteStream>,
+        payload: Bytes,
+        first_byte_gate: Option<FirstByteGate>,
+        charge: ResourceCharge,
+    ) -> Result<Self, SessionError> {
+        Self::try_prepare_guarded_with_backing(stream, payload, first_byte_gate, Some(charge))
+    }
+    fn try_prepare_guarded_with_backing(
+        stream: Arc<dyn ByteStream>,
+        payload: Bytes,
+        first_byte_gate: Option<FirstByteGate>,
+        prepaid: Option<ResourceCharge>,
+    ) -> Result<Self, SessionError> {
         let runtime =
             tokio::runtime::Handle::try_current().map_err(|_| SessionError::OperationFailed)?;
+        let preparation = stream.write_preparation_permit()?;
         let root = stream
             .write_staging_owner()
             .ok_or(SessionError::OperationFailed)?;
-        let reservations = root.reserve(payload.len())?;
+        let reservations = if prepaid.is_some() {
+            root.reserve_with_backing(payload.len(), prepaid)?
+        } else {
+            root.reserve(payload.len())?
+        };
+        Self::from_reservations(
+            stream,
+            payload,
+            first_byte_gate,
+            reservations,
+            preparation,
+            runtime,
+        )
+    }
+    pub(crate) fn reserve_bridge_write(
+        stream: &dyn ByteStream,
+        maximum_bytes: usize,
+    ) -> Result<BridgeWriteReservation, SessionError> {
+        let root = stream
+            .write_staging_owner()
+            .ok_or(SessionError::OperationFailed)?;
+        Ok(BridgeWriteReservation {
+            reservations: root.reserve(maximum_bytes)?,
+            maximum_bytes,
+        })
+    }
+    pub(crate) fn try_prepare_bridge(
+        stream: Arc<dyn ByteStream>,
+        payload: Bytes,
+        reservation: BridgeWriteReservation,
+        stop: &tokio_util::sync::CancellationToken,
+    ) -> Result<Self, SessionError> {
+        if payload.len() > reservation.maximum_bytes {
+            return Err(SessionError::ResourceExhausted);
+        }
+        let runtime =
+            tokio::runtime::Handle::try_current().map_err(|_| SessionError::OperationFailed)?;
+        let preparation = stream.write_preparation_permit()?;
+        let stop = stop.clone();
+        let gate = Arc::new(move |_now: crate::environment_v4::TrustedTimeSample| {
+            if stop.is_cancelled() {
+                Err(SessionError::Canceled)
+            } else {
+                Ok(())
+            }
+        });
+        Self::from_reservations(
+            stream,
+            payload,
+            Some(gate),
+            reservation.reservations,
+            preparation,
+            runtime,
+        )
+    }
+    fn from_reservations(
+        stream: Arc<dyn ByteStream>,
+        payload: Bytes,
+        first_byte_gate: Option<FirstByteGate>,
+        reservations: WriteReservations,
+        preparation: Option<StreamWritePreparationPermit>,
+        runtime: tokio::runtime::Handle,
+    ) -> Result<Self, SessionError> {
         // Bytes can be a tiny slice of an arbitrarily large backing. Snapshot
         // into exact owned storage so the reservation accounts for what we retain.
         let mut snapshot = Vec::new();
@@ -1403,8 +2383,11 @@ impl WriteOperation {
         let requested_bytes = payload.len() as u64;
         drop(payload);
         let owner = Arc::new(WriteOwner {
+            diagnostics: Mutex::new(None),
+            first_byte_gate,
             state: Mutex::new(WriteState {
                 input: Some(PreparedWrite {
+                    preparation,
                     stream,
                     payload: Bytes::from(snapshot.into_boxed_slice()),
                     staging: reservations.staging,
@@ -1497,6 +2480,7 @@ impl WriteOperation {
                 owner: owner.clone(),
             };
             let PreparedWrite {
+                preparation,
                 stream,
                 payload,
                 staging,
@@ -1508,6 +2492,7 @@ impl WriteOperation {
                 .unwrap_or(Err(SessionError::OperationFailed));
             // Retain staging through the native future, including canceled tails.
             drop(stream);
+            drop(preparation);
             drop(staging);
             drop(native_charge);
             let mut state = owner.state.lock().expect("operation lock");
@@ -1523,6 +2508,7 @@ impl WriteOperation {
             state.progress.cleanup.pending_callbacks = 0;
             state.progress.cleanup.complete = true;
             drop(state);
+            owner.finish_diagnostics();
             owner.changed.notify_waiters();
         });
         Ok(())
@@ -1553,6 +2539,33 @@ impl WriteOperation {
     pub fn cancel(&self) {
         self.owner.stop(SessionError::Canceled);
     }
+    /// Permanently withdraw before the original first-byte acceptance gate.
+    /// A committed prefix keeps its complete remaining write responsibility.
+    pub(crate) fn cancel_unsubmitted(&self) -> bool {
+        let input = {
+            let mut state = self.owner.state.lock().expect("operation lock");
+            if state.progress.accepted_bytes != 0 || state.progress.phase == "terminal" {
+                return false;
+            }
+            state.stopped = Some(SessionError::Canceled);
+            if !state.started {
+                state.start_error = Some(SessionError::Canceled);
+                state.input.take()
+            } else {
+                None
+            }
+        };
+        if let Some(input) = input {
+            drop(input);
+            let mut state = self.owner.state.lock().expect("operation lock");
+            state.progress.phase = "terminal".into();
+            state.progress.terminal_reason = Some("canceled".into());
+            state.progress.cleanup.complete = true;
+        }
+        self.owner.finish_diagnostics();
+        self.owner.changed.notify_waiters();
+        true
+    }
     pub fn progress(&self) -> WriteProgress {
         self.owner
             .state
@@ -1567,11 +2580,11 @@ impl WriteOperation {
 }
 
 #[derive(Debug)]
-pub struct NotificationSubscription {
+pub struct OperationNotificationSubscription {
     closed: Mutex<bool>,
     changed: Notify,
 }
-impl NotificationSubscription {
+impl OperationNotificationSubscription {
     pub fn new() -> Self {
         Self {
             closed: Mutex::new(false),
@@ -1602,14 +2615,12 @@ impl NotificationSubscription {
     }
 }
 
-impl Default for NotificationSubscription {
+impl Default for OperationNotificationSubscription {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OperationReference(pub [u8; 32]);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperationStatus {
     NotStarted,
@@ -1626,46 +2637,8 @@ pub struct ResultPayload {
     pub payload: Option<Bytes>,
 }
 #[derive(Debug)]
-pub struct OperationHandle {
-    status: Mutex<OperationStatus>,
-    done: AtomicBool,
-}
-impl OperationHandle {
-    pub fn prepare() -> Self {
-        Self {
-            status: Mutex::new(OperationStatus::NotStarted),
-            done: AtomicBool::new(false),
-        }
-    }
-    pub fn start(&self) -> Result<(), SessionError> {
-        // No execution owner exists, so no request is submitted. In particular,
-        // a local start failure is not a remote Accepted, Failed, or Unknown fact.
-        self.done.store(true, Ordering::Release);
-        Err(SessionError::OperationFailed)
-    }
-    pub fn status(&self) -> OperationStatus {
-        self.status.lock().expect("operation lock").clone()
-    }
-    pub async fn wait_status(&self) -> OperationStatus {
-        self.status()
-    }
-    pub fn request_cancel(&self) {
-        // A local object without a submitted request has no remote operation
-        // to cancel and cannot claim a remote cancellation outcome.
-        self.done.store(true, Ordering::Release);
-    }
-    pub fn cleanup_status(&self) -> CleanupStatus {
-        CleanupStatus {
-            complete: self.done.load(Ordering::Acquire),
-            cleanup_incomplete: false,
-            pending_callbacks: 0,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct StreamV4Ext;
-impl StreamV4Ext {
+pub struct StreamExt;
+impl StreamExt {
     pub fn reader_cursor(
         stream: Arc<dyn ByteStream>,
         options: ReaderCursorOptions,
@@ -1676,7 +2649,7 @@ impl StreamV4Ext {
         stream: Arc<dyn ByteStream>,
         payload: Bytes,
     ) -> Result<WriteOperation, SessionError> {
-        WriteOperation::try_prepare(stream, payload)
+        WriteOperation::try_prepare_public(stream, payload)
     }
 }
 
@@ -1763,6 +2736,88 @@ mod write_owner_tests {
     fn charge(root: &WriteStagingOwner) -> (usize, usize) {
         let state = root.state.lock().unwrap();
         (state.bytes, state.operations)
+    }
+
+    #[tokio::test]
+    async fn public_write_diagnostics_keep_one_original_context_through_canceled_native_tail() {
+        use crate::environment_v4::tests::{bounds, environment};
+        use crate::{DiagnosticMetric, DiagnosticPhase, DiagnosticState};
+        let environment = environment();
+        let (sink, events) = crate::diagnostics_v4::capture_for_test(&environment);
+        let account = environment.admit([1; 32], bounds()).unwrap();
+        let staging = Arc::new(WriteStagingOwner::from_account(account));
+        let stream = NativeWrite::new(staging);
+        let operation =
+            StreamExt::prepare_write(stream.clone(), Bytes::from_static(b"abcd")).unwrap();
+        operation.start().await.unwrap();
+        stream.entered.acquire().await.unwrap().forget();
+        {
+            let waiting = operation.wait();
+            tokio::pin!(waiting);
+            tokio::select! { _ = &mut waiting => panic!("original callback is blocked"), _ = tokio::task::yield_now() => {} }
+        }
+        assert_eq!(
+            environment
+                .diagnostic_metric(DiagnosticMetric::ApplicationOperations)
+                .total,
+            1
+        );
+        assert_eq!(
+            environment
+                .diagnostic_metric(DiagnosticMetric::ApplicationFailures)
+                .total,
+            0
+        );
+        operation.cancel();
+        assert!(!operation.cleanup_status().complete);
+        assert_eq!(
+            environment
+                .diagnostic_metric(DiagnosticMetric::ApplicationFailures)
+                .total,
+            0
+        );
+        stream.release.add_permits(1);
+        let progress = operation.wait().await.unwrap();
+        assert_eq!(progress.terminal_reason.as_deref(), Some("canceled"));
+        assert!(progress.cleanup.complete);
+        assert_eq!(
+            environment
+                .diagnostic_metric(DiagnosticMetric::ApplicationFailures)
+                .total,
+            1
+        );
+        drop(operation);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let finished = events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|event| event.state == DiagnosticState::Closed);
+                if finished {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        {
+            let records = events.lock().unwrap();
+            let ids: std::collections::BTreeSet<_> =
+                records.iter().map(|event| event.correlation_id).collect();
+            assert_eq!(ids.len(), 1);
+            assert_eq!(
+                records
+                    .iter()
+                    .filter(|event| event.phase == DiagnosticPhase::Application
+                        && event.state == DiagnosticState::Canceled)
+                    .count(),
+                1
+            );
+        }
+        sink.close();
+        assert!(sink.wait_cleanup().await.complete);
     }
 
     #[tokio::test]

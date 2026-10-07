@@ -58,6 +58,12 @@ type UnaryServiceDefinition = ServiceDefinition
 type UnaryServiceMethod = ServiceMethod
 
 type UnaryServiceBindOptions struct {
+	// PeerReplicas is an optional finite trusted mapping for Controller bindings.
+	// Every selected authenticated peer must occur in this immutable subject set;
+	// authority domains, tenant, audience and original caller remain unchanged.
+	// Nil requires the exact original peer subject. Fixed Session bindings reject
+	// this option because they never select another authenticated peer.
+	PeerReplicas []string
 	// Workloads reserves additional complete call positions before Bind returns.
 	// Matching Session admission targets transfer their original backing;
 	// otherwise Bind must obtain the complete increment from the same root.
@@ -82,12 +88,13 @@ const (
 )
 
 type boundUnaryMethod struct {
-	workload             ServiceMethodWorkload
-	candidateWorkload    candidateMethodWorkload
-	requiredDeclarations atomic.Uint32
-	dependencyPath       dependencyPathPreparation
-	candidateContract    candidateContractSnapshot
-	definition           UnaryServiceMethod
+	notificationSemantics uint8
+	workload              ServiceMethodWorkload
+	candidateWorkload     candidateMethodWorkload
+	requiredDeclarations  atomic.Uint32
+	dependencyPath        dependencyPathPreparation
+	candidateContract     candidateContractSnapshot
+	definition            UnaryServiceMethod
 	// The admitted static route also pins the trusted declaration when its
 	// snapshot has not been installed. No separate contract body is copied.
 	route      rpcv4.ContractRoute
@@ -124,7 +131,7 @@ func (s *EnvironmentSession) BindMethods(ctx context.Context, definition UnarySe
 	if closed {
 		return nil, cryptov4.ErrClosed
 	}
-	return r.bindMethods(ctx, definition, options)
+	return r.bindMethodsSource(ctx, definition, options, nil, nil, controllerRoutingIdentity{}, true)
 }
 
 func (r *RPCServices) bindUnaryService(method UnaryMethodDefinition) (*UnaryServiceClient, error) {
@@ -206,15 +213,18 @@ func (r *RPCServices) bindUnaryMethods(ctx context.Context, definition UnaryServ
 }
 
 func (r *RPCServices) bindMethods(ctx context.Context, definition ServiceDefinition, options UnaryServiceBindOptions) (_ *UnaryServiceClient, err error) {
-	return r.bindMethodsSource(ctx, definition, options, nil, nil, controllerRoutingIdentity{})
+	return r.bindMethodsSource(ctx, definition, options, nil, nil, controllerRoutingIdentity{}, false)
 }
 
-func (r *RPCServices) bindMethodsSource(ctx context.Context, definition ServiceDefinition, options UnaryServiceBindOptions, controller *ConnectionController, session *EnvironmentSession, routing controllerRoutingIdentity) (_ *UnaryServiceClient, err error) {
+func (r *RPCServices) bindMethodsSource(ctx context.Context, definition ServiceDefinition, options UnaryServiceBindOptions, controller *ConnectionController, session *EnvironmentSession, routing controllerRoutingIdentity, initializeChannels bool) (_ *UnaryServiceClient, err error) {
 	if r == nil || ctx == nil || options.ContractSource > ServiceContractsRemote || options.OfferRefresh > ServiceOfferRefreshManaged || len(definition.Methods) == 0 || len(definition.Methods) > 256 || definition.Namespace == "" || len(definition.Namespace) > 128 || options.InitialMethods != nil && len(options.InitialMethods) == 0 || len(options.InitialMethods) > len(definition.Methods) {
 		return nil, cryptov4.ErrConfiguration
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if options.PeerReplicas != nil && controller == nil {
+		return nil, cryptov4.ErrConfiguration
 	}
 	if _, err := checkApplicationContext(ctx); err != nil {
 		return nil, err
@@ -430,6 +440,13 @@ func (r *RPCServices) bindMethodsSource(ctx context.Context, definition ServiceD
 		method.StreamKind = strings.Clone(method.StreamKind)
 		method.StreamMetadata = append([]byte(nil), method.StreamMetadata...)
 		c.methods[j] = boundUnaryMethod{workload: workloads[j], definition: method, route: route, generation: 1, installed: initial[j] && !remote}
+		if method.Shape == 2 {
+			_, policy, policyErr := route.Policy()
+			if policyErr != nil {
+				return nil, policyErr
+			}
+			c.methods[j].notificationSemantics = policy.Semantics
+		}
 		if remote {
 			c.methods[j].generation = 0
 		}
@@ -464,9 +481,30 @@ func (r *RPCServices) bindMethodsSource(ctx context.Context, definition ServiceD
 	// direction. The unpublished client already pins all its actual resources.
 	r.mu.Unlock()
 	locked = false
+	if controller != nil {
+		// This original shared executor is independent of any Session route.
+		// A later local subscription can wait unattached through a reconnect.
+		plan.mu.Lock()
+		c.notificationExecutor = plan.executor
+		plan.mu.Unlock()
+	}
 	if !remote {
 		if err = c.reserveInitialWorkloads(ctx, r, controller); err != nil {
 			return nil, err
+		}
+	}
+	for j, method := range definition.Methods {
+		if initializeChannels && initial[j] && method.Shape == 2 {
+			if initialDeadline == nil {
+				initialDeadline, err = r.contractAcquisitionDeadline(ctx)
+				if err != nil {
+					return nil, err
+				}
+			}
+			if err = r.prepareBindingNotifyChannel(ctx, initialDeadline); err != nil {
+				return nil, err
+			}
+			break
 		}
 	}
 	e.mu.Lock()
@@ -485,6 +523,9 @@ func (r *RPCServices) bindMethodsSource(ctx context.Context, definition ServiceD
 	if err = e.reservation.CheckSameEnvironment(c.metadata); err != nil {
 		return nil, err
 	}
+	// Endpoint authorization precedes services publication. Channel
+	// construction retains its charged owner outside r.mu, so one-shot Bind
+	// waits for ordinary mutex contention without exposing a retry error.
 	err = authorization.WithCurrentAuthorization(func() error {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -549,6 +590,13 @@ func (r *RPCServices) bindMethodsSource(ctx context.Context, definition ServiceD
 			return err
 		}
 		return withApplicationHandoff(ctx, func() error {
+			// Initialization and publication share this Bind's original
+			// deadline, including local static notification bindings.
+			if initialDeadline != nil {
+				if err := initialDeadline.Check(); err != nil {
+					return err
+				}
+			}
 			for j := range c.methods {
 				if w := c.methods[j].definition.Method.workload; w != nil {
 					w.installed.Store(true)

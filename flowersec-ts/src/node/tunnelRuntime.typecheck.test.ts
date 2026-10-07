@@ -1,16 +1,14 @@
 import { expectTypeOf, test } from "vitest";
+import type { NodeRawQUICOptions } from "./rawQUICCurrent.js";
+import { createTunnelRuntime, type TunnelRuntime, type TunnelRuntimeOptions, type TunnelRuntimeListenerOptions } from "./tunnelRuntime.js";
 
-import {
-  createTunnelRuntime,
-  type TunnelRuntime,
-  type TunnelAuthorizationDecision,
-  type TunnelRuntimeOptions,
-} from "./index.js";
-
-test("exports an opaque tunnel runtime without application Session ownership", () => {
+test("the current relay owns only physical hops and logical-side claims", () => {
   expectTypeOf(createTunnelRuntime).returns.toEqualTypeOf<TunnelRuntime>();
-  expectTypeOf<TunnelRuntimeOptions["authorize"]>().returns.resolves.toEqualTypeOf<TunnelAuthorizationDecision>();
+  expectTypeOf<TunnelRuntimeOptions["ingressRole"]>().toEqualTypeOf<0 | 1 | undefined>();
+  expectTypeOf<TunnelRuntimeOptions["carrierAlternatives"]>().toEqualTypeOf<readonly NodeRawQUICOptions[] | undefined>();
+  expectTypeOf<TunnelRuntimeOptions["serverCarrierAlternatives"]>().toEqualTypeOf<readonly NodeRawQUICOptions[] | undefined>();
+  expectTypeOf<TunnelRuntimeOptions["oppositeListener"]>().toEqualTypeOf<TunnelRuntimeListenerOptions | undefined>();
   expectTypeOf<TunnelRuntimeOptions>().not.toHaveProperty("handlers");
   expectTypeOf<TunnelRuntimeOptions>().not.toHaveProperty("onSession");
-  expectTypeOf<TunnelAuthorizationDecision>().not.toHaveProperty("session");
+  expectTypeOf<TunnelRuntimeOptions>().not.toHaveProperty("psk");
 });

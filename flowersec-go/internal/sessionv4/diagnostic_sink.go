@@ -109,8 +109,12 @@ type DiagnosticSink struct {
 // Callers create a new operation for every connection attempt/application call;
 // there is no API to inject an identity, Session ID or parent correlation ID.
 type DiagnosticOperation struct {
-	sink  atomic.Pointer[DiagnosticSink]
-	index uint32
+	sink                  atomic.Pointer[DiagnosticSink]
+	index                 uint32
+	applicationMu         sync.Mutex
+	applicationReferences uint32
+	applicationFailure    diagnosticv4.Code
+	applicationFailed     bool
 }
 
 func (*DiagnosticSink) String() string        { return "DiagnosticSink" }
@@ -239,6 +243,12 @@ func (s *DiagnosticSink) Begin() *DiagnosticOperation {
 	}
 	s.drop()
 	return nil
+}
+
+// EmitDiagnostic adapts the operation to the cryptov4 diagnostic emitter
+// without exposing sink internals to the record engine.
+func (o *DiagnosticOperation) EmitDiagnostic(fields diagnosticv4.Fields) bool {
+	return o.Emit(fields)
 }
 
 func (o *DiagnosticOperation) Emit(fields diagnosticv4.Fields) bool {

@@ -47,7 +47,7 @@ export interface ServeCallbacks<Plan extends object = object> {
 }
 export interface ServeOptions<Plan extends object = object> extends ServeCallbacks<Plan> {
   readonly listener: ServeListener<Plan>;
-  readonly carrier: "wss";
+  readonly carrier: "wss" | "raw_quic";
   readonly maintenanceOwner?: V4MaintenanceOwner;
 }
 export type ServeFailure = "configuration_capacity" | "owner_unavailable" | "resource_exhausted" | "closed" | "canceled" | "rejected" | "authorization_unknown" | "serve_failed";
@@ -59,6 +59,7 @@ export interface ServeHandleOwner {
   drain(options?: V4DrainOptions): V4DrainOperation;
   waitDrain(options?: OperationOptions): ReturnType<V4DrainOperation["wait"]>;
   close(): void;
+  onCleanup(callback: () => void): void;
   cleanupStatus(): V4CleanupStatus;
   waitCleanup(options?: OperationOptions): Promise<V4CleanupStatus>;
 }
@@ -77,6 +78,7 @@ export class ServeHandle {
 }
 interface ListenerOwner<Plan extends object> {
   environment: V4TransportEnvironment;
+  carrier?: "wss" | "raw_quic";
   start(callbacks: ServeCallbacks<Plan>, maintenanceOwner: V4MaintenanceOwner | undefined, signal?: AbortSignal): Promise<ServeHandle>;
   used: boolean;
 }
@@ -87,6 +89,13 @@ export class ServeListener<Plan extends object = object> {
     if (capability !== token) throw new Error("owner_unavailable"); listeners.set(this, owner); Object.freeze(this);
   }
   toJSON(): object { return {}; }
+}
+/** Internal composite owners observe actual cleanup independently of bounded
+ * public waits. Each Serve owner supports one original parent observer. */
+export function observeServeCleanup(handle: ServeHandle, callback: () => void): void {
+  const owner = handles.get(handle);
+  if (owner === undefined) throw new ServeError("owner_unavailable", complete);
+  owner.onCleanup(callback);
 }
 export function createServeHandle(owner: ServeHandleOwner): ServeHandle { return new ServeHandle(token, owner); }
 export function createServeListener<Plan extends object>(owner: Omit<ListenerOwner<Plan>, "used">): ServeListener<Plan> {
@@ -101,7 +110,7 @@ export async function startServe<Plan extends object>(environment: V4TransportEn
     const callbacks = Object.freeze({ authorizeRequest: options.authorizeRequest, resolveHandlers: options.resolveHandlers,
       authorizeApplication: options.authorizeApplication, onSession: options.onSession, release: options.release });
     if (owner === undefined || owner.environment !== environment || owner.used) throw new ServeError("owner_unavailable", complete);
-    if (carrier !== "wss" || Object.values(callbacks).some(value => typeof value !== "function")) throw new ServeError("configuration_capacity", complete);
+    if (carrier !== (owner.carrier ?? "wss") || Object.values(callbacks).some(value => typeof value !== "function")) throw new ServeError("configuration_capacity", complete);
     if (operation?.signal?.aborted) throw new ServeError("canceled", complete);
     owner.used = true; listeners.delete(options.listener);
     handle = await owner.start(callbacks, maintenance, operation?.signal);

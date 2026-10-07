@@ -36,6 +36,7 @@ type PreparedCarrierConfig struct {
 	relay                    bool
 	originalParent           *preparedCarrierReference
 	originalAlias            resourcev4.Reference
+	originalReservation      resourcev4.Reference
 	Candidate                protocolv4.PoolMember
 	Attempt                  [16]byte
 	Session                  protocolv4.ArtifactSessionParameters
@@ -43,6 +44,24 @@ type PreparedCarrierConfig struct {
 	Deadline                 *timev4.Deadline
 	Reservation, Environment resourcev4.Reference
 	RuntimeBytes             uint64
+}
+
+// TakeReservation moves admitted metadata before physical I/O and preserves
+// the original method identity through its constructor transfer.
+func (c PreparedCarrierConfig) TakeReservation() (PreparedCarrierConfig, error) {
+	if c.originalReservation != (resourcev4.Reference{}) {
+		return c, resourcev4.ErrOwner
+	}
+	charge, err := PreparedCarrierCharge(c.RuntimeBytes)
+	if err != nil {
+		return c, err
+	}
+	owned, err := c.Reservation.Take(charge)
+	if err != nil {
+		return c, err
+	}
+	c.originalReservation, c.Reservation = c.Reservation, owned
+	return c, nil
 }
 
 // Both provider forms must expose their actual original cleanup and retirement.
@@ -226,8 +245,12 @@ func newPreparedCarrier(ctx context.Context, c PreparedCarrierConfig, provider p
 		c.originalParent.giveBack(shared)
 		return nil, cryptov4.ErrConfiguration
 	}
+	originalReservation := c.originalReservation
+	if originalReservation == (resourcev4.Reference{}) {
+		originalReservation = c.Reservation
+	}
 	p := &preparedCarrier{relay: c.relay, incarnation: incarnation, hopChallenge: challenge, binding: PreparedCarrierBinding{Candidate: c.Candidate, Attempt: c.Attempt, Session: c.Session, Role: c.Role, MessageCarrier: messages != nil, Native: native != nil}, guarantees: guarantees,
-		parent: ctx, deadline: c.Deadline, reservation: owned, environment: c.Environment, shared: shared, originalParent: c.originalParent, originalReservation: c.Reservation,
+		parent: ctx, deadline: c.Deadline, reservation: owned, environment: c.Environment, shared: shared, originalParent: c.originalParent, originalReservation: originalReservation,
 		provider: provider, native: native, stream: stream, messages: messages}
 	p.streamAdapter.owner, p.messageAdapter.owner = p, p
 	return &PreparedCarrier{p}, nil

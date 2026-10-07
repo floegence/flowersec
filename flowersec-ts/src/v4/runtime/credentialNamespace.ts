@@ -1,10 +1,10 @@
 import { hostRandomFill, type RandomFill } from "./random.js";
 import type { TrustedClock } from "./clock.js";
 import { TrustedDeadline, TrustedWindow, timerChunk } from "./deadline.js";
-import { TimeError } from "./timeArithmetic.js";
+import { checkLowerBound, TimeError } from "./timeArithmetic.js";
 import { ResourceVector, type ResourceReference } from "./resources.js";
 import { type DecodeContext } from "./schema.js";
-import { CredentialWork, type OwnedCredentialMap, checkCredentialTime, credentialTimeAdd, equalCredential, requireCredential, type CredentialResources } from "./credentialSupport.js";
+import { CredentialError, CredentialWork, type OwnedCredentialMap, checkCredentialTime, credentialTimeAdd, equalCredential, requireCredential, type CredentialResources } from "./credentialSupport.js";
 import { NamespaceArenas, namespaceFloors, containsID, checkStateSuccessor, checkStateHistory, checkTrustTransition, sameMap } from "./namespaceContinuity.js";
 
 export interface CredentialNamespaceConfig {
@@ -15,8 +15,8 @@ export interface CredentialNamespaceConfig {
   readonly subscriptions?: number; readonly maxStateFetchMS?: bigint; readonly maxFetchAttempts?: number;
 }
 export interface CredentialEvidence {
-  readonly namespace: CredentialNamespace; readonly kind: 0 | 1; readonly cohort: bigint; readonly generation: bigint;
-  readonly issuer: Uint8Array; readonly digest: Uint8Array; readonly lease?: Uint8Array;
+  readonly namespace: CredentialNamespace; readonly kind: 0 | 1 | 2; readonly cohort: bigint; readonly generation: bigint;
+  readonly issuer: Uint8Array; readonly digest: Uint8Array; readonly lease?: Uint8Array; readonly grant?: Uint8Array;
   readonly permissionDigest: Uint8Array; readonly permissionKind: "issuer" | "activation";
   readonly policyID: string; readonly policyRevision: bigint; readonly expires: bigint;
 }
@@ -34,7 +34,8 @@ const namespaceToken = Symbol("namespace original subscription");
 interface HeadOwner { map: OwnedCredentialMap; trust: OwnedCredentialMap; signer: number; deadline: TrustedDeadline; references: number; pending: boolean }
 interface NamespacePair { head: HeadOwner; state: OwnedCredentialMap }
 interface Candidate { head: HeadOwner; deadline: TrustedDeadline; attempts: number; canceled: boolean }
-interface Subscriber { reference: ResourceReference; incarnation: bigint; changed: () => void; live: boolean }
+interface Subscriber { reference: ResourceReference; incarnation: bigint; changed: (() => void) | undefined; live: boolean }
+interface RetainedDenials { issuers: Uint8Array[]; certificates: Uint8Array[]; leases: Array<readonly [Uint8Array, Uint8Array]> }
 
 /** One online namespace slot. Its signed history and original protected arenas
  * survive failures/replacement until all actual consumers and fetch tails exit.
@@ -45,8 +46,12 @@ export class CredentialNamespace {
   readonly #work: CredentialWork; readonly #arenas: NamespaceArenas;
   readonly #rootKey: Uint8Array; readonly #rootID: Uint8Array;
   readonly #nonce = new Uint8Array(32); #bootstrap: TrustedWindow;
+  #bootstrapDeadline: TrustedDeadline | undefined; #bootstrapLower = 0n;
+  #bootstrapPending = false; #bootstrapFailure: TimeError | undefined;
+  #bootstrapPairSize: Readonly<{ response: number; state: number }> | undefined;
   readonly #history: OwnedCredentialMap[] = []; readonly #subscribers = new Set<Subscriber>();
   #trust: OwnedCredentialMap | undefined; #pair: NamespacePair | undefined; #observed: HeadOwner | undefined; #candidate: Candidate | undefined;
+  readonly #denials: RetainedDenials = { issuers: [], certificates: [], leases: [] };
   #capacityDigest: Uint8Array = new Uint8Array(); #stateContext: DecodeContext = {};
   #generation = 0n; #incarnation = 1n; #closed = false; #failed = false; #busy = false; #replacement = false; #cleaned = false;
   #finishedGeneration = 0n; #finishedSequence = 0n;
@@ -73,11 +78,14 @@ export class CredentialNamespace {
     namespaces.add(this); Object.freeze(this);
   }
   bootstrapNonce(): Uint8Array {
-    requireCredential(!this.#closed && !this.#busy && (this.#trust === undefined || this.#replacement), "credential_closed"); this.#bootstrap.check(); return new Uint8Array(this.#nonce);
+    requireCredential(!this.#closed && !this.#busy && (this.#trust === undefined || this.#replacement), "credential_closed"); this.#bootstrapRemaining(); return new Uint8Array(this.#nonce);
   }
   beginReplacement(): Uint8Array {
     requireCredential(!this.#closed && this.#failed && !this.#busy && this.#fetch === undefined && !this.#replacement, "credential_closed");
-    this.#bootstrap = new TrustedWindow(this.clock, this.#config.bootstrapMS); (this.#config.random ?? hostRandomFill)(this.#nonce); this.#replacement = true; return this.bootstrapNonce();
+    this.#bootstrap = new TrustedWindow(this.clock, this.#config.bootstrapMS); this.#bootstrapDeadline = undefined; this.#bootstrapLower = 0n;
+    this.#bootstrapPending = false; this.#bootstrapFailure = undefined;
+    this.#bootstrapPairSize = undefined; this.#bootstrapBuffer.fill(0); this.#fetchBuffer.fill(0);
+    (this.#config.random ?? hostRandomFill)(this.#nonce); this.#replacement = true; return this.bootstrapNonce();
   }
   /** A failed safety incarnation never becomes usable again. The retained
    * immutable history is the replacement's lower bound, not a blank cache. */
@@ -88,41 +96,121 @@ export class CredentialNamespace {
     this.cancelFetch(); this.#dropCandidate(); this.#notify();
   }
   bootstrap(response: Uint8Array, state: Uint8Array): void {
-    requireCredential(!this.#closed && !this.#busy && (this.#trust === undefined || this.#replacement), "credential_closed");
-    this.#bootstrap.check(); this.#busy = true;
+    this.#bootstrapPair(response, state, false);
+  }
+  #bootstrapRemaining(): bigint {
+    if (this.#bootstrapFailure !== undefined) throw this.#bootstrapFailure;
+    // A material's original security deadline stays an expiry. Exhausting the
+    // separate local work window after legal pending is a failed time proof.
+    // Keep that first terminal reason even if a later sample would prove time.
+    const security = this.#bootstrapDeadline?.remainingMS();
+    let local: bigint;
+    try { local = this.#bootstrap.remainingMS(); }
+    catch (error) {
+      if (this.#bootstrapPending && error instanceof TimeError && error.code === "time_expired") {
+        this.#bootstrapFailure = new TimeError("time_not_proven"); throw this.#bootstrapFailure;
+      }
+      throw error;
+    }
+    return security === undefined ? local : min(local, security);
+  }
+  #bootstrapPair(response: Uint8Array, state: Uint8Array, originalFetch: boolean): void {
+    requireCredential(!this.#closed && !this.#busy && (!this.#bootstrapJob || originalFetch) && (this.#trust === undefined || this.#replacement), "credential_closed");
+    const pinned = this.#bootstrapPairSize;
+    if (pinned !== undefined) requireCredential(equalCredential(response, this.#bootstrapBuffer.subarray(0, pinned.response)) &&
+      equalCredential(state, this.#fetchBuffer.subarray(0, pinned.state)), "credential_binding");
+    this.#bootstrapRemaining(); this.#busy = true;
+    let installed = false;
     let reply: OwnedCredentialMap | undefined, trust: OwnedCredentialMap | undefined, head: HeadOwner | undefined, content: OwnedCredentialMap | undefined;
     const priorTrust = this.#trust, priorGeneration = this.#generation, priorContext = this.#stateContext, priorCapacity = this.#capacityDigest;
     try {
       reply = this.#arenas.parse(response, "TrustBootstrapResponse"); this.#work.verify(reply, this.#rootKey); this.#namespace(reply);
       requireCredential(equalCredential(reply.bytes("signing_key_id"), this.#rootID) && equalCredential(reply.bytes("request_nonce"), this.#nonce));
-      checkCredentialTime(this.clock, reply.uint("issued_at_ms"), reply.uint("not_after_ms"));
+      // Pending lower bounds do not bypass signatures, bindings, state or an
+      // earlier upper bound. Admit only after the complete original pair passes.
+      const lower = (from: bigint): void => {
+        try { checkLowerBound(this.clock.sample().requireInterval(), from, true); }
+        catch (error) { if (!(error instanceof TimeError) || error.code !== "time_pending") throw error; }
+        this.#bootstrapLower = max(this.#bootstrapLower, from);
+      };
+      const validity = (from: bigint, until: bigint): void => {
+        requireCredential(from < until, "credential_expired");
+        if (this.#bootstrapDeadline === undefined) this.#bootstrapDeadline = new TrustedDeadline(this.clock, until);
+        else this.#bootstrapDeadline.tighten(min(this.#bootstrapDeadline.cap, until));
+        lower(from);
+      };
+      validity(reply.uint("issued_at_ms"), reply.uint("not_after_ms"));
       const trustBytes = reply.bytes("trust_config"), headBytes = reply.bytes("freshness_head");
       try {
-        trust = this.#readTrust(trustBytes);
+        trust = this.#readTrust(trustBytes, validity, lower);
         if (priorTrust !== undefined && sameMap(priorTrust, 0, trust, 0)) { trust.close(); trust = undefined; }
         else { checkTrustTransition(this.#history, trust, this.#pair?.state, this.#work); this.#trust = trust; this.#configure(trust); }
-        head = this.#verifyHead(headBytes); requireCredential(!head.pending, "credential_expired");
+        head = this.#verifyHead(headBytes);
+        this.#bootstrapDeadline!.tighten(min(this.#bootstrapDeadline!.cap, head.deadline.cap));
+        this.#bootstrapLower = max(this.#bootstrapLower, this.#headLower(head));
         this.#followsObserved(head); content = this.#state(state, head);
         if (this.#pair !== undefined) checkStateSuccessor(this.#pair.state, content, this.#trust!);
-        this.#bootstrap.check();
+        this.#bootstrapRemaining();
+        try { checkLowerBound(this.clock.sample().requireInterval(), this.#bootstrapLower, false); }
+        catch (error) {
+          if (error instanceof TimeError && error.code === "time_pending") {
+            this.#bootstrapPending = true;
+            if (!originalFetch && pinned === undefined) {
+              requireCredential(response.length <= this.#bootstrapBuffer.length && state.length <= this.#fetchBuffer.length, "configuration_capacity");
+              this.#bootstrapBuffer.set(response); this.#fetchBuffer.set(state);
+              this.#bootstrapPairSize = Object.freeze({ response: response.length, state: state.length });
+            }
+          }
+          throw error;
+        }
+        head.pending = false;
         if (trust !== undefined) { this.#history.push(trust); trust = undefined; }
         this.#replaceObserved(head); this.#install(head, content); content = undefined;
-        this.#failed = false; this.#replacement = false; this.#nonce.fill(0);
+        this.#failed = false; this.#replacement = false; this.#nonce.fill(0); installed = true;
       } finally { trustBytes.fill(0); headBytes.fill(0); }
     } catch (error) { this.#trust = priorTrust; this.#generation = priorGeneration; this.#stateContext = priorContext; this.#capacityDigest = priorCapacity; throw error; }
-    finally { reply?.close(); trust?.close(); if (head !== undefined) this.#releaseHead(head); content?.close(); this.#busy = false; this.#notify(); }
+    finally {
+      reply?.close(); trust?.close(); if (head !== undefined) this.#releaseHead(head); content?.close(); this.#busy = false;
+      if (installed && this.#bootstrapPairSize !== undefined) { this.#bootstrapPairSize = undefined; this.#bootstrapBuffer.fill(0); this.#fetchBuffer.fill(0); }
+      this.#notify();
+    }
   }
   fetchBootstrap(provider: NamespaceBootstrapProvider): Promise<boolean> {
     if (this.#fetch !== undefined) return this.#fetch;
+    requireCredential(this.#bootstrapPairSize === undefined, "credential_closed");
     const nonce = this.bootstrapNonce(), incarnation = this.#incarnation, abort = new AbortController(); this.#abort = abort; this.#bootstrapJob = true;
-    const tick = (): void => { try { this.#bootstrap.check(); this.#timer = setTimeout(tick, timerChunk(this.#bootstrap.remainingMS())); } catch { abort.abort(); } };
+    const tick = (): void => { try { this.#timer = setTimeout(tick, timerChunk(this.#bootstrapRemaining())); } catch (error) { abort.abort(error); } };
     const operation = Promise.resolve().then(async () => {
       tick(); requireCredential(!abort.signal.aborted, "credential_expired");
       const result = await provider(Object.freeze({ nonce, signal: abort.signal }), this.#bootstrapBuffer, this.#fetchBuffer);
       requireCredential(!abort.signal.aborted && !this.#closed && incarnation === this.#incarnation, "credential_closed");
       requireCredential(Number.isSafeInteger(result.responseBytes) && result.responseBytes > 0 && result.responseBytes <= this.#bootstrapBuffer.length &&
         Number.isSafeInteger(result.stateBytes) && result.stateBytes > 0 && result.stateBytes <= this.#fetchBuffer.length, "configuration_capacity");
-      this.#bootstrap.check(); this.bootstrap(this.#bootstrapBuffer.subarray(0, result.responseBytes), this.#fetchBuffer.subarray(0, result.stateBytes)); return true;
+      // Provider completion returns custody of these original bounded buffers.
+      // Revalidation never queries again or replaces nonce, material or owner.
+      if (this.#timer !== undefined) clearTimeout(this.#timer); this.#timer = undefined;
+      for (;;) {
+        requireCredential(!abort.signal.aborted && !this.#closed && incarnation === this.#incarnation, "credential_closed");
+        this.#bootstrapRemaining();
+        try { this.#bootstrapPair(this.#bootstrapBuffer.subarray(0, result.responseBytes), this.#fetchBuffer.subarray(0, result.stateBytes), true); return true; }
+        catch (error) { if (!(error instanceof TimeError) || error.code !== "time_pending") throw error; }
+        const now = this.clock.sample().requireInterval();
+        const delay = min(this.clock.profile.rate.proveDelta(now.lowerMS, this.#bootstrapLower), this.#bootstrapRemaining());
+        await new Promise<void>((resolve, reject) => {
+          const stop = (): void => {
+            if (this.#timer !== undefined) clearTimeout(this.#timer); this.#timer = undefined;
+            abort.signal.removeEventListener("abort", stop);
+            reject(this.#closed ? new CredentialError("credential_closed") : new TimeError("time_cancelled"));
+          };
+          this.#timer = setTimeout(() => { this.#timer = undefined; abort.signal.removeEventListener("abort", stop); resolve(); }, timerChunk(delay));
+          abort.signal.addEventListener("abort", stop, { once: true }); if (abort.signal.aborted) stop();
+        });
+      }
+    }).catch(error => {
+      // Keep the original timer failure after an aborted provider returns its
+      // physical tail; a transport AbortError must not erase that time reason.
+      if (abort.signal.aborted && abort.signal.reason instanceof TimeError) throw abort.signal.reason;
+      throw error;
     }).finally(() => {
       if (this.#timer !== undefined) clearTimeout(this.#timer); this.#timer = undefined;
       nonce.fill(0); this.#bootstrapBuffer.fill(0); this.#fetchBuffer.fill(0); this.#fetch = undefined; this.#abort = undefined; this.#bootstrapJob = false;
@@ -148,11 +236,16 @@ export class CredentialNamespace {
     this.#namespace(map, node, schema);
     requireCredential(map.uint("authority_generation", node, schema) === this.#generation && equalCredential(map.bytes("namespace_capacity_digest", node, schema), this.#capacityDigest));
   }
-  #readTrust(raw: Uint8Array): OwnedCredentialMap {
+  #readTrust(raw: Uint8Array,
+    validity = (from: bigint, until: bigint): void => {
+      const now = this.clock.sample().requireInterval(); requireCredential(from < until && now.upperMS < until, "credential_expired");
+      checkLowerBound(now, from, true);
+    },
+    lower = (from: bigint): void => checkLowerBound(this.clock.sample().requireInterval(), from, true)): OwnedCredentialMap {
     const trust = this.#arenas.parse(raw, "TrustConfig");
     try {
       this.#work.verify(trust, this.#rootKey); this.#namespace(trust); requireCredential(equalCredential(trust.bytes("signing_key_id"), this.#rootID), "credential_untrusted");
-      checkCredentialTime(this.clock, trust.uint("issued_at_ms"), trust.uint("not_after_ms"));
+      validity(trust.uint("issued_at_ms"), trust.uint("not_after_ms"));
       requireCredential(trust.uint("not_after_ms") - trust.uint("issued_at_ms") <= this.#config.maxTrustLifetimeMS, "credential_untrusted");
       const cap = trust.field("capacity"), publication = trust.field("publication"), generation = trust.uint("authority_generation"), digest = this.#work.digest(trust, "namespace_capacity_digest", cap);
       this.#namespace(trust, cap, "NamespaceCapacity");
@@ -170,7 +263,7 @@ export class CredentialNamespace {
       for (const n of trust.items("head_delegations")) {
         requireCredential(trust.text("publication_policy_id", n, "HeadSignerDelegation") === trust.text("publication_policy_id", publication, "PublicationPolicy") && trust.uint("publication_policy_revision", n, "HeadSignerDelegation") === trust.uint("publication_policy_revision", publication, "PublicationPolicy"));
         requireCredential(trust.uint("not_after_ms", n, "HeadSignerDelegation") - trust.uint("issued_at_ms", n, "HeadSignerDelegation") <= trust.uint("max_signer_lifetime_ms", publication, "PublicationPolicy"));
-        requireCredential(this.clock.sample().requireInterval().lowerMS >= trust.uint("issued_at_ms", n, "HeadSignerDelegation"), "credential_expired");
+        lower(trust.uint("issued_at_ms", n, "HeadSignerDelegation"));
       }
       for (const n of trust.items("once_authorities")) requireCredential(trust.text("tenant_id", n, "OnceAuthorityRef") === this.tenant);
       return trust;
@@ -199,21 +292,30 @@ export class CredentialNamespace {
       head.pending = !this.#headTime(head); return head;
     } catch (error) { map.close(); throw error; }
   }
-  #headTime(head: HeadOwner): boolean {
+  #headLower(head: HeadOwner): bigint {
     const map = head.map, trust = head.trust, cap = trust.field("capacity"), floors = namespaceFloors(map);
     let required = map.uint("this_update_ms");
     for (const [kind, field] of ["max_certificate_impact_ms", "max_connection_impact_ms"].entries()) if (floors[kind]! > 0n)
       required = max(required, credentialTimeAdd(credentialTimeAdd(trust.uint("cohort_time_origin_ms", cap, "NamespaceCapacity"), floors[kind]! * trust.uint("cohort_duration_ms", cap, "NamespaceCapacity")), trust.uint(field, cap, "NamespaceCapacity")));
-    head.deadline.check(); const now = this.clock.sample().requireInterval(); requireCredential(now.upperMS >= required, "credential_expired"); return now.lowerMS >= required;
+    return required;
+  }
+  #headTime(head: HeadOwner): boolean {
+    head.deadline.check(); const now = this.clock.sample().requireInterval(), required = this.#headLower(head);
+    if (head.map.uint("this_update_ms") > now.upperMS) throw new TimeError("future_timestamp");
+    requireCredential(now.upperMS >= required, "credential_expired"); return now.lowerMS >= required;
   }
   #checkHead(head: HeadOwner): void {
     this.#checkTrust(); const trust = this.#trust!, map = head.map;
     requireCredential(map.uint("authority_generation") === this.#generation && !containsID(trust, "rejected_head_signers", map.bytes("signing_key_id")), "credential_revoked");
-    requireCredential([...trust.items("head_delegations")].some(n => equalCredential(this.#work.digest(trust, "head_signer_delegation_digest", n), map.bytes("signer_delegation_digest"))), "credential_revoked");
+    // The original immutable trust map already authenticated this delegation.
+    // Recheck its digest against a replacement trust map, while time, signer
+    // rejection and generation remain live checks on every use.
+    if (trust !== head.trust) requireCredential([...trust.items("head_delegations")].some(n => equalCredential(this.#work.digest(trust, "head_signer_delegation_digest", n), map.bytes("signer_delegation_digest"))), "credential_revoked");
     head.deadline.check();
   }
-  #followsObserved(head: HeadOwner): void {
+  #followsObserved(head: HeadOwner, allowPendingCandidate = false): void {
     const old = this.#observed?.map; if (old === undefined || old.uint("authority_generation") < head.map.uint("authority_generation")) return;
+    if (allowPendingCandidate) return;
     requireCredential(old.uint("authority_generation") === head.map.uint("authority_generation") && head.map.uint("head_sequence") >= old.uint("head_sequence"));
     if (head.map.uint("head_sequence") === old.uint("head_sequence")) requireCredential(sameMap(old, 0, head.map, 0));
     requireCredential(head.map.uint("this_update_ms") >= old.uint("this_update_ms")); const before = namespaceFloors(old), after = namespaceFloors(head.map);
@@ -223,16 +325,19 @@ export class CredentialNamespace {
   #releaseHead(head: HeadOwner): void { if (--head.references === 0) head.map.close(); }
   #replaceObserved(head: HeadOwner): void { const old = this.#observed; this.#observed = this.#retainHead(head); if (old !== undefined) this.#releaseHead(old); }
   observe(raw: Uint8Array): void {
+    this.#observe(raw, false, true);
+  }
+  #observe(raw: Uint8Array, allowPendingCandidate: boolean, reuseState: boolean): void {
     requireCredential(!this.#closed && !this.#failed && !this.#busy && this.#trust !== undefined, "credential_closed"); this.#checkTrust();
     const head = this.#verifyHead(raw);
     try {
-      this.#followsObserved(head);
-      if (!head.pending) this.#replaceObserved(head);
+      this.#followsObserved(head, allowPendingCandidate);
+      if (!head.pending && (!allowPendingCandidate || this.#observed === undefined || head.map.uint("head_sequence") >= this.#observed.map.uint("head_sequence"))) this.#replaceObserved(head);
       if (this.#candidate === undefined && this.#fetch === undefined) {
         const selected = this.#observed !== undefined && this.#canPin(this.#observed) ? this.#observed : head.pending && this.#canPin(head) ? head : undefined;
         if (selected !== undefined) this.#pin(selected);
       }
-      this.#notify(); this.#reuseState();
+      this.#notify(); if (reuseState) this.#reuseState();
     } finally { this.#releaseHead(head); }
   }
   #newerThanActive(head: HeadOwner): boolean {
@@ -254,7 +359,8 @@ export class CredentialNamespace {
       candidate.canceled = true; this.#releaseHead(candidate.head);
     }
   }
-  advance(): void {
+  advance(): void { this.#advance(true); }
+  #advance(reuseState: boolean): void {
     this.#checkTrust(); if (this.#failed || this.#closed) return;
     const candidate = this.#candidate;
     if (candidate !== undefined) {
@@ -266,7 +372,7 @@ export class CredentialNamespace {
         }
       } catch (error) { if (error instanceof TimeError && ["time_unavailable", "time_pending", "time_continuity"].includes(error.code)) throw error; this.cancelFetch(); this.#dropCandidate(); throw error; }
     } else if (this.#fetch === undefined && this.#observed !== undefined && this.#canPin(this.#observed)) this.#pin(this.#observed);
-    this.#reuseState();
+    if (reuseState) this.#reuseState();
   }
   #state(raw: Uint8Array, head: HeadOwner): OwnedCredentialMap {
     const state = this.#arenas.parse(raw, "RevocationState", this.#stateContext);
@@ -275,6 +381,43 @@ export class CredentialNamespace {
       requireCredential(head.map.uint("state_encoded_bytes") === BigInt(state.doc.encodedSize()) && equalCredential(head.map.bytes("state_digest"), this.#work.digest(state, "revocation_state_digest")));
       this.#segments(state); checkStateHistory(this.#history.includes(this.#trust!) ? this.#history : [...this.#history, this.#trust!], state, this.#work); return state;
     } catch (error) { state.close(); throw error; }
+  }
+  /** Retain authenticated denial identities independently of the active pair.
+   * A complete newer State can arrive while an earlier Head is still waiting
+   * for its time bound; its denials must take effect immediately. The trust
+   * limits bound the retained sets, and a denial is never removed in memory. */
+  #recordDenials(state: OwnedCredentialMap): void {
+    const previousIssuers = this.#denials.issuers, previousCertificates = this.#denials.certificates, previousLeases = this.#denials.leases;
+    const issuers = previousIssuers.slice(), certificates = previousCertificates.slice();
+    const leases = previousLeases.slice();
+    const add = (target: Uint8Array[], value: Uint8Array): void => { if (!target.some(existing => equalCredential(existing, value))) target.push(value); else value.fill(0); };
+    const addLease = (issuer: Uint8Array, lease: Uint8Array): void => {
+      if (leases.some(([oldIssuer, oldLease]) => equalCredential(oldIssuer, issuer) && equalCredential(oldLease, lease))) { issuer.fill(0); lease.fill(0); return; }
+      leases.push([issuer, lease]);
+    };
+    try {
+      for (const node of state.items("revoked_issuers")) add(issuers, state.bytes("issuer_key_id", node, "RevokedIssuerEntry"));
+      for (const node of state.items("revoked_certificates")) add(certificates, state.bytes("certificate_digest", node, "RevokedCertificateEntry"));
+      for (const node of state.items("revoked_leases")) addLease(state.bytes("issuer_key_id", node, "RevokedLeaseEntry"), state.bytes("lease_id", node, "RevokedLeaseEntry"));
+      const cap = this.#trust!.field("capacity");
+      requireCredential(issuers.length <= Number(this.#trust!.uint("max_revoked_issuers", cap, "NamespaceCapacity")) &&
+        certificates.length <= Number(this.#trust!.uint("max_revoked_certificates", cap, "NamespaceCapacity")) &&
+        leases.length <= Number(this.#trust!.uint("max_revoked_leases", cap, "NamespaceCapacity")), "configuration_capacity");
+      this.#denials.issuers.splice(0, this.#denials.issuers.length, ...issuers);
+      this.#denials.certificates.splice(0, this.#denials.certificates.length, ...certificates);
+      this.#denials.leases.splice(0, this.#denials.leases.length, ...leases);
+    } catch (error) {
+      // The temporary copies own bytes returned from the decoded State. Drop
+      // only new identities; existing retained denials remain owned by the
+      // namespace. A capacity failure fences authorization before the old
+      // active pair can be used again, while close() keeps provider tails and
+      // subscriber reservations alive until physical cleanup completes.
+      for (const issuer of issuers) if (!previousIssuers.includes(issuer)) issuer.fill(0);
+      for (const certificate of certificates) if (!previousCertificates.includes(certificate)) certificate.fill(0);
+      for (const [issuer, lease] of leases) if (!previousLeases.some(([oldIssuer, oldLease]) => oldIssuer === issuer && oldLease === lease)) { issuer.fill(0); lease.fill(0); }
+      if (error instanceof CredentialError && error.code === "configuration_capacity") this.close();
+      throw error;
+    }
   }
   #segments(state: OwnedCredentialMap): void {
     const trust = this.#trust!, cap = trust.field("capacity");
@@ -285,6 +428,7 @@ export class CredentialNamespace {
     }
   }
   #install(head: HeadOwner, state: OwnedCredentialMap): void {
+    this.#recordDenials(state);
     const old = this.#pair; this.#pair = { head: this.#retainHead(head), state };
     if (old !== undefined) { this.#releaseHead(old.head); old.state.close(); }
   }
@@ -294,17 +438,83 @@ export class CredentialNamespace {
     if (this.#pair !== undefined) checkStateSuccessor(this.#pair.state, state, this.#trust!);
     requireCredential(this.#newerThanActive(candidate.head)); this.#install(candidate.head, state); this.#dropCandidate(); this.#notify();
   }
+  #installRetainedCandidate(state: OwnedCredentialMap, candidate: Candidate): boolean {
+    requireCredential(this.#candidate === candidate && !candidate.canceled && !candidate.head.pending && !this.#failed && !this.#closed, "credential_closed");
+    candidate.deadline.check(); this.#checkHead(candidate.head);
+    if (this.#pair !== undefined) checkStateSuccessor(this.#pair.state, state, this.#trust!);
+    if (!this.#newerThanActive(candidate.head)) {
+      // The original candidate is complete and authenticated, but a newer
+      // active pair already owns the slot. Retire it and reject the stale
+      // replay without moving the active pair backwards.
+      this.#dropCandidate(); this.#notify();
+      requireCredential(false, "credential_untrusted");
+    }
+    // Only refresh() reaches this method after matching the retained
+    // candidate's exact original Head and State bytes. Its original deadline
+    // remains pinned on candidate.deadline and live trust checks still apply.
+    this.#install(candidate.head, state); this.#dropCandidate(); this.#notify(); return true;
+  }
   #reuseState(): void {
     const candidate = this.#candidate, pair = this.#pair;
     if (candidate === undefined || pair === undefined || candidate.head.pending || this.#fetch !== undefined || !equalCredential(candidate.head.map.bytes("state_digest"), pair.head.map.bytes("state_digest"))) return;
     const state = pair.state.retain(); try { this.#installCandidate(state, candidate); } catch (error) { state.close(); throw error; }
   }
   refresh(head: Uint8Array, state: Uint8Array): boolean {
-    this.observe(head); this.advance(); const candidate = this.#candidate;
+    const pending = this.#candidate, samePending = pending !== undefined && equalCredential(pending.head.map.encoded(), head);
+    if (samePending) {
+      this.#observe(head, true, false); this.#advance(false);
+    } else {
+      // Mature any previously retained candidate before admitting the new
+      // Head, then observe the new Head without reusing an active State before
+      // this call validates the supplied bytes.
+      this.advance(); this.#observe(head, false, false);
+    }
+    const candidate = this.#candidate;
     if (candidate === undefined) return this.#observed === undefined || !this.#newerThanActive(this.#observed);
+    // When this call itself selected the candidate, use that authenticated
+    // Head directly. Re-verifying the same bytes as an independent update
+    // would compare the candidate with itself and reject the first H2.
+    if (!samePending && pending === undefined && equalCredential(candidate.head.map.encoded(), head)) {
+      if (candidate.head.pending || this.#fetch !== undefined) return false;
+      const content = this.#state(state, candidate.head);
+      try { this.#installCandidate(content, candidate); return true; } catch (error) { content.close(); throw error; }
+    }
+    if (!samePending) {
+      // A newer network Head advances independent denial evidence before its
+      // complete State is installed. The retained older candidate remains the
+      // only path that may later use its original bytes and deadline.
+      const independent = this.#verifyHead(head);
+      try {
+        if (independent.pending) return false;
+        if (candidate !== undefined &&
+            (independent.map.uint("authority_generation") < candidate.head.map.uint("authority_generation") ||
+             independent.map.uint("authority_generation") === candidate.head.map.uint("authority_generation") &&
+             independent.map.uint("head_sequence") <= candidate.head.map.uint("head_sequence"))) {
+          requireCredential(false, "credential_untrusted");
+        }
+        let content: OwnedCredentialMap | undefined = this.#state(state, independent);
+        try {
+          // A retained candidate owns the sole completion pin. A newer Head
+          // may advance observed denial evidence and have its State rejected
+          // here, but it cannot install a second complete pair until the
+          // original candidate finishes or is retired.
+          if (candidate !== undefined) {
+            if (this.#pair !== undefined) checkStateSuccessor(this.#pair.state, content, this.#trust!);
+            this.#recordDenials(content);
+            content.close(); content = undefined; this.#notify();
+            return false;
+          }
+          requireCredential(this.#newerThanActive(independent), "credential_untrusted");
+          if (this.#pair !== undefined) checkStateSuccessor(this.#pair.state, content, this.#trust!);
+          this.#install(independent, content);
+          content = undefined; this.#notify();
+          return true;
+        } catch (error) { content?.close(); throw error; }
+      } finally { this.#releaseHead(independent); }
+    }
     if (candidate.head.pending || this.#fetch !== undefined || !equalCredential(candidate.head.map.encoded(), head)) return false;
     const content = this.#state(state, candidate.head);
-    try { this.#installCandidate(content, candidate); return true; } catch (error) { content.close(); throw error; }
+    try { if (!this.#installRetainedCandidate(content, candidate)) content.close(); return true; } catch (error) { content.close(); throw error; }
   }
   fetchPending(provider: NamespaceStateProvider): Promise<boolean> {
     if (this.#fetch !== undefined) return this.#fetch;
@@ -336,23 +546,30 @@ export class CredentialNamespace {
     this.#checkTrust(); requireCredential(this.#pair !== undefined, "credential_closed");
     if (reference !== undefined) requireCredential(this.#work.sameEnvironment(reference)); this.#checkHead(this.#pair.head);
   }
-  subscribe(reference: ResourceReference, changed: () => void): CredentialNamespaceSubscription {
+  /** Reserve the original subscriber position and safety incarnation before
+   * source I/O. Its verified consumer attaches the observer after validation. */
+  reserveSubscription(reference: ResourceReference): CredentialNamespaceSubscription {
     this.check(reference); requireCredential(this.#subscribers.size < this.#config.subscriptions, "configuration_capacity");
     const charge = new ResourceVector([this.#config.resources.runtimeBytes + 256n, 0n, 0n, 1n, 1n, 0n, 0n, 0n, 0n, 0n, 0n]);
-    const retained = this.#work.reserve("namespace_subscription", charge), subscriber = { reference: retained, incarnation: this.#incarnation, changed, live: true };
+    const retained = this.#work.reserve("namespace_subscription", charge), subscriber: Subscriber = { reference: retained, incarnation: this.#incarnation, changed: undefined, live: true };
     this.#subscribers.add(subscriber); return new CredentialNamespaceSubscription(namespaceToken, this, subscriber);
   }
   checkSubscription(token: symbol, subscriber: Subscriber): void {
     requireCredential(token === namespaceToken && subscriber.live && this.#subscribers.has(subscriber) && subscriber.incarnation === this.#incarnation, "credential_closed");
     subscriber.reference.check(); this.check(subscriber.reference);
   }
+  attachSubscription(token: symbol, subscriber: Subscriber, reference: ResourceReference, changed: () => void): void {
+    requireCredential(token === namespaceToken && subscriber.live && subscriber.changed === undefined && typeof changed === "function", "credential_closed");
+    this.checkSubscription(token, subscriber); requireCredential(subscriber.reference.sameEnvironment(reference), "credential_binding");
+    subscriber.changed = changed;
+  }
   releaseSubscription(token: symbol, subscriber: Subscriber): void {
-    requireCredential(token === namespaceToken); if (!subscriber.live) return; subscriber.live = false;
+    requireCredential(token === namespaceToken); if (!subscriber.live) return; subscriber.live = false; subscriber.changed = undefined;
     this.#subscribers.delete(subscriber); subscriber.reference.release(); this.#cleanup();
   }
   #notify(): void {
     if (this.#notifying) { this.#notifyAgain = true; return; } this.#notifying = true;
-    try { do { this.#notifyAgain = false; for (const s of this.#subscribers) if (s.live) { try { s.changed(); } catch { /* Safety owners recheck their original gate before handoff. */ } } } while (this.#notifyAgain); }
+    try { do { this.#notifyAgain = false; for (const s of this.#subscribers) if (s.live) { try { const result: unknown = s.changed?.(); if (result !== undefined && typeof result === "object" && result !== null && "then" in result && typeof (result as { then?: unknown }).then === "function") void Promise.resolve(result).catch(() => undefined); } catch { /* Safety owners recheck their original gate before handoff. */ } } } while (this.#notifyAgain); }
     finally { this.#notifying = false; this.#cleanup(); }
   }
   close(): void { if (this.#closed) return; this.#closed = true; this.cancelFetch(); this.#dropCandidate(); this.#notify(); this.#cleanup(); }
@@ -361,16 +578,26 @@ export class CredentialNamespace {
     this.#nonce.fill(0); this.#rootKey.fill(0); this.#rootID.fill(0); this.#capacityDigest.fill(0); this.#fetchBuffer.fill(0); this.#bootstrapBuffer.fill(0);
     if (this.#pair !== undefined) { this.#releaseHead(this.#pair.head); this.#pair.state.close(); } if (this.#observed !== undefined) this.#releaseHead(this.#observed);
     this.#pair = undefined; this.#observed = undefined; this.#trust = undefined; for (const trust of this.#history) trust.close(); this.#history.length = 0;
+    for (const issuer of this.#denials.issuers) issuer.fill(0); for (const certificate of this.#denials.certificates) certificate.fill(0); for (const [issuer, lease] of this.#denials.leases) { issuer.fill(0); lease.fill(0); }
+    this.#denials.issuers.length = 0; this.#denials.certificates.length = 0; this.#denials.leases.length = 0;
     this.#arenas.close(); this.#work.close();
   }
   cleanupComplete(): boolean { this.#cleanup(); return this.#cleaned; }
   async waitCleanup(): Promise<void> { await this.#fetch?.catch(() => undefined); this.#cleanup(); }
   matches(map: OwnedCredentialMap): boolean {
-    return map.text("tenant_id") === this.tenant && map.text("revocation_authority_id") === this.authority;
+    const node = map.schema === "Grant" ? map.field("namespace") : 0, schema = map.schema === "Grant" ? "GrantNamespace" : map.schema;
+    return map.text("tenant_id", node, schema) === this.tenant && map.text("revocation_authority_id", node, schema) === this.authority;
   }
   checkNamespace(map: OwnedCredentialMap): void {
-    this.check(); this.#namespace(map);
-    requireCredential(map.uint("revocation_authority_generation") === this.#generation && equalCredential(map.bytes("namespace_capacity_digest"), this.#capacityDigest));
+    this.check();
+    if (map.schema === "Grant") {
+      const node = map.field("namespace");
+      requireCredential(map.text("tenant_id") === this.tenant && this.matches(map) && map.uint("generation", node, "GrantNamespace") === this.#generation &&
+        equalCredential(map.bytes("namespace_capacity_digest", node, "GrantNamespace"), this.#capacityDigest), "credential_untrusted");
+    } else {
+      this.#namespace(map);
+      requireCredential(map.uint("revocation_authority_generation") === this.#generation && equalCredential(map.bytes("namespace_capacity_digest"), this.#capacityDigest));
+    }
   }
   checkReference(map: OwnedCredentialMap, node: number): void {
     this.#namespace(map, node, "RevocationNamespaceRef");
@@ -386,21 +613,116 @@ export class CredentialNamespace {
     const duration = trust.uint("cohort_duration_ms", cap, "NamespaceCapacity"), origin = trust.uint("cohort_time_origin_ms", cap, "NamespaceCapacity");
     return credentialTimeAdd(credentialTimeAdd(origin, (cohort + 1n) * duration), impact);
   }
-  verifyCredential(map: OwnedCredentialMap, kind: 0 | 1, work: CredentialWork): CredentialEvidence {
-    this.checkNamespace(map); const trust = this.#trust!, cap = trust.field("capacity"), cohort = map.uint("revocation_epoch"), issued = map.uint("issued_at_ms"), end = map.uint(kind === 0 ? "expires_at_ms" : "session_not_after_ms");
+  verifyCredential(map: OwnedCredentialMap, kind: 0 | 1 | 2, work: CredentialWork): CredentialEvidence {
+    return this.#credentialPermission(map, kind, work);
+  }
+  /** Preflight an independently configured future local Grant issuer. This
+   * is a namespace scope, never a signed Grant or relay admission capability. */
+  preauthorizeGrantScope(artifact: OwnedCredentialMap, role: 0 | 1, audience: string, service: string,
+    issuerKeyID: Uint8Array, policyID: string, policyRevision: bigint, maximumEnd: bigint, work: CredentialWork):
+    Readonly<{ evidence: CredentialEvidence; preparationEnd: bigint }> {
+    this.check(); requireCredential(artifact.schema === "Artifact" && issuerKeyID.length === 16 && maximumEnd > 0n, "credential_untrusted");
+    const trust = this.#trust!, cap = trust.field("capacity"), schema = "CredentialIssuerAuthorization";
+    const now = this.clock.sample().requireInterval(), origin = trust.uint("cohort_time_origin_ms", cap, "NamespaceCapacity"), duration = trust.uint("cohort_duration_ms", cap, "NamespaceCapacity");
+    requireCredential(now.lowerMS >= origin && (now.lowerMS - origin) / duration === (now.upperMS - origin) / duration, "credential_untrusted");
+    const cohort = (now.upperMS - origin) / duration, parentCohort = artifact.uint("revocation_epoch");
+    const authorization = [...trust.items("issuer_authorizations")].find(entry =>
+      equalCredential(trust.bytes("issuer_key_id", entry, schema), issuerKeyID) && trust.uint("credential_kind", entry, schema) === 2n &&
+      trust.text("audience", entry, schema) === audience && trust.text("service", entry, schema) === service && (trust.uint("role", entry, schema) & (1n << BigInt(role))) !== 0n &&
+      now.lowerMS >= trust.uint("signing_not_before_ms", entry, schema) && now.upperMS < trust.uint("signing_not_after_ms", entry, schema) &&
+      cohort >= trust.uint("first_cohort", entry, schema) && cohort <= trust.uint("last_cohort", entry, schema) &&
+      trust.text("parent_authority_id", entry, schema) === artifact.text("revocation_authority_id") &&
+      equalCredential(trust.bytes("parent_capacity_digest", entry, schema), artifact.bytes("namespace_capacity_digest")) &&
+      trust.uint("parent_generation", entry, schema) === artifact.uint("revocation_authority_generation") &&
+      equalCredential(trust.bytes("parent_artifact_issuer_key_id", entry, schema), artifact.bytes("issuer_key_id")) &&
+      parentCohort >= trust.uint("first_parent_cohort", entry, schema) && parentCohort <= trust.uint("last_parent_cohort", entry, schema));
+    requireCredential(authorization !== undefined, "credential_untrusted");
+    const end = [maximumEnd, trust.uint("max_credential_not_after_ms", authorization, schema), this.impactDeadline(cohort, 1)].reduce((a, b) => a < b ? a : b);
+    const evidence: CredentialEvidence = Object.freeze({ namespace: this, kind: 2, cohort, issuer: new Uint8Array(issuerKeyID), generation: this.#generation,
+      permissionKind: "issuer", permissionDigest: work.digest(trust, "credential_issuer_authorization_digest", authorization), digest: new Uint8Array(32),
+      policyID, policyRevision, expires: end });
+    try {
+      this.checkEvidence(evidence);
+      return Object.freeze({ evidence, preparationEnd: [end, trust.uint("signing_not_after_ms", authorization, schema), credentialTimeAdd(origin, (cohort + 1n) * duration)].reduce((a, b) => a < b ? a : b) });
+    } catch (error) { evidence.issuer.fill(0); evidence.permissionDigest.fill(0); evidence.digest.fill(0); throw error; }
+  }
+
+  /** Original independent permission for a locally constructed Grant. This
+   * checks the configured signing key and current namespace before signing;
+   * an unsigned projection never becomes a verified credential or capability. */
+  authorizeGrantIssuance(map: OwnedCredentialMap, publicKey: Uint8Array, work: CredentialWork): void {
+    requireCredential(map.schema === "Grant" && publicKey.length === 32, "credential_untrusted");
+    const signature = map.bytes("signature");
+    try { requireCredential(signature.length === 64 && signature.every(byte => byte === 0), "credential_untrusted"); } finally { signature.fill(0); }
+    checkCredentialTime(this.clock, map.uint("issued_at_ms"), map.uint("not_after_ms"));
+    const evidence = this.#credentialPermission(map, 2, work, publicKey);
+    try { this.checkEvidence(evidence); } finally { evidence.issuer.fill(0); evidence.digest.fill(0); evidence.permissionDigest.fill(0); evidence.grant?.fill(0); }
+  }
+  /** Public namespace facts for a bounded local issuance projection. The
+   * returned facts convey no signing permission and cannot authorize a Grant. */
+  grantIssuanceFacts(issued: bigint, reference: ResourceReference): Readonly<{ tenant: string; authority: string; generation: bigint; capacity: Uint8Array; cohort: bigint }> {
+    this.check(reference); const trust = this.#trust!, capacity = trust.field("capacity");
+    const origin = trust.uint("cohort_time_origin_ms", capacity, "NamespaceCapacity"), duration = trust.uint("cohort_duration_ms", capacity, "NamespaceCapacity");
+    requireCredential(issued >= origin, "credential_untrusted");
+    return Object.freeze({ tenant: this.tenant, authority: this.authority, generation: this.#generation, capacity: new Uint8Array(this.#capacityDigest), cohort: (issued - origin) / duration });
+  }
+  #credentialPermission(map: OwnedCredentialMap, kind: 0 | 1 | 2, work: CredentialWork, signingKey?: Uint8Array): CredentialEvidence {
+    requireCredential(map.schema === (kind === 0 ? "IdentityCertificate" : kind === 1 ? "Artifact" : "Grant"), "credential_untrusted");
+    this.checkNamespace(map); const trust = this.#trust!, cap = trust.field("capacity"), node = kind === 2 ? map.field("namespace") : 0, nsSchema = kind === 2 ? "GrantNamespace" : map.schema;
+    const cohort = map.uint("revocation_epoch", node, nsSchema), issued = map.uint("issued_at_ms"), end = map.uint(kind === 0 ? "expires_at_ms" : kind === 1 ? "session_not_after_ms" : "not_after_ms");
     const origin = trust.uint("cohort_time_origin_ms", cap, "NamespaceCapacity"), duration = trust.uint("cohort_duration_ms", cap, "NamespaceCapacity");
-    requireCredential(issued >= origin && (issued - origin) / duration === cohort && end <= this.impactDeadline(cohort, kind));
+    requireCredential(issued >= origin && (issued - origin) / duration === cohort && end <= this.impactDeadline(cohort, kind === 0 ? 0 : 1));
     const issuer = map.bytes("issuer_key_id"); requireCredential(!containsID(trust, "retired_issuers", issuer), "credential_revoked");
     const schema = "CredentialIssuerAuthorization";
-    const auth = [...trust.items("issuer_authorizations")].find(node =>
-      equalCredential(trust.bytes("issuer_key_id", node, schema), issuer) && trust.uint("credential_kind", node, schema) === BigInt(kind) &&
-      trust.text("audience", node, schema) === map.text("audience") && trust.text("crypto_profile_id", node, schema) === map.text("crypto_profile_id") &&
-      issued >= trust.uint("signing_not_before_ms", node, schema) && issued < trust.uint("signing_not_after_ms", node, schema) &&
-      cohort >= trust.uint("first_cohort", node, schema) && cohort <= trust.uint("last_cohort", node, schema) && end <= trust.uint("max_credential_not_after_ms", node, schema) &&
-      (kind === 1 || trust.text("subject_id", node, schema) === map.text("subject_id") && trust.uint("role", node, schema) === map.uint("role")));
-    requireCredential(auth !== undefined, "credential_untrusted"); work.verify(map, trust.bytes("issuer_public_key", auth, schema));
-    const evidence: CredentialEvidence = Object.freeze({ namespace: this, kind, cohort, issuer, generation: this.#generation, permissionKind: "issuer", permissionDigest: work.digest(trust, "credential_issuer_authorization_digest", auth), digest: work.digest(map, kind === 0 ? "certificate_digest" : "artifact_digest"),
-      ...(kind === 1 ? { lease: map.bytes("lease_id") } : {}), policyID: map.text("revocation_policy_id"), policyRevision: map.uint("revocation_policy_revision"), expires: end });
+    const auth = [...trust.items("issuer_authorizations")].find(entry => {
+      if (!equalCredential(trust.bytes("issuer_key_id", entry, schema), issuer) || trust.uint("credential_kind", entry, schema) !== BigInt(kind) ||
+        trust.text("audience", entry, schema) !== map.text("audience") || issued < trust.uint("signing_not_before_ms", entry, schema) ||
+        issued >= trust.uint("signing_not_after_ms", entry, schema) || cohort < trust.uint("first_cohort", entry, schema) || cohort > trust.uint("last_cohort", entry, schema) ||
+        end > trust.uint("max_credential_not_after_ms", entry, schema)) return false;
+      if (kind !== 2) return trust.text("crypto_profile_id", entry, schema) === map.text("crypto_profile_id") &&
+        (kind === 1 || trust.text("subject_id", entry, schema) === map.text("subject_id") && trust.uint("role", entry, schema) === map.uint("role"));
+      const parent = map.field("parent_ref"), role = map.uint("role_mask", node, nsSchema) & 3n;
+      return trust.text("service", entry, schema) === map.text("service") && (trust.uint("role", entry, schema) & role) === role &&
+        trust.text("parent_authority_id", entry, schema) === map.text("revocation_authority_id", parent, "GrantParentRef") &&
+        equalCredential(trust.bytes("parent_capacity_digest", entry, schema), map.bytes("namespace_capacity_digest", parent, "GrantParentRef")) &&
+        trust.uint("parent_generation", entry, schema) === map.uint("authority_generation", parent, "GrantParentRef") &&
+        equalCredential(trust.bytes("parent_artifact_issuer_key_id", entry, schema), map.bytes("artifact_issuer_key_id", parent, "GrantParentRef")) &&
+        map.uint("revocation_epoch", parent, "GrantParentRef") >= trust.uint("first_parent_cohort", entry, schema) &&
+        map.uint("revocation_epoch", parent, "GrantParentRef") <= trust.uint("last_parent_cohort", entry, schema);
+    });
+    requireCredential(auth !== undefined, "credential_untrusted");
+    if (signingKey !== undefined) checkCredentialTime(this.clock, trust.uint("signing_not_before_ms", auth, schema), trust.uint("signing_not_after_ms", auth, schema));
+    const authorizedKey = trust.bytes("issuer_public_key", auth, schema);
+    try { if (signingKey === undefined) work.verify(map, authorizedKey); else requireCredential(equalCredential(signingKey, authorizedKey), "credential_untrusted"); } finally { authorizedKey.fill(0); }
+    const evidence: CredentialEvidence = Object.freeze({ namespace: this, kind, cohort, issuer, generation: this.#generation, permissionKind: "issuer",
+      permissionDigest: work.digest(trust, "credential_issuer_authorization_digest", auth), digest: work.digest(map, kind === 0 ? "certificate_digest" : kind === 1 ? "artifact_digest" : "grant_digest"),
+      ...(kind === 1 ? { lease: map.bytes("lease_id") } : kind === 2 ? { grant: map.bytes("grant_id") } : {}),
+      policyID: map.text("revocation_policy_id", node, nsSchema), policyRevision: map.uint("revocation_policy_revision", node, nsSchema), expires: end });
+    try { this.checkEvidence(evidence); return evidence; }
+    catch (error) { evidence.issuer.fill(0); evidence.digest.fill(0); evidence.permissionDigest.fill(0); evidence.lease?.fill(0); evidence.grant?.fill(0); throw error; }
+  }
+  /** A verified Grant attests public parent facts. Independent parent trust
+   * supplies the original issuer permission; durable issuance remains a
+   * separate obligation of the relay authority before claim. */
+  verifyGrantParent(grant: OwnedCredentialMap, audience: string, profile: string, work: CredentialWork): CredentialEvidence {
+    this.check(); requireCredential(grant.schema === "Grant", "credential_untrusted");
+    const node = grant.field("parent_ref"), schema = "GrantParentRef", trust = this.#trust!, cap = trust.field("capacity");
+    requireCredential(grant.text("tenant_id", node, schema) === this.tenant && grant.text("revocation_authority_id", node, schema) === this.authority &&
+      grant.uint("authority_generation", node, schema) === this.#generation && equalCredential(grant.bytes("namespace_capacity_digest", node, schema), this.#capacityDigest), "credential_untrusted");
+    const issuer = grant.bytes("artifact_issuer_key_id", node, schema), cohort = grant.uint("revocation_epoch", node, schema), issued = grant.uint("issued_at_ms", node, schema), expires = grant.uint("session_not_after_ms", node, schema);
+    const origin = trust.uint("cohort_time_origin_ms", cap, "NamespaceCapacity"), duration = trust.uint("cohort_duration_ms", cap, "NamespaceCapacity");
+    requireCredential(issued >= origin && (issued - origin) / duration === cohort && expires <= this.impactDeadline(cohort, 1), "credential_untrusted");
+    const permission = [...trust.items("issuer_authorizations")].find(entry => {
+      const auth = "CredentialIssuerAuthorization";
+      return trust.uint("credential_kind", entry, auth) === 1n && equalCredential(trust.bytes("issuer_key_id", entry, auth), issuer) &&
+        trust.text("audience", entry, auth) === audience && trust.text("crypto_profile_id", entry, auth) === profile &&
+        issued >= trust.uint("signing_not_before_ms", entry, auth) && issued < trust.uint("signing_not_after_ms", entry, auth) &&
+        cohort >= trust.uint("first_cohort", entry, auth) && cohort <= trust.uint("last_cohort", entry, auth) && expires <= trust.uint("max_credential_not_after_ms", entry, auth);
+    });
+    requireCredential(permission !== undefined, "credential_untrusted");
+    const evidence: CredentialEvidence = Object.freeze({ namespace: this, kind: 1, cohort, issuer, generation: this.#generation,
+      permissionKind: "issuer", permissionDigest: work.digest(trust, "credential_issuer_authorization_digest", permission), digest: grant.bytes("artifact_digest", node, schema),
+      lease: grant.bytes("lease_id", node, schema), policyID: grant.text("revocation_policy_id", node, schema), policyRevision: grant.uint("revocation_policy_revision", node, schema), expires });
     this.checkEvidence(evidence); return evidence;
   }
   policyRequirements(e: CredentialEvidence): Readonly<{ staleness: bigint; signerLifetime: bigint }> {
@@ -427,17 +749,31 @@ export class CredentialNamespace {
     const field = e.permissionKind === "issuer" ? "issuer_authorizations" : "activation_delegations", domain = e.permissionKind === "issuer" ? "credential_issuer_authorization_digest" : "connection_activation_delegation_digest";
     requireCredential([...trust.items(field)].some(n => equalCredential(this.#work.digest(trust, domain, n), e.permissionDigest)), "credential_revoked");
     const floors = namespaceFloors(state), observed = this.#observed === undefined ? floors : namespaceFloors(this.#observed.map);
-    requireCredential(e.cohort >= max(floors[e.kind], observed[e.kind]), "credential_revoked");
+    requireCredential(e.cohort >= max(floors[e.kind === 0 ? 0 : 1], observed[e.kind === 0 ? 0 : 1]), "credential_revoked");
     requireCredential(!containsID(trust, "retired_issuers", e.issuer), "credential_revoked");
     for (const n of state.items("revoked_issuers")) requireCredential(!equalCredential(state.bytes("issuer_key_id", n, "RevokedIssuerEntry"), e.issuer), "credential_revoked");
+    for (const issuer of this.#denials.issuers) requireCredential(!equalCredential(issuer, e.issuer), "credential_revoked");
     if (e.kind === 0) for (const n of state.items("revoked_certificates")) requireCredential(!equalCredential(state.bytes("certificate_digest", n, "RevokedCertificateEntry"), e.digest), "credential_revoked");
-    if (e.lease !== undefined) for (const n of state.items("revoked_leases")) requireCredential(!(equalCredential(state.bytes("issuer_key_id", n, "RevokedLeaseEntry"), e.issuer) && equalCredential(state.bytes("lease_id", n, "RevokedLeaseEntry"), e.lease)), "credential_revoked");
+    if (e.kind === 0) for (const certificate of this.#denials.certificates) requireCredential(!equalCredential(certificate, e.digest), "credential_revoked");
+    if (e.lease !== undefined) {
+      for (const n of state.items("revoked_leases")) requireCredential(!(equalCredential(state.bytes("issuer_key_id", n, "RevokedLeaseEntry"), e.issuer) && equalCredential(state.bytes("lease_id", n, "RevokedLeaseEntry"), e.lease)), "credential_revoked");
+      for (const [issuer, lease] of this.#denials.leases) requireCredential(!(equalCredential(issuer, e.issuer) && equalCredential(lease, e.lease)), "credential_revoked");
+    }
   }
   onceAuthority(issuer: Uint8Array): Uint8Array {
     this.check(); const trust = this.#trust!, node = [...trust.items("once_authorities")].find(n => equalCredential(trust.bytes("artifact_issuer_key_id", n, "OnceAuthorityRef"), issuer));
     requireCredential(node !== undefined, "credential_untrusted"); return trust.encoded(node);
   }
   verifyActivation(activation: OwnedCredentialMap, parent: CredentialEvidence, work: CredentialWork): CredentialEvidence {
+    return this.#activationEvidence(activation, parent, work);
+  }
+  authorizeActivationIssuance(activation: OwnedCredentialMap, parent: CredentialEvidence, publicKey: Uint8Array, work: CredentialWork): CredentialEvidence {
+    requireCredential(publicKey.length === 32 && activation.schema === "ActivationAuthorization", "credential_untrusted");
+    const signature = activation.bytes("signature");
+    try { requireCredential(signature.length === 64 && signature.every(byte => byte === 0), "credential_untrusted"); } finally { signature.fill(0); }
+    return this.#activationEvidence(activation, parent, work, publicKey);
+  }
+  #activationEvidence(activation: OwnedCredentialMap, parent: CredentialEvidence, work: CredentialWork, signingKey?: Uint8Array): CredentialEvidence {
     this.checkEvidence(parent); const trust = this.#trust!, s = "ConnectionActivationDelegation";
     const node = [...trust.items("activation_delegations")].find(n => trust.text("signing_key_id", n, s) === activation.text("signing_key_id"));
     requireCredential(node !== undefined, "credential_untrusted");
@@ -447,7 +783,11 @@ export class CredentialNamespace {
       issued >= trust.uint("signing_not_before_ms", node, s) && issued < trust.uint("signing_not_after_ms", node, s) &&
       parent.cohort >= trust.uint("first_parent_cohort", node, s) && parent.cohort <= trust.uint("last_parent_cohort", node, s) &&
       until <= trust.uint("max_activation_not_after_ms", node, s) && end <= trust.uint("max_session_not_after_ms", node, s) && end <= this.impactDeadline(parent.cohort, 1), "credential_untrusted");
-    work.verify(activation, trust.bytes("signer_public_key", node, s), { selectors: { activation_source_profile: activation.doc.selector("activation_source_profile")! } });
+    const authorizedKey = trust.bytes("signer_public_key", node, s);
+    try {
+      if (signingKey === undefined) work.verify(activation, authorizedKey, { selectors: { activation_source_profile: activation.doc.selector("activation_source_profile")! } });
+      else requireCredential(equalCredential(signingKey, authorizedKey), "credential_untrusted");
+    } finally { authorizedKey.fill(0); }
     const evidence: CredentialEvidence = Object.freeze({ namespace: this, kind: 1, cohort: parent.cohort, issuer, generation: this.#generation, permissionKind: "activation", permissionDigest: work.digest(trust, "connection_activation_delegation_digest", node), digest: work.digest(activation, "activation_digest"),
       policyID: parent.policyID, policyRevision: parent.policyRevision, expires: end }); this.checkEvidence(evidence); return evidence;
   }
@@ -459,6 +799,10 @@ export class CredentialNamespaceSubscription {
     requireCredential(token === namespaceToken, "credential_untrusted"); this.#namespace = namespace; Object.freeze(this);
   }
   check(): void { requireCredential(this.#namespace !== undefined, "credential_closed"); this.#namespace.checkSubscription(namespaceToken, this.subscriber); }
+  attach(namespace: CredentialNamespace, reference: ResourceReference, changed: () => void): void {
+    requireCredential(this.#namespace === namespace && this.subscriber.changed === undefined && typeof changed === "function");
+    namespace.attachSubscription(namespaceToken, this.subscriber, reference, changed);
+  }
   close(): void { this.#namespace?.releaseSubscription(namespaceToken, this.subscriber); this.#namespace = undefined; }
 }
 const min = (a: bigint, b: bigint): bigint => a < b ? a : b;

@@ -67,7 +67,7 @@ Flowersec 将应用会话与承载它的网络路径分离：
 
 ## 示例
 
-从 [Cookbook 索引](examples/README.md)开始，里面的示例使用与生产应用相同的公共 API，涵盖客户端连接、由 Go 控制面签发 v3 连接邀请、持久化单次使用处理、活性探测和会话生命周期。
+从 [Cookbook 索引](examples/README.md)开始，里面的示例使用与生产应用相同的公共 API，涵盖客户端连接、由 Go 控制面签发 v4 连接邀请、持久化单次使用处理、活性探测和会话生命周期。
 
 <!-- readme-section:portable-contract -->
 <a id="portable-contract"></a>
@@ -87,31 +87,23 @@ Flowersec 将应用会话与承载它的网络路径分离：
 | 应用流处理器 | 是 | 是 | 是 | 是 |
 | 长连接自动恢复 | 是 | 是 | 是 | 是 |
 | 协商后的不可靠消息 | 是 | 是 | 否 | 是 |
-| 客户端 RPC 处理器 | 是 | 是 | 否 | 是 |
-| 服务端会话接收 | 是 | 是 | 否 | 是 |
-| 服务端会话处理器 | 是 | 是 | 否 | 是 |
+| 客户端 RPC 处理器 | 是 | 是 | 是 | 是 |
+| 服务端会话接收 | 是 | 是 | 是 | 是 |
+| 服务端会话处理器 | 是 | 是 | 是 | 是 |
 | 控制面签发与授权 | 是 | 否 | 否 | 否 |
-| 直连与隧道准入 | 是 | 是 | 否 | 是 |
+| 直连与隧道准入 | 是 | 是 | 是 | 是 |
 | HTTP 和 WebSocket ProxyServer | 是 | 是 | 否 | 是 |
 | 与载体无关的流合同 | 是 | 是 | 是 | 是 |
-| Transport v3 线协议安全 | 是 | 是 | 是 | 是 |
+| Transport v4 线协议安全 | 是 | 是 | 是 | 是 |
 <!-- capability-table:end -->
-部署 profile 将平台可用性与共享的 Flowersec 应用协议分离：
 
-| Profile | 运行时 | 必需的 carrier 与角色范围 | 可选范围 |
-| --- | --- | --- | --- |
-| `native-server-core` | Go、Rust、Node.js | WebSocket 和 raw QUIC endpoint client、direct server 与 opaque tunnel runtime | WebTransport adapter |
-| `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
-| `apple-client` | Apple 平台上的 Swift | WSS endpoint client | 无 |
-| `webtransport-server` | Go | WebTransport direct server 与 opaque tunnel runtime | 无 |
+部署 profile 描述所需的原生或浏览器载体与角色组合。各 SDK 指南分别说明当前 API 和 provider 资格；源码声明不等于运行验证通过。
 
-机器可读的 native-server-core profile 包含 18 个聚合的运行时-角色-carrier tuple（每个原生运行时 6 个）和 24 个已支持的特定路径服务端单元；Go H4 另增加 2 个 WebTransport 服务端 tuple 和 2 个特定路径单元。互操作矩阵另行声明 18 个 direct cell 和 18 个 tunnel cell。发布门禁已验证所有包含 Go 的 10 个 direct cell 和 14 个两两 tunnel cell；其余 8 个 direct cell 和 4 个 tunnel cell 仍明确标记为未验证。另有 4 个 WSS 客户端 profile 验证 Swift 和浏览器 TypeScript 通过 direct 与 tunnel 路径连接 Go。profile 绝不会改变 Artifact、handshake、RPC、stream、close、rekey 或 authorization wire 语义。
+当前协议使用经过认证的连接材料、独立命名空间信任、有界会话、类型化服务和显式清理。直连及隧道互操作由可执行矩阵和原 provider 验证。发布只进行包发布与仓库回读，不运行验收测试。
 
-请查看各 SDK 指南，了解每个包支持的平台和连接组合。
+WebTransport 需要配置原生或浏览器 provider。浏览器支持取决于实际 WebTransport API 和证书策略能力。当前载体、监听和中继范围请参阅各 SDK 指南。
 
-WebTransport 是可选能力，不属于必需的 native-server carrier 合同。Go 声明独立且完整的 H4 webtransport-server profile；Browser profile 在浏览器 WebTransport API 可用时使用 H3；Node.js 和 Rust 当前没有 production WebTransport adapter。Go、Rust 和 Node.js 的 native-server carrier 范围是 WebSocket 与 raw QUIC；两两互操作支持只由矩阵中标记 supported 的条目声明。
-
-`flowersec-private-loopback/1` 是公开 deployment capability registry 之外的产品私有 profile。它的专用 Go server 和 TypeScript browser API 仅限应用已认证的数字回环 HTTP bridge。
+签名的 `local_loopback` 接入类支持同一机器上经过应用鉴权的 HTTP 桥。它使用当前会话协议，并要求配置本地 provider。
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -119,14 +111,14 @@ WebTransport 是可选能力，不属于必需的 native-server carrier 合同�
 ## 安全
 
 - 直连和中继会话中的应用数据都采用端到端加密。
-- TLS 信任策略会绑定到每个 v3 传输候选项。公共或部署提供的 CA 根与显式叶证书 pin 互斥，失败后绝不降级。
-- `flowersec-private-loopback/1` 是隔离的传输 envelope，不是 `flowersec/3` 的 TLS mode 或 capability。它的专用 API 仅在 authority 与同一数字回环 origin 一致，且 server application 在 upgrade 前完成授权时，才把一个未修改的 CA-mode v3 candidate 映射到 `ws://`。普通 Go、TypeScript、Rust、Swift、Provider 和 tunnel 路径都会拒绝该 envelope。
+- TLS 信任策略会绑定到每个 v4 传输候选项。公共或部署提供的 CA 根与显式叶证书 pin 互斥，失败后绝不降级。
+- `local_loopback` 接入类仅允许签名数字回环端点使用 `ws://`，并要求精确 Origin 和 upgrade 前的应用鉴权。它不声明外层 TLS 验证能力，也不允许明文回退。
 - 连接邀请不透明、有效期短且只能使用一次。
 - 凭据会在使用前完成核销，已消费的邀请无法重放。
 - 中继只转发加密流量，不会终止应用会话。
 - 无效或不受支持的连接尝试会安全失败，并只返回有限的公共错误信息。
 
-协议与威胁模型详情请阅读 [API 契约](docs/API_CONTRACT.md)、[传输架构](docs/TRANSPORT_V3_ARCHITECTURE.md)和[威胁模型](docs/THREAT_MODEL.md)。
+协议与威胁模型详情请阅读 [API 契约](docs/API_CONTRACT.md)、[传输架构](docs/TRANSPORT_V4_BINDING.md)和[威胁模型](docs/THREAT_MODEL.md)。
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -135,7 +127,7 @@ WebTransport 是可选能力，不属于必需的 native-server carrier 合同�
 
 - [API 契约](docs/API_CONTRACT.md)：各 SDK 共享的稳定应用行为。
 - [错误模型](docs/ERROR_MODEL.md)：公共连接、会话和 RPC 错误。
-- [传输架构](docs/TRANSPORT_V3_ARCHITECTURE.md)：直连与中继连接的设计。
+- [传输架构](docs/TRANSPORT_V4_BINDING.md)：直连与中继连接的设计。
 - [示例](examples/README.md)：可运行的 SDK 用法。
 
 Flowersec 采用 [MIT License](LICENSE)。已发布的软件包和版本说明可在 [GitHub Releases](https://github.com/floegence/flowersec/releases)中查看。

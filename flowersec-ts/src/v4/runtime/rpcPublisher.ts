@@ -27,12 +27,20 @@ export interface RPCPublicationGuard {
   /** Original SDK scalar transition, invoked only after request BEGIN enters
    * the immutable Stream publication gate. It must not call application code. */
   admitted?(): void;
+  /** Rebind the same pre-BEGIN windows to another SDK-selected source. */
+  reroute?(source: RPCPublicationGuard): RPCPublicationGuard;
+  /** Original SDK observation after the complete successful response reaches
+   * the native provider. This never invokes an application callback. */
+  responseHandedOff?(): void;
+  /** The physical tail of a response publication has completed. */
+  publicationPhysicalComplete?(): void;
 }
 interface Publication {
   readonly ticket: RPCNetworkTicket; readonly outgoing: boolean; readonly query: boolean;
   header: ApplicationHeader | undefined; payload: RPCPayloadBorrow | undefined; small: RPCSDKError | undefined;
   stopping: boolean; revision: bigint; category: Category | undefined;
   guard: RPCPublicationGuard | undefined;
+  lifecycle: RPCPublicationGuard | undefined;
   readonly observation: ResponsePublication | undefined;
 }
 export function rpcPublisherCharge(runtimeBytes: bigint): ResourceVector {
@@ -67,7 +75,7 @@ export class RPCPublisher {
   #currentEntry: Publication | undefined;
   #tailPayload: RPCPayloadBorrow | undefined;
   constructor(network: RPCNetwork, channel: RPCChannel, receiver: RPCReceiver, stream: RPCStreamOwner,
-    position: ProtectedResourceReservation, runtimeBytes: bigint, reference: ResourceReference) {
+    position: ProtectedResourceReservation, runtimeBytes: bigint, reference: ResourceReference, private readonly reusablePosition = false) {
     if (!network.sameEnvironment(reference) || stream.kind !== "flowersec.rpc.v4" || stream.metadata.length !== 0 || stream.maxWriteBytes < 16384) throw new RPCProtocolError("rpc_publisher_owner");
     this.#network = network; this.#channel = channel; this.#receiver = receiver; this.#stream = stream; this.#position = position;
     this.#reference = reference.take(rpcPublisherCharge(runtimeBytes));
@@ -77,20 +85,23 @@ export class RPCPublisher {
     catch (error) { this.close(); throw error; }
   }
   #check(): void { if (this.#closed) throw new RPCProtocolError("rpc_publisher_closed"); this.#reference!.check(); }
-  #add(ticket: RPCNetworkTicket, outgoing: boolean, header: ApplicationHeader | undefined, payload: RPCPayloadBorrow | undefined, small?: RPCSDKError, guard?: RPCPublicationGuard): void {
+  #add(ticket: RPCNetworkTicket, outgoing: boolean, header: ApplicationHeader | undefined, payload: RPCPayloadBorrow | undefined,
+    small?: RPCSDKError, guard?: RPCPublicationGuard, observation?: ResponsePublication, lifecycle?: RPCPublicationGuard): void {
     this.#check(); this.#sync(); this.#network.checkBinding(ticket, this.#channel, outgoing);
     if (this.#entries.has(ticket)) throw new RPCProtocolError("rpc_duplicate_publication");
     const state = this.#network.state(ticket);
     if (outgoing ? state.requestSerial !== 0n || header !== this.#network.request(ticket) : !state.requestDone || state.responseSerial !== 0n) throw new RPCProtocolError("rpc_publication_owner");
     if (header !== undefined && byteLength(payload!.bytes) !== header.payloadBytes) throw new RPCProtocolError("rpc_payload_length");
     if (!outgoing && header !== undefined) header.checkResponse(this.#network.request(ticket));
-    this.#entries.set(ticket, { ticket, outgoing, query: state.query, header, payload, small, guard, observation: outgoing ? undefined : guard?.responsePublication, stopping: false, revision: 0n, category: undefined });
+    this.#entries.set(ticket, { ticket, outgoing, query: state.query, header, payload, small, guard, lifecycle: lifecycle ?? guard,
+      observation: outgoing ? undefined : observation ?? guard?.responsePublication, stopping: false, revision: 0n, category: undefined });
   }
   addRequest(ticket: RPCNetworkTicket, payload: RPCPayloadBorrow, guard?: RPCPublicationGuard): void { this.#add(ticket, true, this.#network.request(ticket), payload, undefined, guard); }
   addResponse(ticket: RPCNetworkTicket, header: ApplicationHeader, payload: RPCPayloadBorrow, guard?: RPCPublicationGuard): void { this.#add(ticket, false, header, payload, undefined, guard); }
-  replySDK(ticket: RPCNetworkTicket, code: RPCSDKError): void {
+  replySDK(ticket: RPCNetworkTicket, code: RPCSDKError, guard?: RPCPublicationGuard): void {
     if (!Object.hasOwn(codes, code) || code === "source_overflow") throw new RPCProtocolError("rpc_error_variant");
-    this.#add(ticket, false, undefined, undefined, code);
+    this.#add(ticket, false, undefined, undefined, code, undefined, guard?.responsePublication, guard);
+    guard?.responsePublication?.unknown(code === "deadline_exceeded" ? "deadline" : "response_superseded");
   }
   stop(ticket: RPCNetworkTicket): void {
     this.#check(); const entry = this.#entries.get(ticket);
@@ -105,6 +116,13 @@ export class RPCPublisher {
   #remove(entry: Publication): void {
     if (entry.category !== undefined) this.#ready[entry.category].delete(entry);
     entry.category = undefined; this.#entries.delete(entry.ticket); this.#detachPayload(entry); entry.guard = undefined;
+    // An admitted fragment owns its actual tail until publishNext's finally.
+    if (this.#currentEntry !== entry) this.#completePhysical(entry);
+  }
+  #completePhysical(entry: Publication): void {
+    const lifecycle = entry.lifecycle; entry.lifecycle = undefined;
+    lifecycle?.publicationPhysicalComplete?.();
+    entry.observation?.physicalDone();
   }
   #detachPayload(entry: Publication): void {
     if (entry.payload === undefined) return;
@@ -154,6 +172,8 @@ export class RPCPublisher {
     return category === undefined ? undefined : this.#ready[category].values().next().value;
   }
   ready(): boolean { this.#check(); return this.#select() !== undefined; }
+  load(): number { this.#check(); return this.#entries.size + Number(this.#busy); }
+  businessPending(): boolean { return this.#entries.size !== 0 || this.#busy; }
   #served(entry: Publication): void {
     const category = entry.category!;
     if (category === "query") this.#generalRun = 0;
@@ -225,8 +245,11 @@ export class RPCPublisher {
       this.#served(entry);
       const state = this.#network.state(entry.ticket);
       if (entry.outgoing ? state.requestDone : state.responseDone) this.#detachPayload(entry);
-      if (!entry.outgoing && state.responseDone && fragment.kind !== 2 && !entry.stopping && entry.small === undefined && observation !== undefined) {
-        const original = observation; request.observeProtocolHandoff(() => original.handoff());
+      if (!entry.outgoing && state.responseDone && fragment.kind !== 2 && !entry.stopping && entry.small === undefined) {
+        const original = observation, lifecycle = entry.lifecycle;
+        if (original !== undefined || lifecycle?.responseHandedOff !== undefined) request.observeProtocolHandoff(() => {
+          original?.handoff(); lifecycle?.responseHandedOff?.();
+        });
       }
       if (!entry.outgoing && state.responseDone) { this.#network.release(entry.ticket); this.#remove(entry); }
       request.start();
@@ -243,7 +266,8 @@ export class RPCPublisher {
       else await request?.waitCleanup();
       releasePublication?.();
       this.#current = undefined; this.#wire.fill(0); this.#header.fill(0); this.#small.fill(0);
-      this.#currentEntry = undefined; this.#busy = false;
+      const entry = this.#currentEntry; this.#currentEntry = undefined; this.#busy = false;
+      if (entry !== undefined && !this.#entries.has(entry.ticket)) this.#completePhysical(entry);
       const tail = this.#tailPayload; this.#tailPayload = undefined; tail?.release(); this.#collect();
       this.#network.flushOutputEvents();
     }
@@ -253,7 +277,7 @@ export class RPCPublisher {
     this.#currentEntry?.observation?.unknown("owner_unavailable");
     this.#current?.cancel(); // An accepted fragment can only end with its real Stream.
     for (const entry of this.#entries.values()) { entry.observation?.unknown("owner_unavailable"); this.#remove(entry); }
-    this.#position.closeAfterUse(); this.#collect();
+    if (!this.reusablePosition) this.#position.closeAfterUse(); this.#collect();
   }
   #collect(): void {
     if (!this.#closed || this.#busy) return;

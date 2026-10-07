@@ -54,7 +54,7 @@ func TestRuntimeCBORCompleteMapCorpus(t *testing.T) {
 			}
 		})
 	}
-	if positive != 348 || negative == 0 {
+	if positive != 349 || negative == 0 {
 		t.Fatal("incomplete corpus", positive, negative)
 	}
 }

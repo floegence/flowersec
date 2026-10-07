@@ -35,17 +35,16 @@ use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::{
-    HandlerRegistrationError, IncomingStream, SessionError, StreamHandler, StreamHandlerRegistrar,
-    proxy_network::{ProxyNetworkPolicy, ProxySocket},
-    session_handlers::register_stream_handlers,
+    SessionError,
+    proxy_network::{ProxyNativeOwnership, ProxyNetworkPolicy, ProxySocket},
     transport::ByteStream,
-    websocket_transport,
 };
 
 const HTTP_KIND: &str = "flowersec-proxy/http1";
+const CREDENTIAL_CONTROL_PATH: &str = "/.flowersec/upstream-credentials";
 const WEBSOCKET_KIND: &str = "flowersec-proxy/ws";
 const WIRE_VERSION: u8 = 2;
-pub(crate) const DEFAULT_MAX_JSON: usize = 1 << 20;
+pub(crate) const DEFAULT_MAX_METADATA: usize = 1 << 20;
 pub(crate) const DEFAULT_MAX_CHUNK: usize = 256 * 1024;
 pub(crate) const DEFAULT_MAX_BODY: usize = 64 * 1024 * 1024;
 pub(crate) const DEFAULT_MAX_WEBSOCKET_FRAME: usize = 1 << 20;
@@ -107,7 +106,7 @@ pub struct ProxyServerOptions {
     pub max_concurrent_http_streams: usize,
     pub max_concurrent_event_streams: usize,
     pub event_stream_idle_timeout: Duration,
-    pub max_json_frame_bytes: usize,
+    pub max_metadata_bytes: usize,
     pub max_chunk_bytes: usize,
     pub max_body_bytes: usize,
     pub max_websocket_frame_bytes: usize,
@@ -119,6 +118,7 @@ pub struct ProxyServerOptions {
     pub extra_websocket_headers: Vec<String>,
     pub forbidden_cookie_names: Vec<String>,
     pub forbidden_cookie_name_prefixes: Vec<String>,
+    pub credentials: Option<crate::ProxyCredentialPolicy>,
     pub on_error: Option<ProxyErrorReporter>,
 }
 
@@ -142,7 +142,7 @@ impl ProxyServerOptions {
             max_concurrent_http_streams: 0,
             max_concurrent_event_streams: 0,
             event_stream_idle_timeout: Duration::ZERO,
-            max_json_frame_bytes: 0,
+            max_metadata_bytes: 0,
             max_chunk_bytes: 0,
             max_body_bytes: 0,
             max_websocket_frame_bytes: 0,
@@ -154,6 +154,7 @@ impl ProxyServerOptions {
             extra_websocket_headers: Vec::new(),
             forbidden_cookie_names: Vec::new(),
             forbidden_cookie_name_prefixes: Vec::new(),
+            credentials: None,
             on_error: None,
         }
     }
@@ -164,8 +165,6 @@ impl ProxyServerOptions {
 pub enum ProxyServerError {
     #[error("invalid Flowersec proxy server options")]
     InvalidOptions,
-    #[error("Flowersec proxy handlers are already registered")]
-    AlreadyRegistered,
     #[error("Flowersec proxy server is closed")]
     Closed,
     #[error("Flowersec proxy operation failed")]
@@ -179,7 +178,7 @@ struct Config {
     upstream_origin: String,
     upstream_trust_roots_der: Vec<Vec<u8>>,
     allowed_origins: HashSet<String>,
-    max_json: usize,
+    max_metadata: usize,
     max_chunk: usize,
     max_body: usize,
     max_http: usize,
@@ -198,6 +197,7 @@ struct Config {
 }
 
 struct Inner {
+    credentials: Option<Arc<crate::proxy_credentials_v4::CredentialRuntime>>,
     config: Config,
     permits: Arc<Semaphore>,
     http_permits: Arc<Semaphore>,
@@ -222,9 +222,18 @@ pub struct ProxyServer {
 
 impl ProxyServer {
     pub fn new(options: ProxyServerOptions) -> Result<Self, ProxyServerError> {
+        let mut options = options;
+        let credential_policy = options.credentials.take();
         let (config, max_concurrent, on_error) = compile_options(options)?;
+        let credentials = credential_policy
+            .filter(|policy| policy.mode != crate::ProxyCredentialMode::None)
+            .map(|policy| {
+                crate::proxy_credentials_v4::CredentialRuntime::new(policy, &config.upstream)
+            })
+            .transpose()
+            .map_err(|_| ProxyServerError::InvalidOptions)?;
         if config.upstream.scheme() == "https" {
-            websocket_transport::client_tls(config.upstream_trust_roots_der.clone())
+            crate::proxy_network::client_tls(config.upstream_trust_roots_der.clone())
                 .map_err(|_| ProxyServerError::InvalidOptions)?;
         }
         Ok(Self {
@@ -232,6 +241,7 @@ impl ProxyServer {
                 http_permits: Arc::new(Semaphore::new(config.max_http)),
                 event_permits: Arc::new(Semaphore::new(config.max_events)),
                 config,
+                credentials,
                 permits: Arc::new(Semaphore::new(max_concurrent)),
                 closed: CancellationToken::new(),
                 active: AtomicUsize::new(0),
@@ -241,45 +251,70 @@ impl ProxyServer {
         })
     }
 
-    /// Atomically installs the HTTP and WebSocket handlers on a carrier-neutral registry.
-    pub fn register_stream_handlers<R>(&self, handlers: &mut R) -> Result<(), ProxyServerError>
-    where
-        R: StreamHandlerRegistrar,
-    {
-        self.register_into(handlers)
-    }
-
-    fn register_into<R>(&self, handlers: &mut R) -> Result<(), ProxyServerError>
-    where
-        R: StreamHandlerRegistrar,
-    {
+    /// Current raw-stream registrations for a frozen HandlerPlan. HTTP/WS
+    /// authorization, request framing and upstream policy stay in this owner.
+    pub fn stream_registrations(
+        &self,
+    ) -> Result<Vec<crate::RawStreamRegistration>, ProxyServerError> {
         if self.inner.closed.is_cancelled() {
             return Err(ProxyServerError::Closed);
         }
-        let http: Arc<dyn StreamHandler> = Arc::new(ProxyHandler {
-            inner: self.inner.clone(),
-            protocol: Protocol::Http,
-        });
-        let websocket: Arc<dyn StreamHandler> = Arc::new(ProxyHandler {
-            inner: self.inner.clone(),
-            protocol: Protocol::WebSocket,
-        });
-        register_stream_handlers(
-            handlers,
-            vec![
-                (HTTP_KIND.to_owned(), http),
-                (WEBSOCKET_KIND.to_owned(), websocket),
-            ],
-        )
-        .map_err(|error| match error {
-            HandlerRegistrationError::AlreadyRegistered => ProxyServerError::AlreadyRegistered,
-            HandlerRegistrationError::Invalid => ProxyServerError::OperationFailed,
-        })
+        let registrations = vec![
+            crate::RawStreamRegistration {
+                kind: HTTP_KIND.to_owned(),
+                metadata: None,
+                handler: Arc::new(CurrentProxyHandler(ProxyHandler {
+                    inner: self.inner.clone(),
+                    protocol: Protocol::Http,
+                })),
+            },
+            crate::RawStreamRegistration {
+                kind: WEBSOCKET_KIND.to_owned(),
+                metadata: None,
+                handler: Arc::new(CurrentProxyHandler(ProxyHandler {
+                    inner: self.inner.clone(),
+                    protocol: Protocol::WebSocket,
+                })),
+            },
+        ];
+        Ok(registrations)
     }
 
+    pub async fn bind_upstream_credentials(
+        &self,
+        authentication: crate::ApplicationBinding,
+        surface_owner: [u8; 16],
+        content_origin: &str,
+    ) -> Result<crate::ProxyCookieSession, crate::ProxyCredentialError> {
+        self.inner
+            .credentials
+            .as_ref()
+            .ok_or(crate::ProxyCredentialError::ScopeUnavailable)?
+            .bind(authentication, surface_owner, content_origin)
+            .await
+    }
+    /// Reports this server's original invalidation fact. Host/Service Worker
+    /// fences remain separate facts owned by their actual publishers.
+    pub async fn clear_upstream_credentials(
+        &self,
+        authentication: crate::ApplicationBinding,
+        surface_owner: [u8; 16],
+        session: &crate::ProxyCookieSession,
+    ) -> Result<crate::ProxyCredentialClearResult, crate::ProxyCredentialError> {
+        let attachment = session.attachment()?;
+        self.inner
+            .credentials
+            .as_ref()
+            .ok_or(crate::ProxyCredentialError::ScopeUnavailable)?
+            .clear(authentication, surface_owner, &attachment)
+            .await
+    }
     /// Cancels active operations, waits for their cleanup, and rejects future dispatch.
     pub async fn close(&self) {
         self.inner.closed.cancel();
+        if let Some(credentials) = &self.inner.credentials {
+            credentials.close();
+        }
         loop {
             let completion = self.inner.completion.notified();
             tokio::pin!(completion);
@@ -337,12 +372,12 @@ impl Drop for ActiveOperation {
     }
 }
 
-#[async_trait]
-impl StreamHandler for ProxyHandler {
-    async fn handle(
+impl ProxyHandler {
+    async fn serve_stream(
         &self,
-        incoming: &IncomingStream,
+        stream: &dyn ByteStream,
         cancellation: CancellationToken,
+        ownership: Option<Arc<ProxyNativeOwnership>>,
     ) -> Result<(), SessionError> {
         let _active = ActiveOperation::enter(self.inner.clone())?;
         let permit = self
@@ -362,9 +397,12 @@ impl StreamHandler for ProxyHandler {
             operation_for_close.cancel();
         });
         let result = match self.protocol {
-            Protocol::Http => serve_http(&self.inner, incoming.stream(), operation.clone()).await,
+            Protocol::Http => {
+                serve_http_owned(&self.inner, stream, operation.clone(), ownership.clone()).await
+            }
             Protocol::WebSocket => {
-                serve_websocket(&self.inner, incoming.stream(), operation.clone()).await
+                serve_websocket_owned(&self.inner, stream, operation.clone(), ownership.clone())
+                    .await
             }
         };
         close_task.abort();
@@ -375,6 +413,174 @@ impl StreamHandler for ProxyHandler {
             return Err(SessionError::OperationFailed);
         }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct CurrentProxyHandler(ProxyHandler);
+impl CurrentProxyHandler {
+    fn accepts_metadata(&self, metadata: &crate::Metadata) -> bool {
+        if metadata.encoded().is_empty() {
+            return true;
+        }
+        let contract = crate::RawStreamMetadataContract {
+            contract_id: "flowersec.proxy.open".into(),
+            namespace: "application/json".into(),
+            version: 1,
+            codec: "application/json".into(),
+            fields: vec![
+                crate::RawStreamMetadataField {
+                    name: "protocol".into(),
+                    value_type: crate::RawStreamMetadataType::String,
+                    required: true,
+                },
+                crate::RawStreamMetadataField {
+                    name: "version".into(),
+                    value_type: crate::RawStreamMetadataType::Number,
+                    required: true,
+                },
+            ],
+            max_encoded_bytes: 256,
+            max_decoded_bytes: 128,
+        };
+        let Ok(values) = metadata.project_raw(&contract) else {
+            return false;
+        };
+        let protocol = match self.0.protocol {
+            Protocol::Http => "flowersec.proxy.http",
+            Protocol::WebSocket => "flowersec.proxy.websocket",
+        };
+        values.get("protocol").and_then(serde_json::Value::as_str) == Some(protocol)
+            && values.get("version").and_then(serde_json::Value::as_u64)
+                == Some(u64::from(WIRE_VERSION))
+    }
+
+    fn resources(&self) -> Result<crate::environment_v4::ResourceLimits, crate::ServeError> {
+        let config = &self.0.inner.config;
+        let body = match self.0.protocol {
+            Protocol::Http => config.max_body,
+            Protocol::WebSocket => config.max_websocket_frame,
+        } as u64;
+        let bytes = body
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(config.max_metadata as u64 * 4))
+            .and_then(|bytes| bytes.checked_add(config.max_chunk as u64 * 4 + 524288))
+            .ok_or_else(|| crate::ServeError::new(crate::ServeFailure::Capacity))?;
+        Ok(crate::environment_v4::ResourceLimits {
+            sdk_bytes: bytes,
+            provider_bytes: 2 << 20,
+            items: 16,
+            tasks: 3,
+            timers: 3,
+            native_handles: 1,
+            work_slots: 3,
+            ..Default::default()
+        })
+    }
+    fn failure(error: SessionError) -> crate::ServeError {
+        crate::ServeError::new(match error {
+            SessionError::Closed => crate::ServeFailure::Closed,
+            SessionError::Canceled => crate::ServeFailure::Canceled,
+            SessionError::ResourceExhausted => crate::ServeFailure::Capacity,
+            _ => crate::ServeFailure::Rejected,
+        })
+    }
+}
+#[async_trait]
+impl crate::RawStreamHandler for CurrentProxyHandler {
+    async fn authorize(
+        &self,
+        _authentication: crate::ApplicationBinding,
+        metadata: crate::Metadata,
+        cancellation: CancellationToken,
+    ) -> Result<crate::StreamAuthorization, crate::ServeError> {
+        if cancellation.is_cancelled() || self.0.inner.closed.is_cancelled() {
+            return Err(crate::ServeError::new(crate::ServeFailure::Closed));
+        }
+        if !self.accepts_metadata(&metadata) {
+            return Ok(crate::StreamAuthorization::Reject);
+        }
+        Ok(crate::StreamAuthorization::Accept {
+            receive_window: 16384,
+        })
+    }
+    async fn handle_open_with_context(
+        &self,
+        request: crate::OpenRequest,
+        authentication: crate::ApplicationBinding,
+        cancellation: CancellationToken,
+        context: crate::ApplicationInvocationContext,
+    ) -> Result<(), crate::ServeError> {
+        context
+            .check_cancellation()
+            .map_err(|_| crate::ServeError::new(crate::ServeFailure::Canceled))?;
+        let metadata = request.metadata().clone();
+        if !matches!(
+            self.authorize(authentication, metadata, cancellation.clone())
+                .await?,
+            crate::StreamAuthorization::Accept { .. }
+        ) {
+            let _ = request.reject();
+            return Ok(());
+        }
+        // All actual buffers, native work and its Session cleanup descriptor
+        // are admitted before accepting this original pending OPEN.
+        let charge = Arc::new(
+            request
+                .account()
+                .reserve(self.resources()?)
+                .map_err(|_| crate::ServeError::new(crate::ServeFailure::Capacity))?,
+        );
+        let tail = Arc::new(
+            request
+                .session()
+                .application_tail()
+                .map_err(Self::failure)?,
+        );
+        let ownership = Arc::new(ProxyNativeOwnership {
+            authentication: Some(authentication),
+            _charge: charge,
+            _tail: tail,
+        });
+        let stream = request.accept(16384).map_err(Self::failure)?;
+        let result = self
+            .0
+            .serve_stream(&stream, cancellation, Some(ownership))
+            .await
+            .map_err(Self::failure);
+        if result.is_err() || stream.finish().await.is_err() {
+            let _ = stream.reset().await;
+        }
+        result
+    }
+    async fn handle(
+        &self,
+        stream: crate::Stream,
+        metadata: crate::Metadata,
+        cancellation: CancellationToken,
+    ) -> Result<(), crate::ServeError> {
+        if !self.accepts_metadata(&metadata) {
+            return Err(crate::ServeError::new(crate::ServeFailure::Rejected));
+        }
+        let charge = Arc::new(
+            stream
+                .account()
+                .reserve(self.resources()?)
+                .map_err(|_| crate::ServeError::new(crate::ServeFailure::Capacity))?,
+        );
+        let tail = Arc::new(stream.application_tail().map_err(Self::failure)?);
+        self.0
+            .serve_stream(
+                &stream,
+                cancellation,
+                Some(Arc::new(ProxyNativeOwnership {
+                    authentication: None,
+                    _charge: charge,
+                    _tail: tail,
+                })),
+            )
+            .await
+            .map_err(Self::failure)
     }
 }
 
@@ -433,7 +639,7 @@ fn compile_options(
         &options.allowed_upstream_addresses,
         max_concurrent,
     )?;
-    let max_json = fallback(options.max_json_frame_bytes, DEFAULT_MAX_JSON)?;
+    let max_metadata = fallback(options.max_metadata_bytes, DEFAULT_MAX_METADATA)?;
     let max_chunk = fallback(options.max_chunk_bytes, DEFAULT_MAX_CHUNK)?;
     let max_body = fallback(options.max_body_bytes, DEFAULT_MAX_BODY)?;
     let max_websocket_frame = fallback(
@@ -441,7 +647,7 @@ fn compile_options(
         DEFAULT_MAX_WEBSOCKET_FRAME,
     )?;
     if max_concurrent > Semaphore::MAX_PERMITS
-        || max_json > u32::MAX as usize
+        || max_metadata > u32::MAX as usize
         || max_chunk > u32::MAX as usize
         || max_websocket_frame > u32::MAX as usize
     {
@@ -475,7 +681,7 @@ fn compile_options(
             upstream_origin: options.upstream_origin.origin().ascii_serialization(),
             upstream_trust_roots_der: options.upstream_trust_roots_der,
             allowed_origins,
-            max_json,
+            max_metadata,
             max_chunk,
             max_body,
             max_http,
@@ -486,8 +692,10 @@ fn compile_options(
             default_timeout,
             max_timeout,
             request_headers: normalize_header_set(options.extra_request_headers)?,
-            response_headers: normalize_header_set(options.extra_response_headers)?,
-            blocked_response_headers: normalize_header_set(options.blocked_response_headers)?,
+            response_headers: normalize_response_header_set(options.extra_response_headers)?,
+            blocked_response_headers: normalize_response_header_set(
+                options.blocked_response_headers,
+            )?,
             websocket_headers: normalize_header_set(options.extra_websocket_headers)?,
             forbidden_cookies: normalize_names(options.forbidden_cookie_names)?,
             forbidden_cookie_prefixes: normalize_prefixes(options.forbidden_cookie_name_prefixes)?,
@@ -547,6 +755,20 @@ fn normalize_prefixes(values: Vec<String>) -> Result<Vec<String>, ProxyServerErr
         .collect()
 }
 
+fn normalize_response_header_set(values: Vec<String>) -> Result<HashSet<String>, ProxyServerError> {
+    values
+        .into_iter()
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            if !valid_header_name(&value)
+                || value != "set-cookie" && FORBIDDEN_HEADERS.contains(&value.as_str())
+            {
+                return Err(ProxyServerError::InvalidOptions);
+            }
+            Ok(value)
+        })
+        .collect()
+}
 fn normalize_header_set(values: Vec<String>) -> Result<HashSet<String>, ProxyServerError> {
     values
         .into_iter()
@@ -603,6 +825,12 @@ struct HttpRequestMeta {
     external_origin: String,
     #[serde(default)]
     timeout_ms: u64,
+    #[serde(default)]
+    credential_context: String,
+    #[serde(default = "default_credentials")]
+    credentials: String,
+    #[serde(default)]
+    request_origin: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -637,6 +865,15 @@ struct WebSocketOpen {
     conn_id: String,
     path: String,
     headers: Vec<Header>,
+    #[serde(default)]
+    credential_context: String,
+    #[serde(default = "default_credentials")]
+    credentials: String,
+    #[serde(default)]
+    request_origin: String,
+}
+fn default_credentials() -> String {
+    "same-origin".to_owned()
 }
 
 #[derive(Debug, Serialize)]
@@ -703,6 +940,234 @@ async fn write_body_end(
     .await
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Proxy forwarding retains original socket ownership and credential binding with the request context."
+)]
+async fn credential_request(
+    inner: &Inner,
+    ownership: Option<&Arc<ProxyNativeOwnership>>,
+    association: &str,
+    credentials: &str,
+    origin: &str,
+    path: &str,
+    headers: &[Header],
+    websocket: bool,
+) -> Result<Option<Arc<crate::proxy_credentials_v4::CredentialRequest>>, crate::ProxyCredentialError>
+{
+    let Some(runtime) = &inner.credentials else {
+        if !association.is_empty() {
+            return Err(crate::ProxyCredentialError::ScopeUnavailable);
+        }
+        return Ok(None);
+    };
+    let fields = headers
+        .iter()
+        .map(|header| (header.name.clone(), header.value.clone()))
+        .collect::<Vec<_>>();
+    runtime
+        .request(
+            ownership.and_then(|owner| owner.authentication),
+            association,
+            credentials,
+            origin,
+            path,
+            &fields,
+            websocket,
+        )
+        .await
+        .map(|request| Some(Arc::new(request)))
+}
+struct CredentialCancellation(Option<tokio::task::JoinHandle<()>>);
+impl CredentialCancellation {
+    fn new(
+        credential: &Option<Arc<crate::proxy_credentials_v4::CredentialRequest>>,
+        original: &CancellationToken,
+    ) -> Self {
+        Self(credential.as_ref().map(|credential| {
+            let stop = credential.cancellation();
+            let original = original.clone();
+            tokio::spawn(async move {
+                stop.cancelled().await;
+                original.cancel();
+            })
+        }))
+    }
+}
+impl Drop for CredentialCancellation {
+    fn drop(&mut self) {
+        if let Some(worker) = self.0.take() {
+            worker.abort();
+        }
+    }
+}
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CredentialControlRequest {
+    v: u8,
+    operation_id: String,
+    action: u8,
+    surface_owner: String,
+    #[serde(default)]
+    credential_context: Option<String>,
+    #[serde(default)]
+    content_origin: Option<String>,
+}
+#[derive(Debug, Serialize)]
+struct CredentialControlResponse<'a> {
+    v: u8,
+    operation_id: &'a str,
+    action: u8,
+    ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    credential_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_invalidated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<WireError<'a>>,
+}
+fn surface_id(value: &str) -> Option<[u8; 16]> {
+    if value.len() != 32
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return None;
+    }
+    let mut id = [0; 16];
+    for (index, pair) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
+        id[index] = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    (id != [0; 16]).then_some(id)
+}
+async fn serve_credential_control(
+    inner: &Inner,
+    stream: &dyn ByteStream,
+    request_id: &str,
+    body: &[u8],
+    ownership: Option<&Arc<ProxyNativeOwnership>>,
+    cancellation: &CancellationToken,
+) -> Result<(), ProxyServerError> {
+    let control: CredentialControlRequest =
+        match crate::proxy_wire::decode("ProxyCredentialControlRequest", body) {
+            Ok(control) => control,
+            Err(_) => {
+                write_http_error(
+                    stream,
+                    request_id,
+                    "credential_control_invalid",
+                    cancellation,
+                )
+                .await;
+                return Ok(());
+            }
+        };
+    let surface = surface_id(&control.surface_owner);
+    if control.v != WIRE_VERSION
+        || surface.is_none()
+        || surface_id(&control.operation_id).is_none()
+        || !(1..=3).contains(&control.action)
+        || (control.action == 1
+            && (control.content_origin.is_none() || control.credential_context.is_some()))
+        || (control.action != 1
+            && (control.credential_context.is_none() || control.content_origin.is_some()))
+    {
+        write_http_error(
+            stream,
+            request_id,
+            "credential_control_invalid",
+            cancellation,
+        )
+        .await;
+        return Ok(());
+    }
+    let outcome = match (
+        inner.credentials.as_ref(),
+        ownership.and_then(|owner| owner.authentication),
+    ) {
+        (Some(runtime), Some(authentication)) => {
+            runtime
+                .control(
+                    authentication,
+                    surface.expect("validated surface"),
+                    &control.operation_id,
+                    control.action,
+                    control.credential_context.as_deref().unwrap_or(""),
+                    control.content_origin.as_deref().unwrap_or(""),
+                )
+                .await
+        }
+        _ => Err(crate::ProxyCredentialError::ScopeUnavailable),
+    };
+    let response = match outcome {
+        Ok(outcome) => CredentialControlResponse {
+            v: WIRE_VERSION,
+            operation_id: &control.operation_id,
+            action: control.action,
+            ok: outcome.error.is_none(),
+            credential_context: outcome.context,
+            server_invalidated: outcome.invalidated.then_some(true),
+            error: outcome.error.map(|error| WireError {
+                code: match error {
+                    crate::ProxyCredentialError::UpdateFailed => "credential_update_failed",
+                    _ => "credential_scope_unavailable",
+                },
+                message: "proxy operation failed",
+            }),
+        },
+        Err(error) => CredentialControlResponse {
+            v: WIRE_VERSION,
+            operation_id: &control.operation_id,
+            action: control.action,
+            ok: false,
+            credential_context: None,
+            server_invalidated: None,
+            error: Some(WireError {
+                code: match error {
+                    crate::ProxyCredentialError::OperationConflict => {
+                        "credential_operation_conflict"
+                    }
+                    crate::ProxyCredentialError::UpdateFailed => "credential_update_failed",
+                    _ => "credential_scope_unavailable",
+                },
+                message: "proxy operation failed",
+            }),
+        },
+    };
+    let bytes = crate::proxy_wire::encode("ProxyCredentialControlResponse", &response)
+        .map_err(|_| ProxyServerError::OperationFailed)?;
+    write_metadata(
+        stream,
+        &HttpResponseMeta {
+            v: WIRE_VERSION,
+            request_id,
+            ok: true,
+            status: Some(200),
+            headers: vec![
+                HeaderOutput {
+                    name: "content-type".to_owned(),
+                    value: "application/cbor".to_owned(),
+                },
+                HeaderOutput {
+                    name: "cache-control".to_owned(),
+                    value: "no-store, no-transform".to_owned(),
+                },
+            ],
+            error: None,
+        },
+        cancellation,
+    )
+    .await?;
+    write_all(
+        stream,
+        Bytes::from((bytes.len() as u32).to_be_bytes().to_vec()),
+        cancellation,
+    )
+    .await?;
+    write_all(stream, Bytes::from(bytes), cancellation).await?;
+    write_body_end(stream, Vec::new(), cancellation).await
+}
+
 struct ProxyReader<'a> {
     stream: &'a dyn ByteStream,
     buffered: BytesMut,
@@ -755,6 +1220,7 @@ async fn write_all(
 ) -> Result<(), ProxyServerError> {
     while !payload.is_empty() {
         let count = tokio::select! {
+            biased;
             _ = cancellation.cancelled() => return Err(ProxyServerError::Closed),
             count = stream.write(payload.clone()) => count,
         }
@@ -791,7 +1257,7 @@ async fn read_body(
         let mut header = reader.exact(4, cancellation).await?;
         let length = header.get_u32() as usize;
         if length == 0 {
-            let end: BodyEnd = read_metadata(reader, config.max_json, cancellation).await?;
+            let end: BodyEnd = read_metadata(reader, config.max_metadata, cancellation).await?;
             return Ok((body, end.trailers));
         }
         if length > config.max_chunk || body.len().saturating_add(length) > config.max_body {
@@ -813,14 +1279,30 @@ async fn write_chunk(
     write_all(stream, Bytes::from(frame), cancellation).await
 }
 
+#[cfg(test)]
 async fn serve_http(
     inner: &Inner,
     stream: &dyn ByteStream,
     cancellation: CancellationToken,
 ) -> Result<(), ProxyServerError> {
+    serve_http_owned(inner, stream, cancellation, None).await
+}
+async fn serve_http_owned(
+    inner: &Inner,
+    stream: &dyn ByteStream,
+    cancellation: CancellationToken,
+    ownership: Option<Arc<ProxyNativeOwnership>>,
+) -> Result<(), ProxyServerError> {
     let started = Instant::now();
     let (deadline, mut updates) = watch::channel(started + inner.config.max_timeout);
-    let request = serve_http_request(inner, stream, cancellation.clone(), started, &deadline);
+    let request = serve_http_request(
+        inner,
+        stream,
+        cancellation.clone(),
+        started,
+        &deadline,
+        ownership,
+    );
     tokio::pin!(request);
     loop {
         let current = *updates.borrow_and_update();
@@ -843,10 +1325,11 @@ async fn serve_http_request(
     cancellation: CancellationToken,
     started: Instant,
     deadline_updates: &watch::Sender<Instant>,
+    ownership: Option<Arc<ProxyNativeOwnership>>,
 ) -> Result<(), ProxyServerError> {
     let mut reader = ProxyReader::new(stream);
     let meta: HttpRequestMeta =
-        match read_metadata(&mut reader, inner.config.max_json, &cancellation).await {
+        match read_metadata(&mut reader, inner.config.max_metadata, &cancellation).await {
             Ok(meta) => meta,
             Err(_) => {
                 write_http_error(stream, "unknown", "invalid_request_meta", &cancellation).await;
@@ -866,6 +1349,35 @@ async fn serve_http_request(
         write_http_error(stream, request_id, "invalid_request_meta", &cancellation).await;
         return Ok(());
     }
+    let credential = if path == CREDENTIAL_CONTROL_PATH {
+        None
+    } else {
+        match credential_request(
+            inner,
+            ownership.as_ref(),
+            &meta.credential_context,
+            &meta.credentials,
+            &meta.request_origin,
+            &path,
+            &meta.headers,
+            false,
+        )
+        .await
+        {
+            Ok(credential) => credential,
+            Err(_) => {
+                write_http_error(
+                    stream,
+                    request_id,
+                    "credential_scope_unavailable",
+                    &cancellation,
+                )
+                .await;
+                return Ok(());
+            }
+        }
+    };
+    let _credential_stop = CredentialCancellation::new(&credential, &cancellation);
     let external_origin = if meta.external_origin.is_empty() {
         None
     } else {
@@ -952,6 +1464,27 @@ async fn serve_http_request(
             write_http_error(stream, request_id, "request_body_invalid", &cancellation).await;
             return Ok(());
         }
+        if path == CREDENTIAL_CONTROL_PATH {
+            if method != Method::POST || body.len() > 8192 || trailers.is_some() {
+                write_http_error(
+                    stream,
+                    request_id,
+                    "credential_control_invalid",
+                    &cancellation,
+                )
+                .await;
+                return Ok(());
+            }
+            return serve_credential_control(
+                inner,
+                stream,
+                request_id,
+                &body,
+                ownership.as_ref(),
+                &cancellation,
+            )
+            .await;
+        }
         let work = async {
             let is_head = method == Method::HEAD;
             // Authority is fixed by configuration; submit the validated origin-form
@@ -985,7 +1518,11 @@ async fn serve_http_request(
                     .parse()
                     .map_err(|_| ProxyServerError::OperationFailed)?,
             );
-            let request_headers = filter_request_headers(&meta.headers, &inner.config, &facts);
+            let mut request_headers = filter_request_headers(&meta.headers, &inner.config, &facts);
+            if credential.is_some() {
+                request_headers
+                    .retain(|field| field.name != "cookie" && field.name != "authorization");
+            }
             if let Some(origin) = &external_origin {
                 let expected = origin.origin().ascii_serialization();
                 if request_headers.iter().any(|header| {
@@ -1014,8 +1551,20 @@ async fn serve_http_request(
                         .map_err(|_| ProxyServerError::OperationFailed)?,
                 );
             }
+            if let Some(credential) = &credential {
+                credential.check().map_err(|_| ProxyServerError::Closed)?;
+                for (name, value) in &credential.headers {
+                    let name = header::HeaderName::from_bytes(name.as_bytes())
+                        .map_err(|_| ProxyServerError::OperationFailed)?;
+                    let value = header::HeaderValue::from_bytes(value.as_bytes())
+                        .map_err(|_| ProxyServerError::OperationFailed)?;
+                    request.headers_mut().append(name, value);
+                }
+            }
             let (response, connection_task) =
-                match send_http_request(inner, request, deadline, &cancellation).await {
+                match send_http_request(inner, request, deadline, &cancellation, ownership.clone())
+                    .await
+                {
                     Ok(response) => response,
                     Err(HttpRequestFailure::Closed) => return Err(ProxyServerError::Closed),
                     Err(HttpRequestFailure::Timeout) => {
@@ -1098,7 +1647,34 @@ async fn serve_http_request(
                     .await;
                 return Ok(());
             }
-            let headers = filter_response_headers(&parts.headers, &inner.config, &response_facts);
+            if let Some(credential) = &credential
+                && credential.receive_cookies(&parts.headers, &path).is_err()
+            {
+                connection_task.abort();
+                write_http_error(
+                    stream,
+                    request_id,
+                    "credential_update_failed",
+                    &cancellation,
+                )
+                .await;
+                return Ok(());
+            }
+            let mut headers =
+                filter_response_headers(&parts.headers, &inner.config, &response_facts);
+            if credential.is_some() {
+                headers.retain(|field| {
+                    field.name != "cache-control"
+                        && (!credential
+                            .as_ref()
+                            .is_some_and(|credential| credential.managed())
+                            || field.name != "set-cookie")
+                });
+                headers.push(HeaderOutput {
+                    name: "cache-control".to_owned(),
+                    value: "no-store, no-transform".to_owned(),
+                });
+            }
             let result = async {
                 write_metadata(
                     stream,
@@ -1327,6 +1903,7 @@ async fn send_http_request(
     request: Request<ProxyRequestBody>,
     deadline: Instant,
     cancellation: &CancellationToken,
+    ownership: Option<Arc<ProxyNativeOwnership>>,
 ) -> Result<
     (
         hyper::Response<Incoming>,
@@ -1337,7 +1914,7 @@ async fn send_http_request(
     let tcp = inner
         .config
         .network
-        .connect(deadline, cancellation)
+        .connect_owned(deadline, cancellation, ownership)
         .await
         .map_err(|error| match error.kind() {
             std::io::ErrorKind::Interrupted => HttpRequestFailure::Closed,
@@ -1348,7 +1925,7 @@ async fn send_http_request(
         let server_name = ServerName::try_from(inner.config.network.host.clone())
             .map_err(|_| HttpRequestFailure::Dial)?;
         let tls = TlsConnector::from(
-            websocket_transport::client_tls(inner.config.upstream_trust_roots_der.clone())
+            crate::proxy_network::client_tls(inner.config.upstream_trust_roots_der.clone())
                 .map_err(|_| HttpRequestFailure::Dial)?,
         );
         let connected = tokio::select! {
@@ -1424,36 +2001,63 @@ async fn write_http_error(
     let _ = write_body_end(stream, Vec::new(), cancellation).await;
 }
 
+#[cfg(test)]
 async fn serve_websocket(
     inner: &Inner,
     stream: &dyn ByteStream,
     cancellation: CancellationToken,
 ) -> Result<(), ProxyServerError> {
-    serve_websocket_with_establishment_timeout(
+    serve_websocket_owned(inner, stream, cancellation, None).await
+}
+async fn serve_websocket_owned(
+    inner: &Inner,
+    stream: &dyn ByteStream,
+    cancellation: CancellationToken,
+    ownership: Option<Arc<ProxyNativeOwnership>>,
+) -> Result<(), ProxyServerError> {
+    serve_websocket_owned_with_establishment_timeout(
         inner,
         stream,
         cancellation,
         inner.config.websocket_establish_timeout,
+        ownership,
     )
     .await
 }
 
+#[cfg(test)]
 async fn serve_websocket_with_establishment_timeout(
     inner: &Inner,
     stream: &dyn ByteStream,
     cancellation: CancellationToken,
     establishment_timeout: Duration,
 ) -> Result<(), ProxyServerError> {
+    serve_websocket_owned_with_establishment_timeout(
+        inner,
+        stream,
+        cancellation,
+        establishment_timeout,
+        None,
+    )
+    .await
+}
+async fn serve_websocket_owned_with_establishment_timeout(
+    inner: &Inner,
+    stream: &dyn ByteStream,
+    cancellation: CancellationToken,
+    establishment_timeout: Duration,
+    ownership: Option<Arc<ProxyNativeOwnership>>,
+) -> Result<(), ProxyServerError> {
     let mut reader = ProxyReader::new(stream);
-    let open: WebSocketOpen = match read_metadata(&mut reader, inner.config.max_json, &cancellation)
-        .await
-    {
-        Ok(open) => open,
-        Err(_) => {
-            write_websocket_error(stream, "unknown", "invalid_ws_open_meta", &cancellation).await;
-            return Ok(());
-        }
-    };
+    let open: WebSocketOpen =
+        match read_metadata(&mut reader, inner.config.max_metadata, &cancellation).await {
+            Ok(open) => open,
+            Err(_) => {
+                write_websocket_error(stream, "unknown", "invalid_ws_open_meta", &cancellation)
+                    .await;
+                return Ok(());
+            }
+        };
     let conn_id = open.conn_id.trim();
     let Some(path) = normalize_path(&open.path) else {
         write_websocket_error(stream, conn_id, "invalid_ws_open_meta", &cancellation).await;
@@ -1475,6 +2079,31 @@ async fn serve_websocket_with_establishment_timeout(
             return Ok(());
         }
     };
+    let credential = match credential_request(
+        inner,
+        ownership.as_ref(),
+        &open.credential_context,
+        &open.credentials,
+        &open.request_origin,
+        &path,
+        &open.headers,
+        true,
+    )
+    .await
+    {
+        Ok(credential) => credential,
+        Err(_) => {
+            write_websocket_error(
+                stream,
+                conn_id,
+                "credential_scope_unavailable",
+                &cancellation,
+            )
+            .await;
+            return Ok(());
+        }
+    };
+    let _credential_stop = CredentialCancellation::new(&credential, &cancellation);
     let mut target = inner.config.upstream.clone();
     target
         .set_scheme(if target.scheme() == "https" {
@@ -1496,6 +2125,17 @@ async fn serve_websocket_with_establishment_timeout(
             .map_err(|_| ProxyServerError::OperationFailed)?;
         request.headers_mut().append(name, value);
     }
+    if let Some(credential) = &credential {
+        credential.check().map_err(|_| ProxyServerError::Closed)?;
+        for (name, value) in &credential.headers {
+            request.headers_mut().append(
+                header::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|_| ProxyServerError::OperationFailed)?,
+                header::HeaderValue::from_bytes(value.as_bytes())
+                    .map_err(|_| ProxyServerError::OperationFailed)?,
+            );
+        }
+    }
     request.headers_mut().insert(
         "origin",
         inner
@@ -1514,7 +2154,7 @@ async fn serve_websocket_with_establishment_timeout(
         inner
             .config
             .network
-            .connect(establishment_deadline, &cancellation),
+            .connect_owned(establishment_deadline, &cancellation, ownership),
     )
     .await?
     .map_err(|_| ProxyServerError::OperationFailed)?;
@@ -1522,7 +2162,7 @@ async fn serve_websocket_with_establishment_timeout(
         let server_name = ServerName::try_from(inner.config.network.host.clone())
             .map_err(|_| ProxyServerError::OperationFailed)?;
         let tls = TlsConnector::from(
-            websocket_transport::client_tls(inner.config.upstream_trust_roots_der.clone())
+            crate::proxy_network::client_tls(inner.config.upstream_trust_roots_der.clone())
                 .map_err(|_| ProxyServerError::OperationFailed)?,
         );
         let tls = await_websocket_establishment(
@@ -1538,8 +2178,17 @@ async fn serve_websocket_with_establishment_timeout(
             client_async_with_config(request, tls, Some(websocket_config)),
         )
         .await?;
-        return relay_connected_websocket(inner, stream, reader, cancellation, conn_id, connected)
-            .await;
+        return relay_connected_websocket(
+            inner,
+            stream,
+            reader,
+            cancellation,
+            conn_id,
+            connected,
+            credential,
+            &path,
+        )
+        .await;
     }
     let connected = await_websocket_establishment(
         establishment_deadline,
@@ -1547,7 +2196,17 @@ async fn serve_websocket_with_establishment_timeout(
         client_async_with_config(request, tcp, Some(websocket_config)),
     )
     .await?;
-    relay_connected_websocket(inner, stream, reader, cancellation, conn_id, connected).await
+    relay_connected_websocket(
+        inner,
+        stream,
+        reader,
+        cancellation,
+        conn_id,
+        connected,
+        credential,
+        &path,
+    )
+    .await
 }
 
 async fn await_websocket_establishment<F, T>(
@@ -1567,6 +2226,10 @@ where
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Proxy forwarding retains original socket ownership and credential binding with the request context."
+)]
 async fn relay_connected_websocket<S>(
     inner: &Inner,
     stream: &dyn ByteStream,
@@ -1577,6 +2240,8 @@ async fn relay_connected_websocket<S>(
         (WebSocketStream<S>, tungstenite::handshake::client::Response),
         tungstenite::Error,
     >,
+    credential: Option<Arc<crate::proxy_credentials_v4::CredentialRequest>>,
+    path: &str,
 ) -> Result<(), ProxyServerError>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -1597,6 +2262,14 @@ where
             return Ok(());
         }
     };
+    if let Some(credential) = &credential
+        && credential
+            .receive_cookies(response.headers(), path)
+            .is_err()
+    {
+        write_websocket_error(stream, conn_id, "credential_update_failed", &cancellation).await;
+        return Ok(());
+    }
     let protocol = response
         .headers()
         .get("sec-websocket-protocol")
@@ -1615,70 +2288,94 @@ where
         &cancellation,
     )
     .await?;
-    let (sink, mut source) = websocket.split();
-    let sink = Arc::new(tokio::sync::Mutex::new(sink));
-    let mut downstream_close_sent = false;
-    loop {
-        tokio::select! {
-            _ = cancellation.cancelled() => break,
-            upstream_message = source.next() => {
-                let Some(message) = upstream_message else { break; };
-                let message = message.map_err(|_| ProxyServerError::OperationFailed)?;
-                let (operation, payload) = match message {
-                    tungstenite::Message::Text(value) => (1, Bytes::from(value.to_string())),
-                    tungstenite::Message::Binary(value) => (2, value),
-                    tungstenite::Message::Close(value) => (8, encode_websocket_close(value)),
-                    tungstenite::Message::Ping(value) => (9, value),
-                    tungstenite::Message::Pong(value) => (10, value),
-                    tungstenite::Message::Frame(_) => continue,
-                };
-                write_websocket_frame(
-                    stream,
-                    operation,
-                    payload,
-                    inner.config.max_websocket_frame,
-                    &cancellation,
-                )
-                .await?;
-                if operation == 8 {
-                    // An upstream close is terminal after it has been relayed. If the
-                    // downstream initiated close first, this is its acknowledgement.
-                    break;
+    let mut websocket = Some(websocket);
+    let relay = async {
+        let mut downstream_close_sent = false;
+        let mut upstream_close_received = false;
+        loop {
+            // Keep this exact read across upstream messages: a partial frame
+            // may already have consumed its header from the original reader.
+            let downstream_frame =
+                read_websocket_frame(&mut reader, inner.config.max_websocket_frame, &cancellation);
+            tokio::pin!(downstream_frame);
+            let (operation, payload) = loop {
+                tokio::select! {
+                upstream_message = async { websocket.as_mut().expect("original native WebSocket").next().await }, if !upstream_close_received => {
+                    let message = upstream_message.ok_or(ProxyServerError::OperationFailed)?;
+                    let message = message.map_err(|_| ProxyServerError::OperationFailed)?;
+                    let (operation, payload) = match message {
+                        tungstenite::Message::Text(value) => (1, Bytes::from(value.to_string())),
+                        tungstenite::Message::Binary(value) => (2, value),
+                        tungstenite::Message::Close(value) => (8, encode_websocket_close(value)),
+                        tungstenite::Message::Ping(value) => (9, value),
+                        tungstenite::Message::Pong(value) => (10, value),
+                        tungstenite::Message::Frame(_) => continue,
+                    };
+                    write_websocket_frame(
+                        stream,
+                        operation,
+                        payload,
+                        inner.config.max_websocket_frame,
+                        &cancellation,
+                    )
+                    .await?;
+                    if operation == 8 {
+                        upstream_close_received = true;
+                        // Tungstenite queued the native Close reply while reading.
+                        // Flush it once; sending another Close is invalid here.
+                        websocket.as_mut().expect("original native WebSocket").flush().await
+                            .map_err(|_| ProxyServerError::OperationFailed)?;
+                        drop(websocket.take());
+                        if downstream_close_sent {
+                            return Ok(());
+                        }
+                    }
                 }
+                frame = &mut downstream_frame, if !downstream_close_sent => break frame?,
+                }
+            };
+            if upstream_close_received {
+                // The native socket has completed its Close exchange. Retain
+                // this original reader until the downstream actually replies;
+                // earlier in-flight data cannot be sent on the closed socket.
+                if operation == 8 {
+                    decode_websocket_close(&payload)?;
+                    return Ok(());
+                }
+                continue;
             }
-            downstream_frame = read_websocket_frame(
-                &mut reader,
-                inner.config.max_websocket_frame,
-                &cancellation,
-            ), if !downstream_close_sent => {
-                let (operation, payload) = downstream_frame?;
-                let message = match operation {
-                    1 => tungstenite::Message::Text(
-                        String::from_utf8(payload.to_vec())
-                            .map_err(|_| ProxyServerError::OperationFailed)?
-                            .into(),
-                    ),
-                    2 => tungstenite::Message::Binary(payload),
-                    8 => tungstenite::Message::Close(decode_websocket_close(&payload)?),
-                    9 => tungstenite::Message::Ping(payload),
-                    10 => tungstenite::Message::Pong(payload),
-                    _ => return Err(ProxyServerError::OperationFailed),
-                };
-                sink.lock()
-                    .await
-                    .send(message)
-                    .await
-                    .map_err(|_| ProxyServerError::OperationFailed)?;
-                if operation == 8 {
-                    // Keep the carrier stream alive until upstream acknowledges the
-                    // close. This preserves normal FIN semantics for the peer.
-                    downstream_close_sent = true;
-                }
+            let message = match operation {
+                1 => tungstenite::Message::Text(
+                    String::from_utf8(payload.to_vec())
+                        .map_err(|_| ProxyServerError::OperationFailed)?
+                        .into(),
+                ),
+                2 => tungstenite::Message::Binary(payload),
+                8 => tungstenite::Message::Close(decode_websocket_close(&payload)?),
+                9 => tungstenite::Message::Ping(payload),
+                10 => tungstenite::Message::Pong(payload),
+                _ => return Err(ProxyServerError::OperationFailed),
+            };
+            websocket
+                .as_mut()
+                .expect("original native WebSocket")
+                .send(message)
+                .await
+                .map_err(|_| ProxyServerError::OperationFailed)?;
+            if operation == 8 {
+                // Keep the carrier stream alive until upstream acknowledges the
+                // close. This preserves normal FIN semantics for the peer.
+                downstream_close_sent = true;
             }
         }
+    };
+    // Cancellation drops the original I/O futures and native socket together;
+    // no detached relay can outlive the caller's operation ownership.
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(ProxyServerError::Closed),
+        result = relay => result,
     }
-    let _ = sink.lock().await.close().await;
-    Ok(())
 }
 
 async fn write_websocket_error(
@@ -2022,7 +2719,7 @@ fn filter_request_headers(
         }
     }
     result.retain(|header| !header.value.is_empty());
-    result.retain(|header| header.name != "x-forwarded-proto");
+    result.retain(|header| header.name != "x-forwarded-proto" && header.name != "authorization");
     // The original CL remains an assertion in facts, while the native HTTP
     // adapter chooses fresh framing from the actual admitted body.
     result.retain(|header| header.name != "content-length");
@@ -2041,7 +2738,7 @@ fn filter_response_headers(
             let allowed = RESPONSE_HEADERS.contains(&name.as_str())
                 || config.response_headers.contains(&name);
             (allowed
-                && !FORBIDDEN_HEADERS.contains(&name.as_str())
+                && (name == "set-cookie" || !FORBIDDEN_HEADERS.contains(&name.as_str()))
                 && !config.blocked_response_headers.contains(&name)
                 && !facts.connection.contains(&name))
             .then(|| HeaderOutput {
@@ -2068,7 +2765,9 @@ fn filter_websocket_headers(
         &facts.connection,
     )
     .into_iter()
-    .filter(|header| header.name != "content-length")
+    .filter(|header| {
+        header.name != "content-length" && header.name != "cookie" && header.name != "authorization"
+    })
     .collect()
 }
 
@@ -2116,6 +2815,8 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 #[cfg(test)]
 mod tests {
+    include!("proxy_credentials_v4_tests.rs");
+
     use std::{
         collections::VecDeque,
         future::pending,
@@ -2140,6 +2841,7 @@ mod tests {
         reads: Mutex<VecDeque<Bytes>>,
         writes: Mutex<Vec<u8>>,
         reset: AtomicBool,
+        closed: AtomicBool,
         wait: Notify,
     }
 
@@ -2149,12 +2851,18 @@ mod tests {
                 reads: Mutex::new(VecDeque::from([Bytes::from(input)])),
                 writes: Mutex::new(Vec::new()),
                 reset: AtomicBool::new(false),
+                closed: AtomicBool::new(false),
                 wait: Notify::new(),
             }
         }
 
         fn output(&self) -> Vec<u8> {
             self.writes.lock().expect("writes lock").clone()
+        }
+
+        fn push_input(&self, bytes: Bytes) {
+            self.reads.lock().expect("reads lock").push_back(bytes);
+            self.wait.notify_waiters();
         }
     }
 
@@ -2170,20 +2878,20 @@ mod tests {
             None
         }
         async fn read(&self) -> Result<Option<Bytes>, SessionError> {
-            let wake = self.wait.notified();
-            tokio::pin!(wake);
-            wake.as_mut().enable();
-            if self.reset.load(Ordering::Acquire) {
-                return Err(SessionError::StreamReset);
-            }
-            if let Some(bytes) = self.reads.lock().expect("reads lock").pop_front() {
-                return Ok(Some(bytes));
-            }
-            wake.await;
-            if self.reset.load(Ordering::Acquire) {
-                Err(SessionError::StreamReset)
-            } else {
-                Ok(None)
+            loop {
+                let wake = self.wait.notified();
+                tokio::pin!(wake);
+                wake.as_mut().enable();
+                if self.reset.load(Ordering::Acquire) {
+                    return Err(SessionError::StreamReset);
+                }
+                if let Some(bytes) = self.reads.lock().expect("reads lock").pop_front() {
+                    return Ok(Some(bytes));
+                }
+                if self.closed.load(Ordering::Acquire) {
+                    return Ok(None);
+                }
+                wake.await;
             }
         }
         async fn write(&self, payload: Bytes) -> Result<usize, SessionError> {
@@ -2202,6 +2910,7 @@ mod tests {
             Ok(())
         }
         async fn close(&self) -> Result<(), SessionError> {
+            self.closed.store(true, Ordering::Release);
             self.wait.notify_waiters();
             Ok(())
         }
@@ -2246,20 +2955,6 @@ mod tests {
             .expect("response metadata")
     }
 
-    #[derive(Debug)]
-    struct NoopHandler;
-
-    #[async_trait]
-    impl StreamHandler for NoopHandler {
-        async fn handle(
-            &self,
-            _stream: &IncomingStream,
-            _cancellation: CancellationToken,
-        ) -> Result<(), SessionError> {
-            Ok(())
-        }
-    }
-
     fn test_options(upstream: Url) -> ProxyServerOptions {
         ProxyServerOptions {
             upstream,
@@ -2272,7 +2967,7 @@ mod tests {
             max_concurrent_http_streams: 0,
             max_concurrent_event_streams: 0,
             event_stream_idle_timeout: Duration::ZERO,
-            max_json_frame_bytes: 4096,
+            max_metadata_bytes: 4096,
             max_chunk_bytes: 1024,
             max_body_bytes: 4096,
             max_websocket_frame_bytes: 1024,
@@ -2284,6 +2979,7 @@ mod tests {
             extra_websocket_headers: vec!["x-request-id".into()],
             forbidden_cookie_names: vec!["session".into()],
             forbidden_cookie_name_prefixes: vec!["private_".into()],
+            credentials: None,
             on_error: None,
         }
     }
@@ -2807,8 +3503,11 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::result_large_err)]
-    async fn websocket_proxy_relays_frames_and_closes_after_upstream_close() {
+    #[expect(
+        clippy::result_large_err,
+        reason = "The WebSocket handshake callback returns the provider-owned HTTP error response unchanged."
+    )]
+    async fn websocket_proxy_relays_frames_and_joins_actual_downstream_close() {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind upstream");
@@ -2871,6 +3570,24 @@ mod tests {
                 }))
                 .await
                 .expect("close websocket");
+            assert!(matches!(
+                websocket
+                    .next()
+                    .await
+                    .expect("proxy native Close reply")
+                    .expect("valid Close"),
+                tungstenite::Message::Close(_)
+            ));
+            let mut byte = [0];
+            assert_eq!(
+                websocket
+                    .get_mut()
+                    .read(&mut byte)
+                    .await
+                    .expect("native EOF"),
+                0,
+                "The native socket ends before the delayed downstream Close"
+            );
         });
 
         let server = ProxyServer::new(test_options(
@@ -2890,16 +3607,24 @@ mod tests {
             input.push(2);
             input.extend_from_slice(&5u32.to_be_bytes());
             input.extend_from_slice(b"hello");
+            // Keep a partially read downstream Close across upstream data and
+            // Close frames. Its actual body arrives only after our slow read.
+            input.push(8);
+            input.extend_from_slice(&6u32.to_be_bytes());
             input
         }));
-        tokio::time::timeout(
-            Duration::from_secs(2),
-            serve_websocket(&server.inner, &stream, CancellationToken::new()),
-        )
-        .await
-        .expect("websocket proxy converged")
-        .expect("serve websocket");
-        upstream.await.expect("upstream task");
+        let serving = serve_websocket(&server.inner, &stream, CancellationToken::new());
+        tokio::pin!(serving);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut serving)
+                .await
+                .is_err(),
+            "Proxy must retain its original reader until the downstream Close arrives"
+        );
+        tokio::time::timeout(Duration::from_secs(2), upstream)
+            .await
+            .expect("native Close reply was flushed before waiting for downstream")
+            .expect("upstream task");
 
         let output = stream.output();
         let length = u32::from_be_bytes(output[..4].try_into().expect("response length")) as usize;
@@ -2923,6 +3648,123 @@ mod tests {
             &[0x03, 0xe8, b'd', b'o', b'n', b'e'],
             "close code and reason are preserved"
         );
+        stream.push_input(Bytes::from_static(&[0x03, 0xe8, b'd', b'o', b'n', b'e']));
+        tokio::time::timeout(Duration::from_secs(2), &mut serving)
+            .await
+            .expect("websocket proxy converged after the real downstream Close")
+            .expect("serve websocket");
+    }
+
+    #[tokio::test]
+    async fn websocket_proxy_rejects_upstream_eof_without_close() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind upstream");
+        let address = listener.local_addr().expect("upstream address");
+        let upstream = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("accept websocket");
+            let websocket = tokio_tungstenite::accept_async(socket)
+                .await
+                .expect("upgrade websocket");
+            drop(websocket);
+        });
+        let server =
+            ProxyServer::new(test_options(format!("http://{address}").parse().unwrap())).unwrap();
+        let stream = Arc::new(TestStream::new(frame_metadata(serde_json::json!({
+            "v": 2, "conn_id": "abrupt-close", "path": "/socket", "headers": []
+        }))));
+        assert!(matches!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                serve_websocket(&server.inner, &stream, CancellationToken::new())
+            )
+            .await
+            .expect("abrupt upstream termination is bounded"),
+            Err(ProxyServerError::OperationFailed)
+        ));
+        upstream.await.expect("upstream task");
+    }
+
+    #[test]
+    fn current_proxy_metadata_matches_the_registered_protocol() {
+        let server =
+            ProxyServer::new(test_options("http://127.0.0.1:8080".parse().unwrap())).unwrap();
+        let metadata = |namespace: &str,
+                        envelope_version,
+                        protocol: serde_json::Value,
+                        version: serde_json::Value| {
+            crate::Metadata::new(
+                namespace,
+                envelope_version,
+                &std::collections::BTreeMap::from([
+                    (
+                        "protocol".into(),
+                        Bytes::from(serde_json::to_vec(&protocol).unwrap()),
+                    ),
+                    (
+                        "version".into(),
+                        Bytes::from(serde_json::to_vec(&version).unwrap()),
+                    ),
+                ]),
+            )
+            .unwrap()
+        };
+        for (kind, expected, other) in [
+            (
+                Protocol::Http,
+                "flowersec.proxy.http",
+                "flowersec.proxy.websocket",
+            ),
+            (
+                Protocol::WebSocket,
+                "flowersec.proxy.websocket",
+                "flowersec.proxy.http",
+            ),
+        ] {
+            let handler = CurrentProxyHandler(ProxyHandler {
+                inner: server.inner.clone(),
+                protocol: kind,
+            });
+            assert!(handler.accepts_metadata(&crate::Metadata::empty()));
+            assert!(handler.accepts_metadata(&metadata(
+                "application/json",
+                1,
+                expected.into(),
+                2.into()
+            )));
+            for rejected in [
+                metadata("application/json", 1, other.into(), 2.into()),
+                metadata("application/json", 1, "denied".into(), 2.into()),
+                metadata("application/json", 1, expected.into(), 3.into()),
+                metadata("application/json", 1, expected.into(), "2".into()),
+                metadata("application/json", 1, 2.into(), 2.into()),
+                metadata("application/json", 2, expected.into(), 2.into()),
+                metadata("example/json", 1, expected.into(), 2.into()),
+            ] {
+                assert!(!handler.accepts_metadata(&rejected));
+            }
+            let valid = metadata("application/json", 1, expected.into(), 2.into());
+            let mut fields = valid.byte_values();
+            fields.insert("extra".into(), Bytes::from_static(b"true"));
+            assert!(
+                !handler.accepts_metadata(
+                    &crate::Metadata::new("application/json", 1, &fields).unwrap()
+                )
+            );
+            fields.remove("extra");
+            fields.remove("version");
+            assert!(
+                !handler.accepts_metadata(
+                    &crate::Metadata::new("application/json", 1, &fields).unwrap()
+                )
+            );
+            fields.insert("version".into(), Bytes::from_static(b"invalid JSON"));
+            assert!(
+                !handler.accepts_metadata(
+                    &crate::Metadata::new("application/json", 1, &fields).unwrap()
+                )
+            );
+        }
     }
 
     #[tokio::test]
@@ -2956,14 +3798,7 @@ mod tests {
         };
         let result = tokio::time::timeout(
             Duration::from_secs(1),
-            handler.handle(
-                &IncomingStream::new(
-                    WEBSOCKET_KIND,
-                    crate::StreamMetadata::empty(),
-                    Box::new(stream.clone()),
-                ),
-                CancellationToken::new(),
-            ),
+            handler.serve_stream(&stream, CancellationToken::new(), None),
         )
         .await
         .expect("bounded frame rejection");
@@ -2972,14 +3807,7 @@ mod tests {
         server.close().await;
         assert_eq!(
             handler
-                .handle(
-                    &IncomingStream::new(
-                        WEBSOCKET_KIND,
-                        crate::StreamMetadata::empty(),
-                        Box::new(stream)
-                    ),
-                    CancellationToken::new(),
-                )
+                .serve_stream(&stream, CancellationToken::new(), None)
                 .await,
             Err(SessionError::Closed)
         );
@@ -3085,14 +3913,7 @@ mod tests {
             }))));
             let result = tokio::time::timeout(
                 Duration::from_millis(200),
-                handler.handle(
-                    &IncomingStream::new(
-                        WEBSOCKET_KIND,
-                        crate::StreamMetadata::empty(),
-                        Box::new(stream),
-                    ),
-                    CancellationToken::new(),
-                ),
+                handler.serve_stream(&stream, CancellationToken::new(), None),
             )
             .await
             .expect("Upgrade blackhole converged");
@@ -3108,7 +3929,7 @@ mod tests {
     }
 
     #[test]
-    fn options_and_registration_fail_closed_without_partial_installation() {
+    fn options_and_raw_stream_plan_fail_closed_without_duplicates() {
         let invalid = ProxyServerOptions::new(
             "http://user:secret@127.0.0.1:8080".parse().expect("URL"),
             "http://127.0.0.1:8080".parse().expect("origin"),
@@ -3143,18 +3964,28 @@ mod tests {
             "http://127.0.0.1:8080".parse().expect("origin"),
         ))
         .expect("proxy server");
-        let mut handlers = crate::SessionHandlers::new(crate::SessionHandlerOptions::default())
-            .expect("session handlers");
-        handlers
-            .handle_stream(WEBSOCKET_KIND, NoopHandler)
-            .expect("occupy websocket handler");
-        assert_eq!(
-            server.register_stream_handlers(&mut handlers),
-            Err(ProxyServerError::AlreadyRegistered)
+        let registrations = server.stream_registrations().expect("current raw streams");
+        assert_eq!(registrations.len(), 2);
+        assert_eq!(registrations[0].kind, HTTP_KIND);
+        assert_eq!(registrations[1].kind, WEBSOCKET_KIND);
+        let environment = crate::TransportEnvironment::new();
+        let plan = environment
+            .handler_plan(crate::HandlerPlanOptions {
+                streams: crate::StreamDispatch::Registered(registrations.clone()),
+                application_bytes: 65536,
+            })
+            .expect("current handler plan");
+        plan.close();
+        let mut duplicate = registrations;
+        duplicate.push(duplicate[0].clone());
+        assert!(
+            environment
+                .handler_plan(crate::HandlerPlanOptions {
+                    streams: crate::StreamDispatch::Registered(duplicate),
+                    application_bytes: 65536,
+                })
+                .is_err()
         );
-        handlers
-            .handle_stream(HTTP_KIND, NoopHandler)
-            .expect("HTTP handler was not partially installed");
     }
 
     #[test]
@@ -3273,14 +4104,7 @@ mod tests {
         };
         let operation = tokio::spawn(async move {
             handler
-                .handle(
-                    &IncomingStream::new(
-                        HTTP_KIND,
-                        crate::StreamMetadata::empty(),
-                        Box::new(stream),
-                    ),
-                    CancellationToken::new(),
-                )
+                .serve_stream(&stream, CancellationToken::new(), None)
                 .await
         });
         accepted_rx.await.expect("request reached upstream");
@@ -3294,18 +4118,12 @@ mod tests {
             Err(SessionError::OperationFailed)
         );
         assert_eq!(server.inner.permits.available_permits(), 2);
+        let stream = Arc::new(TestStream::new(Vec::new()));
         let rejected = ProxyHandler {
             inner: server.inner.clone(),
             protocol: Protocol::Http,
         }
-        .handle(
-            &IncomingStream::new(
-                HTTP_KIND,
-                crate::StreamMetadata::empty(),
-                Box::new(Arc::new(TestStream::new(Vec::new()))),
-            ),
-            CancellationToken::new(),
-        )
+        .serve_stream(&stream, CancellationToken::new(), None)
         .await;
         assert_eq!(rejected, Err(SessionError::Closed));
         upstream.abort();

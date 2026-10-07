@@ -84,7 +84,8 @@ func (d *Document) BindCarrierRoute(side Direction, relay, accepting bool, carri
 	dialer, dialerOK := leg.Named("Leg", "dialer_role").Uint()
 	listener, listenerOK := leg.Named("Leg", "listener_role").Uint()
 	endpoint, endpointOK := leg.Named("Leg", "endpoint_role").Uint()
-	if !accessOK || access != 0 || !carrierOK || actualCarrier != carrier || !dialerOK || !listenerOK || !endpointOK ||
+	localLoopback := access == 1 && path == 0 && carrier == 1 && !relay
+	if !accessOK || access != 0 && !localLoopback || !carrierOK || actualCarrier != carrier || !dialerOK || !listenerOK || !endpointOK ||
 		accepting && listener != physicalRole || !accepting && dialer != physicalRole {
 		return fail()
 	}
@@ -96,6 +97,9 @@ func (d *Document) BindCarrierRoute(side Direction, relay, accepting bool, carri
 		return fail()
 	}
 	localClass := [3]string{"native_quic_tls13", "native_websocket_tls13", "native_webtransport_tls13"}[carrier]
+	if localLoopback {
+		localClass = "native_websocket_loopback"
+	}
 	if accepting {
 		localClass = [3]string{"accepted_quic", "accepted_websocket", "accepted_webtransport"}[carrier]
 	}

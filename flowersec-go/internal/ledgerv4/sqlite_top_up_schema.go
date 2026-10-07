@@ -2,10 +2,14 @@ package ledgerv4
 
 import (
 	"bytes"
+	"context"
 	"database/sql/driver"
 	"errors"
+	"io"
 	"math"
 	"strconv"
+
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
 const topUpManifestSQL = `CREATE TABLE manifest (id INTEGER PRIMARY KEY CHECK(id=1), format TEXT NOT NULL CHECK(format='flowersec-v4-topup-client'), revision INTEGER NOT NULL CHECK(revision=3), authority TEXT NOT NULL CHECK(length(CAST(authority AS BLOB)) BETWEEN 1 AND 128), instance BLOB NOT NULL CHECK(length(instance)=32), generation BLOB NOT NULL CHECK(length(generation)=8), epoch BLOB NOT NULL CHECK(length(epoch)=8), max_pages INTEGER NOT NULL, max_records INTEGER NOT NULL, max_record_bytes INTEGER NOT NULL, configuration BLOB NOT NULL CHECK(length(configuration) BETWEEN 1 AND 512), binding BLOB NOT NULL CHECK(length(binding)=8), next_sequence BLOB NOT NULL CHECK(length(next_sequence)=8), retired_sequence BLOB NOT NULL CHECK(length(retired_sequence)=8), frontier BLOB NOT NULL CHECK(length(frontier)=8), state INTEGER NOT NULL CHECK(state BETWEEN 0 AND 4), pending BLOB NOT NULL CHECK(length(pending)<=1024), applied BLOB NOT NULL CHECK(length(applied)<=1024), identity BLOB NOT NULL CHECK(length(identity)<=65536), key_reference BLOB NOT NULL CHECK(length(key_reference)<=512), pool_count INTEGER NOT NULL CHECK(pool_count>=0), pool_bytes INTEGER NOT NULL CHECK(pool_bytes>=0), terminal BLOB NOT NULL CHECK(length(terminal)<=2048), permanent_fence BLOB NOT NULL CHECK(length(permanent_fence)=8)) STRICT, WITHOUT ROWID`
@@ -45,7 +49,7 @@ func (j *SQLiteTopUpJournal) createSchema() (err error) {
 	s.epoch = 1
 	return s.checkpoint()
 }
-func (j *SQLiteTopUpJournal) openSchema() (err error) {
+func (j *SQLiteTopUpJournal) openSchema(readOnly bool) (err error) {
 	s := j.store.sqliteStore
 	version, err := s.scalar("PRAGMA user_version")
 	if err != nil || version != int64(3) {
@@ -103,8 +107,14 @@ func (j *SQLiteTopUpJournal) openSchema() (err error) {
 	if err != nil {
 		return err
 	}
+	if err = j.inspectRecoveredRecords(state); err != nil {
+		return err
+	}
 	if j.config.BindingGeneration < state.BindingGeneration {
 		return ErrFenced
+	}
+	if readOnly {
+		return nil
 	}
 	if err = s.continuity.Check(s.identity, epoch, false); err != nil {
 		return err
@@ -136,4 +146,57 @@ func (j *SQLiteTopUpJournal) openSchema() (err error) {
 		return err
 	}
 	return s.checkpoint()
+}
+
+// inspectRecoveredRecords runs inside the admission snapshot before writable
+// configuration, epoch advancement or recovery publication is permitted.
+func (j *SQLiteTopUpJournal) inspectRecoveredRecords(state TopUpRecovery) (err error) {
+	s := j.store.sqliteStore
+	if err = s.readOne("SELECT CASE WHEN length(identity)<=?1 THEN identity ELSE NULL END,CASE WHEN length(key_reference)<=?2 THEN key_reference ELSE NULL END FROM manifest WHERE id=1", 2, func(v []driver.Value) error {
+		cert, cok := v[0].([]byte)
+		key, kok := v[1].([]byte)
+		if !cok || !kok {
+			return ErrStorageFormat
+		}
+		if state.State == TopUpJournalEmpty || state.State == TopUpJournalTerminal || state.PermanentFenceGeneration != 0 {
+			if len(cert) != 0 || len(key) != 0 {
+				return ErrStorageFormat
+			}
+			return nil
+		}
+		if len(cert) == 0 || len(key) == 0 {
+			return ErrStorageFormat
+		}
+		digest, e := protocolv4.TopUpIdentityDigest(cert)
+		if e != nil || digest != state.Request.Identity {
+			return ErrStorageFormat
+		}
+		return nil
+	}, named(1, int64(j.config.IdentityBytes)), named(2, int64(j.config.KeyReferenceBytes))); err != nil {
+		return err
+	}
+	rows, err := s.querier.QueryContext(context.Background(), "SELECT CASE WHEN length(sequence)=8 THEN sequence ELSE NULL END,CASE WHEN length(generation)=8 THEN generation ELSE NULL END,CASE WHEN length(expiry)=8 THEN expiry ELSE NULL END,CASE WHEN length(material_digest)=32 THEN material_digest ELSE NULL END,CASE WHEN length(identity_digest)=32 THEN identity_digest ELSE NULL END,CASE WHEN length(record)<=?1 THEN record ELSE NULL END FROM pool ORDER BY sequence", []driver.NamedValue{named(1, int64(s.backing.limits.MaxRecordBytes))})
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, rows.Close()) }()
+	var values [6]driver.Value
+	var count uint32
+	var after uint64
+	for {
+		if err = rows.Next(values[:]); err == io.EOF {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		count++
+		if count > s.backing.limits.MaxRecords-1 {
+			return ErrStorageFormat
+		}
+		row, _, _, _, e := j.decodePoolRecord(values[:], state, after)
+		if e != nil {
+			return e
+		}
+		after = row.Entry.Sequence
+	}
 }

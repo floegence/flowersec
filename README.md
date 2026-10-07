@@ -66,7 +66,7 @@ Choose the SDK that matches your application:
 
 The [cookbook index](examples/README.md) contains small, runnable examples for
 client connections, durable invitation use, liveness, and session lifecycle
-across the SDKs, plus the Go-owned v3 control-plane issuance flow.
+across the SDKs, plus the Go-owned v4 control-plane issuance flow.
 
 <!-- readme-section:sdks-and-cookbooks -->
 <a id="sdks-and-cookbooks"></a>
@@ -75,7 +75,7 @@ across the SDKs, plus the Go-owned v3 control-plane issuance flow.
 
 Start with the [cookbook index](examples/README.md) for small examples that use
 the same public API as production applications. It covers client connections,
-durable single-use handling, liveness, and session lifecycle, with v3
+durable single-use handling, liveness, and session lifecycle, with v4
 control-plane invitation issuance provided by Go.
 
 <!-- readme-section:portable-contract -->
@@ -98,50 +98,23 @@ syntax without changing shared behavior.
 | Application stream handlers | Yes | Yes | Yes | Yes |
 | Long-lived connection recovery | Yes | Yes | Yes | Yes |
 | Negotiated unreliable messages | Yes | Yes | No | Yes |
-| Client RPC handlers | Yes | Yes | No | Yes |
-| Server-side session acceptance | Yes | Yes | No | Yes |
-| Server session handlers | Yes | Yes | No | Yes |
+| Client RPC handlers | Yes | Yes | Yes | Yes |
+| Server-side session acceptance | Yes | Yes | Yes | Yes |
+| Server session handlers | Yes | Yes | Yes | Yes |
 | Control-plane issuance and authorization | Yes | No | No | No |
-| Direct and tunneled admission | Yes | Yes | No | Yes |
+| Direct and tunneled admission | Yes | Yes | Yes | Yes |
 | HTTP and WebSocket ProxyServer | Yes | Yes | No | Yes |
 | Carrier-neutral stream contract | Yes | Yes | Yes | Yes |
-| Transport v3 wire security | Yes | Yes | Yes | Yes |
+| Transport v4 wire security | Yes | Yes | Yes | Yes |
 <!-- capability-table:end -->
 
-Deployment profiles keep platform availability separate from the shared
-Flowersec application protocol:
+Deployment profiles describe the required native or browser carrier and role combinations. Current APIs and provider qualification are documented separately in each SDK guide. A source declaration does not establish verified runtime support.
 
-| Profile | Runtimes | Required carrier and role surface | Optional surface |
-| --- | --- | --- | --- |
-| `native-server-core` | Go, Rust, Node.js | WebSocket and raw QUIC endpoint client, direct server, and opaque tunnel runtime | WebTransport adapter |
-| `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
-| `apple-client` | Swift on Apple platforms | WSS endpoint client | None |
-| `webtransport-server` | Go | WebTransport direct server and opaque tunnel runtime | None |
+The current wire uses authenticated connection materials, independent namespace trust, bounded Sessions, typed services and explicit cleanup. Direct and tunnel interoperability is qualified by the executable matrix and original providers. Release publishes packages and performs registry readback; it runs no acceptance tests.
 
-The machine-readable native-server-core profile contains 18 aggregate
-runtime-role-carrier tuples (six per native runtime) and 24 supported
-path-specific server units; Go H4 adds two WebTransport server tuples and two
-path-specific units. The interoperability matrix separately declares a
-coordinate universe of 18 direct cells and 18 tunnel cells. The release gate
-proves all 10 direct cells and 14 pairwise tunnel cells that include Go; the
-remaining 8 direct and 4 tunnel cells stay explicitly unverified. Four
-additional WSS client profiles prove Swift and browser TypeScript against Go
-over direct and tunneled paths. A profile never changes Artifact, handshake,
-RPC, stream, close, rekey, or authorization wire semantics.
+WebTransport requires a configured native or browser provider. Browser support depends on the actual WebTransport API and certificate-policy capabilities. See each SDK guide for its current carrier, listener and relay surface.
 
-See the SDK guides for the exact platform and connection combinations supported
-by each package.
-
-WebTransport is optional rather than part of the required native-server carrier
-contract. Go claims the separate complete H4 webtransport-server profile;
-the Browser profile uses the H3 WebTransport API when present. Node.js and Rust
-do not currently provide a production WebTransport adapter. The native-server carrier surface is
-WebSocket and raw QUIC for Go, Rust, and Node.js; pairwise interoperability
-support is claimed only by supported entries in the matrix.
-
-`flowersec-private-loopback/1` is a product-private profile outside the public
-deployment capability registry. Its dedicated Go server and TypeScript browser
-APIs are limited to an application-authenticated numeric-loopback HTTP bridge.
+The signed `local_loopback` access class supports an application-authenticated HTTP bridge on the same machine. It uses the current session protocol and requires a configured local provider.
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -149,15 +122,15 @@ APIs are limited to an application-authenticated numeric-loopback HTTP bridge.
 ## Security
 
 - Application data is encrypted end to end for both direct and relayed sessions.
-- TLS trust policy is bound to every v3 transport candidate. Public or deployment-provided CA roots and explicit leaf-certificate pins are mutually exclusive and never downgrade after failure.
-- `flowersec-private-loopback/1` is an isolated transport envelope, not a `flowersec/3` TLS mode or capability. Its dedicated APIs map one unchanged CA-mode v3 candidate to `ws://` only when the authority is the same numeric loopback origin and the server application authorizes the request before upgrade. Ordinary Go, TypeScript, Rust, Swift, Provider, and tunnel paths reject the envelope.
+- TLS trust policy is bound to every v4 transport candidate. Public or deployment-provided CA roots and explicit leaf-certificate pins are mutually exclusive and never downgrade after failure.
+- The `local_loopback` access class permits `ws://` only for a signed numeric-loopback endpoint with exact Origin and application authorization before upgrade. It does not claim outer TLS verification or permit plaintext fallback.
 - Connection invitations are opaque, short-lived, and single-use.
 - Credentials are committed before use, so a consumed invitation cannot be replayed.
 - Relays forward encrypted traffic only; they do not terminate application sessions.
 - Invalid or unsupported connection attempts fail closed with bounded public errors.
 
 For protocol and threat-model details, read the [API contract](docs/API_CONTRACT.md),
-[transport architecture](docs/TRANSPORT_V3_ARCHITECTURE.md), and
+[transport architecture](docs/TRANSPORT_V4_BINDING.md), and
 [threat model](docs/THREAT_MODEL.md).
 
 <!-- readme-section:deploy-and-develop -->
@@ -167,7 +140,7 @@ For protocol and threat-model details, read the [API contract](docs/API_CONTRACT
 
 - [API contract](docs/API_CONTRACT.md): the stable application-facing behavior shared by the SDKs.
 - [Error model](docs/ERROR_MODEL.md): public connection, session, and RPC failures.
-- [Transport architecture](docs/TRANSPORT_V3_ARCHITECTURE.md): direct and relayed connection design.
+- [Transport architecture](docs/TRANSPORT_V4_BINDING.md): direct and relayed connection design.
 - [Examples](examples/README.md): runnable SDK usage.
 
 Flowersec is available under the [MIT License](LICENSE). Published packages and

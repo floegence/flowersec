@@ -47,33 +47,35 @@ const (
 // cannot establish absence in its replacement. Terminal disposition remains
 // until this original registration is closed, independently of result cleanup.
 type TunnelServerAllowRegistration struct {
-	mu                                                                         sync.Mutex
-	config                                                                     TunnelServerAllowRegistrationConfig
-	reservation, shared, carrier, environment                                  resourcev4.Reference
-	endpoint                                                                   *TunnelServerAllowRecipient
-	provider                                                                   CarrierPreparation
-	prepared                                                                   *PreparedCarrier
-	request                                                                    TunnelServerAllowRequest
-	grantHash                                                                  [32]byte
-	grantSize                                                                  int
-	deadline                                                                   *timev4.Deadline
-	route                                                                      []byte
-	state                                                                      tunnelAllowState
-	terminal                                                                   error
-	ready, done                                                                chan struct{}
-	cancel                                                                     context.CancelFunc
-	busy, joining, waiting, cleaning, closed, cleaned, readyClosed, registered bool
+	entrancePlan                                                                                         *TunnelAcceptedEntrancePlan
+	mu                                                                                                   sync.Mutex
+	config                                                                                               TunnelServerAllowRegistrationConfig
+	reservation, shared, carrier, environment                                                            resourcev4.Reference
+	endpoint                                                                                             *TunnelServerAllowRecipient
+	provider                                                                                             CarrierPreparation
+	prepared                                                                                             *PreparedCarrier
+	request                                                                                              TunnelServerAllowRequest
+	grantHash                                                                                            [32]byte
+	grantSize                                                                                            int
+	deadline                                                                                             *timev4.Deadline
+	route, deliveryGrant                                                                                 []byte
+	state                                                                                                tunnelAllowState
+	terminal                                                                                             error
+	ready, done, preparationDone                                                                         chan struct{}
+	cancel                                                                                               context.CancelFunc
+	busy, joining, waiting, cleaning, closed, cleaned, readyClosed, registered, liveReserved, dispatched bool
 }
 
 type TunnelServerAllowPrepared struct {
 	Recipient *TunnelServerAllowRecipient
 	Deadline  *timev4.Deadline
+	Entrance  *TunnelAcceptedEntrancePlan
 }
 
 // The four charges belong to distinct actual owners. The recipient additionally
 // owns the once-dispatched preparation context through physical adoption/close.
 func TunnelServerAllowRegistrationCharges(c TunnelServerAllowRegistrationConfig, live bool) (registration, recipient, subscriptions, carrier resourcev4.Vector, err error) {
-	if c.Runtime == nil || c.Clock == nil || c.Factory == nil || c.Recipient == ([16]byte{}) || c.Candidate.Index >= 16 || c.Candidate.CandidateID == ([16]byte{}) || c.Candidate.RouteDigest == ([32]byte{}) || c.Attempt == ([16]byte{}) || c.WorkMS == 0 || c.WorkMS > 30000 || c.Budget.PreauthBytes == 0 || c.Budget.WorkUnits == 0 || c.RuntimeBytes == 0 || c.SubscriptionRuntimeBytes == 0 {
+	if c.Runtime == nil || c.Clock == nil || c.Factory == nil || c.Recipient == ([16]byte{}) || c.Candidate.Index >= 16 || c.Candidate.CandidateID == ([16]byte{}) || c.Candidate.RouteDigest == ([32]byte{}) || (!live && c.Attempt == ([16]byte{})) || c.WorkMS == 0 || c.WorkMS > 90000 || c.Budget.PreauthBytes == 0 || c.Budget.WorkUnits == 0 || c.RuntimeBytes == 0 || c.SubscriptionRuntimeBytes == 0 {
 		err = cryptov4.ErrConfiguration
 		return
 	}
@@ -97,7 +99,11 @@ func TunnelServerAllowRegistrationCharges(c TunnelServerAllowRegistrationConfig,
 	if err != nil {
 		return registration, recipient, subscriptions, carrier, err
 	}
-	registration, err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(TunnelServerAllowRegistration{})) + uint64(limit) + uint64(unsafe.Sizeof(timev4.Deadline{})) + 3*uint64(unsafe.Sizeof(timev4.Window{})) + 3072, resourcev4.Items: 1, resourcev4.WorkSlots: 3, resourcev4.Timers: 2, resourcev4.Tasks: 2}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
+	grantLimit, err := protocolv4.SchemaByteLimit("Grant")
+	if err != nil {
+		return registration, recipient, subscriptions, carrier, err
+	}
+	registration, err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(TunnelServerAllowRegistration{})) + uint64(limit) + uint64(grantLimit) + uint64(unsafe.Sizeof(timev4.Deadline{})) + 3*uint64(unsafe.Sizeof(timev4.Window{})) + 3072, resourcev4.Items: 1, resourcev4.WorkSlots: 3, resourcev4.Timers: 2, resourcev4.Tasks: 2}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 	return
 }
 
@@ -136,7 +142,7 @@ func NewTunnelServerAllowRegistration(material *ConnectionMaterial, c TunnelServ
 	if err != nil {
 		return nil, err
 	}
-	r := &TunnelServerAllowRegistration{config: c, reservation: owned, environment: environment, ready: make(chan struct{}), done: make(chan struct{})}
+	r := &TunnelServerAllowRegistration{config: c, reservation: owned, environment: environment, ready: make(chan struct{}), done: make(chan struct{}), preparationDone: make(chan struct{})}
 	adopted := false
 	defer func() {
 		if !adopted {
@@ -188,6 +194,8 @@ func NewTunnelServerAllowRegistration(material *ConnectionMaterial, c TunnelServ
 	}
 	limit, _ := protocolv4.SchemaByteLimit("Artifact")
 	r.route = make([]byte, limit)
+	grantLimit, _ := protocolv4.SchemaByteLimit("Grant")
+	r.deliveryGrant = make([]byte, grantLimit)
 	var digest [32]byte
 	r.route, digest, err = pin.lease.maps[0].CopyCandidateRoute(c.Candidate.Index, r.route)
 	if err != nil {
@@ -221,18 +229,45 @@ func (r *TunnelServerAllowRegistration) Binding() (TunnelServerAllowRequest, err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed {
+	if r.closed || r.entrancePlan == nil {
 		return TunnelServerAllowRequest{}, resourcev4.ErrClosed
 	}
 	return r.endpoint.Binding()
 }
+
+// ReserveOriginalLivePublication fixes the authority's authenticated attempt
+// on an already admitted pending B registration before live_reserved is sent.
+// This dispatches no carrier and accepts no issued material.
+func (r *TunnelServerAllowRegistration) ReserveOriginalLivePublication(attempt [16]byte) error {
+	if r == nil || attempt == ([16]byte{}) {
+		return cryptov4.ErrConfiguration
+	}
+	if err := r.check(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed || r.busy || r.state != tunnelAllowAbsent || r.liveReserved || r.entrancePlan == nil {
+		return resourcev4.ErrOwner
+	}
+	r.endpoint.mu.Lock()
+	defer r.endpoint.mu.Unlock()
+	if !r.endpoint.live || r.endpoint.closed || r.endpoint.grantMap != nil || r.config.Attempt != ([16]byte{}) && r.config.Attempt != attempt {
+		return resourcev4.ErrOwner
+	}
+	r.config.Attempt = attempt
+	r.endpoint.expected.Attempt = attempt
+	r.liveReserved = true
+	return nil
+}
+
 func (r *TunnelServerAllowRegistration) ControlReferenceFor(clock *timev4.Clock, environment resourcev4.Reference) (resourcev4.Reference, error) {
 	if r == nil {
 		return resourcev4.Reference{}, resourcev4.ErrOwner
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed || r.registered || clock != r.config.Clock {
+	if r.closed || r.registered || r.entrancePlan == nil || clock != r.config.Clock {
 		return resourcev4.Reference{}, resourcev4.ErrOwner
 	}
 	if err := r.reservation.CheckSameEnvironment(environment); err != nil {
@@ -269,9 +304,10 @@ func (r *TunnelServerAllowRegistration) signalLocked() {
 	}
 }
 
-// Receive accepts any first physical delivery of the exact original allow.
-// One duplicate may join a currently preparing execution. No duplicate, timeout
-// or terminal result reclaims its prepare dispatch or installs another carrier.
+// Receive installs the exact original Allow execution before acknowledging it.
+// Carrier preparation belongs to this registration's prepaid task and original
+// Runtime, so the control response never waits for tunnel pairing. Duplicates
+// acknowledge the same execution; they cannot dispatch preparation again.
 func (r *TunnelServerAllowRegistration) Receive(ctx context.Context, q TunnelServerAllowRequest, grant []byte) (err error) {
 	if r == nil || ctx == nil || q.Check() != nil {
 		return cryptov4.ErrConfiguration
@@ -285,7 +321,7 @@ func (r *TunnelServerAllowRegistration) Receive(ctx context.Context, q TunnelSer
 	}
 	hash := sha256.Sum256(grant)
 	r.mu.Lock()
-	if r.closed {
+	if r.closed || r.entrancePlan == nil {
 		r.mu.Unlock()
 		return resourcev4.ErrClosed
 	}
@@ -299,16 +335,12 @@ func (r *TunnelServerAllowRegistration) Receive(ctx context.Context, q TunnelSer
 			return cryptov4.ErrCapacity
 		}
 		r.joining = true
-		defer func() { r.mu.Lock(); r.joining = false; r.mu.Unlock() }()
-		if r.state == tunnelAllowPreparing || r.busy {
-			ready := r.ready
-			r.mu.Unlock()
-			if err := r.waitReady(ctx, ready, 2000); err != nil {
-				return err
-			}
-			return r.result()
-		}
+		preparing := r.state == tunnelAllowPreparing
 		r.mu.Unlock()
+		defer func() { r.mu.Lock(); r.joining = false; r.mu.Unlock() }()
+		if preparing {
+			return r.check()
+		}
 		return r.result()
 	}
 	if r.busy {
@@ -317,30 +349,30 @@ func (r *TunnelServerAllowRegistration) Receive(ctx context.Context, q TunnelSer
 	}
 	r.busy = true
 	r.mu.Unlock()
-	dispatched, returned := false, false
+	transferred, returned := false, false
+	var window *timev4.Window
+	var cancel context.CancelFunc
 	defer func() {
 		if recover() != nil || !returned {
 			err = ErrEnvironmentTaskExit
 		}
-		r.mu.Lock()
-		if dispatched && r.state == tunnelAllowPreparing {
-			r.state = tunnelAllowTerminal
-			r.terminal = err
-		}
-		terminal := r.state == tunnelAllowTerminal || r.closed
-		r.mu.Unlock()
-		if terminal {
-			r.endpoint.Close()
-			if r.prepared != nil {
-				_ = r.prepared.Close()
+		if !transferred {
+			if cancel != nil {
+				cancel()
 			}
+			if window != nil {
+				window.Cancel()
+			}
+			r.mu.Lock()
+			closed := r.closed
+			r.mu.Unlock()
+			if closed {
+				r.endpoint.Close()
+			}
+			r.mu.Lock()
+			r.busy = false
+			r.mu.Unlock()
 		}
-		r.mu.Lock()
-		r.busy = false
-		if r.state != tunnelAllowAbsent || r.closed {
-			r.signalLocked()
-		}
-		r.mu.Unlock()
 	}()
 	err = func() error {
 		if err := r.check(); err != nil {
@@ -352,42 +384,87 @@ func (r *TunnelServerAllowRegistration) Receive(ctx context.Context, q TunnelSer
 		if err := r.provider.Check(); err != nil {
 			return err
 		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		// Complete absence and all bounded inputs precede this one dispatch.
-		r.mu.Lock()
-		if r.closed || r.state != tunnelAllowAbsent {
-			r.mu.Unlock()
-			return resourcev4.ErrClosed
-		}
-		r.state, r.request, r.grantHash, r.grantSize = tunnelAllowPreparing, q, hash, len(grant)
-		dispatched = true
-		r.mu.Unlock()
-		window, err := timev4.NewWindow(r.config.Clock, r.config.WorkMS)
-		if err != nil {
-			return err
-		}
-		defer window.Cancel()
 		if err := r.deadline.Tighten(q.NotAfterMS); err != nil {
+			return err
+		}
+		var err error
+		window, err = timev4.NewWindow(r.config.Clock, r.config.WorkMS)
+		if err != nil {
 			return err
 		}
 		remaining, err := r.deadline.RemainingMS()
 		if err != nil {
 			return err
 		}
-		call, cancel := context.WithTimeout(r.config.Runtime, time.Duration(min(r.config.WorkMS, remaining))*time.Millisecond)
+		var call context.Context
+		call, cancel = context.WithTimeout(r.config.Runtime, time.Duration(min(r.config.WorkMS, remaining))*time.Millisecond)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := call.Err(); err != nil {
+			return err
+		}
+		if err := r.check(); err != nil {
+			return err
+		}
 		r.mu.Lock()
-		r.cancel = cancel
-		closed := r.closed
-		r.mu.Unlock()
-		if closed {
-			cancel()
+		if r.closed || r.state != tunnelAllowAbsent {
+			r.mu.Unlock()
 			return resourcev4.ErrClosed
 		}
+		if r.config.Attempt != ([16]byte{}) && r.config.Attempt != q.Attempt {
+			r.mu.Unlock()
+			return protocolv4.ErrHopAuthContext
+		}
+		// Both the input copy and task position were reserved at construction.
+		copy(r.deliveryGrant, grant)
+		r.config.Attempt = q.Attempt
+		r.state, r.request, r.grantHash, r.grantSize = tunnelAllowPreparing, q, hash, len(grant)
+		r.cancel, r.dispatched = cancel, true
+		transferred = true
+		r.mu.Unlock()
+		go r.prepareOriginal(call, q, window)
+		return nil
+	}()
+	returned = true
+	return err
+}
+
+func (r *TunnelServerAllowRegistration) prepareOriginal(call context.Context, q TunnelServerAllowRequest, window *timev4.Window) {
+	var err error
+	returned := false
+	defer func() {
+		if recover() != nil || !returned {
+			err = ErrEnvironmentTaskExit
+		}
+		window.Cancel()
+		r.mu.Lock()
+		if r.state == tunnelAllowPreparing {
+			r.state, r.terminal = tunnelAllowTerminal, err
+		}
+		terminal := r.state == tunnelAllowTerminal || r.closed
+		r.mu.Unlock()
+		if terminal {
+			r.cancel()
+			r.endpoint.Close()
+			if r.prepared != nil {
+				_ = r.prepared.Close()
+			}
+		}
+		clear(r.deliveryGrant)
+		r.mu.Lock()
+		r.busy = false
+		r.signalLocked()
+		close(r.preparationDone)
+		r.mu.Unlock()
+	}()
+	err = func() error {
 		r.endpoint.mu.Lock()
-		r.endpoint.prepareCancel = cancel
+		r.endpoint.prepareCancel = r.cancel
 		r.endpoint.mu.Unlock()
+		if err := call.Err(); err != nil {
+			return err
+		}
 		if err := r.endpoint.identity.identity.check(); err != nil {
 			return err
 		}
@@ -395,6 +472,7 @@ func (r *TunnelServerAllowRegistration) Receive(ctx context.Context, q TunnelSer
 			return err
 		}
 		config := PreparedCarrierConfig{Candidate: r.config.Candidate, Attempt: r.config.Attempt, Session: r.endpoint.lease.lease.session, Role: protocolv4.ServerToClient, Deadline: r.deadline, Reservation: r.carrier, Environment: r.environment, RuntimeBytes: r.config.CarrierRuntimeBytes}
+		var err error
 		r.prepared, err = r.provider.PrepareCarrier(call, CarrierPreparationRequest{Config: config, Scope: r.config.Scope, Route: r.route, Budget: r.config.Budget})
 		if err != nil {
 			return err
@@ -414,7 +492,7 @@ func (r *TunnelServerAllowRegistration) Receive(ctx context.Context, q TunnelSer
 		if err = r.endpoint.attachPrepared(r.prepared, r.environment); err != nil {
 			return err
 		}
-		if err = r.endpoint.Receive(call, q, grant); err != nil {
+		if err = r.endpoint.Receive(call, q, r.deliveryGrant[:r.grantSize]); err != nil {
 			return err
 		}
 		if err = window.Check(); err != nil {
@@ -432,7 +510,6 @@ func (r *TunnelServerAllowRegistration) Receive(ctx context.Context, q TunnelSer
 		return nil
 	}()
 	returned = true
-	return err
 }
 
 func (r *TunnelServerAllowRegistration) result() error {
@@ -492,7 +569,7 @@ func (r *TunnelServerAllowRegistration) TakePrepared(ctx context.Context) (Tunne
 		return TunnelServerAllowPrepared{}, resourcev4.ErrOwner
 	}
 	r.state = tunnelAllowTaken
-	return TunnelServerAllowPrepared{Recipient: r.endpoint, Deadline: r.deadline}, nil
+	return TunnelServerAllowPrepared{Recipient: r.endpoint, Deadline: r.deadline, Entrance: r.entrancePlan}, nil
 }
 
 // Each observer has its own bounded wait while retaining the same original
@@ -535,8 +612,12 @@ func (r *TunnelServerAllowRegistration) Close() {
 	cancel := r.cancel
 	taken, busy := r.state == tunnelAllowTaken, r.busy
 	endpoint := r.endpoint
+	plan := r.entrancePlan
 	r.mu.Unlock()
 	if !taken {
+		if plan != nil {
+			plan.Close()
+		}
 		if cancel != nil {
 			cancel()
 		}
@@ -557,6 +638,16 @@ func (r *TunnelServerAllowRegistration) WaitCleanup(ctx context.Context) error {
 		r.mu.Unlock()
 		return nil
 	}
+	if r.closed && r.busy && r.dispatched {
+		done := r.preparationDone
+		r.mu.Unlock()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		return r.WaitCleanup(ctx)
+	}
 	if !r.closed || r.busy || r.joining || r.waiting || r.cleaning {
 		r.mu.Unlock()
 		return cryptov4.ErrCapacity
@@ -565,6 +656,12 @@ func (r *TunnelServerAllowRegistration) WaitCleanup(ctx context.Context) error {
 	taken := r.state == tunnelAllowTaken
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.cleaning = false; r.mu.Unlock() }()
+	if !taken && r.entrancePlan != nil {
+		r.entrancePlan.Close()
+		if err := r.entrancePlan.WaitCleanup(ctx); err != nil {
+			return err
+		}
+	}
 	if !taken && r.prepared != nil {
 		_ = r.prepared.Close()
 		if err := r.prepared.WaitCleanup(ctx); err != nil {
@@ -584,15 +681,18 @@ func (r *TunnelServerAllowRegistration) WaitCleanup(ctx context.Context) error {
 		r.provider.Close()
 	}
 	clear(r.route)
+	clear(r.deliveryGrant)
 	r.carrier.Release()
 	r.shared.Release()
 	r.reservation.Release()
 	r.mu.Lock()
 	r.cleaned = true
 	r.route = nil
+	r.deliveryGrant = nil
 	r.provider = nil
 	r.prepared = nil
 	r.endpoint = nil
+	r.entrancePlan = nil
 	r.config = TunnelServerAllowRegistrationConfig{}
 	r.cancel = nil
 	close(r.done)

@@ -43,21 +43,22 @@ type sqlitePoolRelayEntry struct {
 // A replay may register the same retained original outbox, but cannot recreate
 // any endpoint publication owner or material that has already been retired.
 type SQLitePoolRelayPublication struct {
-	mu                            sync.Mutex
-	table                         *SQLiteRelayAuthorityTable
-	source                        *SQLiteTopUpServer
-	identity                      SQLiteIdentity
-	request                       protocolv4.TopUpRequestFacts
-	facts                         protocolv4.TopUpResponseFacts
-	wireDigest                    [32]byte
-	invocation                    [16]byte
-	entries                       []sqlitePoolRelayEntry
-	reservation, shared, storeRef resourcev4.Reference
-	ctx                           context.Context
-	access                        TopUpAccess
-	started, active, closed       bool
-	cleaning, cleaned, held       bool
-	cleanupErr                    error
+	mu                               sync.Mutex
+	table                            *SQLiteRelayAuthorityTable
+	source                           *SQLiteTopUpServer
+	identity                         SQLiteIdentity
+	request                          protocolv4.TopUpRequestFacts
+	facts                            protocolv4.TopUpResponseFacts
+	wireDigest                       [32]byte
+	invocation                       [16]byte
+	entries                          []sqlitePoolRelayEntry
+	reservation, shared, storeRef    resourcev4.Reference
+	ctx                              context.Context
+	access                           TopUpAccess
+	started, active, closed          bool
+	cleaning, cleaned, held          bool
+	cleanupErr                       error
+	original, committed, winnerTaken bool
 }
 
 func SQLitePoolRelayPublicationCharge(c SQLitePoolRelayPublicationConfig) (resourcev4.Vector, error) {
@@ -266,6 +267,10 @@ func (p *SQLitePoolRelayPublication) Check() error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.checkLocked()
+}
+
+func (p *SQLitePoolRelayPublication) checkLocked() error {
 	if p.closed {
 		return ErrOwner
 	}
@@ -375,7 +380,13 @@ func (p *SQLitePoolRelayPublication) publish() error {
 		// Ready registrations remain independently retained after Close.
 		e.reserved = false
 	}
-	return p.checkCommit()
+	if err := p.checkCommit(); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.committed = true
+	p.mu.Unlock()
+	return nil
 }
 
 func (p *SQLitePoolRelayPublication) checkCommit() error {

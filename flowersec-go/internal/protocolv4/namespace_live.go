@@ -86,8 +86,14 @@ type LiveNamespace struct {
 	destroyed       bool
 	refresh         *NamespaceRefresh
 	refreshActive   bool
+	refreshFencing  bool
 	durable         *namespaceDurability
-	initializing    bool
+	// initialContinuityContext fences the first durable commit while an online
+	// bootstrap is still owned by its caller. It is cleared before delivery so
+	// later continuity work remains owned by the Environment context.
+	initialContinuityContext context.Context
+	initializing             bool
+	retirementDeletion       bool
 }
 
 // NamespacePin is private to this live incarnation. New Head observations do
@@ -129,10 +135,10 @@ func (r *NamespaceRules) LiveNamespaceCharge(subscriberSlots uint32) (resourcev4
 }
 
 func NewLiveNamespace(ctx context.Context, clock *timev4.Clock, trust NamespaceTrust, bootstrap *NamespaceState, spare *RevocationWorkspace, fetchDuration uint64, attemptLimit uint8, subscriberSlots uint32, reservation resourcev4.Reference) (*LiveNamespace, error) {
-	return newLiveNamespace(ctx, clock, trust, bootstrap, spare, fetchDuration, attemptLimit, subscriberSlots, reservation, false)
+	return newLiveNamespace(ctx, clock, trust, bootstrap, spare, fetchDuration, attemptLimit, subscriberSlots, reservation, false, false)
 }
 
-func newLiveNamespace(ctx context.Context, clock *timev4.Clock, trust NamespaceTrust, bootstrap *NamespaceState, spare *RevocationWorkspace, fetchDuration uint64, attemptLimit uint8, subscriberSlots uint32, reservation resourcev4.Reference, recovering bool) (_ *LiveNamespace, err error) {
+func newLiveNamespace(ctx context.Context, clock *timev4.Clock, trust NamespaceTrust, bootstrap *NamespaceState, spare *RevocationWorkspace, fetchDuration uint64, attemptLimit uint8, subscriberSlots uint32, reservation resourcev4.Reference, recovering, allowPendingHistory bool) (_ *LiveNamespace, err error) {
 	if ctx == nil || clock == nil || trust == nil || bootstrap == nil || spare == nil || bootstrap.workspace == spare || bootstrap.workspace.rules != spare.rules || fetchDuration == 0 || attemptLimit == 0 {
 		return nil, CBORFailure("revocation_namespace_owner")
 	}
@@ -190,7 +196,12 @@ func newLiveNamespace(ctx context.Context, clock *timev4.Clock, trust NamespaceT
 			return nil, err
 		}
 	}
-	if err := n.checkStateHistoryAt(bootstrap, now); err != nil {
+	if allowPendingHistory {
+		_, err = n.checkStateHistoryAtPending(bootstrap, now)
+	} else {
+		err = n.checkStateHistoryAt(bootstrap, now)
+	}
+	if err != nil {
 		return nil, err
 	}
 	n.subscribers = make([]namespaceSubscriber, int(subscriberSlots))
@@ -227,6 +238,9 @@ func newLiveNamespace(ctx context.Context, clock *timev4.Clock, trust NamespaceT
 }
 
 func (n *LiveNamespace) checkAvailable() error {
+	if n.destroyed || n.active == nil || n.spare == nil || n.reservation == (resourcev4.Reference{}) {
+		return CBORFailure("revocation_namespace_owner")
+	}
 	if n.terminal == nil {
 		select {
 		case <-n.parentDone:
@@ -812,6 +826,10 @@ func (n *LiveNamespace) cleanup() {
 	clear(n.input)
 	clear(n.retired)
 	n.input, n.retired = nil, nil
+	// The bootstrap task context is a temporary continuity fence. It may only
+	// be dropped after the candidate's watcher and durable tail have exited;
+	// otherwise a failed candidate could retain a canceled bootstrap shell.
+	n.initialContinuityContext = nil
 	n.cleaned = true
 	close(n.done)
 }
@@ -957,7 +975,7 @@ func (n *LiveNamespace) DestroyEnvironment() error {
 	if n.destroyed {
 		return nil
 	}
-	if !n.cleaned || n.refresh != nil || !n.reservation.EnvironmentClosed() {
+	if !n.cleaned || n.refresh != nil || !n.retirementDeletion && !n.reservation.EnvironmentClosed() {
 		return CBORFailure("revocation_namespace_owner")
 	}
 	for _, slot := range n.subscribers {

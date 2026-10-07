@@ -68,13 +68,17 @@ func (c *ConnectionController) prepareRenewalCurrent(session *EnvironmentSession
 			}
 		}
 	}
-	r, identity, err := session.controllerRPCIdentity()
+	r, _, err := session.controllerRPCIdentity()
 	if err != nil {
 		finish(false)
 		return nil, err
 	}
 	for _, entry := range entries {
-		if entry.group.controller == c && entry.group.routing != identity {
+		if entry.group.controller != c {
+			continue
+		}
+		_, mapped, mappingErr := session.controllerRPCIdentity(entry.group.routing.peers)
+		if mappingErr != nil || entry.group.routing != mapped {
 			finish(false)
 			return nil, ErrApplicationAuthorization
 		}

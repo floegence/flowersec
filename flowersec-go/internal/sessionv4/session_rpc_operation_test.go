@@ -215,3 +215,101 @@ func TestExecutionUnaryPreparedIdentityAndOriginalResponse(t *testing.T) {
 		t.Fatal(result, err)
 	}
 }
+
+func TestExecutionRequestCancelNilContextDoesNotRetainDiagnostic(t *testing.T) {
+	f := newServiceDispatchFixtureProfile(t, func(context.Context, UnaryRequest, *UnaryResponse) (uint32, error) { return 0, nil }, false, ApplicationShort, true)
+	f, r, route := callerForServiceFixture(t, f)
+	options := rpcv4.UnaryPreparation{DeadlineAtMS: 2000, AdmissionNotAfterMS: 1800, ResponseLimitBytes: 1024, Offer: protocolv4.AdmissionOfferBounds{Digest: f.policy.Digest, NotBeforeMS: 1000, NotAfterMS: 1600}}
+	o := prepareCallerOperation(t, r, route, options, []byte("execution request"))
+	if ref, err := o.Reference(); err != nil || !ref.Valid() {
+		t.Fatal("missing original execution reference", err)
+	}
+	op := &DiagnosticOperation{applicationReferences: 1}
+	o.mu.Lock()
+	o.diagnosticOperation = op
+	o.mu.Unlock()
+	if _, err := o.RequestCancel(nil, 1000); !errors.Is(err, cryptov4.ErrConfiguration) {
+		t.Fatal("nil context was not rejected before management ownership", err)
+	}
+	if op.applicationReferences != 1 {
+		t.Fatal("nil context leaked an original diagnostic tail")
+	}
+	o.Close()
+	r.AdvanceCalls()
+	if op.applicationReferences != 0 {
+		t.Fatal("original operation did not release its final diagnostic")
+	}
+}
+
+func TestPreparedConvenienceWaitKeepsOriginalChannelAndDeadline(t *testing.T) {
+	for _, release := range []string{"ready", "canceled", "closed", "expired"} {
+		t.Run(release, func(t *testing.T) {
+			_, r, route := shortCallerFixture(t)
+			o := prepareCallerOperation(t, r, route, rpcv4.UnaryPreparation{DeadlineAtMS: 2000}, []byte("request"))
+			r.mu.Lock()
+			r.firstReady, r.firstSettled, r.bootstrap = make(chan struct{}), false, &Bootstrap{}
+			channel := r.channel
+			r.channel = nil
+			r.mu.Unlock()
+			defer func() { r.mu.Lock(); r.bootstrap = nil; r.settleFirstChannelLocked(); r.mu.Unlock() }()
+			if release == "expired" {
+				// Expire the original preparation, not a replacement wall timer.
+				err := o.request.WithStart(context.Background(), func(rpcv4.ContractRoute, protocolv4.ApplicationHeader, []byte, []byte) error {
+					deadline, err := o.request.PreparationDeadline()
+					if err != nil {
+						return err
+					}
+					deadline.Cancel()
+					return nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := o.waitInitialChannel(context.Background()); !errors.Is(err, timev4.ErrCancelled) {
+					t.Fatal(err)
+				}
+				return
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				selected, err := o.waitInitialChannel(ctx)
+				if err == nil && selected != r {
+					err = errors.New("readiness wait replaced the original service owner")
+				}
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				t.Fatal("returned before original readiness", err)
+			case <-time.After(10 * time.Millisecond):
+			}
+			switch release {
+			case "ready":
+				r.mu.Lock()
+				r.channel = channel
+				r.settleFirstChannelLocked()
+				r.mu.Unlock()
+			case "canceled":
+				cancel()
+			case "closed":
+				r.mu.Lock()
+				r.bootstrap = nil
+				r.mu.Unlock()
+				r.Close()
+			}
+			select {
+			case err := <-done:
+				if release == "ready" && err != nil || release == "canceled" && !errors.Is(err, context.Canceled) {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("original readiness/cancellation did not wake caller")
+			}
+			if o.started {
+				t.Fatal("readiness wait submitted a request")
+			}
+		})
+	}
+}

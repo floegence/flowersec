@@ -100,7 +100,14 @@ func decodeTopUpRequest(wire []byte) (f protocolv4.TopUpRequestFacts, err error)
 	}
 	f.DesiredCount = uint32(count)
 	f.MaxItemBytes = uint32(size)
-	return f, r.done()
+	if r.done() != nil {
+		return f, ErrStorageFormat
+	}
+	digest, e := protocolv4.ComputeTopUpRequestDigest(f)
+	if e != nil || digest != f.Digest {
+		return f, ErrStorageFormat
+	}
+	return f, nil
 }
 func decodeTopUpResponse(wire []byte) (f protocolv4.TopUpResponseFacts, err error) {
 	r := topUpReader{data: wire}

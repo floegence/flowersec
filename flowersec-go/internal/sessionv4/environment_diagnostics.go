@@ -18,6 +18,18 @@ import (
 
 // DiagnosticCounts returns a finite, detached, unsampled observation. It is not
 // an authorization or cleanup fact. The whole bank belongs to EnvironmentCharge.
+func (e *Environment) emitDiagnostic(fields diagnosticv4.Fields) {
+	if e == nil || e.diagnosticSink == nil {
+		return
+	}
+	op := e.diagnosticSink.Begin()
+	if op == nil {
+		return
+	}
+	op.Emit(fields)
+	op.Close()
+}
+
 func (e *Environment) DiagnosticCounts(metric diagnosticv4.Metric) diagnosticv4.Counts {
 	if e == nil {
 		return diagnosticv4.Counts{}
@@ -30,10 +42,19 @@ func (e *Environment) DiagnosticCounts(metric diagnosticv4.Metric) diagnosticv4.
 func (s *EnvironmentSession) beginDiagnostics() {
 	s.diagnosticStarted = time.Now()
 	s.diagnosticPhase = diagnosticv4.PhasePrepare
-	s.environment.counters.Observe(diagnosticv4.MetricConnectionAttempt, diagnosticv4.Fields{
-		State: diagnosticv4.StateStarting, Phase: s.diagnosticPhase,
-		Code: diagnosticv4.CodeOK, AttemptBucket: diagnosticv4.AttemptOne,
-	})
+	s.diagnosticAttempt = s.controllerDiagnosticAttempt
+	if s.diagnosticAttempt == 0 {
+		s.diagnosticAttempt = 1
+	}
+	fields := diagnosticv4.Fields{State: diagnosticv4.StateStarting, Phase: s.diagnosticPhase,
+		Code: diagnosticv4.CodeOK, AttemptBucket: diagnosticv4.Attempt(s.diagnosticAttempt)}
+	s.environment.counters.Observe(diagnosticv4.MetricConnectionAttempt, fields)
+	if s.environment.diagnosticSink != nil {
+		s.diagnosticOperation = s.environment.diagnosticSink.Begin()
+		if s.diagnosticOperation != nil {
+			s.diagnosticOperation.Emit(fields)
+		}
+	}
 }
 
 func (s *EnvironmentSession) setDiagnosticPhase(phase diagnosticv4.Phase) {
@@ -98,20 +119,23 @@ func (s *EnvironmentSession) observeClosure(cause error) {
 	}
 	code, metric := diagnosticFailure(cause)
 	fields := diagnosticv4.Fields{State: diagnosticv4.StateFailed, Phase: s.diagnosticPhase,
-		Code: code, AttemptBucket: diagnosticv4.AttemptOne,
+		Code: code, AttemptBucket: diagnosticv4.Attempt(s.diagnosticAttempt),
 		DurationBucket:   diagnosticv4.Duration(time.Since(s.diagnosticStarted)),
 		RetryDisposition: diagnosticv4.RetryPreserveFacts}
 	s.environment.counters.Observe(diagnosticv4.MetricConnectionFailure, fields)
 	if metric != diagnosticv4.MetricOther {
 		s.environment.counters.Observe(metric, fields)
 	}
+	if s.diagnosticOperation != nil {
+		s.diagnosticOperation.Emit(fields)
+	}
 }
 
 func (e *Environment) observePositionRejection() {
-	e.counters.Observe(diagnosticv4.MetricResourceRejection, diagnosticv4.Fields{
-		State: diagnosticv4.StateStarting, Phase: diagnosticv4.PhasePrepare,
-		Code: diagnosticv4.CodeResourceExhausted,
-	})
+	fields := diagnosticv4.Fields{State: diagnosticv4.StateStarting, Phase: diagnosticv4.PhasePrepare,
+		Code: diagnosticv4.CodeResourceExhausted}
+	e.counters.Observe(diagnosticv4.MetricResourceRejection, fields)
+	e.emitDiagnostic(fields)
 }
 
 func (s *EnvironmentSession) observeCleanupTimeout(cause error) {
@@ -124,10 +148,12 @@ func (s *EnvironmentSession) observeCleanupTimeout(cause error) {
 		return
 	}
 	s.cleanupTimeoutObserved = true
-	s.environment.counters.Observe(diagnosticv4.MetricCleanupTimeout, diagnosticv4.Fields{
-		State: diagnosticv4.StateClosed, Phase: diagnosticv4.PhaseCleanup,
-		Code: diagnosticv4.CodeCleanupIncomplete,
-	})
+	fields := diagnosticv4.Fields{State: diagnosticv4.StateClosed, Phase: diagnosticv4.PhaseCleanup,
+		Code: diagnosticv4.CodeCleanupIncomplete}
+	s.environment.counters.Observe(diagnosticv4.MetricCleanupTimeout, fields)
+	if s.diagnosticOperation != nil {
+		s.diagnosticOperation.Emit(fields)
+	}
 }
 
 func (e *Environment) observeCleanupTimeout(cause error) {
@@ -140,10 +166,10 @@ func (e *Environment) observeCleanupTimeout(cause error) {
 		return
 	}
 	e.cleanupTimeoutObserved = true
-	e.counters.Observe(diagnosticv4.MetricCleanupTimeout, diagnosticv4.Fields{
-		State: diagnosticv4.StateClosed, Phase: diagnosticv4.PhaseCleanup,
-		Code: diagnosticv4.CodeCleanupIncomplete,
-	})
+	fields := diagnosticv4.Fields{State: diagnosticv4.StateClosed, Phase: diagnosticv4.PhaseCleanup,
+		Code: diagnosticv4.CodeCleanupIncomplete}
+	e.counters.Observe(diagnosticv4.MetricCleanupTimeout, fields)
+	e.emitDiagnostic(fields)
 }
 
 // The admission method is already physically active. Its Environment position
@@ -161,10 +187,18 @@ func (p *SessionCorePlan) bindEnvironmentDiagnostics(host *EnvironmentSession) e
 		return cryptov4.ErrTransition
 	}
 	p.diagnostics = &host.environment.counters
+	p.diagnosticOperation = host.diagnosticOperation
+	p.diagnosticSink = host.environment.diagnosticSink
+	if p.application != nil {
+		p.application.mu.Lock()
+		p.application.diagnosticSink = host.environment.diagnosticSink
+		p.application.mu.Unlock()
+	}
 	if p.receivePool != nil {
 		p.receivePool.mu.Lock()
 		if !p.receivePool.closed {
 			p.receivePool.diagnostics = p.diagnostics
+			p.receivePool.diagnosticOperation = p.diagnosticOperation
 		}
 		p.receivePool.mu.Unlock()
 	}
@@ -180,8 +214,10 @@ func (f *ReceiveFlow) observeConsumerSaturationLocked() {
 		return
 	}
 	f.consumerSaturationObserved = true
-	f.pool.diagnostics.Observe(diagnosticv4.MetricSlowConsumer, diagnosticv4.Fields{
-		State: diagnosticv4.StateReady, Phase: diagnosticv4.PhaseApplication,
-		Code: diagnosticv4.CodeSlowConsumer,
-	})
+	fields := diagnosticv4.Fields{State: diagnosticv4.StateReady, Phase: diagnosticv4.PhaseApplication,
+		Code: diagnosticv4.CodeSlowConsumer}
+	f.pool.diagnostics.Observe(diagnosticv4.MetricSlowConsumer, fields)
+	if f.pool.diagnosticOperation != nil {
+		f.pool.diagnosticOperation.Emit(fields)
+	}
 }

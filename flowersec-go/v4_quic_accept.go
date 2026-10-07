@@ -10,16 +10,16 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-// V4QUICAcceptOptions supplies the original entrance policy, a fresh application
+// QUICAcceptOptions supplies the original entrance policy, a fresh application
 // plan and the listener's exact preauth account generations. Input's owner,
 // entrance, establishment, subscriptions, buffers and invocation must be empty.
-type V4QUICAcceptOptions struct {
-	Input                   V4AcceptedSessionInput
-	Source                  V4AcceptedMaterialSource
-	Limits                  V4EstablishmentLimits
-	Entrance                V4AcceptedEntranceConfig
-	Dependencies            V4ResourceReference
-	Accounts                []V4ResourceAccount
+type QUICAcceptOptions struct {
+	Input                   AcceptedSessionInput
+	Source                  AcceptedMaterialSource
+	Limits                  EstablishmentLimits
+	Entrance                AcceptedEntranceConfig
+	Dependencies            ResourceReference
+	Accounts                []ResourceAccount
 	LocalCapabilities       uint64
 	IngressRuntimeBytes     uint64
 	IntakeRuntimeBytes      uint64
@@ -30,13 +30,13 @@ type V4QUICAcceptOptions struct {
 // other Serve entrances, then runs ClientHello, verification, durable admission,
 // Noise and both READY flights. A successfully claimed ingress is consumed even
 // on error. The only successful result is the authenticated original Session.
-func (h *ServeHandle) AcceptQUIC(ctx context.Context, accepted *V4QUICIngress, options V4QUICAcceptOptions) (*V4Session, error) {
-	if h == nil || h.inner == nil || ctx == nil || accepted == nil || accepted.inner == nil || options.Source == nil || isNilV4Interface(options.Source) {
+func (h *ServeHandle) AcceptQUIC(ctx context.Context, accepted *QUICIngress, options QUICAcceptOptions) (*Session, error) {
+	if h == nil || h.inner == nil || ctx == nil || accepted == nil || accepted.inner == nil || options.Source == nil || isNilInterface(options.Source) {
 		return nil, cryptov4.ErrConfiguration
 	}
 	i := options.Input
 	if i.Root == nil || i.Store == nil || i.Authority == nil || i.Entrance != nil || i.Establishment != nil || i.Subscriptions != nil ||
-		i.Owner != (V4AdmissionOwner{}) || i.Buffers != (V4ResourceReference{}) || i.Invocation != (V4ResourceReference{}) ||
+		i.Owner != (AdmissionOwner{}) || i.Buffers != (ResourceReference{}) || i.Invocation != (ResourceReference{}) ||
 		i.Config.Application == nil || !i.Config.Core.Native || i.Config.Core.MessageCarrier ||
 		i.Config.Initial.Role != protocolv4.ServerToClient || i.Config.Initial.Deadline == nil ||
 		i.Config.Initial.Deadline != options.Entrance.Initial.Deadline || i.Config.Initial.Profile != options.Entrance.Initial.Profile ||
@@ -96,5 +96,5 @@ func (h *ServeHandle) AcceptQUIC(ctx context.Context, accepted *V4QUICIngress, o
 	if err != nil {
 		return nil, err
 	}
-	return newV4SessionFromEnvironment(result), nil
+	return newSessionFromEnvironment(result), nil
 }

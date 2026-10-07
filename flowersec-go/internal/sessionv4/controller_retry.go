@@ -48,9 +48,9 @@ func controllerNetworkRetry(err error) bool {
 	if err == native.ErrConnectionLost || err == io.EOF || err == io.ErrUnexpectedEOF || err == io.ErrClosedPipe {
 		return true
 	}
-	// Reconnect only on an actual native transport operation failure.
-	// Authentication, revocation, protocol, capacity and explicit Close remain
-	// terminal unless the original source later supplies its own retry fact.
+	// This preserves provenance for an actual native transport operation.
+	// The coordinator applies cleanup, initialization and attempt gates before
+	// calling the configured Source for fresh material. Consumed material stays sealed.
 	network, ok := err.(*net.OpError)
 	return ok && network != nil && (network.Op == "read" || network.Op == "write") &&
 		native.NetworkFailure(err) == native.ErrConnectionLost

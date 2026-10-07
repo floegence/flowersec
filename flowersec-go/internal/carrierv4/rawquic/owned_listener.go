@@ -299,6 +299,21 @@ func (l *OwnedListener) release(index uint16, owner *ownedConnection) {
 
 func (l *OwnedListener) Addr() netip.AddrPort { return l.address }
 
+// InterruptTransport cuts the original UDP socket without sending an
+// application close. Close and WaitCleanup still own physical retirement.
+func (l *OwnedListener) InterruptTransport() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed || l.packet == nil {
+		return resourcev4.ErrClosed
+	}
+	err := l.packet.Close()
+	if errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+	return err
+}
+
 func (l *OwnedListener) Close() error {
 	if l == nil {
 		return nil
@@ -320,7 +335,9 @@ func (l *OwnedListener) Close() error {
 		err = errors.Join(err, transport.Close())
 	}
 	if packet != nil {
-		err = errors.Join(err, packet.Close())
+		if closeErr := packet.Close(); !errors.Is(closeErr, net.ErrClosed) {
+			err = errors.Join(err, closeErr)
+		}
 	}
 	l.mu.Lock()
 	l.closeErr, l.closing = err, false

@@ -1,3 +1,4 @@
+import { DiagnosticActivity, type DiagnosticObserver } from "./diagnosticObservation.js";
 import { ResponsePublication, responsePublicationCharge, type V4MaintenanceOwner } from "../responsePublication.js";
 import { bindContentRead } from "../streamContent.js";
 import { bindCheckpointIssuer } from "../checkpoint.js";
@@ -27,11 +28,9 @@ import type { RPCPublicationGuard } from "./rpcPublisher.js";
 import type { RPCUnaryHandlerCapture } from "./rpcUnaryRegistration.js";
 import type { SessionCleanup } from "./sessionCleanup.js";
 import { TimeError } from "./timeArithmetic.js";
-
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }), decodeUTF8 = TextDecoder.prototype.decode;
 const encoder = new TextEncoder(), encodeUTF8 = TextEncoder.prototype.encode, codeUnit = String.prototype.charCodeAt;
 type Codec = CapturedMethodDefinition["request"];
-
 export function rpcUnaryDispatchCharges(inputBytes: number, responseLimit: number, method: CapturedMethodDefinition,
   handler: RPCUnaryHandlerCapture, runtimeBytes: bigint): readonly ResourceVector[] {
   if (method.shape !== "unary" || method.response === undefined) throw new RPCProtocolError("rpc_handler_binding");
@@ -43,9 +42,8 @@ export function rpcUnaryDispatchCharges(inputBytes: number, responseLimit: numbe
   const requestBytes = method.request.application?.applicationBytes ?? (method.request.implementation === "utf8" ? BigInt(inputBytes) * 3n : 0n);
   return [new ResourceVector([8192n + 8n * runtimeBytes + requestBytes + resultBytes + handler.options.applicationBytes,
     0n, 0n, 24n, 2n, 4n, 1n, 0n, 0n, 0n, 0n]), rpcPayloadCharge(responseLimit, runtimeBytes),
-    applicationHeaderCharge(runtimeBytes), applicationHeaderDecoderCharge(runtimeBytes), rpcOutputInterestCharge(runtimeBytes), ...(method.restartFlush ? [responsePublicationCharge(runtimeBytes)] : [])];
+  applicationHeaderCharge(runtimeBytes), applicationHeaderDecoderCharge(runtimeBytes), rpcOutputInterestCharge(runtimeBytes), ...(method.restartFlush ? [responsePublicationCharge(runtimeBytes)] : [])];
 }
-
 /** One full-input, prepaid result/handler owner. Transient methods bypass
  * execution history only; they still use the original K/ReplySlot, contract,
  * exact handler generation, ordinary permit and complete inline response. */
@@ -85,19 +83,21 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
   #busy = false;
   #collecting = false;
   #queued = false;
+  #publicationPhysical = false;
   #outputHeld = false;
   #detached = false;
+  #diagnostic: DiagnosticActivity | undefined;
   #onDetach: (() => void) | undefined;
   constructor(input: RPCRequestInput, route: CapturedContractRoute, channel: RPCChannelRuntime, ticket: RPCNetworkTicket,
     group: ApplicationGroup, authentication: V4AuthenticatedContext, clock: TrustedClock, delivery: ReceiveDeliveryGate,
-    cleanup: SessionCleanup, session: AbortSignal, runtimeBytes: bigint, references: readonly ResourceReference[], permit?: ApplicationPermit, routes?: ContractRoutes, identity?: RPCExecutionIdentity, private readonly checkpointPolicy?: CheckpointSessionPolicy, maintenanceOwner?: V4MaintenanceOwner) {
+    cleanup: SessionCleanup, session: AbortSignal, runtimeBytes: bigint, references: readonly ResourceReference[], permit?: ApplicationPermit, routes?: ContractRoutes, identity?: RPCExecutionIdentity, private readonly checkpointPolicy?: CheckpointSessionPolicy, maintenanceOwner?: V4MaintenanceOwner, diagnostics?: DiagnosticObserver) {
     const header = input.header, handler = route.handler;
     if (!["transient_unary_request", "execution_unary_request"].includes(header.kind) || handler === undefined ||
-        (route.contract.semantics === "execution" && (handler.execution === undefined || routes === undefined || identity === undefined)) ||
-        route.definition.restartFlush && maintenanceOwner === undefined || input.state !== "complete") throw new RPCProtocolError("rpc_handler_binding");
+      (route.contract.semantics === "execution" && (handler.execution === undefined || routes === undefined || identity === undefined)) ||
+      route.definition.restartFlush && maintenanceOwner === undefined || input.state !== "complete") throw new RPCProtocolError("rpc_handler_binding");
     const costs = rpcUnaryDispatchCharges(header.payloadBytes, Number(header.uint(8)), route.definition, handler, runtimeBytes);
     if (references.length !== costs.length || !references.every(reference => references[0]!.sameEnvironment(reference)) ||
-        !route.contract.sameEnvironment(references[0]!) || !input.sameEnvironment(references[0]!)) throw new RPCProtocolError("rpc_handler_owner");
+      !route.contract.sameEnvironment(references[0]!) || !input.sameEnvironment(references[0]!)) throw new RPCProtocolError("rpc_handler_owner");
     if (handler.execution !== undefined && !handler.execution.sameEnvironment(references[0]!)) throw new RPCProtocolError("rpc_handler_owner");
     this.#reference = references[0]!.take(costs[0]!);
     this.#routes = routes; this.#executionIdentity = identity;
@@ -105,6 +105,7 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
     this.#group = group; this.#authentication = authentication; this.#clock = clock; this.#cleanup = cleanup; this.#session = session; this.#permit = permit;
     this.#busy = true;
     try {
+      this.#diagnostic = new DiagnosticActivity(diagnostics, "application");
       cleanup.startJob(); this.#job = true;
       this.#deadline = input.forkDeadline();
       this.#output = new RPCPayload(Number(header.uint(8)), runtimeBytes, references[1]!);
@@ -139,13 +140,16 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
     try { this.#channel?.flushOutputEvents(); this.#tick(); } catch (error) { this.#fail(error); }
     void this.#run();
   }
-  #beginRun(): void {
+  async #beginRun(): Promise<void> {
     if (this.#runDeadline !== undefined) return;
     this.check();
     const sample = this.#clock!.sample();
-    this.#runDeadline = this.#deadline!.forkAgeAt(sample, this.#route!.contract.uint(this.#execution === undefined ? 12 : 18)); this.check();
-    this.#execution?.enter();
-    if (this.#timer !== undefined) clearTimeout(this.#timer); this.#timer = undefined; this.#tick();
+    this.#runDeadline = this.#deadline!.forkAgeAt(sample, this.#route!.contract.uint(this.#execution === undefined ? 12 : 18));
+    this.check();
+    (await this.#execution?.enter(() => this.check())); this.check();
+    if (this.#timer !== undefined) clearTimeout(this.#timer);
+    this.#timer = undefined;
+    this.#tick();
   }
   readonly #tick = (): void => {
     this.#timer = undefined; if (this.#closed || this.#reference === undefined) return;
@@ -162,19 +166,23 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
     let unbindContent: (() => void) | undefined;
     let unbindCheckpoint: (() => void) | undefined, checkpointSelected = false, checkpointCommitted = false;
     try {
-      this.check(); const handler = this.#handler!, definition = this.#route!.definition;
+      this.check();
+      const handler = this.#handler!, definition = this.#route!.definition;
       this.#permit ??= await this.#group!.acquire(handler.options.workClass, this.#abort.signal, () => this.check());
       this.check();
       invocation = this.#group!.context(this.#permit, this.#authentication!, this.#abort.signal, this.#interest!.view, this.#publication);
       this.#interest!.attach(invocation.context);
       const enter = (): void => { if (!callback) { callback = true; this.#cleanup!.enterCallback(); } };
       if (handler.options.authorization !== "authenticated") {
-        enter(); const authorized = await handler.options.authorization(invocation.context); this.check();
+        (await enter());
+        const authorized = await handler.options.authorization(invocation.context);
+        this.check();
         if (authorized !== true) throw new RPCProtocolError("permission_denied");
       }
       if (handler.execution !== undefined) {
-        this.#execution = handler.execution.admit(this.#input!, this.#route!, this.#routes!, this.#authentication!, this.#executionIdentity!, this, () => this.#abort.abort());
-        this.#routes = undefined; this.#executionIdentity = undefined;
+        this.#execution = (await handler.execution.admit(this.#input!, this.#route!, this.#routes!, this.#authentication!, this.#executionIdentity!, this, () => this.#abort.abort()));
+        this.#routes = undefined;
+        this.#executionIdentity = undefined;
         if (!this.#execution.created) {
           // A duplicate retains only its real response/input responsibility.
           // It never holds an ordinary application permit while joining work.
@@ -190,27 +198,32 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
       this.#borrow = this.#input!.borrow();
       const requestCodec = definition.request;
       let request: unknown;
-      if (requestCodec.application === undefined) request = requestCodec.implementation === "bytes" ? this.#borrow.bytes : decodeUTF8.call(utf8, this.#borrow.bytes);
+      if (requestCodec.application === undefined)
+        request = requestCodec.implementation === "bytes" ? this.#borrow.bytes : decodeUTF8.call(utf8, this.#borrow.bytes);
       else {
-        this.#beginRun(); enter();
+        (await this.#beginRun());
+        (await enter());
         request = requestCodec.application.execution === "sync" ? requestCodec.application.decode(invocation.context, this.#borrow.bytes)
           : await requestCodec.application.decode(invocation.context, this.#borrow.bytes);
       }
-      this.check(); this.#beginRun(); enter();
-      unbindCheckpoint = bindCheckpointIssuer(invocation.context, (original, checkpoint, options) => {
+      this.check();
+      (await this.#beginRun());
+      (await enter());
+      unbindCheckpoint = bindCheckpointIssuer(invocation.context, async (original, checkpoint, options) => {
         this.check();
         if (checkpointSelected || this.#execution === undefined || this.checkpointPolicy === undefined ||
-            definition.response?.implementation !== "bytes") throw new RPCProtocolError("service_unavailable");
+          definition.response?.implementation !== "bytes") throw new RPCProtocolError("service_unavailable");
         // Seal before key use. Even an application catching a failed commit
         // cannot retry signing or publish an unrelated successful result.
         checkpointSelected = true;
-        this.#execution.issueCheckpoint(original, checkpoint, options, this.checkpointPolicy, this.#runDeadline!.cap, () => this.check());
-        checkpointCommitted = true; return Object.freeze({ kind: "checkpoint_result" as const });
+        (await this.#execution.issueCheckpoint(original, checkpoint, options, this.checkpointPolicy, this.#runDeadline!.cap, () => this.check()));
+        checkpointCommitted = true;
+        return Object.freeze({ kind: "checkpoint_result" as const });
       });
-      unbindContent = bindContentRead(invocation.context, (target, position, destination) => {
+      unbindContent = bindContentRead(invocation.context, async (target, position, destination) => {
         this.check();
         if (this.#execution === undefined) throw new RPCProtocolError("service_unavailable");
-        return this.#execution.readContent(target, position, destination, definition.typeID, () => this.check());
+        return (await this.#execution.readContent(target, position, destination, definition.typeID, () => this.check()));
       });
       let value: unknown, errorCode: number | undefined;
       try { value = await handler.handler(invocation.context, request); }
@@ -223,7 +236,12 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
         }
       }
       this.#publication?.endHandler();
-      request = undefined; unbindContent(); unbindContent = undefined; this.check(); unbindCheckpoint(); unbindCheckpoint = undefined;
+      request = undefined;
+      unbindContent();
+      unbindContent = undefined;
+      this.check();
+      unbindCheckpoint();
+      unbindCheckpoint = undefined;
       if (checkpointSelected) {
         if (!checkpointCommitted) throw new RPCProtocolError("service_failed");
         const result = this.#execution!.copyResult(this.#output!);
@@ -238,16 +256,20 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
       const resultCodec = errorCode === undefined ? definition.response! : selectedError?.codec;
       if (resultCodec === undefined) throw new RPCProtocolError("service_failed");
       const limit = Math.min(Number(this.#input!.header.uint(8)), selectedError?.maximum ?? definition.maxResponseBytes);
-      const encoded = await this.#encode(resultCodec, value, invocation.context, limit); value = undefined; this.check();
+      const encoded = await this.#encode(resultCodec, value, invocation.context, limit);
+      value = undefined;
+      this.check();
       if (this.#execution === undefined && !this.#interest!.view.interested) return;
       const bytes = checkApplicationMessageOutput(encoded, resultCodec.maximum);
       if (byteLength(bytes) > limit) throw new RPCProtocolError("service_failed");
       // Retain the actual outcome before publishing it. STOP_OUTPUT or a lost
       // response cannot erase history or turn the same key into new work.
-      this.#execution?.finish(bytes, errorCode, this.#runDeadline!.cap);
+      (await this.#execution?.finish(bytes, errorCode, this.#runDeadline!.cap));
       if (!this.#interest!.view.interested) return;
-      this.#output!.write(0, bytes); this.#publish(byteLength(bytes), errorCode);
-    } catch (error) { this.#fail(error); }
+      this.#output!.write(0, bytes);
+      this.#publish(byteLength(bytes), errorCode);
+    }
+    catch (error) { this.#fail(error); }
     finally {
       this.#publication?.endHandler();
       unbindContent?.(); unbindCheckpoint?.(); this.#interest?.endInvocation(); invocation?.release(); this.#permit?.release(); this.#permit = undefined;
@@ -268,9 +290,11 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
     if (!this.current() || this.#channel === undefined) throw new RPCProtocolError("service_unavailable");
     this.#publication?.select(this.#deadline!, this.#clock!, this.#route!.definition.restartFlushDeadlineMS!);
     const original = this.#output!.borrow(response.payloadBytes); this.#outputHeld = true;
-    const payload: RPCPayloadBorrow = Object.freeze({ bytes: original.bytes, release: () => {
-      original.release(); this.#outputHeld = false; this.#detach(); this.#collect();
-    } });
+    const payload: RPCPayloadBorrow = Object.freeze({
+      bytes: original.bytes, retainSend: original.retainSend, release: () => {
+        original.release(); this.#outputHeld = false; this.#detach(); this.#collect();
+      }
+    });
     try { this.#channel.queueResponse(this.#ticket!, response, payload, this); this.#queued = true; this.#output!.close(); }
     catch (error) { payload.release(); throw error; }
   }
@@ -299,16 +323,26 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
     if (reason !== undefined) this.#detach();
   }
   #reply(code: RPCSDKError): void {
-    this.#publication?.unknown(code === "deadline_exceeded" ? "deadline" : "response_superseded");
     if (this.#queued || this.#channel === undefined) return;
-    try { this.#channel.replySDK(this.#ticket!, code); this.#queued = true; }
+    // The SDK reply replaces the original business result. Preserve the
+    // original deadline cause when it caused the replacement; other SDK
+    // replacements are explicit supersession. Neither can become flushed.
+    this.#publication?.unknown(code === "deadline_exceeded" ? "deadline" : "response_superseded");
+    try { this.#channel.replySDK(this.#ticket!, code, this); this.#queued = true; }
     catch { /* The original channel owns any failed fixed refusal. */ }
   }
   #fail(error: unknown): void {
+    this.#diagnostic?.failure(error);
     const code: RPCSDKError = error instanceof TimeError && ["time_expired", "time_cancelled"].includes(error.code) ? "deadline_exceeded"
       : error instanceof ResourceError && error.code === "resource_exhausted" ? "resource_exhausted"
-      : error instanceof RPCProtocolError && ["permission_denied", "resource_exhausted", "service_unavailable", "operation_conflict", "result_expired", "deadline_exceeded"].includes(error.code) ? error.code as RPCSDKError : "service_failed";
+        : error instanceof RPCProtocolError && ["permission_denied", "resource_exhausted", "service_unavailable", "operation_conflict", "result_expired", "deadline_exceeded"].includes(error.code) ? error.code as RPCSDKError : "service_failed";
     this.#execution?.fail(code); this.#reply(code); this.close();
+  }
+  publicationPhysicalComplete(): void {
+    this.#publicationPhysical = true;
+    this.#publication?.physicalDone();
+    if (!this.#working) this.#publication = undefined;
+    this.#collect();
   }
   #detach(): void {
     if (this.#detached) return; this.#detached = true;
@@ -324,6 +358,7 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
     this.#group = undefined; this.#authentication = undefined; this.#routes = undefined; this.#executionIdentity = undefined;
     this.#abort.abort(); this.#collect();
   }
+
   #collect(): void {
     if (this.#busy || this.#collecting || this.#working || this.#outputHeld || !this.#closed && !this.#workComplete) return;
     if (!this.#detached && this.#queued) return;
@@ -339,10 +374,15 @@ export class RPCUnaryDispatch implements RPCPublicationGuard {
       this.#lease?.release(); this.#lease = undefined; this.#route?.close(); this.#route = undefined; this.#handler = undefined;
       this.#group = undefined; this.#authentication = undefined; this.#clock = undefined; this.#deadline = this.#runDeadline = undefined;
       this.#execution?.release(); this.#execution = undefined; this.#routes = undefined; this.#executionIdentity = undefined;
-      this.#publication?.endHandler(); this.#publication?.physicalDone(); this.#publication = undefined;
+      this.#publication?.endHandler();
+      if (!this.#queued) this.#publication?.physicalDone();
+      if (!this.#queued || this.#publicationPhysical) this.#publication = undefined;
+      if (this.#workComplete) this.#diagnostic?.event({ state: "ready", code: "ok" });
+      this.#diagnostic?.close(); this.#diagnostic = undefined;
       this.#reference?.release(); this.#reference = undefined;
       if (this.#job) { this.#job = false; this.#cleanup!.finishJob(); } this.#cleanup = undefined;
     } finally { this.#collecting = false; }
   }
 }
-Object.freeze(RPCUnaryDispatch.prototype); Object.freeze(RPCUnaryDispatch);
+Object.freeze(RPCUnaryDispatch.prototype);
+Object.freeze(RPCUnaryDispatch);

@@ -9,10 +9,11 @@ import type * as PublicTypes from "../public.js";
 import type { OperationOptions } from "../../public/contract.js";
 import type { V4CleanupStatus, V4CloseResult, V4ReadResult, V4WriteProgress } from "../../generated/transportV4APIResults.js";
 import type { V4StreamOwner } from "../public.js";
+import type { DiagnosticObserver } from "./diagnosticObservation.js";
 
 /** Private capability installed by the original accepted Stream, never a duck-typed ByteStream. */
 export interface StreamAdapterProfile {
-  readonly kind?: "node" | "web" | "message" | "proxy";
+  readonly kind?: "node" | "web" | "message" | "proxy" | "bridge";
   readonly readBytes: number;
   readonly inputBackingBytes: number;
   readonly inputEntries: number;
@@ -21,12 +22,17 @@ export interface StreamAdapterProfile {
   readonly prepaid?: ResourcesTypes.ResourceReference;
   /** Original SDK group admitted before a fixed channel can activate. */
   readonly application?: ApplicationExecutorTypes.ApplicationGroup;
+  /** A Session-owned future channel group survives individual generations. */
+  readonly reusableApplication?: boolean;
   /** Private candidate construction in the original peer acceptance path. */
   readonly preaccepted?: boolean;
+  /** Charges a Node-native Duplex endpoint against the paired Stream owner. */
+  readonly nativeEndpoint?: boolean;
 }
 
 /** Original Stream capabilities available only to the SDK message owner. */
 export interface MessageStreamAdapterOwner extends StreamAdapterOwner {
+  readonly diagnostics?: DiagnosticObserver | undefined;
   readonly application: ApplicationExecutorTypes.ApplicationGroup;
   readonly sessionCleanup: SessionCleanupTypes.SessionCleanup;
   readonly authentication: StreamHandlersTypes.V4AuthenticatedContext | undefined;
@@ -97,4 +103,56 @@ export function acquireStreamAdapter(stream: V4StreamOwner, profile: StreamAdapt
     if (!Number.isSafeInteger(n) || n < 1 || n > 0x7fffffff) throw new Error("configuration_capacity");
   }
   return acquire(Object.freeze({ ...profile }));
+}
+
+/** A bridge reserves its detached partial-result backing before either pump
+ * starts. The reservation survives I/O retirement only while its result owns
+ * an unaccepted tail; it carries no Session or protocol capability. */
+export interface BridgeStreamAdapterOwner extends StreamAdapterOwner {
+  readonly endpointKind: "flowersec_stream";
+  readonly resultBacking: ResourcesTypes.ResourceReference;
+  /** Extra detached-result backing for the other, Node-native endpoint. */
+  readonly nativeResultBacking?: ResourcesTypes.ResourceReference;
+  /** Original adapter I/O custody for native queues and callbacks, independent of result tails. */
+  readonly nativeIOBacking?: ResourcesTypes.ResourceReference;
+  readState(): PublicTypes.V4ReadState;
+}
+export interface NativeBridgeDuplexAdapterOwner extends StreamAdapterOwner {
+  readonly endpointKind: "native_duplex";
+  readonly resultBacking: ResourcesTypes.ResourceReference;
+  readState(): PublicTypes.V4ReadState;
+  /** Waits for the last accepted native input's callback and required drain.
+   * Cancellation ends this producer wait; original callback custody remains. */
+  waitProducerExit(options?: OperationOptions): Promise<void>;
+}
+const bridgeOwners = new WeakMap<V4StreamOwner, (profile: StreamAdapterProfile) => BridgeStreamAdapterOwner>();
+export function registerBridgeStreamAdapter(stream: V4StreamOwner, acquire: (profile: StreamAdapterProfile) => BridgeStreamAdapterOwner): void {
+  if (bridgeOwners.has(stream)) throw new Error("stream_owner");
+  bridgeOwners.set(stream, acquire);
+}
+export function hasBridgeStreamAdapter(stream: object): stream is V4StreamOwner { return bridgeOwners.has(stream as V4StreamOwner); }
+export function acquireBridgeStreamAdapter(stream: V4StreamOwner, profile: StreamAdapterProfile): BridgeStreamAdapterOwner {
+  const acquire = bridgeOwners.get(stream);
+  if (acquire === undefined || profile.kind !== "bridge" || profile.preaccepted === true) throw new Error("owner_unavailable");
+  for (const n of [profile.readBytes, profile.inputBackingBytes, profile.inputEntries, profile.gracefulFinishMS, profile.cleanupMS]) {
+    if (!Number.isSafeInteger(n) || n < 1 || n > 0x7fffffff) throw new Error("configuration_capacity");
+  }
+  return acquire(Object.freeze({ ...profile }));
+}
+
+const nativeBridgeOwners = new WeakMap<object, (profile: StreamAdapterProfile, resultBacking: ResourcesTypes.ResourceReference, ioBacking: ResourcesTypes.ResourceReference) => NativeBridgeDuplexAdapterOwner>();
+export function registerNativeBridgeDuplexAdapter(endpoint: object,
+  acquire: (profile: StreamAdapterProfile, resultBacking: ResourcesTypes.ResourceReference, ioBacking: ResourcesTypes.ResourceReference) => NativeBridgeDuplexAdapterOwner): void {
+  if (nativeBridgeOwners.has(endpoint)) throw new Error("stream_owner");
+  nativeBridgeOwners.set(endpoint, acquire);
+}
+export function hasNativeBridgeDuplexAdapter(endpoint: object): boolean { return nativeBridgeOwners.has(endpoint); }
+export function acquireNativeBridgeDuplexAdapter(endpoint: object, profile: StreamAdapterProfile,
+  resultBacking: ResourcesTypes.ResourceReference, ioBacking: ResourcesTypes.ResourceReference): NativeBridgeDuplexAdapterOwner {
+  const acquire = nativeBridgeOwners.get(endpoint);
+  if (acquire === undefined || profile.kind !== "bridge" || profile.nativeEndpoint !== true || profile.preaccepted === true) throw new Error("owner_unavailable");
+  for (const n of [profile.readBytes, profile.inputBackingBytes, profile.inputEntries, profile.gracefulFinishMS, profile.cleanupMS]) {
+    if (!Number.isSafeInteger(n) || n < 1 || n > 0x7fffffff) throw new Error("configuration_capacity");
+  }
+  return acquire(Object.freeze({ ...profile }), resultBacking, ioBacking);
 }

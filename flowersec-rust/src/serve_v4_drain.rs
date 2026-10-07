@@ -60,7 +60,7 @@ impl ServeDrainOperation {
         wait(&self.owner).await
     }
 }
-async fn wait(owner: &Arc<ServeOwner>) -> ConnectResult<ServeDrainResult> {
+pub(super) async fn wait(owner: &Arc<ServeOwner>) -> ConnectResult<ServeDrainResult> {
     let result = owner.drain_result();
     if result.outcome != DrainOutcome::Pending {
         return Ok(result);
@@ -81,42 +81,49 @@ async fn wait(owner: &Arc<ServeOwner>) -> ConnectResult<ServeDrainResult> {
 }
 impl ServeHandle {
     pub fn drain(&self, timeout: Duration) -> ConnectResult<ServeDrainOperation> {
-        if timeout.is_zero() || timeout > Duration::from_secs(30) {
-            return Err(ConnectError::Configuration);
-        }
-        {
-            let mut gate = self.owner.gate.lock().expect("Serve publication gate");
-            if gate.drain.is_none() {
-                let started_at = Instant::now();
-                let deadline = started_at
-                    .checked_add(timeout)
-                    .ok_or(ConnectError::Configuration)?;
-                gate.closed = true;
-                gate.drain = Some(DrainState {
-                    started_at,
-                    deadline,
-                    outcome: DrainOutcome::Pending,
-                    error: None,
-                    child_outcome: DrainOutcome::Drained,
-                });
-                for slot in gate.slots.iter().flatten() {
-                    if slot.pending {
-                        slot.cancel.cancel();
-                    }
-                }
-            }
-        }
-        self.owner.stop.cancel();
-        self.owner.poll_drain();
-        self.owner.changed.notify_waiters();
-        Ok(ServeDrainOperation {
-            owner: self.owner.clone(),
-        })
+        start(&self.owner, timeout)
     }
     pub async fn wait_drain(&self) -> ConnectResult<ServeDrainResult> {
         wait(&self.owner).await
     }
 }
+pub(super) fn start(
+    owner: &Arc<ServeOwner>,
+    timeout: Duration,
+) -> ConnectResult<ServeDrainOperation> {
+    if timeout.is_zero() || timeout > Duration::from_secs(30) {
+        return Err(ConnectError::Configuration);
+    }
+    {
+        let mut gate = owner.gate.lock().expect("Serve publication gate");
+        if gate.drain.is_none() {
+            let started_at = Instant::now();
+            let deadline = started_at
+                .checked_add(timeout)
+                .ok_or(ConnectError::Configuration)?;
+            gate.closed = true;
+            gate.drain = Some(DrainState {
+                started_at,
+                deadline,
+                outcome: DrainOutcome::Pending,
+                error: None,
+                child_outcome: DrainOutcome::Drained,
+            });
+            for slot in gate.slots.iter().flatten() {
+                if slot.pending {
+                    slot.cancel.cancel();
+                }
+            }
+        }
+    }
+    owner.stop.cancel();
+    owner.poll_drain();
+    owner.changed.notify_waiters();
+    Ok(ServeDrainOperation {
+        owner: owner.clone(),
+    })
+}
+
 pub(super) struct Observer<'a>(&'a ServeOwner);
 impl Drop for Observer<'_> {
     fn drop(&mut self) {
@@ -317,6 +324,16 @@ impl ServeOwner {
                     && !s.drain_starting
                     && (!draining || s.pending || s.drain_done)
             }) {
+                if let Some(diagnostic) = gate.slots[index]
+                    .as_ref()
+                    .and_then(|slot| slot.diagnostic.as_ref())
+                {
+                    diagnostic.fail(
+                        crate::DiagnosticCode::Closed,
+                        crate::DiagnosticRetryDisposition::DoNotRetry,
+                    );
+                    diagnostic.closed();
+                }
                 gate.slots[index] = None;
             }
         }

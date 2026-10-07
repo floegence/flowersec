@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:e4e740e8-f891-5f25-8d23-0f23c2d5ed60",
+  "serialNumber": "urn:uuid:686d666f-df78-522e-8d05-2cc53ac3d23b",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "ae824e5f729367026e2c0ce01e0b0c91b5ee3e35a9a28c8cb307d5943bda14ef"
+        "value": "1232618a035be3df441e87ab7a37162a01a4f844e6ce13aef4086d6b1e3dc6ed"
       }
     ]
   },
@@ -805,6 +805,90 @@
     },
     {
       "type": "library",
+      "name": "tldts",
+      "version": "7.4.16",
+      "purl": "pkg:npm/tldts@7.4.16",
+      "bom-ref": "pkg:npm/tldts@7.4.16",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/tldts/-/tldts-7.4.16.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tldts-core",
+      "version": "7.4.16",
+      "purl": "pkg:npm/tldts-core@7.4.16",
+      "bom-ref": "pkg:npm/tldts-core@7.4.16",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.4.16.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tough-cookie",
+      "version": "6.0.2",
+      "purl": "pkg:npm/tough-cookie@6.0.2",
+      "bom-ref": "pkg:npm/tough-cookie@6.0.2",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "tr46",
       "version": "6.0.0",
       "purl": "pkg:npm/tr46@6.0.0",
@@ -899,6 +983,7 @@
         "pkg:npm/%40types/node@26.4.0",
         "pkg:npm/%40types/ws@8.18.1",
         "pkg:npm/brotli-dec-wasm@2.3.2",
+        "pkg:npm/tough-cookie@6.0.2",
         "pkg:npm/tr46@6.0.0",
         "pkg:npm/ws@8.21.3"
       ]
@@ -1062,6 +1147,22 @@
     {
       "ref": "pkg:npm/punycode@2.3.1",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/tldts@7.4.16",
+      "dependsOn": [
+        "pkg:npm/tldts-core@7.4.16"
+      ]
+    },
+    {
+      "ref": "pkg:npm/tldts-core@7.4.16",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/tough-cookie@6.0.2",
+      "dependsOn": [
+        "pkg:npm/tldts@7.4.16"
+      ]
     },
     {
       "ref": "pkg:npm/tr46@6.0.0",

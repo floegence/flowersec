@@ -1,4 +1,5 @@
-import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+import type { SQLOutputValue } from "node:sqlite";
+import type { SQLiteWorkerDatabase } from "./sqliteWorkerV4.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { V4ContentObservation } from "../v4/streamContent.js";
 import { methodDefinition, type V4MethodDefinition, type CapturedMethodDefinition } from "../v4/serviceDefinition.js";
@@ -10,7 +11,6 @@ import { ResourceVector, type ResourceReference } from "../v4/runtime/resources.
 import { RPCProtocolError } from "../v4/runtime/rpcFragment.js";
 import { timeAdd } from "../v4/runtime/timeArithmetic.js";
 import { count, readU64, u64 } from "./sqliteV4.js";
-
 export interface V4SQLiteContentConfig {
   readonly methods: readonly V4MethodDefinition<any, any>[];
   readonly maxItemsPerOperation: number;
@@ -30,8 +30,10 @@ export function captureContent(input: V4SQLiteContentConfig | undefined): Captur
   return Object.freeze({ methods: Object.freeze(methods), maxItemsPerOperation: count(input.maxItemsPerOperation, 1, 1024), maxBytesPerOperation, maxItemBytes: count(input.maxItemBytes, 1, maxBytesPerOperation) });
 }
 export function contentConfiguration(c: CapturedContentConfig) {
-  return { maxItemsPerOperation: c.maxItemsPerOperation, maxBytesPerOperation: c.maxBytesPerOperation, maxItemBytes: c.maxItemBytes,
-    methods: c.methods.map(m => ({ type: m.typeID, revision: m.streamContent!.schemaRevision, definition: hex(m.streamContent!.canonical), reader: m.streamContent!.readTypeID })) };
+  return {
+    maxItemsPerOperation: c.maxItemsPerOperation, maxBytesPerOperation: c.maxBytesPerOperation, maxItemBytes: c.maxItemBytes,
+    methods: c.methods.map(m => ({ type: m.typeID, revision: m.streamContent!.schemaRevision, definition: hex(m.streamContent!.canonical), reader: m.streamContent!.readTypeID }))
+  };
 }
 export const contentSchemas = [
   ["content_heads", "CREATE TABLE content_heads (key TEXT PRIMARY KEY, admitted BLOB NOT NULL CHECK(length(admitted)=8)) STRICT, WITHOUT ROWID"],
@@ -72,8 +74,8 @@ export class SQLiteExecutionContent {
       return { origin: doc.uint(doc.field(content, 1)), retention: doc.uint(doc.field(content, 2)), maxItems: Number(maxItems), maxBytes: Number(maxBytes), reader: expected.readTypeID };
     } finally { doc.release(); }
   }
-  #original(db: DatabaseSync, contract: string): Policy {
-    const row = db.prepare("SELECT canonical FROM contracts WHERE digest=?").get(contract);
+  async #original(db: SQLiteWorkerDatabase, contract: string): Promise<Policy> {
+    const row = (await db.get("SELECT canonical FROM contracts WHERE digest=?", contract));
     if (!(row?.canonical instanceof Uint8Array) || hex(credentialDigest("service_contract_digest", row.canonical)) !== contract) unavailable();
     try { return this.policy(row!.canonical as Uint8Array) ?? unavailable(); } finally { (row!.canonical as Uint8Array).fill(0); }
   }
@@ -81,55 +83,63 @@ export class SQLiteExecutionContent {
     if (row === undefined) return missing();
     const expires = readU64(row.expires), committed = readU64(row.committed);
     if (typeof row.digest !== "string" || !/^[0-9a-f]{64}$/u.test(row.digest) || !Number.isSafeInteger(row.bytes) || Number(row.bytes) < 0 || Number(row.bytes) > this.config.maxItemBytes || expires <= committed) unavailable();
-    return Object.freeze({ found: true, available: row.payload !== null && now.upperMS < expires, expired: row.payload === null || now.lowerMS >= expires,
-      committedAtMS: committed, expiresAtMS: expires, bytes: Number(row.bytes), digest: row.digest as string });
+    return Object.freeze({
+      found: true, available: row.payload !== null && now.upperMS < expires, expired: row.payload === null || now.lowerMS >= expires,
+      committedAtMS: committed, expiresAtMS: expires, bytes: Number(row.bytes), digest: row.digest as string
+    });
   }
-  save(db: DatabaseSync, facts: ExecutionRecordFacts, position: Uint8Array, payload: Uint8Array, now: { lowerMS: bigint; upperMS: bigint }): V4ContentObservation {
+  async save(db: SQLiteWorkerDatabase, facts: ExecutionRecordFacts, position: Uint8Array, payload: Uint8Array, now: { lowerMS: bigint; upperMS: bigint }): Promise<V4ContentObservation> {
     if (byteLength(position) < 1 || byteLength(position) > 256 || position.buffer instanceof SharedArrayBuffer || payload.buffer instanceof SharedArrayBuffer || byteLength(payload) > this.config.maxItemBytes) throw new RPCProtocolError("configuration_capacity");
     const location = new Uint8Array(position), content = new Uint8Array(payload);
     try {
-      const policy = this.#original(db, facts.contract), head = db.prepare("SELECT admitted FROM content_heads WHERE key=?").get(facts.key);
+      const policy = (await this.#original(db, facts.contract)), head = (await db.get("SELECT admitted FROM content_heads WHERE key=?", facts.key));
       const admitted = readU64(head?.admitted), digest = hex(sha256(content));
-      const existing = db.prepare("SELECT committed,expires,bytes,digest,payload FROM content_items WHERE key=? AND position=?").get(facts.key, location);
+      const existing = (await db.get("SELECT committed,expires,bytes,digest,payload FROM content_items WHERE key=? AND position=?", facts.key, location));
       if (existing !== undefined) {
         try { if (existing.digest !== digest || existing.bytes !== content.length) throw new RPCProtocolError("operation_conflict"); return this.#observation(existing, now); }
         finally { if (existing.payload instanceof Uint8Array) existing.payload.fill(0); }
       }
-      const count = db.prepare("SELECT count(*) AS items,coalesce(sum(bytes),0) AS bytes FROM content_items WHERE key=?").get(facts.key)!;
+      const count = (await db.get("SELECT count(*) AS items,coalesce(sum(bytes),0) AS bytes FROM content_items WHERE key=?", facts.key))!;
       if (Number(count.items) >= policy.maxItems || Number(count.bytes) + content.length > policy.maxBytes) throw new RPCProtocolError("resource_exhausted");
       const expires = timeAdd(policy.origin === 0n ? admitted : now.upperMS, policy.retention);
       if (expires <= now.upperMS) throw new RPCProtocolError("result_expired");
-      db.prepare("INSERT INTO content_items VALUES(?,?,?,?,?,?,?)").run(facts.key, location, u64(now.upperMS), u64(expires), content.length, digest, content);
+      (await db.run("INSERT INTO content_items VALUES(?,?,?,?,?,?,?)", facts.key, location, u64(now.upperMS), u64(expires), content.length, digest, content));
       return Object.freeze({ found: true, available: true, expired: false, committedAtMS: now.upperMS, expiresAtMS: expires, bytes: content.length, digest });
-    } finally { location.fill(0); content.fill(0); }
+    }
+    finally { location.fill(0); content.fill(0); }
   }
   // Keep bytes in the original prepaid workspace until the transaction and
   // current invocation guard both succeed. Reentrant callbacks cannot reuse it.
-  deliver(destination: Uint8Array, action: (scratch: Uint8Array) => V4ContentObservation, guard: () => void, sample: () => { lowerMS: bigint; upperMS: bigint }): V4ContentObservation {
+  async deliver(destination: Uint8Array, action: (scratch: Uint8Array) => V4ContentObservation | Promise<V4ContentObservation>, guard: () => void, sample: () => { lowerMS: bigint; upperMS: bigint }): Promise<V4ContentObservation> {
     const capacity = byteLength(destination);
     if (destination.buffer instanceof SharedArrayBuffer || capacity > 1048576) throw new RPCProtocolError("configuration_capacity");
     if (this.#delivering) throw new RPCProtocolError("resource_exhausted");
-    this.#reference.checkRetained(); this.#delivering = true;
+    this.#reference.checkRetained();
+    this.#delivering = true;
     try {
-      let observation = action(this.#scratch);
-      const now = sample(); guard(); this.#reference.checkRetained();
+      let observation = await action(this.#scratch);
+      const now = sample();
+      guard();
+      this.#reference.checkRetained();
       if (observation.available && now.upperMS >= observation.expiresAtMS) observation = Object.freeze({ ...observation, available: false, expired: now.lowerMS >= observation.expiresAtMS });
       if (observation.available) {
         if (byteLength(destination) < observation.bytes) throw new RPCProtocolError("resource_exhausted");
         Uint8Array.prototype.set.call(destination, this.#scratch.subarray(0, observation.bytes));
       }
       return observation;
-    } finally { this.#scratch.fill(0); this.#delivering = false; }
+    }
+    finally { this.#scratch.fill(0); this.#delivering = false; }
   }
-  read(db: DatabaseSync, target: ExecutionTarget, position: Uint8Array, destination: Uint8Array, reader: number, now: { lowerMS: bigint; upperMS: bigint }, decode: (value: SQLOutputValue | undefined) => ExecutionRecordFacts): V4ContentObservation {
+  async read(db: SQLiteWorkerDatabase, target: ExecutionTarget, position: Uint8Array, destination: Uint8Array, reader: number, now: { lowerMS: bigint; upperMS: bigint }, decode: (value: SQLOutputValue | undefined) => ExecutionRecordFacts): Promise<V4ContentObservation> {
     if (byteLength(position) < 1 || byteLength(position) > 256 || position.buffer instanceof SharedArrayBuffer || destination.buffer instanceof SharedArrayBuffer || byteLength(destination) > 1048576) throw new RPCProtocolError("configuration_capacity");
-    const key = `${target.authority}\0${target.subject}\0${target.operation}`, row = db.prepare("SELECT facts FROM executions WHERE key=?").get(key);
+    const key = `${target.authority}\0${target.subject}\0${target.operation}`, row = (await db.get("SELECT facts FROM executions WHERE key=?", key));
     if (row === undefined) throw new RPCProtocolError("service_unavailable");
     const facts = decode(row.facts);
     if (facts.request !== target.requestDigest || facts.contract !== target.contractDigest) throw new RPCProtocolError("operation_conflict");
-    const policy = this.#original(db, facts.contract); if (policy.reader !== reader) throw new RPCProtocolError("permission_denied");
-    db.prepare("UPDATE content_items SET payload=NULL WHERE key=? AND expires<=?").run(key, u64(now.lowerMS));
-    const item = db.prepare("SELECT committed,expires,bytes,digest,payload FROM content_items WHERE key=? AND position=?").get(key, position);
+    const policy = (await this.#original(db, facts.contract));
+    if (policy.reader !== reader) throw new RPCProtocolError("permission_denied");
+    (await db.run("UPDATE content_items SET payload=NULL WHERE key=? AND expires<=?", key, u64(now.lowerMS)));
+    const item = (await db.get("SELECT committed,expires,bytes,digest,payload FROM content_items WHERE key=? AND position=?", key, position));
     try {
       const observation = this.#observation(item, now);
       if (observation.available) {
@@ -140,11 +150,12 @@ export class SQLiteExecutionContent {
       return observation;
     } finally { if (item?.payload instanceof Uint8Array) item.payload.fill(0); }
   }
-  validate(db: DatabaseSync, maxRecords: number, decode: (value: SQLOutputValue | undefined) => ExecutionRecordFacts): void {
-    if (Number(db.prepare("SELECT count(*) AS n FROM content_heads").get()!.n) > maxRecords ||
-        Number(db.prepare("SELECT count(*) AS n FROM content_items").get()!.n) > maxRecords * this.config.maxItemsPerOperation ||
-        db.prepare("SELECT 1 FROM content_items i LEFT JOIN content_heads h ON h.key=i.key WHERE h.key IS NULL LIMIT 1").get() !== undefined) unavailable();
-    for (const row of db.prepare("SELECT e.facts,c.canonical,h.admitted FROM executions e JOIN contracts c ON c.digest=json_extract(e.facts,'$.contract') LEFT JOIN content_heads h ON h.key=e.key").iterate()) {
+  async validate(db: SQLiteWorkerDatabase, maxRecords: number, decode: (value: SQLOutputValue | undefined) => ExecutionRecordFacts): Promise<void> {
+    if (Number((await db.get("SELECT count(*) AS n FROM content_heads"))!.n) > maxRecords ||
+      Number((await db.get("SELECT count(*) AS n FROM content_items"))!.n) > maxRecords * this.config.maxItemsPerOperation ||
+      (await db.get("SELECT 1 FROM content_items i LEFT JOIN content_heads h ON h.key=i.key WHERE h.key IS NULL LIMIT 1")) !== undefined)
+      unavailable();
+    for (const row of (await db.all("SELECT e.facts,c.canonical,h.admitted FROM executions e JOIN contracts c ON c.digest=json_extract(e.facts,'$.contract') LEFT JOIN content_heads h ON h.key=e.key"))) {
       try {
         const facts = decode(row.facts);
         if (!(row.canonical instanceof Uint8Array) || hex(credentialDigest("service_contract_digest", row.canonical)) !== facts.contract) unavailable();
@@ -152,11 +163,11 @@ export class SQLiteExecutionContent {
         if (retained !== (row.admitted !== null) || retained && !facts.streaming) unavailable();
       } finally { if (row.canonical instanceof Uint8Array) row.canonical.fill(0); }
     }
-    for (const row of db.prepare("SELECT h.key,h.admitted,e.facts FROM content_heads h LEFT JOIN executions e ON e.key=h.key").iterate()) {
-      const facts = decode(row.facts), admitted = readU64(row.admitted), policy = this.#original(db, facts.contract);
+    for (const row of (await db.all("SELECT h.key,h.admitted,e.facts FROM content_heads h LEFT JOIN executions e ON e.key=h.key"))) {
+      const facts = decode(row.facts), admitted = readU64(row.admitted), policy = (await this.#original(db, facts.contract));
       if (!facts.streaming || row.key !== facts.key) unavailable();
       let items = 0, bytes = 0;
-      for (const item of db.prepare("SELECT committed,expires,bytes,digest,payload FROM content_items WHERE key=?").iterate(facts.key)) {
+      for (const item of (await db.all("SELECT committed,expires,bytes,digest,payload FROM content_items WHERE key=?", facts.key))) {
         try {
           const observation = this.#observation(item, { lowerMS: 0n, upperMS: 0n });
           if (observation.committedAtMS < admitted || observation.expiresAtMS !== timeAdd(policy.origin === 0n ? admitted : observation.committedAtMS, policy.retention)) unavailable();

@@ -5,12 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import {
-  transportV3CommonReadmeLiterals,
-  transportV3ReadmeContracts,
-  transportV3SemanticReadmeContracts,
-  validateTransportV3Readmes,
-} from "./readme-transport-v3-contract.mjs";
+import { transportReadmeContracts, validateTransportReadmes } from "./readme-transport-contract.mjs";
 import {
   extractInlineCodeLiterals,
   extractMarkdownShape,
@@ -19,85 +14,28 @@ import {
 function createTransportReadmeFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-readme-contract-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const files = new Set([
-    ...Object.keys(transportV3ReadmeContracts),
-    ...Object.keys(transportV3SemanticReadmeContracts),
-  ]);
-  for (const file of files) {
+  for (const [file, literals] of Object.entries(transportReadmeContracts)) {
     const target = path.join(root, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, [
-      ...transportV3CommonReadmeLiterals,
-      transportV3ReadmeContracts[file],
-      ...Object.values(transportV3SemanticReadmeContracts[file] ?? {}),
-      "",
-    ].filter((value) => value !== undefined).join("\n"));
+    fs.writeFileSync(target, `${literals.join("\n")}\n`);
   }
   return root;
 }
 
-function removeSemanticContract(root, file, contract) {
-  const target = path.join(root, file);
-  const literal = transportV3SemanticReadmeContracts[file][contract];
-  fs.writeFileSync(
-    target,
-    fs.readFileSync(target, "utf8").replace(literal, "stale capability claim"),
-  );
-}
-
-test("README contract accepts the current user-facing support matrix", (t) => {
-  const root = createTransportReadmeFixture(t);
-  assert.deepEqual(validateTransportV3Readmes(root), []);
+test("README contract accepts current public owners", (t) => {
+  assert.deepEqual(validateTransportReadmes(createTransportReadmeFixture(t)), []);
 });
 
-test("README contract rejects a missing user-facing support description", (t) => {
+test("README contract rejects a missing current SDK owner", (t) => {
   const root = createTransportReadmeFixture(t);
-  const target = path.join(root, "flowersec-go/README.md");
-  fs.writeFileSync(target, "Supports connections.\n");
-  assert.match(validateTransportV3Readmes(root).join("\n"), /flowersec-go\/README\.md.*user-facing support/);
+  fs.writeFileSync(path.join(root, "flowersec-swift/README.md"), "TransportEnvironment ConnectionController\n");
+  assert.match(validateTransportReadmes(root).join("\n"), /flowersec-swift.*ServeHandle/u);
 });
 
-test("README contract rejects overstated SDK support", (t) => {
+test("README contract rejects an obsolete envelope claim", (t) => {
   const root = createTransportReadmeFixture(t);
-  const target = path.join(root, "flowersec-rust/README.md");
-  fs.writeFileSync(
-    target,
-    fs.readFileSync(target, "utf8").replace(
-      transportV3ReadmeContracts["flowersec-rust/README.md"],
-      "The native Rust runtime supports every connection type.",
-    ),
-  );
-  assert.match(validateTransportV3Readmes(root).join("\n"), /flowersec-rust\/README\.md.*user-facing support/);
-});
-
-test("README contract rejects localized WebTransport H4 drift", (t) => {
-  const root = createTransportReadmeFixture(t);
-  removeSemanticContract(root, "README.zh-CN.md", "webtransport_h4");
-  assert.match(validateTransportV3Readmes(root).join("\n"), /README\.zh-CN\.md.*webtransport h4 semantics/);
-});
-
-test("README contract rejects localized v3 issuer drift", (t) => {
-  const root = createTransportReadmeFixture(t);
-  removeSemanticContract(root, "README.ja-JP.md", "go_only_v3_issuer");
-  assert.match(validateTransportV3Readmes(root).join("\n"), /README\.ja-JP\.md.*go only v3 issuer semantics/);
-});
-
-test("README contract rejects localized WebTransport server profile drift", (t) => {
-  const root = createTransportReadmeFixture(t);
-  removeSemanticContract(root, "README.de-DE.md", "webtransport_server_profile");
-  assert.match(validateTransportV3Readmes(root).join("\n"), /README\.de-DE\.md.*webtransport server profile semantics/);
-});
-
-test("README contract rejects localized WebTransport server count drift", (t) => {
-  const root = createTransportReadmeFixture(t);
-  removeSemanticContract(root, "README.fr-FR.md", "webtransport_server_counts");
-  assert.match(validateTransportV3Readmes(root).join("\n"), /README\.fr-FR\.md.*webtransport server counts semantics/);
-});
-
-test("README contract rejects Go direct-only WebTransport wording", (t) => {
-  const root = createTransportReadmeFixture(t);
-  removeSemanticContract(root, "flowersec-go/README.md", "webtransport_path_selection");
-  assert.match(validateTransportV3Readmes(root).join("\n"), /flowersec-go\/README\.md.*webtransport path selection semantics/);
+  fs.appendFileSync(path.join(root, "README.md"), "flowersec-private-loopback/1\n");
+  assert.match(validateTransportReadmes(root).join("\n"), /retired transport contract/u);
 });
 
 test("SDK README descriptions identify the final recovery owner", () => {
@@ -112,22 +50,12 @@ test("SDK README descriptions identify the final recovery owner", () => {
   }
 });
 
-test("README support claims state WebTransport and native package boundaries", () => {
+test("README support claims retain explicit current qualification", () => {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const rootReadme = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
-  const goReadme = fs.readFileSync(path.join(repoRoot, "flowersec-go/README.md"), "utf8");
-  const typescriptReadme = fs.readFileSync(path.join(repoRoot, "flowersec-ts/README.md"), "utf8");
-  const nativeReadme = fs.readFileSync(path.join(repoRoot, "flowersec-node-native/README.md"), "utf8");
-  assert.match(rootReadme, /Browser profile uses the H3 WebTransport API when present/u);
-  assert.match(rootReadme, /native-server carrier surface is\s+WebSocket and raw QUIC for Go, Rust, and Node\.js/u);
-  assert.match(goReadme, /supports WebSocket, raw QUIC, and WebTransport across H4/u);
-  assert.match(goReadme, /Go the H4\s+runtime that claims the complete `webtransport-server` profile/u);
-  assert.match(goReadme, /WebSocket, raw QUIC,\s+and WebTransport are selected internally for either artifact-bound direct or\s+tunnel path/u);
-  assert.doesNotMatch(goReadme, /WebTransport is selected only\s+for direct invitations/u);
-  assert.match(typescriptReadme, /Browsers support WSS and optional browser-owned WebTransport/u);
-  assert.match(typescriptReadme, /Node\.js does not expose WebTransport/u);
-  assert.match(nativeReadme, /macOS\s+arm64, macOS x64, Linux arm64 glibc, and Linux x64 glibc/u);
-  assert.match(nativeReadme, /Windows and\s+musl packages are not published/u);
+  assert.match(rootReadme, /provider qualification/u);
+  assert.match(rootReadme, /local_loopback/u);
+  assert.match(rootReadme, /docs\/TRANSPORT_V4_BINDING\.md/u);
 });
 
 test("test matrix labels the standalone registry consumer as manual and non-gating", () => {
@@ -137,18 +65,6 @@ test("test matrix labels the standalone registry consumer as manual and non-gati
   assert.match(matrix, /No workflow invokes this diagnostic, it is not release-gating evidence/u);
   assert.equal((matrix.match(/release\/npm-consumer\/go-node-raw-quic\/direct-session/gu) ?? []).length, 1);
   assert.doesNotMatch(matrix, /executed after publication on each supported native package platform/u);
-});
-
-test("README states the machine-readable parity counts without ambiguous aliases", () => {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const content = fs.readFileSync(path.join(repoRoot, "README.md"), "utf8");
-  assert.match(content, /18 aggregate\s+runtime-role-carrier tuples/u);
-  assert.match(content, /24 supported\s+path-specific server units/u);
-  assert.match(content, /18\s+direct cells/u);
-  assert.match(content, /18\s+tunnel cells/u);
-  assert.match(content, /10 direct cells and 14 pairwise tunnel cells that include Go/u);
-  assert.match(content, /remaining 8 direct and 4 tunnel cells stay explicitly unverified/u);
-  assert.match(content, /Four\s+additional WSS client profiles prove Swift and browser TypeScript against Go/u);
 });
 
 test("README localization contract captures structure and literals", () => {

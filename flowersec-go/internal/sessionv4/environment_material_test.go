@@ -14,7 +14,7 @@ import (
 
 func materialEnvironment(t *testing.T, f *materialBytesFixture, registry ...*protocolv4.NamespaceRegistry) *Environment {
 	t.Helper()
-	config := EnvironmentConfig{Positions: 2, Materials: 1, MaterialCreateMS: 100, Clock: f.admissionIntegrationFixture.trust.clock, RuntimeBytes: 65536}
+	config := EnvironmentConfig{Positions: 2, Materials: 1, MaterialCreateMS: 100, Clock: f.authorityFixture.trust.clock, RuntimeBytes: 65536}
 	if len(registry) != 0 {
 		config.Verification = registry[0]
 	}
@@ -103,7 +103,7 @@ func TestEnvironmentMaterialExpiryAndDetachedCreationContext(t *testing.T) {
 			if err != cryptov4.ErrCapacity || called {
 				t.Fatal("material capacity checked after factory work", err)
 			}
-			f.admissionIntegrationFixture.trust.tick.Add(300)
+			f.authorityFixture.trust.tick.Add(300)
 			e.signalMaterials()
 			cleanup, stop := context.WithTimeout(context.Background(), time.Second)
 			defer stop()
@@ -158,7 +158,7 @@ func TestEnvironmentMaterialKeepsCanceledOrAbnormalFactoryTail(t *testing.T) {
 			case "environment":
 				e.Close()
 			case "window":
-				f.admissionIntegrationFixture.trust.tick.Add(150)
+				f.authorityFixture.trust.tick.Add(150)
 				e.signalMaterials()
 			}
 			e.mu.Lock()
@@ -215,7 +215,7 @@ func TestEnvironmentMaterialClockFailureClosesUnusedSnapshot(t *testing.T) {
 	if _, err := e.CreateMaterial(context.Background(), func(context.Context) (*ConnectionMaterial, error) { return m, nil }); err != nil {
 		t.Fatal(err)
 	}
-	f.admissionIntegrationFixture.trust.clock.Close()
+	f.authorityFixture.trust.clock.Close()
 	e.signalMaterials()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
@@ -239,7 +239,7 @@ func TestEnvironmentMaterialRetainsOriginalEstablishmentAfterExpiry(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, subscriptions, err := m.Establishment(InitialHello{Index: 0, Attempt: f.admissionIntegrationFixture.trust.attempt, Policy: protocolv4.HelloPolicy{BindingMode: 1}, BindingModes: 2}, limits, MaterialGeneration{Source: [16]byte{1}, Generation: 1}, f.reserve(cost), f.reserve(protocolv4.CredentialSubscriptionsCharge()))
+	p, subscriptions, err := m.Establishment(InitialHello{Index: 0, Attempt: f.authorityFixture.trust.attempt, Policy: protocolv4.HelloPolicy{BindingMode: 1}, BindingModes: 2}, limits, MaterialGeneration{Source: [16]byte{1}, Generation: 1}, f.reserve(cost), f.reserve(protocolv4.CredentialSubscriptionsCharge()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestEnvironmentMaterialRetainsOriginalEstablishmentAfterExpiry(t *testing.T
 			t.Error(err)
 		}
 	})
-	f.admissionIntegrationFixture.trust.tick.Add(300)
+	f.authorityFixture.trust.tick.Add(300)
 	e.signalMaterials()
 	e.Close()
 	wait, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)

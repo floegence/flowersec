@@ -90,3 +90,36 @@ func TestProxyApplicationRejectsTextAndPreservesLargeFieldLists(t *testing.T) {
 		}
 	}
 }
+
+func TestProxyCredentialClearFailureRetainsConfirmedServerFact(t *testing.T) {
+	id := "0102030405060708090a0b0c0d0e0f10"
+	for _, action := range []uint8{2, 3} {
+		response := ProxyCredentialControlResponse{Version: ProxyApplicationVersion(), OperationID: id, Action: action, OK: false, ServerInvalidated: true, Error: &ProxyError{Code: "credential_scope_unavailable", Message: "credential scope unavailable"}}
+		wire, err := EncodeProxyMetadata(response)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var read ProxyCredentialControlResponse
+		if err = DecodeProxyMetadata(wire, &read); err != nil {
+			t.Fatal(err)
+		}
+		if read.OK || !read.ServerInvalidated || read.CredentialContext != "" || read.Error == nil {
+			t.Fatal("replacement failure erased the independently confirmed invalidation")
+		}
+	}
+	response := ProxyCredentialControlResponse{Version: ProxyApplicationVersion(), OperationID: id, Action: 1, OK: false, ServerInvalidated: true, Error: &ProxyError{Code: "credential_scope_unavailable", Message: "credential scope unavailable"}}
+	if _, err := EncodeProxyMetadata(response); err == nil {
+		t.Fatal("Bind claimed a server invalidation fact")
+	}
+}
+
+func TestProxyCredentialMetadataRejectsNonCanonicalAssociation(t *testing.T) {
+	for _, request := range []ProxyHTTPRequest{
+		{Version: ProxyApplicationVersion(), RequestID: "r", Method: "GET", Path: "/", CredentialContext: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx="},
+		{Version: ProxyApplicationVersion(), RequestID: "r", Method: "GET", Path: "/", Credentials: "ambient"},
+	} {
+		if _, err := EncodeProxyMetadata(request); err == nil {
+			t.Fatal("accepted an invalid context or credentials mode")
+		}
+	}
+}

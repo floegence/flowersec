@@ -237,13 +237,13 @@ func TestRekeyRealDirectionalMarkers(t *testing.T) {
 			badDatagram[len(badDatagram)-1] ^= 1
 			beforeCounts, beforeInvalid := p.client.counts, p.client.invalidTotal
 			key := p.client.staged.keys.get(protocolv4.DatagramScope()).keys[protocolv4.ServerToClient]
-			beforeUsage, beforeGood, beforeReplay := key.usage, key.good, key.replay
+			beforeUsage, beforeGood, beforeReplay := key.usage, key.datagramGood, key.replay
 			for _, wire := range [][]byte{datagram, badDatagram} {
 				if _, _, _, err = p.client.Open(wire, acceptRecord); !errors.Is(err, ErrEpoch) {
 					t.Fatal("staged datagram reached authentication", err)
 				}
 			}
-			if p.client.counts != beforeCounts || p.client.invalidTotal != beforeInvalid || key.usage != beforeUsage || key.good != beforeGood || key.replay != beforeReplay {
+			if p.client.counts != beforeCounts || p.client.invalidTotal != beforeInvalid || key.usage != beforeUsage || key.datagramGood != beforeGood || key.replay != beforeReplay {
 				t.Fatal("early datagram changed authentication or replay accounting")
 			}
 			if diagnostics.Snapshot(diagnosticv4.MetricFutureDatagramDrop).Total != 2 || diagnostics.Snapshot(diagnosticv4.MetricCurrentDatagramDrop).Total != 0 || diagnostics.Snapshot(diagnosticv4.MetricOldDatagramDrop).Total != 0 {

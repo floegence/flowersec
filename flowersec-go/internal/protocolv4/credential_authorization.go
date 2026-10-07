@@ -97,17 +97,18 @@ func (e *EndpointCredentials) checkCurrentAt(bindings []CredentialValidation, ha
 // scheduler enforces the returned absolute deadline even without application
 // activity; each publication also calls CheckSession at its original gate.
 type EndpointAuthorization struct {
-	sampling      uint32
-	closing       bool
-	mu            sync.Mutex
-	closure       *EndpointCredentials
-	activation    *ActivationAuthority
-	bindings      [5]CredentialValidation
-	hardEnd       uint64
-	hard          *timev4.Deadline
-	freshness     [5]credentialProjection
-	terminal      error
-	subscriptions *CredentialSubscriptions
+	sampling       uint32
+	closing        bool
+	mu             sync.Mutex
+	closure        *EndpointCredentials
+	deliveryOrigin *EndpointCredentials
+	activation     *ActivationAuthority
+	bindings       [5]CredentialValidation
+	hardEnd        uint64
+	hard           *timev4.Deadline
+	freshness      [5]credentialProjection
+	terminal       error
+	subscriptions  *CredentialSubscriptions
 }
 
 type credentialProjection struct {
@@ -164,6 +165,7 @@ func newEndpointAuthorizationAt(subscriptions *CredentialSubscriptions, activati
 	}
 	a := &s.authorization
 	a.subscriptions, a.closure, a.activation = s, closure, activation
+	a.deliveryOrigin = s.deliveryOrigin
 	a.hardEnd = min(hardEnd, closure.hardEnd, activation.binding.sessionEnd)
 	a.hard, a.freshness = s.hard, s.freshness
 	copy(a.bindings[:], bindings)
@@ -231,7 +233,7 @@ func (a *EndpointAuthorization) ConstrainHandshakeDeadline(deadline *timev4.Dead
 	if !deadline.BelongsTo(a.bindings[0].Namespace.clock) {
 		return timev4.ErrOwner
 	}
-	return deadline.TightenAt(a.hardEnd, samples[0])
+	return deadline.TightenAt(min(deadline.Cap(), a.hardEnd), samples[0])
 }
 
 func (a *EndpointAuthorization) check(admission bool) (result CredentialValidity, err error) {
@@ -414,5 +416,12 @@ func (a *EndpointAuthorization) cleanupLocked() {
 	}
 	clear(a.bindings[:])
 	a.closure, a.activation = nil, nil
+	a.deliveryOrigin = nil
 	a.subscriptions.closeOwned(a)
+}
+
+// WithApplicationPublication holds the same original endpoint gate used for
+// every other finite authenticated application transfer.
+func (a *EndpointAuthorization) WithApplicationPublication(action func() error) error {
+	return a.WithCurrentAuthorization(action)
 }

@@ -1,3 +1,10 @@
+import { authenticateEndpointHop } from "../v4/runtime/endpointHop.js";
+import type { HopAuthenticationPreparation } from "../v4/runtime/hopAuthentication.js";
+import type { VerifiedRelayCredentials } from "../v4/runtime/relayCredentials.js";
+import type { ReadyIdentitySigner } from "../v4/runtime/noiseHandshake.js";
+import type { RandomFill } from "../v4/runtime/random.js";
+import type { CredentialResources } from "../v4/runtime/credentialSupport.js";
+import type { ResourceReference } from "../v4/runtime/resources.js";
 import type { ClientSessionAdmission } from "../v4/runtime/sessionAdmission.js";
 import type { OperationOptions } from "../public/contract.js";
 import type { V4AuthenticatedTransport, V4NativeStreamProvider } from "../v4/runtime/session.js";
@@ -8,6 +15,7 @@ import { ResourceError, ResourceVector } from "../v4/runtime/resources.js";
 import { timerChunk, TrustedDeadline } from "../v4/runtime/deadline.js";
 import { transportV4CarrierProviderRegistry } from "../generated/transportV4Registry.js";
 import { BrowserWebTransportStream, browserStreamSignalsAvailable, observeNative, type BrowserNativeBidi } from "./webTransportStreamV4.js";
+import type { NativeDatagrams } from "../v4/runtime/unreliable.js";
 import { BrowserWebTransportPositions, browserNativeStreamCharge } from "./webTransportPositionsV4.js";
 
 interface BrowserNativeWebTransport {
@@ -15,7 +23,7 @@ interface BrowserNativeWebTransport {
   readonly closed: Promise<unknown>;
   readonly incomingBidirectionalStreams: ReadableStream<BrowserNativeBidi>;
   readonly incomingUnidirectionalStreams: ReadableStream<ReadableStream<Uint8Array>>;
-  readonly datagrams: Readonly<{ readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array>; maxDatagramSize: number }>;
+  readonly datagrams: { readonly readable: ReadableStream<Uint8Array>; readonly writable: WritableStream<Uint8Array>; readonly maxDatagramSize: number; incomingHighWaterMark: number; outgoingHighWaterMark: number };
   readonly reliability?: string;
   createBidirectionalStream(): Promise<BrowserNativeBidi>;
   close(info?: Readonly<{ closeCode: number; reason: string }>): void;
@@ -63,6 +71,7 @@ const captured = new WeakMap<V4BrowserWebTransportOptions, CapturedOptions>();
 const positive = (value: bigint): boolean => typeof value === "bigint" && value > 0n && value <= 0xffffffffffffffffn;
 const identifier = (value: string): boolean => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$/u.test(value);
 
+
 /** Called by trusted Environment setup, before starting Prepare. The opaque
  * captured key exposes no mutable route-digest backing used by admission. */
 export function captureBrowserWebTransport(input: V4BrowserWebTransportOptions): V4BrowserWebTransportOptions {
@@ -74,6 +83,10 @@ export function captureBrowserWebTransport(input: V4BrowserWebTransportOptions):
     buildID: source.buildID, userAgent: source.userAgent, terminatorProfile: source.terminatorProfile, evidenceReference: source.evidenceReference };
   const applicationStreams = input.applicationStreams, streamBufferBytes = input.streamBufferBytes, runtimeBytes = input.runtimeBytes,
     providerRuntimeBytes = input.providerRuntimeBytes, providerStreamBytes = input.providerStreamBytes;
+  // The only browser tuple installed by this provider is Chromium. Checking
+  // the engine family rejects an incompatible deployment claim; it does not
+  // qualify the source/build, TLS, or HTTP/3 behavior of that deployment.
+  requireCredential(/\b(?:Chrome|Chromium|HeadlessChrome)\/\d+/u.test(globalThis.navigator?.userAgent ?? ""), "configuration_capacity");
   requireCredential(typeof NativeWebTransport === "function" && browserStreamSignalsAvailable() && globalThis.isSecureContext && typeof globalThis.location?.origin === "string", "configuration_capacity");
   requireCredential(typeof globalThis.navigator?.userAgent === "string" && d.providerTuple === tuple.id && d.implementation === tuple.implementation && d.quicImplementation === tuple.quic_implementation &&
     d.terminatorProfile === "tls13-no-early-data-h3-dedicated-exact-origin-no-wt-session-flow-control" && identifier(d.deploymentID) && identifier(d.revision) && identifier(d.buildID) &&
@@ -87,7 +100,7 @@ export function captureBrowserWebTransport(input: V4BrowserWebTransportOptions):
   try { endpoint = new URL(d.endpoint); origin = new URL(d.applicationOrigin); }
   catch { requireCredential(false, "configuration_capacity"); }
   requireCredential(endpoint.href === d.endpoint && endpoint.protocol === "https:" && endpoint.username === "" && endpoint.password === "" && endpoint.search === "" && endpoint.hash === "" &&
-    endpoint.pathname === "/flowersec/webtransport/v4/direct" && origin.origin === d.applicationOrigin && origin.origin === globalThis.location.origin, "configuration_capacity");
+    (endpoint.pathname === "/flowersec/webtransport/v4/direct" || endpoint.pathname === "/flowersec/webtransport/v4/tunnel") && origin.origin === d.applicationOrigin && origin.origin === globalThis.location.origin, "configuration_capacity");
   const value = Object.freeze({ deployment: Object.freeze(d), applicationStreams, streamBufferBytes, runtimeBytes, providerRuntimeBytes, providerStreamBytes, constructor: NativeWebTransport });
   const key = Object.freeze({ deployment: Object.freeze({ ...d, routeDigest: new Uint8Array(d.routeDigest) }),
     applicationStreams, streamBufferBytes, runtimeBytes, providerRuntimeBytes, providerStreamBytes });
@@ -102,6 +115,13 @@ export class BrowserWebTransportCarrier implements V4AuthenticatedTransport {
   readonly role = "client" as const;
   readonly mode = "stream" as const;
   readonly nativeStreams: V4NativeStreamProvider;
+  readonly nativeDatagrams: NativeDatagrams;
+  #datagramReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  #datagramWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
+  #datagramReading = false;
+  #datagramWrites = 0;
+  #datagramClosed = true;
+  #datagramCancel: Promise<void> | undefined;
   readonly #done: Promise<void>;
   #resolve!: () => void;
   readonly #abort = new AbortController();
@@ -135,6 +155,9 @@ export class BrowserWebTransportCarrier implements V4AuthenticatedTransport {
     this.nativeStreams = Object.freeze({ capacity: options.applicationStreams, enable: () => this.enableApplicationStreams(),
       open: (operation?: OperationOptions) => this.openApplicationStream(operation), accept: (operation?: OperationOptions) => this.acceptApplicationStream(operation) });
     this.#deadline = new TrustedDeadline(environment.clock, options.deployment.notAfterMS);
+    this.nativeDatagrams = Object.freeze({ maxDatagramBytes: () => this.maxDatagramBytes(),
+      receive: (maximum: number, operation?: OperationOptions) => this.receiveDatagram(maximum, operation),
+      submit: (bytes: Uint8Array, admitted: () => void) => this.submitDatagram(bytes, admitted) });
     dependency.onClose(() => { void this.close(); });
   }
   #checkBinding(): void {
@@ -145,6 +168,10 @@ export class BrowserWebTransportCarrier implements V4AuthenticatedTransport {
     // Browser APIs cannot identify which hash matched. The original entire
     // active set must remain authorized; never remove an expired entry locally.
     for (const pin of this.#pins) requireCredential(now.lowerMS >= pin.from && now.upperMS < pin.until, "credential_expired");
+  }
+  authenticateHop(credentials: VerifiedRelayCredentials, signer: ReadyIdentitySigner, random: RandomFill, resources: CredentialResources, reference: ResourceReference,
+    options?: OperationOptions, acceptedHello?: Uint8Array, prepared?: HopAuthenticationPreparation): Promise<void> {
+    return authenticateEndpointHop(this, credentials, signer, random, resources, reference, this.preparation, options, acceptedHello, prepared);
   }
   checkPreparation(): void {
     this.#checkBinding(); this.preparation.check();
@@ -193,7 +220,7 @@ export class BrowserWebTransportCarrier implements V4AuthenticatedTransport {
     const abort = (): void => { void this.close(); };
     const operation = AbortSignal.any(signal === undefined ? [this.#abort.signal] : [signal, this.#abort.signal]);
     signal?.addEventListener("abort", abort, { once: true });
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined, preparationFailure: unknown;
     try {
       if (operation.aborted) throw new Error("canceled");
       this.preparation.check(); this.#checkBinding();
@@ -213,14 +240,21 @@ export class BrowserWebTransportCarrier implements V4AuthenticatedTransport {
       if (this.#closed) try { native.close({ closeCode: 0, reason: "" }); } catch { /* Retain the original native closed observation. */ }
       const tick = (): void => {
         try { this.preparation.check(); this.#checkBinding(); timer = setTimeout(tick, timerChunk(this.preparation.remainingMS())); }
-        catch { void this.close(); }
+        catch (error) { preparationFailure = error; void this.close(); }
       };
-      tick(); await observeNative(readiness, operation);
+      tick();
+      try { await observeNative(readiness, operation); }
+      catch (error) { throw preparationFailure ?? error; }
       this.preparation.check(); this.#checkBinding();
       requireCredential(native.reliability === undefined || native.reliability === "supports-unreliable", "credential_untrusted");
       const maximum = native.datagrams.maxDatagramSize;
       requireCredential(Number.isSafeInteger(maximum) && maximum > 0 && typeof native.datagrams.readable.getReader === "function" && typeof native.datagrams.writable.getWriter === "function", "credential_untrusted");
       this.#maximumDatagram = maximum;
+      native.datagrams.incomingHighWaterMark = 64; native.datagrams.outgoingHighWaterMark = 1;
+      this.#datagramReader = native.datagrams.readable.getReader(); this.#datagramWriter = native.datagrams.writable.getWriter(); this.#datagramClosed = false;
+      const datagramsEnded = () => { this.#datagramClosed = true; this.#finish(); };
+      void this.#datagramReader.closed.then(datagramsEnded, datagramsEnded);
+      void this.#datagramWriter.closed.catch(() => undefined);
       this.#incoming = native.incomingBidirectionalStreams.getReader(); this.#incomingClosed = false;
       const incomingEnded = (): void => { this.#incomingClosed = true; if (!this.#closed) void this.close(); this.#finish(); };
       void this.#incoming.closed.then(incomingEnded, incomingEnded);
@@ -274,9 +308,43 @@ export class BrowserWebTransportCarrier implements V4AuthenticatedTransport {
   /** Complete Flowersec envelope MTU supplied by the native browser API. This
    * observation alone does not enable the Flowersec datagram feature. */
   maxDatagramBytes(): number {
-    this.#checkIO(); const actual = this.#native!.datagrams.maxDatagramSize;
+    this.#checkBinding(); const actual = this.#native!.datagrams.maxDatagramSize;
     if (!Number.isSafeInteger(actual) || actual < 1) throw new Error("carrier_failed");
     return Math.min(actual, this.#maximumDatagram);
+  }
+  async receiveDatagram(maximum: number, options?: OperationOptions): Promise<Uint8Array> {
+    this.#checkIO(); if (!this.#applications || this.#datagramReading || this.#datagramReader === undefined || !Number.isSafeInteger(maximum) || maximum < 1 || maximum > 1024) throw new Error("carrier_closed");
+    if (options?.signal?.aborted) throw new Error("canceled");
+    this.#datagramReading = true;
+    const cancel = () => { void this.#cancelDatagrams(); };
+    options?.signal?.addEventListener("abort", cancel, { once: true }); if (options?.signal?.aborted) cancel();
+    try { for (;;) {
+      const result = await this.#datagramReader.read();
+      this.#checkIO(); if (options?.signal?.aborted) { result.value?.fill(0); throw new Error("canceled"); }
+      if (result.done) throw new Error("carrier_closed");
+      try {
+        if (!(result.value instanceof Uint8Array)) throw new Error("carrier_failed");
+        if (result.value.length > maximum) continue;
+        return new Uint8Array(result.value);
+      } finally { result.value.fill(0); }
+    } } finally { options?.signal?.removeEventListener("abort", cancel); this.#datagramReading = false; this.#finish(); }
+  }
+  submitDatagram(bytes: Uint8Array, admitted: () => void): Readonly<{ completion: Promise<void> }> | undefined {
+    this.#checkIO(); const writer = this.#datagramWriter;
+    if (!this.#applications || writer === undefined || bytes.length > this.maxDatagramBytes() || writer.desiredSize === null || writer.desiredSize <= 0) return undefined;
+    const actual = writer.write(bytes); this.#datagramWrites++;
+    let failure: unknown;
+    try { admitted(); } catch (error) { failure = error; }
+    const completion = (async () => { try { await actual; if (failure !== undefined) throw failure; }
+      finally { this.#datagramWrites--; this.#finish(); } })();
+    return Object.freeze({ completion });
+  }
+  #cancelDatagrams(): Promise<void> {
+    if (this.#datagramCancel !== undefined) return this.#datagramCancel;
+    if (this.#datagramReader === undefined) return Promise.resolve();
+    let actual: Promise<void>;
+    try { actual = this.#datagramReader.cancel(); } catch { actual = Promise.reject(new Error("carrier_failed")); }
+    return this.#datagramCancel = actual.catch(() => undefined).then(() => { this.#datagramCancel = undefined; this.#finish(); });
   }
   read(maxBytes: number, options?: OperationOptions): Promise<Uint8Array | null> {
     try {
@@ -288,13 +356,13 @@ export class BrowserWebTransportCarrier implements V4AuthenticatedTransport {
   write(data: Uint8Array, options?: OperationOptions): Promise<number> {
     try { this.#checkIO(); return this.#maintenance!.write(data, options); } catch (error) { return Promise.reject(error); }
   }
-  submit(data: Uint8Array, admitted: () => void): { completion: Promise<void> } | undefined {
+  submit(data: Uint8Array, admitted: () => void, beforeSubmit?: () => void): { completion: Promise<void> } | undefined {
     try { this.#checkIO(); } catch { return undefined; }
-    return this.#maintenance!.submit(data, admitted);
+    return this.#maintenance!.submit(data, admitted, beforeSubmit);
   }
   close(): Promise<void> {
     if (!this.#closed) {
-      this.#closed = true; this.#abort.abort();
+      this.#closed = true; this.#abort.abort(); void this.#cancelDatagrams();
       this.positions.close();
       for (const stream of this.#streams) void stream.close();
       if (this.#incoming !== undefined) {
@@ -315,8 +383,8 @@ export class BrowserWebTransportCarrier implements V4AuthenticatedTransport {
   waitTermination(): Promise<void> { return this.#done; }
   #finish(): void {
     if (!this.#closed || this.#constructing || !this.#nativeEnded || this.#readyPending || this.#released || this.#streams.size !== 0 || this.#accepting || this.#incomingCancel !== undefined || !this.#incomingClosed ||
-        this.#unsupportedInput !== undefined || this.#incomingUniCancel !== undefined || !this.#incomingUniClosed || !this.positions.cleanupComplete()) return;
-    this.#released = true; this.#incoming?.releaseLock(); this.#incomingUni?.releaseLock();
+        this.#datagramReading || this.#datagramWrites !== 0 || !this.#datagramClosed || this.#datagramCancel !== undefined || this.#unsupportedInput !== undefined || this.#incomingUniCancel !== undefined || !this.#incomingUniClosed || !this.positions.cleanupComplete()) return;
+    this.#released = true; this.#datagramReader?.releaseLock(); this.#datagramWriter?.releaseLock(); this.#datagramReader = undefined; this.#datagramWriter = undefined; this.#incoming?.releaseLock(); this.#incomingUni?.releaseLock();
     this.#incoming = undefined; this.#incomingUni = undefined; this.#native = undefined; this.#maintenance = undefined;
     for (const pin of this.#pins) pin.digest.fill(0); this.#pins = [];
     this.dependency.release(); this.#resolve();
@@ -326,8 +394,8 @@ export class BrowserWebTransportCarrier implements V4AuthenticatedTransport {
 export function browserWebTransportAdmissionCosts(maxFrame: number, configuration: V4BrowserWebTransportOptions, runtimeBytes: bigint): readonly (readonly [string, ResourceVector])[] {
   const options = captured.get(configuration); requireCredential(options !== undefined, "configuration_capacity");
   const maximum = Math.max(maxFrame, 65536) + 8; requireCredential(maximum <= options.streamBufferBytes, "configuration_capacity");
-  const charge = new ResourceVector([options.runtimeBytes + 16384n + BigInt(options.applicationStreams + 1) * 128n,
-    options.providerRuntimeBytes + options.providerStreamBytes, 0n, BigInt(options.applicationStreams + 20), 4n, 8n, 1n, 1n, 1n, 0n, 5n]);
+  const charge = new ResourceVector([options.runtimeBytes + 16384n + 65536n + BigInt(options.applicationStreams + 1) * 128n,
+    options.providerRuntimeBytes + options.providerStreamBytes + 4194304n, 0n, BigInt(options.applicationStreams + 20), 4n, 8n, 1n, 1n, 1n, 0n, 5n]);
   const position = browserNativeStreamCharge(maximum, options.runtimeBytes, options.providerStreamBytes);
   return [["browser_webtransport", charge], ...Array.from({ length: options.applicationStreams + 1 }, () => ["carrier_stream_position", position] as const),
     ["browser_webtransport_policy", credentialWorkCharge(16384, runtimeBytes)]];
@@ -353,9 +421,9 @@ export async function prepareBrowserWebTransport(environment: V4EnvironmentRunti
     try { work = new CredentialWork(r, 16384, ref); } finally { ref.release(); }
     const route = work.parse(fields.route, "Route", 16384);
     try {
-      const leg = route.field("direct_leg"), tls = route.field("tls_policy", leg, "Leg"), origin = route.field("origin_policy", leg, "Leg"), url = new URL(d.endpoint);
-      requireCredential(route.uint("path_kind") === 0n && route.uint("access_class", leg, "Leg") === 0n && route.uint("carrier", leg, "Leg") === 2n &&
-        route.uint("dialer_role", leg, "Leg") === 0n && route.uint("listener_role", leg, "Leg") === 1n && route.text("path", leg, "Leg") === url.pathname &&
+      const leg = route.field(fields.pathKind === 0 ? "direct_leg" : "client_leg"), tls = route.field("tls_policy", leg, "Leg"), origin = route.field("origin_policy", leg, "Leg"), url = new URL(d.endpoint);
+      requireCredential(route.uint("path_kind") === BigInt(fields.pathKind) && route.uint("access_class", leg, "Leg") === 0n && route.uint("carrier", leg, "Leg") === 2n &&
+        route.uint("dialer_role", leg, "Leg") === 0n && route.uint("listener_role", leg, "Leg") === (fields.pathKind === 0 ? 1n : 2n) && route.text("path", leg, "Leg") === url.pathname &&
         route.text("alpn", leg, "Leg") === "h3" && route.text("subprotocol", leg, "Leg") === "" &&
         route.text("host", leg, "Leg") === url.hostname.replace(/^\[|\]$/gu, "") && route.uint("port", leg, "Leg") === BigInt(url.port === "" ? 443 : Number(url.port)) &&
         [...route.items("origins", origin, "OriginPolicy")].some(node => route.doc.text(node) === d.applicationOrigin), "credential_untrusted");
@@ -372,10 +440,10 @@ export async function prepareBrowserWebTransport(environment: V4EnvironmentRunti
       } else requireCredential(mode === 0n, "credential_untrusted");
     } finally { route.close(); work.close(); work = undefined; }
     carrier = new BrowserWebTransportCarrier(environment, dependency, positions, options, maximum, fields.preparationDeadline, Object.freeze(pins));
-    await carrier.prepare(signal); return carrier;
+    await carrier.prepare(signal); requireCredential((fields.required & 1n) === 0n || carrier.maxDatagramBytes() >= 76, "required_guarantee_unavailable"); return carrier;
   } catch (error) {
     work?.close();
-    if (carrier !== undefined) void carrier.close();
+    if (carrier !== undefined) await Promise.allSettled([carrier.close(), carrier.waitTermination()]);
     else {
       for (const pin of pins) pin.digest.fill(0);
       if (positions !== undefined) positions.close(); else for (const position of prepaid) position.close();

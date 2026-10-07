@@ -21,6 +21,10 @@ func rpcChannelRuntimeFixtureConfigured(t *testing.T, configure func(int, *execu
 	return rpcChannelRuntimeProfile(t, "services", configure)
 }
 func rpcChannelRuntimeProfile(t *testing.T, application string, configure func(int, *executorFixture, *SessionPlan, *RPCServicesConfig), clocks ...*timev4.Clock) (context.Context, [2]*RPCServices, [2]*executorFixture, [2]*bootstrapEndpoint, [2]*RPCChannel, [2][16]byte) {
+	return rpcChannelRuntimeProfilePrepared(t, application, configure, nil, clocks...)
+}
+
+func rpcChannelRuntimeProfilePrepared(t *testing.T, application string, configure func(int, *executorFixture, *SessionPlan, *RPCServicesConfig), beforeRun func(context.Context, [2]*RPCServices, [2]*bootstrapEndpoint), clocks ...*timev4.Clock) (context.Context, [2]*RPCServices, [2]*executorFixture, [2]*bootstrapEndpoint, [2]*RPCChannel, [2][16]byte) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
@@ -152,8 +156,16 @@ func rpcChannelRuntimeProfile(t *testing.T, application string, configure func(i
 					t.Error(err)
 				}
 			}
-			if err := services[role].waitChannel(cleanup); err != nil {
-				t.Error(err)
+			// Runtime and admission cleanup may observe the same original channel.
+			// Both must join its one physical retirement without a stale tail error.
+			channelCleanup := make(chan error, 2)
+			for range 2 {
+				go func() { channelCleanup <- services[role].waitChannel(cleanup) }()
+			}
+			for range 2 {
+				if err := <-channelCleanup; err != nil {
+					t.Error(err)
+				}
 			}
 			if err := e.admission.sendService.WaitCleanup(cleanup); err != nil {
 				t.Error(err)
@@ -183,6 +195,9 @@ func rpcChannelRuntimeProfile(t *testing.T, application string, configure func(i
 	})
 	client.complete(t, server)
 	server.complete(t, client)
+	if beforeRun != nil {
+		beforeRun(ctx, services, endpoints)
+	}
 	for role, e := range endpoints {
 		done[role][0] = make(chan error, 1)
 		go func() {

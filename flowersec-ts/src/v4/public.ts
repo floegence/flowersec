@@ -1,3 +1,8 @@
+import { ConnectionError, controllerFailureCode } from "./connectionDiagnostic.js";
+import { diagnosticDimensions, diagnosticMetrics, type DiagnosticCounts, type DiagnosticMetric, type DiagnosticSink } from "./diagnostics.js";
+import { ConnectionFacts, observedConnectionFacts, unknownConnectionFacts } from "./runtime/connectionFacts.js";
+import type { V4UnreliableMessages } from "./unreliable.js";
+import { V4UnreliableMessageError } from "./unreliable.js";
 import type * as OperationReferenceTypes from "./operationReference.js";
 import type * as OperationResultReadTypes from "./operationResultRead.js";
 import type * as ServiceDefinitionTypes from "./serviceDefinition.js";
@@ -10,6 +15,7 @@ import { ServeError, startServe, type ServeOptions, type ServeHandle } from "./s
 import type { V4Notifications } from "./notificationSubscription.js";
 import { V4LivenessError, type V4LivenessResult } from "./liveness.js";
 import { captureConnectionRequirements } from "./connectionRequirements.js";
+import { cleanupResult } from "./runtime/lifecycle.js";
 import type { OperationOptions } from "../public/contract.js";
 import type { StreamMetadata } from "../public/streamMetadata.js";
 import { byteSlice } from "./runtime/cbor.js";
@@ -34,6 +40,7 @@ const uint64Max = (1n << 64n) - 1n;
 const empty = new Uint8Array();
 const copyBytes = Uint8Array.prototype.set;
 const NativePromise = Promise;
+const completeCleanup = cleanupResult({ status: "complete", core_cleanup: "complete", pending_callbacks: 0n });
 const enqueueReadJob = queueMicrotask;
 interface CursorWaiter {
   readonly prefix: boolean;
@@ -418,6 +425,7 @@ export interface V4StreamOwner extends V4ReaderSource, V4WriteSource {
 
 /** Runtime integration: Created only after the actual v4 admission/READY path succeeds. */
 export interface V4SessionOwner {
+  unreliableMessages?(): V4UnreliableMessages;
   subscribeNotification?: V4Notifications["subscribe"];
   readOperationResult?(reference: OperationReferenceTypes.V4OperationReference, options?: OperationResultReadTypes.V4OperationResultReadOptions): OperationResultReadTypes.V4OperationResultRead;
   queryOperation?(reference: OperationReferenceTypes.V4OperationReference, options?: OperationOptions): Promise<OperationReferenceTypes.V4ExecutionManagementResult>;
@@ -466,6 +474,10 @@ export class V4Session {
       this.#termination = owner.waitTermination(); void this.#termination.catch(() => undefined);
       this.#owner = undefined;
     });
+  }
+  unreliableMessages(): V4UnreliableMessages {
+    if (this.#closing || this.#owner?.unreliableMessages === undefined) throw new V4UnreliableMessageError(this.#closing ? "closed" : "unavailable");
+    return this.#owner.unreliableMessages();
   }
   queryOperation(reference: OperationReferenceTypes.V4OperationReference, options?: OperationOptions): Promise<OperationReferenceTypes.V4ExecutionManagementResult> {
     if (this.#owner?.queryOperation === undefined) return NativePromise.reject(new Error("configuration_capacity")); return this.#owner.queryOperation(reference, options);
@@ -538,6 +550,8 @@ export class V4Session {
 export interface V4MaterialOwner { closeMaterial(): Promise<void>; }
 /** Runtime integration: The runtime owns source acquisition and prepare/spend/READY. */
 export interface V4EnvironmentOwner {
+  diagnosticCounts?(metric: DiagnosticMetric): DiagnosticCounts;
+  diagnosticSink?(): DiagnosticSink | undefined;
   /** Required dependencies are checked before material ownership transfers. */
   assertConnectAvailable?(): void;
   connect(source: V4ConnectionMaterialSource, request: V4ConnectionRequirements, options?: OperationOptions): Promise<V4SessionOwner>;
@@ -572,8 +586,14 @@ export class V4ConnectionMaterial {
   }
 }
 
+const emptyDiagnosticCounts: DiagnosticCounts = Object.freeze({ total: 0n,
+  state: Object.freeze(diagnosticDimensions.state.map(() => 0n)), phase: Object.freeze(diagnosticDimensions.phase.map(() => 0n)),
+  code: Object.freeze(diagnosticDimensions.code.map(() => 0n)), duration_bucket: Object.freeze(diagnosticDimensions.duration_bucket.map(() => 0n)),
+  attempt_bucket: Object.freeze(diagnosticDimensions.attempt_bucket.map(() => 0n)) });
 /** Lifecycle projection; connection and cleanup evidence come from the runtime. */
 export class V4TransportEnvironment {
+  #diagnosticFinal: ReadonlyMap<DiagnosticMetric, DiagnosticCounts> | undefined;
+  #diagnosticSink: DiagnosticSink | undefined;
   #owner: V4EnvironmentOwner | undefined;
   #closing = false;
   #final: V4LifecycleResult | undefined;
@@ -581,9 +601,17 @@ export class V4TransportEnvironment {
   constructor(owner: V4EnvironmentOwner) {
     if (typeof owner?.connectMaterial !== "function" || typeof owner.cleanupStatus !== "function") throw new Error("owner_unavailable");
     this.#owner = owner;
+    this.#diagnosticSink = owner.diagnosticSink?.();
     Object.defineProperty(this, "then", { value: undefined });
-    owner.onCleanup?.(() => { this.#final = owner.lifecycleResult(); this.#closing = true; this.#owner = undefined; });
+    owner.onCleanup?.(() => {
+      this.#diagnosticFinal = new Map(diagnosticMetrics.map(metric => [metric, owner.diagnosticCounts?.(metric) ?? emptyDiagnosticCounts]));
+      this.#final = owner.lifecycleResult(); this.#closing = true; this.#owner = undefined;
+    });
   }
+  diagnosticCounts(metric: DiagnosticMetric): DiagnosticCounts {
+    return this.#owner?.diagnosticCounts?.(metric) ?? this.#diagnosticFinal?.get(metric) ?? emptyDiagnosticCounts;
+  }
+  diagnosticSink(): DiagnosticSink | undefined { return this.#diagnosticSink; }
   async serve<Plan extends object>(options: ServeOptions<Plan>, operation?: OperationOptions): Promise<ServeHandle> {
     try { this.#checkConnect(operation?.signal); }
     catch { throw new ServeError(operation?.signal?.aborted ? "canceled" : "closed", { status: "complete", core_cleanup: "complete", pending_callbacks: 0n }); }
@@ -630,14 +658,14 @@ export class V4TransportEnvironment {
         const session = new V4Session(owner);
         if (this.#closing || signal?.aborted) {
           void session.close().then(
-            () => reject(new Error(this.#closing ? "closed" : "canceled")),
-            () => reject(new Error("cleanup_failed")),
+            () => reject(new ConnectionError(this.#closing ? "closed" : "canceled", observedConnectionFacts(owner) ?? unknownConnectionFacts(), session.cleanupStatus())),
+            () => reject(new ConnectionError("controller_failed", observedConnectionFacts(owner) ?? unknownConnectionFacts(), session.cleanupStatus())),
           );
           return;
         }
         resolve(session);
-      }).catch(reject);
-    } catch (error) { reject(error); }
+      }).catch(error => reject(error instanceof ConnectionError ? error : new ConnectionError(controllerFailureCode(error), new ConnectionFacts().snapshot(), completeCleanup)));
+    } catch (error) { reject(error instanceof ConnectionError ? error : new ConnectionError(controllerFailureCode(error), new ConnectionFacts().snapshot(), completeCleanup)); }
     return pending;
   }
   close(): Promise<V4LifecycleResult> {

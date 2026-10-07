@@ -166,3 +166,120 @@ func TestTakeBorrowExhaustionAndClosureDoNotChangeOwnership(t *testing.T) {
 		}
 	}
 }
+
+func TestBorrowInScopesOfRetainsBackingAcrossOriginalScopes(t *testing.T) {
+	limit := Vector{SDKBytes: 1 << 20, Items: 32, WorkSlots: 32}
+	r := testRoot(t, limit, 8, 32)
+	tenant := account(t, r, TenantAccount, 1, limit)
+	environment := account(t, r, EnvironmentAccount, 1, limit)
+	session := account(t, r, SessionAccount, 1, limit)
+	direction := account(t, r, DirectionAccount, 1, limit)
+	ownerA := owner(1)
+	ownerA.Environment = [16]byte{1}
+	ownerB := owner(2)
+	ownerB.Environment = [16]byte{1}
+	charge := Vector{SDKBytes: 128, Items: 1, WorkSlots: 1}
+	native, err := r.Reserve(ownerA, charge, tenant, environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paired, err := r.Reserve(ownerB, charge, tenant, environment, session, direction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := r.Snapshot()
+	scoped, err := native.BorrowInScopesOf(paired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := charge.Add(charge)
+	if got, _ := session.Usage(); got != want {
+		t.Fatalf("missing new scope charge: %#v", got)
+	}
+	if got := r.Snapshot(); got.Charged != before.Charged {
+		t.Fatalf("duplicated physical charge: %#v vs %#v", got, before)
+	}
+	native.Release()
+	if err := scoped.CheckRetained(); err != nil {
+		t.Fatal(err)
+	}
+	scoped.Release()
+	paired.Release()
+	environment.Close()
+	tenant.Close()
+	session.Close()
+	direction.Close()
+}
+
+func TestBorrowInScopesOfRefusalPreservesAllCharges(t *testing.T) {
+	limit := Vector{SDKBytes: 4096, Items: 16}
+	r := testRoot(t, limit, 8, 32)
+	environment := account(t, r, EnvironmentAccount, 1, limit)
+	session := account(t, r, SessionAccount, 1, Vector{SDKBytes: 64, Items: 4})
+	native, err := r.Reserve(owner(1), Vector{SDKBytes: 128, Items: 1}, environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer native.Release()
+	paired, err := r.Reserve(owner(2), Vector{SDKBytes: 32, Items: 1}, environment, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer paired.Release()
+	before, sessionBefore := r.Snapshot(), Vector{}
+	sessionBefore, _ = session.Usage()
+	if scoped, err := native.BorrowInScopesOf(paired); scoped != (Reference{}) || !errors.Is(err, ErrCapacity) {
+		t.Fatal("exhausted original account accepted", scoped, err)
+	}
+	if after := r.Snapshot(); after != before {
+		t.Fatal("failed scope attachment changed root", before, after)
+	}
+	if after, _ := session.Usage(); after != sessionBefore {
+		t.Fatal("failed scope attachment changed account", sessionBefore, after)
+	}
+	alias, err := native.Borrow()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer alias.Release()
+	before = r.Snapshot()
+	if scoped, err := alias.BorrowInScopesOf(native); scoped != (Reference{}) || !errors.Is(err, ErrOwner) {
+		t.Fatal("borrowed alias manufactured another owner", scoped, err)
+	}
+	if after := r.Snapshot(); after != before {
+		t.Fatal("refused alias changed root", before, after)
+	}
+	session.Close()
+	before = r.Snapshot()
+	if scoped, err := native.BorrowInScopesOf(paired); scoped != (Reference{}) || !errors.Is(err, ErrClosed) {
+		t.Fatal("closed paired account accepted", scoped, err)
+	}
+	if after := r.Snapshot(); after != before {
+		t.Fatal("closed scope attachment changed root", before, after)
+	}
+}
+
+func TestBorrowInScopesOfRejectsDifferentTrustedAncestry(t *testing.T) {
+	limit := Vector{SDKBytes: 4096, Items: 16}
+	r := testRoot(t, limit, 8, 32)
+	environment := account(t, r, EnvironmentAccount, 1, limit)
+	tenant := account(t, r, TenantAccount, 1, limit)
+	otherTenant := account(t, r, TenantAccount, 2, limit)
+	native, err := r.Reserve(owner(1), Vector{SDKBytes: 128, Items: 1}, tenant, environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer native.Release()
+	paired, err := r.Reserve(owner(2), Vector{SDKBytes: 32, Items: 1}, otherTenant, environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer paired.Release()
+	before := r.Snapshot()
+	if scoped, err := native.BorrowInScopesOf(paired); scoped != (Reference{}) || !errors.Is(err, ErrOwner) {
+		t.Fatal("different trusted tenant accepted", scoped, err)
+	}
+	if after := r.Snapshot(); after != before {
+		t.Fatal("refused ancestry changed root", before, after)
+	}
+}

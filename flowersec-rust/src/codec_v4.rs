@@ -23,21 +23,34 @@ pub(crate) struct Limits {
     pub(crate) bytes: usize,
     pub(crate) nodes: usize,
 }
+// The typed envelope has 11 nodes. Its embedded ordinary metadata has seven
+// fixed nodes and at most 64 key/value pairs under the current wire schema.
+pub(crate) const TYPED_MESSAGE_METADATA_MAX_NODES: usize = 11 + 7 + 64 * 2;
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Context {
     path_kind: Option<u64>,
+    resume_protection: Option<u64>,
+    hop_sender_is_relay: Option<bool>,
     pub(crate) activation_source: Option<ActivationSource>,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "The native v4 material sources are not yet wired")
-)]
 pub(crate) enum ActivationSource {
     LiveAuthority,
     PreauthorizedPool,
 }
 impl Context {
+    pub(crate) fn hop_endpoint() -> Self {
+        Self {
+            hop_sender_is_relay: Some(false),
+            ..Self::default()
+        }
+    }
+    pub(crate) fn hop_relay() -> Self {
+        Self {
+            hop_sender_is_relay: Some(true),
+            ..Self::default()
+        }
+    }
     pub(crate) fn with_activation_source(source: ActivationSource) -> Self {
         Self {
             activation_source: Some(source),
@@ -46,9 +59,19 @@ impl Context {
     }
     fn selector(self, name: &str) -> Result<&'static str> {
         match name {
+            "hop_sender_role" => match self.hop_sender_is_relay {
+                Some(false) => Ok("endpoint"),
+                Some(true) => Ok("relay"),
+                None => Err("context_unresolved"),
+            },
             "path_kind" => match self.path_kind {
                 Some(0) => Ok("direct"),
                 Some(1) => Ok("tunnel"),
+                _ => Err("context_unresolved"),
+            },
+            "resume_protection" => match self.resume_protection {
+                Some(0) => Ok("ed25519"),
+                Some(1) => Ok("hmac_sha256"),
                 _ => Err("context_unresolved"),
             },
             "activation_source_profile" => match self.activation_source {
@@ -103,10 +126,31 @@ fn domains() -> &'static Json {
         serde_json::from_str(registry::DOMAIN_REGISTRY_JSON).expect("generated domains")
     })
 }
+pub(crate) fn application_header_registry() -> &'static Json {
+    static VALUE: OnceLock<Json> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        serde_json::from_str(registry::APPLICATION_HEADER_REGISTRY_JSON)
+            .expect("generated application header registry")
+    })
+}
+pub(crate) fn rpc_fragment_registry() -> &'static Json {
+    static VALUE: OnceLock<Json> = OnceLock::new();
+    VALUE.get_or_init(|| {
+        serde_json::from_str(registry::FRAGMENT_REGISTRY_JSON)
+            .expect("generated RPC fragment registry")
+    })
+}
+pub(crate) fn wire_domain(name: &str) -> Result<&'static Json> {
+    domain(name)
+}
 pub(crate) fn registry_backing_bound() -> u64 {
     // Immutable generated input only. Charge a conservative bound for serde's
     // node/string/container allocation at Environment construction.
-    (registry::CBOR_REGISTRY_JSON.len() + registry::DOMAIN_REGISTRY_JSON.len()) as u64 * 64
+    (registry::CBOR_REGISTRY_JSON.len()
+        + registry::DOMAIN_REGISTRY_JSON.len()
+        + registry::APPLICATION_HEADER_REGISTRY_JSON.len()
+        + registry::FRAGMENT_REGISTRY_JSON.len()) as u64
+        * 64
 }
 fn descriptor(name: &str) -> Result<&'static Json> {
     schema()["frame_maps"].get(name).ok_or("unknown_schema")
@@ -302,6 +346,84 @@ impl<'a> Iterator for Items<'a> {
         }
     }
 }
+/// Canonical bounded control arrays have a fixed invocation-specific shape,
+/// rather than a generated protocol map schema. Callers check every element;
+/// this scanner rejects trailing bytes and malformed/noncanonical CBOR first.
+pub(crate) fn decode_control_array(raw: &[u8], cap: Limits) -> Result<Value<'_>> {
+    if raw.is_empty() || raw.len() > cap.bytes || cap.nodes == 0 || raw[0] >> 5 != 4 {
+        return Err("array_size");
+    }
+    let mut remaining = cap.nodes;
+    if scan(raw, 0, &mut remaining)? != raw.len() {
+        return Err("trailing_bytes");
+    }
+    Ok(Value { raw })
+}
+/// Local storage maps use fixed numeric fields owned by their physical format.
+/// This parses only canonical structure; callers inspect every field and never
+/// obtain a wire credential or an original invocation from the returned view.
+pub(crate) fn decode_storage_map(raw: &[u8], cap: Limits) -> Result<Value<'_>> {
+    if raw.is_empty() || raw.len() > cap.bytes || cap.nodes == 0 || raw[0] >> 5 != 5 {
+        return Err("map_size");
+    }
+    let mut remaining = cap.nodes;
+    if scan(raw, 0, &mut remaining)? != raw.len() {
+        return Err("trailing_bytes");
+    }
+    Ok(Value { raw })
+}
+/// Durable TopUp intent and Applied Ack projections exclude only renewable
+/// owner generation and proof. Neither is a complete network request.
+pub(crate) fn decode_shape_projection<'a>(
+    raw: &'a [u8],
+    name: &str,
+    excluded: &[u64],
+    cap: Limits,
+) -> Result<Value<'a>> {
+    if !((name == "TopUpRequest" && excluded == [6, 7])
+        || (name == "TopUpAck" && excluded == [8, 9]))
+        || raw.is_empty()
+        || raw.len() > cap.bytes
+        || cap.nodes == 0
+    {
+        return Err("projection_invalid");
+    }
+    let mut remaining = cap.nodes;
+    if scan(raw, 0, &mut remaining)? != raw.len() {
+        return Err("trailing_bytes");
+    }
+    let value = Value { raw };
+    if raw[0] >> 5 != 5 || name == "TopUpRequest" && value.len()? != 8 {
+        return Err("projection_invalid");
+    }
+    let descriptor = descriptor(name)?;
+    let mut fields = value.children()?;
+    while let Some(key) = fields.next() {
+        let id = key?.uint()?;
+        if excluded.contains(&id) {
+            return Err("projection_invalid");
+        }
+        let child = fields.next().ok_or("truncated")??;
+        let field = descriptor["fields"]
+            .get(id.to_string())
+            .ok_or("unknown_field")?;
+        check_field(child, field, None, 1, &mut remaining, Context::default())?;
+    }
+    for id in descriptor["required"]
+        .as_array()
+        .ok_or("registry_unresolved")?
+    {
+        if !excluded.contains(&number(id)?) {
+            value.field(
+                name,
+                descriptor["fields"][number(id)?.to_string()]["name"]
+                    .as_str()
+                    .ok_or("registry_unresolved")?,
+            )?;
+        }
+    }
+    Ok(value)
+}
 pub(crate) fn decode<'a>(
     raw: &'a [u8],
     name: &str,
@@ -357,6 +479,9 @@ fn check_map(
     let map = descriptor(name)?;
     if name == "Candidate" || name == "Route" {
         context.path_kind = Some(value.u(name, "path_kind")?);
+    }
+    if name == "ResumeRequest" {
+        context.resume_protection = Some(value.u(name, "protection")?);
     }
     bounded(
         value.raw.len() as u64,
@@ -445,6 +570,10 @@ fn check_field(
                 if schema()["field_registries"][reference].as_str() != Some(text) {
                     return Err("constant_mismatch");
                 }
+            } else if let Some(expected) = field["const"].as_str() {
+                if text != expected {
+                    return Err("constant_mismatch");
+                }
             } else if let Some(pattern) = field["pattern_ref"].as_str() {
                 if pattern == "metadata_namespace" {
                     let valid = |part: &str| {
@@ -526,6 +655,15 @@ fn check_field(
                 "max_items",
                 "length",
             )?;
+            let entries = field
+                .get("entries")
+                .map(|entries| entries.as_object().ok_or("registry_unresolved"))
+                .transpose()?;
+            if let Some(entries) = entries
+                && value.len()? != entries.len()
+            {
+                return Err("missing_field");
+            }
             let mut children = value.children()?;
             while let Some(key) = children.next() {
                 let key = key?.text()?;
@@ -539,14 +677,25 @@ fn check_field(
                 if !key.nfc().eq(key.chars()) {
                     return Err("text_noncanonical");
                 }
-                let bytes = children.next().ok_or("truncated")??.bytes()?;
-                bounded(
-                    bytes.len() as u64,
-                    &field["values"],
-                    "min_bytes",
-                    "max_bytes",
-                    "length",
-                )?;
+                let child = children.next().ok_or("truncated")??;
+                if let Some(entries) = entries {
+                    check_field(
+                        child,
+                        entries.get(key).ok_or("unknown_field")?,
+                        state,
+                        depth + 1,
+                        remaining,
+                        context,
+                    )?;
+                } else {
+                    bounded(
+                        child.bytes()?.len() as u64,
+                        &field["values"],
+                        "min_bytes",
+                        "max_bytes",
+                        "length",
+                    )?;
+                }
             }
         }
         "map" => check_map(
@@ -643,7 +792,7 @@ fn check_text(format: &str, text: &str) -> Result<()> {
                     || last
                         .strip_prefix("0x")
                         .is_some_and(|v| v.bytes().all(|b| b.is_ascii_hexdigit()))
-                    || crate::idna_v3::lookup_ascii(text).as_deref() != Ok(text)
+                    || crate::idna_v4::lookup_ascii(text).as_deref() != Ok(text)
                 {
                     return Err("host_noncanonical");
                 }
@@ -888,6 +1037,34 @@ fn check_rule(value: Value<'_>, name: &str, rule: &Json, context: Context) -> Re
         }
     }
     match text("op")? {
+        "map_digest" => {
+            let source = get(text("source")?)?;
+            let source = match header(source.raw)?.0 {
+                5 => source,
+                // Embedded signed maps retain their exact canonical bytes;
+                // the outer byte-string header is not part of the domain.
+                2 => Value {
+                    raw: source.bytes()?,
+                },
+                _ => return Err("field_type"),
+            };
+            let expected = digest(text("domain")?, source)?;
+            if get(text("field")?)?.bytes()? != expected {
+                return Err("field_relation");
+            }
+        }
+        "allowed_pairs" => {
+            let left = get(text("left")?)?;
+            let right = get(text("right")?)?;
+            if !rule["pairs"]
+                .as_array()
+                .ok_or("registry_unresolved")?
+                .iter()
+                .any(|pair| raw_matches(left, &pair[0]) && raw_matches(right, &pair[1]))
+            {
+                return Err("tuple_invalid");
+            }
+        }
         "less_than" | "less_or_equal" | "equal" | "not_equal" | "bit_subset" | "max_difference" => {
             let left = get(text("left")?)?;
             let right = get(text("right")?)?;
@@ -1040,6 +1217,33 @@ fn check_rule(value: Value<'_>, name: &str, rule: &Json, context: Context) -> Re
                 return Err("origin_endpoint");
             }
         }
+        "equal_if_present" => {
+            let left = path(value, name, text("left")?, context)?;
+            let right = path(value, name, text("right")?, context)?;
+            if let (Some(left), Some(right)) = (left, right)
+                && left.raw != right.raw
+            {
+                return Err("field_relation");
+            }
+        }
+        "ordinal_indices" => {
+            let array = get(text("field")?)?;
+            let item_field_id = number(&rule["item_field_id"])?;
+            for (index, item) in array.children()?.enumerate() {
+                let item = item?;
+                let mut fields = item.children()?;
+                let mut actual = None;
+                while let Some(key) = fields.next() {
+                    let value = fields.next().ok_or("truncated")??;
+                    if key?.uint()? == item_field_id {
+                        actual = Some(value.uint()?);
+                    }
+                }
+                if actual != Some(index as u64) {
+                    return Err("ordinal_index");
+                }
+            }
+        }
         "increasing" | "increasing_scopes" => {
             let mut previous = None;
             for child in get(text("field")?)?.children()? {
@@ -1178,7 +1382,13 @@ fn label<'a>(domain: &Json, buffer: &'a mut [u8; 128]) -> Result<&'a [u8]> {
 }
 pub(crate) fn digest(name: &str, value: Value<'_>) -> Result<[u8; 32]> {
     let domain = domain(name)?;
-    if domain["operation"] != "sha256" || domain["input_schema"]["parts"][0]["projection"] != "full"
+    let parts = domain["input_schema"]["parts"]
+        .as_array()
+        .ok_or("domain_projection")?;
+    if domain["operation"] != "sha256"
+        || domain["output_length"] != 32
+        || parts.len() != 1
+        || parts[0]["encoding"] != "lp-map"
     {
         return Err("domain_projection");
     }
@@ -1186,12 +1396,54 @@ pub(crate) fn digest(name: &str, value: Value<'_>) -> Result<[u8; 32]> {
     let label = label(domain, &mut buffer)?;
     let mut hash = Sha256::new();
     hash.update(label);
-    hash.update(
-        u32::try_from(value.raw.len())
-            .map_err(|_| "map_size")?
-            .to_be_bytes(),
-    );
-    hash.update(value.raw);
+    if parts[0]["projection"] == "full" {
+        hash.update(
+            u32::try_from(value.raw.len())
+                .map_err(|_| "map_size")?
+                .to_be_bytes(),
+        );
+        hash.update(value.raw);
+        return Ok(hash.finalize().into());
+    }
+    if name != "grant_digest"
+        || parts[0]["projection"] != "without_signature"
+        || parts[0]["schema_ref"] != "Grant"
+    {
+        return Err("domain_projection");
+    }
+    // Hash the exact unsigned canonical map in place. No second credential
+    // buffer is allocated, and no signature/authorization is inferred.
+    let signature = number(&descriptor("Grant")?["signature_field"])?;
+    let (head, head_len) = encoded_head(5, value.len()?.checked_sub(1).ok_or("map_size")? as u64);
+    let mut length = head_len;
+    let mut children = value.children()?;
+    let mut found = false;
+    while let Some(key) = children.next() {
+        let key = key?;
+        let child = children.next().ok_or("truncated")??;
+        if key.uint()? == signature {
+            found = true;
+        } else {
+            length = length
+                .checked_add(key.raw.len())
+                .and_then(|n| n.checked_add(child.raw.len()))
+                .ok_or("map_size")?;
+        }
+    }
+    if !found {
+        return Err("signature_missing");
+    }
+    hash.update(u32::try_from(length).map_err(|_| "map_size")?.to_be_bytes());
+    hash.update(&head[..head_len]);
+    let mut children = value.children()?;
+    while let Some(key) = children.next() {
+        let key = key?;
+        let child = children.next().ok_or("truncated")??;
+        if key.uint()? != signature {
+            hash.update(key.raw);
+            hash.update(child.raw);
+        }
+    }
     Ok(hash.finalize().into())
 }
 pub(crate) fn verify_signature(
@@ -1279,9 +1531,14 @@ pub(crate) fn valid_ed25519_key(encoded: &[u8; 32]) -> bool {
         })
 }
 pub(crate) fn encode_head(out: &mut Vec<u8>, major: u8, n: u64) {
+    let (head, size) = encoded_head(major, n);
+    out.extend_from_slice(&head[..size]);
+}
+fn encoded_head(major: u8, n: u64) -> ([u8; 9], usize) {
+    let mut head = [0; 9];
     if n < 24 {
-        out.push(major << 5 | n as u8);
-        return;
+        head[0] = major << 5 | n as u8;
+        return (head, 1);
     }
     let (ai, width) = if n <= 255 {
         (24, 1)
@@ -1292,8 +1549,9 @@ pub(crate) fn encode_head(out: &mut Vec<u8>, major: u8, n: u64) {
     } else {
         (27, 8)
     };
-    out.push(major << 5 | ai);
-    out.extend_from_slice(&n.to_be_bytes()[8 - width..]);
+    head[0] = major << 5 | ai;
+    head[1..1 + width].copy_from_slice(&n.to_be_bytes()[8 - width..]);
+    (head, 1 + width)
 }
 
 #[cfg(test)]
@@ -1441,6 +1699,61 @@ pub(crate) mod tests {
         }
     }
     #[test]
+    fn production_grant_digest_matches_independent_domain_vector() {
+        let corpus: Json =
+            serde_json::from_str(include_str!("../../testdata/transport_v4/domains.json")).unwrap();
+        let vector = corpus["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|vector| vector["id"] == "domain_grant_digest")
+            .unwrap();
+        let raw = hex(vector["inputs"]["grant"]["$bytes"].as_str().unwrap());
+        let expected = hex(vector["result"]["output_hex"].as_str().unwrap());
+        let limits = Limits {
+            bytes: 9302,
+            nodes: 2048,
+        };
+        let grant = decode(&raw, "Grant", limits, None).unwrap();
+        assert_eq!(digest("grant_digest", grant).unwrap().as_slice(), expected);
+        let signature_id = number(&descriptor("Grant").unwrap()["signature_field"]).unwrap();
+        let mut fields = Vec::new();
+        let mut children = grant.children().unwrap();
+        while let Some(key) = children.next() {
+            let id = key.unwrap().uint().unwrap();
+            let child = children.next().unwrap().unwrap();
+            fields.push((
+                id,
+                if id == signature_id {
+                    b(&[91; 64])
+                } else {
+                    child.raw.to_vec()
+                },
+            ));
+        }
+        let changed_signature = encode_map(&fields);
+        assert_eq!(
+            digest(
+                "grant_digest",
+                decode(&changed_signature, "Grant", limits, None).unwrap()
+            )
+            .unwrap()
+            .as_slice(),
+            expected
+        );
+        fields.iter_mut().find(|(id, _)| *id == 1).unwrap().1 = b(&[92; 16]);
+        let changed_identity = encode_map(&fields);
+        assert_ne!(
+            digest(
+                "grant_digest",
+                decode(&changed_identity, "Grant", limits, None).unwrap()
+            )
+            .unwrap()
+            .as_slice(),
+            expected
+        );
+    }
+    #[test]
     fn production_credential_codec_matches_stateless_shared_corpus() {
         let corpus: Json =
             serde_json::from_str(include_str!("../../testdata/transport_v4/corpus.json")).unwrap();
@@ -1461,12 +1774,21 @@ pub(crate) mod tests {
                     | "TLSPolicy"
                     | "TLSPin"
                     | "Candidate"
+                    | "Grant"
+                    | "HopChallengeContext"
+                    | "HOP_AUTH_HELLO"
             ) || vector["expected_error"] == "pool_set_membership"
             {
                 continue;
             }
             let input = hex(vector["hex"].as_str().unwrap());
             let context = Context {
+                resume_protection: None,
+                hop_sender_is_relay: match vector["limits"]["hop_sender_role"].as_str() {
+                    Some("endpoint") => Some(false),
+                    Some("relay") => Some(true),
+                    _ => None,
+                },
                 path_kind: match vector["limits"]["path_kind"].as_str() {
                     Some("direct") => Some(0),
                     Some("tunnel") => Some(1),

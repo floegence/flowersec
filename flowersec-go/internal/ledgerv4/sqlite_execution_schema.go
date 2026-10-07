@@ -80,7 +80,7 @@ func (e *SQLiteExecutions) verifySchema() error {
 	return nil
 }
 
-func (e *SQLiteExecutions) openSchema() (err error) {
+func (e *SQLiteExecutions) openSchema(readOnly bool) (err error) {
 	s := e.store.sqliteStore
 	if err = e.verifySchema(); err != nil {
 		return err
@@ -112,6 +112,12 @@ func (e *SQLiteExecutions) openSchema() (err error) {
 		return ErrStorageFormat
 	}
 	// A valid local file is not evidence that no newer business history exists.
+	if err = e.recoverRows(false); err != nil {
+		return err
+	}
+	if readOnly {
+		return nil
+	}
 	if err = s.continuity.Check(s.identity, epoch, false); err != nil {
 		return err
 	}
@@ -131,7 +137,7 @@ func (e *SQLiteExecutions) openSchema() (err error) {
 	}()
 	// Recovery does not reconstruct any execution work capability. Independent
 	// continuity attests that the old actual work was settled or fenced first.
-	if err = e.recoverRows(); err != nil {
+	if err = e.recoverRows(true); err != nil {
 		return err
 	}
 	s.epoch = epoch + 1
@@ -195,7 +201,7 @@ func (e *SQLiteExecutions) readManifest() (epoch uint64, err error) {
 	return epoch, nil
 }
 
-func (e *SQLiteExecutions) recoverRows() error {
+func (e *SQLiteExecutions) recoverRows(recover bool) error {
 	var cursor [executionStorageKeyBytes]byte
 	for {
 		n, err := e.readGCPage(cursor[:])
@@ -232,7 +238,7 @@ func (e *SQLiteExecutions) recoverRows() error {
 			if err := e.verifyRecoveryRow(row.key[:]); err != nil {
 				return err
 			}
-			if r.WorkActive {
+			if recover && r.WorkActive {
 				r.WorkActive = false
 				if r.State == SQLiteExecutionAccepted {
 					r.State, r.Reason = SQLiteExecutionFailed, SQLiteExecutionReasonNotDispatched

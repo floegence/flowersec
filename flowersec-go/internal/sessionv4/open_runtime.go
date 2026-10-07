@@ -104,6 +104,7 @@ func (a *OpenAdmission) newFlow(scope, peerLimit uint64, class StreamClass, rese
 	if err != nil {
 		return nil, err
 	}
+	send.diagnosticSink = a.diagnosticSink
 	frontier := TerminalTuple{Epoch: rx.Epoch, NextSequence: rx.Sequence}
 	var receive *ReceiveFlow
 	if guard := reservation.ReceiveProtection; guard != nil {

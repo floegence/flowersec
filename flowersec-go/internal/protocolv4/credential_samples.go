@@ -34,6 +34,32 @@ func sampleCredentialBindings(bindings []CredentialValidation) (samples credenti
 
 // Concrete shared trust stores consume the same validated envelope. Component
 // trust adapters retain their existing contract of bounded local SDK reads.
+func (n *LiveNamespace) checkHeadAtPending(head *NamespaceHead, sample timev4.Sample) (uint64, error) {
+	var err error
+	sample, err = n.clock.RefreshSample(sample)
+	if err != nil {
+		return 0, err
+	}
+	if head == nil || head.rules != n.rules || head.generation != n.observed.generation {
+		return 0, CBORFailure("revocation_namespace_binding")
+	}
+	binding := NamespaceHeadTrust{Tenant: n.rules.tenant, Authority: n.rules.authority, Capacity: n.rules.capacityDigest, Delegation: head.delegationDigest, Signer: head.signerID, Generation: head.generation, TrustIssuedMS: head.trustIssued, TrustNotAfterMS: head.trustEnd}
+	pending := uint64(0)
+	if trust, ok := n.trust.(*NamespaceTrustStore); ok {
+		pending, err = trust.headAtPending(binding, sample)
+	} else {
+		err = n.trust.Head(binding)
+	}
+	if err != nil {
+		return 0, err
+	}
+	headPending, err := head.CheckTimePending(sample.Interval)
+	if err != nil {
+		return 0, err
+	}
+	return max(pending, headPending), nil
+}
+
 func (n *LiveNamespace) checkHeadAt(head *NamespaceHead, sample timev4.Sample) error {
 	var err error
 	sample, err = n.clock.RefreshSample(sample)
@@ -87,6 +113,18 @@ func (n *LiveNamespace) checkActivationTrustAt(binding ActivationTrustBinding, s
 		return trust.activationAt(binding, sample)
 	}
 	return n.trust.Activation(binding)
+}
+
+func (n *LiveNamespace) checkStateHistoryAtPending(state *NamespaceState, sample timev4.Sample) (uint64, error) {
+	if current, err := n.clock.RefreshSample(sample); err != nil {
+		return 0, err
+	} else {
+		sample = current
+	}
+	if trust, ok := n.trust.(*NamespaceTrustStore); ok {
+		return trust.stateHistoryAtPending(state, sample)
+	}
+	return 0, n.trust.StateHistory(state)
 }
 
 func (n *LiveNamespace) checkStateHistoryAt(state *NamespaceState, sample timev4.Sample) error {

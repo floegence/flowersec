@@ -16,179 +16,55 @@ func verifyPublicAPIDesign(repoRoot string) error {
 		return string(data), nil
 	}
 
-	leaseChecks := map[string]string{
-		"flowersec-swift/Sources/Flowersec/ArtifactV3.swift": "  public func commitSpend()",
-		"flowersec-rust/src/artifact_v3.rs":                  "    pub async fn commit_spend(",
-	}
-	for path, forbidden := range leaseChecks {
-		source, err := read(path)
-		if err != nil {
-			return err
-		}
-		if strings.Contains(source, forbidden) {
-			return fmt.Errorf("%s publicly exposes connector-owned artifact spending", path)
-		}
-	}
-	tsLease, err := read("flowersec-ts/src/v3/artifactLease.ts")
-	if err != nil {
-		return err
-	}
-	tsLeaseBody, err := declarationBody(tsLease, "class ArtifactLeaseV3 {")
-	if err != nil {
-		return err
-	}
-	if strings.Contains(tsLeaseBody, "commitSpend(") {
-		return fmt.Errorf("TypeScript ArtifactLease publicly exposes connector-owned artifact spending")
-	}
-	if !strings.Contains(tsLeaseBody, "private constructor") || !strings.Contains(tsLeaseBody, "leaseBrand") {
-		return fmt.Errorf("TypeScript ArtifactLease must have a private constructor and opaque brand")
-	}
-
-	terminationChecks := []struct {
+	checks := []struct {
 		path      string
 		required  []string
 		forbidden []string
 	}{
-		{
-			path:      "flowersec-go/connector.go",
-			required:  []string{"WaitTermination(context.Context) (SessionTermination, error)"},
-			forbidden: []string{"Termination() <-chan struct{}", "WaitClosed(context.Context) error"},
-		},
-		{
-			path:      "flowersec-ts/src/public/contract.ts",
-			required:  []string{"waitTermination(): Promise<SessionTermination>;"},
-			forbidden: []string{"waitClosed(): Promise<SessionTermination>;", "SessionV2", "ByteStreamV2"},
-		},
-		{
-			path:      "flowersec-swift/Sources/Flowersec/Transport.swift",
-			required:  []string{"public struct SessionTermination", "func waitTermination() async -> SessionTermination"},
-			forbidden: []string{"func waitClosed() async -> SessionError"},
-		},
-		{
-			path:      "flowersec-rust/src/transport.rs",
-			required:  []string{"pub struct SessionTermination", "async fn wait_termination(&self) -> SessionTermination;"},
-			forbidden: []string{"async fn wait_closed(&self) -> Result<(), SessionError>;"},
-		},
+		{"flowersec-swift/Sources/Flowersec/TransportV4API.swift", []string{"public final class ConnectionMaterial", "init(owner: any ConnectionMaterialOwner)", "public func waitCleanup()"}, []string{"public func commitSpend("}},
+		{"flowersec-rust/src/material_source_v4.rs", []string{"pub struct ConnectionMaterial", "pub async fn connect(\n    environment: &TransportEnvironment"}, []string{"pub async fn commit_spend("}},
+		{"flowersec-ts/src/v4/public.ts", []string{"const materialOwners = new WeakMap", "const wrappedMaterials = new WeakSet", "materialOwners.delete(material)", "waitTermination(options?: OperationOptions): Promise<void>", "waitCleanup(options?: OperationOptions): Promise<V4CleanupStatus>"}, []string{}},
+		{"flowersec-go/current_transport.go", []string{"Environment *TransportEnvironment", "func Connect(ctx context.Context, source ConnectionMaterialSource", "func ConnectMaterial(ctx context.Context, material *ConnectionMaterial"}, []string{}},
+		{"flowersec-go/v4_session_lifecycle.go", []string{"func (s *Session) WaitTermination(ctx context.Context) error"}, []string{}},
+		{"flowersec-go/v4_api.go", []string{"func (s *Session) WaitCleanup(ctx context.Context) error", "type Stream interface"}, []string{}},
+		{"flowersec-swift/Sources/Flowersec/Transport.swift", []string{"public struct SessionTermination", "func waitTermination() async -> SessionTermination"}, []string{"func waitClosed() async -> SessionError"}},
+		{"flowersec-ts/src/v4/messageDefinition.ts", []string{"decode(context: V4ApplicationContext, bytes: Uint8Array): T", "typeof decode !== \"function\""}, []string{}},
+		{"flowersec-go/v4_controller.go", []string{"type ControllerOptions struct", "MaximumAttempts", "func (c *ConnectionController) Snapshot() ControllerSnapshot", "func (c *ConnectionController) WaitCleanup(ctx context.Context) error"}, []string{}},
+		{"flowersec-rust/src/connection_controller_v4.rs", []string{"pub struct MaterialControllerOptions", "pub fn progress(&self) -> MaterialControllerProgress", "pub async fn wait_cleanup(&self) -> CleanupStatus"}, []string{}},
+		{"flowersec-swift/Sources/Flowersec/ConnectionController.swift", []string{"maximumAttempts: UInt64? = nil", "func retryNow() async -> Bool", "private var closeTask"}, []string{}},
 	}
-	for _, check := range terminationChecks {
+	for _, check := range checks {
 		source, err := read(check.path)
 		if err != nil {
 			return err
 		}
-		for _, required := range check.required {
-			if !strings.Contains(source, required) {
-				return fmt.Errorf("%s is missing %q", check.path, required)
-			}
-		}
-		for _, forbidden := range check.forbidden {
-			if strings.Contains(source, forbidden) {
-				return fmt.Errorf("%s retains duplicate termination API %q", check.path, forbidden)
-			}
-		}
-	}
-
-	tsContract, err := read("flowersec-ts/src/public/contract.ts")
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(tsContract, "decodeResponse: (payload: JsonValue) => Response") {
-		return fmt.Errorf("TypeScript RpcPeer.call must require a successful-response decoder")
-	}
-	tsProjection, err := read("flowersec-ts/src/v3/publicSession.ts")
-	if err != nil {
-		return err
-	}
-	if strings.Contains(tsProjection, "as Response") {
-		return fmt.Errorf("TypeScript public RPC projection must not assert an unchecked response type")
-	}
-	for path, required := range map[string][]string{
-		"flowersec-go/connection_controller.go": {
-			"type ConnectionControllerOptions struct", "MaximumAttempts uint64", "type ConnectionSnapshot struct", "func (controller *ConnectionController) Snapshot() ConnectionSnapshot",
-		},
-		"flowersec-rust/src/connection_controller.rs": {
-			"pub struct ConnectionControllerOptions", "with_maximum_attempts", "pub struct ConnectionSnapshot", "pub fn snapshot(&self) -> ConnectionSnapshot",
-		},
-		"flowersec-swift/Sources/Flowersec/ConnectionController.swift": {
-			"maximumAttempts: UInt64? = nil", "func retryNow() async -> Bool", "private var closeTask",
-		},
-	} {
-		source, err := read(path)
-		if err != nil {
-			return err
-		}
-		for _, token := range required {
+		for _, token := range check.required {
 			if !strings.Contains(source, token) {
-				return fmt.Errorf("%s is missing final controller contract %q", path, token)
+				return fmt.Errorf("%s is missing current API ownership contract %q", check.path, token)
 			}
 		}
-	}
-	for path, forbidden := range map[string][]string{
-		"flowersec-go/connection_controller.go":                        {"RetryPolicy", "ConnectionStatus", "ErrConnectionControllerStarted"},
-		"flowersec-rust/src/connection_controller.rs":                  {"pub struct RetryPolicy", "pub enum RetryPolicyError", "ConnectionControllerStartError", "pub struct ConnectionStatus"},
-		"flowersec-swift/Sources/Flowersec/ConnectionController.swift": {"ConnectionRetryPolicy", "nextRetryAt", "retryPolicy:"},
-		"flowersec-ts/src/facade.ts":                                   {"SessionV2", "ArtifactLeaseV2", "ConnectorArtifactLeaseV2"},
-	} {
-		source, err := read(path)
-		if err != nil {
-			return err
-		}
-		for _, token := range forbidden {
+		for _, token := range check.forbidden {
 			if strings.Contains(source, token) {
-				return fmt.Errorf("%s retains removed public API %q", path, token)
+				return fmt.Errorf("%s exposes forbidden ownership operation %q", check.path, token)
 			}
 		}
 	}
-	for path := range map[string]struct{}{
-		"flowersec-go/connection_controller_test.go":                           {},
-		"flowersec-ts/src/v3/controller.test.ts":                               {},
-		"flowersec-rust/src/connection_controller.rs":                          {},
-		"flowersec-swift/Tests/FlowersecTests/ConnectionControllerTests.swift": {},
-	} {
-		source, err := read(path)
-		if err != nil {
-			return err
-		}
-		if !strings.Contains(source, "transport_v3") || !strings.Contains(source, "controller_vectors.json") {
-			return fmt.Errorf("%s does not consume shared connection controller vectors", path)
-		}
-	}
-	if source, err := read("flowersec-ts/scripts/sanitize-public-declarations.mjs"); err == nil || source != "" {
-		return fmt.Errorf("removed TypeScript declaration sanitizer remains")
-	}
-
-	goConnector, err := read("flowersec-go/connector.go")
+	tsSource, err := read("flowersec-ts/src/v4/public.ts")
 	if err != nil {
 		return err
 	}
-	for _, forbidden := range []string{
-		"ConnectInvalid = ConnectInvalidInput",
-		"ConnectFailed  = ConnectConnectionFailed",
-	} {
-		if strings.Contains(goConnector, forbidden) {
-			return fmt.Errorf("Go public errors retain compatibility alias %q", forbidden)
-		}
-	}
-
-	rustTransport, err := read("flowersec-rust/src/transport.rs")
+	material, err := declarationBody(tsSource, "export class V4ConnectionMaterial {")
 	if err != nil {
 		return err
 	}
-	body, err := declarationBody(rustTransport, "pub enum SessionError")
-	if err != nil {
-		return err
+	if strings.Contains(material, "commitSpend(") {
+		return fmt.Errorf("TypeScript material exposes runtime-owned spending")
 	}
-	for _, forbidden := range []string{"InvalidInput", "Rejected", "Reset", "TimedOut", "Failed"} {
-		if strings.Contains(body, "\n    "+forbidden+",") {
-			return fmt.Errorf("Rust SessionError retains overlapping variant %s", forbidden)
-		}
-	}
-	for _, required := range []string{"Timeout", "OperationFailed"} {
-		if !strings.Contains(body, "\n    "+required+",") {
-			return fmt.Errorf("Rust SessionError is missing portable variant %s", required)
-		}
+	if _, err := os.Stat(filepath.Join(repoRoot, "flowersec-ts/scripts/sanitize-public-declarations.mjs")); err == nil || !os.IsNotExist(err) {
+		return fmt.Errorf("removed TypeScript declaration sanitizer remains or cannot be inspected")
 	}
 
-	fmt.Println("public API design OK: portable lease, termination, RPC, and error contracts verified")
+	fmt.Println("public API design OK: current material, termination, cleanup, typed codec and controller source contracts verified")
 	return nil
 }
 

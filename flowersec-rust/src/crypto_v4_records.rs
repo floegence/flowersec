@@ -5,15 +5,28 @@ use crate::environment_v4::{ResourceAccount, ResourceCharge, ResourceLimits, Tru
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey};
 use std::fmt;
 use zeroize::{Zeroize, Zeroizing};
+#[path = "crypto_v4_datagrams.rs"]
+mod datagrams;
 #[path = "crypto_v4_rekey.rs"]
 mod rekey;
 #[path = "crypto_v4_streams.rs"]
 mod streams;
+pub(crate) use datagrams::DatagramLease;
+pub(crate) use streams::ProbePublication;
 pub use streams::{
     DrainOperation, DrainOutcome, DrainResult, Metadata, OpenRequest, ProbeOutcome, ProbeResult,
     RawStreamMetadataContract, RawStreamMetadataField, RawStreamMetadataType, Session, Stream,
+    UnreliableMessages,
 };
-pub(crate) use streams::{ReliableSession, SessionTransport};
+#[cfg(test)]
+pub(crate) use streams::{
+    MaintenanceReceiveProbe, TerminalPublicationProbe, install_maintenance_receive_probe,
+    install_terminal_publication_probe,
+};
+pub(crate) use streams::{
+    NativeStreamBinding, ReliableSession, ResumeMessageClaim, SessionLink, SessionReceiver,
+    SessionTransport, StreamPreparation, StreamPublicationAdmission, StreamView,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct Usage {
@@ -75,6 +88,10 @@ pub(crate) struct RecordEngine {
     root: Zeroizing<[u8; 32]>,
     hash: [u8; 32],
     context: [u8; 32],
+    authenticated_identities: [[u8; 32]; 2],
+    service_authorities: [[u8; 32]; 2],
+    application_profile: u8,
+    resume_policy: Option<crate::checkpoint_v4::ResumeSessionPolicy>,
     born: TrustedTimeSample,
     epoch: u32,
     max_frame: usize,
@@ -90,6 +107,7 @@ pub(crate) struct RecordEngine {
     spare_keys: Vec<RecordKey>,
     rekey: rekey::Coordinator,
     streams: streams::State,
+    datagrams: datagrams::State,
 }
 impl fmt::Debug for RecordEngine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -109,8 +127,40 @@ pub(super) struct RecordReservation {
     spare_keys: Vec<RecordKey>,
     rekey: rekey::Coordinator,
     streams: streams::State,
+    datagrams: datagrams::State,
 }
 impl RecordReservation {
+    fn record_limits(shape: &super::RecordShape) -> Result<ResourceLimits> {
+        if !(36..=1_048_576).contains(&shape.max_frame) || shape.max_streams > 1035 {
+            return Err(CryptoError::Configuration);
+        }
+        let max_keys = (shape.max_streams + 2 + 128) * 2;
+        let geometry = rekey::Geometry::new(shape)?;
+        Ok(ResourceLimits {
+            sdk_bytes: (2 * max_keys * std::mem::size_of::<RecordKey>()
+                + std::mem::size_of::<RecordEngine>()
+                + geometry.bytes
+                + 256) as u64,
+            items: (2 * max_keys + 4) as u64,
+            timers: 1,
+            work_slots: 2,
+            tasks: 1,
+            ..ResourceLimits::default()
+        })
+    }
+    pub(super) fn preparation_limits(
+        shape: &super::RecordShape,
+        automatic: bool,
+    ) -> Result<ResourceLimits> {
+        let limits = crate::crypto_v4::connect::candidate_add_limits(
+            Self::record_limits(shape)?,
+            streams::State::preparation_limits(shape, automatic)?,
+        )?;
+        Ok(crate::crypto_v4::connect::candidate_add_limits(
+            limits,
+            datagrams::State::preparation_limits(shape.datagrams),
+        )?)
+    }
     pub(super) fn owns(&self, account: &ResourceAccount) -> bool {
         self.account.same_owner(account)
     }
@@ -119,10 +169,26 @@ impl RecordReservation {
         shape: super::RecordShape,
         role: super::Role,
     ) -> Result<Self> {
+        let charge = account.reserve(Self::preparation_limits(
+            &shape,
+            account.automatic_liveness().is_some(),
+        )?)?;
+        Self::new_prepaid(account, shape, role, charge)
+    }
+    pub(super) fn new_prepaid(
+        account: ResourceAccount,
+        shape: super::RecordShape,
+        role: super::Role,
+        mut backing: ResourceCharge,
+    ) -> Result<Self> {
+        let automatic = account.automatic_liveness().is_some();
+        if !backing.matches(&account, Self::preparation_limits(&shape, automatic)?) {
+            return Err(CryptoError::Configuration);
+        }
         if !(36..=1_048_576).contains(&shape.max_frame) || shape.max_streams > 1035 {
             return Err(CryptoError::Configuration);
         }
-        let max_keys = (shape.max_streams + 1 + 128) * 2;
+        let max_keys = (shape.max_streams + 2 + 128) * 2;
         let geometry = rekey::Geometry::new(&shape)?;
         let credit = rekey::Credit::new(
             shape.rekey_envelope,
@@ -140,17 +206,14 @@ impl RecordReservation {
         }
         // Both generations, full legal barriers, phase messages, decoder/MAC
         // scratch and output coexist under this original admission reservation.
-        let charge = account.reserve(ResourceLimits {
-            sdk_bytes: (2 * max_keys * std::mem::size_of::<RecordKey>()
-                + std::mem::size_of::<RecordEngine>()
-                + geometry.bytes) as u64,
-            items: (2 * max_keys + 4) as u64,
-            timers: 1,
-            work_slots: 2,
-            tasks: 1,
-            sessions: 0,
-            ..ResourceLimits::default()
-        })?;
+        let charge = backing.split(Self::record_limits(&shape)?)?;
+        let stream_charge =
+            backing.split(streams::State::preparation_limits(&shape, automatic)?)?;
+        let datagram_charge = if shape.datagrams {
+            Some(backing.split(datagrams::State::preparation_limits(true))?)
+        } else {
+            None
+        };
         let mut keys = Vec::new();
         let mut spare_keys = Vec::new();
         keys.try_reserve_exact(max_keys)
@@ -159,7 +222,10 @@ impl RecordReservation {
             .try_reserve_exact(max_keys)
             .map_err(|_| CryptoError::Capacity)?;
         let rekey = rekey::Coordinator::new(geometry, credit)?;
-        let streams = streams::State::prepare(account.clone(), &shape, role)?;
+        let streams =
+            streams::State::prepare_prepaid(account.clone(), &shape, role, stream_charge)?;
+        let datagrams =
+            datagrams::State::prepare_prepaid(&account, shape.datagrams, datagram_charge)?;
         Ok(Self {
             account,
             shape,
@@ -170,6 +236,7 @@ impl RecordReservation {
             spare_keys,
             rekey,
             streams,
+            datagrams,
         })
     }
 }
@@ -192,10 +259,7 @@ impl RecordEngine {
         born: TrustedTimeSample,
         root: Zeroizing<[u8; 32]>,
     ) -> Result<Self> {
-        if reservation.shape != binding.shape
-            || reservation.role != binding.role
-            || binding.features & 1 != 0
-        {
+        if reservation.shape != binding.shape || reservation.role != binding.role {
             return Err(CryptoError::Configuration);
         }
         let RecordReservation {
@@ -206,6 +270,7 @@ impl RecordEngine {
             spare_keys,
             rekey,
             streams,
+            datagrams,
             ..
         } = reservation;
         let mut engine = Self {
@@ -216,6 +281,10 @@ impl RecordEngine {
             root,
             hash,
             context: binding.context,
+            authenticated_identities: binding.certificates,
+            service_authorities: binding.service_authorities,
+            application_profile: binding.shape.application_profile,
+            resume_policy: binding.resume,
             born,
             epoch: 0,
             max_frame: binding.shape.max_frame,
@@ -231,8 +300,13 @@ impl RecordEngine {
             spare_keys,
             rekey,
             streams,
+            datagrams,
         };
+        engine.datagrams.enabled = binding.features & 1 != 0;
         engine.install(0)?;
+        if engine.datagrams.enabled {
+            engine.install(datagrams::SCOPE)?;
+        }
         if binding.shape.application_profile != 0 {
             engine.install(1)?;
         }
@@ -256,7 +330,10 @@ impl RecordEngine {
         if let Some(candidate) = &self.candidate {
             self.check_age(candidate.born, now)?;
         }
-        self.rekey.check_deadline(now)?;
+        if let Err(error) = self.rekey.check_deadline(now) {
+            self.rekey.record_timeout(&self.account);
+            return Err(error);
+        }
         self.streams.check_deadlines(now)
     }
     fn check_age(&self, born: TrustedTimeSample, now: TrustedTimeSample) -> Result<()> {
@@ -280,6 +357,7 @@ impl RecordEngine {
         self.candidate = None;
         self.rekey.clear();
         self.streams.close();
+        self.datagrams.close();
     }
     pub(super) fn derive_ready_key(&self, info: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
         self.check()?;

@@ -23,12 +23,79 @@ type TunnelServerAllowHTTPSConfig struct {
 type TunnelServerAllowHTTPSTransport struct {
 	mu                    sync.Mutex
 	provider              *HTTPSBootstrapProvider
+	preparation           *tunnelServerAllowHTTPSPublication
 	reservation, shared   resourcev4.Reference
 	request               []byte
 	response              [1]byte
 	cancel                context.CancelFunc
 	done                  chan struct{}
 	busy, closed, cleaned bool
+}
+
+// The private HTTPS provider has one dispatch lane, exclusively owned by this
+// outer transport. Holding preparation fixes that lane and its encoded body;
+// neither another preparation nor a direct publication can borrow it.
+type tunnelServerAllowHTTPSPublication struct {
+	transport       *TunnelServerAllowHTTPSTransport
+	size            int
+	started, closed bool
+}
+
+func (p *TunnelServerAllowHTTPSTransport) PrepareServerAllow(request sessionv4.TunnelServerAllowRequest, grant []byte) (sessionv4.TunnelServerAllowPublication, error) {
+	if p == nil {
+		return nil, resourcev4.ErrConfiguration
+	}
+	if !p.mu.TryLock() {
+		return nil, ErrBusy
+	}
+	defer p.mu.Unlock()
+	if p.closed || p.busy || p.preparation != nil {
+		return nil, ErrBusy
+	}
+	if err := p.reservation.Check(); err != nil {
+		return nil, err
+	}
+	if err := p.shared.Check(); err != nil {
+		return nil, err
+	}
+	size, err := EncodeTunnelServerAllow(p.request, request, grant)
+	if err != nil {
+		clear(p.request)
+		return nil, err
+	}
+	publication := &tunnelServerAllowHTTPSPublication{transport: p, size: size}
+	p.preparation = publication
+	return publication, nil
+}
+
+func (q *tunnelServerAllowHTTPSPublication) PublishServerAllow(ctx context.Context, guard func() error) error {
+	if q == nil || q.transport == nil {
+		return resourcev4.ErrConfiguration
+	}
+	return q.transport.publishPrepared(ctx, guard, q)
+}
+
+func (q *tunnelServerAllowHTTPSPublication) Close() {
+	if q == nil || q.transport == nil {
+		return
+	}
+	p := q.transport
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	q.closed = true
+	if p.preparation != q {
+		return
+	}
+	if p.busy {
+		if p.cancel != nil {
+			p.cancel()
+		}
+		return
+	}
+	clear(p.request)
+	clear(p.response[:])
+	p.preparation = nil
+	p.cleanupLocked()
 }
 
 func TunnelServerAllowHTTPSTransportCharge(c TunnelServerAllowHTTPSConfig) (resourcev4.Vector, error) {
@@ -42,7 +109,7 @@ func TunnelServerAllowHTTPSTransportCharge(c TunnelServerAllowHTTPSConfig) (reso
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(TunnelServerAllowHTTPSTransport{})) + uint64(limit), resourcev4.Items: 1, resourcev4.WorkSlots: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
+	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(TunnelServerAllowHTTPSTransport{})) + uint64(unsafe.Sizeof(tunnelServerAllowHTTPSPublication{})) + uint64(limit), resourcev4.Items: 1, resourcev4.WorkSlots: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 }
 
 func NewTunnelServerAllowHTTPSTransport(c TunnelServerAllowHTTPSConfig, reservation, providerReservation, dependencies resourcev4.Reference) (*TunnelServerAllowHTTPSTransport, error) {
@@ -81,14 +148,26 @@ func NewTunnelServerAllowHTTPSTransport(c TunnelServerAllowHTTPSConfig, reservat
 	return &TunnelServerAllowHTTPSTransport{provider: provider, reservation: owned, shared: shared, request: make([]byte, limit), done: make(chan struct{})}, nil
 }
 
-func (p *TunnelServerAllowHTTPSTransport) PublishServerAllow(ctx context.Context, request sessionv4.TunnelServerAllowRequest, grant []byte, guard func() error) (err error) {
+func (p *TunnelServerAllowHTTPSTransport) PublishServerAllow(ctx context.Context, request sessionv4.TunnelServerAllowRequest, grant []byte, guard func() error) error {
+	if ctx == nil || guard == nil {
+		return resourcev4.ErrConfiguration
+	}
+	publication, err := p.PrepareServerAllow(request, grant)
+	if err != nil {
+		return err
+	}
+	defer publication.Close()
+	return publication.PublishServerAllow(ctx, guard)
+}
+
+func (p *TunnelServerAllowHTTPSTransport) publishPrepared(ctx context.Context, guard func() error, publication *tunnelServerAllowHTTPSPublication) (err error) {
 	if p == nil || ctx == nil || guard == nil {
 		return resourcev4.ErrConfiguration
 	}
-	if !p.mu.TryLock() {
-		return ErrBusy
-	}
-	if p.closed || p.busy {
+	// This already owns the lane. Transient metadata contention cannot turn
+	// the reserved dispatch into an after-spend capacity rejection.
+	p.mu.Lock()
+	if p.closed || p.busy || p.preparation != publication || publication.closed || publication.started {
 		p.mu.Unlock()
 		return ErrBusy
 	}
@@ -99,11 +178,8 @@ func (p *TunnelServerAllowHTTPSTransport) PublishServerAllow(ctx context.Context
 		p.mu.Unlock()
 		return err
 	}
-	size, err := EncodeTunnelServerAllow(p.request, request, grant)
-	if err != nil {
-		p.mu.Unlock()
-		return err
-	}
+	size := publication.size
+	publication.started = true
 	call := newHTTPSCallContext(p.provider)
 	call.beforeWrite = guard
 	p.busy, p.cancel = true, call.stopCall
@@ -134,7 +210,8 @@ func (p *TunnelServerAllowHTTPSTransport) PublishServerAllow(ctx context.Context
 		clear(p.response[:])
 		call.beforeWrite = nil
 		call.stopCall()
-		p.busy, p.cancel = false, nil
+		p.busy, p.cancel, p.preparation = false, nil, nil
+		publication.closed = true
 		p.cleanupLocked()
 	}()
 	if err = call.start(ctx); err == nil {
@@ -165,7 +242,7 @@ func (p *TunnelServerAllowHTTPSTransport) Close() {
 }
 
 func (p *TunnelServerAllowHTTPSTransport) cleanupLocked() {
-	if !p.closed || p.busy || p.cleaned {
+	if !p.closed || p.busy || p.preparation != nil || p.cleaned {
 		return
 	}
 	if p.provider != nil && p.provider.Retire() != nil {
@@ -193,3 +270,5 @@ func (p *TunnelServerAllowHTTPSTransport) WaitCleanup(ctx context.Context) error
 }
 
 var _ sessionv4.TunnelServerAllowProvider = (*TunnelServerAllowHTTPSTransport)(nil)
+
+var _ sessionv4.PreparedTunnelServerAllowProvider = (*TunnelServerAllowHTTPSTransport)(nil)

@@ -7,15 +7,14 @@ import (
 	"errors"
 	"io"
 	"math"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"unsafe"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
-	"modernc.org/sqlite"
 )
 
 const sqliteStorageRevision = 7
@@ -71,7 +70,11 @@ func SQLiteStoreCharge(l SQLiteLimits) (resourcev4.Vector, error) {
 	if !l.valid() {
 		return resourcev4.Vector{}, ErrConfiguration
 	}
-	sdk := uint64(unsafe.Sizeof(SQLiteStore{})) + uint64(unsafe.Sizeof(sqliteStore{})) + 128 + 4*sqliteManifestPrefixBytes
+	decoder, err := protocolv4.StorageFactsDecoderBackingBytes()
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	sdk := uint64(unsafe.Sizeof(SQLiteStore{})) + uint64(unsafe.Sizeof(sqliteStore{})) + 128 + 4*sqliteManifestPrefixBytes + decoder
 	provider := uint64(l.MaxPages)*sqlitePageBytes*2 + uint64(l.MaxRecordBytes)*2
 	if l.RuntimeBytes > math.MaxUint64-sdk || l.ProviderRuntimeBytes > math.MaxUint64-provider {
 		return resourcev4.Vector{}, ErrConfiguration
@@ -216,17 +219,39 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 	if err = backing.checkFiles(); err != nil {
 		return nil, err
 	}
-	d := &sqlite.Driver{}
-	u := url.URL{Scheme: "file", Path: backing.path, RawQuery: "mode=rw"}
-	connection, err := d.Open(u.String())
+	// Pin the original regular file before opening its provider. Inspection
+	// and admission retain the same connection and transaction-group namespace.
+	originalFile, err := os.Lstat(backing.path)
 	if err != nil {
 		return nil, err
 	}
-	execer, execOK := connection.(driver.ExecerContext)
-	querier, queryOK := connection.(driver.QueryerContext)
-	s := &sqliteStore{backing: backing, identity: identity, continuity: continuity, conn: connection, execer: execer, querier: querier, reservation: owned, environment: shared, disk: disk, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	if !originalFile.Mode().IsRegular() {
+		return nil, ErrStorageUnavailable
+	}
+	checkOriginalFile := func() error {
+		current, statErr := os.Lstat(backing.path)
+		if statErr != nil {
+			return statErr
+		}
+		if !current.Mode().IsRegular() || !os.SameFile(originalFile, current) {
+			return ErrStorageUnavailable
+		}
+		return backing.checkFiles()
+	}
+	connection, err := openSQLiteConnection(backing.path, backing.limits, !create)
+	if err != nil {
+		if connection != nil {
+			failed := &sqliteStore{backing: backing, identity: identity, continuity: continuity,
+				conn: connection, reservation: owned, environment: shared, disk: disk,
+				closed: true, closeErr: err, done: make(chan struct{})}
+			close(failed.done)
+			return &SQLiteStore{failed}, err
+		}
+		return nil, err
+	}
+	s := &sqliteStore{backing: backing, identity: identity, continuity: continuity, conn: connection, execer: connection, querier: connection, reservation: owned, environment: shared, disk: disk, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	defer func() {
-		if err != nil {
+		if err != nil && connection != nil {
 			if closeErr := connection.Close(); closeErr != nil {
 				// A provider that cannot prove cleanup remains charged. Return
 				// its incomplete owner even though construction failed.
@@ -237,9 +262,15 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 				err = errors.Join(err, closeErr)
 			}
 		}
+		if err != nil && result == nil && s.publication != nil {
+			// Publication admission takes its bounded workspaces before the
+			// first snapshot. Return them only after the provider has closed;
+			// an incomplete close retains the complete failed store owner.
+			s.publication.clear()
+		}
 	}()
-	if !execOK || !queryOK {
-		return nil, ErrConfiguration
+	if err = checkOriginalFile(); err != nil {
+		return nil, err
 	}
 	s.identity.Authority = strings.Clone(identity.Authority)
 	if business != nil {
@@ -281,6 +312,29 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 			return nil, err
 		}
 	}
+	if err = connection.boundCache(backing.limits); err != nil {
+		return nil, s.projectStorageFormat(err, StorageRevision{}, StorageFormatBackend)
+	}
+	if !create {
+		if err = s.inspectCurrentStorage(); err != nil {
+			return nil, err
+		}
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Keep the original exclusive connection and WAL snapshot through
+		// admission. Refusal never opens a second writable provider or lets
+		// close checkpoint an unaccepted transaction group.
+		if err = checkOriginalFile(); err != nil {
+			return nil, err
+		}
+		if err = s.exec("PRAGMA query_only=OFF"); err != nil {
+			return nil, err
+		}
+	}
+	if err = checkOriginalFile(); err != nil {
+		return nil, err
+	}
 	if err = s.configure(create); err != nil {
 		return nil, s.projectStorageFormat(err, StorageRevision{}, StorageFormatBackend)
 	}
@@ -291,7 +345,7 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 		if observed, err = s.inspectStorageHeader(); err != nil {
 			return nil, err
 		}
-		err = s.openSchema()
+		err = s.openSchema(false)
 	}
 	if err != nil {
 		return nil, s.projectStorageFormat(err, observed, StorageFormatState)
@@ -316,6 +370,9 @@ func openSQLitePurpose(ctx context.Context, backing *SQLiteBacking, identity SQL
 	if s.business != nil {
 		s.business.refreshCapacity()
 	}
+	if err = connection.admit(); err != nil {
+		return nil, err
+	}
 	go s.cleanupWorker()
 	return &SQLiteStore{s}, nil
 }
@@ -329,9 +386,8 @@ func syncSQLiteDirectory(path string) error {
 	return errors.Join(err, dir.Close())
 }
 
-// Driver calls intentionally have no cancellable context: this pinned driver
-// otherwise creates unjoined per-statement interrupt tasks. The original
-// invocation remains synchronous and charged through its actual return. Busy
+// Engine calls are synchronous and create no per-statement interrupt task.
+// The original invocation stays charged through its actual return. Busy
 // waiting is disabled; bounded fixed statements do not retry on contention.
 func (s *sqliteStore) exec(query string, args ...driver.NamedValue) error {
 	_, err := s.execer.ExecContext(context.Background(), query, args)

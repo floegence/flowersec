@@ -131,7 +131,13 @@ func (i *unaryInvocation) advanceDeferredLocked(closed bool) {
 		i.canceled = true
 		_, _ = i.publisher.CancelRequest(i.ticket)
 		i.completion.Close()
-		i.finishDeferredLocked(UnaryCallOutcome{Reason: "result_abandoned", Error: cause}, nil)
+		outcome := UnaryCallOutcome{Reason: "result_abandoned", Error: cause}
+		if i.publicationFailure != nil && !i.publication.Progress().HeaderAccepted {
+			// A fenced route or exhausted reselection never entered BEGIN.
+			// Closing its original result interest cannot change that fact.
+			outcome.Reason = "not_submitted"
+		}
+		i.finishDeferredLocked(outcome, nil)
 		return
 	}
 	outcome := UnaryCallOutcome{Header: progress.Header, Reason: progress.Reason, SDKErrorCode: progress.SDKErrorCode, Error: progress.Error}

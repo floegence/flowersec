@@ -42,7 +42,7 @@ func TestEnvironmentConnectMaterialLocalRefusalPreservesOriginal(t *testing.T) {
 			if mode == "foreign_environment" {
 				e = materialEnvironment(t, f)
 			}
-			c := staticConnectTestConfig(t, f.admissionIntegrationFixture, carrierFactoryFunc(func(context.Context, CarrierPreparationRequest) (*PreparedCarrier, error) {
+			c := staticConnectTestConfig(t, &admissionIntegrationFixture{authorityFixture: f.authorityFixture}, carrierFactoryFunc(func(context.Context, CarrierPreparationRequest) (*PreparedCarrier, error) {
 				t.Error("local refusal reached provider")
 				return nil, cryptov4.ErrClosed
 			}))
@@ -55,7 +55,7 @@ func TestEnvironmentConnectMaterialLocalRefusalPreservesOriginal(t *testing.T) {
 			if mode == "acquisition_input" {
 				c.Acquisition = c.Preparation
 			}
-			_, err := consumeSessionPool(t, f.admissionIntegrationFixture, nil, func(store *ledgerv4.SQLiteStore, authority poolSQLiteAuthority, work resourcev4.Reference) (*InitialExchange, error) {
+			_, err := consumeSessionPool(t, &admissionIntegrationFixture{authorityFixture: f.authorityFixture}, nil, func(store *ledgerv4.SQLiteStore, authority poolSQLiteAuthority, work resourcev4.Reference) (*InitialExchange, error) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				if mode == "cancelled" {
@@ -101,12 +101,12 @@ func TestEnvironmentConnectMaterialCancellationRetainsOriginalPreparation(t *tes
 			entered, release := make(chan struct{}), make(chan struct{})
 			var releaseOnce sync.Once
 			defer releaseOnce.Do(func() { close(release) })
-			c := staticConnectTestConfig(t, f.admissionIntegrationFixture, carrierFactoryFunc(func(context.Context, CarrierPreparationRequest) (*PreparedCarrier, error) {
+			c := staticConnectTestConfig(t, &admissionIntegrationFixture{authorityFixture: f.authorityFixture}, carrierFactoryFunc(func(context.Context, CarrierPreparationRequest) (*PreparedCarrier, error) {
 				close(entered)
 				<-release
 				return nil, ErrCandidateExhausted
 			}))
-			_, err := consumeSessionPool(t, f.admissionIntegrationFixture, nil, func(store *ledgerv4.SQLiteStore, authority poolSQLiteAuthority, work resourcev4.Reference) (*InitialExchange, error) {
+			_, err := consumeSessionPool(t, &admissionIntegrationFixture{authorityFixture: f.authorityFixture}, nil, func(store *ledgerv4.SQLiteStore, authority poolSQLiteAuthority, work resourcev4.Reference) (*InitialExchange, error) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 				input := PoolSessionInput{Store: store, Authority: authority, Consume: work}
@@ -131,7 +131,7 @@ func TestEnvironmentConnectMaterialCancellationRetainsOriginalPreparation(t *tes
 				case "material_close":
 					m.Close()
 				case "material_expiry":
-					f.admissionIntegrationFixture.trust.tick.Add(300)
+					f.authorityFixture.trust.tick.Add(300)
 					e.signalMaterials()
 				}
 				select {

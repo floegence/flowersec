@@ -48,8 +48,12 @@ func TestSQLiteDirectIssuerMatureRetirementPreservesReplayHistory(t *testing.T) 
 		t.Fatal("retirement was not idempotent", retired, err)
 	}
 	a.Close()
+	previousEpoch := f.host.epoch
 	closeDirectSQLite(t, store)
 	a = f.authority(f.open(false), c)
+	if f.host.epoch != previousEpoch+1 {
+		t.Fatal("valid canonical retirement did not advance the reopened fence", previousEpoch, f.host.epoch)
+	}
 	status, err = a.Status(context.Background())
 	if err != nil || status.Outstanding != 0 || status.RetainedRequests != 1 {
 		t.Fatal("restart lost durable retirement/replay facts", status, err)

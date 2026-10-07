@@ -43,6 +43,8 @@ const originalDestroy = Duplex.prototype.destroy;
 const originalPush = Duplex.prototype.push;
 const originalPause = Duplex.prototype.pause;
 const scheduleCheckpoint = setImmediate;
+const flowersecDuplexes = new WeakSet<object>();
+export function isFlowersecNodeDuplex(value: object): boolean { return flowersecDuplexes.has(value); }
 
 function positive(value: number): number {
   if (!Number.isSafeInteger(value) || value < 1 || value > 0x7fffffff) throw new Error("configuration_capacity");
@@ -276,6 +278,7 @@ export function asNodeDuplex(stream: V4StreamOwner, options: V4NodeDuplexOptions
     owner.check();
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
+    flowersecDuplexes.add(duplex);
     return duplex;
   } catch (error) {
     owner.rollback(); throw error;

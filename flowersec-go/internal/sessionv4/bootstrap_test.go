@@ -17,11 +17,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
-type bootstrapSigner struct{ key ed25519.PrivateKey }
-
-func (s bootstrapSigner) PublicKey() []byte             { return s.key.Public().(ed25519.PublicKey) }
-func (s bootstrapSigner) Sign(p []byte) ([]byte, error) { return ed25519.Sign(s.key, p), nil }
-
 type bootstrapEndpoint struct {
 	*openEndpoint
 	bootstrap *Bootstrap

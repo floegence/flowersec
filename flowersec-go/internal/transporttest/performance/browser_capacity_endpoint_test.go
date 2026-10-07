@@ -15,7 +15,8 @@ import (
 	"testing"
 	"time"
 
-	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	fs "github.com/floegence/flowersec/flowersec-go/v6"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 )
 
@@ -330,7 +331,7 @@ func TestClaimCapacityMetadataIndexAcceptsUniqueOutOfOrderSet(t *testing.T) {
 }
 
 func TestNormalizeBrowserCapacitySessionCloseAcceptsNormalTermination(t *testing.T) {
-	if err := normalizeBrowserCapacitySessionClose(flowersession.ErrSessionClosed); err != nil {
+	if err := normalizeBrowserCapacitySessionClose(context.Canceled); err != nil {
 		t.Fatalf("normal session termination = %v", err)
 	}
 	want := errors.New("transport failed")
@@ -369,11 +370,11 @@ func TestCloseBrowserCapacityServerSessionActivelyClosesAfterGrace(t *testing.T)
 
 func TestCloseBrowserCapacityServerSessionKeepsProtocolFailure(t *testing.T) {
 	session := newFakeBrowserServerSession()
-	want := fmt.Errorf("%w: control reset", flowersession.ErrSessionProtocol)
+	want := fmt.Errorf("%w: control reset", sessionv4.ErrAbandoned)
 	session.terminate(want)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := closeBrowserCapacityServerSessionAfter(ctx, session, 100*time.Millisecond); !errors.Is(err, flowersession.ErrSessionProtocol) {
+	if err := closeBrowserCapacityServerSessionAfter(ctx, session, 100*time.Millisecond); !errors.Is(err, sessionv4.ErrAbandoned) {
 		t.Fatalf("server close error = %v, want protocol failure", err)
 	}
 	if session.closeCalls != 0 {
@@ -407,14 +408,14 @@ type fakeBrowserCapacityArtifact struct {
 func newFakeBrowserCapacityArtifact() *fakeBrowserCapacityArtifact {
 	return &fakeBrowserCapacityArtifact{session: newFakeBrowserServerSession()}
 }
-func (artifact *fakeBrowserCapacityArtifact) ArtifactJSON() string { return `{"version":3}` }
+func (artifact *fakeBrowserCapacityArtifact) ArtifactJSON() string { return `{"version":4}` }
 func (artifact *fakeBrowserCapacityArtifact) Start(context.Context) error {
 	artifact.mu.Lock()
 	artifact.starts++
 	artifact.mu.Unlock()
 	return nil
 }
-func (artifact *fakeBrowserCapacityArtifact) AwaitServer(context.Context) (flowersession.Session, error) {
+func (artifact *fakeBrowserCapacityArtifact) AwaitServer(context.Context) (browserServerSession, error) {
 	artifact.mu.Lock()
 	defer artifact.mu.Unlock()
 	if artifact.starts != 1 || artifact.canceled {
@@ -439,24 +440,14 @@ func newFakeBrowserServerSession() *fakeBrowserServerSession {
 	return &fakeBrowserServerSession{termination: make(chan struct{})}
 }
 
-func (*fakeBrowserServerSession) Path() flowersession.PathKind       { return flowersession.PathTunnel }
-func (*fakeBrowserServerSession) EndpointInstanceID() (string, bool) { return "", false }
-func (*fakeBrowserServerSession) RPC() flowersession.RPCPeer         { return nil }
-func (*fakeBrowserServerSession) UnreliableMessages() (flowersession.UnreliableMessageChannel, error) {
-	return nil, errors.New("unavailable")
+func (*fakeBrowserServerSession) AcceptStream(context.Context) (fs.AcceptedStream, error) {
+	return fs.AcceptedStream{}, errors.New("unavailable")
 }
-func (*fakeBrowserServerSession) OpenStream(context.Context, string, flowersession.Metadata) (flowersession.ByteStream, error) {
-	return nil, errors.New("unavailable")
-}
-func (*fakeBrowserServerSession) AcceptStream(context.Context) (flowersession.IncomingStream, error) {
-	return flowersession.IncomingStream{}, errors.New("unavailable")
-}
-func (*fakeBrowserServerSession) Rekey(context.Context) error { return nil }
-func (*fakeBrowserServerSession) ProbeLiveness(context.Context) (time.Duration, error) {
-	return time.Millisecond, nil
+func (*fakeBrowserServerSession) ProbeLiveness(context.Context, uint64) (fs.LivenessResult, error) {
+	return fs.LivenessResult{}, nil
 }
 func (session *fakeBrowserServerSession) Termination() <-chan struct{} { return session.termination }
-func (session *fakeBrowserServerSession) WaitClosed(ctx context.Context) error {
+func (session *fakeBrowserServerSession) WaitCleanup(ctx context.Context) error {
 	select {
 	case <-session.termination:
 		return session.waitErr
@@ -471,6 +462,93 @@ func (session *fakeBrowserServerSession) Close() error {
 }
 
 func (session *fakeBrowserServerSession) terminate(err error) {
-	session.waitErr = err
-	session.closeOnce.Do(func() { close(session.termination) })
+	session.closeOnce.Do(func() { session.waitErr = err; close(session.termination) })
+}
+
+func (session *fakeBrowserServerSession) WaitTermination(ctx context.Context) error {
+	return session.WaitCleanup(ctx)
+}
+
+func TestBrowserCapacityCancellationRetainsAnUnjoinedOriginalObserver(t *testing.T) {
+	artifact := newFakeBrowserCapacityArtifact()
+	broker, err := newBrowserCapacityArtifactBroker(func() (browserCapacityArtifact, error) { return artifact, nil }, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := broker.issueRecord()
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitorDone := make(chan struct{})
+	record.mu.Lock()
+	record.session = artifact.session
+	record.monitorDone = monitorDone
+	record.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err = broker.cancelAll(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("original observer cleanup: %v", err)
+	}
+	if broker.residual() != 1 {
+		t.Fatal("cancellation removed a record whose original observer had not exited")
+	}
+	if _, err = broker.issueRecord(); err == nil {
+		t.Fatal("closing broker admitted fresh material")
+	}
+	close(monitorDone)
+	if err = broker.cancelAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if broker.residual() != 0 {
+		t.Fatal("joined original observer retained a disposed record")
+	}
+}
+
+type canceledBrowserCapacityControl struct {
+	fakeBrowserCapacityControl
+	started, exited chan struct{}
+}
+
+func (control *canceledBrowserCapacityControl) Connect(ctx context.Context, _ *browserCapacityRecord) error {
+	defer close(control.exited)
+	close(control.started)
+	<-ctx.Done()
+	return context.Cause(ctx)
+}
+func TestBrowserCapacityCancellationJoinsItsOriginalConnectCallback(t *testing.T) {
+	broker, err := newBrowserCapacityArtifactBroker(func() (browserCapacityArtifact, error) { return newFakeBrowserCapacityArtifact(), nil }, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := &canceledBrowserCapacityControl{started: make(chan struct{}), exited: make(chan struct{})}
+	endpoint := &browserCapacityEndpoint{broker: broker, control: control}
+	result := make(chan error, 1)
+	done := make(chan struct{})
+	go func() { defer close(done); _, err := endpoint.Connect(context.Background()); result <- err }()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	select {
+	case <-control.started:
+	case <-ctx.Done():
+		t.Fatal("original connect callback did not start")
+	}
+	if err = broker.cancelAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-control.exited:
+	default:
+		t.Fatal("broker cleanup preceded its original callback exit")
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		t.Fatal("capacity Connect retained its original driver")
+	}
+	if err = <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("original Connect cancellation: %v", err)
+	}
+	if broker.residual() != 0 {
+		t.Fatal("joined canceled connection retained a broker record")
+	}
 }

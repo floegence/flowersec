@@ -2,261 +2,404 @@ package transporttest
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"errors"
-	"net/url"
-	"strings"
+	"net/netip"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
-// ControllerArtifactPlan is an explicit release-harness artifact state. The
-// stale pin and unavailable URL plans model deployment refreshes; they never
-// change the connector's security mode or silently fall back to CA.
 type ControllerArtifactPlan string
 
 const (
-	ControllerPlanCurrentPin  ControllerArtifactPlan = "current-pin"
-	ControllerPlanExpiringPin ControllerArtifactPlan = "expiring-pin"
-	ControllerPlanStalePin    ControllerArtifactPlan = "stale-pin"
-	ControllerPlanUnavailable ControllerArtifactPlan = "unavailable"
+	ControllerPlanCurrentPin      ControllerArtifactPlan = "current-pin"
+	ControllerPlanExpiringPin     ControllerArtifactPlan = "expiring-pin"
+	ControllerPlanStalePin        ControllerArtifactPlan = "stale-pin"
+	ControllerPlanUnavailable     ControllerArtifactPlan = "unavailable"
+	ControllerPlanTLSInterruption ControllerArtifactPlan = "tls-interruption"
 )
 
 type controllerArtifactRecord struct {
-	expected *admissionExpectation
-	digest   [sha256.Size]byte
-	spent    atomic.Int32
-	retired  atomic.Int32
+	material     interopharness.Material
+	accepted     *interopharness.AcceptedRecord
+	client       *interopharness.Client
+	rpc          *interopharness.RPCDefinition
+	acquiredAt   time.Time
+	pinExpiresMS uint64
 }
 
-// ProductControllerArtifactSource issues one fresh production artifact per
-// acquisition and exposes only the server-side session rendezvous needed by
-// the release workload. Candidate, pin, and FSB3 details remain internal.
+// ProductControllerArtifactSource prepares exclusively owned local recipes in
+// one original Environment. All signed inputs are independently issued and
+// installed before Start. Only the original acquisition callback records an
+// acquisition; actual SQLite completion and original lease cleanup record spend
+// and retirement. Preparation never issues, acquires, spends or dials.
 type ProductControllerArtifactSource struct {
-	endpoint *ProductDirectEndpoint
-	plans    []ControllerArtifactPlan
-
-	mu           sync.Mutex
-	records      []*controllerArtifactRecord
-	acquiredAt   []time.Time
-	acquisitions int
+	endpoint       *ProductDirectEndpoint
+	reporter       *interopharness.Reporter
+	base           *interopharness.Client
+	clientHandlers interopharness.HandlerConfig
+	mu             sync.Mutex
+	records        []*controllerArtifactRecord
+	acquired       []*controllerArtifactRecord
+	next           int
+	closed         bool
+	pause          *controllerPreparationPause
 }
 
-func NewProductControllerArtifactSource(endpoint *ProductDirectEndpoint, plans []ControllerArtifactPlan) (*ProductControllerArtifactSource, error) {
-	if endpoint == nil || len(plans) == 0 {
-		return nil, errors.New("controller artifact source requires endpoint and plans")
-	}
-	return &ProductControllerArtifactSource{endpoint: endpoint, plans: append([]ControllerArtifactPlan(nil), plans...)}, nil
+func NewProductControllerArtifactSource(endpoint *ProductDirectEndpoint, plans []ControllerArtifactPlan, handlers ...interopharness.HandlerConfig) (*ProductControllerArtifactSource, error) {
+	return newProductControllerArtifactSource(endpoint, plans, nil, handlers...)
 }
-
-func (source *ProductControllerArtifactSource) Acquire(ctx context.Context) (flowersec.ArtifactLease, *flowersec.ArtifactSourceError) {
-	if source == nil || source.endpoint == nil {
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(errors.New("controller artifact source is not initialized"))
+func NewProductControllerTLSInterruptionSource(endpoint *ProductDirectEndpoint, address netip.AddrPort, handlers ...interopharness.HandlerConfig) (*ProductControllerArtifactSource, error) {
+	if !address.IsValid() || address.Port() == 0 || !address.Addr().IsLoopback() {
+		return nil, errors.New("TLS interruption requires an explicitly owned numeric loopback endpoint")
 	}
-	if err := ctx.Err(); err != nil {
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(err)
+	return newProductControllerArtifactSource(endpoint, []ControllerArtifactPlan{ControllerPlanCurrentPin, ControllerPlanTLSInterruption, ControllerPlanCurrentPin}, map[ControllerArtifactPlan]netip.AddrPort{ControllerPlanTLSInterruption: address}, handlers...)
+}
+func newProductControllerArtifactSource(endpoint *ProductDirectEndpoint, plans []ControllerArtifactPlan, addresses map[ControllerArtifactPlan]netip.AddrPort, handlers ...interopharness.HandlerConfig) (result *ProductControllerArtifactSource, resultErr error) {
+	if endpoint == nil || len(plans) == 0 || len(plans) > 32 {
+		return nil, errors.New("original controller endpoint and finite plans are required")
 	}
-	source.mu.Lock()
-	index := source.acquisitions
-	source.acquisitions++
-	plan := ControllerPlanCurrentPin
-	if index < len(source.plans) {
-		plan = source.plans[index]
+	if len(handlers) > 1 || len(handlers) == 1 && handlers[0] == nil {
+		return nil, errors.New("one original client handler declaration is required")
 	}
-	source.acquiredAt = append(source.acquiredAt, time.Now())
-	source.mu.Unlock()
-
-	contract, err := releaseSessionContractV3WithStreams(protocolv3.SuiteChaCha20Poly1305, defaultMaxInboundStreams)
-	if err != nil {
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(err)
+	source := &ProductControllerArtifactSource{endpoint: endpoint}
+	if len(handlers) == 1 {
+		source.clientHandlers = handlers[0]
 	}
-	artifact := directArtifactV3(source.endpoint.kind, source.endpoint.candidateURL, contract)
-	if len(artifact.Path.Candidates) != 1 {
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(errors.New("controller artifact candidate count changed"))
-	}
-	candidate := &artifact.Path.Candidates[0]
-	leafPin := base64.RawURLEncoding.EncodeToString(source.endpoint.certificateHash[:])
-	certificate, err := x509.ParseCertificate(source.endpoint.certificateDER)
-	if err != nil || !time.Now().Before(certificate.NotAfter) {
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(errors.New("controller endpoint certificate is unavailable or expired"))
-	}
-	currentPinPolicy := artifactv3.TLSPolicy{Mode: artifactv3.TLSModePin, Pins: []artifactv3.CertificatePin{{
-		Algorithm: "sha-256", ValueBase64URL: leafPin, NotAfterUnixS: certificate.NotAfter.Unix(),
-	}}}
-	switch plan {
-	case ControllerPlanCurrentPin:
-		candidate.TLS = currentPinPolicy
-	case ControllerPlanStalePin:
-		stale := sha256.Sum256([]byte("flowersec-controller-stale-pin"))
-		candidate.TLS = artifactv3.TLSPolicy{Mode: artifactv3.TLSModePin, Pins: []artifactv3.CertificatePin{{
-			Algorithm: "sha-256", ValueBase64URL: base64.RawURLEncoding.EncodeToString(stale[:]), NotAfterUnixS: certificate.NotAfter.Unix(),
-		}}}
-	case ControllerPlanExpiringPin:
-		policyExpiry := time.Now().Unix() + 4
-		if policyExpiry > certificate.NotAfter.Unix() {
-			policyExpiry = certificate.NotAfter.Unix()
-		}
-		candidate.TLS = artifactv3.TLSPolicy{Mode: artifactv3.TLSModePin, Pins: []artifactv3.CertificatePin{{
-			Algorithm: "sha-256", ValueBase64URL: leafPin, NotAfterUnixS: policyExpiry,
-		}}}
-	case ControllerPlanUnavailable:
-		candidate.TLS = currentPinPolicy
-		candidate.URL = unavailableCandidateURL(candidate.URL)
-	default:
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(errors.New("unknown controller artifact plan"))
-	}
-	expectedFSB3, err := expectedDirectAdmission(artifact)
-	if err != nil {
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(err)
-	}
-	digest := sha256.Sum256(expectedFSB3)
-	expected := &admissionExpectation{raw: expectedFSB3, contract: contract, result: make(chan productServerResult, 1)}
-	registeredDigest, err := source.endpoint.register(expected)
-	if err != nil {
-		return flowersec.ArtifactLease{}, flowersec.NewRetryableArtifactSourceError(err)
-	}
-	digest = registeredDigest
-	record := &controllerArtifactRecord{expected: expected, digest: digest}
-	source.mu.Lock()
-	if index >= len(source.records) {
-		source.records = append(source.records, record)
-	} else {
-		source.records[index] = record
-	}
-	source.mu.Unlock()
-	leaseReady := false
 	defer func() {
-		if !leaseReady {
-			source.endpoint.abandon(digest, expected)
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, source.Close())
 		}
 	}()
-	rawArtifact, err := artifactv3.MarshalArtifactJSON(artifact)
-	if err != nil {
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(err)
+	// Current replacements are finite original materials, never a reusable lease.
+	planned := append(append([]ControllerArtifactPlan(nil), plans...), make([]ControllerArtifactPlan, 16)...)
+	source.records = make([]*controllerArtifactRecord, len(planned))
+	order := make([]int, 0, len(planned))
+	for index, plan := range planned {
+		if plan != ControllerPlanExpiringPin {
+			order = append(order, index)
+		}
 	}
-	opaque, err := flowersec.ParseArtifact(rawArtifact)
-	if err != nil {
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(err)
+	for index, plan := range planned {
+		if plan == ControllerPlanExpiringPin {
+			order = append(order, index)
+		}
 	}
-	lease, err := flowersec.NewArtifactLeaseWithRetirement(
-		opaque,
-		func(context.Context) error {
-			if record.spent.Add(1) != 1 {
-				return errors.New("controller artifact spend callback invoked more than once")
+	issueRecord := func(index int) error {
+		plan := planned[index]
+		if plan == "" {
+			plan = ControllerPlanCurrentPin
+		}
+		now, err := endpoint.reporter.AuthorityClock().Sample()
+		if err != nil {
+			return err
+		}
+		leaf := endpoint.certificateDER
+		expires := uint64(0)
+		address := netip.AddrPort{}
+		install := true
+		switch plan {
+		case ControllerPlanCurrentPin:
+		case ControllerPlanExpiringPin:
+			expires = now.Interval.UpperMS + 4000
+		case ControllerPlanStalePin:
+			previous, _, _, _, err := interopharness.TLSMaterial(endpoint.listenHost)
+			if err != nil {
+				return err
 			}
-			return nil
-		},
-		func(context.Context) error {
-			if record.retired.Add(1) != 1 {
-				return errors.New("controller artifact retire callback invoked more than once")
+			leaf = previous.Certificate[0]
+			install = false
+		case ControllerPlanUnavailable:
+			address = netip.AddrPortFrom(endpoint.nativeServer().Address.Addr(), 1)
+			install = false
+		case ControllerPlanTLSInterruption:
+			address = addresses[plan]
+			if !address.IsValid() {
+				return errors.New("TLS interruption destination was not independently installed")
 			}
-			source.endpoint.abandon(digest, expected)
-			return nil
-		},
-	)
-	if err != nil {
-		return flowersec.ArtifactLease{}, flowersec.NewTerminalArtifactSourceError(err)
+			install = false
+		default:
+			return errors.New("unknown current controller material plan")
+		}
+		policy, err := currentPinPolicy(leaf, expires, now.Interval, true)
+		if err != nil {
+			return err
+		}
+		material, accepted, err := endpoint.issue(policy, address, install)
+		if err != nil {
+			return err
+		}
+		source.records[index] = &controllerArtifactRecord{material: material, accepted: accepted, pinExpiresMS: expires}
+		return nil
 	}
-	leaseReady = true
-	return lease, nil
+	for _, index := range order {
+		if planned[index] != ControllerPlanExpiringPin {
+			if err := issueRecord(index); err != nil {
+				return nil, err
+			}
+		}
+	}
+	reporter, err := interopharness.NewPeerReporter()
+	if err != nil {
+		return nil, err
+	}
+	source.reporter = reporter
+	reporter.ApplicationProfile = "services"
+	reporter.OperationDeadlineMS = endpoint.reporter.OperationDeadlineMS
+	reporter.ActivationWindowMS = endpoint.reporter.ActivationWindowMS
+	// Bootstrap installs a fresh complete original namespace before any material
+	// acquisition. This base owns the one Environment and its real consumer store.
+	wire, err := source.records[len(plans)].material.JSON()
+	if err != nil {
+		return nil, err
+	}
+	source.base, err = interopharness.NewClient(endpoint.ctx, reporter, wire, endpoint.nativeServer().TrustPEM, endpoint.allowedOrigin, productHandlers(nil))
+	if err != nil {
+		return nil, err
+	}
+	// Expiring policies are issued after namespace/bootstrap construction so the
+	// original trusted admission interval is available to the first attempt.
+	for _, index := range order {
+		if planned[index] == ControllerPlanExpiringPin {
+			if err := issueRecord(index); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return source, nil
 }
-
-func (source *ProductControllerArtifactSource) WaitServer(ctx context.Context, acquisition int) (flowersession.Session, error) {
-	if source == nil {
-		return nil, errors.New("controller artifact source is nil")
+func (source *ProductControllerArtifactSource) PrepareConnection(ctx context.Context, _ flowersec.ControllerRequest) (*flowersec.ControllerPreparation, error) {
+	if ctx == nil || source == nil {
+		return nil, errors.New("original controller preparation context is required")
+	}
+	var record *controllerArtifactRecord
+	for {
+		if err := context.Cause(ctx); err != nil {
+			return nil, err
+		}
+		source.mu.Lock()
+		if source.closed || source.next == len(source.records) {
+			source.mu.Unlock()
+			return nil, errors.New("current controller local recipe capacity is exhausted")
+		}
+		if pause := source.pause; pause != nil {
+			source.mu.Unlock()
+			select {
+			case <-pause.ready:
+				continue
+			case <-ctx.Done():
+				return nil, context.Cause(ctx)
+			}
+		}
+		record = source.records[source.next]
+		source.next++
+		source.mu.Unlock()
+		break
+	}
+	var definition *interopharness.RPCDefinition
+	configured := productHandlers(&definition)
+	if source.clientHandlers != nil {
+		configured = source.clientHandlers
+	}
+	client, err := source.base.PrepareMaterial(ctx, record.material, source.endpoint.allowedOrigin, configured)
+	if err != nil {
+		return nil, err
 	}
 	source.mu.Lock()
-	if acquisition < 0 || acquisition >= len(source.records) {
+	if source.closed {
 		source.mu.Unlock()
-		return nil, errors.New("controller server acquisition is unavailable")
+		return nil, errors.Join(errors.New("original controller source closed during preparation"), client.Runtime.Reporter.Close())
 	}
-	record := source.records[acquisition]
+	record.client, record.rpc = client, definition
 	source.mu.Unlock()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	select {
-	case result := <-record.expected.result:
-		if result.err != nil {
-			return nil, result.err
-		}
-		source.endpoint.unregister(record.digest, record.expected)
-		return result.session, nil
-	case <-ctx.Done():
-		return nil, context.Cause(ctx)
-	}
+	preparation := client.Runtime.SourcePreparation(client.Carrier)
+	original := preparation.Config.Provider
+	preparation.Config.Provider = &controllerObservedSource{owner: source, record: record, original: original}
+	return preparation, nil
 }
 
-func (source *ProductControllerArtifactSource) AcquisitionCount() int {
-	if source == nil {
-		return 0
+type controllerObservedSource struct {
+	owner    *ProductControllerArtifactSource
+	record   *controllerArtifactRecord
+	original flowersec.ConnectionMaterialSource
+}
+
+func (source *controllerObservedSource) PreparationNamespaces(clock *flowersec.Clock, environment flowersec.ResourceReference) ([3]*protocolv4.LiveNamespace, error) {
+	return source.record.client.Runtime.Authority.PreparationNamespaces(clock, environment)
+}
+func (source *controllerObservedSource) AcquireLease(ctx context.Context, request flowersec.MaterialLeaseRequest) (*flowersec.ArtifactLease, error) {
+	lease, err := source.original.AcquireLease(ctx, request)
+	if lease != nil {
+		source.owner.mu.Lock()
+		source.record.acquiredAt = time.Now()
+		source.owner.acquired = append(source.owner.acquired, source.record)
+		source.owner.mu.Unlock()
 	}
+	return lease, err
+}
+func (source *ProductControllerArtifactSource) NewController(ctx context.Context) (*flowersec.ConnectionController, error) {
+	if source == nil || source.base == nil {
+		return nil, errors.New("original current controller source is required")
+	}
+	runtime := source.base.Runtime
+	authority := runtime.Authority
+	options := flowersec.ControllerOptions{Clock: authority.Clock, Source: source, SourceIncarnation: authority.Generation.Source, Executor: runtime.Executor, AttemptTimeoutMS: source.reporter.AuthorityOperationMS(), DrainTimeoutMS: 1000, RuntimeBytes: 65536, MaximumAttempts: uint64(len(source.records))}
+	metadata, task, completion, err := flowersec.ControllerCharges(options)
+	if err != nil {
+		return nil, err
+	}
+	// A Controller spans Session generations within this trusted tenant.
+	// Its observer roots must retain the same ancestry as their source Sessions.
+	options.Reservation = authority.Reserve(metadata, authority.Scope[0].Tenant)
+	if task != (flowersec.ResourceVector{}) {
+		options.InitializeTask = authority.Reserve(task, authority.Scope[0].Tenant)
+	}
+	if completion != (flowersec.ResourceVector{}) {
+		options.InitializeCompletion = authority.Reserve(completion, authority.Scope[0].Tenant)
+	}
+	return flowersec.NewConnectionController(ctx, flowersec.ConnectionControllerOptions{Environment: runtime.Environment, ControllerOptions: options})
+}
+func (source *ProductControllerArtifactSource) WaitServer(ctx context.Context, acquisition int) (*flowersec.Session, error) {
+	source.mu.Lock()
+	if acquisition < 0 || acquisition >= len(source.acquired) {
+		source.mu.Unlock()
+		return nil, errors.New("original controller acquisition is unavailable")
+	}
+	record := source.acquired[acquisition]
+	source.mu.Unlock()
+	return record.accepted.WaitSession(ctx)
+}
+func (source *ProductControllerArtifactSource) AcquisitionCount() int {
 	source.mu.Lock()
 	defer source.mu.Unlock()
-	return source.acquisitions
+	return len(source.acquired)
 }
-
 func (source *ProductControllerArtifactSource) AcquisitionTimes() []time.Time {
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	times := make([]time.Time, len(source.acquired))
+	for index, record := range source.acquired {
+		times[index] = record.acquiredAt
+	}
+	return times
+}
+func (source *ProductControllerArtifactSource) observation(index int) (*ledgerv4.PoolSpendObservation, *flowersec.ArtifactLease) {
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	if index < 0 || index >= len(source.acquired) {
+		return nil, nil
+	}
+	runtime := source.acquired[index].client.Runtime
+	return runtime.PoolSpend, runtime.Leases[0]
+}
+func (source *ProductControllerArtifactSource) SpendCount(index int) int32 {
+	observation, _ := source.observation(index)
+	if observation != nil && observation.Snapshot().CommitKnown {
+		return 1
+	}
+	return 0
+}
+func (source *ProductControllerArtifactSource) RetireCount(index int) int32 {
+	observation, lease := source.observation(index)
+	if observation != nil && !observation.Snapshot().CommitKnown && lease != nil && lease.CleanupComplete() {
+		return 1
+	}
+	return 0
+}
+func (source *ProductControllerArtifactSource) NewPair(ctx context.Context, client, server *flowersec.Session) (*ProductDirectPair, error) {
+	source.mu.Lock()
+	var record *controllerArtifactRecord
+	for index := len(source.acquired) - 1; index >= 0; index-- {
+		candidate := source.acquired[index]
+		if candidate.client != nil && candidate.accepted.IsSession(server) {
+			record = candidate
+			break
+		}
+	}
+	source.mu.Unlock()
+	if record == nil || record.rpc == nil {
+		return nil, errors.New("original controller service registration is unavailable")
+	}
+	echo, err := record.rpc.Bind(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+	return &ProductDirectPair{Client: client, Server: server, Profile: source.endpoint.profile, spend: record.client.Runtime.PoolSpend, echo: echo}, nil
+}
+func (source *ProductControllerArtifactSource) Close() error {
 	if source == nil {
 		return nil
 	}
 	source.mu.Lock()
-	defer source.mu.Unlock()
-	return append([]time.Time(nil), source.acquiredAt...)
+	if source.closed {
+		source.mu.Unlock()
+		return nil
+	}
+	source.closed = true
+	if source.pause != nil {
+		source.pause.once.Do(func() { close(source.pause.ready) })
+	}
+	records := append([]*controllerArtifactRecord(nil), source.records...)
+	source.mu.Unlock()
+	var err error
+	for _, record := range records {
+		if record != nil {
+			err = errors.Join(err, record.accepted.Close())
+		}
+	}
+	if source.reporter != nil {
+		err = errors.Join(err, source.reporter.Close())
+	}
+	return err
 }
 
-func (source *ProductControllerArtifactSource) SpendCount(acquisition int) int32 {
+var _ flowersec.ControllerSource = (*ProductControllerArtifactSource)(nil)
+
+func (source *ProductControllerArtifactSource) ClientRuntime(index int) *interopharness.Runtime {
 	source.mu.Lock()
 	defer source.mu.Unlock()
-	if acquisition < 0 || acquisition >= len(source.records) {
-		return 0
+	if index < 0 || index >= len(source.acquired) || source.acquired[index].client == nil {
+		return nil
 	}
-	return source.records[acquisition].spent.Load()
+	return source.acquired[index].client.Runtime
+}
+func (source *ProductControllerArtifactSource) ServerRuntime(index int) *interopharness.Runtime {
+	source.mu.Lock()
+	if index < 0 || index >= len(source.acquired) {
+		source.mu.Unlock()
+		return nil
+	}
+	accepted := source.acquired[index].accepted
+	source.mu.Unlock()
+	return accepted.Runtime()
 }
 
-func (source *ProductControllerArtifactSource) RetireCount(acquisition int) int32 {
+type controllerPreparationPause struct {
+	ready chan struct{}
+	once  sync.Once
+}
+
+// PausePreparations holds only untouched local recipes during an explicitly
+// owned listener restart. It neither acquires material nor masks transport
+// failure, and the original preparation context cancels the wait normally.
+func (source *ProductControllerArtifactSource) PausePreparations() (func(), error) {
 	source.mu.Lock()
 	defer source.mu.Unlock()
-	if acquisition < 0 || acquisition >= len(source.records) {
-		return 0
+	if source.closed || source.pause != nil {
+		return nil, errors.New("controller preparation pause is unavailable")
 	}
-	return source.records[acquisition].retired.Load()
+	pause := &controllerPreparationPause{ready: make(chan struct{})}
+	source.pause = pause
+	return func() {
+		source.mu.Lock()
+		defer source.mu.Unlock()
+		if source.pause == pause {
+			source.pause = nil
+		}
+		pause.once.Do(func() { close(pause.ready) })
+	}, nil
 }
-
-func unavailableCandidateURL(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return raw
-	}
-	host := parsed.Hostname()
-	if host == "" {
-		return raw
-	}
-	parsed.Host = host + ":1"
-	if strings.Contains(host, ":") {
-		parsed.Host = "[" + host + "]:1"
-	}
-	return parsed.String()
-}
-
-// NewProductControllerPair binds the opaque public client Session to the
-// server Session delivered by a ProductControllerArtifactSource.
-func NewProductControllerPair(client flowersec.Session, server flowersession.Session) *ProductDirectPair {
-	return &ProductDirectPair{Client: client, Server: server}
-}
-
-// ProductControllerConnectorOptions returns the endpoint's deployment trust
-// roots and origin for a production ConnectionController.
-func (endpoint *ProductDirectEndpoint) ProductControllerConnectorOptions() flowersec.ConnectorOptions {
-	return flowersec.ConnectorOptions{TrustRoots: endpoint.trustRoots, Origin: releaseRunnerOrigin, ConnectTimeout: 10 * time.Second}
-}
-
-var _ flowersec.ArtifactSource = (*ProductControllerArtifactSource)(nil)

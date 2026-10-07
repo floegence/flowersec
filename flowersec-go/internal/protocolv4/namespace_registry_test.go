@@ -10,7 +10,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
-func registryFixture(t *testing.T, profile VerificationContinuity, entries uint32) (*onlineBootstrapFixture, *NamespaceRegistry) {
+func registryFixture(t *testing.T, profile VerificationContinuity, entries uint32, prepare ...func(*onlineBootstrapFixture)) (*onlineBootstrapFixture, *NamespaceRegistry) {
 	t.Helper()
 	var registry *NamespaceRegistry
 	setup := func(f *onlineBootstrapFixture) {
@@ -64,7 +64,7 @@ func registryFixture(t *testing.T, profile VerificationContinuity, entries uint3
 			return NamespaceDurabilityConfig{Scope: scope, Store: &namespaceMemoryHistory{scope: scope}, Reservation: f.namespace.reserve(t, cost), Dependencies: borrow}
 		}
 	}
-	f := onlineBootstrapConfigured(t, durable, setup)
+	f := onlineBootstrapConfigured(t, durable, append(prepare, setup)...)
 	return f, registry
 }
 
@@ -84,8 +84,17 @@ func registryAnchor(t *testing.T, f *onlineBootstrapFixture, authority string) *
 	}
 	t.Cleanup(func() {
 		trust.Close()
-		if err := trust.DestroyEnvironment(); err != nil {
-			t.Error(err)
+		trust.mu.Lock()
+		registered := trust.registry != nil
+		trust.mu.Unlock()
+		// A published anchor belongs to the registry teardown order. Its
+		// retained history must remain protected until the registry and shared
+		// resources have been closed; an unpublished anchor can be destroyed
+		// directly here.
+		if !registered {
+			if err := trust.DestroyEnvironment(); err != nil {
+				t.Error(err)
+			}
 		}
 	})
 	return trust

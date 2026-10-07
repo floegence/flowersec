@@ -24,6 +24,11 @@ func (p *Publisher) QueueGuardedRequest(t Ticket, header, payload []byte, reserv
 }
 
 func (p *Publisher) stepRequest(ctx context.Context, t Ticket, h protocolv4.ApplicationHeader, publication *Publication, guard RequestPublicationGuard) (progress bool, err error) {
+	if sink, ok := p.sink.(AuthorizedRequestBatchSink); ok {
+		if err := sink.CheckRequestAcceptance(ctx); err != nil {
+			return false, err
+		}
+	}
 	entered := false
 	err = guard.WithRequestPublication(h, func() error {
 		n := p.network

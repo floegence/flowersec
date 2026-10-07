@@ -130,7 +130,7 @@ final class ProxyNIOWebSocketTests: XCTestCase {
     let socket = try await ProxyNIOWebSocketConnector.connect(
       url: URL(string: "ws://127.0.0.1:\(server.port)/socket")!,
       headers: [],
-      maxFrameBytes: FlowersecSDKDefaults.Proxy.maxWSFrameBytes,
+      maxFrameBytes: FlowersecSDKDefaults.Proxy.maximumWebSocketFrameBytes,
       timeout: .seconds(1)
     )
     defer { Task { await socket.close() } }
@@ -146,7 +146,7 @@ final class ProxyNIOWebSocketTests: XCTestCase {
     XCTAssertEqual(received, payloads)
   }
 
-  func testConnectionClosesWhenBufferedInboundFramesExceedBudget() async throws {
+  func testConnectionBackpressuresAtOriginalInboundBudget() async throws {
     let payloads = (0..<96).map { Data(repeating: UInt8($0), count: 4) }
     let server = try LocalWebSocketServer(
       behavior: .upgrade(
@@ -167,22 +167,8 @@ final class ProxyNIOWebSocketTests: XCTestCase {
 
     try await Task.sleep(for: .milliseconds(100))
     var received: [Data] = []
-    var terminalError: (any Error)?
-    while received.count < payloads.count {
-      do {
-        received.append(try await socket.receive().payload)
-      } catch {
-        terminalError = error
-        break
-      }
-    }
-    XCTAssertFalse(received.isEmpty)
-    XCTAssertLessThan(received.count, payloads.count)
-    XCTAssertEqual(received, Array(payloads.prefix(received.count)))
-    XCTAssertEqual(
-      terminalError as? ProxyError,
-      .stream("Upstream WebSocket receive buffer exceeded")
-    )
+    for _ in payloads { received.append(try await socket.receive().payload) }
+    XCTAssertEqual(received, payloads)
   }
 
   func testConnectionEnforcesInboundAndOutboundFrameSize() async throws {

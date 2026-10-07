@@ -34,13 +34,13 @@ type manifest struct {
 }
 
 type docsManifest struct {
-	APIContract       string   `json:"api_contract"`
-	ChangePolicy      string   `json:"change_policy"`
-	Readme            string   `json:"readme"`
-	ErrorModel        string   `json:"error_model"`
-	TransportV3API    string   `json:"transport_v3_api"`
-	CLITokens         []string `json:"cli_tokens"`
-	TransportV3Tokens []string `json:"transport_v3_tokens"`
+	APIContract        string   `json:"api_contract"`
+	ChangePolicy       string   `json:"change_policy"`
+	Readme             string   `json:"readme"`
+	ErrorModel         string   `json:"error_model"`
+	TransportV4Binding string   `json:"transport_v4_binding"`
+	CLITokens          []string `json:"cli_tokens"`
+	TransportV4Tokens  []string `json:"transport_v4_tokens"`
 }
 
 type goManifest struct {
@@ -163,7 +163,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if m.Version != 1 {
 		return fmt.Errorf("unsupported manifest version %d", m.Version)
 	}
-	for _, p := range []string{m.Docs.APIContract, m.Docs.ChangePolicy, m.Docs.Readme, m.Docs.ErrorModel, m.Docs.TransportV3API} {
+	for _, p := range []string{m.Docs.APIContract, m.Docs.ChangePolicy, m.Docs.Readme, m.Docs.ErrorModel, m.Docs.TransportV4Binding} {
 		if strings.TrimSpace(p) == "" {
 			return errors.New("docs paths must not be empty")
 		}
@@ -174,10 +174,10 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if err := requireUnique("docs.cli_tokens", m.Docs.CLITokens); err != nil {
 		return err
 	}
-	if len(m.Docs.TransportV3Tokens) == 0 {
-		return errors.New("docs.transport_v3_tokens must not be empty")
+	if len(m.Docs.TransportV4Tokens) == 0 {
+		return errors.New("docs.transport_v4_tokens must not be empty")
 	}
-	if err := requireUnique("docs.transport_v3_tokens", m.Docs.TransportV3Tokens); err != nil {
+	if err := requireUnique("docs.transport_v4_tokens", m.Docs.TransportV4Tokens); err != nil {
 		return err
 	}
 	if strings.TrimSpace(m.Go.ModulePath) == "" {
@@ -210,7 +210,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 		if strings.TrimSpace(target.DocPackageToken) == "" {
 			return fmt.Errorf("go target %q doc_package_token must not be empty", target.Package)
 		}
-		if target.StabilityGroup != "" && target.StabilityGroup != "transport_v3" {
+		if target.StabilityGroup != "" && target.StabilityGroup != "transport_v4" {
 			return fmt.Errorf("go target %q has unsupported stability_group %q", target.Package, target.StabilityGroup)
 		}
 		if len(target.Entries) == 0 {
@@ -238,7 +238,7 @@ func validateManifest(repoRoot string, m *manifest) error {
 			if entry.Kind != "interface_method" && entry.Kind != "field" && strings.TrimSpace(entry.Signature) != "" {
 				return fmt.Errorf("go entry %q signature is only valid for interface_method or field", entry.Expr)
 			}
-			if entry.StabilityGroup != "" && entry.StabilityGroup != "transport_v3" {
+			if entry.StabilityGroup != "" && entry.StabilityGroup != "transport_v4" {
 				return fmt.Errorf("go entry %q has unsupported stability_group %q", entry.Expr, entry.StabilityGroup)
 			}
 			seenExpr = append(seenExpr, entry.Expr)
@@ -326,8 +326,8 @@ func validateManifest(repoRoot string, m *manifest) error {
 	if err := requireUnique("ts.bins.name", binNames); err != nil {
 		return err
 	}
-	if m.NativeABI.Package != "@floegence/flowersec-node-native" || m.NativeABI.ContractVersion != 3 || m.NativeABI.WireVersion != 3 {
-		return errors.New("native_abi must describe the Flowersec contract 3 / wire 3 package")
+	if m.NativeABI.Package != "@floegence/flowersec-node-native" || m.NativeABI.ContractVersion != 4 || m.NativeABI.WireVersion != 4 {
+		return errors.New("native_abi must describe the Flowersec contract 4 / wire 4 package")
 	}
 	if len(m.NativeABI.RuntimeExports) == 0 {
 		return errors.New("native_abi.runtime_exports must not be empty")

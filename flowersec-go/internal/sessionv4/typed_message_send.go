@@ -80,10 +80,13 @@ func (m *TypedMessageStream) Send(ctx context.Context, value any, options Messag
 		options.Admission = MessageSendTryNow
 	}
 	m.mu.Lock()
-	origin, _, err := ordinarySynchronousOrigin(ctx, m.executor)
-	if err != nil {
-		m.mu.Unlock()
-		return result, err
+	var origin *applicationContext
+	if m.outboundCodec.execution == MessageCodecSynchronous {
+		origin, _, err = ordinarySynchronousOrigin(ctx, m.executor)
+		if err != nil {
+			m.mu.Unlock()
+			return result, err
+		}
 	}
 	entry, permit, err := m.admitMessageSendLocked(ctx, value, options, origin != nil, &dependencies)
 	m.mu.Unlock()
@@ -203,6 +206,9 @@ func (m *TypedMessageStream) admitMessageSendLocked(ctx context.Context, value a
 	if err == nil {
 		metadata, err = metadata.Add(resourcev4.Vector{resourcev4.SDKBytes: m.config.RuntimeBytes})
 	}
+	if err == nil && m.outboundCodec.implementation == 3 {
+		metadata, err = metadata.Add(resourcev4.Vector{resourcev4.SDKBytes: m.outboundCodec.applicationBytes})
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -223,7 +229,7 @@ func (m *TypedMessageStream) admitMessageSendLocked(ctx context.Context, value a
 		backing: refs[0], taskRef: refs[1], value: value, codec: m.outboundCodec, done: make(chan struct{}), encoding: true, dispatching: !inline}
 	if !inline {
 		if options.Admission == MessageSendTryNow {
-			permit, err = m.executor.TryAcquire(ApplicationShort, refs[1], refs[0])
+			permit, err = m.executor.tryAcquireInGroup(m.group, ApplicationShort, refs[1], refs[0])
 		} else {
 			entry.queued, err = m.executor.prepareApplication(m.group, ApplicationShort, refs[1], refs[0])
 		}
@@ -282,6 +288,14 @@ func (m *TypedMessageStream) encodeMessage(e *typedMessageSend, parent context.C
 	var exit func()
 	var err error
 	if inline {
+		m.mu.Lock()
+		group := m.group
+		m.mu.Unlock()
+		if failure = m.executor.retainSynchronousWork(group); failure != nil {
+			returned = true
+			return
+		}
+		defer m.executor.releaseSynchronousWork(group)
 		callCtx, exit, err = enterSynchronousStage(parent, m.executor)
 	} else {
 		callCtx, exit, err = enterApplicationContext(parent, m.executor, ordinaryApplicationLane, ApplicationShort, e.backing, &e.dependencies)

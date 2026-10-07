@@ -173,10 +173,15 @@ fn group(sessions: &[Session]) -> ServeHandle {
     let charge = root
         .reserve_environment(serve_charge(sessions.len()))
         .unwrap();
+    let diagnostic = root.diagnostic_activity(crate::DiagnosticPhase::Serve, 1);
+    diagnostic.succeed();
     let owner = Arc::new(ServeOwner {
         root,
+        diagnostic,
+        diagnostic_closed: AtomicBool::new(false),
         gate: Mutex::new(Gate {
             closed: false,
+            preparation: None,
             drain: None,
             generation: sessions.len() as u64,
             slots: sessions
@@ -188,12 +193,14 @@ fn group(sessions: &[Session]) -> ServeHandle {
                         cancel: CancellationToken::new(),
                         session: Some(s.clone()),
                         provider: None,
+                        prepared: true,
                         pending: false,
                         drain: None,
                         drain_done: false,
                         drain_starting: false,
                         tail_done: false,
                         invocation: None,
+                        diagnostic: None,
                     })
                 })
                 .collect(),

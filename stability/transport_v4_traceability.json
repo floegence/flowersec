@@ -4338,12 +4338,12 @@
       ],
       "vector_ids": [
         "strict_public_scalar_valid",
-        "strict_A_torsion_0",
-        "strict_R_torsion_0",
-        "strict_A_mixed_1",
-        "strict_R_mixed_1",
-        "strict_A_negative_zero",
-        "strict_R_nonpoint",
+        "strict_a_torsion_0",
+        "strict_r_torsion_0",
+        "strict_a_mixed_1",
+        "strict_r_mixed_1",
+        "strict_a_negative_zero",
+        "strict_r_nonpoint",
         "strict_scalar_l",
         "strict_no_implicit_prehash"
       ],

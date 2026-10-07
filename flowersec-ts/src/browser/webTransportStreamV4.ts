@@ -180,7 +180,7 @@ export class BrowserWebTransportStream implements V4NativeApplicationStream {
       void this.stopSending().catch(() => undefined); this.#finish();
     });
   }
-  submit(data: Uint8Array, admitted: () => void): { completion: Promise<void> } | undefined {
+  submit(data: Uint8Array, admitted: () => void, beforeSubmit?: () => void): { completion: Promise<void> } | undefined {
     if (this.#writeFailure !== undefined) throw this.#writeFailure;
     try { this.#check(); } catch { return undefined; }
     if (this.#writeSealed || this.#writeEnded || this.#writing || data.byteLength < 1 || data.byteLength > this.maximum) return undefined;
@@ -189,8 +189,9 @@ export class BrowserWebTransportStream implements V4NativeApplicationStream {
     try {
       // This callback is synchronous. A second outstanding write is forbidden;
       // native backpressure retains this exact buffer and position until exit.
-      admitted(); this.#check(); tail = this.#writer!.write(data);
+      this.#check(); beforeSubmit?.(); tail = this.#writer!.write(data);
     } catch (error) { this.#writing = false; this.#finish(); throw error; }
+    try { admitted(); } catch { void this.close(); }
     const completion = tail.then(() => { this.#writing = false; this.#finish(); }, error => {
       this.#writing = false; this.#finish(); throw nativeFailure(error);
     });

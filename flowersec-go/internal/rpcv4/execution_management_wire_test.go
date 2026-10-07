@@ -4,16 +4,19 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type managementTestSink struct {
-	mu   sync.Mutex
-	wire [][]byte
-	fail error
+	mu         sync.Mutex
+	wire       [][]byte
+	fail       error
+	beforeGate func()
 }
 
 func (s *managementTestSink) TryAcceptManagement(ctx context.Context, wire []byte, gate ManagementPublicationGate) (uint64, error) {
@@ -30,6 +33,9 @@ func (s *managementTestSink) TryAcceptManagement(ctx context.Context, wire []byt
 		return nil
 	}
 	if gate != nil {
+		if s.beforeGate != nil {
+			s.beforeGate()
+		}
 		if err := gate(transfer); err != nil {
 			return 0, err
 		}
@@ -43,9 +49,14 @@ func managementWireTarget() ExecutionTarget {
 }
 func newManagementWireFixture(t *testing.T) (*ExecutionManagementWire, *managementTestSink, ExecutionAccess) {
 	t.Helper()
+	wire, sink, access, _ := newManagementWireFixtureClock(t, executionClock(t))
+	return wire, sink, access
+}
+func newManagementWireFixtureClock(t *testing.T, clock *timev4.Clock) (*ExecutionManagementWire, *managementTestSink, ExecutionAccess, *resourcev4.Root) {
+	t.Helper()
 	root := executionRoot(t)
 	sink := &managementTestSink{}
-	c := ExecutionManagementWireConfig{Clock: executionClock(t), Sink: sink, RuntimeBytes: 4096}
+	c := ExecutionManagementWireConfig{Clock: clock, Sink: sink, RuntimeBytes: 4096}
 	charge, err := ExecutionManagementWireCharge(c.RuntimeBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +87,7 @@ func newManagementWireFixture(t *testing.T) (*ExecutionManagementWire, *manageme
 			t.Error("management leaked reservation", root.Snapshot())
 		}
 	})
-	return wire, sink, managementAccess{ref: authority}
+	return wire, sink, managementAccess{ref: authority}, root
 }
 func managementTestResponse(t *testing.T, w *ExecutionManagementWire, serial uint64, cancel bool, result protocolv4.ManagementResult) []byte {
 	t.Helper()
@@ -286,5 +297,236 @@ func TestExecutionManagementPartialHeaderKeepsExactOriginalAdmission(t *testing.
 	w.Close()
 	if !w.CleanupComplete() {
 		t.Fatal("unstarted job retained after close")
+	}
+}
+
+// The same original clock governs worker completion, scheduler retry and the
+// sending ring gate. Advancing this admitted source needs no wall-clock sleep.
+func newManagementExpiryFixture(t *testing.T) (*ExecutionManagementWire, *managementTestSink, ExecutionAccess, *atomic.Uint64, ExecutionManagementResolver) {
+	t.Helper()
+	tick := &atomic.Uint64{}
+	clock, err := timev4.NewClock(timev4.Profile{Rate: timev4.Rate{Denominator: 1}, MaxWidthMS: 1000, MaxAgeMS: 10000, MaxRoundTripMS: 1000}, func() (timev4.Tick, error) {
+		return timev4.Tick{Milliseconds: tick.Load(), Incarnation: [16]byte{1}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(clock.Close)
+	mark, err := clock.Monotonic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := clock.InstallTrusted(mark, timev4.Interval{LowerMS: 25, UpperMS: 25}); err != nil {
+		t.Fatal(err)
+	}
+	w, sink, access, root := newManagementWireFixtureClock(t, clock)
+	target := managementWireTarget()
+	cfg := VolatileExecutionConfig{Root: root, Owner: resourcev4.OwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Instance: [16]byte{35}, Backing: [16]byte{36}, Kind: 7}, Clock: clock, Service: target.Service, CallerAuthorities: [][32]byte{target.Caller.Authority}, Records: 1, Active: 1, TaskCharge: resourcev4.Vector{resourcev4.Tasks: 1, resourcev4.WorkSlots: 1}, RuntimeBytes: 4096, WorkRuntimeBytes: 4096, ResultRuntimeBytes: 4096}
+	charge, err := VolatileExecutionsCharge(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := root.Reserve(cfg.Owner, charge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := NewVolatileExecutions(cfg, ref)
+	if err != nil {
+		ref.Release()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		history.Close()
+		ref.Release()
+		if !history.CleanupComplete() {
+			t.Error("management history retained actual work")
+		}
+	})
+	resolver := ExecutionManagementResolverFunc(func(context.Context, ExecutionTarget, bool) (*VolatileExecutions, ExecutionAccess, error) {
+		return history, access, nil
+	})
+	return w, sink, access, tick, resolver
+}
+
+func assertManagementUnavailableEnvelope(t *testing.T, w *ExecutionManagementWire, sink *managementTestSink, serial uint64) {
+	t.Helper()
+	if len(sink.wire) != 2 {
+		t.Fatal("finite reply did not transfer exactly once", len(sink.wire))
+	}
+	header, body, cancel, err := w.decodeEnvelope(sink.wire[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := w.bodies.DecodeResult(body, cancel)
+	if err != nil || !header.IsResponse() || header.Fields().ControlSerial != serial || result.Status != "unavailable" {
+		t.Fatal("finite reply lost original serial or result", header.Fields(), result, err)
+	}
+	if w.closed {
+		t.Fatal("request expiry closed the management generation")
+	}
+}
+
+func TestExecutionManagementCompletedExpiryRemainsSchedulerReadable(t *testing.T) {
+	w, sink, access, tick, _ := newManagementExpiryFixture(t)
+	if _, err := w.TryRequest(context.Background(), false, managementWireTarget(), 1000, access); err != nil {
+		t.Fatal(err)
+	}
+	job, err := w.BeginRequest(sink.wire[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := job.Run(context.Background(), ExecutionManagementResolverFunc(func(context.Context, ExecutionTarget, bool) (*VolatileExecutions, ExecutionAccess, error) {
+		// Even a business failure completing at the original cap must converge
+		// before the scheduler observes the completed worker.
+		tick.Store(975)
+		return nil, nil, ErrOwner
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := job.RemainingMS(); !errors.Is(err, timev4.ErrExpired) {
+		t.Fatal("completed finite reply was not readable by scheduler", err)
+	}
+	finite, err := job.Unavailable()
+	if err != nil || finite != reply || w.replies[job.index].deadline == nil || w.replies[job.index].access != nil {
+		t.Fatal("scheduler replaced completed reply ownership", finite, err)
+	}
+	if err := finite.Publish(context.Background()); !errors.Is(err, timev4.ErrExpired) {
+		t.Fatal("expired original reply acquired publication authority", err)
+	}
+	if len(sink.wire) != 1 || w.replies[job.index].serial != job.serial {
+		t.Fatal("expiry lost the original reply or submitted new bytes")
+	}
+}
+
+func TestExecutionManagementSelectedReplyBackpressureExpiry(t *testing.T) {
+	w, sink, access, tick, resolver := newManagementExpiryFixture(t)
+	if _, err := w.TryRequest(context.Background(), false, managementWireTarget(), 1000, access); err != nil {
+		t.Fatal(err)
+	}
+	job, err := w.BeginRequest(sink.wire[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := job.Run(context.Background(), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := w.replies[job.index].deadline
+	if original == nil || w.replies[job.index].access == nil || w.replies[job.index].timedOut {
+		t.Fatal("ordinary result was not available before expiry")
+	}
+	sink.fail = ErrCapacity
+	if err := reply.Publish(context.Background()); !errors.Is(err, ErrCapacity) {
+		t.Fatal(err)
+	}
+	if w.replies[job.index].serial != job.serial || w.replies[job.index].deadline != original || w.replies[job.index].publishing || len(sink.wire) != 1 {
+		t.Fatal("backpressure consumed or replaced selected reply")
+	}
+	tick.Store(975)
+	if _, err := job.RemainingMS(); !errors.Is(err, timev4.ErrExpired) {
+		t.Fatal("selected reply stopped observing original cap", err)
+	}
+	finite, err := job.Unavailable()
+	if err != nil || finite != reply {
+		t.Fatal("scheduler changed selected owner", finite, err)
+	}
+	sink.fail = nil
+	if err := finite.Publish(context.Background()); !errors.Is(err, timev4.ErrExpired) {
+		t.Fatal("expired original reply acquired publication authority", err)
+	}
+	if len(sink.wire) != 1 || w.replies[job.index].serial != job.serial {
+		t.Fatal("expiry lost the original reply or submitted new bytes")
+	}
+}
+
+func TestExecutionManagementPublishGateCrossingExpiryRetainsReply(t *testing.T) {
+	w, sink, access, tick, resolver := newManagementExpiryFixture(t)
+	if _, err := w.TryRequest(context.Background(), false, managementWireTarget(), 1000, access); err != nil {
+		t.Fatal(err)
+	}
+	job, err := w.BeginRequest(sink.wire[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply, err := job.Run(context.Background(), resolver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := job.RemainingMS(); err != nil {
+		t.Fatal("reply expired before selection", err)
+	}
+	gates := 0
+	sink.beforeGate = func() {
+		gates++
+		tick.Store(975)
+	}
+	if err := reply.Publish(context.Background()); !errors.Is(err, timev4.ErrExpired) {
+		t.Fatal("final gate failed to preserve original deadline", err)
+	}
+	if gates != 1 {
+		t.Fatal("finite failure retried the expired success gate", gates)
+	}
+	if len(sink.wire) != 1 || w.replies[job.index].serial != job.serial {
+		t.Fatal("expired gate published bytes or lost original ownership")
+	}
+	if err := reply.Publish(context.Background()); !errors.Is(err, timev4.ErrExpired) || len(sink.wire) != 1 {
+		t.Fatal("expired reply renewed publication authority", err, len(sink.wire))
+	}
+}
+
+func TestExecutionManagementExpiryPublicationRetainsRunningProvider(t *testing.T) {
+	w, sink, access, tick, _ := newManagementExpiryFixture(t)
+	if _, err := w.TryRequest(context.Background(), false, managementWireTarget(), 1000, access); err != nil {
+		t.Fatal(err)
+	}
+	job, err := w.BeginRequest(sink.wire[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, exit, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var release sync.Once
+	defer func() {
+		release.Do(func() { close(exit) })
+		<-done
+	}()
+	var workerErr error
+	go func() {
+		defer close(done)
+		_, workerErr = job.Run(context.Background(), ExecutionManagementResolverFunc(func(context.Context, ExecutionTarget, bool) (*VolatileExecutions, ExecutionAccess, error) {
+			close(entered)
+			<-exit
+			return nil, nil, ErrOwner
+		}))
+	}()
+	<-entered
+	tick.Store(975)
+	if _, err := job.RemainingMS(); !errors.Is(err, timev4.ErrExpired) {
+		t.Fatal(err)
+	}
+	reply, err := job.Unavailable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reply.Publish(context.Background()); !errors.Is(err, timev4.ErrExpired) {
+		t.Fatal("expired provider acquired publication authority", err)
+	}
+	if len(sink.wire) != 1 {
+		t.Fatal("expired provider submitted bytes")
+	}
+	w.mu.Lock()
+	original := w.replies[job.index]
+	w.mu.Unlock()
+	if original.serial != job.serial || !original.running || original.published || !original.timedOut {
+		t.Fatal("finite publication refunded the active provider position")
+	}
+	w.Close()
+	if w.CleanupComplete() {
+		t.Fatal("channel close refunded the late provider tail")
+	}
+	release.Do(func() { close(exit) })
+	<-done
+	if !errors.Is(workerErr, ErrManagementClosed) || !w.CleanupComplete() || len(sink.wire) != 1 {
+		t.Fatal("late completion changed finite reply or stranded cleanup", workerErr, w.CleanupComplete(), len(sink.wire))
 	}
 }

@@ -69,7 +69,7 @@ func (d ExecutionDispatch) DispatchWithOutcome(ctx context.Context, input *rpcv4
 	// root executor in one finite admission. No fallback goroutine or second
 	// worker is created when this gate refuses.
 	err = work.SubmitTask(func(task, backing resourcev4.Reference) (<-chan struct{}, error) {
-		return d.Executor.trySubmitJoined(d.Class, task, backing, func() {
+		return d.Executor.trySubmitJoined(d.group, d.Class, task, backing, func() {
 			failure := error(ErrCompletionCallbackExit)
 			var code uint32
 			var payload []byte

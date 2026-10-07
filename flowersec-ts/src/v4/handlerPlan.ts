@@ -5,7 +5,7 @@ import { originalEnvironment, type EnvironmentDependency, type V4EnvironmentRunt
 import { captureRPCApplication, type RPCApplicationConfig, type RPCApplicationUnaryHandler, type RPCApplicationStreamingHandler, type RPCApplicationNotificationHandler } from "./runtime/rpcApplication.js";
 import { ServiceContractSnapshot, AdmissionOffer, serviceContractCharge, serviceContractDecoderCharge } from "./runtime/serviceContract.js";
 import { CBORDecoder, cborDecoderCharge } from "./runtime/cbor.js";
-import { ResourceVector } from "./runtime/resources.js";
+import { ResourceVector, type ResourceReference } from "./runtime/resources.js";
 import { checkRawStreamKind, captureRegistration } from "./runtime/streamRegistration.js";
 import type { CapturedRawStreamDeclaration } from "./runtime/rawStreamPreparation.js";
 
@@ -79,10 +79,12 @@ export function createHandlerPlan(environment: V4TransportEnvironment, options: 
       if (services.profile !== "services" && services.profile !== "execution") throw new Error("configuration_capacity");
       const convert = <T extends { contract: Uint8Array; offer?: Uint8Array; maximumOfferWindowMS?: bigint }>(entry: T) => {
         const r = runtime.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 0, arrayItems: 8, runtimeBytes: r.runtimeBytes };
-        const refs = r.root.reserveBatch([serviceContractCharge(r.runtimeBytes), serviceContractDecoderCharge(r.runtimeBytes), cborDecoderCharge(offerConfig)]
-          .map((charge, i) => ({ charge, accounts: r.accounts, owner: { ...r.owner, kind: `handler_contract_${i}` } })));
+        const refs: ResourceReference[] = [];
         let decoder: CBORDecoder | undefined;
         try {
+          for (const charge of [serviceContractCharge(r.runtimeBytes), serviceContractDecoderCharge(r.runtimeBytes), cborDecoderCharge(offerConfig)]) {
+            refs.push(runtime.reserveConnectionWork("handler_contract", charge));
+          }
           const contract = new ServiceContractSnapshot(entry.contract, r.runtimeBytes, refs[0]!, refs[1]!); state.contracts.push(contract);
           let offer: AdmissionOffer | undefined;
           if (entry.offer !== undefined) {

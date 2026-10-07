@@ -266,6 +266,7 @@ func (e *Engine) Retire() error {
 		return ErrTransition
 	}
 	e.config.Authorization, e.config.Clock = nil, nil
+	e.config.DiagnosticEvents = nil
 	e.config.Diagnostics = nil
 	e.clock.Store(nil)
 	e.config.RootBorn = timev4.Sample{}

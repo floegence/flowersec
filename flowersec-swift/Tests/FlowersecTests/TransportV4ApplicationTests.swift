@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportV4ApplicationTests: XCTestCase {
+final class TransportApplicationTests: XCTestCase {
   private static let reference = try! V4ApplicationReference()
   private static let corpus = try! JSONDecoder().decode(V4JSON.self, from: Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/application_headers.json")))
   private static let maps = try! JSONDecoder().decode(V4JSON.self, from: Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/corpus.json")))

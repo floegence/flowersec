@@ -125,6 +125,38 @@ describe("original Serve aggregate", () => {
       expect((await drain.wait()).outcome).toBe(outcome); await f.close();
     });
   }
+  for (const seal of ["drain", "close"] as const) {
+    it(`acknowledges the original READY claim after ${seal} seals admission`, async () => {
+      const f = setup(), ingress = f.group.begin(vi.fn()), childDrain = createSessionDrain(() => () => undefined, complete);
+      const child = { info: () => ({}), cleanupStatus: () => complete,
+        drain: () => childDrain.operation, close: vi.fn(async () => { childDrain.finish("failed"); }) } as unknown as V4SessionOwner & { cleanupOwner: SessionCleanup };
+      try {
+        await ingress.authorize(authentication); ingress.claim(child);
+        if (seal === "drain") f.group.drain(); else f.group.close();
+        await expect(ingress.publishClaimed()).resolves.toBeUndefined();
+        expect(f.callbacks.onSession).toHaveBeenCalledTimes(1);
+        await ingress.publishClaimed(); expect(f.callbacks.onSession).toHaveBeenCalledTimes(1);
+        await ingress.finish();
+        expect(f.callbacks.release).toHaveBeenCalledWith(expect.objectContaining({ authorization: "authorized", published: true }));
+        expect(f.lease.close).toHaveBeenCalledTimes(1);
+      } finally { await f.close(); }
+    });
+  }
+  it("retains a claimed handoff callback through Close until its actual acknowledgment", async () => {
+    const entered = deferred<void>(), acknowledged = deferred<{ accepted: true }>();
+    const f = setup({ onSession: async () => { entered.resolve(); return acknowledged.promise; } });
+    const ingress = f.group.begin(vi.fn());
+    const child = { info: () => ({}), cleanupStatus: () => complete, close: vi.fn(async () => undefined) } as unknown as V4SessionOwner & { cleanupOwner: SessionCleanup };
+    try {
+      await ingress.authorize(authentication); ingress.claim(child);
+      const publishing = ingress.publishClaimed(); await entered.promise;
+      f.group.close(); f.group.listenerEnded();
+      expect(f.group.cleanupStatus().pending_callbacks).toBe(1n);
+      expect(f.callbacks.release).not.toHaveBeenCalled();
+      acknowledged.resolve({ accepted: true }); await expect(publishing).resolves.toBeUndefined();
+      await ingress.finish(); expect(f.lease.close).toHaveBeenCalledTimes(1); expect(f.callbacks.release).toHaveBeenCalledTimes(1);
+    } finally { acknowledged.resolve({ accepted: true }); await ingress.finish(); await f.close(); }
+  });
   it("keeps Close during Drain as forced termination", async () => {
     const f = setup(), ingress = f.group.begin(vi.fn());
     const childDrain = createSessionDrain(() => () => undefined, complete);

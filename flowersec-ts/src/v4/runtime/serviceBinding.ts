@@ -5,6 +5,7 @@ import { captureNotifyOptions, type NotifyPreparation, type NotifyPreparationOpt
 import { staticServiceContracts, type V4StaticServiceContracts } from "../staticServiceContracts.js";
 import { referenceSaveFailure, referenceSaveReport, type V4OperationReferenceStore, type ReferenceSaveReport } from "../operationReferenceStore.js";
 import type { V4OperationReference } from "../operationReference.js";
+import type { V4AdmissionOffer } from "../admissionOffer.js";
 import { cleanupResult } from "./lifecycle.js";
 import type { V4ApplicationContext, V4AuthenticatedContext } from "../streamHandlers.js";
 import { applicationHasPermit } from "./applicationExecutor.js";
@@ -54,6 +55,8 @@ export interface ServiceBindingSource {
   preacceptStreams(namespace: string, targets: readonly Readonly<{ method: CapturedBindingMethod; contract: ServiceContractSnapshot }>[]): readonly RPCStreamPoolDemand[];
   prepareResume(method: CapturedBindingMethod, namespace: string, contract: ServiceContractSnapshot, offer: AdmissionOffer | undefined,
     stream: V4StreamOwner, token: Uint8Array, options: RPCUnaryPreparationOptions, context?: V4ApplicationContext, signal?: AbortSignal): Promise<RPCUnaryPreparation>;
+  prepareDispatch?(method: CapturedBindingMethod, namespace: string, contract: ServiceContractSnapshot, offer: AdmissionOffer | undefined,
+    value: unknown, options: RPCUnaryPreparationOptions, context?: V4ApplicationContext, signal?: AbortSignal): Promise<RPCUnaryPreparation>;
   prepare(method: CapturedBindingMethod, namespace: string, contract: ServiceContractSnapshot, offer: AdmissionOffer | undefined,
     value: unknown, options: RPCUnaryPreparationOptions, context?: V4ApplicationContext, signal?: AbortSignal): Promise<RPCUnaryPreparation>;
 }
@@ -63,6 +66,7 @@ export interface ServiceContractProgress {
   readonly installed: boolean;
   readonly acceptance: "exact" | "bounded";
   readonly digest?: string;
+  readonly offer?: V4AdmissionOffer;
   readonly refresh: "idle" | "checking" | "installed" | "rejected" | "deferred" | "blocked";
   readonly reason?: string;
 }
@@ -384,8 +388,14 @@ export class ServiceBinding implements ServiceOfferParticipant {
         }
       } catch { availability = "source_unavailable"; }
     }
+    const installedDigest = slot.current === undefined ? undefined : digest(slot.current);
+    // Only copy an already installed, validated advertisement. The public value
+    // retains no contract body, clock, binding, Session or runtime capability.
+    const offer: V4AdmissionOffer | undefined = installedDigest === undefined || slot.offer === undefined ? undefined : Object.freeze({
+      serviceContractDigest: installedDigest, notBeforeMS: slot.offer.notBeforeMS, notAfterMS: slot.offer.notAfterMS,
+    });
     return Object.freeze({ availability, installed: slot.current !== undefined, acceptance: slot.acceptance,
-      ...(slot.current === undefined ? {} : { digest: digest(slot.current) }), refresh: slot.refresh,
+      ...(installedDigest === undefined ? {} : { digest: installedDigest }), ...(offer === undefined ? {} : { offer }), refresh: slot.refresh,
       ...(slot.reason === undefined ? {} : { reason: slot.reason }) });
   }
   async refresh(methods: readonly object[], deadline: TrustedDeadline, context?: V4ApplicationContext, signal?: AbortSignal): Promise<readonly ServiceRefreshResult[]> {
@@ -793,18 +803,21 @@ export class ServiceBinding implements ServiceOfferParticipant {
   }
   /** Convenience Call owns the hidden preparation through the original final
    * result capability. Explicitly returned preparations remain independent. */
-  async callUnary(method: object, value: unknown, options: RPCUnaryPreparationOptions, context?: V4ApplicationContext,
+  callUnary(method: object, value: unknown, options: RPCUnaryPreparationOptions, context?: V4ApplicationContext,
     signal?: AbortSignal): Promise<RPCUnaryTakeResult> {
-    options = await this.#readyOptions(method, captureUnaryOptions(options, context), options.defaultLifetimeMS, context, signal);
-    this.#check(); const slot = this.#select([method])[0]!;
+    const captured = captureUnaryOptions(options, context);
+    this.#checkOwner(); const slot = this.#select([method])[0]!;
     if (slot.current === undefined) throw new RPCProtocolError("not_ready");
     if (slot.config!.facts.shape !== "unary") throw new RPCProtocolError("rpc_request_binding");
-    const captured = captureUnaryOptions(options, context); this.#check();
+    // Construct the caller's final native result capability before passive
+    // readiness work. Only preparation metadata flows through helper Promises.
+    // Returning from an async wrapper would create a second payload recipient.
+    this.#checkOwner();
     const release = this.#reservation!.hold(); let call: RPCUnaryCall | undefined;
     try {
       call = new RPCUnaryCall(context, signal, () => { if (call !== undefined) this.#calls.delete(call); release(); this.#collect(); });
       this.#calls.add(call);
-      try { this.#check(); call.begin(cancellation => this.prepareUnary(method, value, captured, context, cancellation)); }
+      try { this.#checkOwner(); call.begin(cancellation => this.#prepareCallUnary(method, value, captured, context, cancellation)); }
       catch (error) { call.fail(error); }
       const promise = call.promise;
       call.arm();
@@ -883,6 +896,20 @@ export class ServiceBinding implements ServiceOfferParticipant {
   prepareResumeAndSave(method: object, stream: V4StreamOwner, token: Uint8Array, store: V4OperationReferenceStore,
     options: RPCUnaryPreparationOptions, context?: V4ApplicationContext, signal?: AbortSignal) {
     return this.#prepareAndSave(method, store, "unary", cancellation => this.prepareResume(method, stream, token, options, context, cancellation), context, signal);
+  }
+  async #prepareCallUnary(method: object, value: unknown, options: RPCUnaryPreparationOptions, context?: V4ApplicationContext, signal?: AbortSignal): Promise<RPCUnaryPreparation> {
+    if (this.#source?.prepareDispatch === undefined || options.admission === "try_now" || applicationHasPermit(context)) {
+      return this.prepareUnary(method, value, options, context, signal);
+    }
+    options = await this.#readyOptions(method, captureUnaryOptions(options, context), options.defaultLifetimeMS, context, signal);
+    this.#check(); const slot = this.#select([method])[0]!, contract = slot.current;
+    if (contract === undefined) throw new RPCProtocolError("not_ready");
+    const captured = { ...captureUnaryOptions(options, context) }; delete captured.defaultResponseLimitBytes;
+    if (slot.config!.defaultResponseLimitBytes !== undefined) captured.defaultResponseLimitBytes = slot.config!.defaultResponseLimitBytes;
+    const cancellation = signal === undefined ? this.#abort.signal : AbortSignal.any([signal, this.#abort.signal]);
+    const prepared = await this.#source!.prepareDispatch!(slot.config!, this.config.namespace, contract, slot.offer, value, captured, context, cancellation);
+    if (this.#closed || cancellation.aborted) { prepared.close(); throw new RPCProtocolError("service_binding_closed"); }
+    return prepared;
   }
   async prepareUnary(method: object, value: unknown, options: RPCUnaryPreparationOptions, context?: V4ApplicationContext, signal?: AbortSignal): Promise<RPCUnaryPreparation> {
     options = await this.#readyOptions(method, captureUnaryOptions(options, context), options.defaultLifetimeMS, context, signal);

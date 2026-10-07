@@ -2,27 +2,27 @@
 
 The public `github.com/floegence/flowersec/flowersec-go/v6` package exposes the
 original bounded transport v4 implementation through `TransportEnvironment`,
-`V4Session`, immutable connection materials and explicit control-plane adapters.
+`Session`, immutable connection materials and explicit control-plane adapters.
 All examples below use `fs` as the package import alias. The schema and provider
 qualification gates in [TRANSPORT_V4_BINDING.md](TRANSPORT_V4_BINDING.md) remain
 separate from API availability.
 
 ## Shared host components
 
-Construct one `V4ResourceRoot` for every group that claims a shared budget.
-`V4ResourceConfig` fixes the profile revision, finite dimension limits and
+Construct one `ResourceRoot` for every group that claims a shared budget.
+`ResourceConfig` fixes the profile revision, finite dimension limits and
 account, reservation and reference slot counts. Create accounts with explicit
-`V4ResourceAccountKey` values; peer names never create an account. Every owning
+`ResourceAccountKey` values; peer names never create an account. Every owning
 constructor requires its corresponding `...Charge` reservation before it can
 allocate or run. References move through their original `Take`/`Borrow` rules;
 copying a handle does not reserve new quota.
 
-Create a `V4Clock` from a qualified monotonic source and a `V4ClockProfile`.
-`V4ClockRate` expresses an error ratio, so its numerator must be smaller than its
+Create a `Clock` from a qualified monotonic source and a `ClockProfile`.
+`ClockRate` expresses an error ratio, so its numerator must be smaller than its
 denominator. The source reports an incarnation and must report loss of its
 continuity guarantee. Install trusted time intervals only from an independently
 authenticated host or control authority. A wall-clock timestamp alone does not
-qualify time. `NewV4Deadline` and `NewV4Age` retain unsigned millisecond caps.
+qualify time. `NewDeadline` and `NewAge` retain unsigned millisecond caps.
 The local adapter must be bounded and safe for concurrent calls. Clock, deadline,
 window, delay and idle owners invoke it outside their own state locks. Concurrent
 read completion preserves the newest published mark in the same continuous era;
@@ -33,9 +33,9 @@ trusted envelopes invalidate previously captured wall samples without changing
 the separate monotonic-only window policy. The original network refresh position
 remains occupied through sampling, cancellation and actual completion.
 
-Create one `V4VerificationNamespaces` for the physical Environment budget,
-selecting `V4OnlineBootstrap` or `V4DurableRestore` before construction. Register
-independent `V4NamespaceTrustStore` anchors and complete their corresponding
+Create one `VerificationNamespaces` for the physical Environment budget,
+selecting `OnlineBootstrap` or `DurableRestore` before construction. Register
+independent `NamespaceTrustStore` anchors and complete their corresponding
 bootstrap or restore operation. An online nonce cannot establish absence of
 rollback in a restored durable store. Refresh, retained history and credential
 subscriptions remain owned by their original namespace.
@@ -66,14 +66,40 @@ through Close. Parent cancellation fences authorization even before the
 watchdog runs. Abnormal namespace and refresh watchdog exits cancel their
 original work and keep provider backing until the provider actually returns.
 
-The root-shared `V4ApplicationExecutor` requires explicit ordinary, resident and
-protected Completion capacities. Its `V4ApplicationExecutorCharge` includes the
+The root-shared `ApplicationExecutor` requires explicit ordinary, resident and
+protected Completion capacities. Its `ApplicationExecutorCharge` includes the
 qualified runtime allowance; no callback may create another free worker pool.
+For the normal online composition, construct `NamespaceReferenceFactory` with a
+finite trusted `NamespaceReferenceConfig` list. Each entry fixes the independent
+root, original Clock, authenticated bootstrap provider, trust and bootstrap
+limits, allocation owners and aggregate accounts. Reserve
+`NamespaceReferenceFactoryCharge` before construction. Configure the original
+`NamespaceRetirementService` with this same factory and install that service in
+`EnvironmentConfig.NamespaceRetirement`. Both owners belong to the original
+verification registry and are closed when that registry closes.
+
+Use `env.VerificationNamespace(ctx, tenant, authority)` to obtain a configured
+namespace. A missing history, including a visit after confirmed retirement,
+requires a fresh nonce query and complete independent trust/Head/State bootstrap
+before delivery. Application code does not reconstruct the trust or bootstrap
+owners. Unconfigured names refuse without creating an anchor. Each configured
+authority has one finite work slot; provider and cleanup tails retain that slot.
+History pressure invokes the same independent factory, with complete historical
+coverage and exact reference quiescence required before deletion. Missing
+coverage retains the occupied history and refuses capacity. `durable_restore`
+registries use their original persistent recovery composition and do not install
+this online factory.
+
+SQLite namespace history admits its current envelope and complete chunk digest
+in a bounded read-only snapshot before advancing the store epoch. The reader
+retains one chunk at a time; signature verification, original deadlines and
+independent recovery authority remain with namespace restoration.
+
 The Environment borrows shared dependencies without closing them.
 
 ```go
 env, err := fs.NewTransportEnvironment(fs.TransportEnvironmentOptions{
-    Config: fs.V4EnvironmentConfig{
+    Config: fs.EnvironmentConfig{
         Positions: 8, Materials: 16, MaterialPools: 1,
         MaterialCreateMS: 10_000, RuntimeBytes: qualifiedEnvironmentBytes,
         Clock: clock, Verification: verification,
@@ -83,7 +109,7 @@ env, err := fs.NewTransportEnvironment(fs.TransportEnvironmentOptions{
 })
 ```
 
-Reserve `environmentReservation` with `V4EnvironmentCharge` for this exact
+Reserve `environmentReservation` with `EnvironmentCharge` for this exact
 configuration. Runtime sizes, account limits and provider charges come from the
 deployment's qualified profile rather than values copied from the example.
 Services additionally configure finite result/query capacity and the shared
@@ -107,21 +133,21 @@ Completion position without admission.
 
 ## Session plans and connection inputs
 
-`V4SessionPlanFactory.Create` atomically reserves metadata, an original ordinary
+`SessionPlanFactory.Create` atomically reserves metadata, an original ordinary
 task and future protected Completion responsibility. It captures the immutable
-`V4SessionPlanConfig` without invoking application code. The authorization
-callback later receives `V4AuthenticatedRequestContext` under the original
-permit; it reserves and returns the same invocation's `V4ApplicationLease` with
+`SessionPlanConfig` without invoking application code. The authorization
+callback later receives `AuthenticatedRequestContext` under the original
+permit; it reserves and returns the same invocation's `ApplicationLease` with
 its cleanup callback. Handler declarations are fixed before READY. Build a new
 handler plan and application plan for each Session.
 
-`V4ConnectOptions.Preparation` supplies the local carrier factory, exact
+`ConnectOptions.Preparation` supplies the local carrier factory, exact
 application profile and K, required guarantees, original deadline, bounded
 Hello/establishment geometry, preauth backing, root, owner, tenant/session scope
 and original application plan. Workspace reference fields are empty at this
 entry point: the public assembly obtains the six source or four static/pool
-workspace charges in one root batch. A `V4PoolSessionInput` or
-`V4LiveSessionInput` supplies the separately admitted original durable spend
+workspace charges in one root batch. A `PoolSessionInput` or
+`LiveSessionInput` supplies the separately admitted original durable spend
 authority or authenticated control provider and workspaces. Exactly one is
 required.
 
@@ -160,7 +186,7 @@ Candidate metadata uses one protected reservation per configured parallel
 position. Numeric retries reuse that position only after the previous carrier
 has physically retired. They do not reserve another metadata owner or borrow
 another Environment alias. Component callers reserve the first position using
-`V4SourceCarrierCharge`; the shared preparation admits the additional position
+`SourceCarrierCharge`; the shared preparation admits the additional position
 before acquisition when parallel preparation is enabled. The built-in native
 factories also admit their actual method positions, immutable policy references,
 Environment aliases and separate TLS/socket/transport backing at this point.
@@ -179,15 +205,15 @@ cannot restart another candidate's cleanup allowance.
 
 The signed session parameters come from the acquired material. Do not copy
 parameters, feature grants or identity fields from an earlier connection.
-`V4RPCServicesConfig` supplies immutable method registrations and exact canonical
+`RPCServicesConfig` supplies immutable method registrations and exact canonical
 contracts; its Session and crypto profile are filled from the actual material
 inside the same aggregate admission.
 
-`NewV4WebSocketCarrierFactory` supplies a native direct WSS implementation of
-`V4ConsumerCarrierFactory`. Register one exact canonical public Route, its fixed
+`NewWebSocketCarrierFactory` supplies a native direct WSS implementation of
+`ConsumerCarrierFactory`. Register one exact canonical public Route, its fixed
 numeric endpoint, independent CA roots (CA mode) or signed leaf-DER pins (pin
 mode), original clock and qualified provider options. Reserve
-`V4WebSocketCarrierFactoryCharge` before construction. Connect reserves each
+`WebSocketCarrierFactoryCharge` before construction. Connect reserves each
 prospective connection's protected `websocket.Charge` under the preparation's
 original tenant/Session accounts before acquisition, then transfers that backing
 into native TLS/upgrade work. Direct component preparation obtains the same
@@ -206,9 +232,9 @@ policy backing until physical cleanup and retirement. `WaitCleanup` observes
 those original tails. This factory does not supply local-loopback or tunnel
 admission, listener setup, native QUIC, or WebTransport.
 
-For multiple fixed WSS candidates, use `NewV4WebSocketCarrierSet` with up to 16
-distinct `V4WebSocketEndpoint` entries. Its metadata reservation uses
-`V4WebSocketCarrierSetCharge`; construction additionally reserves all child
+For multiple fixed WSS candidates, use `NewWebSocketCarrierSet` with up to 16
+distinct `WebSocketEndpoint` entries. Its metadata reservation uses
+`WebSocketCarrierSetCharge`; construction additionally reserves all child
 factories atomically under the supplied original accounts. Set
 `Preparation.Carrier` to the returned set. Each call dispatches only the exact
 signed Route selected by the existing Connect owner; finite candidate racing,
@@ -224,11 +250,11 @@ until physical retirement. A set preparation uses one position per route, so
 Closing the set fences new preparation, and its cleanup waits for the original
 child providers to retire.
 
-`NewV4QUICCarrierFactory` provides the direct native QUIC alternative through
-the same `Preparation.Carrier` field. `V4QUICFactoryConfig` fixes one canonical
+`NewQUICCarrierFactory` provides the direct native QUIC alternative through
+the same `Preparation.Carrier` field. `QUICFactoryConfig` fixes one canonical
 signed Route, numeric `RemoteAddress`, independently installed CA roots or signed
-leaf-DER pins, original clock and finite `V4QUICProviderOptions`. Reserve
-`V4QUICCarrierFactoryCharge` before construction. `DefaultV4QUICLimits` supplies
+leaf-DER pins, original clock and finite `QUICProviderOptions`. Reserve
+`QUICCarrierFactoryCharge` before construction. `DefaultQUICLimits` supplies
 the protocol geometry; deployments still provide qualified runtime, provider
 byte/task limits and native stream/connection positions. Use one address attempt.
 
@@ -242,12 +268,12 @@ streams remain attached to the original charged QUIC connection. Reported
 Session guarantees come from the actual admitted graph and current registry;
 the existence of a factory does not establish deployment qualification.
 
-`NewV4WebTransportCarrierFactory` uses the same native Session graph over a
+`NewWebTransportCarrierFactory` uses the same native Session graph over a
 dedicated HTTP/3 connection. Its signed Route fixes `h3`,
 `/flowersec/webtransport/v4/direct`, an empty subprotocol and explicit Origin
-policy. `V4WebTransportFactoryConfig` binds one numeric endpoint, the logical
+policy. `WebTransportFactoryConfig` binds one numeric endpoint, the logical
 signed host, TLS roots or DER pins, the original clock and finite provider
-options. Reserve `V4WebTransportCarrierFactoryCharge` before construction.
+options. Reserve `WebTransportCarrierFactoryCharge` before construction.
 Preparation permits only TLS, HTTP/3 CONNECT/SETTINGS and native association
 bytes; Flowersec credentials remain behind the existing durable activation.
 There is one WebTransport Session per native connection and no connection reuse,
@@ -268,12 +294,12 @@ Use one of these explicit inputs:
 
 | Entry point | Original input |
 | --- | --- |
-| `env.ConnectSource(ctx, provider, options)` | A fixed `V4ApplicationIdentity` and `V4MaterialLeaseProvider`; acquisition returns a verified lease. |
+| `env.ConnectSource(ctx, provider, options)` | A fixed `ApplicationIdentity` and `ConnectionMaterialSource`; acquisition returns a verified lease. |
 | `env.ConnectMaterial(ctx, material, options)` | One immutable material hosted through `env.CreateMaterial`; identity/provider/acquisition fields are absent. |
 | `env.ConnectPool(ctx, source, options)` | An installed item from this Environment's preauthorized source; generation, identity/provider and material-allocation fields are absent. |
 
 Create material with `NewConnectionMaterial` from an original verified lease,
-matching immutable identity, material generation and `V4ConnectionMaterialCharge`
+matching immutable identity, material generation and `ConnectionMaterialCharge`
 reservation. It never wraps an existing Session. The Environment claims a finite
 material position before entering the `CreateMaterial` callback. Local refusal
 preserves caller inputs. Once original preparation is admitted, the Environment
@@ -281,24 +307,24 @@ keeps its workspaces and application plan through real cleanup, even when the
 Connect wait returns canceled without a Session. A canceled wait does not prove
 that spend, provider work or material retirement has completed.
 
-For an independent live control authority, set `V4LiveSessionInput.Control` to
-`V4LiveControlConfig` and reserve `V4LiveControlCharge` in its `Buffers` field.
+For an independent live control authority, set `LiveSessionInput.Control` to
+`LiveControlConfig` and reserve `LiveControlCharge` in its `Buffers` field.
 The SQLite store, authority, issuance, policy, guard and invocation fields are
 absent in this variant, as is `Preparation.LiveIssuance`. The original prepared
 winner and complete Session admission precede the control request. The trusted
-`V4LiveAuthorizationProvider` receives only fixed public request fields and one
+`LiveAuthorizationProvider` receives only fixed public request fields and one
 bounded proof output buffer; its backing is retained through actual return.
 This explicit L1 path uses one physical attempt, with no hidden retry or fallback.
 The adapter supplies authenticated control transport and authority-side logical
-deduplication. `NewV4LiveHTTPSTransport` supplies the bounded consumer HTTPS
+deduplication. `NewLiveHTTPSTransport` supplies the bounded consumer HTTPS
 transport, using independently installed server trust, an explicit client TLS
 identity and a fixed numeric endpoint. Reserve its transport charge and the
-separate `V4HTTPSBootstrapCharge` before construction. Its one physical request
+separate `HTTPSBootstrapCharge` before construction. Its one physical request
 posts the `live-authorization-1` envelope to `<BaseURL>/live/authorize`; success
 requires HTTP/1.1 200, `application/cbor`, a positive bounded Content-Length,
 and complete original proof bytes. The server must authenticate and authorize
 the client certificate. Redirects, compression and chunked responses are refused.
-`controlplane.NewV4LiveAuthorizationCodec` provides the bounded server request
+`controlplane.NewLiveAuthorizationCodec` provides the bounded server request
 decoder; parsing never grants an issuance or activation capability.
 Returned proof bytes pass the same signature, namespace, exact winner and
 original Activate gate as the in-process authority. A late valid proof cannot
@@ -315,7 +341,7 @@ it is not a new spend key. The server resolves the original Artifact and frozen
 authority projection independently. It must not authorize from the request's
 identity or digest fields alone.
 
-`controlplane.NewV4LiveAuthorizationHTTPSService` supplies the matching reference
+`controlplane.NewLiveAuthorizationHTTPSService` supplies the matching reference
 server at `POST /live/authorize`. Its independently configured host binds the
 verified TLS certificate to the tenant, client identity and audience, then
 returns the retained original Artifact, activation plan, trust and deadline.
@@ -327,7 +353,7 @@ publication retain the same guard; restart can read exact committed proof bytes
 without reviving the old execution right.
 
 Reserve all five vectors returned by
-`V4LiveAuthorizationHTTPSServiceCharges` before construction, plus the separately
+`LiveAuthorizationHTTPSServiceCharges` before construction, plus the separately
 owned native listener/header/connection budgets. The service supports direct
 and tunnel plans, with one physical request position, a fixed aggregate rate
 share and no queue. Tunnel plans retain both original leg Grants and publish
@@ -338,14 +364,14 @@ their original charges.
 
 ## Native WSS serving
 
-Create `V4Environment.Serve` with a separately reserved `V4ServeCharge` and a
-finite `V4ServeConfig`. The returned `ServeHandle` owns the ingress aggregate
+Create `Environment.Serve` with a separately reserved `ServeCharge` and a
+finite `ServeConfig`. The returned `ServeHandle` owns the ingress aggregate
 and its Sessions. Each original ingress receives a random invocation/carrier
 identity from this aggregate; applications cannot supply a detached admission
 owner to `AcceptWebSocket`.
 
-`NewV4WebSocketServer` owns one native TCP listener, static certificate chain,
-canonical direct WSS Route and exact Origin policy. Its `V4WebSocketServerCharge`
+`NewWebSocketServer` owns one native TCP listener, static certificate chain,
+canonical direct WSS Route and exact Origin policy. Its `WebSocketServerCharge`
 reserves finite connection positions, bounded HTTP headers/timeouts and native
 provider allowances before serving. It enforces TLS 1.3, HTTP/1.1, no TLS
 resumption, exact Host/port/path and the actual local socket address. Pin-mode
@@ -356,7 +382,7 @@ trusted clock. The server accepts only native `*net.TCPListener` ownership.
 In that server's handler, call `serve.AcceptWebSocket(ctx, writer, request,
 options)`, setting `options.Server` to the original server and leaving
 `options.Upgrade` empty. Supply a fresh application plan, trusted bounded
-`V4AcceptedMaterialSource`, original deadline, resource accounts, establishment
+`AcceptedMaterialSource`, original deadline, resource accounts, establishment
 limits and SQLite AdmissionLedger authority. Its input workspace and admission
 owner fields remain empty: the public boundary reserves the complete intake
 batch and installs the original ingress identity itself. Material lookup sees
@@ -379,8 +405,8 @@ A Session ending never closes a shared listener, clock, key or durable authority
 
 ## Native QUIC serving
 
-`NewV4QUICServer` opens a finite native UDP listener for one fixed signed direct
-Route and static certificate. Reserve `V4QUICServerCharge` with the exact
+`NewQUICServer` opens a finite native UDP listener for one fixed signed direct
+Route and static certificate. Reserve `QUICServerCharge` with the exact
 preauth accounts. Construction additionally reserves the listener's provider
 allowance, and each connection is reserved before its native TLS work. The
 server rejects dynamic certificate callbacks, resumption and wrong ALPN. Its
@@ -388,10 +414,10 @@ fixed local certificate must satisfy the signed CA or pin policy and shared
 trusted clock. `Address` returns the actual bound numeric endpoint.
 
 Call `server.Accept(ctx, entrance)` with the original deadline and initial frame
-policy to obtain an opaque `V4QUICIngress`. This result is an accepted TLS owner,
+policy to obtain an opaque `QUICIngress`. This result is an accepted TLS owner,
 not an authenticated Session. Pass it to `serve.AcceptQUIC(ctx, ingress, options)`
 using the same entrance, root, Environment and exact account generations. Supply
-a fresh application plan, bounded `V4AcceptedMaterialSource`, establishment
+a fresh application plan, bounded `AcceptedMaterialSource`, establishment
 limits and SQLite AdmissionLedger authority. Leave the input's owner, entrance,
 establishment, subscriptions and admission workspace fields empty. The boundary
 reserves six admission owners together and obtains the ingress identity from
@@ -401,7 +427,7 @@ Before durable admission, the accepted provider compares the signed candidate
 with its actual local/remote addresses, SNI, TLS version, negotiated ALPN and
 fixed listener policy. The same original path receives HELLO and FSB, verifies
 material, commits accepted admission, performs Noise and both READY flights,
-then returns a public `V4Session`. Public `OpenStream` uses its authenticated
+then returns a public `Session`. Public `OpenStream` uses its authenticated
 native stream dispatcher in either signed role; raw QUIC connection handles
 are not exposed. Pool and live source profiles share this assembly.
 
@@ -415,14 +441,14 @@ executor, namespace, keys and durable store remain caller-owned.
 
 ## Artifact issuance and HTTPS publication
 
-`controlplane.NewV4DirectIssuer` fixes verified client/server certificates,
+`controlplane.NewDirectIssuer` fixes verified client/server certificates,
 direct or private-local candidates, profile, Session contract and revocation
 policy. Its signing authority is separate from ordinary connection consumers.
 Every issue generates independent nonzero lease, Session nonce and PSK values,
 reserves the full durable issuance obligation before signing, and commits the
 actual signed Artifact digest before publication.
 
-`NewV4SQLiteDirectIssueAuthority` provides that durable gate in the original
+`NewSQLiteDirectIssueAuthority` provides that durable gate in the original
 SQLite transaction domain. Its immutable namespace/issuer/policy share comes
 from current independently verified TrustConfig and complete State. The
 configured rate, outstanding count and reserved State-byte limits are persisted
@@ -432,20 +458,20 @@ authenticates the original request and authorizes both verifiers' complete
 namespace read permissions; authenticated transport alone does not supply those
 application rights.
 
-`controlplane.NewV4ArtifactIssuer` also supports a fixed mixture of direct and
+`controlplane.NewArtifactIssuer` also supports a fixed mixture of direct and
 tunnel candidates. Each tunnel leg has its own independently installed Grant
 issuer/policy and verified relay identity. Construction checks every candidate's
 exact namespace closure, including the endpoint and relay role masks, against
 the actual local namespace owners. The parent policy and validity envelope must
 cover all required Grant and relay dependencies.
-`V4ArtifactIssuer.NamespaceClosure` supplies the complete dependency set for
-the durable authority's `V4DirectIssuePolicyConfig.Namespaces`. The authority
+`ArtifactIssuer.NamespaceClosure` supplies the complete dependency set for
+the durable authority's `DirectIssuePolicyConfig.Namespaces`. The authority
 checks this complete set for every issuance, and its persisted immutable
 configuration binds the set so reopening cannot omit or change dependencies.
-The same SQLite authority implements `V4ArtifactIssueAuthority`; its durable
+The same SQLite authority implements `ArtifactIssueAuthority`; its durable
 parent obligation is distinct from endpoint Grant issuance during live TxB.
 
-`V4SQLiteDirectIssueAuthority.RetireMature` retires an original request only after
+`SQLiteDirectIssueAuthority.RetireMature` retires an original request only after
 current authenticated full State and its Head establish a connection floor
 strictly above its cohort, and trusted lower time passes the namespace's maximum
 complete impact. It rechecks the exact evidence around the durable compare and
@@ -456,7 +482,7 @@ the tombstone still counts against physical `MaxRecords`.
 including retired rows. Enumeration is a publication input, not a coherent
 complete-State snapshot or a signed State/Head publisher.
 
-`NewV4DirectIssueHTTPSService` mounts one such issuer for one registered client
+`NewDirectIssueHTTPSService` mounts one such issuer for one registered client
 certificate at `POST /issue/direct`. The request body is the canonical CBOR
 array `[request_id: bytes32]`, exactly 35 bytes. Its body cannot select an
 identity, route or signer. Mount it on a separately reserved native TLS 1.3
@@ -464,10 +490,10 @@ listener with mandatory client verification, session tickets disabled, bounded
 headers and finite connection/task capacity. The handler pins the verified
 client certificate, checks trusted-time validity, admits one request position
 without a queue, and applies its aggregate request rate before body work.
-`V4AuthenticatedDirectIssueClient(ctx)` exposes the original mTLS fingerprint
+`AuthenticatedDirectIssueClient(ctx)` exposes the original mTLS fingerprint
 to the authority's host hook, which compares it with the authentication envelope.
 
-`NewV4ArtifactIssueHTTPSService` fixes the general issuer at
+`NewArtifactIssueHTTPSService` fixes the general issuer at
 `POST /issue/artifact` with the same request, mTLS registration and bounded
 publication contract. The constructor selects the endpoint; neither service
 accepts a peer-selected issuer or falls back to the other endpoint.
@@ -480,7 +506,7 @@ publication and cancellation callbacks exit. It borrows the issuer and does
 not close that shared authority. A request ID whose durable reservation was
 accepted cannot be reused to manufacture another issuance after a lost reply.
 
-`NewV4DirectIssueSource` is the matching consumer `V4MaterialLeaseProvider` for
+`NewDirectIssueSource` is the matching consumer `ConnectionMaterialSource` for
 ordinary `ConnectSource`. Configure the immutable client/server certificates,
 their independent namespace trust, activation delegation name and exact
 application profile/K before construction. Connect captures the source's actual
@@ -506,7 +532,7 @@ Close interrupts the original physical request and keeps its buffers until
 actual network/callback exit. Failed or uncertain responses do not trigger a
 new request, a second issuer or automatic reacquisition.
 
-`NewV4ArtifactIssueSource` uses `/issue/artifact`. Its immutable tunnel entries
+`NewArtifactIssueSource` uses `/issue/artifact`. Its immutable tunnel entries
 name the original candidate index, endpoint role, Grant validation and relay
 certificate/trust. They must cover every returned tunnel candidate for the
 local endpoint. The source verifies the returned parent and derives each
@@ -518,9 +544,9 @@ credential permission.
 
 ## Retained original live Artifact material
 
-`controlplane.NewV4LiveArtifactHost` connects general issuance with the native
+`controlplane.NewLiveArtifactHost` connects general issuance with the native
 live authorization service. Pass the same host as
-`V4ArtifactIssuerConfig.Retention` and `V4LiveAuthorizationHTTPSConfig.Host`.
+`ArtifactIssuerConfig.Retention` and `LiveAuthorizationHTTPSConfig.Host`.
 Its configuration fixes the authenticated client TLS certificate digest,
 endpoint certificates and independent trust, activation delegation and signer,
 per-candidate Grant signers/limits, relay identities, and application policy.
@@ -528,7 +554,7 @@ The durable issuance authority and SQLite live spend store remain independent
 requirements. The host never substitutes its resident material index for either
 durable ledger.
 
-`V4LiveArtifactHostCharges` returns the material host charge and the charge for
+`LiveArtifactHostCharges` returns the material host charge and the charge for
 one protected plan position. Reserve the host and `MaxArtifacts` separate plan
 positions under the same Environment before construction. The host reserves an
 original material position before durable issuance begins. Only after the
@@ -541,13 +567,13 @@ lookup or diagnostic export.
 The first authenticated live request fixes the exact attempt, winner and
 activation cutoff in that original position. The plan derives both Grant
 scopes using the same parent issue/session bounds used by
-`V4ArtifactIssueSource`. Its independent application policy runs once, only
+`ArtifactIssueSource`. Its independent application policy runs once, only
 through the original SQLite TxA dispatch. Further requests borrow the same
 plan for the existing read-only material path; they cannot replace its winner,
 regenerate Grant projections, or rerun the policy after an uncertain outcome.
 
-For a tunnel, `V4LiveArtifactServerResolver` receives the fixed public plan
-fields and a read-only `V4LiveArtifactServerMaterial` borrow before TxA. The
+For a tunnel, `LiveArtifactServerResolver` receives the fixed public plan
+fields and a read-only `LiveArtifactServerMaterial` borrow before TxA. The
 secret Artifact is for the independently authenticated server endpoint only.
 The resolver joins authenticated material delivery and admission of the
 server's original registration, then returns its exact incarnation and
@@ -569,14 +595,14 @@ the original authority's signing or allow dispatch from storage.
 
 ## Deferred server allow preparation
 
-`NewV4TunnelServerAllowRegistration` admits one original material, candidate
+`NewTunnelServerAllowRegistration` admits one original material, candidate
 and attempt before exposing its fresh recipient incarnation. Reserve all four
-vectors from `V4TunnelServerAllowRegistrationCharges`: registration, recipient,
+vectors from `TunnelServerAllowRegistrationCharges`: registration, recipient,
 credential subscriptions and carrier. The configured admitting carrier factory
 reserves its preparation position without carrier I/O. The server Runtime is
 independent of the incoming physical HTTP request.
 
-Pass the registration as the `V4TunnelServerAllowEndpoint` of the authenticated
+Pass the registration as the `TunnelServerAllowEndpoint` of the authenticated
 allow service. The first valid original instruction atomically starts its only
 Prepare dispatch; a later physical send may be that first arrival. It verifies
 the exact request and Grant before preparing the public route and checks the
@@ -595,22 +621,27 @@ always has a new incarnation and cannot accept the previous one's allow.
 
 ## Preauthorized pool and explicit TopUp
 
-A pool has one `V4SQLiteTopUpJournal`, complete material decoder, original-key
-identity restorer and `V4MaterialPool`. Create or open the journal explicitly
-with its independent `V4SQLiteContinuity` and `V4SQLiteTopUpAuthority`.
-`CreateV4SQLiteTopUpJournal` is only for an authorized new namespace;
-`OpenV4SQLiteTopUpJournal` never initializes missing history. Persistent backing
-survives closure, and `V4StorageFormatError.Projection` exposes only finite
-refusal facts.
+A pool has one `SQLiteTopUpJournal`, complete material decoder, original-key
+identity restorer and `MaterialPool`. Create or open the journal explicitly
+with its independent `SQLiteContinuity` and `SQLiteTopUpAuthority`.
+`CreateSQLiteTopUpJournal` is only for an authorized new namespace;
+`OpenSQLiteTopUpJournal` never initializes missing history. Persistent backing
+survives closure, and `StorageFormatError.Projection` exposes only finite
+refusal facts. Reopen inspects the current manifest and every installed pool
+record in a read-only snapshot, then repeats admission on the same original
+file before writable configuration or epoch advancement. Stored identity and
+material digests, sequence and generation bounds, and surviving Applied tuples
+must agree. These checks preserve expired history and do not restore keys or
+grant fresh acquisition authority.
 
 Use `env.NewMaterialPool` to register the original pool tails under the
 Environment's configured `MaterialPools` and `Materials` limits. A
-`V4PoolMaterialDecoder` verifies the reference `pool-material-1` bundle against
-independent issuer and activation trust. `V4PoolIdentityRestorer` recovers the
+`PoolMaterialDecoder` verifies the reference `pool-material-1` bundle against
+independent issuer and activation trust. `PoolIdentityRestorer` recovers the
 persisted certificate and opaque provider locator; it must not substitute the
 provider's current identity.
 
-The issuer side can use `NewV4PoolBatchSigningIssuer`. It reserves one bounded
+The issuer side can use `NewPoolBatchSigningIssuer`. It reserves one bounded
 batch worker and a separate activation-plan position for every requested item.
 Each item is issued through the original Artifact authority, then the issuer
 verifies the complete preauthorized candidate set and fixed attempt budget,
@@ -621,7 +652,7 @@ deadline; the complete bundle is size-checked before any bytes enter the TopUp
 response. A failed or canceled item clears its private bytes and cannot be
 re-signed by that plan.
 
-Configure `NewV4PoolRelayFactory` with independent parent/Grant/relay trust and
+Configure `NewPoolRelayFactory` with independent parent/Grant/relay trust and
 the destination `SQLiteRelayAuthorityTable`. It verifies every returned pool
 bundle against the original Artifact, proof, candidate set, activation
 delegation, current revocation state and both role-local Grants. Only after the
@@ -631,17 +662,17 @@ server allow, or restores a lost publication owner. Closing an unfinished
 publication removes only its exact unused reserved rows; committed public rows
 and consumption history remain.
 
-`NewV4PreauthorizedPoolSource` fixes source permission, immutable identity
+`NewPreauthorizedPoolSource` fixes source permission, immutable identity
 snapshot provider, authenticated owner-proof provider, control transport, fence
 key, clock, finite windows and observer cap. The source owns one control worker
-and one unresolved durable intent. The reference `V4PoolHTTPSTransport` provides
+and one unresolved durable intent. The reference `PoolHTTPSTransport` provides
 independent cold-start control I/O using explicit TLS trust and a fixed numeric
-endpoint. Its `V4PoolResultDecoder` validates the complete authenticated response
+endpoint. Its `PoolResultDecoder` validates the complete authenticated response
 envelope. Reserve the transport, HTTPS provider and decoder charges separately.
 Their dependencies retain all TLS/key/trust backing through actual method exit.
 
 ```go
-result := source.TopUp(ctx, fs.V4TopUpOptions{
+result := source.TopUp(ctx, fs.TopUpOptions{
     DesiredCount: 4,
     MaxItemBytes: 65536,
 })
@@ -671,19 +702,19 @@ Only explicit source `Close` cancels the worker. Neither pool acquisition nor
 `ConnectPool` triggers replenishment or fallback. `ConnectPool` reserves the
 Session position before acquiring/removing an installed material, then uses the
 same carrier preparation, spend, Noise and READY owners as the other inputs.
-After process recovery, `V4MaterialPool.RestoreInstalled` restores complete
+After process recovery, `MaterialPool.RestoreInstalled` restores complete
 untaken items with their original certificate/key reference.
 
 ## Live spend facts and original material
 
 `controlplane.NewSpendReceiptService` borrows the original SQLite store, trusted
 clock and independently reserved service/read capacity. The host derives
-`V4LiveSpendReadAccess` from authenticated tenant, identity and audience context.
+`LiveSpendReadAccess` from authenticated tenant, identity and audience context.
 The request's lease identifier alone cannot authorize a lookup. One actual read
 and response position shares a finite rate/burst limit and at most two seconds
 of work. The response writer and row remain charged until their actual exit.
 
-Standalone `V4SQLiteLiveSpendReadCharge` and `NewV4SQLiteLiveSpendRead` also
+Standalone `SQLiteLiveSpendReadCharge` and `NewSQLiteLiveSpendRead` also
 require the qualified `runtimeBytes` allowance. The read captures the parent's
 deadline and cancellation signal during admitted construction. Its own reserved
 observer and timer enforce the original read window while store or response
@@ -696,7 +727,7 @@ canonical CBOR map into caller-reserved output. Neither method constructs a
 signed control response; the authenticated application or HTTPS response owner
 still binds the original request and supplies its required signature.
 
-`V4SQLiteLiveSpendRead.RecoverExpired` can end an expired spending intent as
+`SQLiteLiveSpendRead.RecoverExpired` can end an expired spending intent as
 `consumed/unknown`. `ReconcileAuthorization` can monotonically record a trusted
 external `denied` or `authorized` fact for the exact original target. It cannot
 generate material, dispatch policy or server allow, or infer `not_started`.
@@ -730,16 +761,16 @@ required retention history independently of Session or Environment closure.
 
 ## Native WebTransport serving and datagrams
 
-`NewV4WebTransportServer` owns a finite UDP/H3 listener, fixed signed route,
+`NewWebTransportServer` owns a finite UDP/H3 listener, fixed signed route,
 TLS identity, exact Origin policy and preauthentication account generations.
-Reserve `V4WebTransportServerCharge` before construction. `Accept` obtains an
-opaque `V4WebTransportIngress`; `serve.AcceptWebTransport` performs original
+Reserve `WebTransportServerCharge` before construction. `Accept` obtains an
+opaque `WebTransportIngress`; `serve.AcceptWebTransport` performs original
 material verification, durable admission, Noise and both READY obligations.
 Unadopted ingress must be closed. Listener, ingress and Session cleanup retain
 their respective original native tasks and stream positions through real exit.
 
 With the signed datagram feature selected and `Core.Datagrams` configured,
-raw QUIC and WebTransport `V4Session.UnreliableMessages` expose the existing
+raw QUIC and WebTransport `Session.UnreliableMessages` expose the existing
 carrier-neutral `UnreliableMessageChannel`. `MaxMessageBytes` reports only the
 current local submission payload cap (949 bytes for the standard 1024-byte
 envelope). A smaller observed native MTU is retained; it grants no retry.
@@ -759,13 +790,13 @@ qualification work; these constructors do not assert those results.
 
 ## Service operations and response publication
 
-Bind a service to one `V4Session`, or call `PrepareUnary` with an exact installed
+Bind a service to one `Session`, or call `PrepareUnary` with an exact installed
 contract digest and trusted local codec/decoder. Prepare fixes input and
 deadlines. Start joins the same original operation and returns `NotAdmitted`
 separately from an admitted operation that later fails. `Status`, `Progress` and
 `WaitStatus` do not infer remote execution from local send acceptance.
 
-Method-bound preparation chooses `V4OperationOptions.ResponseLimitBytes` when
+Method-bound preparation chooses `OperationOptions.ResponseLimitBytes` when
 nonzero or when `ExplicitResponseLimit` is true, then the method's
 `DefaultResponseLimitBytes`, and finally the exact contract maximum. Set
 `ExplicitDefaultResponseLimit` to configure a zero local default. Both explicit
@@ -783,7 +814,7 @@ request header is actually accepted. Execution method preparation captures one
 installed exact Offer; supplied bounds must match that real snapshot. It does
 not merge windows, query for a replacement, or renew an older operation.
 
-`V4ServiceClient` borrows one fixed Session or one Controller and owns a finite
+`ServiceClient` borrows one fixed Session or one Controller and owns a finite
 mixed unary, streaming and notify method table in the Environment's 64-entry
 service index. `BindMethods`
 accepts a trusted namespace and method definition; `BindUnaryService` restricts
@@ -798,9 +829,9 @@ actual cleanup. The original single-method convenience entry uses this same
 owner and implementation.
 
 Handler registrations can borrow exact subsets through `Dependencies`.
-`NewV4ServiceDependency` takes a local alias, an existing `V4ServiceClient`, and
-namespace-qualified `V4ServiceDependencyMethod` selectors. Each method defaults
-to `V4RequiredForDispatch`; `V4OnUse` allows the application to enter without
+`NewServiceDependency` takes a local alias, an existing `ServiceClient`, and
+namespace-qualified `ServiceDependencyMethod` selectors. Each method defaults
+to `RequiredForDispatch`; `OnUse` allows the application to enter without
 that dependency being ready. Declarations are limited to 64 aliases and 256
 method references per registration, with copied selectors and real references
 charged to that registration. They reuse the client's original method slots,
@@ -812,7 +843,9 @@ borrowing clients outside host authority gates. Close can seal that position;
 the final registration gate rejects late construction without publishing it.
 Selecting a view retains its actual application origin and the registration's
 borrowed clients until that call returns. Registration Close seals new selection
-but cannot clear a selected call's clients early. An initializer whose origin
+but cannot clear a selected call's clients early. Every entered application
+context also retains its captured declaration until the context actually exits.
+An initializer whose origin
 and registration share the same primary uses one alias for that responsibility.
 Ordinary registrations preadmit view reference slots for each borrowed client's
 generic call table and distinct declared workloads. Repeated aliases of the
@@ -822,7 +855,19 @@ extra root reference when the slab is full. Shared aggregate metadata stays
 charged as a whole through every component's actual lifetime. Initializers
 retain their separate pre-Acquire Controller reference allowance.
 
-`V4InvocationServiceFromContext(ctx, alias)` returns the restricted invocation
+`Session.ReplaceServiceDependencies(ctx, method, dependencies)` replaces the
+trusted declaration of an existing unary, streaming or notification execution
+handler. `NotificationSubscription.ReplaceDependencies` uses the same bounded
+replacement path for Session and Controller observers. Each original owner
+admits at most one construction turn, reserves the new declaration in its exact
+resource scopes and rechecks its registration gate before publication. The
+method, handler and contract do not change. A new required dependency that is
+not ready gates future application entry; it does not undo a published current
+Session. Replacement closes the previous declaration's future selection rights,
+while its running contexts, selected views and real cleanup retain the old
+backing. Invocation contexts cannot use these registration control APIs.
+
+`InvocationServiceFromContext(ctx, alias)` returns the restricted invocation
 view. Its unary, streaming and notification preparation and convenience methods
 use only the declared selectors. It provides no Bind, Refresh, UpdateContract,
 Close or Controller controls. Use the original callback context or a child
@@ -881,7 +926,7 @@ cleanup. Optional descriptors create none of this work. Replacement candidates
 use the original Controller attempt to query and stage their own authenticated
 exact snapshots and Offers before publication.
 
-`V4ConnectionController.BindMethods` and `BindUnaryMethods` use the Controller's
+`ConnectionController.BindMethods` and `BindUnaryMethods` use the Controller's
 existing accepting current. They capture the authenticated logical endpoints
 and trusted application mapping and preserve full canonical snapshots in
 charged binding backing. New work selects only that Controller's current and
@@ -910,7 +955,7 @@ unapproved canonical field. Failure preserves the existing snapshot and local
 response default. Snapshot availability and actual current dispatch readiness
 are separate facts.
 
-`V4ServiceBindOptions.ContractSource = V4ServiceContractsRemote` obtains the
+`ServiceBindOptions.ContractSource = ServiceContractsRemote` obtains the
 selected methods through the existing authenticated ordinary query channel.
 The entire definition and maximum snapshot backing are reserved first, including
 unselected descriptors. Initial acquisition returns the client only when every
@@ -920,8 +965,8 @@ partial outcomes, and `UpdateContract` queries the explicitly approved digest.
 All batches fork the same original trusted deadline. A complete installed
 canonical body supplies conditional queries; both successful response variants
 copy into the original method snapshot. Unknown local variants cannot install
-methods or handlers. Per-target refusals distinguish `ErrV4ContractDenied` from
-`ErrV4ContractUnavailable`. Current method/schema identity, bounded acceptance and
+methods or handlers. Per-target refusals distinguish `ErrContractDenied` from
+`ErrContractUnavailable`. Current method/schema identity, bounded acceptance and
 response defaults remain mandatory. Offer installation retains distinct old
 windows, accepts a valid future window as time-pending, and captures the selected
 window in each new prepared operation. Environment acquisition positions are
@@ -940,8 +985,8 @@ no cancellation task. Contract reads, joined observers, and batch installation
 return their original visits on panic or abnormal task exit. An abandoned batch
 settles only its own original method updates and retains any real query tail.
 
-Remote bindings can set `OfferRefresh: V4ServiceOfferRefreshManaged` with an
-explicit `V4ContractRenewalPolicy`. The policy supplies qualified complete-batch,
+Remote bindings can set `OfferRefresh: ServiceOfferRefreshManaged` with an
+explicit `ContractRenewalPolicy`. The policy supplies qualified complete-batch,
 join, whole-round suspension and trusted-time error bounds, plus the source's
 guaranteed minimum remaining Offer window. These are trusted deployment inputs;
 peer timestamps and measured query latency cannot establish them. Initial Bind
@@ -972,16 +1017,16 @@ descriptor, including unselected initial methods. Direct preparation rejects
 an incompatible variant before application encoding; a per-call option cannot
 weaken the method's configured guarantee.
 
-`V4RPCServicesConfig.Workloads` accepts `V4SessionMethodWorkload` targets for
+`RPCServicesConfig.Workloads` accepts `SessionMethodWorkload` targets for
 complete Session assembly. Each fixes the trusted namespace, method descriptor
-and `V4ServiceMethodWorkload` before material acquisition. The existing
-`V4RPCServicesRequirements` includes these operation/result/Completion vectors;
+and `ServiceMethodWorkload` before material acquisition. The existing
+`RPCServicesRequirements` includes these operation/result/Completion vectors;
 complete Session admission additionally includes their actual streaming
 transport, receive and native ownership. These targets share the Session's
 existing tables and baseline services. They do not create remote reservations
 or occupy running application workers while idle.
 
-Pass matching `V4ServiceBindOptions.Workloads` when binding the service. Bind
+Pass matching `ServiceBindOptions.Workloads` when binding the service. Bind
 takes the Session's already admitted matching target when available; otherwise
 it must acquire the complete additional vector before publishing the binding.
 The method type must belong to that definition, targets must be unique, and an
@@ -989,15 +1034,15 @@ explicit empty recipe list is invalid. A missing list adds no workload target.
 
 ```go
 method := definition.Methods[0]
-recipe := fs.V4ServiceMethodWorkload{
+recipe := fs.ServiceMethodWorkload{
     Type: method.Type, Calls: 4, RequestBytes: 1024,
 }
-rpcConfig.Workloads = []fs.V4SessionMethodWorkload{{
+rpcConfig.Workloads = []fs.SessionMethodWorkload{{
     Namespace: definition.Namespace, Method: method, Workload: recipe,
 }}
 // Use rpcConfig in the original Session assembly, then bind that Session.
-client, err := session.BindMethods(ctx, definition, fs.V4ServiceBindOptions{
-    Workloads: []fs.V4ServiceMethodWorkload{recipe},
+client, err := session.BindMethods(ctx, definition, fs.ServiceBindOptions{
+    Workloads: []fs.ServiceMethodWorkload{recipe},
 })
 ```
 
@@ -1023,17 +1068,18 @@ after every previous parent reference returns. Transport Close retains capacity
 for independent accepted results until their real result and decoder owners
 exit; closing the Environment still fences new use.
 Component-only `InstallRPCServices` cannot accept these Session assembly targets.
-Automatically qualifying all existing binding recipes before replacement
-acquisition and deployment-wide workload profile reports remain incomplete.
+Controller replacement projects existing declared binding recipes and their
+overlapping cleanup responsibility before acquisition. Deployment-wide workload
+profile reports remain separate from this local admission decision.
 
-`V4Session.QueryServiceContracts` reads one to eight explicit
-`V4ServiceContractTarget` values through an existing ordinary RPC channel. The
+`Session.QueryServiceContracts` reads one to eight explicit
+`ServiceContractTarget` values through an existing ordinary RPC channel. The
 original fixed query worker, Session query capacity, Environment acquisition
 position, deadlines and authenticated publication gate remain responsible for
 the entire request and cleanup. Targets may specify one approved digest and a
 locally trusted Offer window cap. A `Known` snapshot plus `KnownIndex` supplies
 an SDK-validated conditional baseline in the same Environment; arbitrary known
-digests do not substitute for complete canonical bytes. `V4ContractQuerySnapshots`
+digests do not substitute for complete canonical bytes. `ContractQuerySnapshots`
 owns the returned batch. Use `Count`, `Item` and `CopyCanonical`, then `Close`.
 Both full and unchanged successful responses own independent canonical bodies;
 closing a baseline cannot reclaim a query's live borrow. These reads do not
@@ -1050,6 +1096,12 @@ floor. Candidate routes coexist with current and prepared routes under actual
 resource reservations before installation. Explicit remote `Refresh` on an
 installed bounded method checks the current advertisement under those same
 rules; exact execution bindings query only their approved digest.
+
+Public Session and Controller bindings that initially select notification
+methods prepare an accepted NOTIFY channel before returning. Concurrent
+bindings share the original protected channel position and observe its actual
+readiness. Binding cancellation creates no replacement channel or retry;
+ordinary `NotifyMethod` only submits through an already accepted channel.
 
 `Close` cancels preparation and convenience `Call`, `StreamMethod` and
 `NotifyMethod` scopes; explicit handles returned by preparation or a successful
@@ -1081,9 +1133,9 @@ and original submission facts on success, cancellation and failure. A result
 already handed off by the original result owner survives late cancellation.
 Neither result value retains a Session, credentials or a hidden operation.
 
-`NewV4StreamRegistration` adapts a trusted server handler into the original
+`NewStreamRegistration` adapts a trusted server handler into the original
 preinstalled streaming dispatcher. The handler receives authenticated request
-context and bounded input; `V4StreamingResponse.SendItemEncoded` applies the
+context and bounded input; `StreamingResponse.SendItemEncoded` applies the
 original item limit and backpressure. Returning from the handler lets the
 dispatcher publish the terminal output. These dynamic operation handles still
 expose reference methods that reject unsupported semantics at runtime; the
@@ -1110,28 +1162,28 @@ through its actual exit.
 
 `OperationReferenceCodec` imports and exports canonical query-only locators for
 one explicitly expected local domain. Reserve its exact charge before creation.
-`CreateV4SQLiteReferences` and `OpenV4SQLiteReferences` provide bounded durable
+`CreateSQLiteReferences` and `OpenSQLiteReferences` provide bounded durable
 reference storage with independent continuity validation. Configure finite
 record count, encoded bytes and retention; duplicate exact saves do not renew
 retention, and a conflicting value under the same identity is rejected.
 `Collect` explicitly removes expired records. `List` copies at most 16 entries
 into caller-owned output without an unbounded enumeration queue. Close fences
 new work; `WaitCleanup` and `Retire` preserve the provider's actual exit.
-`NewV4SQLiteReferenceStore` supplies the matching application-store binding.
+`NewSQLiteReferenceStore` supplies the matching application-store binding.
 This persistence path stores query locators, not payloads or a replay outbox.
 
 `PrepareResume` captures one already accepted, unused target `Stream` in the
-same Session using a trusted `V4ResumeMethod`. Its exact registered contract must
+same Session using a trusted `ResumeMethod`. Its exact registered contract must
 be durable unary execution; the application-resume feature and signed policy
 must be enabled. The method ordinal and transport context/stream ID are derived
 internally. Preparation borrows that target's message qualification before
 fixing the new operation ID, request digest, original Offer and deadlines.
 `Resume` calls that same preparation and Start path. Both return the existing
-`OperationHandle`; typed Take returns `V4ResumeResult` in `Result.Value`, and
+`OperationHandle`; typed Take returns `ResumeResult` in `Result.Value`, and
 encoded Take consumes the same single result. The accepted/rejected/unknown
 recovery decision is separate from local operation completion and submission.
 
-`V4ResumeCodec` imports canonical signed/MAC token syntax and decodes result
+`ResumeCodec` imports canonical signed/MAC token syntax and decodes result
 values using an explicitly reserved workspace. Import does not authenticate a
 token. The receiving application service independently verifies the recovery
 key, caller permission, original history and atomic token/generation change.
@@ -1139,17 +1191,17 @@ key, caller permission, original history and atomic token/generation change.
 the original target before handle delivery. A persisted reference cannot bind
 another target or restore Start authority.
 
-Server recovery assembly uses `CreateV4SQLiteExecutions` or
-`OpenV4SQLiteExecutions` with explicit continuity, limits and original backing,
-then `NewV4DurableExecutions` for the shared execution history.
-`V4DurableServiceBinding` connects that history and an independently provisioned
-`V4RecoveryVerifier` to the existing service registry. The verifier freezes at
-most sixteen recovery keys; `ImportV4RecoveryMACKey` creates a charged opaque key
+Server recovery assembly uses `CreateSQLiteExecutions` or
+`OpenSQLiteExecutions` with explicit continuity, limits and original backing,
+then `NewDurableExecutions` for the shared execution history.
+`DurableServiceBinding` connects that history and an independently provisioned
+`RecoveryVerifier` to the existing service registry. The verifier freezes at
+most sixteen recovery keys; `ImportRecoveryMACKey` creates a charged opaque key
 owner, while signature keys retain their explicit signer backing. Session keys
-cannot substitute for recovery authority. `NewV4ResumeRegistration` selects the
-original SDK recovery handler; its configured `V4ResumeStreamBinding` fixes the
-accepted stream entrance. `V4ResumeCodec.CaptureCheckpoint` copies an application
-checkpoint into bounded canonical backing, and `V4UnaryResponse.IssueCheckpoint`
+cannot substitute for recovery authority. `NewResumeRegistration` selects the
+original SDK recovery handler; its configured `ResumeStreamBinding` fixes the
+accepted stream entrance. `ResumeCodec.CaptureCheckpoint` copies an application
+checkpoint into bounded canonical backing, and `UnaryResponse.IssueCheckpoint`
 uses the same durable history and generation transaction. These assembly APIs
 do not independently authorize token consumption or expose an arbitrary target
 constructor.
@@ -1182,9 +1234,9 @@ and cleanup responsibility. Closing a completed handle leaves the caller's
 target Stream usable. Submission reports actual queue acceptance and does not
 infer provider flush or remote token consumption.
 
-For `restart_flush`, reserve `V4MaintenanceOwnerCharge(maxObservations,
-runtimeBytes)` in the original Environment, create `NewV4MaintenanceOwner`, and
-inject that same owner into `V4SessionPlanConfig.MaintenanceOwner`. It belongs to
+For `restart_flush`, reserve `MaintenanceOwnerCharge(maxObservations,
+runtimeBytes)` in the original Environment, create `NewMaintenanceOwner`, and
+inject that same owner into `SessionPlanConfig.MaintenanceOwner`. It belongs to
 the application's existing Runtime lifecycle and can serve plans in either
 connection role. The observation capacity is finite (1–64); registration rejects
 a missing, closed, or foreign owner before publishing a restart method.
@@ -1209,9 +1261,9 @@ application or proves peer receipt.
 ## Namespace State and Head publication
 
 The server-only `controlplane` package provides one durable publication owner
-per complete namespace. Create a `V4SQLitePublicationStore` only for an
+per complete namespace. Create a `SQLitePublicationStore` only for an
 authorized new namespace; reopen an existing one with
-`OpenV4SQLitePublicationStore`. Reserve `V4SQLitePublicationStoreCharges` in the
+`OpenSQLitePublicationStore`. Reserve `SQLitePublicationStoreCharges` in the
 same Environment before either operation. The configuration fixes the namespace
 scope, trusted clock and TrustConfig, independent mutation/read authorization,
 bounded authentication input, and complete State/Head history capacity. The
@@ -1224,7 +1276,7 @@ authorization and returns an immutable published State/Head pair into bounded
 caller buffers. Updating the authority State does not expose an unsigned or
 partially published snapshot to consumers.
 
-Reserve `V4NamespacePublisherCharges` and construct `NewV4NamespacePublisher`
+Reserve `NamespacePublisherCharges` and construct `NewNamespacePublisher`
 with the independently authorized Head signer. The trusted host calls `Publish`
 on its chosen schedule; consumer refresh requests never trigger signing. Each
 job first captures one fixed State and reserves its complete publication/history
@@ -1234,7 +1286,7 @@ final durable commit. A fresh Head may reuse unchanged State content. Occupied
 unexpired history cannot be evicted to make room for another publication, and
 uncertain commits do not return an invented successful publication.
 
-`NewV4NamespaceHTTPSService` exposes `/head`, `/state`, `/trust` and nonce-bound
+`NewNamespaceHTTPSService` exposes `/head`, `/state`, `/trust` and nonce-bound
 `/bootstrap` to one explicitly authenticated complete-namespace reader. Its
 configuration retains the exact client certificate, an independent bootstrap
 root signer, work deadlines and request rate limits. The deployment supplies the
@@ -1247,8 +1299,8 @@ operation or response writer retains its original reservation until actual exit.
 ## Fixed-upstream proxy on v4 Streams
 
 Create `NewProxyServer` with the trusted upstream, address ranges, header policy
-and finite limits. `ProxyServer.V4StreamHandlers(authorize)` returns the HTTP and
-WebSocket entries to install in a `V4StreamHandlerPlanConfig` before READY. The
+and finite limits. `ProxyServer.StreamHandlers(authorize)` returns the HTTP and
+WebSocket entries to install in a `StreamHandlerPlanConfig` before READY. The
 required callback authorizes that specific upstream using the original
 authenticated application binding and Stream metadata. It must not derive that
 permission from a content-supplied hostname. Each handler uses its actual v4
@@ -1279,18 +1331,18 @@ are not provided by a bare ProxyServer registration.
 
 ## Connection Controller
 
-`V4Environment.NewConnectionController` creates an optional long-lived connection
+`Environment.NewConnectionController` creates an optional long-lived connection
 owner in the existing Environment. It owns at most one current, one candidate,
-and one retiring Session. Configure a trusted `V4ControllerSource`, a nonzero
+and one retiring Session. Configure a trusted `ControllerSource`, a nonzero
 `SourceIncarnation`, the original `Clock`, finite attempt and drain deadlines,
-and qualified runtime bytes in `V4ControllerOptions`. Reserve the three separate
-vectors returned by `V4ControllerCharges`: Controller metadata, initializer task,
+and qualified runtime bytes in `ControllerOptions`. Reserve the three separate
+vectors returned by `ControllerCharges`: Controller metadata, initializer task,
 and initializer Completion. The last two are zero without `InitializeSession`.
 Construction starts no material acquisition or carrier connection.
 
-Each `PrepareConnection` invocation supplies a fresh `V4ControllerPreparation`:
-the `V4SourceConnectConfig`, exactly one Pool or Live spend input, and optionally
-the original installed `V4PreauthorizedPoolSource`. Keep all six connection
+Each `PrepareConnection` invocation supplies a fresh `ControllerPreparation`:
+the `SourceConnectConfig`, exactly one Pool or Live spend input, and optionally
+the original installed `PreauthorizedPoolSource`. Keep all six connection
 workspace references empty; the public adapter allocates them as one same-root,
 same-tenant/Session batch. The Controller then reserves the complete candidate
 admission vector before material acquisition. A source prepares only local
@@ -1335,7 +1387,7 @@ original RPC publisher together with READY and current authorization. A missing
 route/Offer waits within the same attempt. The optional `InitializeSession`
 callback runs once for that candidate on its configured ordinary executor class;
 its result passes through the reserved Completion position. The callback and
-`WaitForSession` see the same public `V4Session` object. After callback entry,
+`WaitForSession` see the same public `Session` object. After callback entry,
 failure, cancellation or uncertain completion fences Controller dispatch until
 an explicit successful `ReplaceSession`; it never silently repeats the callback.
 Waiting for the same Controller from its initializer is rejected as a dependency
@@ -1369,7 +1421,7 @@ physical projection as well as the Controller's own logical target union.
 Adding a missing required dependency gates the related handler's future dispatch
 without revoking the published current. The bounded registration revision also
 fences additions and contract installation against candidate publication.
-`V4ControllerOptions.InitializeDependencies` supplies the initializer's restricted
+`ControllerOptions.InitializeDependencies` supplies the initializer's restricted
 views and required checks before its ordinary permit and first application entry.
 Each attempt freezes these method generations and projects their exact contracts
 onto its fixed candidate, with the original authenticated routing identity.
@@ -1400,12 +1452,12 @@ and result tails retain their original Session/Environment cleanup owners.
 
 `ReplaceSession` establishes and qualifies the candidate before switching future
 dispatch. The default retirement drains the previous Session. Explicit
-`V4ControllerRetain` requires a fixed positive `RetainUntilMS` within the previous
+`ControllerRetain` requires a fixed positive `RetainUntilMS` within the previous
 Session's original hard cap. `CurrentSwitched`, `PreviousRetained`, and
 `RetirementError` report separate facts: an old Session that already drained or
 closed cannot be reopened by retain. A previous retained Session or its actual
 cleanup tail consumes the single retirement position; another replacement fails
-with `ErrV4RetirementCapacity` before acquisition.
+with `ErrRetirementCapacity` before acquisition.
 
 `PrepareUnary` captures one current Session and constructs the original immutable
 operation. `Dispatch` starts only that handle. The actual first-header gate
@@ -1415,10 +1467,14 @@ operations may select another already READY/accepting current at most twice
 before header acceptance. Selection preserves the original encoded bytes,
 contract, operation ID/digest, captured Offer, response limit and original
 preparation/request/result deadline projections. It neither acquires a connection
-nor reruns the encoder or Start. The authenticated authority, tenant, audience,
-caller/peer subjects and any installed execution identity must remain equal;
-certificate and key rotation alone do not change that identity. Mapping a
-different peer subject to an approved replica is not implemented.
+nor reruns the encoder or Start. The authenticated authority domains, tenant, audience, original caller and
+any installed execution identity must remain equal. A Controller service
+binding may configure `ServiceBindOptions.PeerReplicas` with up to sixteen
+unique trusted peer subjects; every selected peer must belong to that captured
+set. This mapping applies only to the peer subject and cannot change any other
+identity field. Omission requires the exact original peer subject. Certificate
+and key rotation alone do not change the logical identity; an unapproved peer
+permanently seals the binding's new-call gate.
 
 The original publication gate permanently fences each discarded route before
 the replacement obtains its complete request/result/Completion vector. Prior
@@ -1429,35 +1485,90 @@ streaming, result reads and submitted requests do not reselect. The Controller's
 existing coordinator holds at most 256 original operations; result observation
 continues through their bounded route chain, and Close fences future headers.
 
-This implementation does not yet provide declaration replacement, complete
-declared workload and replacement headroom qualification, or Controller
-notification subscriptions.
 Initializer callback, operation, result, Completion and invocation-view aliases
 are reserved before acquisition. Declared method workloads also preadmit their
-ordinary Prepare/Start/result ancestor references. General callbacks outside
-these recipes, ordinary registration-view reference floors, and complete
-factory/replacement recipe qualification remain incomplete.
+ordinary Prepare/Start/result ancestor references. Ordinary handler and observer
+registrations reserve their view reference floors when the declaration is
+installed. These promises cover the admitted recipes and fixed local limits;
+they do not promise arbitrary application allocation or unrestricted concurrent
+work outside those recipes.
 
-Only structured original source failures and recognized original transport
-failures schedule automatic acquisition retries. The native adapters project
-QUIC idle/handshake timeout, stateless reset, connection refusal and unavailable
-path, selected socket interruptions, and abnormal WebSocket disconnects. Native
-stream half-close, stream reset, peer application close, protocol and TLS policy
-failures retain their separate meaning. No arbitrary error chain or error text
-can supply transport provenance.
+`Controller.SubscribeNotification(client, method, observer, options)` borrows a
+notify method from an existing service binding owned by that Controller. It
+returns the same `NotificationSubscription` Close, WaitClosed, Status and Release
+lifecycle as a Session subscription. `NotificationCurrentOnly` is the default;
+`NotificationDrainAware` may continue to observe the original retained or
+draining Session within that source's unchanged authorization and delivery
+gates. Session subscriptions remain fixed to their original Session.
+
+One Controller subscription owns one aggregate queue, at most sixteen pending
+data inputs and one running callback. An unpublished candidate may enqueue
+authenticated encoded input but cannot enter the observer's decoder or handler.
+Publication switches source eligibility under the original current gate.
+Current-only closes the old source's future callbacks and discards its unentered
+inputs; drain-aware can preserve those inputs with a retained or draining phase.
+`NotificationLatestPending` requires an installed observation contract and one
+logical pending input. A candidate cannot replace an eligible current input.
+Every superseded input and running callback remains charged until actual exit.
+
+Before own READY, the original admission owner attempts to install existing
+Controller subscriptions whose exact trusted method, contract and logical target
+are already available. Failure does not delay connection readiness or acquire
+another Session. Late attachment keeps an explicit possible gap. The fixed
+`MaxObservedSessions` cap defaults to two and accepts one or two; candidates,
+retained sources and real cleanup tails all consume it. Reclaiming an old
+noncurrent source cannot create a free third position before its owners exit.
+
+`ControllerNotificationEvent` carries either `Kind: "notification"` with Value,
+SourceGeneration and SourcePhase, or `Kind: "observation_gap"` with finite reason
+bits, a local generation range, saturating known-drop count and PossibleGap.
+Generations and phases are local observation facts, not identity, replay keys
+or a cross-Session event order. A separate protected gap slot shares the one
+serial callback with data; when both are eligible, dispatch alternates. A local
+gap needs no live Session or ready network dependency. Callback failure remains
+visible without an automatic gap retry loop.
+
+`ObservationStatus` reads the same compact attachment and gap facts after Close
+without retaining a source Session graph. Controller.Close seals its owned
+subscriptions immediately, and Controller cleanup waits for their real source,
+callback and reference tails. A permanently blocked callback cannot create a
+replacement callback or free capacity. Subscription readiness and preinstallation
+do not establish a complete business snapshot: applications that need one must
+use their own snapshot RPC and event version/cursor contract after attachment,
+and recover explicitly after a gap. The SDK does not replay or deduplicate
+business events.
+
+Automatic acquisition retries accept an original structured
+`ControllerSourceError` or a transport failure recorded by the original native
+preparation, Initial exchange or current Session owner. A failed candidate may
+retry only before initializer entry. The source worker, unused preparation and
+original candidate cleanup must finish before another attempt. Each retry
+invokes the configured Source for a fresh recipe and material; it never reuses a
+consumed Lease or changes the previous attempt's spend facts. Authoritative
+source not-before deadlines, bounded backoff, attempt limits and cancellation
+remain in force. `RetryNow` only advances an already eligible backoff.
+
+The adapters project QUIC idle/handshake timeout, stateless reset, connection
+refusal and unavailable path, selected socket interruptions, and abnormal
+WebSocket disconnects. Native stream half-close, stream reset, peer application
+close, protocol and TLS policy failures retain their separate meaning. No
+arbitrary error chain or error text can supply transport provenance.
 
 Native WebSocket TLS and HTTP preparation carry a private marker from the actual
 socket I/O boundary. Truncated handshake input preserves that interruption
 through parsing; certificate callbacks, TLS alerts, malformed HTTP and explicit
-HTTP refusal cannot forge it or convert a later cleanup failure into a retry.
+HTTP refusal cannot forge it. This provenance authorizes a fresh acquisition
+when the retry gates permit; it never proves that the previous spend was unused.
 
 Preparation retains earlier policy, resource and binding refusals across the
 fixed candidate set. Exhausting a factory's immutable numeric address list keeps
-the preceding network outcome without starting another dial. The initial
+the preceding network outcome without starting another dial. The Initial
 exchange records actual provider I/O separately from builders and verifiers.
-Automatic retry after pre-READY failure waits for original candidate cleanup and
-requests fresh material; an already consumed lease is never reused. These retry
-facts grant no permission to replay application initialization or business work.
+Physical cleanup must finish before fresh acquisition after pre-READY transport
+failure or loss of the published current Session. An explicit `ReplaceSession`
+remains a separately requested attempt through the original admission and
+retirement gates. No initializer failure or submitted business operation is
+resumed or replayed automatically.
 Shared reliable writes, maintenance writes and native connection ingress preserve
 the first close cause; individual native data-stream failures keep their stream
 scope. Public
@@ -1530,7 +1641,7 @@ windows; only the pre-ticket busy gate can wait without consuming the sample.
 `WaitTermination` observes communication termination independently of cleanup.
 
 Call Session/Environment/source Close to seal admission, then observe their
-original cleanup. `V4Session.CleanupStatus` can report `cleanup_incomplete` while
+original cleanup. `Session.CleanupStatus` can report `cleanup_incomplete` while
 callbacks or providers still retain real backing. A later observation may prove
 completion. `env.WaitCleanup` retires Environment metadata only after those tails
 exit. It does not close the caller's root, executor, clock, verification registry,
@@ -1538,3 +1649,48 @@ key providers or durable stores. Close and retire these shared owners only after
 all users exit. Durable namespace history destruction also requires the physical
 Environment resource authority to be closed; ordinary Session replacement never
 destroys it.
+
+
+## Owned duplex bridges
+
+`NewDuplexBridge(ctx, a, b, DuplexBridgeOptions{})` takes two distinct, unused
+raw `Stream` endpoints from the same Environment. The constructor reserves
+coordination, endpoint ownership and both finite copy chunks before replacing
+either original owner. Old Stream aliases can no longer read, write or reset
+the transferred endpoints. Failed construction leaves both owners available.
+Raw handler invocation contexts and original Stream deadlines remain part of
+the bridge's lifetime; transferring an owner does not cancel its handler.
+Shared copy and coordination backing retains both original account ancestries.
+
+Call `Start()` to begin once. Repeated calls join that same operation. The
+constructor's overall deadline also bounds the prepared period before Start.
+Each direction consumes one bounded chunk and accepts its remaining suffix
+before another read. Source EOF only half-closes that direction's destination;
+the opposite pump continues. After both pumps finish, the bridge concurrently
+waits for both actual send completions and endpoint cleanup.
+
+`Wait(ctx)` is passive. Canceling that wait returns a partial observation and
+error while the operation continues. Use `Abort()` or cancel the original
+constructor/handler context to stop the complete operation. `Progress()` and
+`CleanupStatus()` expose current progress and actual late cleanup. Repeated
+Wait calls share the same final result and bounded tail storage. A cleanup
+timeout keeps live socket, copy and callback responsibility charged.
+
+For an SDK-created native TCP endpoint, calculate `NativeTCPDialCharge` and
+`NativeTCPCharge`, reserve two distinct references in the Stream's original
+Environment ancestry, and call `StartNativeTCPDial(ctx, clock, address,
+options, dialReservation, socketReservation)`. `address` is a fixed numeric
+`netip.AddrPort`, and `options.HardDeadline` belongs to that same qualified
+Clock. The factory admits provider/runtime overhead before starting its native
+connect. `dial.Wait(ctx)` hands off one opaque `NativeTCP`; cancellation of a
+wait does not pretend that a pending native connect or late socket has exited.
+`dial.Cancel()` seals the original delivery gate. Observe actual cleanup before
+returning its admitted resources to a different use.
+
+`NewNativeDuplexBridge(ctx, stream, tcp, options)` claims that sealed endpoint
+and the raw Stream. The socket's original backing remains charged in the union
+of its original scopes and the paired Stream's scopes until the native owner
+exits. Native completion uses `NativeSendFinished`; Flowersec completion uses
+`SendDrained`. Native queue completion and TCP half-close do not authenticate
+peer receipt or prove business execution. External `net.Conn` adoption, DNS,
+TLS and native-to-native bridges are outside this factory's contract.

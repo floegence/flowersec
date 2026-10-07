@@ -23,6 +23,21 @@ func (hostileDiagnosticError) Error() string { panic("application Error called")
 func (hostileDiagnosticError) Is(error) bool { panic("application Is called") }
 func (hostileDiagnosticError) Unwrap() error { panic("application Unwrap called") }
 
+func TestApplicationDiagnosticRetainsOnlyFiniteFailureThroughOriginalTails(t *testing.T) {
+	for _, cause := range []error{hostileDiagnosticError("private application detail"), context.Canceled, context.DeadlineExceeded} {
+		op := &DiagnosticOperation{applicationReferences: 2}
+		finishApplicationDiagnosticError(op, cause)
+		want, _ := diagnosticFailure(cause)
+		if op.applicationReferences != 1 || !op.applicationFailed || op.applicationFailure != want {
+			t.Fatal("original physical tail lost its finite outcome")
+		}
+		finishApplicationDiagnostic(op)
+		if op.applicationReferences != 0 || op.applicationFailed || retainApplicationDiagnostic(op) {
+			t.Fatal("completed operation retained or reacquired its diagnostic")
+		}
+	}
+}
+
 func TestEnvironmentDiagnosticErrorProjectionDoesNotCallApplication(t *testing.T) {
 	loop := &net.OpError{}
 	loop.Err = loop
@@ -128,4 +143,55 @@ func TestEnvironmentDiagnosticConsumerSaturationPreservesCredit(t *testing.T) {
 	if pool.diagnostics != nil {
 		t.Fatal("closed receive pool retained the bank")
 	}
+}
+
+func TestEnvironmentSessionAutomaticallyEmitsConnectionDiagnostics(t *testing.T) {
+	events := make(chan diagnosticv4.Event, 4)
+	sampling, release := make(chan struct{}), make(chan struct{})
+	var sampleOnce, releaseOnce sync.Once
+	f := newDiagnosticFixture(t, DiagnosticSinkConfig{}, func(_ context.Context, event diagnosticv4.Event) {
+		events <- event
+	}, func(uint16) bool {
+		sampleOnce.Do(func() { close(sampling); <-release })
+		return true
+	})
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	// Begin and Emit intentionally drop on diagnostic lock contention. Hold
+	// the real pump at its sampling boundary, outside that lock, while testing
+	// both automatic transitions; the seed also exercises actual delivery.
+	seed := f.begin(t)
+	diagnosticEmit(t, seed, diagnosticv4.Fields{State: diagnosticv4.StateStarting, Phase: diagnosticv4.PhasePrepare, Code: diagnosticv4.CodeOK})
+	diagnosticReceive(t, sampling)
+	dropsBefore := f.sink.Counters(diagnosticv4.MetricDiagnosticDrop).Total
+	e := &Environment{diagnosticSink: f.sink}
+	s := newEnvironmentSession(e, 0, context.Background())
+	s.beginDiagnostics()
+	s.closeWith(context.Canceled)
+	releaseOnce.Do(func() { close(release) })
+	starting, failed := 0, 0
+	for range 3 {
+		fields := diagnosticReceive(t, events).Fields()
+		switch {
+		case fields.State == diagnosticv4.StateStarting && fields.Code == diagnosticv4.CodeOK:
+			starting++
+		case fields.State == diagnosticv4.StateFailed && fields.Code == diagnosticv4.CodeCancelled:
+			failed++
+		default:
+			t.Fatal("unexpected automatic diagnostic fields", fields)
+		}
+	}
+	if starting != 2 || failed != 1 || f.sink.Counters(diagnosticv4.MetricDiagnosticDrop).Total != dropsBefore {
+		t.Fatal("automatic diagnostic transitions were lost", starting, failed)
+	}
+	if got := e.DiagnosticCounts(diagnosticv4.MetricConnectionAttempt).Total; got != 1 {
+		t.Fatal("automatic connection attempt aggregate missing", got)
+	}
+	if got := e.DiagnosticCounts(diagnosticv4.MetricConnectionFailure).Total; got != 1 {
+		t.Fatal("automatic connection failure aggregate missing", got)
+	}
+	if s.diagnosticOperation == nil {
+		t.Fatal("environment session did not retain the sink operation")
+	}
+	s.diagnosticOperation.Close()
+	s.diagnosticOperation = nil
 }

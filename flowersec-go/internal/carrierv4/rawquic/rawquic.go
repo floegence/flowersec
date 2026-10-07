@@ -343,7 +343,7 @@ func (session *Session) acceptStream(ctx context.Context) (carrier.Stream, error
 }
 
 // OpenAdmissionStream creates the client-owned native stream for the FSB4/FSA4
-// exchange. Admission framing remains transport-neutral in admissionv3.
+// exchange. The Session admission owner handles transport-neutral framing.
 func OpenAdmissionStream(ctx context.Context, session *Session) (carrier.Stream, error) {
 	if session == nil {
 		return nil, net.ErrClosed

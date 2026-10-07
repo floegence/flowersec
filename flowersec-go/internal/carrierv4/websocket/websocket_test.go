@@ -521,6 +521,94 @@ func TestOwnedConnectionCloseExactlyOnce(t *testing.T) {
 	}
 }
 
+type tlsShutdownConn struct {
+	net.Conn
+	failWrites atomic.Bool
+	closes     atomic.Int32
+	closeErr   error
+}
+
+func (c *tlsShutdownConn) Write(body []byte) (int, error) {
+	if c.failWrites.Load() {
+		return 0, &net.OpError{Op: "write", Net: "pipe", Err: io.ErrClosedPipe}
+	}
+	return c.Conn.Write(body)
+}
+
+func (c *tlsShutdownConn) Close() error {
+	c.closes.Add(1)
+	if c.closeErr != nil {
+		return c.closeErr
+	}
+	return c.Conn.Close()
+}
+
+func TestTLSAlertWriteFailureDoesNotRetainClosedTransport(t *testing.T) {
+	certificate := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer certificate.Close()
+	for _, closeFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("physical_close_fails_%v", closeFails), func(t *testing.T) {
+			left, right := net.Pipe()
+			defer left.Close()
+			defer right.Close()
+			physical := &tlsShutdownConn{Conn: left}
+			if closeFails {
+				physical.closeErr = &net.OpError{Op: "close", Net: "pipe", Err: errors.New("physical close refused")}
+			}
+			server := tls.Server(physical, certificate.TLS.Clone())
+			clientConfig := certificate.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+			clientConfig.ServerName = "127.0.0.1"
+			client := tls.Client(right, clientConfig)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			serverHandshake := make(chan error, 1)
+			go func() { serverHandshake <- server.HandshakeContext(ctx) }()
+			if err := client.HandshakeContext(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-serverHandshake; err != nil {
+				t.Fatal(err)
+			}
+			physical.failWrites.Store(true)
+			o := testOptions()
+			charge, err := Charge(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, reservation, environment := reservations(t, charge)
+			owner, err := newOwner(ctx, o, reservation, environment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner.mu.Lock()
+			owner.transport = &ownedConn{Conn: server}
+			owner.mu.Unlock()
+			owner.finishPrepare(true)
+			messages := &Messages{owner}
+			_ = messages.Close()
+			err = messages.WaitCleanup(ctx)
+			if closeFails {
+				if err != physical.closeErr {
+					t.Fatal("physical close failure was hidden", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal("completed physical close retained the alert write error", err)
+				}
+				if err = messages.Retire(); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = client.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+					t.Fatal("underlying socket did not close", err)
+				}
+			}
+			if physical.closes.Load() != 1 {
+				t.Fatal("physical close was repeated", physical.closes.Load())
+			}
+		})
+	}
+}
+
 func TestDialCancellationWhileAwaitingUpgrade(t *testing.T) {
 	started, closed := make(chan struct{}), make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

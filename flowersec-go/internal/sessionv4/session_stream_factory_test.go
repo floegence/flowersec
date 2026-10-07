@@ -9,6 +9,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func TestSessionStreamFactoryRawReadsRenewOnlyOriginalWindow(t *testing.T) {
@@ -45,16 +46,15 @@ func TestSessionStreamFactoryRawReadsRenewOnlyOriginalWindow(t *testing.T) {
 	}
 }
 
-func factoryStreamConfig() SessionStreamConfig {
-	return SessionStreamConfig{ReceivePoolBytes: 128, ReceiveBytes: 64, InitialReceiveLimit: 64,
-		SendBytes: 64, QueueBytes: 64, WriteWaiters: 2, MaxPlaintext: 128, Chunk: 64, RuntimeBytes: 16384}
-}
-
-func factoryCorePair(t *testing.T, framing string, stream SessionStreamConfig) ([2]*SessionCore, *[2]initialCoreFixture, context.Context) {
+func factoryCorePair(t *testing.T, framing string, stream SessionStreamConfig, resources ...func(*resourcev4.Config)) ([2]*SessionCore, *[2]initialCoreFixture, context.Context) {
 	t.Helper()
 	var fixtures [2]initialCoreFixture
 	pair, configs := initialTestPairPrepared(t, protocolv4.DHProfileX25519, framing, 4,
-		initialCorePrepareConfig(t, &fixtures, framing == "messages", func(c *SessionCoreConfig) { c.Streams = stream }))
+		initialCorePrepareWithResources(t, &fixtures, framing == "messages", func(c *SessionCoreConfig) { c.Streams = stream }, func(c *resourcev4.Config) {
+			for _, configure := range resources {
+				configure(c)
+			}
+		}))
 	results := startInitialCorePair(pair, configs, &fixtures)
 	var cores [2]*SessionCore
 	for role := range 2 {

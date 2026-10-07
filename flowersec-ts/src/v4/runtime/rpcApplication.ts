@@ -1,3 +1,4 @@
+import { DiagnosticActivity, type DiagnosticObserver } from "./diagnosticObservation.js";
 import type * as RpcInputTypes from "./rpcInput.js";
 import type * as ServiceBindingConfigTypes from "./serviceBindingConfig.js";
 import type * as ServiceBindingPoolTypes from "./serviceBindingPool.js";
@@ -5,6 +6,7 @@ import type * as RpcPreacceptedStreamsTypes from "./rpcPreacceptedStreams.js";
 import type * as RpcUnaryPreparationTypes from "./rpcUnaryPreparation.js";
 import type * as ContractQueryAcquisitionTypes from "./contractQueryAcquisition.js";
 import type { StreamOpenPreparation } from "./streamOpenPreparation.js";
+import type { ControllerUnaryRoute, ControllerUnaryRouteRequest } from "./controllerUnaryRoute.js";
 import { initializerCallBacking } from "./initializerWorkload.js";
 import { checkMaintenanceOwner, type V4MaintenanceOwner } from "../responsePublication.js";
 import { rpcOutputInterestCharge } from "./rpcOutputInterest.js";
@@ -27,12 +29,13 @@ import { notificationSubscription, type V4NotificationSubscription, type V4Notif
 import { NotifyChannel, notifyChannelCharges } from "./notifyChannel.js";
 import { NotifyPreparation, captureNotifyOptions, notifyPreparationCharges, type NotifyPreparationOptions } from "./notifyPreparation.js";
 import { NotificationInput, NotificationMessage, NotificationRegistration, NotificationSubscribers, NotificationAccess, captureNotificationHandler, notificationMessageCharges, notificationRegistrationCharge, notificationWorkCharge, notificationSubscribersCharge } from "./notifyDispatch.js";
+import type { NotificationScheduler } from "./notifyDispatch.js";
 import type { V4NotificationHandler, V4NotificationHandlerOptions } from "../serviceHandlers.js";
 import type { ApplicationHeader } from "./applicationHeader.js";
 import { rpcPayloadCharge } from "./rpcPayload.js";
 import { timeAdd } from "./timeArithmetic.js";
 import { operationTarget, operationResultLimit, type V4OperationReference } from "../operationReference.js";
-import { captureServiceBindingTarget, type ServiceBindingTarget } from "./serviceBindingConfig.js";
+import { checkServiceBindingTarget, captureServiceBindingTarget, type ServiceBindingTarget } from "./serviceBindingConfig.js";
 import { ExecutionManagementChannel, executionManagementCharges } from "./executionManagementChannel.js";
 import { ExecutionManagementCodec, executionManagementDecoderCharge, type ExecutionTarget, type ExecutionManagementResult } from "./executionManagementCodec.js";
 import { captureExecutionIdentity, captureVolatileExecution, executionResultReadCharge, type VolatileExecutionConfig, type RPCExecutionIdentity, type VolatileExecutions } from "./volatileExecutions.js";
@@ -318,6 +321,7 @@ export interface RPCApplicationPlan {
   readonly inputs: number;
   readonly queries: number;
   readonly channel: number;
+  readonly channelWidth: number;
   readonly publication: number;
   readonly management: number;
   readonly resultRead: number;
@@ -347,19 +351,21 @@ export function rpcApplicationPlan(config: RPCApplicationConfig, profile: "servi
   const inputs = charges.length; charges.push(...serviceInputsCharges(maxGeneral, runtimeBytes));
   const queries = charges.length; charges.push(...contractQuerySessionCharges(runtimeBytes));
   const channel = charges.length;
-  charges.push(rpcChannelCharge(runtimeBytes),
+  const channelCosts = [rpcChannelCharge(runtimeBytes),
     new ResourceVector([50304n + runtimeBytes, 0n, 0n, 5n, 6n, 6n, 4n, 0n, 0n, 1n, 0n]), applicationGroupCharge(runtimeBytes),
-    ...rpcReceiverCharges(runtimeBytes), rpcPublisherCharge(runtimeBytes), writeRequestCharge(16384, runtimeBytes));
-  const publication = charges.length - 1, management = charges.length;
+    ...rpcReceiverCharges(runtimeBytes), rpcPublisherCharge(runtimeBytes), writeRequestCharge(16384, runtimeBytes)];
+  const channelWidth = channelCosts.length;
+  for (let position = 0; position < 8; position++) charges.push(...channelCosts);
+  const publication = channel + channelWidth - 1, management = charges.length;
   if (profile === "execution") charges.push(...executionManagementCharges(runtimeBytes));
   const resultRead = charges.length;
   if (config.resultRead !== undefined) charges.push(executionManagementDecoderCharge(runtimeBytes), new ResourceVector([4096n + runtimeBytes, 0n, 0n, 4n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]));
   const notify = charges.length; charges.push(...notifyChannelCharges(runtimeBytes), ...notifyChannelCharges(runtimeBytes));
-  return Object.freeze({ charges: Object.freeze(charges), handlers, streamingHandlers, notificationHandlers, notificationMethods, notificationSubscribers, notify, inputs, queries, channel, publication, management, resultRead });
+  return Object.freeze({ charges: Object.freeze(charges), handlers, streamingHandlers, notificationHandlers, notificationMethods, notificationSubscribers, notify, inputs, queries, channel, channelWidth, publication, management, resultRead });
 }
 
 /** Original pre-spend Session RPC admission. All fixed query/network/input and
- * first-channel objects and execution-service attachments are acquired before
+ * eight-channel positions and execution-service attachments are acquired before
  * irreversible authorization consumption. Authentication and physical Stream
  * binding remain gates in the original Session; this owner cannot assert READY. */
 export class RPCApplicationAdmission {
@@ -369,7 +375,7 @@ export class RPCApplicationAdmission {
   readonly #runtimeBytes: bigint;
   #reference: ResourceReference | undefined;
   #group: ApplicationGroup | undefined;
-  #channelGroup: ApplicationGroup | undefined;
+  readonly #channelGroups: ApplicationGroup[] = [];
   #network: RPCNetwork | undefined;
   #calls: RPCCallCapacity | undefined;
   #completion: CompletionPosition | undefined;
@@ -379,7 +385,8 @@ export class RPCApplicationAdmission {
   #queries: ContractQuerySession | undefined;
   #acquisitions: ContractQueryAcquisitions | undefined;
   #host: Readonly<{ root: ResourceRoot; accounts: readonly ResourceAccount[]; sendAccounts: readonly ResourceAccount[];
-    owner: ResourceOwner; clock: TrustedClock; delivery: ReceiveDeliveryGate; notificationAccounts: readonly (readonly ResourceAccount[])[] }> | undefined;
+    diagnostics: DiagnosticObserver | undefined; owner: ResourceOwner; clock: TrustedClock; delivery: ReceiveDeliveryGate; notificationAccounts: readonly (readonly ResourceAccount[])[];
+    channelSendAccounts: readonly (readonly ResourceAccount[])[] }> | undefined;
   #cleanup: SessionCleanup | undefined;
   #authentication: V4AuthenticatedContext | undefined;
   #executionIdentity: RPCExecutionIdentity | undefined;
@@ -397,6 +404,7 @@ export class RPCApplicationAdmission {
   #managementChanged: (() => void) | undefined;
   readonly #managementWaiters = new Set<() => void>();
   #managementUnavailable = false;
+  #managementBusinessAvailable: (() => boolean) | undefined;
   #resultReadCodec: ExecutionManagementCodec | undefined;
   #resultReadReference: ResourceReference | undefined;
   #resultReadBuffer = new Uint8Array();
@@ -429,44 +437,46 @@ export class RPCApplicationAdmission {
   #nextPreparation = 0n;
   #random: RandomFill | undefined;
   #bindings: ServiceBindingPool | undefined;
-  #channel: RPCChannelRuntime | undefined;
-  #publication: ProtectedResourceReservation | undefined;
-  readonly #channelRefs: ResourceReference[] = [];
+  readonly #channels: (RPCChannelRuntime | undefined)[] = Array.from({ length: 8 });
+  readonly #channelPositions: ProtectedResourceReservation[][] = [];
+  #channelsChanged: (() => void) | undefined;
   #checkpointPolicy: CheckpointSessionPolicy | undefined;
   #claimed = false;
   #bound = false;
   #closed = false;
   #closing = false;
   #draining = false;
-  #dispatching = false;
+  #peerDraining = false;
+  readonly #dispatching = new Set<RPCChannelRuntime>();
   #collecting = false;
   #observer: (() => void) | undefined;
   #cleaned: (() => void) | undefined;
-  #turnTimer: ReturnType<typeof setTimeout> | undefined;
-  #turnResolve: (() => void) | undefined;
+  readonly #turns = new Map<RPCChannelRuntime, { timer: ReturnType<typeof setTimeout>; resolve: () => void }>();
   readonly #maintenanceOwner: V4MaintenanceOwner | undefined;
   constructor(config: RPCApplicationConfig, profile: "services" | "execution", maxGeneral: number, root: ResourceRoot,
     accounts: readonly ResourceAccount[], sendAccounts: readonly ResourceAccount[], owner: ResourceOwner, clock: TrustedClock, deadline: TrustedDeadline, delivery: ReceiveDeliveryGate,
-    runtimeBytes: bigint, references: readonly ResourceReference[], acquisitions: ContractQueryAcquisitions, random: RandomFill, bindings: ServiceBindingPool, executionOwner: (config: VolatileExecutionConfig) => VolatileExecutions, notificationAccounts: readonly (readonly ResourceAccount[])[], prepaidCalls?: RPCCallCapacity, prepaidServices?: RPCApplicationServices, initialStreams?: RPCStreamPreparation) {
+    runtimeBytes: bigint, references: readonly ResourceReference[], acquisitions: ContractQueryAcquisitions, random: RandomFill, bindings: ServiceBindingPool, executionOwner: (config: VolatileExecutionConfig) => VolatileExecutions, notificationAccounts: readonly (readonly ResourceAccount[])[], channelSendAccounts: readonly (readonly ResourceAccount[])[], prepaidCalls?: RPCCallCapacity, prepaidServices?: RPCApplicationServices, initialStreams?: RPCStreamPreparation, diagnostics?: DiagnosticObserver) {
     const plan = rpcApplicationPlan(config, profile, maxGeneral, runtimeBytes);
     this.#maxCaptureBytes = config.maxCaptureBytes; this.#maintenanceOwner = config.maintenanceOwner;
     if (config.maintenanceOwner !== undefined) checkMaintenanceOwner(config.maintenanceOwner, references[0]!);
     this.#executionIdentity = config.executionIdentity; this.#localExecutionAuthority = config.localExecutionAuthority; this.#referenceTargets = config.referenceTargets ?? []; this.#executionDelegations = config.executionDelegations ?? [];
     this.#executionPermissions = config.executionPermissions ?? [];
     if (profile !== "execution" && ((config.executionServices?.length ?? 0) !== 0 || this.#executionPermissions.length !== 0 || this.#executionDelegations.length !== 0 || config.localExecutionAuthority !== undefined || config.executionIdentity !== undefined)) throw new RPCProtocolError("configuration_capacity");
-    if (references.length !== plan.charges.length || !deadline.belongsTo(clock) || !references.every(reference => references[0]!.sameEnvironment(reference)) ||
+    if (references.length !== plan.charges.length || channelSendAccounts.length !== 8 || !deadline.belongsTo(clock) || !references.every(reference => references[0]!.sameEnvironment(reference)) ||
         !acquisitions.sameEnvironment(references[0]!, clock)) throw new RPCProtocolError("rpc_owner");
     this.#profile = profile; this.#general = maxGeneral; this.#deadline = deadline; this.#runtimeBytes = runtimeBytes; this.#acquisitions = acquisitions; this.#random = random; this.#bindings = bindings;
-    this.#host = { root, accounts: Object.freeze([...accounts]), sendAccounts: Object.freeze([...sendAccounts]), owner: Object.freeze({ ...owner }), clock, delivery, notificationAccounts };
+    this.#host = { root, diagnostics, accounts: Object.freeze([...accounts]), sendAccounts: Object.freeze([...sendAccounts]), owner: Object.freeze({ ...owner }), clock, delivery, notificationAccounts,
+      channelSendAccounts: Object.freeze(channelSendAccounts.map(scopes => Object.freeze([...scopes]))) };
     this.#reference = references[0]!.take(plan.charges[0]!);
     this.#initialStreams = initialStreams;
     try {
       if (prepaidServices !== undefined && (!prepaidServices.group.sameEnvironment(this.#reference) ||
           prepaidServices.completion.group !== prepaidServices.group || prepaidServices.queries.group !== prepaidServices.group ||
           prepaidServices.queries.direction !== 0 || prepaidServices.notificationGroups.length !== 2 ||
-          !prepaidServices.channelGroup.sameEnvironment(this.#reference) ||
+          prepaidServices.channelGroups.length !== 8 || !prepaidServices.channelGroups.every(group => group.sameEnvironment(this.#reference!)) ||
           !prepaidServices.notificationGroups.every(group => group.sameEnvironment(this.#reference!)))) throw new RPCProtocolError("rpc_owner");
       this.#group = prepaidServices?.group ?? applicationGroup(root, accounts, { ...owner, kind: "rpc_application" }, runtimeBytes, true, references[1]!);
+      if (profile === "execution") this.#group.enableManagement();
       this.#completion = prepaidServices?.completion ?? this.#group.protectCompletion(runtimeBytes, references[6]!);
       if (prepaidCalls !== undefined && (prepaidCalls.limit !== maxGeneral || !prepaidCalls.sameEnvironment(this.#reference))) throw new RPCProtocolError("rpc_call_owner");
       this.#calls = prepaidCalls ?? new RPCCallCapacity(maxGeneral, runtimeBytes, references[5]!);
@@ -539,10 +549,15 @@ export class RPCApplicationAdmission {
       for (const entry of config.queryPermissions ?? []) this.#access.set(entry.namespace, methodDefinition(entry.method).typeID, entry.permission);
       this.#inputs = new ServiceInputs(this.#network, this.#routes, { root, accounts, owner, deadline, maxCaptureBytes: config.maxCaptureBytes, runtimeBytes }, references.slice(plan.inputs, plan.queries));
       this.#queries = new ContractQuerySession(this.#network, this.#inputs, this.#routes, this.#access, this.#group,
-        root, delivery, deadline, runtimeBytes, references.slice(plan.queries, plan.channel), prepaidServices?.queries, prepaidServices?.outgoing);
-      this.#channelGroup = prepaidServices?.channelGroup ?? applicationGroup(root, accounts, { ...owner, kind: "rpc_first_channel" }, runtimeBytes, true, references[plan.channel + 2]!);
-      this.#publication = root.protect(references[plan.publication]!, plan.charges[plan.publication]!);
-      for (let i = plan.channel; i < plan.management; i++) if (i !== plan.channel + 2 && i !== plan.publication) this.#channelRefs.push(references[i]!.take(plan.charges[i]!));
+        root, delivery, deadline, runtimeBytes, references.slice(plan.queries, plan.channel), prepaidServices?.queries, prepaidServices?.outgoing, prepaidServices?.queryResponses, diagnostics);
+      for (let position = 0; position < 8; position++) {
+        const start = plan.channel + position * plan.channelWidth, positions: ProtectedResourceReservation[] = [];
+        this.#channelPositions.push(positions);
+        this.#channelGroups.push(prepaidServices?.channelGroups[position] ?? applicationGroup(root, accounts,
+          { ...owner, kind: `rpc_channel_${position}` }, runtimeBytes, true, references[start + 2]!));
+        for (let part = 0; part < plan.channelWidth; part++) if (part !== 2)
+          positions[part] = root.protect(references[start + part]!, plan.charges[start + part]!);
+      }
       if (profile === "execution") {
         const costs = executionManagementCharges(runtimeBytes), refs = references.slice(plan.management, plan.resultRead);
         this.#managementPosition = root.protect(refs[6]!, costs[6]!);
@@ -557,52 +572,95 @@ export class RPCApplicationAdmission {
     } catch (error) { this.close(); throw error; }
   }
   #check(): void { if (this.#closed) throw new RPCProtocolError("rpc_closed"); this.#reference!.check(); }
+  #applicationDraining(): boolean { return this.#draining || this.#peerDraining; }
   /** Once-only transfer to the actual authenticated Session assembly. */
   claim(reference: ResourceReference, profile: string, maxGeneral: number, deadline: TrustedDeadline, cleanup: SessionCleanup,
-    authentication?: V4AuthenticatedContext, checkpointPolicy?: CheckpointSessionPolicy, session?: object): void {
+    authentication?: V4AuthenticatedContext, checkpointPolicy?: CheckpointSessionPolicy, session?: object, managementBusinessAvailable?: () => boolean): void {
     this.#check();
     if (this.#claimed || profile !== this.#profile || maxGeneral !== this.#general || deadline !== this.#deadline ||
         !this.#reference!.sameEnvironment(reference)) throw new RPCProtocolError("rpc_owner");
     if (this.#executionIdentity !== undefined && (authentication?.peerSubject !== this.#executionIdentity.subject ||
         authentication.peerIdentityDigest !== this.#executionIdentity.identityDigest)) throw new RPCProtocolError("permission_denied");
     this.#claimed = true; this.#cleanup = cleanup; this.#checkpointPolicy = checkpointPolicy; this.#session = session;
+    this.#managementBusinessAvailable = managementBusinessAvailable;
     this.#authentication = authentication === undefined ? undefined : Object.freeze({ ...authentication });
     if (profile === "execution") this.#managementLease = this.#host!.delivery.retain(this.#reference!, () => this.close());
   }
   /** Called only after the real fixed-scope prefix is bound. This never sends
    * another OPEN and never creates a channel for each service or method. */
   bindBootstrap(stream: V4StreamOwner): void {
-    this.#check(); if (!this.#claimed || this.#bound) throw new RPCProtocolError("rpc_owner"); this.#bound = true;
-    const refs = this.#channelRefs;
+    this.#check(); if (!this.#claimed || this.#bound) throw new RPCProtocolError("rpc_owner");
+    this.#bound = true;
+    try { this.bindChannel(stream, 0); }
+    catch (error) { this.#bound = false; throw error; }
+  }
+  onChannelsChange(changed: () => void): void {
+    this.#check(); if (this.#channelsChanged !== undefined) throw new RPCProtocolError("rpc_owner"); this.#channelsChanged = changed;
+  }
+  channelReady(position: number): boolean { return !this.#closed && this.#channels[position]?.ready() === true; }
+  channelGracefullyEnded(position: number): boolean { return this.#channels[position]?.gracefullyEnded() === true; }
+  channelsReady(): boolean { return !this.#closed && this.#channels.some(channel => channel?.ready()); }
+  channelReusable(position: number): boolean {
+    return !this.#closed && !this.#draining && Number.isSafeInteger(position) && position >= 0 && position < 8 &&
+      this.#channels[position]?.cleanupComplete() !== false && this.#channelPositions[position]!.every(slot => slot.available());
+  }
+  bindChannel(stream: V4StreamOwner, position: number): void {
+    this.#check(); if (!this.#claimed || !this.channelReusable(position)) throw new RPCProtocolError("rpc_channel_owner");
+    const slots = this.#channelPositions[position]!, refs: ResourceReference[] = [];
     try {
-      this.#channel = new RPCChannelRuntime(stream, this.#network!, this.#inputs!, this.#runtimeBytes,
-        { channel: refs[0]!, adapter: refs[1]!, application: this.#channelGroup!, receiver: refs.slice(2, 7), publisher: refs[7]!, publication: this.#publication! });
-      this.#dispatching = true;
-      void this.#dispatch(this.#channel); this.#channel.start();
-    } catch (error) { this.close(); throw error; }
-    finally { for (const reference of refs) reference.release(); refs.length = 0; }
+      for (let part = 0; part < slots.length - 1; part++) if (part !== 2) refs[part] = slots[part]!.checkout();
+      const channel = new RPCChannelRuntime(stream, this.#network!, this.#inputs!, this.#runtimeBytes,
+        { channel: refs[0]!, adapter: refs[1]!, application: this.#channelGroups[position]!, receiver: refs.slice(3, 8),
+          publisher: refs[8]!, publication: slots[9]!, reusable: true });
+      this.#channels[position] = channel;
+      channel.onChange(() => { this.#channelsChanged?.(); this.#collect(); });
+      try {
+        channel.start(); if (this.#peerDraining) channel.drain();
+        this.#dispatching.add(channel); void this.#dispatch(channel); this.#channelsChanged?.();
+      }
+      catch (error) { this.#dispatching.delete(channel); channel.close(); throw error; }
+    } finally { for (const reference of refs) reference?.release(); }
+  }
+  #selectChannel(workClass: ApplicationWorkClass = "short"): RPCChannelRuntime {
+    this.#check();
+    let selected: RPCChannelRuntime | undefined, preferred = false, load = Number.POSITIVE_INFINITY;
+    for (const [position, channel] of this.#channels.entries()) {
+      if (channel?.requestReady() !== true) continue;
+      const matching = (position % 4 >= 2) === (workClass === "resident"), current = channel.requestLoad();
+      if (selected === undefined || matching && !preferred || matching === preferred && current < load) {
+        selected = channel; preferred = matching; load = current;
+      }
+    }
+    if (selected === undefined) throw new RPCProtocolError("not_ready"); return selected;
+  }
+  #sendAccounts(channel: RPCChannelRuntime): readonly ResourceAccount[] {
+    const position = this.#channels.indexOf(channel);
+    if (position < 0) throw new RPCProtocolError("rpc_channel_owner"); return this.#host!.channelSendAccounts[position]!;
   }
   bindNotify(stream: V4StreamOwner, position: 0 | 1): void {
     this.#check(); if (this.#notifyChannels[position] !== undefined || this.#draining) throw new RPCProtocolError("notify_unavailable");
     const refs = this.#notifyRefs[position]!;
     try {
       const channel = new NotifyChannel(stream, this.#runtimeBytes, refs, this.#notifyGroups[position]!, this.#notifyPositions[position]!, header => this.#acceptNotification(header), () => this.#collect());
-      this.#notifyChannels[position] = channel; channel.start();
+      this.#notifyChannels[position] = channel; channel.start(); if (this.#peerDraining) channel.drain();
     } finally { for (const ref of refs) ref?.release(); refs.length = 0; }
   }
   notifyReady(): boolean { return !this.#closed && this.#notifyChannels.some(channel => channel?.ready()); }
   subscribeNotification<Input, Value>(method: object, handler: V4NotificationHandler<Value>, options: V4NotificationSubscriptionOptions<Input, Value>): V4NotificationSubscription<Value> {
-    this.#check(); if (this.#draining || this.#authentication === undefined) throw new RPCProtocolError("source_unavailable");
+    return notificationSubscription<Value>(this.subscribeNotificationOwner(method, handler, options));
+  }
+  subscribeNotificationOwner<Input, Value>(method: object, handler: V4NotificationHandler<Value>, options: V4NotificationSubscriptionOptions<Input, Value>, scheduler?: NotificationScheduler): NotificationRegistration {
+    this.#check(); if (this.#applicationDraining() || this.#authentication === undefined) throw new RPCProtocolError("source_unavailable");
     const access = this.#notificationAccess.get(method), definition = methodDefinition(method);
     if (access === undefined || definition.shape !== "notify") throw new RPCProtocolError("method_unavailable");
-    const registration = this.#subscribers!.subscribe(method, definition, handler as V4NotificationHandler<unknown>, options as V4NotificationSubscriptionOptions<unknown, unknown>, access);
-    try { this.#check(); if (this.#draining) throw new RPCProtocolError("source_unavailable"); return notificationSubscription<Value>(registration); }
+    const registration = this.#subscribers!.subscribe(method, definition, handler as V4NotificationHandler<unknown>, options as V4NotificationSubscriptionOptions<unknown, unknown>, access, undefined, scheduler);
+    try { this.#check(); if (this.#applicationDraining()) throw new RPCProtocolError("source_unavailable"); return registration; }
     catch (error) { registration.close(); throw error; }
   }
   #acceptNotification(header: ApplicationHeader): NotificationMessage | undefined {
     let route: CapturedContractRoute | undefined, references: readonly ResourceReference[] = [];
     try {
-      this.#check(); if (this.#draining || (header.kind !== "observation_notify" && header.kind !== "execution_notify") || header.payloadBytes > this.#maxCaptureBytes || this.#authentication === undefined || this.#cleanup === undefined) return;
+      this.#check(); if (this.#applicationDraining() || (header.kind !== "observation_notify" && header.kind !== "execution_notify") || header.payloadBytes > this.#maxCaptureBytes || this.#authentication === undefined || this.#cleanup === undefined) return;
       route = this.#routes!.capture(header); if (route === undefined || !route.registered) return;
       const access = this.#notificationAccess.get(route.method); if (access === undefined) return; access.check();
       route.contract.checkRequest(header);
@@ -622,6 +680,7 @@ export class RPCApplicationAdmission {
   }
   #dispatchNotification(route: CapturedContractRoute, request: RpcInputTypes.RPCRequestInput, bytes: Uint8Array, deadline: TrustedDeadline): boolean {
     this.#check(); deadline.check();
+    if (this.#applicationDraining()) return false;
     const registration = this.#notificationBusinesses.get(route.method), history = this.#histories.get(route.namespace), access = this.#notificationAccess.get(route.method);
     if (registration === undefined || history === undefined || access === undefined || this.#executionIdentity === undefined || !registration.available() || request.header.uint(7) === 1n && !registration.idle) return false;
     registration.check(); access.check();
@@ -636,27 +695,27 @@ export class RPCApplicationAdmission {
           const original = request.borrow();
           try { this.#fanoutNotification(route, original.bytes, deadline, this.#subscribers!.snapshot(route.method, boundary)); } finally { original.release(); }
         });
-      input = new NotificationInput(bytes, route.definition, registration, deadline.fork(deadline.cap), this.#group!, this.#authentication!, host.delivery, this.#cleanup!, this.#runtimeBytes, refs, execution);
+      input = new NotificationInput(bytes, route.definition, registration, deadline.fork(deadline.cap), this.#group!, this.#authentication!, host.delivery, this.#cleanup!, this.#runtimeBytes, refs, execution, host.diagnostics);
       input.ready(); return true;
     } catch { input?.close(); execution?.close(); return false; }
     finally { for (const ref of refs) ref.release(); }
   }
   #fanoutNotification(route: CapturedContractRoute, bytes: Uint8Array, deadline: TrustedDeadline, captured?: readonly NotificationRegistration[]): void {
     this.#check(); deadline.check();
-    if (this.#draining || this.#cleanup === undefined || this.#authentication === undefined) return;
+    if (this.#applicationDraining() && captured === undefined || this.#cleanup === undefined || this.#authentication === undefined) return;
     const access = this.#notificationAccess.get(route.method); access?.check(); if (access === undefined) return;
     // Capture once at complete-message admission; no late registration replay.
     const registrations = captured ?? [...(this.#notificationBusinesses.has(route.method) ? [this.#notificationBusinesses.get(route.method)!] : []), ...this.#subscribers!.snapshot(route.method)], host = this.#host!;
     for (const registration of registrations) {
       if (registration.closed) continue;
-      if (!registration.available()) { registration.gap("dropped_budget"); continue; }
+      if (!registration.available()) { host.diagnostics?.counters.observe("slow_consumer", { phase: "application", code: "slow_consumer" }); registration.gap("dropped_budget"); continue; }
       let refs: readonly ResourceReference[] = [], input: NotificationInput | undefined;
       try {
         this.#check(); deadline.check(); access.check(); registration.check();
         if (this.#nextInbound === (1n << 64n) - 1n) throw new RPCProtocolError("resource_exhausted"); const id = ++this.#nextInbound;
         refs = host.root.reserveBatch([rpcPayloadCharge(bytes.length, this.#runtimeBytes), notificationWorkCharge(route.definition, registration.options, this.#runtimeBytes)]
           .map((charge, index) => ({ accounts: host.accounts, owner: { ...host.owner, kind: `notify_observer_${id}_${index}` }, charge })));
-        input = new NotificationInput(bytes, route.definition, registration, deadline.fork(deadline.cap), this.#group!, this.#authentication!, host.delivery, this.#cleanup!, this.#runtimeBytes, refs);
+        input = new NotificationInput(bytes, route.definition, registration, deadline.fork(deadline.cap), this.#group!, this.#authentication!, host.delivery, this.#cleanup!, this.#runtimeBytes, refs, undefined, host.diagnostics);
         input.ready();
       } catch { if (input === undefined) registration.gap("dropped_budget"); else input.close("dropped_budget"); }
       finally { for (const ref of refs) ref.release(); }
@@ -665,7 +724,7 @@ export class RPCApplicationAdmission {
   prepareNotify(method: object, namespace: string, contract: ServiceContractSnapshot, offer: AdmissionOffer | undefined, value: unknown, options: NotifyPreparationOptions,
     source: RPCPublicationGuard, workClass: ApplicationWorkClass, context?: V4ApplicationContext, signal?: AbortSignal, destination?: ServiceBindingTarget): Promise<NotifyPreparation> {
     this.#check(); const definition = methodDefinition(method), captured = captureNotifyOptions(options, context), host = this.#host!;
-    if (this.#draining || this.#cleanup === undefined || this.#authentication === undefined || definition.shape !== "notify" || definition.semantics === "execution" && this.#profile !== "execution") throw new RPCProtocolError("notify_unavailable");
+    if (this.#applicationDraining() || this.#cleanup === undefined || this.#authentication === undefined || definition.shape !== "notify" || definition.semantics === "execution" && this.#profile !== "execution") throw new RPCProtocolError("notify_unavailable");
     contract.checkMethod(namespace, definition); source.check(); this.#check();
     if (!source.current() || signal?.aborted || context?.signal.aborted) throw new RPCProtocolError("canceled");
     const localClass = applicationWorkClass(workClass, context), inputBytes = messageInputBytes(value, definition.request.implementation, definition.request.maximum);
@@ -681,11 +740,11 @@ export class RPCApplicationAdmission {
       accounts: index === 1 ? host.notificationAccounts[position]! : host.accounts, owner: { ...host.owner, kind: `notify_preparation_${id}_${index}` }, charge })));
     let operation: NotifyPreparation | undefined;
     try {
-      operation = new NotifyPreparation(definition, namespace, contract, captured, source, { start: original => {
-        this.#check(); if (this.#draining) throw new RPCProtocolError("source_unavailable");
+      operation = new NotifyPreparation(definition, namespace, contract, captured, this.#operationPublication(source), { start: original => {
+        this.#check(); if (this.#applicationDraining()) throw new RPCProtocolError("source_unavailable");
         const channel = this.#notifyChannels[position];
         return channel?.submit(original) ?? Object.freeze({ status: "not_admitted", submission: "not_submitted", reason: "not_ready" });
-      } }, host.clock, this.#deadline!, this.#group!, this.#authentication, host.delivery, this.#cleanup, localClass, inputBytes, this.#runtimeBytes, refs, offer, this.#random, this.#localExecutionAuthority, destination);
+      } }, host.clock, this.#deadline!, this.#group!, this.#authentication, host.delivery, this.#cleanup, localClass, inputBytes, this.#runtimeBytes, refs, offer, this.#random, this.#localExecutionAuthority, destination, host.diagnostics);
       const original = operation; this.#notifyPreparations.add(original); original.onDetach(() => { this.#notifyPreparations.delete(original); this.#collect(); });
       return original.encode(value, context, signal).then(() => { original.checkPublication(); return original; });
     } catch (error) { operation?.close(); throw error; }
@@ -696,11 +755,11 @@ export class RPCApplicationAdmission {
     const refs = this.#managementRefs;
     try {
       this.#management = new ExecutionManagementChannel(stream, this.#host!.clock, this.#deadline!, this.#managementPosition!, this.#runtimeBytes,
-        refs, this.#managementGroup!, (target, cancel) => {
+        refs, this.#managementGroup!, (target, cancel, access) => {
           const history = this.#histories.get(target.namespace);
           if (history === undefined) return { status: "unavailable" };
-          return history.manage(target, cancel, { check: () => this.#authorizeManagement(target, cancel, false), current: () => !this.#closed });
-        }, (target, cancel, outgoing) => this.#authorizeManagement(target, cancel, outgoing), () => { this.#collect(); this.#managementChanged?.(); });
+          return history.manage(target, cancel, access);
+        }, (target, cancel, outgoing) => this.#authorizeManagement(target, cancel, outgoing), () => { this.#collect(); this.#managementChanged?.(); }, this.#host!.diagnostics);
       this.#management.start(); for (const wake of this.#managementWaiters) wake();
     } catch (error) { this.managementFailed(); throw error; }
     finally { for (const reference of refs) reference.release(); refs.length = 0; }
@@ -733,6 +792,7 @@ export class RPCApplicationAdmission {
   }
   #authorizeManagement(target: ExecutionTarget, cancel: boolean, outgoing: boolean): void {
     this.#check(); this.#deadline!.check(); this.#managementLease?.check(); const identity = this.#executionIdentity, authentication = this.#authentication;
+    if (this.#managementBusinessAvailable?.() === false) throw new RPCProtocolError("management_unavailable");
     if (this.#profile !== "execution" || authentication === undefined || target.tenant !== authentication.tenant || target.audience !== authentication.audience) throw new RPCProtocolError("permission_denied");
     let authority: string | undefined, subject: string;
     if (outgoing) { authority = this.#localExecutionAuthority; subject = authentication.localSubject; }
@@ -755,6 +815,12 @@ export class RPCApplicationAdmission {
     this.#check();
   }
   async manageExecution(reference: V4OperationReference, cancel: boolean, deadline: TrustedDeadline, signal?: AbortSignal): Promise<ExecutionManagementResult> {
+    const diagnostic = new DiagnosticActivity(this.#host?.diagnostics, "application");
+    let transferred = false;
+    try { return await this.#manageExecution(reference, cancel, deadline, signal, diagnostic, () => { transferred = true; }); }
+    catch (error) { if (!transferred) diagnostic.failure(error); throw error; }
+  }
+  async #manageExecution(reference: V4OperationReference, cancel: boolean, deadline: TrustedDeadline, signal: AbortSignal | undefined, diagnostic: DiagnosticActivity, transfer: () => void): Promise<ExecutionManagementResult> {
     this.#check(); if (this.#authentication === undefined) throw new RPCProtocolError("permission_denied");
     const target = operationTarget(reference, this.#authentication, this.#referenceTargets);
     this.#authorizeManagement(target, cancel, true);
@@ -780,41 +846,46 @@ export class RPCApplicationAdmission {
         } catch (error) { finish(); reject(error); }
       });
     }
-    return this.#management!.request(target, cancel, deadline, signal);
+    const channel = this.#management;
+    if (channel === undefined) throw new RPCProtocolError("management_unavailable");
+    transfer();
+    return channel.request(target, cancel, deadline, signal, diagnostic);
   }
   get bound(): boolean { return this.#bound; }
   /** Fixed ordinary read, admitted as general K + complete result ownership.
    * No management request, Offer refresh or execution registration is hidden. */
   readExecutionResult(reference: V4OperationReference, deadline: TrustedDeadline, context?: V4ApplicationContext, signal?: AbortSignal): RPCUnaryExchange {
     this.#check();
-    if (this.#draining || this.#authentication === undefined || this.#resultReadCodec === undefined || this.#channel === undefined || this.#resultReadBusy) throw new RPCProtocolError("service_unavailable");
+    if (this.#applicationDraining() || this.#authentication === undefined || this.#resultReadCodec === undefined || this.#resultReadBusy) throw new RPCProtocolError("service_unavailable");
     if (signal !== undefined && managementAborted.call(signal)) throw new RPCProtocolError("canceled");
     const target = operationTarget(reference, this.#authentication, this.#referenceTargets), limit = operationResultLimit(reference), host = this.#host!, cleanup = this.#cleanup!;
     if (!deadline.belongsTo(host.clock) || deadline.cap > this.#deadline!.cap) throw new RPCProtocolError("rpc_request_binding");
     this.#authorizeManagement(target, false, true); deadline.check();
     const workClass = applicationWorkClass("resident", context);
+    const channel = this.#selectChannel(workClass);
     this.#resultReadBusy = true;
     let references: readonly ResourceReference[] = [], reserved: ReturnType<RPCApplicationAdmission["reserveCall"]> | undefined;
     let request: RPCPayload | undefined, exchange: RPCUnaryExchange | undefined, job = false;
+    const diagnostic = new DiagnosticActivity(host.diagnostics, "application");
     try {
       if (this.#nextPreparation === (1n << 64n) - 1n) throw new RPCProtocolError("resource_exhausted");
       const id = ++this.#nextPreparation, encoded = this.#resultReadCodec.encodeTarget(target, this.#resultReadBuffer);
       const costs = rpcUnaryExchangeCharges(encoded.length, limit, this.#runtimeBytes);
-      references = host.root.reserveBatch(costs.map((charge, index) => ({ accounts: index === 1 ? host.sendAccounts : host.accounts,
+      references = host.root.reserveBatch(costs.map((charge, index) => ({ accounts: index === 1 ? this.#sendAccounts(channel) : host.accounts,
         owner: { ...host.owner, kind: `rpc_result_read_${id}_${index}` }, charge })));
       reserved = this.reserveCall(workClass);
       request = new RPCPayload(encoded.length, this.#runtimeBytes, references[1]!); request.write(0, encoded);
-      const header = this.#channel.resultReadHeader(encoded.length, deadline.cap);
+      const header = channel.resultReadHeader(encoded.length, deadline.cap);
       const guard: RPCPublicationGuard = Object.freeze({ check: () => this.#authorizeManagement(target, false, true), current: () => !this.#closed });
       cleanup.startJob(); job = true;
       exchange = new RPCUnaryExchange(header, undefined, request, deadline, guard, host.delivery, host.root, this.#runtimeBytes,
-        [references[0]!, references[2]!], reserved.call, reserved.completion, undefined, this.#authentication, undefined, limit);
+        [references[0]!, references[2]!], reserved.call, reserved.completion, undefined, this.#authentication, undefined, limit, undefined, diagnostic);
       const original = exchange; this.#unary.add(original);
       original.onNetworkCleanup(() => { this.#unary.delete(original); cleanup.finishJob(); this.#collect(); }); job = false;
-      this.#check(); if (this.#draining) throw new RPCProtocolError("service_unavailable");
-      original.cancelWith(signal); original.submit(this.#channel); return original;
+      this.#check(); if (this.#applicationDraining()) throw new RPCProtocolError("service_unavailable");
+      original.cancelWith(signal); original.submit(channel); return original;
     } catch (error) {
-      exchange?.close(); request?.close(); reserved?.call.close(); reserved?.completion.close(); if (job) cleanup.finishJob(); throw error;
+      diagnostic.failure(error); exchange?.close(); request?.close(); reserved?.call.close(); reserved?.completion.close(); if (job) cleanup.finishJob(); throw error;
     } finally {
       this.#resultReadBuffer.fill(0); for (const ref of references) ref.release(); this.#resultReadBusy = false; this.#collect();
     }
@@ -827,7 +898,7 @@ export class RPCApplicationAdmission {
     context?: V4ApplicationContext, signal?: AbortSignal, dependency?: ServiceBindingConfigTypes.CapturedServiceBinding, prepaid?: ServiceBindingPoolTypes.ServiceBindingReservation, preparation?: ContractQueryPreparation): Promise<ServiceBinding> {
     this.#check(); const contracts = options.contractSource, captured = dependency ?? captureServiceBinding(definition, options);
     if (captured.definition !== definition) throw new RPCProtocolError("service_binding_owner"); this.#check();
-    if (this.#draining || this.#authentication === undefined || !deadline.belongsTo(this.#host!.clock)) throw new RPCProtocolError("source_unavailable");
+    if (this.#applicationDraining() || this.#authentication === undefined || !deadline.belongsTo(this.#host!.clock)) throw new RPCProtocolError("source_unavailable");
     const source = this.bindingSource(captured, () => preparation);
     const reservation = prepaid ?? this.#bindings!.reserve(captured);
     reservation.claim(captured, this.#bindings!);
@@ -844,15 +915,15 @@ export class RPCApplicationAdmission {
     this.#check();
     const check = (): void => {
       this.#check(); this.#deadline!.check();
-      if (this.#draining || this.#authentication === undefined) throw new RPCProtocolError("source_unavailable");
+      if (this.#applicationDraining() || this.#authentication === undefined) throw new RPCProtocolError("source_unavailable");
     };
-    const current = (): boolean => !this.#closed && !this.#draining && this.#authentication !== undefined;
+    const current = (): boolean => !this.#closed && !this.#applicationDraining() && this.#authentication !== undefined;
     return Object.freeze<ServiceBindingSource>({ clock: this.#host!.clock, group: this.#serviceGroup, check, current,
       authentication: () => { check(); return this.#authentication!; },
       checkDependency: (method, contract) => {
         check();
         if (method.facts.shape === "notify") { if (!this.notifyReady()) throw new RPCProtocolError("not_ready"); }
-        else if (method.facts.shape === "unary") { if (this.#channel === undefined) throw new RPCProtocolError("not_ready"); this.#channel.checkDependency(); }
+        else if (method.facts.shape === "unary") this.#selectChannel().checkDependency();
         else {
           if (this.#preaccepted === undefined || method.streamKind === undefined) throw new RPCProtocolError("not_ready");
           this.#preaccepted.checkReady({ namespace: captured.namespace, authority: captured.target.authority, kind: method.streamKind, metadata: method.streamMetadata!, contract });
@@ -860,8 +931,7 @@ export class RPCApplicationAdmission {
       },
       deadline: duration => { check(); return this.#deadline!.forkAgeAt(this.#host!.clock.sample(), duration); },
       protectRenewal: reference => {
-        check(); if (this.#channel === undefined) throw new RPCProtocolError("not_ready");
-        return this.#queries!.protectRenewal(this.#acquisitions!, this.#channel, reference);
+        check(); return this.#queries!.protectRenewal(this.#acquisitions!, this.#selectChannel(), reference);
       },
       observeAvailability: (reference, wake) => this.#host!.root.observeAvailability(reference, wake),
       retain: (reference: ResourceReference, closed: () => void) => this.#host!.delivery.retain(reference, closed),
@@ -897,7 +967,7 @@ export class RPCApplicationAdmission {
   reserveCall(workClass: ApplicationWorkClass, prepaid?: CompletionReservation, prepaidCall?: RPCCallReservation): Readonly<{ call: RPCCallReservation; completion: CompletionReservation }> {
     let call: RPCCallReservation;
     try {
-      this.#check(); if (this.#draining) throw new RPCProtocolError("service_unavailable");
+      this.#check(); if (this.#applicationDraining()) throw new RPCProtocolError("service_unavailable");
       if (prepaidCall !== undefined) { this.#calls!.checkUnsubmitted(prepaidCall); prepaidCall.inheritClass(workClass); }
       call = prepaidCall ?? this.#network!.reserveCall(workClass);
     } catch (error) { prepaidCall?.close(); prepaid?.close(); throw error; }
@@ -913,13 +983,13 @@ export class RPCApplicationAdmission {
   }
   #preacceptStreams(namespace: string, targets: readonly Readonly<{ method: CapturedBindingMethod; contract: ServiceContractSnapshot }>[], authority: string): readonly RPCStreamPoolDemand[] {
     this.#check(); const host = this.#host!;
-    if (this.#draining || this.#streamOpener === undefined || targets.some(({ method }) => method.streamKind === undefined || method.facts.shape !== "server_streaming")) throw new RPCProtocolError("not_ready");
+    if (this.#applicationDraining() || this.#streamOpener === undefined || targets.some(({ method }) => method.streamKind === undefined || method.facts.shape !== "server_streaming")) throw new RPCProtocolError("not_ready");
     if (this.#preaccepted === undefined) {
       const reference = this.#initialStreams?.takePool() ?? host.root.reserve({ owner: { ...host.owner, kind: "rpc_preaccepted_streams" }, accounts: host.accounts, charge: rpcPreacceptedStreamsCharge(this.#runtimeBytes) });
       try {
         this.#preaccepted = new RPCPreacceptedStreams(this.#runtimeBytes, reference, host.clock, this.#deadline!.fork(this.#deadline!.cap), target => this.#newMessages(target),
           async (target, fixed, signal) => {
-            this.#check(); if (this.#draining) throw new RPCProtocolError("source_unavailable");
+            this.#check(); if (this.#applicationDraining()) throw new RPCProtocolError("source_unavailable");
             await this.#streamOpener!(target.kind, target.metadata, this.#deadline!.forkAgeAt(host.clock.sample(), 30000n), signal, stream => fixed.messages.attach(stream, fixed.adapter), fixed.open);
           }, () => this.#collect());
       } finally { reference.release(); }
@@ -949,7 +1019,7 @@ export class RPCApplicationAdmission {
   }
   prepareIncomingResume(kind: string, namespace: string, method: object): RPCResumeDispatch {
     this.#check(); const host = this.#host!, definition = methodDefinition(method);
-    if (this.#draining || this.#checkpointPolicy === undefined || this.#executionIdentity === undefined || this.#authentication === undefined ||
+    if (this.#applicationDraining() || this.#checkpointPolicy === undefined || this.#executionIdentity === undefined || this.#authentication === undefined ||
         this.#cleanup === undefined || definition.shape !== "unary" || definition.semantics !== "execution") throw new RPCProtocolError("resume_binding");
     const fixed = this.#newMessages(); let codec: ResumeCodec | undefined, output: ResourceReference | undefined, interest: ResourceReference | undefined, work: ResourceReference | undefined, dispatch: RPCResumeDispatch | undefined;
     try {
@@ -962,7 +1032,7 @@ export class RPCApplicationAdmission {
       dispatch = new RPCResumeDispatch(fixed.messages, fixed.adapter, codec, this.#network!, ticket, this.#inputs!, this.#routes!, namespace, method, kind,
         this.#group!, this.#authentication, this.#executionIdentity, this.#checkpointPolicy, host.clock, this.#cleanup, this.#runtimeBytes, output, interest, work, bytes => host.root.reserve({
           owner: { ...host.owner, kind: `rpc_resume_authorization_${serial}` }, accounts: host.accounts,
-          charge: new ResourceVector([bytes, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]) }));
+          charge: new ResourceVector([bytes, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]) }), host.diagnostics);
       const original = dispatch; this.#resumeDispatches.add(original);
       original.onCleanup(() => { this.#resumeDispatches.delete(original); this.#collect(); }); return original;
     } catch (error) { dispatch?.close(); fixed.messages.close(); fixed.adapter.release(); codec?.close(); throw error; }
@@ -970,7 +1040,7 @@ export class RPCApplicationAdmission {
   }
   prepareIncomingStream(kind: string, metadata: Uint8Array): Readonly<{ attach(stream: V4StreamOwner): void; start(): void; close(): void }> {
     this.#check(); const entry = this.#streamHandlers.get(kind), host = this.#host!;
-    if (entry === undefined || this.#draining || this.#authentication === undefined || this.#cleanup === undefined ||
+    if (entry === undefined || this.#applicationDraining() || this.#authentication === undefined || this.#cleanup === undefined ||
         metadata.length !== (entry.metadata?.length ?? 0) || metadata.some((byte, index) => byte !== entry.metadata![index])) throw new RPCProtocolError("service_unavailable");
     const fixed = this.#newMessages(); let dispatch: RPCStreamingDispatch | undefined;
     const source = byteEventSource(entry.handler);
@@ -984,7 +1054,7 @@ export class RPCApplicationAdmission {
         this.#group!, this.#authentication, host.clock, this.#deadline!.fork(this.#deadline!.cap), host.delivery, this.#cleanup, this.#runtimeBytes, references, this.#routes!, this.#executionIdentity, source, charge => {
           if (this.#nextPreparation === (1n << 64n) - 1n) throw new RPCProtocolError("resource_exhausted");
           return host.root.reserve({ owner: { ...host.owner, kind: `rpc_source_input_${++this.#nextPreparation}` }, accounts: host.accounts, charge });
-        });
+        }, host.diagnostics);
       const original = dispatch; this.#streamDispatches.add(original);
       original.onCleanup(() => { this.#streamDispatches.delete(original); if (this.#closed && this.#streamDispatches.size === 0) this.#group?.retireResults(); this.#collect(); });
       return Object.freeze({ attach: (stream: V4StreamOwner) => { try { fixed.messages.attach(stream, fixed.adapter); } finally { fixed.adapter.release(); } },
@@ -997,7 +1067,7 @@ export class RPCApplicationAdmission {
     destination?: ServiceBindingTarget): Promise<RPCUnaryPreparation<RPCStreamingExchange>> {
     this.#check(); const host = this.#host!, captured = captureUnaryOptions(options, context), definition = method.facts;
     if (definition.shape !== "server_streaming" || definition.semantics === "execution" && this.#profile !== "execution" || method.streamKind === undefined || this.#streamOpener === undefined ||
-        this.#draining || this.#authentication === undefined || this.#cleanup === undefined || destination === undefined) throw new RPCProtocolError("rpc_request_binding");
+        this.#applicationDraining() || this.#authentication === undefined || this.#cleanup === undefined || destination === undefined) throw new RPCProtocolError("rpc_request_binding");
     const kind = method.streamKind, metadata = new Uint8Array(method.streamMetadata!); contract.checkMethod(namespace, definition);
     const localClass = applicationWorkClass(method.workClass, context), inputBytes = messageInputBytes(value, definition.request.implementation, definition.request.maximum);
     const costs = rpcUnaryPreparationCharges(contract, definition, unaryResponseLimit(contract, captured), inputBytes, this.#runtimeBytes);
@@ -1007,13 +1077,13 @@ export class RPCApplicationAdmission {
     let reserved: ReturnType<RPCApplicationAdmission["reserveCall"]> | undefined, preparation: RPCUnaryPreparation<RPCStreamingExchange> | undefined;
     try {
       reserved = this.reserveCall(localClass, prepaid?.completion, prepaid?.call);
-      preparation = new RPCUnaryPreparation<RPCStreamingExchange>(definition, namespace, contract, offer, captured, source, {
-        check: (header, call) => { this.#check(); if (this.#draining || this.#streamOpener === undefined) throw new RPCProtocolError("not_ready"); this.#network!.checkOutgoingStream(header, call); },
-        current: () => !this.#closed && !this.#draining && this.#streamOpener !== undefined,
+      preparation = new RPCUnaryPreparation<RPCStreamingExchange>(definition, namespace, contract, offer, captured, this.#operationPublication(source), {
+        check: (header, call) => { this.#check(); if (this.#applicationDraining() || this.#streamOpener === undefined) throw new RPCProtocolError("not_ready"); this.#network!.checkOutgoingStream(header, call); },
+        current: () => !this.#closed && !this.#applicationDraining() && this.#streamOpener !== undefined,
         reserve: (header, call) => header.uint(7) === 1n ? this.#reserveStreamStart(header, call, { namespace, authority: destination.authority, kind, metadata, contract }) : undefined,
         start: (transfer, claim) => this.#startStream(transfer, claim, kind, metadata),
       }, host.clock, this.#deadline!, this.#random!, host.delivery, this.#group!, this.#authentication, this.#cleanup,
-      reserved.call, reserved.completion, localClass, inputBytes, this.#runtimeBytes, references, this.#localExecutionAuthority, destination);
+      reserved.call, reserved.completion, localClass, inputBytes, this.#runtimeBytes, references, this.#localExecutionAuthority, destination, false, host.diagnostics);
       const original = preparation; this.#preparations.add(original);
       original.onDetach(() => { this.#preparations.delete(original); this.#collect(); });
       return original.encode(value, context, signal).then(() => { original.checkReady(); return original; });
@@ -1030,7 +1100,7 @@ export class RPCApplicationAdmission {
       admission = network.prepareOutgoingStream(checkout.fixed.messages, header, call);
       lease = host.delivery.retain(checkout.fixed.error, () => { authorized = false; exchange?.authorizationClosed(); });
       return {
-        current: () => authorized && !this.#closed && !this.#draining && checkout.current() && admission!.current(),
+        current: () => authorized && !this.#closed && !this.#applicationDraining() && checkout.current() && admission!.current(),
         start: (transfer, claim) => {
           const fixed = checkout.take(); transferred = true;
           try { exchange = this.#startStream(transfer, claim, target.kind, target.metadata, { fixed, admission: admission!, lease: lease! }); lease = undefined; return exchange; }
@@ -1092,13 +1162,13 @@ export class RPCApplicationAdmission {
         preparation = await this.prepareUnary(method.method, namespace, contract, offer, bytes.subarray(0, size), options, guard,
           method.workClass, context, signal, destination, {
             check: (header, call) => { guard.check(); this.#network!.checkOutgoingStream(header, call); },
-            current: () => guard.current() && !this.#draining && !this.#closed,
+            current: () => guard.current() && !this.#applicationDraining() && !this.#closed,
             releaseUnused: release,
             reserve: (header, call) => {
               if (header.uint(7) !== 1n) return;
               const admission = this.#network!.prepareOutgoingStream(fixed.messages, header, call);
               return {
-                current: () => guard.current() && !this.#draining && !this.#closed && admission.current(),
+                current: () => guard.current() && !this.#applicationDraining() && !this.#closed && admission.current(),
                 start: (transfer, claim) => {
                   moved = true; fixed.error.release();
                   return this.#startResume(transfer, claim, fixed.messages, codec!, admission);
@@ -1124,7 +1194,7 @@ export class RPCApplicationAdmission {
       const ticket = prepared?.commit() ?? network.reserveOutgoingStream(messages, transfer.header, transfer.call); messages.bind(network, ticket);
       cleanup.startJob(); job = true;
       exchange = new RPCUnaryExchange(transfer.header, transfer.contract, transfer.request, transfer.deadline, transfer.guard,
-        host.delivery, host.root, this.#runtimeBytes, transfer.references, transfer.call, transfer.completion, transfer.method, this.#authentication!, claim);
+        host.delivery, host.root, this.#runtimeBytes, transfer.references, transfer.call, transfer.completion, transfer.method, this.#authentication!, claim, undefined, undefined, transfer.diagnostic);
       const original = exchange; this.#unary.add(original);
       original.onNetworkCleanup(() => { this.#unary.delete(original); cleanup.finishJob(); this.#collect(); }); job = false;
       original.submitResume(messages, network, ticket, codec); return original;
@@ -1132,17 +1202,17 @@ export class RPCApplicationAdmission {
   }
   prepareUnary(method: object, namespace: string, contract: ServiceContractSnapshot, offer: AdmissionOffer | undefined,
     value: unknown, options: RPCUnaryPreparationOptions, source: RPCPublicationGuard, workClass: ApplicationWorkClass,
-    context?: V4ApplicationContext, signal?: AbortSignal, destination?: ServiceBindingTarget, resume?: RpcUnaryPreparationTypes.RPCUnaryStartTarget): Promise<RPCUnaryPreparation> {
+    context?: V4ApplicationContext, signal?: AbortSignal, destination?: ServiceBindingTarget, resume?: RpcUnaryPreparationTypes.RPCUnaryStartTarget, route?: ControllerUnaryRoute): Promise<RPCUnaryPreparation> {
     this.#check();
     const captured = captureUnaryOptions(options, context), definition = methodDefinition(method);
     const host = this.#host!, cleanup = this.#cleanup, authentication = this.#authentication;
-    if (this.#draining || cleanup === undefined || authentication === undefined) throw new RPCProtocolError("service_unavailable");
+    if (this.#applicationDraining() || cleanup === undefined || authentication === undefined) throw new RPCProtocolError("service_unavailable");
     if (signal?.aborted) throw new RPCProtocolError("canceled");
     if (definition.shape !== "unary" || definition.semantics === "execution" && this.#profile !== "execution" ||
         !contract.sameEnvironment(this.#reference!)) throw new RPCProtocolError("rpc_request_binding");
     contract.checkMethod(namespace, definition);
     source.check(); this.#check();
-    if (!source.current() || this.#draining) throw new RPCProtocolError("source_unavailable");
+    if (!source.current() || this.#applicationDraining()) throw new RPCProtocolError("source_unavailable");
     const localClass = applicationWorkClass(workClass, context);
     const inputBytes = messageInputBytes(value, definition.request.implementation, definition.request.maximum);
     const costs = rpcUnaryPreparationCharges(contract, definition, unaryResponseLimit(contract, captured), inputBytes, this.#runtimeBytes);
@@ -1154,17 +1224,17 @@ export class RPCApplicationAdmission {
     let reserved: ReturnType<RPCApplicationAdmission["reserveCall"]> | undefined, preparation: RPCUnaryPreparation | undefined;
     try {
       reserved = this.reserveCall(localClass, prepaid?.completion, prepaid?.call);
-      preparation = new RPCUnaryPreparation(definition, namespace, contract, offer, captured, source, resume ?? {
+      preparation = new RPCUnaryPreparation(definition, namespace, contract, offer, captured,
+        this.#operationPublication(source), resume ?? {
         check: (header, call) => {
           this.#check();
-          if (this.#draining) throw new RPCProtocolError("service_unavailable");
-          if (this.#channel === undefined) throw new RPCProtocolError("not_ready");
-          this.#channel.checkRequestAdmission(header, call);
+          if (this.#applicationDraining()) throw new RPCProtocolError("service_unavailable");
+          this.#selectChannel(call.workClass()).checkRequestAdmission(header, call);
         },
-        current: (header, call) => !this.#closed && !this.#draining && this.#channel?.requestAdmissionCurrent(header, call) === true,
-        start: (transfer, claim) => this.#startUnary(transfer, claim),
+        current: (header, call) => !this.#closed && !this.#applicationDraining() && this.#channels.some(channel => channel?.ready() && channel.requestAdmissionCurrent(header, call)),
+        start: (transfer, claim) => this.#startUnary(transfer, claim, route),
       }, host.clock, this.#deadline!, this.#random!, host.delivery, this.#group!, authentication, cleanup,
-      reserved.call, reserved.completion, localClass, inputBytes, this.#runtimeBytes, references, this.#localExecutionAuthority, destination, resume !== undefined);
+      reserved.call, reserved.completion, localClass, inputBytes, this.#runtimeBytes, references, this.#localExecutionAuthority, destination, resume !== undefined, host.diagnostics);
       const original = preparation; this.#preparations.add(original);
       original.onDetach(() => { this.#preparations.delete(original); this.#collect(); });
       this.#check();
@@ -1173,15 +1243,72 @@ export class RPCApplicationAdmission {
       preparation?.close(); reserved?.completion.close(); reserved?.call.close(); throw error;
     } finally { for (const reference of references) reference.release(); }
   }
-  #startUnary(transfer: RPCUnaryTransfer, claim: CompletionClaim | undefined): RPCUnaryExchange {
+  #operationPublication(source: RPCPublicationGuard): RPCPublicationGuard {
+    let admitted = false;
+    return Object.freeze({
+      check: () => {
+        if (!admitted) { source.check(); return; }
+        // Drain seals new admission but does not revoke the original accepted
+        // operation. Its deadline, result safety and channel still govern tails.
+        this.#check(); this.#deadline!.check();
+        if (this.#authentication === undefined) throw new RPCProtocolError("source_unavailable");
+      },
+      current: () => admitted ? !this.#closed && this.#authentication !== undefined : source.current(),
+      admitted: () => { admitted = true; source.admitted?.(); },
+    });
+  }
+  /** SDK-local route identity. A captured execution authority cannot be
+   * inferred from a later peer advertisement or changed during reselection. */
+  unaryRouteAuthority(): string | undefined { this.#check(); return this.#localExecutionAuthority; }
+  /** Adopt the original encoded queued operation into this published Session.
+   * This path allocates a complete new K/Completion/result vector and never
+   * invokes an encoder, generates an ID or extends the original deadline. */
+  adoptControllerUnary(request: ControllerUnaryRouteRequest, method: ServiceBindingConfigTypes.CapturedBindingMethod,
+    target: ServiceBindingTarget, workClass: ApplicationWorkClass, route: ControllerUnaryRoute,
+    originalAuthority: string | undefined): RPCUnaryExchange {
     this.#check();
-    const host = this.#host!, channel = this.#channel, cleanup = this.#cleanup!;
-    if (this.#draining || channel === undefined) throw new RPCProtocolError("service_unavailable");
+    const host = this.#host!, channel = this.#selectChannel(workClass), authentication = this.#authentication!;
+    if (this.#applicationDraining() || channel === undefined || this.#cleanup === undefined || request.publication.reroute === undefined ||
+        request.header.uint(7) !== 0n || request.header.kind !== "transient_unary_request" && request.header.kind !== "execution_unary_request") throw new RPCProtocolError("source_unavailable");
+    checkServiceBindingTarget(target, authentication);
+    const original = request.authentication;
+    checkServiceBindingTarget(target, original);
+    if (original.tenant !== authentication.tenant || original.audience !== authentication.audience || original.localRole !== authentication.localRole ||
+        original.localSubject !== authentication.localSubject ||
+        request.header.has(1) && (this.#profile !== "execution" || originalAuthority === undefined || this.#localExecutionAuthority !== originalAuthority)) throw new RPCProtocolError("rpc_request_binding");
+    request.contract.checkMethod(request.contract.namespace, method.facts); request.contract.checkRequest(request.header);
+    if (!request.deadline.belongsTo(host.clock) || request.bytes.length !== request.header.payloadBytes) throw new RPCProtocolError("rpc_request_binding");
+    request.deadline.check(); this.#deadline!.check(); route.check(); this.#check();
+    const guard = request.publication.reroute(this.#operationPublication({
+      check: () => { this.#check(); this.#deadline!.check(); if (this.#applicationDraining()) throw new RPCProtocolError("source_unavailable"); },
+      current: () => !this.#closed && !this.#applicationDraining(),
+    }));
+    const costs = rpcUnaryExchangeCharges(request.bytes.length, Number(request.header.uint(8)), this.#runtimeBytes, request.method);
+    if (this.#nextPreparation === (1n << 64n) - 1n) throw new RPCProtocolError("resource_exhausted");
+    const index = ++this.#nextPreparation;
+    const references = host.root.reserveBatch(costs.map((charge, part) => ({ accounts: part === 1 ? this.#sendAccounts(channel) : host.accounts,
+      owner: { ...host.owner, kind: `rpc_unary_route_${index}_${part}` }, charge })));
+    let requestPayload: RPCPayload | undefined, reserved: ReturnType<RPCApplicationAdmission["reserveCall"]> | undefined, exchange: RPCUnaryExchange | undefined;
+    try {
+      reserved = this.reserveCall(workClass);
+      requestPayload = new RPCPayload(request.bytes.length, this.#runtimeBytes, references[1]!); requestPayload.write(0, request.bytes);
+      channel.checkRequestAdmission(request.header, reserved.call); route.check(); this.#check();
+      if (!route.current() || !channel.requestAdmissionCurrent(request.header, reserved.call)) throw new RPCProtocolError("source_unavailable");
+      exchange = this.#startUnary({ header: request.header, contract: request.contract, request: requestPayload, deadline: request.deadline,
+        guard, references: [references[0]!, references[2]!], call: reserved.call, completion: reserved.completion, method: request.method }, undefined, route);
+      return exchange;
+    } catch (error) { exchange?.close(); requestPayload?.close(); reserved?.call.close(); reserved?.completion.close(); throw error; }
+    finally { for (const reference of references) reference.release(); }
+  }
+  #startUnary(transfer: RPCUnaryTransfer, claim: CompletionClaim | undefined, route?: ControllerUnaryRoute): RPCUnaryExchange {
+    this.#check();
+    const host = this.#host!, channel = this.#selectChannel(transfer.call.workClass()), cleanup = this.#cleanup!;
+    if (this.#applicationDraining() || channel === undefined) throw new RPCProtocolError("service_unavailable");
     let exchange: RPCUnaryExchange | undefined, job = false;
     try {
       cleanup.startJob(); job = true;
       exchange = new RPCUnaryExchange(transfer.header, transfer.contract, transfer.request, transfer.deadline, transfer.guard,
-        host.delivery, host.root, this.#runtimeBytes, transfer.references, transfer.call, transfer.completion, transfer.method, this.#authentication!, claim);
+        host.delivery, host.root, this.#runtimeBytes, transfer.references, transfer.call, transfer.completion, transfer.method, this.#authentication!, claim, undefined, route, transfer.diagnostic);
       const original = exchange; this.#unary.add(original);
       // Install original cleanup before any later safety check can fail.
       original.onNetworkCleanup(() => { this.#unary.delete(original); cleanup.finishJob(); this.#collect(); }); job = false;
@@ -1193,8 +1320,7 @@ export class RPCApplicationAdmission {
   query(targets: readonly ContractQueryTarget[], deadline: TrustedDeadline,
     windows: readonly bigint[], context?: V4ApplicationContext, delivery?: ContractQueryAcquisitionTypes.ContractQueryDelivery,
     renewal?: ContractRenewalProtection, preparation?: ContractQueryPreparation): ContractQueryAcquisition {
-    this.#check(); if (this.#channel === undefined) throw new RPCProtocolError("query_source_unavailable");
-    return this.#queries!.acquire(this.#acquisitions!, this.#channel, targets, deadline, windows, context, delivery, renewal, preparation);
+    this.#check(); return this.#queries!.acquire(this.#acquisitions!, this.#selectChannel(), targets, deadline, windows, context, delivery, renewal, preparation);
   }
   #acceptUnary(channel: RPCChannelRuntime, request: RPCReadyRequest): void {
     if (request.refusal !== undefined || request.input === undefined) {
@@ -1205,7 +1331,7 @@ export class RPCApplicationAdmission {
     let references: readonly ResourceReference[] = [];
     try {
       this.#check(); channel.checkIncoming(request.ticket);
-      if (this.#draining || this.#cleanup === undefined || this.#authentication === undefined) throw new RPCProtocolError("service_unavailable");
+      if (this.#applicationDraining() || this.#cleanup === undefined || this.#authentication === undefined) throw new RPCProtocolError("service_unavailable");
       route = input.takeRoute(); const handler = route.handler;
       if (handler === undefined) throw new RPCProtocolError("method_unavailable");
       if (route.contract.semantics === "execution" && (handler.execution === undefined || this.#executionIdentity === undefined || this.#profile !== "execution")) throw new RPCProtocolError("service_unavailable");
@@ -1213,12 +1339,12 @@ export class RPCApplicationAdmission {
       const costs = rpcUnaryDispatchCharges(input.header.payloadBytes, Number(input.header.uint(8)), route.definition, handler, this.#runtimeBytes);
       if (this.#nextInbound === (1n << 64n) - 1n) throw new RPCProtocolError("resource_exhausted");
       const id = ++this.#nextInbound;
-      references = host.root.reserveBatch(costs.map((charge, index) => ({ accounts: index === 1 ? host.sendAccounts : host.accounts,
+      references = host.root.reserveBatch(costs.map((charge, index) => ({ accounts: index === 1 ? this.#sendAccounts(channel) : host.accounts,
         owner: { ...host.owner, kind: `rpc_dispatch_${id}_${index}` }, charge })));
       if (input.header.uint(7) === 1n) permit = this.#group!.tryOrdinary(handler.options.workClass);
       handler.admit();
       job = new RPCUnaryDispatch(input, route, channel, request.ticket, this.#group!, this.#authentication, host.clock, host.delivery,
-        this.#cleanup, this.#inboundAbort.signal, this.#runtimeBytes, references, permit, this.#routes!, this.#executionIdentity, this.#checkpointPolicy, this.#maintenanceOwner);
+        this.#cleanup, this.#inboundAbort.signal, this.#runtimeBytes, references, permit, this.#routes!, this.#executionIdentity, this.#checkpointPolicy, this.#maintenanceOwner, host.diagnostics);
       route = undefined; permit = undefined;
       const original = job; this.#inbound.add(original);
       original.onDetach(() => { this.#inbound.delete(original); this.#collect(); }); original.start();
@@ -1235,7 +1361,7 @@ export class RPCApplicationAdmission {
     let reference: ResourceReference | undefined, payload: RPCPayloadBorrow | undefined, entered = false;
     try {
       this.#check(); channel.checkIncoming(request.ticket);
-      if (this.#draining || this.#resultReadCodec === undefined || this.#resultReadBusy) throw new RPCProtocolError("service_unavailable");
+      if (this.#applicationDraining() || this.#resultReadCodec === undefined || this.#resultReadBusy) throw new RPCProtocolError("service_unavailable");
       this.#resultReadBusy = entered = true;
       const borrow = input.borrow(); let target: ExecutionTarget;
       try { target = this.#resultReadCodec.target(borrow.bytes); } finally { borrow.release(); }
@@ -1266,14 +1392,62 @@ export class RPCApplicationAdmission {
         }
         if (count < 8) await channel.waitRequests();
         else await new Promise<void>(resolve => {
-          this.#turnResolve = resolve;
-          this.#turnTimer = setTimeout(() => { this.#turnTimer = undefined; this.#turnResolve = undefined; resolve(); }, 0);
+          const timer = setTimeout(() => { this.#turns.delete(channel); resolve(); }, 0);
+          this.#turns.set(channel, { timer, resolve });
         });
       }
     } catch { channel.close(); }
-    finally { this.#dispatching = false; this.#collect(); }
+    finally { this.#dispatching.delete(channel); this.#channelsChanged?.(); this.#collect(); }
   }
-  drain(): void { this.#check(); this.#draining = true; this.#preaccepted?.close(); this.#queries!.drain(); for (const wake of this.#managementWaiters) wake(); }
+  /** Peer GOAWAY seals new application work while retaining the original
+   * management owner. Accepted RPC/Notify channels still finish their input
+   * and output tails on the same owners; no new deadline or channel is made. */
+  peerGoaway(): void {
+    this.#check();
+    if (this.#peerDraining) return;
+    this.#peerDraining = true;
+    this.#preaccepted?.close();
+    for (const preparation of [...this.#preparations]) preparation.close();
+    for (const preparation of [...this.#notifyPreparations]) preparation.close();
+    this.#queries!.drain();
+    this.#drainApplicationChannels();
+  }
+
+  drain(deadline?: TrustedDeadline): void {
+    this.#check();
+    if (this.#draining) return;
+    this.#draining = true;
+    this.#preaccepted?.close();
+    // A prepared operation has not crossed the local OPEN/NOTIFY admission
+    // gate. Drain seals that gate and releases such dormant owners; already
+    // submitted exchanges remain attached to their original channel and are
+    // allowed to finish under the Session drain proof.
+    for (const preparation of [...this.#preparations]) preparation.close();
+    for (const preparation of [...this.#notifyPreparations]) preparation.close();
+    this.#queries!.drain();
+    if (deadline !== undefined) this.#management?.drain(deadline);
+    for (const wake of this.#managementWaiters) wake();
+    this.drainChannels();
+  }
+  #drainApplicationChannels(): void {
+    if (this.#closed) return;
+    for (const channel of this.#channels) channel?.drain();
+    for (const channel of this.#notifyChannels) channel?.drain();
+  }
+  drainChannels(): void {
+    if (!this.#draining || this.#closed) return;
+    this.#drainApplicationChannels();
+  }
+  businessPending(): boolean {
+    return this.#group?.businessPending() === true || this.#channelGroups.some(group => group.businessPending()) ||
+      this.#notifyGroups.some(group => group.businessPending()) || this.#subscribers?.businessPending() === true ||
+      this.#channels.some(channel => channel?.businessPending()) || this.#notifyChannels.some(channel => channel?.businessPending()) ||
+      [...this.#notificationBusinesses.values()].some(registration => !registration.idle);
+  }
+  finishBusinessDrain(): void {
+    if (!this.#draining || this.#closed || this.#managementUnavailable) return;
+    this.managementFailed();
+  }
   onCleanup(callback: () => void): void {
     if (this.#cleaned !== undefined) throw new RPCProtocolError("rpc_owner");
     if (this.#reference === undefined) callback(); else this.#cleaned = callback;
@@ -1281,8 +1455,9 @@ export class RPCApplicationAdmission {
   close(): void {
     if (this.#closed) return; this.#closed = true; this.#closing = true;
     try {
-    if (this.#turnTimer !== undefined) clearTimeout(this.#turnTimer); this.#turnTimer = undefined;
-    const resolve = this.#turnResolve; this.#turnResolve = undefined; resolve?.();
+    for (const turn of this.#turns.values()) { clearTimeout(turn.timer); turn.resolve(); } this.#turns.clear();
+    this.#channelsChanged = undefined;
+    this.#managementBusinessAvailable = undefined;
     this.#inboundAbort.abort(); this.#managementLease?.release(); this.#managementLease = undefined; this.managementFailed(); this.#management?.close(); this.#managementGroup?.close(); this.#managementPosition?.closeAfterUse();
     this.#managementChanged = undefined; for (const position of this.#managementPositions) position.closeAfterUse();
     for (const reference of this.#managementRefs) reference.release(); this.#managementRefs.length = 0;
@@ -1302,34 +1477,35 @@ export class RPCApplicationAdmission {
     for (const position of this.#notifyPositions) position.closeAfterUse();
     for (const group of this.#notifyGroups) group.close();
     for (const exchange of this.#unary) exchange.endSession();
-    this.#queries?.close(); this.#channel?.close(); this.#inputs?.close(); this.#access?.close(); this.#routes?.close();
-    this.#publication?.closeAfterUse();
+    this.#queries?.close(); for (const channel of this.#channels) channel?.close(); this.#inputs?.close(); this.#access?.close(); this.#routes?.close();
+    for (const positions of this.#channelPositions) for (const position of positions) position?.closeAfterUse();
     this.#network?.close(); this.#network?.flushOutputEvents(); this.#calls?.close(); this.#completion?.close();
     // Accepted event subscriptions still own ordinary cleanup duties. Keep the
     // original executor service alive until their real disposer exits.
-    if (this.#streamDispatches.size === 0) this.#group?.retireResults(); this.#channelGroup?.close();
-      for (const reference of this.#channelRefs) reference.release(); this.#channelRefs.length = 0;
+    if (this.#streamDispatches.size === 0) this.#group?.retireResults(); for (const group of this.#channelGroups) group.close();
     } finally { this.#closing = false; this.#collect(); }
   }
   #collect(): void {
-    if (!this.#closed || this.#closing || this.#collecting || this.#dispatching || this.#resultReadBusy) return; this.#collecting = true;
+    if (!this.#closed || this.#closing || this.#collecting || this.#dispatching.size !== 0 || this.#resultReadBusy) return; this.#collecting = true;
     try {
       if (this.#management?.cleanupComplete() === false || this.#managementPosition?.cleanupComplete() === false || this.#managementGroup?.cleanupComplete() === false ||
           this.#managementPositions.some(position => !position.cleanupComplete())) return;
       if (this.#notifyPreparations.size !== 0 || this.#notifyChannels.some(channel => channel?.cleanupComplete() === false) ||
           this.#notifyPositions.some(position => !position.cleanupComplete())) return;
-      if (this.#preaccepted?.cleanupComplete() === false || this.#preparations.size !== 0 || this.#streaming.size !== 0 || this.#streamDispatches.size !== 0 || this.#resumeDispatches.size !== 0 || this.#unary.size !== 0 || this.#channel?.cleanupComplete() === false || this.#queries?.cleanupComplete() === false || this.#inputs?.cleanupComplete() === false ||
-          this.#network?.cleanupComplete() === false || this.#channelGroup?.cleanupComplete() === false || this.#publication?.cleanupComplete() === false) return;
+      if (this.#preaccepted?.cleanupComplete() === false || this.#preparations.size !== 0 || this.#streaming.size !== 0 || this.#streamDispatches.size !== 0 || this.#resumeDispatches.size !== 0 || this.#unary.size !== 0 || this.#channels.some(channel => channel?.cleanupComplete() === false) || this.#queries?.cleanupComplete() === false || this.#inputs?.cleanupComplete() === false ||
+          this.#network?.cleanupComplete() === false || this.#channelGroups.some(group => !group.cleanupComplete()) ||
+          this.#channelPositions.some(positions => positions.some(position => !position.cleanupComplete()))) return;
       this.#notifyChannels.length = this.#notifyPositions.length = this.#notifyGroups.length = 0;
       this.#management = undefined; this.#managementPosition = undefined; this.#managementGroup = undefined; this.#histories.clear(); this.#localExecutionAuthority = undefined; this.#referenceTargets = []; this.#executionDelegations = [];
       this.#managementPositions.length = 0;
       this.#resultReadCodec?.close(); this.#resultReadCodec = undefined; this.#resultReadReference?.release(); this.#resultReadReference = undefined;
       this.#resultReadBuffer.fill(0); this.#resultReadBuffer = new Uint8Array();
-      this.#channel = undefined; this.#preaccepted = undefined; this.#queries = undefined; this.#inputs = undefined; this.#access = undefined; this.#routes = undefined;
-      this.#network = undefined; this.#calls = undefined; this.#completion = undefined; this.#group = undefined; this.#channelGroup = undefined; this.#acquisitions = undefined;
+      this.#channels.length = this.#channelGroups.length = this.#channelPositions.length = 0;
+      this.#preaccepted = undefined; this.#queries = undefined; this.#inputs = undefined; this.#access = undefined; this.#routes = undefined;
+      this.#network = undefined; this.#calls = undefined; this.#completion = undefined; this.#group = undefined; this.#acquisitions = undefined;
       // Complete unary results retain only their original compact K and
       // Completion owners. Their eventual release does not hold Session core.
-      this.#publication = undefined; this.#deadline = undefined; this.#host = undefined; this.#cleanup = undefined; this.#authentication = undefined; this.#executionIdentity = undefined; this.#random = undefined; this.#bindings = undefined;
+      this.#deadline = undefined; this.#host = undefined; this.#cleanup = undefined; this.#authentication = undefined; this.#executionIdentity = undefined; this.#random = undefined; this.#bindings = undefined;
       this.#observer?.(); this.#observer = undefined; this.#reference?.release(); this.#reference = undefined;
       const cleaned = this.#cleaned; this.#cleaned = undefined; cleaned?.();
     } finally { this.#collecting = false; }

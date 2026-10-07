@@ -91,6 +91,7 @@ export class RecordEpoch {
   #ledger: CryptoUsageLedger | undefined;
   readonly #usage: CryptoEpochUsage;
   #deadline: TrustedDeadline | undefined;
+  #rootCap: bigint;
   #authorizationDeadline: TrustedDeadline | undefined;
   readonly #number: number;
   #root: Uint8Array = empty;
@@ -113,6 +114,7 @@ export class RecordEpoch {
       this.#root = new Uint8Array(32); this.#hash = new Uint8Array(32); this.#context = new Uint8Array(32);
       if (config.transportContextDigest !== undefined) copy.call(this.#context, config.transportContextDigest);
       copy.call(this.#root, byteSlice(root, 0, 32)); copy.call(this.#hash, byteSlice(handshakeHash, 0, 32));
+      this.#rootCap = born.requireInterval().lowerMS + ledger.rootMaxAgeMS;
       this.#deadline = authorization.forkAgeAt(born, ledger.rootMaxAgeMS);
       usage = ledger.newEpoch(number); this.#usage = usage;
     } catch (error) {
@@ -159,6 +161,14 @@ export class RecordEpoch {
   }
   copyContextDigest(destination: Uint8Array): void {
     this.#check(); if (byteLength(destination) !== 32) cryptoFailure("configuration_capacity"); copy.call(destination, this.#context);
+  }
+  rekeySafetySnapshot(): Readonly<{ epoch: number; remainingMS: bigint; rootMaxAgeMS: bigint; rootAgeLimited: boolean; triggered: boolean }> {
+    this.#check();
+    return Object.freeze({ ...this.#ledger!.rekeySafetySnapshot(this.#usage), remainingMS: this.#deadline!.remainingMS(),
+      rootMaxAgeMS: this.#ledger!.rootMaxAgeMS, rootAgeLimited: this.#authorizationDeadline!.cap >= this.#rootCap });
+  }
+  safetyDeadline(): TrustedDeadline {
+    this.#check(); return this.#deadline!.fork(this.#deadline!.cap);
   }
   deriveRekeySecret(info: Uint8Array, destination: Uint8Array): void {
     this.#check(); if (byteLength(destination) !== 32 || byteLength(info) > 512) cryptoFailure("configuration_capacity");
@@ -402,12 +412,11 @@ export class RecordCipher {
   commitPacket(token: symbol, packet: RecordPacket): void {
     const p = this.#original(token, packet);
     if (!p.incoming || p.accepted) cryptoFailure("crypto_owner");
-    if (this.#replay !== undefined) {
-      this.#replay.commit(p.header.sequence);
-      const cost = this.#pendingCost!;
-      this.#goodCalls += cost[0]; this.#goodBlocks += cost[1]; this.#goodBytes += cost[2];
-    }
+    const cost = this.#pendingCost!;
+    if (this.#replay !== undefined) this.#replay.commit(p.header.sequence);
     else { if (this.#exhausted || p.header.sequence !== this.#next) cryptoFailure("record_sequence"); this.#advance(); }
+    this.#goodCalls += cost[0]; this.#goodBlocks += cost[1]; this.#goodBytes += cost[2];
+    if (this.#replay !== undefined) this.#ledger!.acceptDatagram(this.#usage, cost);
     p.accepted = true;
     const validated = p.validated; delete p.validated; validated?.();
   }

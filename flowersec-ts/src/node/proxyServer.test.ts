@@ -1,26 +1,36 @@
 import { encodeProxyMetadata, decodeProxyMetadata } from "../proxy/wire.js";
+import type { V4StreamOpenAuthorizer } from "../v4/streamHandlers.js";
 import type { AddressInfo } from "node:net";
-import type { Session } from "../public/contract.js";
 import { expect, expectTypeOf, test } from "vitest";
+import { ProxyServer, ResourceRoot, ResourceVector, ClockRate, TransportEnvironment, createTransportEnvironment,
+  type ProxyServerOptions } from "./index.js";
+import { captureProxyProtocolHandlers } from "./proxyServer.js";
+import { captureHandlerPlan } from "../v4/handlerPlan.js";
+import { originalEnvironment } from "../v4/runtime/environment.js";
+import type { ProxyStream } from "../proxy/stream.js";
+import type { ProxyStreamSource } from "../proxy/runtime.js";
 
-import {
-  ProxyServer,
-  type ProxyServerOptions,
-  SessionHandlers,
-  StreamHandlers,
-} from "./index.js";
-import type { StreamHandlerRegistrar } from "./proxyServer.js";
-import { freezeStreamHandlers } from "../public/streamHandlers.js";
-import { createStreamMetadata, type ByteStream } from "../facade.js";
+function registrationEnvironment() {
+  const limit = new ResourceVector([256n << 20n, 64n << 20n, 64n << 20n, 100000n, 100000n, 1024n, 1024n, 1024n, 1024n, 1024n, 1024n]);
+  const root = new ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: 32, reservations: 128, references: 256,
+    rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
+  const beginning = performance.now();
+  const environment = createTransportEnvironment({ root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: "2".repeat(32),
+    runtimeBytes: 1024n, namespaces: 1, sources: 1, acquisitions: 1, materials: 1, sessions: 1, dependencies: 8, acquireMS: 1000n, cleanupMS: 100,
+    clock: { profile: { rate: new ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 60000n, maxRoundTripMS: 100n },
+      tick: () => ({ milliseconds: BigInt(Math.floor(performance.now() - beginning)), incarnation: "3".repeat(32) }),
+      initial: () => ({ lowerMS: 1000n, upperMS: 1000n }) }, random: bytes => { crypto.getRandomValues(bytes); } });
+  return { root, environment, owner: originalEnvironment(environment), async close() { await environment.close(); await environment.waitCleanup(); root.close(); } };
+}
+const registrationOptions = Object.freeze({ authorize: () => true, applicationBytes: 1024n });
 
 test.each(["metadata", "GET", "POST"])("bounds incomplete proxy %s intake", async (stage) => {
   const server = new ProxyServer({
     upstream: "http://127.0.0.1:1", upstreamOrigin: "http://127.0.0.1:1",
     defaultHTTPRequestTimeoutMs: 20, maxHTTPRequestTimeoutMs: 40,
   });
-  const handlers = new StreamHandlers();
-  server.register(handlers);
-  const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const handlers = captureProxyProtocolHandlers(server);
+  const [, handler] = [...handlers].find(([name]) => name.includes("http"))!;
   const payload = encodeProxyMetadata("ProxyHTTPRequest",{ v: 2, request_id: "stalled", method: stage, path: "/", headers: [], timeout_ms: 20 });
   const frame = new Uint8Array(payload.length + 4);
   new DataView(frame.buffer).setUint32(0, payload.length);
@@ -28,9 +38,7 @@ test.each(["metadata", "GET", "POST"])("bounds incomplete proxy %s intake", asyn
   let delivered = stage === "metadata";
   let reset = false;
   let rejectRead: ((error: Error) => void) | undefined;
-  const stream: ByteStream = {
-    kind,
-    terminalError: undefined,
+  const stream: ProxyStream = {
     async read() {
       if (!delivered) { delivered = true; return frame; }
       if (reset) throw new Error("reset");
@@ -41,7 +49,7 @@ test.each(["metadata", "GET", "POST"])("bounds incomplete proxy %s intake", asyn
     async reset() { reset = true; rejectRead?.(new Error("reset")); },
     async close() {},
   };
-  await handler({ kind, metadata: createStreamMetadata({}), stream }, {});
+  await handler({ stream }, { signal: new AbortController().signal });
   expect(reset).toBe(true);
   expect(server.activeCount).toBe(0);
   await server.close();
@@ -56,32 +64,38 @@ test("exposes a native Node ProxyServer with bounded loopback upstream policy", 
   } satisfies ProxyServerOptions;
   expectTypeOf<ProxyServerOptions["upstream"]>().toEqualTypeOf<string>();
   const server = new ProxyServer(options);
-  const handlers = new SessionHandlers();
-  expect(() => server.register(handlers)).not.toThrow();
-  await expect(server.close()).resolves.toBeUndefined();
-  await expect(server.close()).resolves.toBeUndefined();
+  const fixture = registrationEnvironment();
+  const plan = server.register(fixture.environment, registrationOptions);
+  try {
+    const captured = captureHandlerPlan(plan, fixture.owner, undefined);
+    try { expect(captured.raw.map(stream => stream.kind)).toEqual(["flowersec-proxy/http1", "flowersec-proxy/ws"]); }
+    finally { captured.release(); }
+    await expect(server.close()).resolves.toBeUndefined();
+    await expect(server.close()).resolves.toBeUndefined();
+  } finally { plan.close(); await fixture.close(); }
 });
 
-test("registers atomically into role-neutral StreamHandlers", async () => {
-  const server = new ProxyServer({
-    upstream: "http://127.0.0.1:18080",
-    upstreamOrigin: "http://127.0.0.1:18080",
-  });
-  const handlers = new StreamHandlers();
-  expect(() => server.register(handlers)).not.toThrow();
-  expect(() => server.register(handlers)).toThrow(/handler_registration/u);
-  await server.close();
+test("publishes a complete immutable current plan and preserves existing captures after close", async () => {
+  const server = new ProxyServer({ upstream: "http://127.0.0.1:18080", upstreamOrigin: "http://127.0.0.1:18080" });
+  const fixture = registrationEnvironment(), other = registrationEnvironment();
+  const plan = server.register(fixture.environment, registrationOptions);
+  const captured = captureHandlerPlan(plan, fixture.owner, undefined);
+  try {
+    expect(captured.raw).toHaveLength(2);
+    expect(() => captureHandlerPlan(plan, other.owner, undefined)).toThrow("owner_unavailable");
+    plan.close();
+    expect(captured.raw.map(stream => stream.kind)).toEqual(["flowersec-proxy/http1", "flowersec-proxy/ws"]);
+    expect(() => captureHandlerPlan(plan, fixture.owner, undefined)).toThrow("owner_unavailable");
+  } finally { captured.release(); plan.close(); await server.close(); await other.close(); await fixture.close(); }
 });
 
-test("rejects a forged registrar without invoking caller-controlled code", async () => {
-  const server = new ProxyServer({
-    upstream: "http://127.0.0.1:18080",
-    upstreamOrigin: "http://127.0.0.1:18080",
-  });
-  const forged = Object.create(StreamHandlers.prototype) as StreamHandlerRegistrar;
-
-  expect(() => server.register(forged)).toThrow(/handler_registration/u);
-  expect(Object.getOwnPropertySymbols(StreamHandlers.prototype)).toEqual([]);
+test("rejects a forged Environment before reading caller-controlled registration options", async () => {
+  const server = new ProxyServer({ upstream: "http://127.0.0.1:18080", upstreamOrigin: "http://127.0.0.1:18080" });
+  const forged = Object.create(TransportEnvironment.prototype) as TransportEnvironment;
+  let reads = 0;
+  const options = { get authorize(): V4StreamOpenAuthorizer { reads++; throw new Error("caller getter"); }, applicationBytes: 1024n };
+  expect(() => server.register(forged, options)).toThrow(/handler_registration/u);
+  expect(reads).toBe(0);
   await server.close();
 });
 
@@ -120,30 +134,17 @@ test("streams negotiated events beyond finite limits and cancels idle upstream w
   const finiteTimeoutMs = 1_000;
   const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxBodyBytes: 16,
     defaultHTTPRequestTimeoutMs: finiteTimeoutMs, maxHTTPRequestTimeoutMs: finiteTimeoutMs });
-  const handlers = new StreamHandlers(); server.register(handlers);
-  const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const handlers = captureProxyProtocolHandlers(server);
+  const [, handler] = [...handlers].find(([name]) => name.includes("http"))!;
   const operations: Promise<void>[] = [];
-  const termination = new Promise<never>(() => undefined);
-  const session: Session = {
-    rpc: {
-      async call() { throw new Error("unused RPC call"); },
-      async notify() { throw new Error("unused RPC notification"); },
-      onNotify() { throw new Error("unused RPC subscription"); },
-    },
-    async acceptStream() { throw new Error("unused stream accept"); },
-    async rekey() { throw new Error("unused rekey"); },
-    async probeLiveness() { throw new Error("unused liveness probe"); },
-    async waitTermination() { return await termination; },
-    async close() { throw new Error("unused session close"); },
+  const session: ProxyStreamSource = {
     async openStream() {
       const up = new TransformStream<Uint8Array, Uint8Array>();
       const down = new TransformStream<Uint8Array, Uint8Array>();
       const controller = new AbortController();
-      const end = (readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array>): ByteStream => {
+      const end = (readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array>): ProxyStream => {
         const reader = readable.getReader(); const writer = writable.getWriter();
         return {
-          kind,
-          terminalError: undefined,
           async read(options) {
             const cancel = () => { void reader.cancel().catch(() => undefined); };
             options?.signal?.addEventListener("abort", cancel, { once: true });
@@ -157,7 +158,7 @@ test("streams negotiated events beyond finite limits and cancels idle upstream w
         };
       };
       const peer = end(up.readable, down.writable);
-      operations.push(handler({ kind, stream: peer, metadata: createStreamMetadata({}) }, { signal: controller.signal }));
+      operations.push(handler({ stream: peer }, { signal: controller.signal }));
       return end(down.readable, up.writable);
     },
   };
@@ -194,21 +195,21 @@ test("retains repeated request fields and origin content-coded response bytes", 
   await once(upstream, "listening");
   const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
   const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin });
-  const handlers = new StreamHandlers(); server.register(handlers);
-  const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const handlers = captureProxyProtocolHandlers(server);
+  const [, handler] = [...handlers].find(([name]) => name.includes("http"))!;
   const meta = Buffer.from(encodeProxyMetadata("ProxyHTTPRequest",{ v: 2, request_id: "coded", method: "GET", path: "/", headers: [
     { name: "if-match", value: '"one"' }, { name: "if-match", value: '"two"' },
   ] }));
   const requestBytes = requestWithEnd(meta);
   const writes: Buffer[] = [];
   let delivered = false;
-  const stream: ByteStream = { kind, terminalError: undefined,
+  const stream: ProxyStream = {
     async read() { if (delivered) return null; delivered = true; return requestBytes; },
     async write(bytes) { writes.push(Buffer.from(bytes)); return bytes.length; },
     async closeWrite() {}, async reset() {}, async close() {},
   };
   try {
-    await handler({ kind, stream, metadata: createStreamMetadata({}) }, {});
+    await handler({ stream }, { signal: new AbortController().signal });
     const matches = observed.flatMap((name, index) => index % 2 === 0 && name.toLowerCase() === "if-match" ? [observed[index + 1]] : []);
     expect(matches).toEqual(['"one"', '"two"']);
     expect(observed.some(name => name.toLowerCase() === "accept-encoding")).toBe(false);
@@ -246,18 +247,18 @@ test.each([
   upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
   const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
   const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxBodyBytes: 8 });
-  const handlers = new StreamHandlers(); server.register(handlers);
-  const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const handlers = captureProxyProtocolHandlers(server);
+  const [, handler] = [...handlers].find(([name]) => name.includes("http"))!;
   const meta = Buffer.from(encodeProxyMetadata("ProxyHTTPRequest",{ v: 2, request_id: "bodyless", method, path, headers: [] }));
   const input = requestWithEnd(meta);
   const writes: Buffer[] = []; let delivered = false;
-  const stream: ByteStream = { kind, terminalError: undefined,
+  const stream: ProxyStream = {
     async read() { if (delivered) return null; delivered = true; return input; },
     async write(bytes) { writes.push(Buffer.from(bytes)); return bytes.length; },
     async closeWrite() {}, async reset() {}, async close() {},
   };
   try {
-    await handler({ kind, stream, metadata: createStreamMetadata({}) }, {});
+    await handler({ stream }, { signal: new AbortController().signal });
     expect(observed).toBe(path);
     const wire = Buffer.concat(writes), length = wire.readUInt32BE();
     const response = decodeProxyMetadata("ProxyHTTPResponse",wire.subarray(4, 4 + length));
@@ -294,18 +295,18 @@ test.each(["extra_input", "hidden_coding", "method_case"])("enforces native prox
   upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
   const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
   const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin });
-  const handlers = new StreamHandlers(); server.register(handlers);
-  const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const handlers = captureProxyProtocolHandlers(server);
+  const [, handler] = [...handlers].find(([name]) => name.includes("http"))!;
   const meta = Buffer.from(encodeProxyMetadata("ProxyHTTPRequest", { v: 2, request_id: failure, method: "x-Custom", path: "/", headers: [] }));
   const input = Buffer.concat([requestWithEnd(meta), ...(failure === "extra_input" ? [Buffer.from([1])] : [])]);
   const writes: Buffer[] = []; let delivered = false;
-  const stream: ByteStream = { kind, terminalError: undefined,
+  const stream: ProxyStream = {
     async read() { if (delivered) return null; delivered = true; return input; },
     async write(bytes) { writes.push(Buffer.from(bytes)); return bytes.length; },
     async closeWrite() {}, async reset() {}, async close() {},
   };
   try {
-    await handler({ kind, stream, metadata: createStreamMetadata({}) }, {});
+    await handler({ stream }, { signal: new AbortController().signal });
     const output = Buffer.concat(writes), response = decodeProxyMetadata("ProxyHTTPResponse", output.subarray(4, 4 + output.readUInt32BE()));
     expect(response.ok).toBe(failure === "method_case");
     if (failure === "extra_input") expect(connections).toBe(0);
@@ -338,8 +339,8 @@ test.each(["", "body"])("forwards separate native trailers for request body %j",
   const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
   const logicalOrigin = origin.replace("127.0.0.1", "localhost");
   const server = new ProxyServer({ upstream: logicalOrigin, upstreamOrigin: logicalOrigin, allowedUpstreamHosts: ["localhost"], allowedUpstreamAddresses: ["127.0.0.1", "::1"], extraRequestHeaders: ["x-check"], extraResponseHeaders: ["x-check"] });
-  const handlers = new StreamHandlers(); server.register(handlers);
-  const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const handlers = captureProxyProtocolHandlers(server);
+  const [, handler] = [...handlers].find(([name]) => name.includes("http"))!;
   const frame = (schema: "ProxyHTTPRequest" | "ProxyBodyEnd", value: unknown): Buffer => {
     const bytes = Buffer.from(encodeProxyMetadata(schema, value)), length = Buffer.alloc(4);
     length.writeUInt32BE(bytes.length); return Buffer.concat([length, bytes]);
@@ -351,13 +352,13 @@ test.each(["", "body"])("forwards separate native trailers for request body %j",
     frame("ProxyBodyEnd", { v: 2, trailers: [{ name: "x-check", value: "one" }, { name: "x-check", value: "é" }] }),
   ]);
   const writes: Buffer[] = []; let delivered = false;
-  const stream: ByteStream = { kind, terminalError: undefined,
+  const stream: ProxyStream = {
     async read() { if (delivered) return null; delivered = true; return input; },
     async write(bytes) { writes.push(Buffer.from(bytes)); return bytes.length; },
     async closeWrite() {}, async reset() {}, async close() {},
   };
   try {
-    await handler({ kind, stream, metadata: createStreamMetadata({}) }, {});
+    await handler({ stream }, { signal: new AbortController().signal });
     expect(received).toBe(body);
     expect(requestTarget).toBe("//fixed/path?");
     expect(authority).toBe(new URL(logicalOrigin).host);
@@ -390,27 +391,37 @@ test.each(["//fixed/path?", "/public/../api//items?q=%7euser"])("WebSocket prese
   upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
   const origin = `http://localhost:${(upstream.address() as AddressInfo).port}`;
   const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, allowedUpstreamHosts: ["localhost"], allowedUpstreamAddresses: ["127.0.0.1", "::1"] });
-  const handlers = new StreamHandlers(); server.register(handlers);
-  const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.endsWith("/ws"))!;
+  const handlers = captureProxyProtocolHandlers(server);
+  const [, handler] = [...handlers].find(([name]) => name.endsWith("/ws"))!;
   const metadata = Buffer.from(encodeProxyMetadata("ProxyWebSocketOpen", { v: 2, conn_id: "network", path, headers: [] }));
   const prefix = Buffer.alloc(4); prefix.writeUInt32BE(metadata.length);
-  let delivered = false, resolveRead: ((value: null) => void) | undefined;
+  let delivered = false, resolveRead: ((value: Uint8Array | null) => void) | undefined;
+  let closeReply: Uint8Array | undefined;
   const writes: Buffer[] = [];
-  const stream: ByteStream = { kind, terminalError: undefined,
+  const stream: ProxyStream = {
     async read(options) {
       options?.signal?.throwIfAborted();
       if (!delivered) { delivered = true; return Buffer.concat([prefix, metadata]); }
-      return await new Promise<null>((resolve, reject) => {
+      if (closeReply !== undefined) { const reply = closeReply; closeReply = undefined; return reply; }
+      return await new Promise<Uint8Array | null>((resolve, reject) => {
         const canceled = () => { resolveRead = undefined; reject(new Error("canceled")); };
         resolveRead = value => { options?.signal?.removeEventListener("abort", canceled); resolve(value); };
         options?.signal?.addEventListener("abort", canceled, { once: true });
       });
     },
-    async write(bytes) { writes.push(Buffer.from(bytes)); return bytes.length; },
+    async write(bytes) {
+      writes.push(Buffer.from(bytes));
+      if (bytes[0] === 8) {
+        const reply = Uint8Array.from(bytes);
+        if (resolveRead === undefined) closeReply = reply;
+        else { const resume = resolveRead; resolveRead = undefined; resume(reply); }
+      }
+      return bytes.length;
+    },
     async closeWrite() {}, async reset() { resolveRead?.(null); }, async close() { resolveRead?.(null); },
   };
   try {
-    await handler({ kind, stream, metadata: createStreamMetadata({}) }, {});
+    await handler({ stream }, { signal: new AbortController().signal });
     expect(authority).toBe(new URL(origin).host); expect(target).toBe(path);
     const output = Buffer.concat(writes);
     expect(decodeProxyMetadata("ProxyWebSocketResponse", output.subarray(4, 4 + output.readUInt32BE()))).toMatchObject({ ok: true });

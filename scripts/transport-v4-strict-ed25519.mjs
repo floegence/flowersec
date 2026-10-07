@@ -55,11 +55,11 @@ export function buildStrictEd25519Corpus(schema, signatures) {
   for (const index of plan.torsion_indices) {
     const torsion = Point.fromHex(ED25519_TORSION_SUBGROUP[index]);
     assert.ok(torsion.multiplyUnsafe(8n).is0());
-    fixture("strict_A_torsion_" + index, torsion, r, 0n, nonce, false, torsion.is0() ? "A_identity" : "A_small_order");
-    fixture("strict_R_torsion_" + index, a, torsion, scalar, 0n, false, torsion.is0() ? "R_identity" : "R_small_order");
+    fixture("strict_a_torsion_" + index, torsion, r, 0n, nonce, false, torsion.is0() ? "A_identity" : "A_small_order");
+    fixture("strict_r_torsion_" + index, a, torsion, scalar, 0n, false, torsion.is0() ? "R_identity" : "R_small_order");
     if (!torsion.is0()) {
-      fixture("strict_A_mixed_" + index, a.add(torsion), r, scalar, nonce, false, "A_mixed_order");
-      fixture("strict_R_mixed_" + index, a, r.add(torsion), scalar, nonce, false, "R_mixed_order");
+      fixture("strict_a_mixed_" + index, a.add(torsion), r, scalar, nonce, false, "A_mixed_order");
+      fixture("strict_r_mixed_" + index, a, r.add(torsion), scalar, nonce, false, "R_mixed_order");
     }
   }
   function mutate(id, changes, reason) {
@@ -69,8 +69,8 @@ export function buildStrictEd25519Corpus(schema, signatures) {
   const nonpoint = little(2n);
   assert.throws(() => Point.fromBytes(nonpoint, false));
   for (const [name, bytes] of [["y_eq_p", little(Point.Fp.ORDER)], ["y_above_p", little(Point.Fp.ORDER + 1n)], ["negative_zero", negativeZero], ["nonpoint", nonpoint]]) {
-    mutate("strict_A_" + name, { public_key_hex: bytes.toString("hex") }, "A_" + name);
-    mutate("strict_R_" + name, { signature_hex: bytes.toString("hex") + valid.signature_hex.slice(64) }, "R_" + name);
+    mutate("strict_a_" + name, { public_key_hex: bytes.toString("hex") }, "A_" + name);
+    mutate("strict_r_" + name, { signature_hex: bytes.toString("hex") + valid.signature_hex.slice(64) }, "R_" + name);
   }
   for (const [name, s] of [["L", order], ["S_plus_L", integer(strictHex(valid.signature_hex).subarray(32)) + order], ["maximum", (1n << 256n) - 1n]]) {
     mutate("strict_scalar_" + name.toLowerCase(), { signature_hex: valid.signature_hex.slice(0, 64) + little(s).toString("hex") }, "scalar_range");

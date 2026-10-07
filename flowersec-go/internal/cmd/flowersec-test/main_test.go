@@ -137,16 +137,17 @@ func TestAcceptanceRegistryOwnsPrivateLoopbackInterop(t *testing.T) {
 }
 
 func TestGoAcceptorRegistryPatternEnumeratesProductionNativeListeners(t *testing.T) {
-	command := exec.Command("go", "test", "-list", goAcceptorTestPattern, "../../..")
+	command := exec.Command("go", "test", "-list", goAcceptorTestPattern, "../../transporttest")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("list Go acceptor tests: %v\n%s", err, output)
 	}
 	listed := string(output)
 	for _, name := range []string{
-		"TestRawQUICAcceptorListenerEstablishesApplicationSession",
-		"TestRawQUICAcceptorServeCancellationWaitsForSessionCleanup",
-		"TestWebTransportAcceptorListenerEstablishesApplicationSession",
+		"TestProductDirectCarriersUsePublicConnectorAndAdmission",
+		"TestProductDirectEndpointReusesListenerForConcurrentArtifacts",
+		"TestCurrentDirectInterruptionReleasesOriginalOwnersBeforeReconnect",
+		"TestCurrentDirectCanceledAcceptanceCannotConsumeReplacement",
 	} {
 		if !strings.Contains(listed, name+"\n") {
 			t.Fatalf("server/go-acceptor pattern did not enumerate %s:\n%s", name, listed)

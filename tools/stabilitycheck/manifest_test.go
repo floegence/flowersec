@@ -49,7 +49,7 @@ func TestSwiftModulePathsUseOnlyBuildSelectedDependencySlices(t *testing.T) {
 
 func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 	root := t.TempDir()
-	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "docs/TRANSPORT_V3_ARCHITECTURE.md", "README.md", "docs/ERROR_MODEL.md"} {
+	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "docs/TRANSPORT_V4_BINDING.md", "README.md", "docs/ERROR_MODEL.md"} {
 		full := filepath.Join(root, p)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
@@ -62,13 +62,13 @@ func TestValidateManifestRejectsDuplicateTSSubpaths(t *testing.T) {
 	m := &manifest{
 		Version: 1,
 		Docs: docsManifest{
-			APIContract:       "docs/API_CONTRACT.md",
-			ChangePolicy:      "docs/API_CHANGE_POLICY.md",
-			Readme:            "README.md",
-			ErrorModel:        "docs/ERROR_MODEL.md",
-			TransportV3API:    "docs/TRANSPORT_V3_ARCHITECTURE.md",
-			CLITokens:         []string{"`cli`"},
-			TransportV3Tokens: []string{"flowersec/3"},
+			APIContract:        "docs/API_CONTRACT.md",
+			ChangePolicy:       "docs/API_CHANGE_POLICY.md",
+			Readme:             "README.md",
+			ErrorModel:         "docs/ERROR_MODEL.md",
+			TransportV4Binding: "docs/TRANSPORT_V4_BINDING.md",
+			CLITokens:          []string{"`cli`"},
+			TransportV4Tokens:  []string{"flowersec/4"},
 		},
 		Go: goManifest{
 			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v6",
@@ -159,13 +159,13 @@ func TestValidateManifestRejectsDuplicateTSTypeExports(t *testing.T) {
 	}
 }
 
-func TestValidateManifestRequiresTransportV3DocumentationGuard(t *testing.T) {
+func TestValidateManifestRequiresTransportV4DocumentationGuard(t *testing.T) {
 	m, root := validTestManifest(t)
-	m.Docs.TransportV3Tokens = nil
+	m.Docs.TransportV4Tokens = nil
 
 	err := validateManifest(root, m)
-	if err == nil || !strings.Contains(err.Error(), "docs.transport_v3_tokens") {
-		t.Fatalf("expected missing Transport v3 documentation guard error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "docs.transport_v4_tokens") {
+		t.Fatalf("expected missing Transport v4 documentation guard error, got %v", err)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestValidateManifestRejectsSignatureOnNonInterfaceMethod(t *testing.T) {
 func validTestManifest(t *testing.T) (*manifest, string) {
 	t.Helper()
 	root := t.TempDir()
-	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "docs/TRANSPORT_V3_ARCHITECTURE.md", "README.md", "docs/ERROR_MODEL.md", "flowersec-rust/Cargo.toml"} {
+	for _, p := range []string{"docs/API_CONTRACT.md", "docs/API_CHANGE_POLICY.md", "docs/TRANSPORT_V4_BINDING.md", "README.md", "docs/ERROR_MODEL.md", "flowersec-rust/Cargo.toml"} {
 		full := filepath.Join(root, p)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			t.Fatal(err)
@@ -220,13 +220,13 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 	return &manifest{
 		Version: 1,
 		Docs: docsManifest{
-			APIContract:       "docs/API_CONTRACT.md",
-			ChangePolicy:      "docs/API_CHANGE_POLICY.md",
-			Readme:            "README.md",
-			ErrorModel:        "docs/ERROR_MODEL.md",
-			TransportV3API:    "docs/TRANSPORT_V3_ARCHITECTURE.md",
-			CLITokens:         []string{"`cli`"},
-			TransportV3Tokens: []string{"flowersec/3"},
+			APIContract:        "docs/API_CONTRACT.md",
+			ChangePolicy:       "docs/API_CHANGE_POLICY.md",
+			Readme:             "README.md",
+			ErrorModel:         "docs/ERROR_MODEL.md",
+			TransportV4Binding: "docs/TRANSPORT_V4_BINDING.md",
+			CLITokens:          []string{"`cli`"},
+			TransportV4Tokens:  []string{"flowersec/4"},
 		},
 		Go: goManifest{
 			ModulePath:        "github.com/floegence/flowersec/flowersec-go/v6",
@@ -265,8 +265,8 @@ func validTestManifest(t *testing.T) (*manifest, string) {
 		},
 		NativeABI: nativeABIManifest{
 			Package:         "@floegence/flowersec-node-native",
-			ContractVersion: 3,
-			WireVersion:     3,
+			ContractVersion: 4,
+			WireVersion:     4,
 			RuntimeExports:  []string{"bindRawQuic", "connectRawQuic", "contractVersion"},
 		},
 		Coverage: coverageManifest{
@@ -456,8 +456,13 @@ func TestSwiftSymbolsCoalesceIdenticalProtocolDefaultDeclaration(t *testing.T) {
 	}
 	different := requirement
 	different.Declaration = "func finish() async"
-	if _, err := normalizeSwiftSymbols([]dumpedSwiftSymbol{requirement, different}); err == nil {
-		t.Fatal("distinct public declarations silently coalesced")
+	symbols, err = normalizeSwiftSymbols([]dumpedSwiftSymbol{requirement, different})
+	if err != nil || len(symbols) != 2 {
+		t.Fatalf("distinct overload declarations must remain in the signature input: %v, %v", symbols, err)
+	}
+	manifestSymbols := swiftManifestSymbols(symbols)
+	if len(manifestSymbols) != 1 || manifestSymbols[0].Name != requirement.Name {
+		t.Fatalf("overload paths must be represented once in the manifest: %v", manifestSymbols)
 	}
 }
 
@@ -572,7 +577,7 @@ func TestMakefileStabilityCheckRunsEveryContractVerifier(t *testing.T) {
 	}
 }
 
-func TestRustCompileEntriesRequireSessionHandlersHandleStreamContract(t *testing.T) {
+func TestRustCompileEntriesRequireRawStreamHandlerPlanContract(t *testing.T) {
 	repoRoot := filepath.Join("..", "..")
 	m, err := loadManifest(repoRoot)
 	if err != nil {
@@ -580,7 +585,7 @@ func TestRustCompileEntriesRequireSessionHandlersHandleStreamContract(t *testing
 	}
 
 	const stale = "let _ = flowersec::SessionHandlers::handle_stream::<String>"
-	const expected = "fn require_session_handlers_handle_stream<K, H>(handlers: &mut flowersec::SessionHandlers, kind: K, handler: H) -> Result<(), flowersec::HandlerRegistrationError> where K: Into<String>, H: flowersec::StreamHandler { handlers.handle_stream(kind, handler) }"
+	const expected = "fn require_raw_stream_handler_plan<K, H>(environment: &flowersec::TransportEnvironment, kind: K, metadata: Option<flowersec::RawStreamMetadataContract>, handler: H, application_bytes: u64) -> Result<flowersec::HandlerPlan, flowersec::ServeError> where K: Into<String>, H: flowersec::RawStreamHandler { environment.handler_plan(flowersec::HandlerPlanOptions { streams: flowersec::StreamDispatch::Registered(vec![flowersec::RawStreamRegistration { kind: kind.into(), metadata, handler: std::sync::Arc::new(handler) }]), application_bytes }) }"
 	if slices.Contains(m.Rust.CompileEntries, stale) {
 		t.Fatalf("Rust compile entries retain stale handle_stream probe %q", stale)
 	}
@@ -591,7 +596,7 @@ func TestRustCompileEntriesRequireSessionHandlersHandleStreamContract(t *testing
 		}
 	}
 	if count != 1 {
-		t.Fatalf("Rust compile entries contain handle_stream contract %d times, want 1", count)
+		t.Fatalf("Rust compile entries contain raw stream handler plan contract %d times, want 1", count)
 	}
 }
 

@@ -1,79 +1,102 @@
+#![allow(clippy::all)]
+#![recursion_limit = "256"]
+
 use flowersec::{
-    Acceptor, ArtifactLease, ArtifactSource, ArtifactSourceError, ConnectionController,
-    ConnectionControllerOptions, ConnectorOptions, IncomingStream, NotificationHandler,
-    RetryDisposition, RpcError, RpcHandler, RpcHandlers, RpcPeer, RpcPeerExt,
-    RuntimeAuthorizationRequest, SessionError, SessionHandlerOptions, SessionHandlers,
-    SessionTermination, StreamHandler, StreamHandlerOptions, StreamHandlers, StreamMetadata,
-    StreamMetadataError, TunnelAdmissionOptions, TunnelAuthorizationError,
-    TunnelAuthorizationResponse, TunnelAuthorizer, TunnelRuntime, TunnelRuntimeOptions,
-    WebSocketAcceptorOptions, connect,
+    AcceptedMaterialSource, ApplicationBinding, ApplicationLimits, ConnectError,
+    ConnectionController, ConnectionControllerError, ConnectionControllerOptions,
+    ConnectionMaterial, ConnectionMaterialSource, ConnectionRequest, ExecutionNotificationHandler,
+    HandlerPlan, HandlerPlanOptions, IdentityKeys, MaterialSourceError, MessageCodec, Metadata,
+    MethodDefinition, Namespace, NotificationContext, RawStreamHandler, RawStreamRegistration,
+    RelayHost, RelayHostOptions, SQLiteAdmissionAuthority, SQLiteRelayLedger, ServeError,
+    ServeFailure, ServeHandle, ServiceClient, ServiceError, ServicePlan, Session, SessionError,
+    SessionTermination, Stream, StreamAuthorization, StreamDispatch, TransportEnvironment,
+    TypedUnaryValue, UnaryPrepareOptions, UnaryRequestContext, UnaryResponse, UnaryServiceHandler,
+    UnaryServiceRegistration, WssServeOptions, WssServerIdentity, connect,
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
-    num::NonZeroU64,
-    path::Path,
+    collections::BTreeMap,
+    fmt, fs,
+    path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 use tokio_util::sync::CancellationToken;
 
-struct RpcWithoutDebug;
-
-#[async_trait::async_trait]
-impl RpcHandler for RpcWithoutDebug {
-    async fn call(
-        &self,
-        _type_id: u32,
-        request: serde_json::Value,
-    ) -> Result<serde_json::Value, RpcError> {
-        Ok(request)
-    }
-
-    async fn notify(&self, _type_id: u32, _request: serde_json::Value) -> Result<(), RpcError> {
-        Ok(())
-    }
-}
-
-struct NotificationWithoutDebug;
-
-#[async_trait::async_trait]
-impl NotificationHandler for NotificationWithoutDebug {
-    async fn handle_notification(
-        &self,
-        _type_id: u32,
-        _request: serde_json::Value,
-    ) -> Result<(), RpcError> {
-        Ok(())
-    }
-}
-
-struct StreamWithoutDebug;
-
-struct CompileAuthorizer;
-
-#[async_trait::async_trait]
-impl TunnelAuthorizer for CompileAuthorizer {
-    async fn authorize(
-        &self,
-        _request: RuntimeAuthorizationRequest,
-        cancellation: CancellationToken,
-    ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
-        let _ = cancellation.is_cancelled();
-        Err(TunnelAuthorizationError)
-    }
-}
-
 static CARGO_PROBE_LOCK: Mutex<()> = Mutex::new(());
 
+fn cargo_probe_target() -> PathBuf {
+    // Keep probe inputs disposable while reusing dependency compilation. The
+    // running test's profile separates ordinary and instrumented build caches,
+    // and this nested target never contends with the parent Cargo target lock.
+    std::env::current_exe()
+        .expect("locate public API test executable")
+        .parent()
+        .and_then(Path::parent)
+        .expect("locate public API test profile")
+        .join("public-api-probes")
+}
+
+struct RpcWithoutDebug;
+struct NotificationWithoutDebug;
+struct StreamWithoutDebug;
+
+struct OpaqueApplication<T>(T);
+impl<T> fmt::Debug for OpaqueApplication<T> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ApplicationHandler { <opaque> }")
+    }
+}
 #[async_trait::async_trait]
-impl StreamHandler for StreamWithoutDebug {
+impl UnaryServiceHandler for OpaqueApplication<RpcWithoutDebug> {
+    async fn authorize(&self, _context: UnaryRequestContext) -> Result<(), ServiceError> {
+        Ok(())
+    }
     async fn handle(
         &self,
-        _stream: &IncomingStream,
+        _context: UnaryRequestContext,
+        request: &[u8],
+    ) -> Result<UnaryResponse, ServiceError> {
+        Ok(UnaryResponse {
+            payload: request.to_vec(),
+            application_error_code: None,
+        })
+    }
+}
+#[async_trait::async_trait]
+impl ExecutionNotificationHandler for OpaqueApplication<NotificationWithoutDebug> {
+    fn application_bytes(&self) -> u64 {
+        4096
+    }
+    async fn authorize(&self, _context: NotificationContext) -> Result<(), ServiceError> {
+        Ok(())
+    }
+    async fn handle(
+        &self,
+        _payload: &[u8],
+        _context: NotificationContext,
+    ) -> Result<(), ServiceError> {
+        Ok(())
+    }
+}
+#[async_trait::async_trait]
+impl RawStreamHandler for OpaqueApplication<StreamWithoutDebug> {
+    async fn authorize(
+        &self,
+        _binding: ApplicationBinding,
+        _metadata: Metadata,
         _cancellation: CancellationToken,
-    ) -> Result<(), SessionError> {
+    ) -> Result<StreamAuthorization, ServeError> {
+        Ok(StreamAuthorization::Accept {
+            receive_window: 65536,
+        })
+    }
+    async fn handle(
+        &self,
+        _stream: Stream,
+        _metadata: Metadata,
+        _cancellation: CancellationToken,
+    ) -> Result<(), ServeError> {
         Ok(())
     }
 }
@@ -82,174 +105,218 @@ impl StreamHandler for StreamWithoutDebug {
 struct TypedRequest {
     value: String,
 }
-
 #[derive(Deserialize)]
 struct TypedResponse {
     accepted: bool,
 }
 
-async fn compile_public_api(lease: ArtifactLease, peer: &dyn RpcPeer) {
-    let options = ConnectorOptions::new()
-        .with_trust_roots_der(vec![vec![1]])
-        .expect("explicit trust roots");
-    let _ = connect(lease, options).await;
-    let response = peer
-        .call_typed::<TypedRequest, TypedResponse>(
-            7,
-            &TypedRequest {
-                value: "request".into(),
-            },
+async fn compile_current_public_api(
+    environment: &TransportEnvironment,
+    source: &ConnectionMaterialSource,
+) {
+    let session: Result<Session, ConnectError> = connect(
+        environment,
+        source,
+        ConnectionRequest::default(),
+        CancellationToken::new(),
+    )
+    .await;
+    if let Ok(session) = session {
+        session.close();
+        let _ = session.wait_cleanup().await;
+    }
+}
+async fn compile_advanced_handoff(
+    environment: &TransportEnvironment,
+    material: ConnectionMaterial,
+    handlers: HandlerPlan,
+    limits: ApplicationLimits,
+) {
+    let _ = environment
+        .connect_material_with_handlers(
+            material,
+            Some((handlers, limits)),
+            CancellationToken::new(),
         )
         .await;
-    if let Ok(response) = response {
-        let _ = response.accepted;
+}
+async fn compile_typed_rpc(
+    client: &ServiceClient,
+    method: &MethodDefinition,
+    request_codec: Arc<dyn MessageCodec<TypedRequest>>,
+    response_codec: Arc<dyn MessageCodec<TypedResponse>>,
+    options: UnaryPrepareOptions,
+) {
+    if let Ok(operation) = client.prepare_unary(
+        method,
+        &TypedRequest {
+            value: "request".into(),
+        },
+        request_codec,
+        response_codec,
+        options,
+    ) {
+        if operation.start().is_ok() {
+            if let Ok(result) = operation.wait_typed(CancellationToken::new()).await {
+                if let TypedUnaryValue::Response(response) = result.value {
+                    let _ = response.accepted;
+                }
+            }
+        }
+        operation.close();
+        let _ = operation.wait_cleanup().await;
     }
 }
 
-async fn compile_connector_handlers(lease: ArtifactLease, mut handlers: RpcHandlers) {
-    handlers.handle_rpc(1, RpcWithoutDebug).unwrap();
-    handlers
-        .handle_notification(2, NotificationWithoutDebug)
-        .unwrap();
-    let options = ConnectorOptions::new()
-        .with_trust_roots_der(vec![vec![1]])
-        .expect("explicit trust roots")
-        .with_rpc_handlers(handlers);
-    let _ = connect(lease, options).await;
+#[test]
+fn exposes_captured_connection_options_and_typed_rpc() {
+    let _ = compile_current_public_api;
+    let _ = compile_advanced_handoff;
+    let _ = compile_typed_rpc;
 }
 
 #[test]
-fn exposes_explicit_options_and_typed_rpc() {
-    let _ = compile_public_api;
-    let _ = compile_connector_handlers;
-
-    fn compile_retry_disposition(error: flowersec::ConnectError) -> RetryDisposition {
-        error.retry_disposition()
+fn exposes_production_direct_listeners_for_each_carrier() {
+    async fn compile_listener(
+        environment: &TransportEnvironment,
+        namespaces: Vec<Arc<Namespace>>,
+        keys: IdentityKeys,
+        source: Arc<dyn AcceptedMaterialSource>,
+        admission: Arc<SQLiteAdmissionAuthority>,
+        identity: WssServerIdentity,
+        options: WssServeOptions,
+    ) -> Result<ServeHandle, ServeError> {
+        environment
+            .serve_wss(namespaces, keys, source, admission, identity, options)
+            .await
     }
-    let _ = compile_retry_disposition;
-}
-
-#[test]
-fn exposes_a_production_websocket_direct_listener() {
-    fn compile_listener(options: WebSocketAcceptorOptions) {
-        let acceptor = Acceptor::bind_websocket(options).expect("bind WebSocket listener");
-        let _ = acceptor.local_address();
+    async fn compile_raw_quic_listener(
+        environment: &TransportEnvironment,
+        namespaces: Vec<Arc<Namespace>>,
+        keys: IdentityKeys,
+        source: Arc<dyn AcceptedMaterialSource>,
+        admission: Arc<SQLiteAdmissionAuthority>,
+        identity: WssServerIdentity,
+        options: WssServeOptions,
+    ) -> Result<ServeHandle, ServeError> {
+        environment
+            .serve_raw_quic(namespaces, keys, source, admission, identity, options)
+            .await
+    }
+    async fn compile_webtransport_listener(
+        environment: &TransportEnvironment,
+        namespaces: Vec<Arc<Namespace>>,
+        keys: IdentityKeys,
+        source: Arc<dyn AcceptedMaterialSource>,
+        admission: Arc<SQLiteAdmissionAuthority>,
+        identity: WssServerIdentity,
+        options: WssServeOptions,
+    ) -> Result<ServeHandle, ServeError> {
+        environment
+            .serve_webtransport(namespaces, keys, source, admission, identity, options)
+            .await
     }
     let _ = compile_listener;
+    let _ = compile_raw_quic_listener;
+    let _ = compile_webtransport_listener;
 }
 
 #[test]
-fn exposes_an_independent_opaque_tunnel_runtime() {
-    let _ = CompileAuthorizer;
-    let _: Option<&dyn TunnelAuthorizer> = None;
-    fn compile_runtime(options: TunnelRuntimeOptions, authorizer: Arc<dyn TunnelAuthorizer>) {
-        let runtime =
-            TunnelRuntime::bind_websocket(options, authorizer).expect("bind opaque tunnel runtime");
-        let _ = runtime.local_address();
+fn exposes_an_independent_opaque_tunnel_relay() {
+    fn compile_relay(
+        environment: &TransportEnvironment,
+        keys: IdentityKeys,
+        ledger: Arc<SQLiteRelayLedger>,
+        options: RelayHostOptions,
+    ) -> Result<RelayHost, flowersec::TransportConnectError> {
+        environment.wss_relay_host(keys, ledger, options)
     }
-    fn compile_raw_quic_runtime(
-        options: TunnelRuntimeOptions,
-        authorizer: Arc<dyn TunnelAuthorizer>,
-    ) {
-        let runtime = TunnelRuntime::bind_raw_quic(options, authorizer)
-            .expect("bind opaque raw QUIC tunnel runtime");
-        let _ = runtime.local_address();
+    fn compile_prebound_relay(
+        environment: &TransportEnvironment,
+        keys: IdentityKeys,
+        ledger: Arc<SQLiteRelayLedger>,
+        options: RelayHostOptions,
+        socket: std::net::UdpSocket,
+    ) -> Result<RelayHost, flowersec::TransportConnectError> {
+        environment.wss_relay_host_on_udp_socket(socket, keys, ledger, options)
     }
-    fn compile_bounded_runtime(
-        options: TunnelRuntimeOptions,
-        authorizer: Arc<dyn TunnelAuthorizer>,
-    ) {
-        let admission = TunnelAdmissionOptions {
-            admission_timeout: Duration::from_secs(5),
-            max_concurrent_admissions: 32,
-        };
-        let _ = TunnelRuntime::bind_websocket_with_admission_options(
-            options.clone(),
-            admission,
-            authorizer.clone(),
-        );
-        let _ = TunnelRuntime::bind_raw_quic_with_admission_options(options, admission, authorizer);
-    }
-    let _ = compile_runtime;
-    let _ = compile_raw_quic_runtime;
-    let _ = compile_bounded_runtime;
+    let _ = compile_relay;
+    let _ = compile_prebound_relay;
 }
 
 #[test]
-fn handler_registration_is_generic_and_does_not_require_debug_or_arc() {
-    let mut handlers = SessionHandlers::new(SessionHandlerOptions::default()).unwrap();
-    handlers.handle_rpc(1, RpcWithoutDebug).unwrap();
-    handlers
-        .handle_notification(2, NotificationWithoutDebug)
-        .unwrap();
-    handlers
-        .handle_stream("application.stream", StreamWithoutDebug)
-        .unwrap();
-
-    let mut streams = StreamHandlers::new(StreamHandlerOptions::default()).unwrap();
-    streams
-        .handle_stream("client.application.stream", StreamWithoutDebug)
-        .unwrap();
-    assert_eq!(format!("{streams:?}"), "StreamHandlers { <opaque> }");
+fn application_handlers_can_keep_user_state_opaque() {
+    let stream: Arc<dyn RawStreamHandler> = Arc::new(OpaqueApplication(StreamWithoutDebug));
+    let rpc: Arc<dyn UnaryServiceHandler> = Arc::new(OpaqueApplication(RpcWithoutDebug));
+    let notification: Arc<dyn ExecutionNotificationHandler> =
+        Arc::new(OpaqueApplication(NotificationWithoutDebug));
+    assert_eq!(format!("{stream:?}"), "ApplicationHandler { <opaque> }");
+    assert_eq!(format!("{rpc:?}"), "ApplicationHandler { <opaque> }");
+    assert_eq!(
+        format!("{notification:?}"),
+        "ApplicationHandler { <opaque> }"
+    );
+    fn compile_frozen_dispatch(
+        environment: &TransportEnvironment,
+        mut services: ServicePlan,
+        mut unary: UnaryServiceRegistration,
+    ) -> Result<HandlerPlan, ServeError> {
+        unary.handler = Arc::new(OpaqueApplication(RpcWithoutDebug));
+        services.unary.push(unary);
+        environment
+            .handler_plan(HandlerPlanOptions {
+                streams: StreamDispatch::Registered(vec![RawStreamRegistration {
+                    kind: "application.stream".into(),
+                    metadata: None,
+                    handler: Arc::new(OpaqueApplication(StreamWithoutDebug)),
+                }]),
+                application_bytes: 65536,
+            })?
+            .with_services(services)
+    }
+    let _ = compile_frozen_dispatch;
 }
 
 #[test]
-fn connection_controller_requires_a_refreshable_artifact_source() {
-    fn compile_controller(source: Arc<dyn ArtifactSource>) -> ConnectionController {
-        let connector = ConnectorOptions::new();
-        ConnectionController::new(
-            source,
-            ConnectionControllerOptions::new(connector)
-                .with_maximum_attempts(NonZeroU64::new(2).expect("nonzero"))
-                .expect("safe maximum attempts"),
-        )
+fn current_controller_accepts_captured_material_sources() {
+    fn compile_controller(
+        environment: Arc<TransportEnvironment>,
+        options: ConnectionControllerOptions,
+    ) -> Result<ConnectionController, ConnectionControllerError> {
+        ConnectionController::new(environment, options)
     }
     let _ = compile_controller;
 }
 
 #[test]
-fn artifact_source_failures_require_structured_dispositions() {
-    assert_eq!(
-        ArtifactSourceError::terminal().disposition(),
-        RetryDisposition::Terminal
-    );
-    assert_eq!(
-        ArtifactSourceError::retryable().disposition(),
-        RetryDisposition::Retryable
-    );
-}
-
-#[test]
-fn public_error_codes_expose_direct_stable_strings() {
-    let connect_error = ConnectorOptions::new()
-        .with_trust_roots_der(vec![])
-        .expect_err("empty trust roots are invalid");
-    assert_eq!(connect_error.as_str(), "artifact_invalid");
+fn public_errors_keep_source_and_session_failures_distinct() {
+    let error = ConnectError::Source(MaterialSourceError::RequiredGuaranteeUnavailable);
+    assert!(matches!(
+        error,
+        ConnectError::Source(MaterialSourceError::RequiredGuaranteeUnavailable)
+    ));
     assert_eq!(SessionError::Timeout.as_str(), "timeout");
     assert_eq!(SessionError::GoingAway.as_str(), "going_away");
     assert_eq!(SessionError::StreamRejected.as_str(), "stream_rejected");
+    assert_eq!(
+        ServeError::new(ServeFailure::Configuration).code,
+        ServeFailure::Configuration
+    );
 }
 
 #[test]
 fn stream_metadata_is_validated_before_opening_a_stream() {
-    let metadata = StreamMetadata::try_from(serde_json::json!({"purpose": "health", "attempt": 1}))
-        .expect("valid metadata");
-    assert_eq!(metadata.values()["purpose"], "health");
-    assert!(matches!(
-        StreamMetadata::try_from(serde_json::json!({"fraction": 1.5})),
-        Err(StreamMetadataError::InvalidValue)
-    ));
-    assert!(StreamMetadata::empty().values().is_empty());
+    let values = BTreeMap::from([("purpose".to_owned(), bytes::Bytes::from_static(b"health"))]);
+    let metadata = Metadata::new("application/metadata", 1, &values).expect("valid metadata");
+    assert_eq!(metadata.namespace(), Some("application/metadata"));
+    assert_eq!(metadata.version(), Some(1));
+    assert_eq!(metadata.byte_values()["purpose"], values["purpose"]);
+    assert!(Metadata::new("invalid namespace", 1, &values).is_err());
+    assert_eq!(Metadata::empty().namespace(), None);
 }
 
 #[test]
-fn artifact_lease_does_not_expose_spend_state() {
-    let source = include_str!("../src/artifact_v3.rs");
-    assert!(!source.contains("pub fn is_committed"));
-}
-
-#[test]
-fn artifact_lease_does_not_expose_its_artifact() {
+fn connection_material_does_not_expose_its_artifact() {
     let _probe_guard = CARGO_PROBE_LOCK.lock().expect("cargo probe lock");
     let fixture = tempfile::tempdir().expect("create lease API probe directory");
     let crate_path = env!("CARGO_MANIFEST_DIR").replace('\\', "\\\\");
@@ -263,23 +330,23 @@ fn artifact_lease_does_not_expose_its_artifact() {
     fs::create_dir(fixture.path().join("src")).expect("create lease API probe source directory");
     fs::write(
         fixture.path().join("src/main.rs"),
-        "use flowersec::ArtifactLease;\n\nfn inspect(lease: &ArtifactLease) { let _ = lease.artifact(); }\nfn main() {}\n",
+        "use flowersec::ConnectionMaterial;\n\nfn inspect(material: &ConnectionMaterial) { let _ = material.artifact(); }\nfn main() {}\n",
     )
     .expect("write lease API probe source");
 
     let output = Command::new(env!("CARGO"))
         .args(["check", "--offline", "--quiet"])
         .current_dir(fixture.path())
-        .env("CARGO_TARGET_DIR", fixture.path().join("target"))
+        .env("CARGO_TARGET_DIR", cargo_probe_target())
         .output()
         .expect("run lease API probe");
     assert!(
         !output.status.success(),
-        "ArtifactLease unexpectedly exposes its artifact"
+        "ConnectionMaterial unexpectedly exposes its artifact"
     );
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("artifact"),
-        "lease opacity probe failed for an unrelated reason:\n{}",
+        "material opacity probe failed for an unrelated reason:\n{}",
         String::from_utf8_lossy(&output.stderr),
     );
 }
@@ -287,10 +354,14 @@ fn artifact_lease_does_not_expose_its_artifact() {
 #[test]
 fn rustdoc_uses_real_unversioned_portable_types() {
     let _probe_guard = CARGO_PROBE_LOCK.lock().expect("cargo probe lock");
-    let fixture = tempfile::tempdir().expect("create rustdoc target directory");
+    let target = cargo_probe_target();
+    let documentation = target.join("doc/flowersec");
+    if documentation.exists() {
+        fs::remove_dir_all(&documentation).expect("remove previous public rustdoc pages");
+    }
     let output = Command::new(env!("CARGO"))
         .args(["doc", "--no-deps", "--quiet", "--target-dir"])
-        .arg(fixture.path())
+        .arg(&target)
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("generate public rustdoc");
@@ -301,7 +372,7 @@ fn rustdoc_uses_real_unversioned_portable_types() {
     );
 
     let mut pages = Vec::new();
-    collect_html(&fixture.path().join("doc/flowersec"), &mut pages);
+    collect_html(&documentation, &mut pages);
     assert!(!pages.is_empty(), "cargo doc produced no Flowersec pages");
     for page in pages {
         if matches!(
@@ -312,8 +383,12 @@ fn rustdoc_uses_real_unversioned_portable_types() {
         }
         let source = fs::read_to_string(&page).expect("read rustdoc page");
         for name in [
-            "ArtifactV3",
-            "ArtifactLeaseV3",
+            "struct.Artifact.html",
+            "struct.ArtifactLease.html",
+            "struct.Acceptor.html",
+            "struct.ConnectorOptions.html",
+            "V3ConnectionController",
+            "connect_v3",
             "SessionV2",
             "ByteStreamV2",
             "IncomingStreamV2",
@@ -383,7 +458,7 @@ fn default_public_api_does_not_expose_fuzzing() {
     let output = Command::new("cargo")
         .args(["check", "--offline", "--quiet"])
         .current_dir(fixture.path())
-        .env("CARGO_TARGET_DIR", fixture.path().join("target"))
+        .env("CARGO_TARGET_DIR", cargo_probe_target())
         .output()
         .expect("run default API probe");
 

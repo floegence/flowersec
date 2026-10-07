@@ -41,12 +41,13 @@ type writeRequest struct {
 // closed signal. They do not retain the queue, Stream, Session or clock graph.
 // The caller owns that compact result after its original slab slot is returned.
 type WriteOperation struct {
-	mu       sync.Mutex
-	queue    atomic.Pointer[SendQueue]
-	slot     int
-	progress protocolv4.V4WriteProgress
-	failure  error
-	done     chan struct{}
+	mu                  sync.Mutex
+	queue               atomic.Pointer[SendQueue]
+	slot                int
+	progress            protocolv4.V4WriteProgress
+	failure             error
+	diagnosticOperation *DiagnosticOperation
+	done                chan struct{}
 }
 
 // MaxWriteOperationBytes is the admitted per-request staging cap. Ordinary
@@ -92,7 +93,8 @@ func (q *SendQueue) prepareWriteOwned(input []byte, options WriteOptions, owner 
 	}
 	storage := q.operationStorage[index*q.maxOperationBytes : index*q.maxOperationBytes+len(input)]
 	copy(storage, input)
-	op := &WriteOperation{slot: index, done: make(chan struct{}), progress: protocolv4.V4WriteProgress{
+	diagnosticOperation := beginApplicationDiagnosticForSink(q.flow.diagnosticSink)
+	op := &WriteOperation{slot: index, done: make(chan struct{}), diagnosticOperation: diagnosticOperation, progress: protocolv4.V4WriteProgress{
 		RequestedBytes: uint64(len(input)), Phase: protocolv4.V4WritePhasePrepared,
 		TerminalReason: protocolv4.V4WriteTerminalReasonNone,
 		CleanupStatus:  protocolv4.V4CleanupStatus{Status: protocolv4.V4CleanupStatePending, CoreCleanup: protocolv4.V4CoreCleanupPending},
@@ -259,6 +261,8 @@ func (q *SendQueue) finishOperationLocked(index int, reason protocolv4.V4WriteTe
 	op.mu.Lock()
 	op.progress.AcceptedBytes = r.accepted
 	op.progress.Phase, op.progress.TerminalReason = protocolv4.V4WritePhaseTerminal, reason
+	diagnosticOperation := op.diagnosticOperation
+	op.diagnosticOperation = nil
 	switch reason {
 	case protocolv4.V4WriteTerminalReasonComplete:
 		op.failure = nil
@@ -277,6 +281,21 @@ func (q *SendQueue) finishOperationLocked(index int, reason protocolv4.V4WriteTe
 	op.cleanupLocked()
 	close(op.done)
 	op.mu.Unlock()
+	if diagnosticOperation != nil {
+		var cause error
+		switch reason {
+		case protocolv4.V4WriteTerminalReasonCanceled:
+			cause = context.Canceled
+		case protocolv4.V4WriteTerminalReasonDeadlineExceeded:
+			cause = context.DeadlineExceeded
+		case protocolv4.V4WriteTerminalReasonStreamTerminated:
+			cause = ErrFlowClosed
+		case protocolv4.V4WriteTerminalReasonComplete:
+		default:
+			cause = ErrWriteOperationFailed
+		}
+		finishApplicationDiagnosticError(diagnosticOperation, cause)
+	}
 	q.removeWaitLocked(index)
 }
 
@@ -300,6 +319,32 @@ func (q *SendQueue) acceptanceErrorLocked() error {
 	}
 	if err := q.flow.writer.engine.CheckApplicationAuthorization(); err != nil {
 		return err
+	}
+	q.flow.mu.Lock()
+	defer q.flow.mu.Unlock()
+	if q.flow.stopping {
+		return ErrFlowClosed
+	}
+	return q.flow.reservation.Check()
+}
+
+// Called only inside the original request's current authorization/lease gate.
+// The full Engine check ran before entering that gate; local closure and all
+// concrete backing are rechecked here before the finite atomic ring transfer.
+func (q *SendQueue) authorizedRequestAcceptanceErrorLocked() error {
+	if q.closed {
+		return q.failure
+	}
+	if q.sealed || q.flow == nil || q.flow.reset.Load() {
+		return ErrFlowClosed
+	}
+	if err := q.reservation.Check(); err != nil {
+		return err
+	}
+	select {
+	case <-q.flow.writer.engine.Done():
+		return cryptov4.ErrClosed
+	default:
 	}
 	q.flow.mu.Lock()
 	defer q.flow.mu.Unlock()

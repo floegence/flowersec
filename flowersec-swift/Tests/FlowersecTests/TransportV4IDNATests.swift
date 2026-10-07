@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportV4IDNATests: XCTestCase {
+final class TransportIDNATests: XCTestCase {
   private static let reference = try! V4IDNA(syntax: V4CBORReference())
 
   private func unescape(_ input: String) throws -> String {

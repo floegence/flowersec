@@ -1,15 +1,18 @@
-import type { DatabaseSync} from "node:sqlite";
-import { type SQLInputValue, type SQLOutputValue } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue, SQLOutputValue } from "node:sqlite";
 import { closeSync, constants, fsyncSync, lstatSync, openSync, realpathSync, type Stats } from "node:fs";
 import { dirname, isAbsolute, normalize } from "node:path";
 import type { V4TransportEnvironment } from "../v4/public.js";
+import type { StorageFormatProjection } from "./sqliteFormat.js";
 import { originalEnvironment, type V4EnvironmentRuntime } from "../v4/runtime/environment.js";
 import { ResourceVector, type ResourceReference } from "../v4/runtime/resources.js";
 import { credentialOwner } from "../v4/runtime/credentialSupport.js";
+import { sqliteInspectionRowBytes } from "./sqliteFormat.js";
 
 export type V4PoolStoreFailure = "configuration_capacity" | "storage_unavailable" | "storage_format" | "history_unknown" | "fenced" | "spend_conflict" | "spent_unknown" | "capacity" | "owner_unavailable" | "closed";
 export class V4PoolStoreError extends Error {
-  constructor(readonly code: V4PoolStoreFailure, readonly writeState: "not_submitted" | "committed" | "unknown" = "not_submitted") { super(code); this.name = "V4PoolStoreError"; }
+  constructor(readonly code: V4PoolStoreFailure, readonly writeState: "not_submitted" | "committed" | "unknown" = "not_submitted",
+    readonly format?: StorageFormatProjection) { super(format?.code ?? code); this.name = "V4PoolStoreError"; }
 }
 export function fail(code: V4PoolStoreFailure): never { throw new V4PoolStoreError(code); }
 const token = Symbol("node SQLite backing");
@@ -56,7 +59,7 @@ function backingCharge(c: V4SQLitePoolLimits): ResourceVector {
   return new ResourceVector([4096n + c.runtimeBytes, 0n, disk, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
 }
 export function storeCharge(c: V4SQLitePoolLimits): ResourceVector {
-  return new ResourceVector([8192n + 64n * 144n + 65n * c.runtimeBytes, BigInt(c.maxPages) * pageBytes * 2n + BigInt(c.maxRecordBytes) * 2n + c.providerRuntimeBytes,
+  return new ResourceVector([8192n + 64n * 144n + 65n * c.runtimeBytes, BigInt(c.maxPages) * pageBytes * 2n + BigInt(sqliteInspectionRowBytes(c.maxRecordBytes)) * 2n + c.providerRuntimeBytes,
     0n, 1n, 1n, 1n, 0n, 0n, 0n, 0n, 4n]);
 }
 export function u64(value: bigint): Uint8Array { if (value < 0n || value > maximum) fail("storage_format"); const result = new Uint8Array(8); new DataView(result.buffer).setBigUint64(0, value); return result; }

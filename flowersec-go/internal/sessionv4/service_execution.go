@@ -108,6 +108,10 @@ func (d *ServiceDispatch) admitExecution(publisher *rpcv4.Publisher, ticket rpcv
 		d.mu.Unlock()
 		return refuse("resource_exhausted", cryptov4.ErrCapacity)
 	}
+	if err := registration.services.retainRegistration(); err != nil {
+		d.mu.Unlock()
+		return refuse("service_unavailable", err)
+	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	i := &serviceInvocation{dispatcher: d, plan: d.plan, method: registration, header: header, input: input, ctx: ctx, cancel: cancel, execution: &serviceExecution{access: access, durableHistory: binding.DurableHistory}}
 	i.response.invocation = i
@@ -132,6 +136,9 @@ func (d *ServiceDispatch) admitExecution(publisher *rpcv4.Publisher, ticket rpcv
 		}
 	}
 	d.mu.Unlock()
+	i.diagnosticOperation = i.plan.beginApplicationDiagnostic()
+	i.ctx = withDiagnosticOperation(i.ctx, i.diagnosticOperation)
+	ctx = i.ctx
 	success := false
 	defer func() {
 		if !success {
@@ -229,7 +236,7 @@ func (d *ServiceDispatch) admitExecution(publisher *rpcv4.Publisher, ticket rpcv
 	reserve := func(task, backing resourcev4.Reference) error {
 		// No callback or dispatch right exists during the history admission gate.
 		if header.Fields().AdmissionMode == 1 {
-			i.execution.permit, err = d.plan.executor.TryAcquire(registration.WorkClass, task, backing)
+			i.execution.permit, err = d.plan.executor.tryAcquireInGroup(d.plan.applicationGroup, registration.WorkClass, task, backing)
 		} else {
 			i.queued, err = d.plan.executor.prepareApplication(d.plan.applicationGroup, registration.WorkClass, task, backing)
 		}
@@ -285,6 +292,7 @@ func (i *serviceInvocation) runExecution() {
 			failure = ErrCompletionCallbackExit
 		}
 		i.mu.Lock()
+		i.failure = failure
 		i.returned = true
 		i.publication.endHandler()
 		if failure != nil && !i.execution.outputFinished {
@@ -452,12 +460,15 @@ func (d *ServiceDispatch) finishExecution(index int, i *serviceInvocation) {
 	class := i.method.WorkClass
 	i.dispatcher = nil
 	i.plan = nil
+	i.method.services.releaseInvocation()
 	i.method = UnaryRegistration{}
 	i.input = nil
 	i.result = nil
 	i.writer = nil
 	i.observation = nil
 	i.deadline = nil
+	finishApplicationDiagnosticError(i.diagnosticOperation, i.failure)
+	i.diagnosticOperation = nil
 	i.ctx = nil
 	i.cancel = nil
 	i.queued = nil

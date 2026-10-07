@@ -92,7 +92,7 @@ pub struct ServeRequestContext {
 }
 impl fmt::Debug for ServeRequestContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("V4ServeRequestContext { <opaque> }")
+        f.write_str("ServeRequestContext { <opaque> }")
     }
 }
 /// Detached authenticated association. Digests are inspection values, never
@@ -108,7 +108,7 @@ pub struct ApplicationBinding {
 }
 impl fmt::Debug for ApplicationBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("V4ApplicationBinding { <opaque> }")
+        f.write_str("ApplicationBinding { <opaque> }")
     }
 }
 #[derive(Clone)]
@@ -118,12 +118,29 @@ pub struct AuthenticatedRequestContext {
 }
 impl fmt::Debug for AuthenticatedRequestContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("V4AuthenticatedRequestContext { <opaque> }")
+        f.write_str("AuthenticatedRequestContext { <opaque> }")
     }
 }
 impl AuthenticatedRequestContext {
+    pub fn response_publication(&self) -> crate::ResponsePublication {
+        crate::ResponsePublication::not_applicable()
+    }
+    pub fn maintenance_owner(&self) -> Result<crate::MaintenanceOwner, crate::ServiceError> {
+        let services = self.services().ok_or(crate::ServiceError(
+            crate::ServiceFailure::ServiceUnavailable,
+        ))?;
+        services.service_peer().maintenance_owner()
+    }
     pub fn binding(&self) -> ApplicationBinding {
         self.binding
+    }
+    /// Available only after the original Session publication gate succeeds.
+    pub fn services(&self) -> Option<AcceptedServices> {
+        let state = self.invocation.state.lock().expect("Serve invocation");
+        if !state.published || self.invocation.cancel.is_cancelled() {
+            return None;
+        }
+        state.services.clone()
     }
     pub fn cancellation(&self) -> CancellationToken {
         self.invocation.cancel.clone()
@@ -223,7 +240,71 @@ pub enum StreamAuthorization {
     Reject,
 }
 #[async_trait]
-pub trait RawStreamHandler: fmt::Debug + Send + Sync + 'static {
+pub trait RawStreamHandler: fmt::Debug + Send + Sync + std::any::Any + 'static {
+    fn message_definition(&self) -> Option<[u8; 32]> {
+        None
+    }
+    /// One original pending OPEN remains responsible for either acceptance or
+    /// rejection while a specialized adapter reserves its finite ownership.
+    async fn handle_open_with_context(
+        &self,
+        request: OpenRequest,
+        authentication: ApplicationBinding,
+        cancel: CancellationToken,
+        context: crate::ApplicationInvocationContext,
+    ) -> Result<(), ServeError> {
+        let metadata = request.metadata().clone();
+        let decision = self
+            .authorize_with_context(
+                authentication,
+                metadata.clone(),
+                cancel.clone(),
+                context.clone(),
+            )
+            .await?;
+        if let StreamAuthorization::Accept { receive_window } = decision {
+            let stream = request
+                .accept(receive_window)
+                .map_err(|_| ServeError::new(ServeFailure::Rejected))?;
+            let handled = self
+                .handle_with_context(stream.clone(), metadata, cancel, context)
+                .await;
+            if handled.is_err() || stream.finish().await.is_err() {
+                let _ = stream.reset().await;
+            }
+            handled
+        } else {
+            let _ = request.reject();
+            Ok(())
+        }
+    }
+    /// Context-aware callbacks borrow the actual ordinary invocation. Existing
+    /// implementations keep their original callback semantics through defaults.
+    async fn authorize_with_context(
+        &self,
+        authentication: ApplicationBinding,
+        metadata: Metadata,
+        cancellation: CancellationToken,
+        context: crate::ApplicationInvocationContext,
+    ) -> Result<StreamAuthorization, ServeError> {
+        context
+            .check_cancellation()
+            .map_err(|_| ServeError::new(ServeFailure::Canceled))?;
+        self.authorize(authentication, metadata, cancellation).await
+    }
+    async fn handle_with_context(
+        &self,
+        stream: Stream,
+        metadata: Metadata,
+        cancellation: CancellationToken,
+        context: crate::ApplicationInvocationContext,
+    ) -> Result<(), ServeError> {
+        context
+            .check_cancellation()
+            .map_err(|_| ServeError::new(ServeFailure::Canceled))?;
+        self.handle(stream, metadata, cancellation).await
+    }
+
     async fn authorize(
         &self,
         authentication: ApplicationBinding,
@@ -249,6 +330,9 @@ pub enum StreamDispatch {
     Manual,
     /// Only frozen registrations may accept inbound raw Streams.
     Registered(Vec<RawStreamRegistration>),
+    /// Frozen SDK/business kinds use the dispatcher; all other business kinds
+    /// remain in the original bounded pending OPEN slots for next_open.
+    Reserved(Vec<RawStreamRegistration>),
 }
 #[derive(Clone, Debug)]
 pub struct HandlerPlanOptions {
@@ -258,6 +342,8 @@ pub struct HandlerPlanOptions {
 struct PlanOwner {
     root: Arc<EnvironmentRoot>,
     options: HandlerPlanOptions,
+    services: Option<ServicePlan>,
+    maintenance: Option<crate::MaintenanceOwner>,
     closed: AtomicBool,
     _charge: EnvironmentCharge,
 }
@@ -267,32 +353,84 @@ struct PlanOwner {
 pub struct HandlerPlan(Arc<PlanOwner>);
 impl fmt::Debug for HandlerPlan {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("V4HandlerPlan { <opaque> }")
+        f.write_str("HandlerPlan { <opaque> }")
     }
 }
 impl HandlerPlan {
     pub(crate) fn new(
         root: Arc<EnvironmentRoot>,
-        mut options: HandlerPlanOptions,
+        options: HandlerPlanOptions,
     ) -> Result<Self, ServeError> {
+        Self::new_with_services(root, options, None, None)
+    }
+    fn new_with_services(
+        root: Arc<EnvironmentRoot>,
+        mut options: HandlerPlanOptions,
+        services: Option<ServicePlan>,
+        maintenance: Option<crate::MaintenanceOwner>,
+    ) -> Result<Self, ServeError> {
+        if let Some(owner) = &maintenance {
+            owner
+                .check_root(&root)
+                .map_err(|_| ServeError::new(ServeFailure::Closed))?;
+        }
+        let services = services.map(|plan| plan.capture(&root)).transpose()?;
+        if let Some(plan) = services
+            .as_ref()
+            .filter(|plan| !plan.streaming.is_empty() || !plan.resume.is_empty())
+        {
+            let registrations = plan
+                .streaming
+                .iter()
+                .map(|entry| entry.service.raw_registration())
+                .chain(
+                    plan.resume
+                        .iter()
+                        .map(|entry| entry.service.raw_registration()),
+                );
+            match &mut options.streams {
+                StreamDispatch::Manual => {
+                    options.streams = StreamDispatch::Reserved(registrations.collect())
+                }
+                StreamDispatch::Registered(entries) | StreamDispatch::Reserved(entries) => {
+                    entries.extend(registrations)
+                }
+            }
+        }
         if !(256..=1 << 30).contains(&options.application_bytes) {
             return Err(ServeError::new(ServeFailure::Configuration));
         }
         let count = match &options.streams {
             StreamDispatch::Manual => 0,
-            StreamDispatch::Registered(entries) => entries.len(),
+            StreamDispatch::Registered(entries) | StreamDispatch::Reserved(entries) => {
+                entries.len()
+            }
         };
         if count > 128 {
             return Err(ServeError::new(ServeFailure::Configuration));
         }
+        let service_count = services.as_ref().map_or(0, |plan| {
+            plan.unary.len()
+                + plan.notifications.len()
+                + plan.streaming.len()
+                + plan.resume.len()
+                + plan
+                    .result_read
+                    .as_ref()
+                    .map_or(0, |read| read.grants.len())
+                + plan.management.as_ref().map_or(0, Vec::len)
+        });
         let charge = root.reserve_environment(ResourceLimits {
-            sdk_bytes: options.application_bytes + 4096 + count as u64 * 16384,
-            items: 1 + count as u64,
+            sdk_bytes: options.application_bytes
+                + 4096
+                + count as u64 * 16384
+                + service_count as u64 * 4096,
+            items: 1 + count as u64 + service_count as u64,
             ..ResourceLimits::default()
         })?;
         match &mut options.streams {
             StreamDispatch::Manual => 0,
-            StreamDispatch::Registered(entries) => {
+            StreamDispatch::Registered(entries) | StreamDispatch::Reserved(entries) => {
                 if entries.len() > 128 {
                     return Err(ServeError::new(ServeFailure::Configuration));
                 }
@@ -320,27 +458,133 @@ impl HandlerPlan {
         Ok(Self(Arc::new(PlanOwner {
             root,
             options,
+            services,
+            maintenance,
             closed: AtomicBool::new(false),
             _charge: charge,
         })))
+    }
+    /// Capture the complete service directory at handler resolution, before
+    /// application authorization and the accepted handshake's irreversible spend.
+    pub fn with_services(self, services: ServicePlan) -> Result<Self, ServeError> {
+        if self.0.services.is_some() || self.0.closed.load(Ordering::Acquire) {
+            return Err(ServeError::new(ServeFailure::Configuration));
+        }
+        Self::new_with_services(
+            self.0.root.clone(),
+            self.0.options.clone(),
+            Some(services),
+            self.0.maintenance.clone(),
+        )
+    }
+    /// Capture the Runtime's finite maintenance observation capability for both
+    /// outbound Connect and inbound Serve before method admission.
+    pub fn with_maintenance_owner(
+        self,
+        owner: crate::MaintenanceOwner,
+    ) -> Result<Self, ServeError> {
+        if self.0.closed.load(Ordering::Acquire) || self.0.maintenance.is_some() {
+            return Err(ServeError::new(ServeFailure::Configuration));
+        }
+        Self::new_with_services(
+            self.0.root.clone(),
+            self.0.options.clone(),
+            self.0.services.clone(),
+            Some(owner),
+        )
+    }
+    fn check_restart_maintenance(&self) -> Result<(), ServeError> {
+        if self.0.services.as_ref().is_some_and(|plan| {
+            plan.unary
+                .iter()
+                .any(|entry| entry.contract.bool(21).unwrap_or(false))
+        }) {
+            self.0
+                .maintenance
+                .as_ref()
+                .ok_or(ServeError::new(ServeFailure::Configuration))?
+                .check_root(&self.0.root)
+                .map_err(|_| ServeError::new(ServeFailure::Closed))?;
+        }
+        Ok(())
+    }
+    pub(crate) fn reserve_services(
+        &self,
+        account: &ResourceAccount,
+        profile: u8,
+        identity: [u8; 32],
+    ) -> Result<Option<super::services::PreparedServicePlan>, ServeError> {
+        self.check_restart_maintenance()?;
+        self.0
+            .services
+            .as_ref()
+            .map(|plan| {
+                let mut prepared = plan.reserve(account, profile, identity)?;
+                prepared.maintenance = self.0.maintenance.clone();
+                Ok(prepared)
+            })
+            .transpose()
+    }
+    pub(crate) fn service_preparation_limits(&self) -> Result<Option<ResourceLimits>, ServeError> {
+        self.0
+            .services
+            .as_ref()
+            .map(ServicePlan::preparation_limits)
+            .transpose()
+    }
+    pub(crate) fn has_management_plan(&self) -> bool {
+        self.0
+            .services
+            .as_ref()
+            .is_some_and(|plan| plan.management.is_some())
+    }
+    pub(crate) fn reserve_services_prepaid(
+        &self,
+        account: &ResourceAccount,
+        profile: u8,
+        identity: [u8; 32],
+        charge: Option<ResourceCharge>,
+    ) -> Result<Option<super::services::PreparedServicePlan>, ServeError> {
+        self.check_restart_maintenance()?;
+        match (&self.0.services, charge) {
+            (Some(plan), Some(charge)) => {
+                let mut prepared = plan.reserve_prepaid(account, profile, identity, charge)?;
+                prepared.maintenance = self.0.maintenance.clone();
+                Ok(Some(prepared))
+            }
+            (None, None) => Ok(None),
+            _ => Err(ServeError::new(ServeFailure::Configuration)),
+        }
     }
     pub fn close(&self) {
         self.0.closed.store(true, Ordering::Release);
     }
     pub(crate) fn bind(&self, session: &Session) {
-        if matches!(&self.0.options.streams, StreamDispatch::Registered(_)) {
-            session.bind_registered_dispatch();
+        session.install_maintenance_owner(self.0.maintenance.clone());
+        match &self.0.options.streams {
+            StreamDispatch::Registered(_) => session.bind_registered_dispatch(),
+            StreamDispatch::Reserved(entries) => session.bind_reserved_dispatch(
+                entries
+                    .iter()
+                    .map(|entry| entry.kind.clone())
+                    .collect::<Vec<_>>()
+                    .into(),
+            ),
+            StreamDispatch::Manual => {}
         }
     }
     pub(crate) fn validate_limits(&self, limits: ApplicationLimits) -> Result<(), ServeError> {
-        if matches!(&self.0.options.streams, StreamDispatch::Registered(_))
-            && limits.ordinary_callback_bytes < 32768
+        if matches!(
+            &self.0.options.streams,
+            StreamDispatch::Registered(_) | StreamDispatch::Reserved(_)
+        ) && limits.ordinary_callback_bytes < 32768
         {
             return Err(ServeError::new(ServeFailure::Configuration));
         }
         Ok(())
     }
     pub(crate) fn capture(&self, root: &Arc<EnvironmentRoot>) -> Result<Self, ServeError> {
+        self.check_restart_maintenance()?;
         if !Arc::ptr_eq(root, &self.0.root)
             || self.0.root.is_closed()
             || self.0.closed.load(Ordering::Acquire)
@@ -355,9 +599,9 @@ impl HandlerPlan {
         context: ApplicationBinding,
         lifetime: Arc<ApplicationLifetime>,
     ) {
-        let StreamDispatch::Registered(_) = &self.0.options.streams else {
+        if matches!(&self.0.options.streams, StreamDispatch::Manual) {
             return;
-        };
+        }
         let Ok(dispatcher) = lifetime.enter(CallbackKind::Dispatcher) else {
             return;
         };
@@ -370,21 +614,49 @@ impl HandlerPlan {
                 tokio::select! {
                     _ = cancel.cancelled() => break,
                     Some(_) = running.join_next(), if !running.is_empty() => {},
-                    request = session.next_registered_open() => {
+                    request = async {
+                        match &plan.0.options.streams {
+                            StreamDispatch::Reserved(_) => session.next_reserved_open().await,
+                            _ => session.next_registered_open().await,
+                        }
+                    } => {
                         let Ok(request) = request else { session.close(); break };
                         while running.try_join_next().is_some() {}
-                        // Finished but uncollected tasks still own JoinSet
-                        // entries. Count them against the same fixed capacity.
-                        if running.len() >= lifetime.ordinary_capacity() { drop(request); continue; }
-                        let StreamDispatch::Registered(entries) = &plan.0.options.streams else { unreachable!() };
+                        let entries = match &plan.0.options.streams {
+                            StreamDispatch::Registered(entries) | StreamDispatch::Reserved(entries) => entries,
+                            StreamDispatch::Manual => unreachable!(),
+                        };
                         let Some(entry) = entries.iter().find(|r| r.kind == request.kind()) else { drop(request); continue };
+                        if entry.handler.message_definition() != request.metadata().typed_definition() { drop(request); continue; }
                         if entry.metadata.as_ref().is_some_and(|contract| request.metadata().project_raw(contract).is_err()) { drop(request); continue; }
+                        if crate::resume_service_v4::is_sdk_resume_handler(entry.handler.as_ref()) {
+                            let capacity = session.stream_dispatch_capacity().unwrap_or(0);
+                            if running.len() >= capacity { drop(request); continue; }
+                            let handler = entry.handler.clone(); let cancel = cancel.clone();
+                            running.spawn(async move {
+                                let _ = crate::resume_service_v4::handle_sdk_resume_open(handler, request, cancel).await;
+                            });
+                            continue;
+                        }
+                        if crate::streaming_service_v4::is_sdk_streaming_handler(entry.handler.as_ref()) {
+                            let capacity = session.stream_dispatch_capacity().unwrap_or(0);
+                            if running.len() >= capacity { drop(request); continue; }
+                            let handler = entry.handler.clone(); let cancel = cancel.clone();
+                            running.spawn(async move {
+                                let _ = crate::streaming_service_v4::handle_sdk_streaming_open(handler, request, cancel).await;
+                            });
+                            continue;
+                        }
+                        let group = lifetime.application_group();
+                        let Ok(position) = group.try_ordinary(true, None) else { drop(request); continue };
                         let Ok(guard) = lifetime.enter(CallbackKind::Ordinary) else { drop(request); continue };
                         let handler = entry.handler.clone();
                         let cancel = cancel.clone();
                         running.spawn(async move {
                             let _guard = guard;
-                            handle_stream(handler, request, context, cancel).await;
+                            let Ok(invocation) = position.enter() else { drop(request); return };
+                            handle_stream(handler, request, context, cancel, invocation.context()).await;
+                            drop(invocation);
                         });
                     }
                 }
@@ -400,21 +672,10 @@ async fn handle_stream(
     request: OpenRequest,
     authentication: ApplicationBinding,
     cancel: CancellationToken,
+    context: crate::ApplicationInvocationContext,
 ) {
-    let metadata = request.metadata().clone();
-    let decision =
-        callback(handler.authorize(authentication, metadata.clone(), cancel.clone())).await;
-    if let Ok(StreamAuthorization::Accept { receive_window }) = decision {
-        let Ok(stream) = request.accept(receive_window) else {
-            return;
-        };
-        let handled = callback(handler.handle(stream.clone(), metadata, cancel)).await;
-        // Keep successful handler ownership through the original FIN proof.
-        // Dropping the final live Stream would otherwise reset that FIN.
-        if handled.is_err() || stream.finish().await.is_err() {
-            let _ = stream.reset().await;
-        }
-    }
+    let _ =
+        callback(handler.handle_open_with_context(request, authentication, cancel, context)).await;
 }
 
 struct InvocationState {
@@ -423,6 +684,7 @@ struct InvocationState {
     authorizing: bool,
     lease: Option<Arc<dyn ApplicationAuthorizationLease>>,
     application: Option<Arc<ApplicationLifetime>>,
+    services: Option<AcceptedServices>,
     published: bool,
     lease_close_started: bool,
     lease_close_finished: bool,
@@ -445,6 +707,7 @@ impl Invocation {
                 authorizing: false,
                 lease: None,
                 application: None,
+                services: None,
                 published: false,
                 lease_close_started: false,
                 lease_close_finished: false,
@@ -486,11 +749,28 @@ impl Invocation {
             };
         state.lease.is_some()
     }
+    pub(super) fn install_services(&self, services: AcceptedServices) -> Result<(), ServeError> {
+        let mut state = self.state.lock().expect("Serve invocation");
+        if state.published || state.services.is_some() || self.cancel.is_cancelled() {
+            drop(state);
+            services.close();
+            return Err(ServeError::new(ServeFailure::Closed));
+        }
+        state.services = Some(services);
+        Ok(())
+    }
     pub(super) fn published(&self) {
         self.state.lock().expect("Serve invocation").published = true;
     }
     pub(super) fn retire(&self) {
-        self.state.lock().expect("Serve invocation").application = None;
+        let services = {
+            let mut state = self.state.lock().expect("Serve invocation");
+            state.application = None;
+            state.services.take()
+        };
+        if let Some(services) = services {
+            services.close();
+        }
         self.charge.lock().expect("Serve invocation charge").take();
         self.complete.store(true, Ordering::Release);
     }
@@ -501,7 +781,7 @@ impl Invocation {
     }
     pub(super) fn revoke(self: &Arc<Self>) {
         self.cancel.cancel();
-        let (claimed, application) = {
+        let (claimed, application, services) = {
             let mut state = self.state.lock().expect("Serve invocation");
             let lease = if state.lease_close_started {
                 None
@@ -511,8 +791,11 @@ impl Invocation {
             if lease.is_some() {
                 state.lease_close_started = true;
             }
-            (lease, state.application.clone())
+            (lease, state.application.clone(), state.services.clone())
         };
+        if let Some(services) = services {
+            services.close();
+        }
         if let Some(application) = &application {
             application.close();
         }

@@ -26,17 +26,20 @@ import (
 // RuntimeBytes supplies the deployment's non-Engine allocation/channel/stack
 // allowance; this source-sized minimum does not qualify a runtime or provider.
 type SessionCoreConfig struct {
-	applicationServices                    bool
-	Session                                protocolv4.ArtifactSessionParameters
-	Clock                                  *timev4.Clock
-	LocalIdleDurationMS                    uint64
-	Open                                   OpenLimits
-	MaxScopes, PendingScopes, WorkSlots    uint32
-	Datagrams                              bool
-	Maintenance                            cryptov4.MaintenanceReserve
-	EngineResources                        cryptov4.EngineResourceOptions
-	RuntimeBytes                           uint64
-	Native, MessageCarrier                 bool
+	applicationServices                 bool
+	Session                             protocolv4.ArtifactSessionParameters
+	Clock                               *timev4.Clock
+	LocalIdleDurationMS                 uint64
+	Open                                OpenLimits
+	MaxScopes, PendingScopes, WorkSlots uint32
+	Datagrams                           bool
+	Maintenance                         cryptov4.MaintenanceReserve
+	EngineResources                     cryptov4.EngineResourceOptions
+	RuntimeBytes                        uint64
+	Native, MessageCarrier              bool
+	// MixedCarrier captures both complete carrier geometries before acquisition.
+	// Native and MessageCarrier still name the actual selected original provider.
+	MixedCarrier                           bool
 	MessageRuntimeBytes                    uint64
 	Streams                                SessionStreamConfig
 	Handlers                               SessionStreamHandlerConfig
@@ -96,6 +99,8 @@ type SessionResourceScope struct {
 type SessionCorePlan struct {
 	serviceFloors                                                                      []streamServiceFloor
 	diagnostics                                                                        *diagnosticv4.Counters
+	diagnosticOperation                                                                *DiagnosticOperation
+	diagnosticSink                                                                     *DiagnosticSink
 	preaccepted                                                                        [maxPreacceptedStreams]*preacceptedStream
 	mu                                                                                 sync.Mutex
 	config                                                                             SessionCoreConfig
@@ -245,6 +250,37 @@ func (c SessionCoreConfig) validateTime() error {
 }
 
 func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourcev4.Vector, total resourcev4.Vector, count uint32, err error) {
+	if c.MixedCarrier {
+		if c.Native == c.MessageCarrier {
+			return charges, total, count, cryptov4.ErrConfiguration
+		}
+		native, shared := coreCarrierMode(c, false), coreCarrierMode(c, true)
+		native.MixedCarrier, shared.MixedCarrier = false, false
+		// Shared carriers negotiate no datagrams. Keep the captured capability on
+		// the mixed configuration so later selection preserves the same union.
+		shared.Datagrams = false
+		nc, _, _, e := sessionCoreCharges(native)
+		if e != nil {
+			return charges, total, count, e
+		}
+		sc, _, _, e := sessionCoreCharges(shared)
+		if e != nil {
+			return charges, total, count, e
+		}
+		for owner := range charges {
+			for dimension := range charges[owner] {
+				charges[owner][dimension] = max(nc[owner][dimension], sc[owner][dimension])
+			}
+			if charges[owner] != (resourcev4.Vector{}) {
+				total, e = total.Add(charges[owner])
+				if e != nil {
+					return charges, total, count, e
+				}
+				count++
+			}
+		}
+		return charges, total, count, nil
+	}
 	if c.Handlers != (SessionStreamHandlerConfig{}) {
 		if c.Handlers.Plan != nil && c.Streams == (SessionStreamConfig{}) || uint64(c.Handlers.Concurrency) > uint64(c.Open.Opening)+uint64(c.Open.IngressItems) {
 			err = cryptov4.ErrConfiguration
@@ -481,7 +517,7 @@ func SessionCoreReferenceSlots(c SessionCoreConfig) (uint32, error) {
 		return 0, err
 	}
 	count += 2
-	if c.MessageCarrier {
+	if c.MessageCarrier || c.MixedCarrier {
 		count++
 	}
 	for position := coreStreamServiceStart; position < len(charges); position++ {
@@ -561,7 +597,7 @@ func (b *sessionCoreBatch) reserveEnvironmentBorrows() error {
 		return resourcev4.ErrOwner
 	}
 	borrows := 2
-	if b.config.MessageCarrier {
+	if b.config.MessageCarrier || b.config.MixedCarrier {
 		borrows++
 	}
 	for i := 0; i < borrows; i++ {
@@ -882,6 +918,7 @@ func (p *SessionCorePlan) PrepareRecords(f *cryptov4.FinishedHandshake, records 
 	}
 	p.preparing, p.busy = true, true
 	records.Diagnostics = p.diagnostics
+	records.DiagnosticEvents = p.diagnosticOperation
 	options, reservation, environment := p.config.EngineResources, p.refs[coreEngineOwner], p.engineEnvironment
 	p.mu.Unlock()
 	defer p.finishWork()
@@ -944,7 +981,12 @@ func (p *SessionCorePlan) Install(engine *cryptov4.Engine, input RuntimeInput, o
 	p.mu.Lock()
 	p.admission = a
 	a.application = p.application
-	a.diagnostics = p.diagnostics
+	if handlers := p.config.Handlers.Plan; handlers != nil {
+		handlers.mu.Lock()
+		a.handlerGroup = handlers.group
+		handlers.mu.Unlock()
+	}
+	a.diagnostics, a.diagnosticOperation, a.diagnosticSink = p.diagnostics, p.diagnosticOperation, p.diagnosticSink
 	p.mu.Unlock()
 	if c.Streams != (SessionStreamConfig{}) {
 		pool := p.receivePool
@@ -982,7 +1024,7 @@ func (p *SessionCorePlan) Install(engine *cryptov4.Engine, input RuntimeInput, o
 		}
 	}
 	if c.Datagrams && engine.DatagramSelected() {
-		unreliable, unreliableErr := newUnreliableMessages(engine, p.nativeConnection, c, p.refs[coreUnreliableOwner])
+		unreliable, unreliableErr := newUnreliableMessages(a, p.nativeConnection, c, p.refs[coreUnreliableOwner])
 		if unreliableErr != nil {
 			return nil, unreliableErr
 		}
@@ -1396,6 +1438,7 @@ func (p *SessionCorePlan) Retire() (err error) {
 	p.probes, p.pongs, p.rekeyWait = nil, nil, nil
 	p.config.Clock = nil
 	p.diagnostics = nil
+	p.diagnosticOperation = nil
 	p.carrier.mu.Lock()
 	p.carrier.bound, p.carrier.shared = nil, nil
 	p.carrier.mu.Unlock()
@@ -1486,4 +1529,19 @@ func (c *SessionCore) Retire() error {
 		return cryptov4.ErrConfiguration
 	}
 	return c.plan.Retire()
+}
+
+// coreCarrierMode selects only physical transport behavior. MixedCarrier
+// continues to name the already captured owner union; no new reserve, dial,
+// claim or signed policy is introduced by choosing its actual member.
+func coreCarrierMode(c SessionCoreConfig, messages bool) SessionCoreConfig {
+	c.Native, c.MessageCarrier = !messages, messages
+	if messages {
+		c.NativeAuthWorkers = 0
+		c.SendWorkers = [3]uint32{min(c.Open.PerClass[0], 2), min(c.Open.PerClass[1], 1), min(c.Open.PerClass[2], 1)}
+	} else {
+		c.NativeAuthWorkers = max(c.NativeAuthWorkers, 1)
+		c.SendWorkers = c.Open.PerClass
+	}
+	return c
 }

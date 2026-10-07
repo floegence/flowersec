@@ -192,7 +192,7 @@ func restoreNamespace(ctx, environment context.Context, t *NamespaceTrustStore, 
 	// The common State binder verifies contents and evidence against this exact
 	// historical Head. Expired active Heads may retain denial history, but the
 	// ordinary live gate still refuses them for authorization.
-	candidate, err = newLiveNamespace(environment, t.clock, t, pair, spare, r.FetchDurationMS, r.FetchAttempts, subscribers, refs[2], true)
+	candidate, err = newLiveNamespace(environment, t.clock, t, pair, spare, r.FetchDurationMS, r.FetchAttempts, subscribers, refs[2], true, false)
 	if err != nil {
 		return nil, nil, err
 	}

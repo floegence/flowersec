@@ -12,9 +12,11 @@ export interface PreparedPeerOpen {
 export class PeerOpenPreparation {
   readonly #entries: PreparedPeerOpen[] = [];
   #closed = false;
+  #capacity = 0;
   constructor(root: ResourceRoot, accounts: readonly ResourceAccount[], owner: ResourceOwner, ledger: CryptoUsageLedger,
     count: number, keyCharges: readonly ResourceVector[]) {
     if (!Number.isSafeInteger(count) || count < 1 || count > 4096 || keyCharges.length !== 2) throw new Error("configuration_capacity");
+    this.#capacity = count;
     try {
       for (let index = 0; index < count; index++) {
         const references = root.reserveBatch(keyCharges.map((charge, part) => ({ accounts, charge, owner: { ...owner, kind: `initial_peer_key_${index}_${part}` } })));
@@ -22,6 +24,15 @@ export class PeerOpenPreparation {
         catch (error) { for (const reference of references) reference.release(); throw error; }
       }
     } catch (error) { this.close(); throw error; }
+  }
+  /** Additional Controller declarations join the same original candidate
+   * ingress owner before acquisition; failure leaves its existing pool intact. */
+  extend(root: ResourceRoot, accounts: readonly ResourceAccount[], owner: ResourceOwner, ledger: CryptoUsageLedger,
+    count: number, keyCharges: readonly ResourceVector[]): void {
+    if (this.#closed) throw new Error("owner_unavailable");
+    if (!Number.isSafeInteger(count) || count < 1 || this.#capacity + count > 4096) throw new Error("configuration_capacity");
+    const additional = new PeerOpenPreparation(root, accounts, owner, ledger, count, keyCharges);
+    this.#entries.push(...additional.#entries); additional.#entries.length = 0; additional.close(); this.#capacity += count;
   }
   take(reference: ResourceReference): PreparedPeerOpen | undefined {
     if (this.#closed) throw new Error("owner_unavailable");

@@ -36,14 +36,14 @@ export function sign(schema: string, value: Value, seed: number): Value {
 }
 export type CredentialFixture = ReturnType<typeof credentialFixture>;
 export function credentialFixture(resources: CredentialResources, clock: TrustedClock, reserve: (name: string, charge: ResourceVector) => ResourceReference,
-  source: ActivationSource = "live_authority", profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", suppliedNamespace?: CredentialNamespace, options: { sessionNotAfterMS?: number; resume?: boolean; timeOrigin?: bigint; leg?: Value; applicationProfile?: "services" | "execution"; rpcMaxGeneralOutstanding?: number; clientSubject?: string; authorizedClientSubjects?: readonly string[]; connectionSeed?: number } = {}) {
+  source: ActivationSource = "live_authority", profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", suppliedNamespace?: CredentialNamespace, options: { bootstrapMS?: bigint; sessionNotAfterMS?: number; resume?: boolean; datagram?: boolean; timeOrigin?: bigint; leg?: Value; applicationProfile?: "services" | "execution"; rpcMaxGeneralOutstanding?: number; clientSubject?: string; authorizedClientSubjects?: readonly string[]; connectionSeed?: number; candidateLegs?: readonly Value[] } = {}) {
   const clientSubject = options.clientSubject ?? "client", clientSubjects = options.authorizedClientSubjects ?? ["client"];
   if (!clientSubjects.includes(clientSubject)) throw new Error("test client authorization missing");
   const leaseID = fill(options.connectionSeed ?? 22, 16), sessionNonce = fill((options.connectionSeed ?? 22) + 1), attemptID = fill((options.connectionSeed ?? 22) + 3, 16);
   const t = (value: number | bigint): Value => u((options.timeOrigin ?? 0n) + BigInt(value));
   const revision = text("draft.70");
   const namespace = suppliedNamespace ?? new CredentialNamespace({ tenant: "tenant", authority: "authority", rootKeyID: fill(1, 16), rootPublicKey: ed25519.getPublicKey(fill(7)),
-    clock, maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 8192, stateNodes: 16384, resources }, reserve("namespace", credentialWorkCharge(270336, resources.runtimeBytes)));
+    clock, maxTrustLifetimeMS: 120000n, bootstrapMS: options.bootstrapMS ?? 10000n, stateBytes: 8192, stateNodes: 16384, resources }, reserve("namespace", credentialWorkCharge(270336, resources.runtimeBytes)));
   const capacity = map({ 0: text("tenant"), 1: text("authority"), 2: text("capacity-1"), 3: u(8192), 4: u(16), 5: u(16), 6: u(16), 7: u(16), 8: u(795),
     9: u(1 << 20), 10: u(1024), 11: t(0), 12: u(100), 13: u(100000), 14: u(100000) });
   const cap = digest("namespace_capacity_digest", capacity), publication = map({ 0: text("publication"), 1: u(1), 2: u(60000), 3: u(90000) });
@@ -75,18 +75,22 @@ export function credentialFixture(resources: CredentialResources, clock: Trusted
   let client = certificate(0), server = certificate(1);
   const leg = options.leg ?? map({ 0: u(0), 1: bytes(fill(21, 16)), 2: u(1), 3: u(0), 4: u(1), 5: u(1), 6: text("example.com"), 7: u(443), 8: text("/flowersec/v4/direct"),
     9: text("http/1.1"), 10: text("flowersec.direct.v4"), 11: map({ 0: u(0), 1: { kind: "bool", value: true } }) });
-  const candidate = map({ 0: bytes(fill(20, 16)), 1: u(0), 2: u(0), 3: leg, 6: array(map({ 0: text("tenant"), 1: text("authority"), 2: u(1), 3: bytes(cap), 4: u(3) })) });
-  const route = digest("route_digest", map({ 0: u(0), 1: bytes(fill(20, 16)), 2: leg }));
-  const contract = map({ 0: u(65536), 1: u(8), 2: u(65536), 3: u(0), 4: map({ 0: u(10), 1: u(1000), 2: u(1000) }), 5: u(options.applicationProfile === undefined ? 0 : options.applicationProfile === "services" ? 1 : 2),
+  const candidateLegs = options.candidateLegs ?? [leg];
+  const candidateValues = candidateLegs.map((candidateLeg, index) => map({ 0: bytes(fill(20 + index, 16)), 1: u(0), 2: u(0), 3: candidateLeg,
+    6: array(map({ 0: text("tenant"), 1: text("authority"), 2: u(1), 3: bytes(cap), 4: u(3) })) }));
+  const candidateRoutes = candidateValues.map((candidate, index) => digest("route_digest", map({ 0: u(0), 1: bytes(fill(20 + index, 16)), 2: candidateLegs[index]! })));
+  const route = candidateRoutes[0]!;
+  const contract = map({ 0: u(65536), 1: u(options.applicationProfile === undefined ? 8 : options.applicationProfile === "execution" ? 19 : 18), 2: u(options.applicationProfile === undefined ? 65536 : 1048576), 3: u(0), 4: map({ 0: u(10), 1: u(1000), 2: u(1000) }), 5: u(options.applicationProfile === undefined ? 0 : options.applicationProfile === "services" ? 1 : 2),
     ...(options.applicationProfile === undefined ? {} : { 6: u(options.rpcMaxGeneralOutstanding ?? 4) }) });
   let artifact = sign("Artifact", map({ 0: text("4"), 1: text("flowersec/4"), 2: text("4"), 3: text(profile), 4: text("tenant"), 5: bytes(fill(5, 16)), 6: bytes(leaseID),
-    7: bytes(sessionNonce), 8: bytes(fill(24)), 9: bytes(digest("certificate_digest", client)), 10: bytes(digest("certificate_digest", server)), 11: text("service"), 12: array(candidate), 13: contract,
-    14: u(options.resume ? applicationResumeFeature() : 0n), 15: u(0), 16: options.resume ? map({ 0: { kind: "bool", value: true }, 1: u(0), 2: u(0), 3: u(8000), 4: u(4948) }) : map({ 0: { kind: "bool", value: false } }), 17: map({ 0: u(0) }), 18: t(800), 19: t(20000), 20: t(40000), 21: text("authority"), 22: u(1), 23: u(8),
+    7: bytes(sessionNonce), 8: bytes(fill(24)), 9: bytes(digest("certificate_digest", client)), 10: bytes(digest("certificate_digest", server)), 11: text("service"), 12: array(...candidateValues), 13: contract,
+    14: u((options.resume ? applicationResumeFeature() : 0n) | (options.datagram ? 1n : 0n)), 15: u(0), 16: options.resume ? map({ 0: { kind: "bool", value: true }, 1: u(0), 2: u(0), 3: u(8000), 4: u(4948) }) : map({ 0: { kind: "bool", value: false } }), 17: map({ 0: u(0) }), 18: t(800), 19: t(20000), 20: t(40000), 21: text("authority"), 22: u(1), 23: u(8),
     24: text("credentials"), 25: u(1), 26: bytes(cap) }), 12);
   const activationFor = (): Value => {
-    const ad = digest("artifact_digest", artifact), set = map({ 0: bytes(ad), 1: array(map({ 0: u(0), 1: bytes(fill(20, 16)), 2: bytes(route) })) });
+    const ad = digest("artifact_digest", artifact), indices = candidateValues.map((_candidate, index) => index);
+    const set = map({ 0: bytes(ad), 1: array(...indices.map(index => map({ 0: u(index), 1: bytes(fill(20 + index, 16)), 2: bytes(candidateRoutes[index]!) }))) });
     const budget = map({ 0: map({ 0: u(8), 1: u(262144), 2: u(256) }), 1: u(32), 2: u(8 << 20), 3: u(8192), 4: u(2) });
-    const selection = source === "live_authority" ? bytes(fill(20, 16)) : map({ 0: bytes(ad), 1: array(u(0)), 2: bytes(digest("candidate_set_digest", set)), 3: budget, 4: once });
+    const selection = source === "live_authority" ? bytes(fill(20, 16)) : map({ 0: bytes(ad), 1: array(...indices.map(index => u(index))), 2: bytes(digest("candidate_set_digest", set)), 3: budget, 4: once });
     return sign("ActivationAuthorization", map({ 0: u(1), 1: text("spend"), 2: text("activate-1"), 3: text("tenant"), 4: bytes(fill(5, 16)), 5: bytes(leaseID), 6: bytes(ad),
       7: selection, 8: bytes(source === "live_authority" ? route : digest("route_set_digest", set)), 9: bytes(attemptID), 10: get(artifact, 9), 11: get(artifact, 10), 12: text("service"),
       13: t(950), 14: t(10000), 15: t(options.sessionNotAfterMS ?? 30000) }), 13);

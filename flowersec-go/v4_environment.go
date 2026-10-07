@@ -12,45 +12,40 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-type ApplicationIdentity = V4ApplicationIdentity
-type ConnectionMaterial = V4AuthenticatedMaterial
-type ConnectionMaterialSource = V4MaterialLeaseProvider
-type TransportEnvironment = V4Environment
-
-// V4MaterialAcquisition is the public owner for one first-connect material
+// MaterialAcquisition is the public owner for one first-connect material
 // attempt.  It captures the identity, source profile, generation and output
 // reservations before provider I/O.  Acquire has a single-use contract;
 // Close fences publication and WaitCleanup observes the same physical tail.
 // The wrapper deliberately exposes no lease, key or mutable identity state.
-type V4MaterialAcquisition struct {
+type MaterialAcquisition struct {
 	inner *sessionv4.MaterialAcquisition
 }
 
-// NewV4MaterialAcquisition creates the bounded first-connect recipe.  The
+// NewMaterialAcquisition creates the bounded first-connect recipe.  The
 // source must be one of the closed protocol profiles (preauthorized_pool or
 // live_authority); provider work starts only when Acquire is called.
-func NewV4MaterialAcquisition(ctx context.Context, identity *V4ApplicationIdentity, generation V4MaterialGeneration, source string, requirements V4MaterialRequirements, deadline *V4Deadline, runtimeBytes, materialRuntimeBytes uint64, reservation, material V4ResourceReference) (*V4MaterialAcquisition, error) {
+func NewMaterialAcquisition(ctx context.Context, identity *ApplicationIdentity, generation MaterialGeneration, source string, requirements MaterialRequirements, deadline *Deadline, runtimeBytes, materialRuntimeBytes uint64, reservation, material ResourceReference) (*MaterialAcquisition, error) {
 	inner, err := sessionv4.NewMaterialAcquisition(ctx, identity, generation, source, requirements, deadline, runtimeBytes, materialRuntimeBytes, reservation, material)
 	if err != nil {
 		return nil, err
 	}
-	return &V4MaterialAcquisition{inner: inner}, nil
+	return &MaterialAcquisition{inner: inner}, nil
 }
 
-// NewV4PreauthorizedPoolMaterialAcquisition is the closed preauthorized-pool
+// NewPreauthorizedPoolMaterialAcquisition is the closed preauthorized-pool
 // recipe.  It avoids exposing a runtime source selector to callers.
-func NewV4PreauthorizedPoolMaterialAcquisition(ctx context.Context, identity *V4ApplicationIdentity, generation V4MaterialGeneration, requirements V4MaterialRequirements, deadline *V4Deadline, runtimeBytes, materialRuntimeBytes uint64, reservation, material V4ResourceReference) (*V4MaterialAcquisition, error) {
-	return NewV4MaterialAcquisition(ctx, identity, generation, "preauthorized_pool", requirements, deadline, runtimeBytes, materialRuntimeBytes, reservation, material)
+func NewPreauthorizedPoolMaterialAcquisition(ctx context.Context, identity *ApplicationIdentity, generation MaterialGeneration, requirements MaterialRequirements, deadline *Deadline, runtimeBytes, materialRuntimeBytes uint64, reservation, material ResourceReference) (*MaterialAcquisition, error) {
+	return NewMaterialAcquisition(ctx, identity, generation, "preauthorized_pool", requirements, deadline, runtimeBytes, materialRuntimeBytes, reservation, material)
 }
 
-// NewV4LiveAuthorityMaterialAcquisition is the closed live-authority recipe.
+// NewLiveAuthorityMaterialAcquisition is the closed live-authority recipe.
 // It never falls back to a preauthorized pool after provider failure.
-func NewV4LiveAuthorityMaterialAcquisition(ctx context.Context, identity *V4ApplicationIdentity, generation V4MaterialGeneration, requirements V4MaterialRequirements, deadline *V4Deadline, runtimeBytes, materialRuntimeBytes uint64, reservation, material V4ResourceReference) (*V4MaterialAcquisition, error) {
-	return NewV4MaterialAcquisition(ctx, identity, generation, "live_authority", requirements, deadline, runtimeBytes, materialRuntimeBytes, reservation, material)
+func NewLiveAuthorityMaterialAcquisition(ctx context.Context, identity *ApplicationIdentity, generation MaterialGeneration, requirements MaterialRequirements, deadline *Deadline, runtimeBytes, materialRuntimeBytes uint64, reservation, material ResourceReference) (*MaterialAcquisition, error) {
+	return NewMaterialAcquisition(ctx, identity, generation, "live_authority", requirements, deadline, runtimeBytes, materialRuntimeBytes, reservation, material)
 }
 
-func (a *V4MaterialAcquisition) Acquire(provider V4MaterialLeaseProvider) (*ConnectionMaterial, error) {
-	if a == nil || a.inner == nil || provider == nil || isNilV4Interface(provider) {
+func (a *MaterialAcquisition) Acquire(provider ConnectionMaterialSource) (*ConnectionMaterial, error) {
+	if a == nil || a.inner == nil || provider == nil || isNilInterface(provider) {
 		return nil, cryptov4.ErrConfiguration
 	}
 	material, err := a.inner.Acquire(provider)
@@ -61,38 +56,97 @@ func (a *V4MaterialAcquisition) Acquire(provider V4MaterialLeaseProvider) (*Conn
 	if material == nil {
 		return nil, err
 	}
-	return &V4AuthenticatedMaterial{inner: material}, err
+	return &ConnectionMaterial{inner: material}, err
 }
 
-func (a *V4MaterialAcquisition) Close() {
+// MaterialAcquisitionBatch owns a finite set of same-source one-shot
+// acquisitions. It publishes the materials only when every member succeeds;
+// an earlier lease is retired if a later provider call fails.
+type MaterialAcquisitionBatch struct {
+	inner *sessionv4.MaterialAcquisitionBatch
+}
+
+// NewMaterialAcquisitionBatch transfers ownership of one to sixteen prepared
+// acquisitions. Members must have the same identity, source, generation,
+// requirements and deadline. Prepare every member before provider I/O.
+func NewMaterialAcquisitionBatch(members ...*MaterialAcquisition) (*MaterialAcquisitionBatch, error) {
+	if len(members) == 0 || len(members) > 16 {
+		return nil, cryptov4.ErrConfiguration
+	}
+	inner := make([]*sessionv4.MaterialAcquisition, len(members))
+	for index, member := range members {
+		if member == nil || member.inner == nil {
+			return nil, cryptov4.ErrConfiguration
+		}
+		inner[index] = member.inner
+	}
+	batch, err := sessionv4.NewMaterialAcquisitionBatch(inner...)
+	if err != nil {
+		return nil, err
+	}
+	return &MaterialAcquisitionBatch{inner: batch}, nil
+}
+
+func (b *MaterialAcquisitionBatch) Acquire(provider ConnectionMaterialSource) ([]*ConnectionMaterial, error) {
+	if b == nil || b.inner == nil || provider == nil || isNilInterface(provider) {
+		return nil, cryptov4.ErrConfiguration
+	}
+	materials, err := b.inner.Acquire(provider)
+	if err != nil {
+		for _, material := range materials {
+			material.Close()
+		}
+		return nil, err
+	}
+	result := make([]*ConnectionMaterial, len(materials))
+	for index, material := range materials {
+		result[index] = &ConnectionMaterial{inner: material}
+	}
+	return result, nil
+}
+
+func (b *MaterialAcquisitionBatch) Close() {
+	if b != nil && b.inner != nil {
+		b.inner.Close()
+	}
+}
+func (b *MaterialAcquisitionBatch) WaitCleanup(ctx context.Context) error {
+	if b == nil || b.inner == nil {
+		return cryptov4.ErrConfiguration
+	}
+	return b.inner.WaitCleanup(ctx)
+}
+
+func (a *MaterialAcquisition) Close() {
 	if a != nil && a.inner != nil {
 		a.inner.Close()
 	}
 }
 
-func (a *V4MaterialAcquisition) WaitCleanup(ctx context.Context) error {
+func (a *MaterialAcquisition) WaitCleanup(ctx context.Context) error {
 	if a == nil || a.inner == nil {
 		return cryptov4.ErrConfiguration
 	}
 	return a.inner.WaitCleanup(ctx)
 }
 
-// V4LiveAuthoritySource is a closed source variant for live-authority
+// LiveAuthoritySource is a closed source variant for live-authority
 // issuance.  The provider remains responsible for issuer authentication and
 // durable lease construction; this owner adds the source's local closed gate
 // and never falls back to a pool or another provider.  A provider may expose
 // Close/WaitCleanup itself; those methods are forwarded after the wrapper's
 // own callers have drained.
-type V4LiveAuthoritySource struct {
-	mu       sync.Mutex
-	provider V4MaterialLeaseProvider
-	active   uint32
-	closed   bool
-	done     chan struct{}
+type LiveAuthoritySource struct {
+	mu             sync.Mutex
+	provider       ConnectionMaterialSource
+	active         uint32
+	closed         bool
+	providerClosed bool
+	done           chan struct{}
 }
 
-func NewV4LiveAuthoritySource(provider V4MaterialLeaseProvider) (*V4LiveAuthoritySource, error) {
-	if provider == nil || isNilV4Interface(provider) {
+func NewLiveAuthoritySource(provider ConnectionMaterialSource) (*LiveAuthoritySource, error) {
+	if provider == nil || isNilInterface(provider) {
 		return nil, cryptov4.ErrConfiguration
 	}
 	// A public live source must be able to name its complete immutable
@@ -101,16 +155,16 @@ func NewV4LiveAuthoritySource(provider V4MaterialLeaseProvider) (*V4LiveAuthorit
 	// provider call, too late to reserve its real subscriber slot. Component
 	// providers remain usable through the lower-level material API, but they
 	// cannot be wrapped as a public live source without this preflight.
-	if _, complete := provider.(V4MaterialNamespaceSetProvider); !complete {
-		if _, complete = provider.(V4MaterialNamespaceProvider); !complete {
+	if _, complete := provider.(MaterialNamespaceSetProvider); !complete {
+		if _, complete = provider.(MaterialNamespaceProvider); !complete {
 			return nil, cryptov4.ErrConfiguration
 		}
 	}
-	s := &V4LiveAuthoritySource{provider: provider, done: make(chan struct{})}
+	s := &LiveAuthoritySource{provider: provider, done: make(chan struct{})}
 	return s, nil
 }
 
-func (s *V4LiveAuthoritySource) AcquireLease(ctx context.Context, request V4MaterialLeaseRequest) (*V4ArtifactLease, error) {
+func (s *LiveAuthoritySource) AcquireLease(ctx context.Context, request MaterialLeaseRequest) (*ArtifactLease, error) {
 	if s == nil || ctx == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -129,14 +183,8 @@ func (s *V4LiveAuthoritySource) AcquireLease(ctx context.Context, request V4Mate
 	defer func() {
 		s.mu.Lock()
 		s.active--
-		if s.closed && s.active == 0 {
-			select {
-			case <-s.done:
-			default:
-				close(s.done)
-			}
-		}
 		s.mu.Unlock()
+		s.closeProviderIfReady()
 	}()
 	lease, err := provider.AcquireLease(ctx, request)
 	if err != nil && lease != nil {
@@ -158,7 +206,7 @@ func (s *V4LiveAuthoritySource) AcquireLease(ctx context.Context, request V4Mate
 	return lease, err
 }
 
-func (s *V4LiveAuthoritySource) Close() {
+func (s *LiveAuthoritySource) Close() {
 	if s == nil {
 		return
 	}
@@ -168,17 +216,41 @@ func (s *V4LiveAuthoritySource) Close() {
 		return
 	}
 	s.closed = true
-	provider := s.provider
-	if s.active == 0 {
-		close(s.done)
+	s.mu.Unlock()
+	s.closeProviderIfReady()
+}
+
+// closeProviderIfReady transfers the wrapper's close fence to the underlying
+// provider only after the last wrapper operation has returned. The provider
+// close is performed outside the mutex so a provider can safely inspect this
+// wrapper or complete its own callbacks during Close.
+func (s *LiveAuthoritySource) closeProviderIfReady() {
+	if s == nil {
+		return
 	}
+	s.mu.Lock()
+	if !s.closed || s.active != 0 || s.providerClosed {
+		s.mu.Unlock()
+		return
+	}
+	s.providerClosed = true
+	provider := s.provider
 	s.mu.Unlock()
 	if c, ok := provider.(interface{ Close() }); ok {
 		c.Close()
 	}
+	s.mu.Lock()
+	if s.closed && s.active == 0 {
+		select {
+		case <-s.done:
+		default:
+			close(s.done)
+		}
+	}
+	s.mu.Unlock()
 }
 
-func (s *V4LiveAuthoritySource) WaitCleanup(ctx context.Context) error {
+func (s *LiveAuthoritySource) WaitCleanup(ctx context.Context) error {
 	if s == nil || ctx == nil {
 		return cryptov4.ErrConfiguration
 	}
@@ -196,13 +268,13 @@ func (s *V4LiveAuthoritySource) WaitCleanup(ctx context.Context) error {
 	return nil
 }
 
-func (*V4LiveAuthoritySource) String() string               { return "Flowersec.LiveAuthoritySource" }
-func (*V4LiveAuthoritySource) GoString() string             { return "Flowersec.LiveAuthoritySource" }
-func (*V4LiveAuthoritySource) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
+func (*LiveAuthoritySource) String() string               { return "Flowersec.LiveAuthoritySource" }
+func (*LiveAuthoritySource) GoString() string             { return "Flowersec.LiveAuthoritySource" }
+func (*LiveAuthoritySource) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 
-var _ V4MaterialLeaseProvider = (*V4LiveAuthoritySource)(nil)
+var _ ConnectionMaterialSource = (*LiveAuthoritySource)(nil)
 
-func isNilV4Interface(value any) bool {
+func isNilInterface(value any) bool {
 	v := reflect.ValueOf(value)
 	switch v.Kind() {
 	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
@@ -212,52 +284,45 @@ func isNilV4Interface(value any) bool {
 	}
 }
 
-// NewConnectionMaterial captures original verified material, never an existing
-// Session. CreateMaterial must host the result before ConnectMaterial uses it.
-func NewConnectionMaterial(lease *V4ArtifactLease, identity *ApplicationIdentity, generation V4MaterialGeneration, runtimeBytes uint64, reservation V4ResourceReference) (*ConnectionMaterial, error) {
-	return NewV4AuthenticatedMaterial(lease, identity, generation, runtimeBytes, reservation)
-}
-
 type TransportEnvironmentOptions struct {
-	Config                    V4EnvironmentConfig
-	Reservation, Dependencies V4ResourceReference
+	Config                    EnvironmentConfig
+	Reservation, Dependencies ResourceReference
 }
 
 // NewTransportEnvironment requires the original qualified clock and explicit
-// verification-continuity registry. Component-only construction remains
-// available through NewV4Environment; it supplies no startup qualification.
+// verification-continuity registry before admitting current transport work.
 func NewTransportEnvironment(options TransportEnvironmentOptions) (*TransportEnvironment, error) {
 	if options.Config.Clock == nil || options.Config.Verification == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
-	return NewV4Environment(options.Config, options.Reservation, options.Dependencies)
+	return newTransportEnvironment(options.Config, options.Reservation, options.Dependencies)
 }
 
-// V4ConnectOptions fixes source profile, necessary guarantees, original
+// ConnectOptions fixes source profile, necessary guarantees, original
 // deadline, application plan and actual same-root scope before provider work.
 // Exactly one spend authority is selected. Workspace references must be empty:
 // this entry point reserves them together and transfers them to the original
-// Environment position. Spend inputs retain their original explicit charges.
-type V4ConnectOptions struct {
-	Preparation V4SourceConnectConfig
-	Pool        *V4PoolSessionInput
-	Live        *V4LiveSessionInput
+// TransportEnvironment position. Spend inputs retain their original explicit charges.
+type ConnectOptions struct {
+	Preparation SourceConnectConfig
+	Pool        *PoolSessionInput
+	Live        *LiveSessionInput
 }
 
-func (e *V4Environment) Connect(ctx context.Context, source ConnectionMaterialSource, options V4ConnectOptions) (*V4Session, error) {
+func (e *TransportEnvironment) Connect(ctx context.Context, source ConnectionMaterialSource, options ConnectOptions) (*Session, error) {
 	return e.ConnectSource(ctx, source, options)
 }
 
-func (e *V4Environment) ConnectSource(ctx context.Context, source ConnectionMaterialSource, options V4ConnectOptions) (*V4Session, error) {
-	if source == nil || isNilV4Interface(source) || options.Preparation.Provider != nil {
+func (e *TransportEnvironment) ConnectSource(ctx context.Context, source ConnectionMaterialSource, options ConnectOptions) (*Session, error) {
+	if source == nil || isNilInterface(source) || options.Preparation.Provider != nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	// Public source admission requires the provider's fixed namespace graph so
 	// every credential subscriber position can be reserved before Acquire.
 	// This check stays at the public boundary; component-only material callers
 	// may continue using the lower-level provider contract without it.
-	if _, complete := source.(V4MaterialNamespaceSetProvider); !complete {
-		if _, complete = source.(V4MaterialNamespaceProvider); !complete {
+	if _, complete := source.(MaterialNamespaceSetProvider); !complete {
+		if _, complete = source.(MaterialNamespaceProvider); !complete {
 			return nil, cryptov4.ErrConfiguration
 		}
 	}
@@ -266,14 +331,14 @@ func (e *V4Environment) ConnectSource(ctx context.Context, source ConnectionMate
 	return e.connectPrepared(ctx, nil, nil, c, options.Pool, options.Live)
 }
 
-func (e *V4Environment) ConnectMaterial(ctx context.Context, material *ConnectionMaterial, options V4ConnectOptions) (*V4Session, error) {
+func (e *TransportEnvironment) ConnectMaterial(ctx context.Context, material *ConnectionMaterial, options ConnectOptions) (*Session, error) {
 	if material == nil || material.inner == nil || options.Preparation.Identity != nil || options.Preparation.Provider != nil || options.Preparation.MaterialRuntimeBytes != 0 {
 		return nil, cryptov4.ErrConfiguration
 	}
 	return e.connectPrepared(ctx, material.inner, nil, options.Preparation, options.Pool, options.Live)
 }
 
-func (e *V4Environment) connectPrepared(ctx context.Context, material *sessionv4.ConnectionMaterial, source *sessionv4.PreauthorizedPoolSource, c V4SourceConnectConfig, pool *V4PoolSessionInput, live *V4LiveSessionInput) (*V4Session, error) {
+func (e *TransportEnvironment) connectPrepared(ctx context.Context, material *sessionv4.ConnectionMaterial, source *sessionv4.PreauthorizedPoolSource, c SourceConnectConfig, pool *PoolSessionInput, live *LiveSessionInput) (*Session, error) {
 	if e == nil || e.inner == nil || ctx == nil || c.Root == nil || (pool == nil) == (live == nil) {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -283,7 +348,7 @@ func (e *V4Environment) connectPrepared(ctx context.Context, material *sessionv4
 	if source != nil && (pool == nil || live != nil) {
 		return nil, cryptov4.ErrConfiguration
 	}
-	c, err := reserveV4ConnectionWorkspace(c, material == nil && source == nil)
+	c, err := reserveConnectionWorkspace(c, material == nil && source == nil)
 	if err != nil {
 		return nil, err
 	}
@@ -295,24 +360,24 @@ func (e *V4Environment) connectPrepared(ctx context.Context, material *sessionv4
 		s, admitted, err = e.inner.ConnectPrepared(ctx, c, material, pool, live)
 	}
 	if !admitted {
-		releaseV4ConnectionWorkspace(c)
+		releaseConnectionWorkspace(c)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return newV4SessionFromEnvironment(s), nil
+	return newSessionFromEnvironment(s), nil
 }
 
 // Every public connection entry point uses the same all-or-none allocation.
 // On error the supplied configuration is unchanged and retains its ownership.
-func reserveV4ConnectionWorkspace(c V4SourceConnectConfig, acquire bool) (V4SourceConnectConfig, error) {
+func reserveConnectionWorkspace(c SourceConnectConfig, acquire bool) (SourceConnectConfig, error) {
 	if c.Root == nil {
 		return c, cryptov4.ErrConfiguration
 	}
-	if c.Preparation != (V4ResourceReference{}) || c.Acquisition != (V4ResourceReference{}) || c.Material != (V4ResourceReference{}) || c.Establishment != (V4ResourceReference{}) || c.Subscriptions != (V4ResourceReference{}) || c.CarrierReservation != (V4ResourceReference{}) {
+	if c.Preparation != (ResourceReference{}) || c.Acquisition != (ResourceReference{}) || c.Material != (ResourceReference{}) || c.Establishment != (ResourceReference{}) || c.Subscriptions != (ResourceReference{}) || c.CarrierReservation != (ResourceReference{}) {
 		return c, cryptov4.ErrConfiguration
 	}
-	var charges [6]V4ResourceVector
+	var charges [6]ResourceVector
 	var err error
 	charges[0], err = sessionv4.SourcePreparationCharge(c)
 	if err != nil {
@@ -322,7 +387,7 @@ func reserveV4ConnectionWorkspace(c V4SourceConnectConfig, acquire bool) (V4Sour
 	if err != nil {
 		return c, err
 	}
-	charges[2] = V4CredentialSubscriptionsCharge()
+	charges[2] = CredentialSubscriptionsCharge()
 	charges[3], err = sessionv4.SourceCarrierCharge(c.CarrierRuntimeBytes)
 	if err != nil {
 		return c, err
@@ -340,9 +405,9 @@ func reserveV4ConnectionWorkspace(c V4SourceConnectConfig, acquire bool) (V4Sour
 		count = 6
 	}
 	// Both exact account handles are required before creating any workspace.
-	accounts := [2]V4ResourceAccount{c.Scope.Tenant, c.Scope.Session}
+	accounts := [2]ResourceAccount{c.Scope.Tenant, c.Scope.Session}
 	var requests [6]resourcev4.Request
-	var refs [6]V4ResourceReference
+	var refs [6]ResourceReference
 	for i := range requests[:count] {
 		requests[i] = resourcev4.Request{Owner: v4AssemblyOwner(c.Owner, "connection", uint64(i)), Charge: charges[i], Accounts: accounts[:]}
 	}
@@ -356,13 +421,13 @@ func reserveV4ConnectionWorkspace(c V4SourceConnectConfig, acquire bool) (V4Sour
 	return c, nil
 }
 
-func releaseV4ConnectionWorkspace(c V4SourceConnectConfig) {
-	for _, ref := range [...]V4ResourceReference{c.Preparation, c.Establishment, c.Subscriptions, c.CarrierReservation, c.Acquisition, c.Material} {
+func releaseConnectionWorkspace(c SourceConnectConfig) {
+	for _, ref := range [...]ResourceReference{c.Preparation, c.Establishment, c.Subscriptions, c.CarrierReservation, c.Acquisition, c.Material} {
 		ref.Release()
 	}
 }
 
-func v4AssemblyOwner(owner V4ResourceOwnerKey, domain string, index uint64) V4ResourceOwnerKey {
+func v4AssemblyOwner(owner ResourceOwnerKey, domain string, index uint64) ResourceOwnerKey {
 	var input [80]byte
 	copy(input[:24], "flowersec/v4/"+domain)
 	copy(input[24:40], owner.Instance[:])
@@ -374,18 +439,18 @@ func v4AssemblyOwner(owner V4ResourceOwnerKey, domain string, index uint64) V4Re
 	return owner
 }
 
-// V4SessionPlanFactory is a trusted finite recipe. Each Create reserves new
+// SessionPlanFactory is a trusted finite recipe. Each Create reserves new
 // original metadata, ordinary task and protected Completion responsibility in
 // one root batch. It invokes no application code; AuthorizeApplication runs
 // only later under the resulting Session's original application permit.
 // Handler plans are per-session inputs and cannot be reused across Create.
-type V4SessionPlanFactory struct {
-	Executor     *V4ApplicationExecutor
-	Root         *V4ResourceRoot
-	Dependencies V4ResourceReference
+type SessionPlanFactory struct {
+	Executor     *ApplicationExecutor
+	Root         *ResourceRoot
+	Dependencies ResourceReference
 }
 
-func (f V4SessionPlanFactory) Create(c V4SessionPlanConfig, owner V4ResourceOwnerKey, accounts ...V4ResourceAccount) (*V4SessionPlan, error) {
+func (f SessionPlanFactory) Create(c SessionPlanConfig, owner ResourceOwnerKey, accounts ...ResourceAccount) (*SessionPlan, error) {
 	if f.Executor == nil || f.Root == nil || len(accounts) > resourcev4.MaxAccountsPerCharge {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -393,9 +458,9 @@ func (f V4SessionPlanFactory) Create(c V4SessionPlanConfig, owner V4ResourceOwne
 	if err != nil {
 		return nil, err
 	}
-	charges := [3]V4ResourceVector{charge, f.Executor.TaskCharge(), f.Executor.CompletionCharge()}
+	charges := [3]ResourceVector{charge, f.Executor.TaskCharge(), f.Executor.CompletionCharge()}
 	var requests [3]resourcev4.Request
-	var refs [3]V4ResourceReference
+	var refs [3]ResourceReference
 	for i := range requests {
 		requests[i] = resourcev4.Request{Owner: v4AssemblyOwner(owner, "application", uint64(i)), Charge: charges[i], Accounts: accounts}
 	}

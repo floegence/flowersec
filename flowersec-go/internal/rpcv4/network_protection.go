@@ -226,4 +226,11 @@ func (n *Network) resetSlotLocked(s *networkSlot) {
 	}
 	*s = networkSlot{streamBacking: s.streamBacking, streamBorrowed: s.streamBorrowed, generation: s.generation, protectionGeneration: s.protectionGeneration,
 		protected: s.protected, protectionInUse: s.protectionInUse, protectionClosed: s.protectionClosed}
+	// Idle channel FIN observes the original shared table. A final response
+	// may retire on another lane, so wake the existing bounded publishers.
+	for _, publisher := range n.publishers {
+		if publisher != nil {
+			publisher.notifyLocked()
+		}
+	}
 }

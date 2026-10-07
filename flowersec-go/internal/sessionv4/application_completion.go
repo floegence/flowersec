@@ -22,6 +22,7 @@ type completionSlot struct {
 	reservation                 *CompletionReservation
 	task                        *CompletionTask
 	backing, charge             resourcev4.Reference
+	service                     resourcev4.Reference
 	work                        func() error
 	order                       uint64
 	active, submitted, running  bool
@@ -65,7 +66,13 @@ func (e *ApplicationExecutor) CompletionCharge() resourcev4.Vector {
 	// The root executor already owns every possible running Completion stack.
 	// Dormant owners reserve bounded descriptor/wake metadata and their own
 	// payload, without pretending to run a task or taking a ready worker.
-	return resourcev4.Vector{resourcev4.SDKBytes: e.config.RuntimeBytes + uint64(unsafe.Sizeof(CompletionReservation{})) + uint64(unsafe.Sizeof(CompletionTask{})), resourcev4.Items: 2}
+	overhead := e.config.RuntimeBytes
+	if e.config.Profile != ApplicationProfileCustom {
+		// Two actual descriptor/wake channels plus fixed allocator metadata;
+		// the running stack is already owned by the shared Completion reserve.
+		overhead = 192
+	}
+	return resourcev4.Vector{resourcev4.SDKBytes: overhead + uint64(unsafe.Sizeof(CompletionReservation{})) + uint64(unsafe.Sizeof(CompletionTask{})), resourcev4.Items: 2}
 }
 
 func (e *ApplicationExecutor) ReserveCompletion(reservation, backing resourcev4.Reference) (*CompletionReservation, error) {
@@ -98,8 +105,17 @@ func (e *ApplicationExecutor) reserveCompletion(reservation, backing resourcev4.
 	if floor {
 		minimum = e.CompletionFloorCharge()
 	}
+	var service resourcev4.Reference
+	if e.config.Profile != ApplicationProfileCustom {
+		service, err = e.reservation.BorrowApplicationService(backing)
+		if err != nil {
+			borrow.Release()
+			return nil, err
+		}
+	}
 	charge, err := reservation.Take(minimum)
 	if err != nil {
+		service.Release()
 		borrow.Release()
 		return nil, err
 	}
@@ -109,7 +125,7 @@ func (e *ApplicationExecutor) reserveCompletion(reservation, backing resourcev4.
 	}
 	p := &CompletionReservation{index: index}
 	e.completionOrder++
-	e.completions[index] = completionSlot{order: e.completionOrder, reservation: p, task: &CompletionTask{done: make(chan struct{})}, backing: borrow, charge: charge, active: true}
+	e.completions[index] = completionSlot{order: e.completionOrder, reservation: p, task: &CompletionTask{done: make(chan struct{})}, backing: borrow, charge: charge, service: service, active: true}
 	e.completionCount++
 	p.executor.Store(e)
 	return p, nil
@@ -183,10 +199,12 @@ func (p *CompletionReservation) Close() {
 		task.mu.Unlock()
 	}
 	e.releaseCompletionLocked(p.index)
+	e.dispatchCompletionsLocked()
 	e.cleanupLocked()
 }
 
 func (e *ApplicationExecutor) releaseCompletionLocked(index int) {
+	defer e.refillCompletionReadyLocked()
 	s := &e.completions[index]
 	if s.claimed {
 		e.completionClaims--
@@ -236,6 +254,7 @@ func (e *ApplicationExecutor) releaseCompletionLocked(index int) {
 	}
 	s.backing.Release()
 	s.charge.Release()
+	s.service.Release()
 	if s.running {
 		e.completionRunning--
 	}
@@ -243,17 +262,48 @@ func (e *ApplicationExecutor) releaseCompletionLocked(index int) {
 	e.completionCount--
 }
 
+// refillCompletionReadyLocked scans the existing finite owner index. At most
+// four original eligible owners enter real ready positions; the rest hold no
+// queued worker or separate polling job. Explicit ancestor claims retain their
+// promised next permit and take precedence over unclaimed ready owners.
+func (e *ApplicationExecutor) refillCompletionReadyLocked() {
+	e.completionReadyCount = 0
+	for i := range e.completions {
+		s := &e.completions[i]
+		if !s.active || !s.submitted || s.running {
+			continue
+		}
+		position := e.completionReadyCount
+		for j := uint32(0); j < e.completionReadyCount; j++ {
+			current := &e.completions[e.completionReady[j]]
+			if s.claimed && !current.claimed || s.claimed == current.claimed && s.order < current.order {
+				position = j
+				break
+			}
+		}
+		if position >= uint32(len(e.completionReady)) {
+			continue
+		}
+		last := min(e.completionReadyCount, uint32(len(e.completionReady)-1))
+		for j := last; j > position; j-- {
+			e.completionReady[j] = e.completionReady[j-1]
+		}
+		e.completionReady[position] = i
+		if e.completionReadyCount < uint32(len(e.completionReady)) {
+			e.completionReadyCount++
+		}
+	}
+}
+
 func (e *ApplicationExecutor) dispatchCompletionsLocked() {
+	e.refillCompletionReadyLocked()
 	for e.completionRunning < e.config.CompletionRunning {
 		index := -1
-		var order uint64
-		for i := range e.completions {
-			s := &e.completions[i]
-			if !s.claimed && e.completionRunning+e.completionClaims >= e.config.CompletionRunning {
-				continue
-			}
-			if s.active && s.submitted && !s.running && (index < 0 || s.claimed && !e.completions[index].claimed || s.claimed == e.completions[index].claimed && s.order < order) {
-				index, order = i, s.order
+		for _, candidate := range e.completionReady[:e.completionReadyCount] {
+			s := &e.completions[candidate]
+			if s.claimed || e.completionRunning+e.completionClaims < e.config.CompletionRunning {
+				index = candidate
+				break
 			}
 		}
 		if index < 0 {
@@ -271,6 +321,7 @@ func (e *ApplicationExecutor) dispatchCompletionsLocked() {
 		e.completionRunning++
 		work, task := s.work, s.task
 		s.work = nil
+		e.refillCompletionReadyLocked()
 		go e.runCompletion(index, work, task)
 	}
 }

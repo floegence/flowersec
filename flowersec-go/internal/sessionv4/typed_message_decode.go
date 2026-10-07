@@ -39,8 +39,15 @@ func typedMessageDecodeCharge(codec MessageCodec, n uint32, runtimeBytes uint64)
 	extra := uint64(0)
 	if codec.implementation == 2 {
 		extra = uint64(n)
+	} else if codec.implementation == 3 {
+		extra = codec.applicationBytes
 	}
-	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(typedMessageDecode{})) + applicationContextBytes() + completionDependencyBytes() + extra, resourcev4.Items: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
+	charge := resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(typedMessageDecode{})) + uint64(unsafe.Sizeof(MessageReceiveResult{})) + applicationContextBytes() + completionDependencyBytes(), resourcev4.Items: 1}
+	charge, err := charge.Add(resourcev4.Vector{resourcev4.SDKBytes: extra})
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	return charge.Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
 }
 
 func (d *typedMessageDecode) invoke() (err error) {
@@ -217,8 +224,9 @@ func (m *TypedMessageStream) deliverTypedMessage(ctx context.Context, dependenci
 				// These concrete codecs perform mandatory SDK structure checks;
 				// they are not arbitrary application decoder exceptions.
 				m.closeLocked(failure)
+				identity := m.inboundIdentity
 				m.mu.Unlock()
-				return nil, failure
+				return MessageReceiveResult{Codec: identity}, MessageReceiveError{Codec: identity}
 			}
 			consume := func() error {
 				if err := ctx.Err(); err != nil {
@@ -250,7 +258,11 @@ func (m *TypedMessageStream) deliverTypedMessage(ctx context.Context, dependenci
 			if err != nil {
 				return nil, err
 			}
-			return value, failure
+			result := MessageReceiveResult{Value: value, Codec: m.inboundIdentity, ApplicationInputDelivered: delivered}
+			if failure != nil {
+				return result, MessageReceiveError{Codec: result.Codec, ApplicationInputDelivered: delivered}
+			}
+			return result, nil
 		}
 		d.waiting = ctx
 		if d.task == nil {
@@ -304,7 +316,7 @@ func (m *TypedMessageStream) retireTypedDecoderForEncoded(ctx context.Context) e
 	if d.inputDelivered {
 		d.mu.Unlock()
 		m.mu.Unlock()
-		return ErrStreamInputDelivered
+		return MessageResultModeConflict{Codec: m.inboundIdentity, ApplicationInputDelivered: true}
 	}
 	// Input disclosure and withdrawal share this gate. Once withdrawal wins,
 	// no queued decoder may observe the bytes returned by ReceiveEncoded.
@@ -371,6 +383,10 @@ func prepareTypedDecoder(executor *ApplicationExecutor, codec MessageCodec, meta
 
 // Receive selects the definition's concrete inbound codec. Encoded and typed
 // calls share the same cursor, deadline and single outcome consumption gate.
-func (m *TypedMessageStream) Receive(ctx context.Context) (any, error) {
-	return m.receiveMessage(ctx, true)
+func (m *TypedMessageStream) Receive(ctx context.Context) (MessageReceiveResult, error) {
+	value, err := m.receiveMessage(ctx, true)
+	if value == nil {
+		return MessageReceiveResult{}, err
+	}
+	return value.(MessageReceiveResult), err
 }

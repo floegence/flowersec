@@ -8,6 +8,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
@@ -23,36 +24,45 @@ const sessionCleanupTimeout = 5 * time.Second
 // Connect cancellation ends at successful delivery; Close remains available
 // independently of the shared Environment and any caller's cleanup wait.
 type EnvironmentSession struct {
-	publicView                                      any
-	diagnosticStarted                               time.Time
-	diagnosticPhase                                 diagnosticv4.Phase
-	cleanupTimeoutObserved                          bool
-	cleanupDeadline                                 time.Time
-	cleanupObserved, physicalDone, cleanupWatchDone chan struct{}
-	application                                     *SessionPlan
-	mu                                              sync.Mutex
-	environment                                     *Environment
-	position                                        int
-	establishment                                   *SessionEstablishment
-	admission                                       *SessionAdmissionReservation
-	entrance                                        *AcceptedEntrance
-	core                                            *SessionCore
-	context                                         sessionRuntimeContext
-	preparationDeadline                             *timev4.Deadline
-	staticMaterial                                  *ConnectionMaterial
-	source                                          *sourcePreparation
-	intake                                          *acceptedIntake
-	ingress                                         *acceptedIngress
-	preparationOwner, preparationDependencies       resourcev4.Reference
-	ready, published, stop, watchDone, done         chan struct{}
-	delivered, closed, cleaned                      bool
-	result, cleanupError                            error
-	drain                                           *DrainOperation
-	controllerRetention                             *timev4.Deadline
-	controllerSourceFailure                         *ControllerSourceError
-	controllerTransportFailure                      bool
-	info                                            protocolv4.V4SessionInfo
-	serve                                           ServeIngress
+	notificationController                            *ConnectionController
+	publicView                                        any
+	diagnosticStarted                                 time.Time
+	diagnosticPhase                                   diagnosticv4.Phase
+	diagnosticOperation                               *DiagnosticOperation
+	diagnosticAttempt                                 uint64
+	cleanupTimeoutObserved                            bool
+	cleanupDeadline                                   time.Time
+	cleanupObserved, physicalDone, cleanupWatchDone   chan struct{}
+	application                                       *SessionPlan
+	spendObservation                                  *ledgerv4.PoolSpendObservation
+	diagnosticSourceProfile                           string
+	admissionState                                    string
+	controllerManaged, controllerApplicationPublished bool
+	controllerDiagnosticAttempt                       uint64
+	diagnosticNetworkReady                            bool
+	mu                                                sync.Mutex
+	environment                                       *Environment
+	position                                          int
+	establishment                                     *SessionEstablishment
+	admission                                         *SessionAdmissionReservation
+	entrance                                          *AcceptedEntrance
+	core                                              *SessionCore
+	context                                           sessionRuntimeContext
+	preparationDeadline                               *timev4.Deadline
+	staticMaterial                                    *ConnectionMaterial
+	source                                            *sourcePreparation
+	intake                                            *acceptedIntake
+	ingress                                           *acceptedIngress
+	preparationOwner, preparationDependencies         resourcev4.Reference
+	ready, published, stop, watchDone, done           chan struct{}
+	delivered, closed, cleaned                        bool
+	result, cleanupError                              error
+	drain                                             *DrainOperation
+	controllerRetention                               *timev4.Deadline
+	controllerSourceFailure                           *ControllerSourceError
+	controllerTransportFailure                        bool
+	info                                              protocolv4.V4SessionInfo
+	serve                                             ServeIngress
 }
 
 // PublicView memoizes only the SDK's opaque facade for this original owner.
@@ -136,7 +146,23 @@ func (s *EnvironmentSession) deliver(ctx context.Context) (*EnvironmentSession, 
 	if err == nil {
 		s.context.parent = nil
 		s.delivered = true
+		// Connect/Accept publishes a usable application owner. A caller may
+		// subscribe immediately, before the Environment coordinator wakes.
+		if s.application != nil {
+			s.application.mu.Lock()
+			dispatch, notifications := s.application.services, s.application.notifications
+			s.application.mu.Unlock()
+			if notifications != nil {
+				notifications.activate()
+			}
+			if dispatch != nil {
+				dispatch.activate()
+			}
+		}
 		s.diagnosticPhase = diagnosticv4.PhaseApplication
+		if s.diagnosticOperation != nil {
+			s.diagnosticOperation.Emit(diagnosticv4.Fields{State: diagnosticv4.StateReady, Phase: s.diagnosticPhase, Code: diagnosticv4.CodeOK, AttemptBucket: diagnosticv4.Attempt(s.diagnosticAttempt), DurationBucket: diagnosticv4.Duration(time.Since(s.diagnosticStarted))})
+		}
 	}
 	s.context.mu.Unlock()
 	if err != nil {
@@ -265,7 +291,7 @@ func (s *EnvironmentSession) run(input environmentEstablishment) {
 		switch input.kind {
 		case 1:
 			i := input.pool
-			core, err = p.connectPool(a, i.Store, i.Authority, i.Consume, s, i.ServerAllow)
+			core, err = p.connectPool(a, i.Store, i.Authority, i.Consume, s, i.Observation, i.ServerAllow)
 		case 2:
 			i := input.live
 			if i.Control.Provider != nil {
@@ -416,8 +442,13 @@ func (s *EnvironmentSession) finish(input environmentEstablishment, a *SessionAd
 	s.intake = nil
 	s.ingress = nil
 	s.application = nil
+	s.notificationController = nil
 	s.preparationOwner, s.preparationDependencies = resourcev4.Reference{}, resourcev4.Reference{}
 	s.cleaned = true
+	if s.diagnosticOperation != nil {
+		s.diagnosticOperation.Close()
+		s.diagnosticOperation = nil
+	}
 	s.environment = nil
 	serve := s.serve
 	s.serve = ServeIngress{}
@@ -466,7 +497,11 @@ func (s *EnvironmentSession) closeWithSource(cause error, transport bool) {
 
 func (s *EnvironmentSession) Close() {
 	if s != nil {
-		s.closeWith(cryptov4.ErrClosed)
+		// An explicit local Close is a successful terminal request. Peer and
+		// transport failures still publish their own authoritative causes via
+		// closeWithSource, while WaitTermination remains nil for this local
+		// lifecycle action.
+		s.closeWith(nil)
 	}
 }
 
@@ -722,6 +757,24 @@ func (s *EnvironmentSession) OpenStream(ctx context.Context, kind string, metada
 		}
 	}
 	return core.OpenStream(ctx, kind, metadata, deadline)
+}
+
+// OpenMessageStream retains the same delivered Session and original dispatch
+// deadline as OpenStream. The typed candidate and reserved metadata wrapper
+// are prepared by SessionCore before the native OPEN ordinal is allocated.
+func (s *EnvironmentSession) OpenMessageStream(ctx context.Context, config TypedMessageConfig, metadata []byte) (*TypedMessageStream, error) {
+	if s == nil || ctx == nil {
+		return nil, cryptov4.ErrConfiguration
+	}
+	core, err := s.Core()
+	if err != nil {
+		return nil, err
+	}
+	deadline, err := timev4.NewAge(core.plan.config.Clock, core.plan.config.DispatchTimeoutMS, core.plan.config.Session.SessionNotAfterMS)
+	if err != nil {
+		return nil, err
+	}
+	return core.OpenMessageStream(ctx, config, metadata, deadline)
 }
 
 func (s *EnvironmentSession) abortFromGroup(result DrainResult) DrainResult {

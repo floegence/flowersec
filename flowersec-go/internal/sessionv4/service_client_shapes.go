@@ -171,7 +171,8 @@ type NotificationResult struct {
 	CleanupComplete bool
 }
 
-// NotifyMethod waits only for the original submission. It has no result,
+// NotifyMethod waits for the original submission, then closes the hidden
+// operation without waiting for physical network cleanup. It has no result,
 // completion decoder, remote execution inference or implicit retry.
 func (c *UnaryServiceClient) NotifyMethod(ctx context.Context, methodType uint32, input []byte, options rpcv4.UnaryPreparation) (result NotificationResult, err error) {
 	op, slot, child, err := c.prepareNotify(ctx, methodType, input, options, true)

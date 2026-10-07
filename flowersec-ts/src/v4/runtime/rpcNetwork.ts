@@ -105,6 +105,7 @@ export class RPCNetwork {
     } catch (error) { this.#reference.release(); this.#reference = undefined; throw error; }
   }
   #check(): void { if (this.#closed) throw new RPCProtocolError("rpc_closed"); this.#reference!.check(); }
+  channelIdle(channel: RPCChannel): boolean { return this.#channel(channel).liveTickets === 0; }
   #channel(owner: RPCChannel, retained = false): ChannelSlot {
     const state = channels.get(owner), slot = state?.network === this ? this.#channels[state.index] : undefined;
     if (slot === undefined || slot.owner !== owner || slot.generation !== state!.generation) throw new RPCProtocolError("rpc_channel_owner");

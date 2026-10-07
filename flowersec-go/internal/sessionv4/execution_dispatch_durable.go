@@ -47,7 +47,7 @@ func (d ExecutionDispatch) dispatchDurableRequest(ctx context.Context, input *rp
 	}()
 	o, work, err := d.DurableHistory.Admit(ctx, d.Routes, input, d.Caller, d.Access, func(task, backing resourcev4.Reference) error {
 		var err error
-		permit, err = d.Executor.TryAcquire(d.Class, task, backing)
+		permit, err = d.Executor.tryAcquireInGroup(d.group, d.Class, task, backing)
 		if err == nil && recovery != nil {
 			recoveryPin, err = recovery.verifier.Borrow(backing)
 		}

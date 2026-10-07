@@ -37,6 +37,7 @@ type SendFlow struct {
 	queue                                                *SendQueue
 	queueOwner                                           *SendQueue
 	completion                                           *sendCompletion
+	diagnosticSink                                       *DiagnosticSink
 	termination                                          directionTermination
 	finTerminal                                          bool
 }

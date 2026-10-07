@@ -16,32 +16,32 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-type referenceContinuityFunc func(V4SQLiteIdentity, uint64, bool) error
+type referenceContinuityFunc func(SQLiteIdentity, uint64, bool) error
 
-func (f referenceContinuityFunc) Check(identity V4SQLiteIdentity, epoch uint64, create bool) error {
+func (f referenceContinuityFunc) Check(identity SQLiteIdentity, epoch uint64, create bool) error {
 	return f(identity, epoch, create)
 }
 
 type publicReferenceFixture struct {
-	root   *V4ResourceRoot
+	root   *ResourceRoot
 	serial byte
-	clock  *V4Clock
+	clock  *Clock
 	tick   atomic.Uint64
 }
 
 func newPublicReferenceFixture(t *testing.T) *publicReferenceFixture {
 	t.Helper()
-	c := V4ResourceConfig{ProfileRevision: [32]byte{1}, AccountSlots: 4, ReservationSlots: 64, ReferenceSlots: 256}
+	c := ResourceConfig{ProfileRevision: [32]byte{1}, AccountSlots: 4, ReservationSlots: 64, ReferenceSlots: 256}
 	for i := range c.Limit {
 		c.Limit[i] = 1 << 30
 	}
-	root, err := NewV4ResourceRoot(c)
+	root, err := NewResourceRoot(c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f := &publicReferenceFixture{root: root}
-	f.clock, err = NewV4Clock(V4ClockProfile{Rate: V4ClockRate{Numerator: 1, Denominator: 1000000, QuantizationMS: 1}, MaxWidthMS: 1000, MaxAgeMS: 60000, MaxRoundTripMS: 1000}, func() (V4ClockTick, error) {
-		return V4ClockTick{Milliseconds: f.tick.Load(), Incarnation: [16]byte{1}}, nil
+	f.clock, err = NewClock(ClockProfile{Rate: ClockRate{Numerator: 1, Denominator: 1000000, QuantizationMS: 1}, MaxWidthMS: 1000, MaxAgeMS: 60000, MaxRoundTripMS: 1000}, func() (ClockTick, error) {
+		return ClockTick{Milliseconds: f.tick.Load(), Incarnation: [16]byte{1}}, nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func newPublicReferenceFixture(t *testing.T) *publicReferenceFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.clock.InstallTrusted(mark, V4TimeInterval{LowerMS: 1000, UpperMS: 1001}); err != nil {
+	if err := f.clock.InstallTrusted(mark, TimeInterval{LowerMS: 1000, UpperMS: 1001}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -62,11 +62,11 @@ func newPublicReferenceFixture(t *testing.T) *publicReferenceFixture {
 	return f
 }
 
-func (f *publicReferenceFixture) owner() V4ResourceOwnerKey {
+func (f *publicReferenceFixture) owner() ResourceOwnerKey {
 	f.serial++
-	return V4ResourceOwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Instance: [16]byte{f.serial}, Backing: [16]byte{f.serial}, Kind: 1}
+	return ResourceOwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Instance: [16]byte{f.serial}, Backing: [16]byte{f.serial}, Kind: 1}
 }
-func (f *publicReferenceFixture) reserve(t *testing.T, charge V4ResourceVector, err error) V4ResourceReference {
+func (f *publicReferenceFixture) reserve(t *testing.T, charge ResourceVector, err error) ResourceReference {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func newPublicReferenceCodec(t *testing.T, f *publicReferenceFixture) *Operation
 	return codec
 }
 
-func TestV4ReferenceCodecCanonicalDomainAndClosure(t *testing.T) {
+func TestReferenceCodecCanonicalDomainAndClosure(t *testing.T) {
 	f := newPublicReferenceFixture(t)
 	codec := newPublicReferenceCodec(t, f)
 	ref := publicReference(t, codec, 1, 2)
@@ -147,15 +147,15 @@ func TestV4ReferenceCodecCanonicalDomainAndClosure(t *testing.T) {
 	}
 }
 
-func TestV4SQLiteReferencePersistenceQuotaReopenAndExpiry(t *testing.T) {
+func TestSQLiteReferencePersistenceQuotaReopenAndExpiry(t *testing.T) {
 	f := newPublicReferenceFixture(t)
 	codec := newPublicReferenceCodec(t, f)
 	first, conflicting, second := publicReference(t, codec, 1, 2), publicReference(t, codec, 1, 3), publicReference(t, codec, 2, 4)
-	environment := f.reserve(t, V4ResourceVector{V4Items: 1}, nil)
-	limits := V4SQLiteLimits{MaxPages: 32, MaxRecords: 1, MaxRecordBytes: 2048, RuntimeBytes: 65536, ProviderRuntimeBytes: 1 << 20, DiskOverheadBytes: 65536}
-	charge, err := V4SQLiteBackingCharge(limits)
+	environment := f.reserve(t, ResourceVector{Items: 1}, nil)
+	limits := SQLiteLimits{MaxPages: 32, MaxRecords: 1, MaxRecordBytes: 2048, RuntimeBytes: 65536, ProviderRuntimeBytes: 1 << 20, DiskOverheadBytes: 65536}
+	charge, err := SQLiteBackingCharge(limits)
 	path := filepath.Join(t.TempDir(), "references.db")
-	backing, err := NewV4SQLiteBacking(path, limits, f.reserve(t, charge, err), environment)
+	backing, err := NewSQLiteBacking(path, limits, f.reserve(t, charge, err), environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,17 +170,17 @@ func TestV4SQLiteReferencePersistenceQuotaReopenAndExpiry(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	identity := V4SQLiteIdentity{Authority: "local-references", StoreID: [32]byte{4}, Generation: 1}
-	continuity := referenceContinuityFunc(func(got V4SQLiteIdentity, _ uint64, _ bool) error {
+	identity := SQLiteIdentity{Authority: "local-references", StoreID: [32]byte{4}, Generation: 1}
+	continuity := referenceContinuityFunc(func(got SQLiteIdentity, _ uint64, _ bool) error {
 		if got != identity {
 			return ledgerv4.ErrFenced
 		}
 		return nil
 	})
-	config := V4SQLiteReferenceConfig{Root: f.root, Clock: f.clock, Domain: "local-domain", MaxBytes: 2048, RetentionMS: 1000}
-	open := func(create bool) *V4SQLiteReferences {
+	config := SQLiteReferenceConfig{Root: f.root, Clock: f.clock, Domain: "local-domain", MaxBytes: 2048, RetentionMS: 1000}
+	open := func(create bool) *SQLiteReferences {
 		config.Owner = f.owner()
-		charge, err := V4SQLiteReferencesCharge(limits, config)
+		charge, err := SQLiteReferencesCharge(limits, config)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -189,11 +189,11 @@ func TestV4SQLiteReferencePersistenceQuotaReopenAndExpiry(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer reservation.Release()
-		var store *V4SQLiteReferences
+		var store *SQLiteReferences
 		if create {
-			store, err = CreateV4SQLiteReferences(context.Background(), backing, identity, continuity, config, reservation, environment)
+			store, err = CreateSQLiteReferences(context.Background(), backing, identity, continuity, config, reservation, environment)
 		} else {
-			store, err = OpenV4SQLiteReferences(context.Background(), backing, identity, continuity, config, reservation, environment)
+			store, err = OpenSQLiteReferences(context.Background(), backing, identity, continuity, config, reservation, environment)
 		}
 		if store != nil {
 			t.Cleanup(func() { retirePublicReferences(t, store) })
@@ -204,7 +204,7 @@ func TestV4SQLiteReferencePersistenceQuotaReopenAndExpiry(t *testing.T) {
 		return store
 	}
 	store := open(true)
-	adapter, err := NewV4SQLiteReferenceStore(store, "local-domain", f.reserve(t, V4SQLiteReferenceStoreCharge(), nil))
+	adapter, err := NewSQLiteReferenceStore(store, "local-domain", f.reserve(t, SQLiteReferenceStoreCharge(), nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestV4SQLiteReferencePersistenceQuotaReopenAndExpiry(t *testing.T) {
 		t.Fatal(binding, err)
 	}
 	for range 2 {
-		if outcome, err := adapter.SaveOperationReference(context.Background(), first); err != nil || outcome != V4ReferenceSaveConfirmed {
+		if outcome, err := adapter.SaveOperationReference(context.Background(), first); err != nil || outcome != ReferenceSaveConfirmed {
 			t.Fatal(outcome, err)
 		}
 	}
@@ -256,7 +256,7 @@ func TestV4SQLiteReferencePersistenceQuotaReopenAndExpiry(t *testing.T) {
 	}
 }
 
-func retirePublicReferences(t *testing.T, store *V4SQLiteReferences) {
+func retirePublicReferences(t *testing.T, store *SQLiteReferences) {
 	t.Helper()
 	store.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -269,17 +269,17 @@ func retirePublicReferences(t *testing.T, store *V4SQLiteReferences) {
 	}
 }
 
-type publicReferenceStoreFunc func(context.Context, OperationReference) (V4ReferenceSaveOutcome, error)
+type publicReferenceStoreFunc func(context.Context, OperationReference) (ReferenceSaveOutcome, error)
 
-func (f publicReferenceStoreFunc) SaveOperationReference(ctx context.Context, ref OperationReference) (V4ReferenceSaveOutcome, error) {
+func (f publicReferenceStoreFunc) SaveOperationReference(ctx context.Context, ref OperationReference) (ReferenceSaveOutcome, error) {
 	return f(ctx, ref)
 }
 
-func TestV4PrepareAndSaveValidatesBindingBeforePreparation(t *testing.T) {
+func TestPrepareAndSaveValidatesBindingBeforePreparation(t *testing.T) {
 	f := newPublicReferenceFixture(t)
 	validated, preparations := 0, 0
 	want := errors.New("store binding refused")
-	s := &V4Session{validateReferenceStore: func(context.Context, sessionv4.ReferenceStoreBinding) error { validated++; return want },
+	s := &Session{validateReferenceStore: func(context.Context, sessionv4.ReferenceStoreBinding) error { validated++; return want },
 		prepareUnary: func(context.Context, sessionv4.UnaryMethodDefinition, []byte, rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error) {
 			preparations++
 			return nil, nil
@@ -293,20 +293,58 @@ func TestV4PrepareAndSaveValidatesBindingBeforePreparation(t *testing.T) {
 			return nil, nil
 		},
 	}
-	binding := V4ReferenceStoreBinding{Domain: "local-domain", Backing: f.reserve(t, V4ResourceVector{V4Items: 1}, nil), Store: publicReferenceStoreFunc(func(context.Context, OperationReference) (V4ReferenceSaveOutcome, error) {
+	binding := ReferenceStoreBinding{Domain: "local-domain", Backing: f.reserve(t, ResourceVector{Items: 1}, nil), Store: publicReferenceStoreFunc(func(context.Context, OperationReference) (ReferenceSaveOutcome, error) {
 		t.Error("invalid binding invoked store")
-		return V4ReferenceSaveUnknown, nil
+		return ReferenceSaveUnknown, nil
 	})}
-	if _, _, err := s.PrepareUnaryAndSave(context.Background(), V4UnaryMethod{}, nil, V4OperationOptions{}, binding); !errors.Is(err, want) {
+	if _, _, err := s.PrepareUnaryAndSave(context.Background(), UnaryMethod{}, nil, OperationOptions{}, binding); !errors.Is(err, want) {
 		t.Fatal(err)
 	}
-	if _, _, err := s.PrepareStreamingAndSave(context.Background(), V4StreamingMethod{}, nil, V4OperationOptions{}, binding); !errors.Is(err, want) {
+	if _, _, err := s.PrepareStreamingAndSave(context.Background(), StreamingMethod{}, nil, OperationOptions{}, binding); !errors.Is(err, want) {
 		t.Fatal(err)
 	}
-	if _, _, err := s.PrepareNotifyAndSave(context.Background(), V4NotifyMethod{}, nil, V4OperationOptions{}, binding); !errors.Is(err, want) {
+	if _, _, err := s.PrepareNotifyAndSave(context.Background(), NotifyMethod{}, nil, OperationOptions{}, binding); !errors.Is(err, want) {
 		t.Fatal(err)
 	}
 	if validated != 3 || preparations != 0 {
 		t.Fatal(validated, preparations)
+	}
+}
+
+func TestPrepareAndSaveRejectsTypedNilStoreBeforePreparation(t *testing.T) {
+	f := newPublicReferenceFixture(t)
+	var store publicReferenceStoreFunc
+	binding := ReferenceStoreBinding{Domain: "local-domain", Store: store, Backing: f.reserve(t, ResourceVector{Items: 1}, nil)}
+	s := &Session{validateReferenceStore: func(context.Context, sessionv4.ReferenceStoreBinding) error {
+		t.Error("typed-nil store passed local validation")
+		return nil
+	}, prepareUnary: func(context.Context, sessionv4.UnaryMethodDefinition, []byte, rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error) {
+		t.Error("typed-nil store reached preparation")
+		return nil, ErrTransportUnavailable
+	}}
+	if op, result, err := s.PrepareUnaryAndSave(context.Background(), UnaryMethod{}, nil, OperationOptions{}, binding); err == nil || op != nil || result.Attempted {
+		t.Fatal("invalid store published an operation or attempted persistence")
+	}
+}
+
+func TestPrepareNotifyAndSavePreservesDurabilityRequirement(t *testing.T) {
+	f := newPublicReferenceFixture(t)
+	binding := ReferenceStoreBinding{Domain: "local-domain", Backing: f.reserve(t, ResourceVector{Items: 1}, nil), Store: publicReferenceStoreFunc(func(context.Context, OperationReference) (ReferenceSaveOutcome, error) {
+		t.Error("rejected preparation invoked store")
+		return ReferenceSaveUnknown, nil
+	})}
+	calls := 0
+	s := &Session{validateReferenceStore: func(context.Context, sessionv4.ReferenceStoreBinding) error { return nil },
+		prepareNotify: func(_ context.Context, method sessionv4.UnaryMethodDefinition, _ []byte, options rpcv4.UnaryPreparation) (*sessionv4.NotifyOperation, error) {
+			calls++
+			if !method.RequireDurable || !method.RequireExecution || !options.RequireExecution {
+				t.Error("prepare-and-save weakened the notification's execution requirements")
+			}
+			return nil, ErrContractPolicyRejected
+		},
+	}
+	op, result, err := s.PrepareNotifyAndSave(context.Background(), NotifyMethod{RequireExecution: true, RequireDurable: true}, nil, OperationOptions{}, binding)
+	if op != nil || result.Attempted || !errors.Is(err, ErrContractPolicyRejected) || calls != 1 {
+		t.Fatal(op, result, err, calls)
 	}
 }

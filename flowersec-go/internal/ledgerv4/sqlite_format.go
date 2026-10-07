@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
@@ -100,9 +99,11 @@ func (s *sqliteStore) projectStorageFormat(err error, observed StorageRevision, 
 	if errors.Is(err, ErrStorageFormat) {
 		return s.storageFormat().refusal(observed, reason)
 	}
-	var provider *sqlite.Error
+	var provider interface{ Code() int }
 	if errors.As(err, &provider) {
 		switch provider.Code() & 0xff {
+		case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+			return ErrStorageUnavailable
 		case sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB:
 			return s.storageFormat().refusal(StorageRevision{}, StorageFormatManifest)
 		}
@@ -173,4 +174,33 @@ func (s *sqliteStore) inspectStorageHeader() (StorageRevision, error) {
 		return observed, f.refusal(observed, StorageFormatNewer)
 	}
 	return observed, nil
+}
+
+// inspectCurrentStorage never configures durable storage, advances an epoch,
+// invokes a recovery writer or selects another revision's decoder.
+func (s *sqliteStore) inspectCurrentStorage() (err error) {
+	if err = s.exec("PRAGMA trusted_schema=OFF"); err != nil {
+		return s.projectStorageFormat(err, StorageRevision{}, StorageFormatBackend)
+	}
+	if err = s.exec("BEGIN"); err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, s.exec("ROLLBACK")) }()
+	observed, err := s.inspectStorageHeader()
+	if err != nil {
+		return err
+	}
+	if err = s.openSchema(true); err != nil {
+		return s.projectStorageFormat(err, observed, StorageFormatState)
+	}
+	integrity, integrityErr := s.scalar("PRAGMA quick_check")
+	if integrityErr != nil || integrity != "ok" {
+		return s.storageFormat().refusal(observed, StorageFormatState)
+	}
+	mode, modeErr := s.scalar("PRAGMA journal_mode")
+	page, pageErr := s.scalar("PRAGMA page_size")
+	if modeErr != nil || pageErr != nil || mode != "wal" || page != int64(sqlitePageBytes) {
+		return s.storageFormat().refusal(observed, StorageFormatBackend)
+	}
+	return s.backing.checkFiles()
 }

@@ -39,6 +39,11 @@ func preparedOperationChargesWithTask(runtimeBytes uint64, payloadBytes, inputBy
 	if err == nil {
 		charges[2], err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(UnaryOperation{})), resourcev4.Items: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: runtimeBytes})
 	}
+	if err == nil && !streaming && !notify {
+		// The convenience caller may await the admitted first channel under its
+		// original prepared lifetime with one bounded host timer.
+		charges[2], err = charges[2].Add(resourcev4.Vector{resourcev4.SDKBytes: 128, resourcev4.Timers: 1})
+	}
 	if err == nil && streaming {
 		charges[2], err = charges[2].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(streamOperationState{})) + uint64(unsafe.Sizeof(StreamOperation{})) + uint64(len(stream.kind)) + uint64(len(stream.metadata)), resourcev4.Items: 2})
 	}

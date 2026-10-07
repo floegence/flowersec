@@ -8,11 +8,13 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
 	"net"
 	"net/netip"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,22 +27,22 @@ import (
 
 type publicQUICMaterialSource struct {
 	material *fs.ConnectionMaterial
-	hello    fs.V4InitialHello
+	hello    fs.InitialHello
 }
 
-func (s publicQUICMaterialSource) ResolveAcceptedMaterial(context.Context, []byte) (*fs.ConnectionMaterial, fs.V4InitialHello, error) {
+func (s publicQUICMaterialSource) ResolveAcceptedMaterial(context.Context, []byte) (*fs.ConnectionMaterial, fs.InitialHello, error) {
 	return s.material, s.hello, nil
 }
 
-type publicControllerSource func(context.Context, fs.V4ControllerRequest) (*fs.V4ControllerPreparation, error)
+type publicControllerSource func(context.Context, fs.ControllerRequest) (*fs.ControllerPreparation, error)
 
-func (s publicControllerSource) PrepareConnection(ctx context.Context, r fs.V4ControllerRequest) (*fs.V4ControllerPreparation, error) {
+func (s publicControllerSource) PrepareConnection(ctx context.Context, r fs.ControllerRequest) (*fs.ControllerPreparation, error) {
 	return s(ctx, r)
 }
 
-type publicControllerLeaseSource struct{ lease *fs.V4ArtifactLease }
+type publicControllerLeaseSource struct{ lease *fs.ArtifactLease }
 
-func (s publicControllerLeaseSource) AcquireLease(context.Context, fs.V4MaterialLeaseRequest) (*fs.V4ArtifactLease, error) {
+func (s publicControllerLeaseSource) AcquireLease(context.Context, fs.MaterialLeaseRequest) (*fs.ArtifactLease, error) {
 	return s.lease, nil
 }
 
@@ -137,6 +139,10 @@ func TestPublicControllerQUICSourceAndCandidateIdentity(t *testing.T) {
 	}
 }
 
+func TestPublicControllerQUICFailureProjection(t *testing.T) {
+	publicQUICEnvironmentRoundTrip(t, "preauthorized_pool", protocolv4.DHProfileX25519, true, false, false, true, true)
+}
+
 func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bool, enableDatagrams ...bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
@@ -152,11 +158,12 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 	})
 	datagrams := len(enableDatagrams) != 0 && enableDatagrams[0]
 	viaController := len(enableDatagrams) > 2 && enableDatagrams[2]
+	failInitialization := len(enableDatagrams) > 3 && enableDatagrams[3]
 	h = sessionv4.NewPublicQUICTestHarness(t, source, profile, address, tlsPolicy, datagrams)
 	if len(enableDatagrams) > 1 && enableDatagrams[1] {
 		h.Hello.Policy.BindingMode, h.Hello.BindingModes = 0, 1
 	}
-	reserve := func(cost fs.V4ResourceVector, err error) fs.V4ResourceReference {
+	reserve := func(cost fs.ResourceVector, err error) fs.ResourceReference {
 		t.Helper()
 		if err != nil {
 			t.Fatal(err)
@@ -166,8 +173,8 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 	cleanupContext := func() (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.Background(), 5*time.Second)
 	}
-	executorConfig := fs.V4ApplicationExecutorConfig{Running: 8, ResidentRunning: 4, CompletionRunning: 1, CompletionReserved: 4, RuntimeBytes: 8192, RuntimeBytesPerTask: 65536}
-	executor, err := fs.NewV4ApplicationExecutor(executorConfig, reserve(fs.V4ApplicationExecutorCharge(executorConfig)))
+	executorConfig := fs.ApplicationExecutorConfig{Running: 8, ResidentRunning: 4, CompletionRunning: 1, CompletionReserved: 4, RuntimeBytes: 8192, RuntimeBytesPerTask: 65536}
+	executor, err := fs.NewApplicationExecutor(executorConfig, reserve(fs.ApplicationExecutorCharge(executorConfig)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,8 +188,8 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 			t.Error("public QUIC executor retained callbacks")
 		}
 	})
-	config := fs.V4EnvironmentConfig{Positions: 2, Materials: 2, MaterialCreateMS: 1000, Clock: h.Clock, Verification: h.Verification, RuntimeBytes: 65536}
-	environment, err := fs.NewTransportEnvironment(fs.TransportEnvironmentOptions{Config: config, Reservation: reserve(fs.V4EnvironmentCharge(config)), Dependencies: h.Environment})
+	config := fs.EnvironmentConfig{Positions: 2, Materials: 2, MaterialCreateMS: 1000, Clock: h.Clock, Verification: h.Verification, RuntimeBytes: 65536}
+	environment, err := fs.NewTransportEnvironment(fs.EnvironmentOptions{Config: config, Reservation: reserve(fs.EnvironmentCharge(config)), Dependencies: h.Environment})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,10 +202,10 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 		}
 	})
 	var materials [2]*fs.ConnectionMaterial
-	var clientLease *fs.V4ArtifactLease
-	var clientIdentity *fs.V4ApplicationIdentity
+	var clientLease *fs.ArtifactLease
+	var clientIdentity *fs.ApplicationIdentity
 	for role := range 2 {
-		lease, err := fs.NewV4ArtifactLeaseFromBytes(h.Lease, reserve(fs.V4ArtifactLeaseCharge(h.Lease.MapBytes, h.Lease.MapNodes, h.Lease.RuntimeBytes)), h.Preauth)
+		lease, err := fs.NewArtifactLeaseFromBytes(h.Lease, reserve(fs.ArtifactLeaseCharge(h.Lease.MapBytes, h.Lease.MapNodes, h.Lease.RuntimeBytes)), h.Preauth)
 		if err != nil {
 			t.Fatal("lease", role, err)
 		}
@@ -211,7 +218,7 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 			}
 		})
 		identityConfig := h.Identity[role]
-		identity, err := fs.NewV4ApplicationIdentityFromBytes(identityConfig, reserve(fs.V4ApplicationIdentityCharge(identityConfig.MapNodes, identityConfig.RuntimeBytes)), h.Preauth)
+		identity, err := fs.NewApplicationIdentityFromBytes(identityConfig, reserve(fs.ApplicationIdentityCharge(identityConfig.MapNodes, identityConfig.RuntimeBytes)), h.Preauth)
 		if err != nil {
 			t.Fatal("identity", role, err)
 		}
@@ -223,7 +230,7 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 				t.Error("identity cleanup", role, err)
 			}
 		})
-		materials[role], err = fs.NewConnectionMaterial(lease, identity, h.Generation, 8192, reserve(fs.V4ConnectionMaterialCharge(8192)))
+		materials[role], err = fs.NewConnectionMaterial(lease, identity, h.Generation, 8192, reserve(fs.ConnectionMaterialCharge(8192)))
 		if err != nil {
 			t.Fatal("material", role, err)
 		}
@@ -250,15 +257,15 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 	var authorized, released [2]atomic.Int32
 	reports := make(chan error, 2)
 	for role := range 2 {
-		handlersConfig := fs.V4StreamHandlerPlanConfig{RuntimeBytes: 8192, Handlers: []fs.V4RawStreamHandlerConfig{{
-			Kind: "example/quic", Slots: 2, WorkClass: fs.V4WorkResident,
+		handlersConfig := fs.StreamHandlerPlanConfig{RuntimeBytes: 8192, Handlers: []fs.RawStreamHandlerConfig{{
+			Kind: "example/quic", Slots: 2, WorkClass: fs.WorkResident,
 			AuthorizeOpen: func(_ context.Context, binding any, _ []byte) error {
 				if binding != role {
 					return fmt.Errorf("unexpected application binding %v", binding)
 				}
 				return nil
 			},
-			Handler: func(ctx context.Context, _ any, _ []byte, stream *fs.V4StreamOwnership) error {
+			Handler: func(ctx context.Context, _ any, _ []byte, stream *fs.StreamOwnership) error {
 				var payload [64]byte
 				read, err := stream.ReadInto(ctx, payload[:])
 				if err == nil {
@@ -273,18 +280,18 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 		if err != nil {
 			t.Fatal(err)
 		}
-		handlers, err := fs.NewV4StreamHandlerPlan(handlersConfig, executor, reserve(fs.V4StreamHandlerPlanCharge(handlersConfig)), delegates)
+		handlers, err := fs.NewStreamHandlerPlan(handlersConfig, executor, reserve(fs.StreamHandlerPlanCharge(handlersConfig)), delegates)
 		if err != nil {
 			delegates.Release()
 			t.Fatal("handler plan", err)
 		}
 		t.Cleanup(handlers.Close)
-		plan, err := (fs.V4SessionPlanFactory{Root: h.Root, Executor: executor, Dependencies: h.Environment}).Create(fs.V4SessionPlanConfig{
+		plan, err := (fs.SessionPlanFactory{Root: h.Root, Executor: executor, Dependencies: h.Environment}).Create(fs.SessionPlanConfig{
 			RuntimeBytes: 8192, Handlers: handlers,
-			AuthorizeApplication: func(_ context.Context, request fs.V4AuthenticatedRequestContext) (fs.V4AuthorizeApplicationResult, error) {
+			AuthorizeApplication: func(_ context.Context, request fs.AuthenticatedRequestContext) (fs.AuthorizeApplicationResult, error) {
 				authorized[role].Add(1)
 				lease, err := request.ReserveLease(request.Binding(), role, func(context.Context) error { released[role].Add(1); return nil })
-				return fs.V4AuthorizeApplicationResult{Handlers: handlers, Lease: lease}, err
+				return fs.AuthorizeApplicationResult{Handlers: handlers, Lease: lease}, err
 			},
 		}, h.Owner(), h.Scope[role].Tenant, h.Scope[role].Session)
 		if err != nil {
@@ -292,20 +299,20 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 		}
 		t.Cleanup(func() { plan.Close(); _ = plan.Retire() })
 		h.Admission[role].Application = plan
-		h.Admission[role].Core.Handlers = fs.V4SessionStreamHandlerConfig{Plan: handlers, Concurrency: 2, TimeoutMS: 3000, RuntimeBytes: 8192, RuntimeBytesPerInvocation: 32768}
+		h.Admission[role].Core.Handlers = fs.SessionStreamHandlerConfig{Plan: handlers, Concurrency: 2, TimeoutMS: 3000, RuntimeBytes: 8192, RuntimeBytesPerInvocation: 32768}
 	}
-	limits := fs.DefaultV4QUICLimits()
+	limits := fs.DefaultQUICLimits()
 	limits.MaxInboundStreams = 8
-	provider := fs.V4QUICProviderOptions{Limits: limits, StreamSlots: 8, RuntimeBytes: 65536, ProviderBytes: 32 << 20, ProviderTasks: 16}
-	accounts := []fs.V4ResourceAccount{h.Scope[1].Tenant}
-	serverConfig := fs.V4QUICServerConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Accounts: accounts, Address: address,
+	provider := fs.QUICProviderOptions{Limits: limits, StreamSlots: 8, RuntimeBytes: 65536, ProviderBytes: 32 << 20, ProviderTasks: 16}
+	accounts := []fs.ResourceAccount{h.Scope[1].Tenant}
+	serverConfig := fs.QUICServerConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Accounts: accounts, Address: address,
 		Route: h.Route, Certificate: certificate, Roots: roots, Connection: provider, Connections: 2, RuntimeBytes: 65536,
 		ListenerRuntimeBytes: 65536, ListenerProviderBytes: 1 << 20, ListenerProviderTasks: 4}
-	serverCharge, err := fs.V4QUICServerCharge(serverConfig)
+	serverCharge, err := fs.QUICServerCharge(serverConfig)
 	if err != nil {
 		t.Fatal("server charge", err)
 	}
-	server, err := fs.NewV4QUICServer(serverConfig, h.Reserve(serverCharge, accounts...), h.Environment)
+	server, err := fs.NewQUICServer(serverConfig, h.Reserve(serverCharge, accounts...), h.Environment)
 	if err != nil {
 		t.Fatal("server", err)
 	}
@@ -317,8 +324,8 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 			t.Error("server cleanup", err)
 		}
 	})
-	factoryConfig := fs.V4QUICFactoryConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Route: h.Route, RemoteAddress: address, Roots: roots, Options: provider, Connections: 1, RuntimeBytes: 65536}
-	factory, err := fs.NewV4QUICCarrierFactory(factoryConfig, reserve(fs.V4QUICCarrierFactoryCharge(factoryConfig)), h.Environment)
+	factoryConfig := fs.QUICFactoryConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Route: h.Route, RemoteAddress: address, Roots: roots, Options: provider, Connections: 1, RuntimeBytes: 65536}
+	factory, err := fs.NewQUICCarrierFactory(factoryConfig, reserve(fs.QUICCarrierFactoryCharge(factoryConfig)), h.Environment)
 	if err != nil {
 		t.Fatal("factory", err)
 	}
@@ -330,8 +337,8 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 			t.Error("factory cleanup", err)
 		}
 	})
-	serveConfig := fs.V4ServeConfig{Positions: 2, RuntimeBytes: 8192, DrainTimeoutMS: 1000, Clock: h.Clock}
-	serve, err := environment.Serve(ctx, fs.V4ServeOptions{Config: serveConfig, Reservation: reserve(fs.V4ServeCharge(serveConfig))})
+	serveConfig := fs.ServeConfig{Positions: 2, RuntimeBytes: 8192, DrainTimeoutMS: 1000, Clock: h.Clock}
+	serve, err := fs.NewAcceptor(ctx, fs.AcceptorOptions{Environment: environment, ServeOptions: fs.ServeOptions{Config: serveConfig, Reservation: reserve(fs.ServeCharge(serveConfig))}})
 	if err != nil {
 		t.Fatal("serve", err)
 	}
@@ -343,8 +350,8 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 			t.Error("serve cleanup", err)
 		}
 	})
-	entrance := fs.V4AcceptedEntranceConfig{Initial: h.Admission[1].Initial, RuntimeBytes: 8192, InitialRuntimeBytes: 8192, CarrierRuntimeBytes: 8192}
-	acceptOptions := fs.V4QUICAcceptOptions{Input: fs.V4AcceptedSessionInput{Config: h.Admission[1], Root: h.Root, ResourceOwner: h.Owner(),
+	entrance := fs.AcceptedEntranceConfig{Initial: h.Admission[1].Initial, RuntimeBytes: 8192, InitialRuntimeBytes: 8192, CarrierRuntimeBytes: 8192}
+	acceptOptions := fs.QUICAcceptOptions{Input: fs.AcceptedSessionInput{Config: h.Admission[1], Root: h.Root, ResourceOwner: h.Owner(),
 		Environment: h.Environment, Preauth: h.Preauth, Scope: h.Scope[1], Store: h.Store, Authority: h.Authority},
 		Source: publicQUICMaterialSource{materials[1], h.Hello}, Limits: h.Limits, Entrance: entrance, Dependencies: h.Environment,
 		Accounts: accounts, LocalCapabilities: h.Hello.Offered, IngressRuntimeBytes: 8192, IntakeRuntimeBytes: 8192, MaxAdmissionRecordBytes: 16384}
@@ -352,7 +359,7 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 		acceptOptions.MaxAdmissionRecordBytes = 4096
 	}
 	type result struct {
-		session *fs.V4Session
+		session *fs.Session
 		err     error
 	}
 	accepted := make(chan result, 1)
@@ -366,29 +373,35 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 		session, err := serve.AcceptQUIC(ctx, ingress, acceptOptions)
 		accepted <- result{session, err}
 	}()
-	preparation := fs.V4SourceConnectConfig{Generation: h.Generation, LocalCapabilities: h.Hello.Offered, Requirements: fs.V4MaterialRequirements{ApplicationProfile: "transport", Connection: fs.V4RequiredGuarantees{LocalConsumerTls13Verification: true, Datagram: datagrams}},
+	preparation := fs.SourceConnectConfig{Generation: h.Generation, LocalCapabilities: h.Hello.Offered, Requirements: fs.MaterialRequirements{ApplicationProfile: "transport", Connection: fs.RequiredGuarantees{LocalConsumerTls13Verification: true, Datagram: datagrams}},
 		Carrier: factory, Hello: h.Hello, Limits: h.Limits, Admission: h.Admission[0], Root: h.Root, Owner: h.Owner(),
 		Environment: h.Environment, Preauth: h.Preauth, Dependencies: h.Environment, Scope: h.Scope[0], RuntimeBytes: 8192, CarrierRuntimeBytes: 8192,
-		AddressAttempts: 1, AttemptBudget: fs.V4CarrierAttemptBudget{PreauthBytes: 131072, WorkUnits: 128}, LiveIssuance: h.LiveIssuance}
-	var client *fs.V4Session
+		AddressAttempts: 1, AttemptBudget: fs.CarrierAttemptBudget{PreauthBytes: 131072, WorkUnits: 128}, LiveIssuance: h.LiveIssuance}
+	var client *fs.Session
 	var clientErr error
 	if viaController {
 		preparation.Identity, preparation.Provider, preparation.MaterialRuntimeBytes = clientIdentity, publicControllerLeaseSource{clientLease}, 8192
-		var candidate *fs.V4Session
-		options := fs.V4ControllerOptions{Clock: h.Clock, SourceIncarnation: h.Generation.Source, Executor: executor,
+		var candidate *fs.Session
+		options := fs.ControllerOptions{Clock: h.Clock, SourceIncarnation: h.Generation.Source, Executor: executor,
 			AttemptTimeoutMS: 1000, DrainTimeoutMS: 1000, RuntimeBytes: 65536, MaximumAttempts: 1,
-			Source: publicControllerSource(func(_ context.Context, request fs.V4ControllerRequest) (*fs.V4ControllerPreparation, error) {
+			Source: publicControllerSource(func(_ context.Context, request fs.ControllerRequest) (*fs.ControllerPreparation, error) {
 				if request.Attempt != 1 {
 					return nil, fmt.Errorf("unexpected replay: %d", request.Attempt)
 				}
-				return &fs.V4ControllerPreparation{Config: preparation, Pool: h.Pool, Live: h.Live}, nil
-			}), InitializeSession: func(_ context.Context, session *fs.V4Session) error { candidate = session; return nil }}
-		metadata, task, completion, chargeErr := fs.V4ControllerCharges(options)
+				return &fs.ControllerPreparation{Config: preparation, Pool: h.Pool, Live: h.Live}, nil
+			}), InitializeSession: func(_ context.Context, session *fs.Session) error {
+				candidate = session
+				if failInitialization {
+					return errors.New("private initializer failure")
+				}
+				return nil
+			}}
+		metadata, task, completion, chargeErr := fs.ControllerCharges(options)
 		if chargeErr != nil {
 			t.Fatal(chargeErr)
 		}
 		options.Reservation, options.InitializeTask, options.InitializeCompletion = h.Reserve(metadata), h.Reserve(task), h.Reserve(completion)
-		controller, createErr := environment.NewConnectionController(ctx, options)
+		controller, createErr := fs.NewConnectionController(ctx, fs.ConnectionControllerOptions{Environment: environment, ControllerOptions: options})
 		if createErr != nil {
 			t.Fatal(createErr)
 		}
@@ -404,17 +417,35 @@ func publicQUICEnvironmentRoundTrip(t *testing.T, source, profile string, pin bo
 		if clientErr == nil {
 			client, clientErr = controller.WaitForSession(ctx)
 		}
-		if clientErr == nil && (client != candidate || candidate == nil) {
+		if failInitialization {
+			snapshot := controller.Snapshot()
+			if !errors.Is(clientErr, fs.ErrControllerInitialization) || snapshot.LastError == nil ||
+				snapshot.LastError.Code() != fs.SessionOperationFailed || snapshot.Current || snapshot.Pending ||
+				strings.Contains(clientErr.Error(), "private initializer failure") {
+				t.Fatalf("public Controller failure projection: error=%v snapshot=%+v", clientErr, snapshot)
+			}
+		} else if clientErr == nil && (client != candidate || candidate == nil) {
 			t.Fatal("initializer candidate public identity changed at publication")
 		}
 	} else {
-		client, clientErr = environment.ConnectMaterial(ctx, materials[0], fs.V4ConnectOptions{Pool: h.Pool, Live: h.Live, Preparation: preparation})
+		client, clientErr = fs.ConnectMaterial(ctx, materials[0], fs.ConnectorOptions{Environment: environment, ConnectOptions: fs.ConnectOptions{Pool: h.Pool, Live: h.Live, Preparation: preparation}})
 	}
 	if clientErr != nil {
 		cancel()
 	}
 	peer := <-accepted
-	sessions := [2]*fs.V4Session{client, peer.session}
+	if failInitialization {
+		if peer.session != nil {
+			_ = peer.session.Close()
+			cleanup, stop := cleanupContext()
+			if err := peer.session.WaitCleanup(cleanup); err != nil {
+				t.Error("failed-candidate peer cleanup", err)
+			}
+			stop()
+		}
+		return
+	}
+	sessions := [2]*fs.Session{client, peer.session}
 	t.Cleanup(func() {
 		for _, session := range sessions {
 			if session != nil {

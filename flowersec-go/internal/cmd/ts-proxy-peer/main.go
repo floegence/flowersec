@@ -2,25 +2,16 @@ package main
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
-	"math/big"
-	"net"
 	"net/url"
 	"os"
 	"time"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
-	"github.com/floegence/flowersec/flowersec-go/v6/controlplane"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
 )
 
 type endpoint struct {
@@ -30,159 +21,78 @@ type endpoint struct {
 	TrustPEM     string `json:"trust_pem"`
 }
 
-func main() {
+func main() { fail(runCurrentProxyPeer()) }
+
+func runCurrentProxyPeer() (err error) {
 	upstream := flag.String("upstream", "", "fixed loopback HTTP upstream origin")
 	origin := flag.String("origin", "https://app.example", "exact browser and proxy external origin")
 	maxBodyBytes := flag.Int64("max-body-bytes", 8, "maximum proxied HTTP body size")
 	httpTimeout := flag.Duration("http-timeout", time.Second, "proxy HTTP request timeout")
 	flag.Parse()
-	if *upstream == "" {
-		fail(errors.New("--upstream is required"))
+	if *upstream == "" || *maxBodyBytes < 1 || *httpTimeout <= 0 {
+		return errors.New("invalid proxy peer options")
 	}
-	parsedOrigin, err := url.Parse(*origin)
-	if err != nil || parsedOrigin.Scheme == "" || parsedOrigin.Host == "" || parsedOrigin.String() != parsedOrigin.Scheme+"://"+parsedOrigin.Host {
-		fail(errors.New("--origin must be an exact origin"))
+	parsed, err := url.Parse(*origin)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.String() != parsed.Scheme+"://"+parsed.Host {
+		return errors.New("--origin must be an exact origin")
 	}
-	if *maxBodyBytes < 1 {
-		fail(errors.New("--max-body-bytes must be positive"))
+	reporter, err := interopharness.NewPeerReporter()
+	if err != nil {
+		return err
 	}
-	if *httpTimeout <= 0 {
-		fail(errors.New("--http-timeout must be positive"))
+	reporter.ApplicationProfile = "services"
+	defer func() { err = errors.Join(err, reporter.Close()) }()
+	proxy, err := flowersec.NewProxyServer(flowersec.ProxyServerOptions{Upstream: *upstream, UpstreamOrigin: *upstream, AllowedOrigins: []string{*origin}, MaxConcurrentStreams: 4, MaxMetadataBytes: 4096, MaxChunkBytes: 8, MaxBodyBytes: *maxBodyBytes, MaxWebSocketFrameBytes: 32,
+		DefaultHTTPRequestTimeout: *httpTimeout, MaxHTTPRequestTimeout: *httpTimeout, ExtraRequestHeaders: []string{"cookie", "origin", "x-request-id"}, ExtraResponseHeaders: []string{"x-visible"}, BlockedResponseHeaders: []string{"location"}, ExtraWebSocketHeaders: []string{"x-request-id"}, ForbiddenCookieNames: []string{"secret"}, ForbiddenCookieNamePrefixes: []string{"private_"}, OnError: func(err error) { fmt.Fprintf(os.Stderr, "proxy handler error: %v\n", err) }})
+	if err != nil {
+		return err
 	}
-
-	handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{MaxConcurrentStreams: 4})
-	fail(err)
-	proxy, err := flowersec.NewProxyServer(flowersec.ProxyServerOptions{
-		Upstream:                    *upstream,
-		UpstreamOrigin:              *upstream,
-		AllowedOrigins:              []string{*origin},
-		MaxConcurrentStreams:        4,
-		MaxJSONFrameBytes:           4096,
-		MaxChunkBytes:               8,
-		MaxBodyBytes:                *maxBodyBytes,
-		MaxWebSocketFrameBytes:      32,
-		DefaultHTTPRequestTimeout:   *httpTimeout,
-		MaxHTTPRequestTimeout:       *httpTimeout,
-		ExtraRequestHeaders:         []string{"cookie", "origin", "x-request-id"},
-		ExtraResponseHeaders:        []string{"x-visible"},
-		BlockedResponseHeaders:      []string{"location"},
-		ExtraWebSocketHeaders:       []string{"x-request-id"},
-		ForbiddenCookieNames:        []string{"secret"},
-		ForbiddenCookieNamePrefixes: []string{"private_"},
-		OnError: func(err error) {
-			// Keep peer diagnostics on stderr; the endpoint JSON remains machine-readable.
-			fmt.Fprintf(os.Stderr, "proxy handler error: %v\n", err)
-		},
-	})
-	fail(err)
-	defer proxy.Close()
-	fail(proxy.RegisterStreamHandlers(handlers))
-
-	var record controlplane.AuthorizationRecord
-	released := make(chan struct{}, 1)
-	acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-		AllowedOrigins:    []string{*origin},
-		MaxInboundStreams: 8,
-		Authorize: func(_ context.Context, request controlplane.RuntimeAuthorizationRequest) (controlplane.AuthorizationResponse, error) {
-			return controlplane.AuthorizeRuntime(request, record, "proxy-matrix-go")
-		},
-		ResolveHandlers: func(context.Context, controlplane.RuntimeAuthorizationRequest) (*flowersec.SessionHandlers, error) {
-			return handlers, nil
-		},
-		Release: func(context.Context, string) {
-			select {
-			case released <- struct{}{}:
-			default:
+	reporter.Cleanup(func() { reporter.ErrorIf(proxy.Close()) })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	server, err := interopharness.NewServer(ctx, reporter, interopharness.ServerOptions{Carrier: "websocket", Origin: *origin, Handlers: func(runtime *interopharness.Runtime, role uint8) (flowersec.StreamHandlerPlanConfig, error) {
+		interopharness.ConfigureRPC(runtime, role, "flowersec.proxy-test", []interopharness.RPCMethod{{Type: 7001, Handle: func(context.Context, []byte) ([]byte, error) { return []byte(`{"server":"proxy"}`), nil }}})
+		config := flowersec.StreamHandlerPlanConfig{RuntimeBytes: 16384}
+		err := proxy.RegisterStreamHandlers(&config, func(_ context.Context, binding any, _ []byte) error {
+			if binding != role {
+				return errors.New("proxy application lease mismatch")
 			}
-		},
-		OnSession: func(ctx context.Context, session flowersec.Session, _ string) error {
-			_, err := session.WaitTermination(ctx)
+			return nil
+		})
+		return config, err
+	}})
+	if err != nil {
+		return err
+	}
+	material := server.Material()
+	artifactJSON, err := material.JSON()
+	if err != nil {
+		return err
+	}
+	if err = json.NewEncoder(os.Stdout).Encode(map[string]any{"runtime": "go", "artifact_json": artifactJSON, "origin": *origin, "trust_pem": server.TrustPEM, "wire_revision": 4, "profile": material.Profile, "source": material.Source}); err != nil {
+		return err
+	}
+	session, err := server.WaitSession(ctx)
+	if err != nil {
+		return err
+	}
+	if err = session.WaitTermination(ctx); err != nil {
+		var terminal *flowersec.SessionError
+		// The client validates application behavior before explicitly closing
+		// its Session. That abort retires the carrier without a peer Drain
+		// receipt; this side still requires real cleanup and lease release.
+		if ctx.Err() != nil || !errors.As(err, &terminal) ||
+			(terminal.Code() != flowersec.SessionClosed && terminal.Code() != flowersec.SessionOperationFailed) {
 			return err
-		},
-	})
-	fail(err)
-	serverTLS, trustPEM, err := peerTLS()
-	fail(err)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	fail(err)
-	server, err := flowersec.NewWebSocketHTTPServer(flowersec.WebSocketHTTPServerOptions{
-		Handler: acceptor.Handler(), TLSConfig: serverTLS, ReadHeaderTimeout: 5 * time.Second,
-	})
-	if err != nil {
-		_ = listener.Close()
+		}
 	}
-	fail(err)
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(listener) }()
-	defer func() {
-		_ = server.Close()
-		<-serveDone
-	}()
-	_, port, err := net.SplitHostPort(listener.Addr().String())
-	fail(err)
-
-	endpoints, err := controlplane.NewEndpointSet(controlplane.EndpointConfig{
-		ID: "websocket", URL: "wss://localhost:" + port + flowersec.WebSocketDirectPath,
-		TLS: controlplane.CAPolicy(),
-	})
-	fail(err)
-	issued, err := controlplane.NewIssuer().IssueDirect(controlplane.DirectIssueOptions{
-		Session: controlplane.SessionOptions{
-			ChannelID:         "browser-proxy-go",
-			ExpiresAt:         time.Now().Add(time.Minute),
-			MaxInboundStreams: 8,
-		},
-		Endpoints:         endpoints,
-		RendezvousGroupID: "browser-proxy-go",
-		ListenerAudience:  "browser-proxy-matrix",
-		UpstreamAddress:   listener.Addr().String(),
-	})
-	fail(err)
-	record = issued.AuthorizationRecord()
-	fail(json.NewEncoder(os.Stdout).Encode(endpoint{
-		Runtime: "go", ArtifactJSON: string(issued.ArtifactJSON()), Origin: *origin, TrustPEM: trustPEM,
-	}))
-
-	select {
-	case <-released:
-	case <-time.After(20 * time.Second):
-		fail(errors.New("proxy matrix session did not release"))
+	if err = session.WaitCleanup(ctx); err != nil {
+		return err
 	}
-}
-
-func peerTLS() (*tls.Config, string, error) {
-	rootKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, "", err
+	if server.Runtime.Authorized[1].Load() != 1 || server.Runtime.Released[1].Load() != 1 {
+		return errors.New("proxy Session application lease did not release exactly once")
 	}
-	now := time.Now()
-	rootTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(now.UnixNano()), Subject: pkix.Name{CommonName: "Flowersec proxy peer root"},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
-		BasicConstraintsValid: true, IsCA: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-	}
-	rootDER, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, &rootKey.PublicKey, rootKey)
-	if err != nil {
-		return nil, "", err
-	}
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, "", err
-	}
-	leafTemplate := &x509.Certificate{
-		SerialNumber: big.NewInt(now.UnixNano() + 1), Subject: pkix.Name{CommonName: "localhost"},
-		DNSNames: []string{"localhost"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")},
-		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour),
-		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageDigitalSignature,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, rootTemplate, &leafKey.PublicKey, rootKey)
-	if err != nil {
-		return nil, "", err
-	}
-	certificate := tls.Certificate{Certificate: [][]byte{leafDER, rootDER}, PrivateKey: leafKey}
-	trustPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})
-	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}, string(trustPEM), nil
+	return nil
 }
 
 func fail(err error) {

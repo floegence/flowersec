@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -377,5 +378,135 @@ func TestNamespaceRefreshTrustTransportFailurePreservesOriginalValidWork(t *test
 	r.namespace.mu.Unlock()
 	if active != 2 {
 		t.Fatal("valid original trust could not complete current Head", active)
+	}
+}
+
+// Reference resolution owns an optional periodic refresh for the exact live
+// namespace. Retirement fences that scheduler before claiming the namespace;
+// the physical refresh worker may finish in the background after the bounded
+// retirement operation returns.
+func TestReferenceFactoryRefreshOwnedAndRetirementFencesIt(t *testing.T) {
+	f, registry, _ := retirementFixture(t)
+	refreshStarted, refreshRelease := make(chan struct{}), make(chan struct{})
+	var refreshOnce sync.Once
+	refresh := refreshTestProvider{
+		trust: func(context.Context, NamespaceRefreshRequest, []byte) (int, error) {
+			refreshOnce.Do(func() { close(refreshStarted) })
+			<-refreshRelease
+			return 0, errors.New("refresh test authority unavailable")
+		},
+		head: func(context.Context, NamespaceRefreshRequest, []byte) (int, error) {
+			return 0, errors.New("refresh test authority unavailable")
+		},
+		fetch: f.provider.fetch,
+	}
+	retirementLimits := f.operation.limits
+	retirementLimits.DurationMS = 100
+	retirementLimits.FetchDurationMS = 100
+	config := NamespaceReferenceConfig{
+		Root: f.owner.root, Trust: f.owner.limits, Bootstrap: retirementLimits,
+		Allocation: f.namespace.namespaceAllocation(t), Owner: f.namespace.resourceOwner(),
+		Provider: f.provider, Refresh: NamespaceRefreshConfig{
+			Limits:   NamespaceRefreshLimits{HeadIntervalMS: 10, TrustIntervalMS: 1000, DurationMS: 500, RuntimeBytes: 65536},
+			Provider: refresh,
+		},
+	}
+	charge, err := NamespaceReferenceFactoryCharge([]NamespaceReferenceConfig{config}, 65536)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory, err := NewNamespaceReferenceFactory(context.Background(), registry, f.owner.clock, []NamespaceReferenceConfig{config}, 65536, f.namespace.reserve(t, charge))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		factory.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := factory.WaitCleanup(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	owner, err := factory.Resolve(context.Background(), f.owner.root.Tenant, f.owner.root.Authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerAgain, err := factory.Resolve(context.Background(), f.owner.root.Tenant, f.owner.root.Authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ownerAgain != owner {
+		t.Fatal("reference Resolve did not singleflight the installed refresh owner")
+	}
+	owner.mu.Lock()
+	n := owner.namespace
+	owner.mu.Unlock()
+	if n == nil {
+		t.Fatal("reference bootstrap did not publish namespace")
+	}
+	n.mu.Lock()
+	attached := n.refresh != nil
+	n.mu.Unlock()
+	if !attached {
+		t.Fatal("configured reference did not install its owned refresh")
+	}
+	select {
+	case <-refreshStarted:
+	case <-time.After(time.Second):
+		t.Fatal("owned refresh did not start")
+	}
+	prepared := make(chan struct {
+		operation *NamespaceOnlineRetirement
+		provider  NamespaceBootstrapProvider
+		err       error
+	}, 1)
+	go func() {
+		operation, provider, err := factory.PrepareNamespaceRetirement(context.Background(), registry, owner)
+		prepared <- struct {
+			operation *NamespaceOnlineRetirement
+			provider  NamespaceBootstrapProvider
+			err       error
+		}{operation, provider, err}
+	}()
+	var result struct {
+		operation *NamespaceOnlineRetirement
+		provider  NamespaceBootstrapProvider
+		err       error
+	}
+	select {
+	case result = <-prepared:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("retirement preparation did not return while refresh provider was blocked")
+	}
+	operation, provider, err := result.operation, result.provider, result.err
+	if provider == nil || operation == nil {
+		t.Fatal("retirement did not admit after fencing refresh")
+	}
+	startedAt := time.Now()
+	if err = operation.Run(context.Background(), bootstrapTestProvider{
+		query: func(context.Context, NamespaceBootstrapRequest, []byte) (int, error) {
+			return 0, errors.New("independent authority unavailable")
+		},
+		fetch: func(context.Context, NamespaceContent, []byte) (int, error) {
+			return 0, errors.New("unexpected fetch")
+		},
+	}); err == nil {
+		t.Fatal("refused proof succeeded")
+	}
+	if elapsed := time.Since(startedAt); elapsed > time.Second {
+		t.Fatalf("retirement Run exceeded its original deadline: %s", elapsed)
+	}
+	close(refreshRelease)
+	if err = operation.PreserveForReplacement(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	registry.mu.Lock()
+	entry := registry.entries[0]
+	registry.mu.Unlock()
+	if entry.retirement != nil || entry.trust != operation.next {
+		t.Fatal("retirement left a fenced refresh owner pending")
 	}
 }

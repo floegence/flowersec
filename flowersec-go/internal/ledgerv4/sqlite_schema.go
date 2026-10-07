@@ -196,27 +196,27 @@ func (s *sqliteStore) verifySchema() error {
 	return nil
 }
 
-func (s *sqliteStore) openSchema() (err error) {
+func (s *sqliteStore) openSchema(readOnly bool) (err error) {
 	if s.publication != nil {
-		return s.publication.openSchema()
+		return s.publication.openSchema(readOnly)
 	}
 	if s.archive != nil {
-		return s.archive.openSchema()
+		return s.archive.openSchema(readOnly)
 	}
 	if s.namespace != nil {
-		return s.namespace.openSchema()
+		return s.namespace.openSchema(readOnly)
 	}
 	if s.topUpServer != nil {
-		return s.topUpServer.openSchema()
+		return s.topUpServer.openSchema(readOnly)
 	}
 	if s.topUps != nil {
-		return s.topUps.openSchema()
+		return s.topUps.openSchema(readOnly)
 	}
 	if s.business != nil {
-		return s.business.openSchema()
+		return s.business.openSchema(readOnly)
 	}
 	if s.references != nil {
-		return s.references.openSchema()
+		return s.references.openSchema(readOnly)
 	}
 	if err = s.verifySchema(); err != nil {
 		return err
@@ -278,6 +278,12 @@ func (s *sqliteStore) openSchema() (err error) {
 	}
 	if err = s.verifyDirectIssuanceRows(issueCount); err != nil {
 		return err
+	}
+	if err = s.inspectMainRecords(epoch); err != nil {
+		return err
+	}
+	if readOnly {
+		return nil
 	}
 	if err = s.continuity.Check(s.identity, epoch, false); err != nil {
 		return err

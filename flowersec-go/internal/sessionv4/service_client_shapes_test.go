@@ -163,6 +163,79 @@ func TestServiceClientMixedShapeValidationBeforeEncoding(t *testing.T) {
 	}
 }
 
+func TestSessionNotifyConvenienceReturnsAfterSubmission(t *testing.T) {
+	f, r, e, definition := notifyWorkloadFixture(t, false)
+	publisher, sink := attachNotifyWorkloadPublisher(t, f, r, 0)
+	client, workload := bindNotifyWorkload(t, r, e, definition)
+	ctx := resultTestContext(t)
+	done := make(chan struct {
+		result NotificationResult
+		err    error
+	}, 1)
+	go func() {
+		result, err := client.NotifyMethod(ctx, f.policy.Type, []byte("notify"), rpcv4.UnaryPreparation{DeadlineAtMS: 2000})
+		done <- struct {
+			result NotificationResult
+			err    error
+		}{result: result, err: err}
+	}()
+
+	until := time.Now().Add(3 * time.Second)
+	for sink.accepted.Load() == 0 && time.Now().Before(until) {
+		if _, err := publisher.Step(ctx); err != nil {
+			t.Fatal(err)
+		}
+		runtime.Gosched()
+	}
+	if sink.accepted.Load() != 1 {
+		t.Fatal("convenience notification header was not accepted by the original publisher")
+	}
+	// The publisher preserves each accepted chunk's provider tail before
+	// admitting the next chunk. Release the header tail, then retain the
+	// complete message tail so NotifyMethod can return at submission time.
+	sink.flush()
+	for sink.accepted.Load() < 2 && time.Now().Before(until) {
+		if _, err := publisher.Step(ctx); err != nil {
+			t.Fatal(err)
+		}
+		runtime.Gosched()
+	}
+	if sink.accepted.Load() < 2 {
+		t.Fatal("convenience notification was not fully accepted by the original publisher")
+	}
+
+	select {
+	case result := <-done:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		if !result.result.MessageAccepted || result.result.Flushed || result.result.Terminal || result.result.CleanupComplete {
+			t.Fatal("convenience notification did not return submission facts before physical cleanup", result.result)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if !workload.slots[0].used {
+		t.Fatal("convenience notification refunded its original workload before the publication tail was released")
+	}
+
+	sink.flush()
+	if _, err := publisher.Step(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !workload.slots[0].used {
+		t.Fatal("publication tail release bypassed the original workload coordinator")
+	}
+
+	client.Close()
+	r.AdvanceCalls()
+	e.advanceServiceClients()
+	if err := client.WaitCleanup(resultTestContext(t)); err != nil {
+		t.Fatal(err)
+	}
+	waitWorkload(t, r, e, func() bool { return !workload.slots[0].used })
+}
+
 func TestSessionNotifyPreparedCodecPublishesOriginalOutput(t *testing.T) {
 	ctx, services, fixtures, endpoints, _, _ := notificationRuntimeFixture(t)
 	var policies [2]protocolv4.ServiceContractPolicy

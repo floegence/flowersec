@@ -5,13 +5,14 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
-func TestV4ReadProjectionPreservesCancellationAndDetachedFacts(t *testing.T) {
+func TestReadProjectionPreservesCancellationAndDetachedFacts(t *testing.T) {
 	target := uint64(17)
 	cause := protocolv4.V4ReadCauseUnexpectedEof
 	wire := protocolv4.V4ReadResult{Progress: protocolv4.V4ReadProgress{Offset: 9, Target: &target}, WaitStatus: protocolv4.V4WaitStatusWaitCanceled, StreamStatus: protocolv4.V4StreamStatusEof, Cause: &cause}
@@ -22,7 +23,30 @@ func TestV4ReadProjectionPreservesCancellationAndDetachedFacts(t *testing.T) {
 	}
 }
 
-func TestV4PublicationWaitAndTransferCannotInventFlush(t *testing.T) {
+func TestPublicCreateMaterialRejectsInvalidCallbackInputs(t *testing.T) {
+	environment := &TransportEnvironment{}
+	if _, err := environment.CreateMaterial(nil, func(context.Context) (*ConnectionMaterial, error) { return nil, nil }); !errors.Is(err, cryptov4.ErrConfiguration) {
+		t.Fatalf("nil context returned %v, want configuration error", err)
+	}
+	if _, err := environment.CreateMaterial(context.Background(), nil); !errors.Is(err, cryptov4.ErrConfiguration) {
+		t.Fatalf("nil factory returned %v, want configuration error", err)
+	}
+}
+
+func TestStreamingStartErrorZeroValueIsSafe(t *testing.T) {
+	var err *StreamingStartError
+	if got := err.Error(); got != "Flowersec streaming start failed" {
+		t.Fatalf("nil streaming error string = %q", got)
+	}
+	if got := err.Unwrap(); got != nil {
+		t.Fatalf("nil streaming error unwrap = %v", got)
+	}
+	if got := (&StreamingStartError{}).Error(); got != "Flowersec streaming start failed" {
+		t.Fatalf("zero streaming error string = %q", got)
+	}
+}
+
+func TestPublicationWaitAndTransferCannotInventFlush(t *testing.T) {
 	publication := newResponsePublication(&rpcv4.Publication{})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -44,8 +68,8 @@ func TestV4PublicationWaitAndTransferCannotInventFlush(t *testing.T) {
 	}
 }
 
-func TestV4OwnerlessLifecycleCannotClaimCleanup(t *testing.T) {
-	session := newV4SessionFromEnvironment(nil)
+func TestOwnerlessLifecycleCannotClaimCleanup(t *testing.T) {
+	session := newSessionFromEnvironment(nil)
 	if session.CleanupStatus().Complete || session.WaitCleanup(context.Background()) == nil {
 		t.Fatal("Session invented cleanup")
 	}
@@ -61,9 +85,9 @@ func TestV4OwnerlessLifecycleCannotClaimCleanup(t *testing.T) {
 	}
 }
 
-func TestV4SessionCleanupStatusPreservesOriginalFacts(t *testing.T) {
+func TestSessionCleanupStatusPreservesOriginalFacts(t *testing.T) {
 	original := protocolv4.V4CleanupStatus{Status: protocolv4.V4CleanupStateCleanupIncomplete, CoreCleanup: protocolv4.V4CoreCleanupComplete, PendingCallbacks: 2}
-	s := &V4Session{cleanupStatus: func() protocolv4.V4CleanupStatus { return original }}
+	s := &Session{cleanupStatus: func() protocolv4.V4CleanupStatus { return original }}
 	status := s.CleanupStatus()
 	if status.Complete || !status.CleanupIncomplete || status.PendingCallbacks != 2 || status.CoreCleanup != original.CoreCleanup || !errors.Is(sessionv4.ErrSessionCleanupIncomplete, ErrCleanupIncomplete) {
 		t.Fatal("public Session status lost original cleanup facts", status)
@@ -74,16 +98,16 @@ func TestV4SessionCleanupStatusPreservesOriginalFacts(t *testing.T) {
 	}
 }
 
-func TestV4ReadInProgressUsesOriginalIdentity(t *testing.T) {
+func TestReadInProgressUsesOriginalIdentity(t *testing.T) {
 	if !errors.Is(sessionv4.ErrReadInProgress, ErrReadInProgress) {
 		t.Fatal("the public read-in-progress sentinel does not identify the original error")
 	}
 }
 
-func TestV4OpenStreamPreservesCallerContext(t *testing.T) {
+func TestOpenStreamPreservesCallerContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	s := newV4SessionFromOwnerFactory(func(got context.Context, _ string, _ []byte, _ *timev4.Deadline) (*sessionv4.StreamOwnership, error) {
+	s := newSessionFromOwnerFactory(func(got context.Context, _ string, _ []byte, _ *timev4.Deadline) (*sessionv4.StreamOwnership, error) {
 		if got != ctx {
 			t.Fatal("OpenStream replaced the caller's cancellation context")
 		}

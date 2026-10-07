@@ -55,6 +55,7 @@ type invocationServices struct {
 	bindings       []invocationServiceBinding
 	backing        resourcev4.Reference
 	primary        resourcev4.Reference
+	ownedPrimary   bool
 	viewReferences *resourcev4.BorrowPool
 	closed         bool
 	visits         uint32
@@ -347,6 +348,9 @@ func (s *invocationServices) cleanupLocked() {
 	s.viewReferences = nil
 	s.backing.Release()
 	s.backing = resourcev4.Reference{}
+	if s.ownedPrimary {
+		s.primary.Release()
+	}
 	s.primary = resourcev4.Reference{}
 }
 
@@ -674,11 +678,44 @@ func attachInvocationServices(ctx context.Context, services *invocationServices)
 	if origin == nil {
 		return ErrApplicationDependency
 	}
+	if services != nil {
+		services.mu.Lock()
+		defer services.mu.Unlock()
+		if services.closed || services.visits == math.MaxUint32 {
+			return ErrApplicationDependency
+		}
+	}
 	origin.state.mu.Lock()
 	defer origin.state.mu.Unlock()
-	if !origin.state.live {
+	if !origin.state.live || origin.state.services != nil {
 		return ErrApplicationDependency
 	}
+	if services != nil {
+		services.visits++
+	}
 	origin.state.services = services
+	return nil
+}
+
+func (s *invocationServices) releaseInvocation() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.visits--
+	s.cleanupLocked()
+	s.mu.Unlock()
+}
+
+func (s *invocationServices) retainRegistration() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.visits == math.MaxUint32 {
+		return ErrApplicationDependency
+	}
+	s.visits++
 	return nil
 }

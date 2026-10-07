@@ -25,7 +25,7 @@ const (
 	ControlplaneMaxRequestBodyBytes  = 32 * 1024
 	ControlplaneMaxResponseBodyBytes = 1024 * 1024
 
-	ProxyMaxJSONFrameBytes    = 1024 * 1024
+	ProxyMaxMetadataBytes     = 1024 * 1024
 	ProxyMaxConcurrentStreams = 64
 	ProxyMaxChunkBytes        = 256 * 1024
 	ProxyMaxBodyBytes         = 64 * 1024 * 1024

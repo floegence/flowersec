@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -35,8 +36,10 @@ type relayPairBinding struct {
 // or retired registration never reopens either slot. It owns all forwarding
 // work and charged buffers until both real provider tails have returned.
 type RelayMessagePair struct {
+	runner                                               RelayPairRun
 	native                                               *relayNativePair
 	mu                                                   sync.Mutex
+	claimGate                                            chan struct{}
 	c                                                    RelayMessagePairConfig
 	reservation, shared                                  resourcev4.Reference
 	binding                                              relayPairBinding
@@ -45,9 +48,31 @@ type RelayMessagePair struct {
 	references                                           uint8
 	buffers                                              [2][]byte
 	wake                                                 chan struct{}
+	settled                                              chan struct{}
+	settledClosed                                        bool
 	results                                              chan error
 	cancel                                               context.CancelFunc
 	started, running, closed, closing, cleaning, cleaned bool
+}
+
+const relayPairWorkPositions = 3
+
+// RelayMessagePairAuthorityLookups bounds simultaneous public-authority
+// checks by the admitted pair work positions and the two original HOP owners.
+// Native mapping supervisors and forwarding tails retain those same positions
+// until physical cleanup; a resident mapping never frees a lookup allowance
+// while one of its original workers can still call the guard.
+func RelayMessagePairAuthorityLookups(c RelayMessagePairConfig) (uint32, error) {
+	if c.MaxEnvelopeBytes < 9 || c.MaxEnvelopeBytes > protocolv4.MaxPayloadLength+protocolv4.EnvelopePrefixSize {
+		return 0, cryptov4.ErrConfiguration
+	}
+	nativeCharge, err := relayNativeCharge(c)
+	if err != nil {
+		return 0, err
+	}
+	// Pair forwarding admits three work positions; the HOP establishment
+	// owners are separate from those and from the native mapping positions.
+	return uint32(relayPairWorkPositions + 2 + nativeCharge[resourcev4.WorkSlots]), nil
 }
 
 func RelayMessagePairCharge(c RelayMessagePairConfig) (resourcev4.Vector, error) {
@@ -58,7 +83,7 @@ func RelayMessagePairCharge(c RelayMessagePairConfig) (resourcev4.Vector, error)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	charge, err := (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(RelayMessagePair{})) + 2*uint64(c.MaxEnvelopeBytes) + 1024, resourcev4.Items: 3, resourcev4.WorkSlots: 3, resourcev4.Tasks: 3, resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
+	charge, err := (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(RelayMessagePair{})) + 2*uint64(c.MaxEnvelopeBytes) + 1024, resourcev4.Items: 3, resourcev4.WorkSlots: relayPairWorkPositions, resourcev4.Tasks: relayPairWorkPositions, resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
@@ -85,7 +110,9 @@ func NewRelayMessagePair(c RelayMessagePairConfig, reservation, dependencies res
 		shared.Release()
 		return nil, err
 	}
-	p := &RelayMessagePair{c: c, reservation: owned, shared: shared, buffers: [2][]byte{make([]byte, c.MaxEnvelopeBytes), make([]byte, c.MaxEnvelopeBytes)}, wake: make(chan struct{}, 1), results: make(chan error, 2)}
+	p := &RelayMessagePair{c: c, reservation: owned, shared: shared, buffers: [2][]byte{make([]byte, c.MaxEnvelopeBytes), make([]byte, c.MaxEnvelopeBytes)}, wake: make(chan struct{}, 1), settled: make(chan struct{}), results: make(chan error, 2)}
+	p.claimGate = make(chan struct{}, 1)
+	p.claimGate <- struct{}{}
 	p.native = newRelayNativePair(p)
 	return p, nil
 }
@@ -184,16 +211,60 @@ func (p *RelayMessagePair) check() error {
 
 // Run has one original caller. It waits only for its two pre-registered HOP
 // owners and never fetches an Artifact, starts a Session, or retries a claim.
-func (p *RelayMessagePair) Run(ctx context.Context) (err error) {
-	if p == nil || ctx == nil {
-		return cryptov4.ErrConfiguration
+// RelayPairRun is the original pair's single forwarding capability. Claiming
+// it seals public Run before an aggregate adopts the pair; copying a pointer
+// cannot start another worker or close work owned by a different caller.
+type RelayPairRun struct {
+	pair *RelayMessagePair
+	used atomic.Bool
+}
+
+func (p *RelayMessagePair) ClaimRun(service resourcev4.Reference) (*RelayPairRun, error) {
+	return p.claimRun(service, true)
+}
+
+func (p *RelayMessagePair) claimRun(service resourcev4.Reference, hosted bool) (*RelayPairRun, error) {
+	if p == nil {
+		return nil, cryptov4.ErrConfiguration
 	}
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.started || p.closed {
-		p.mu.Unlock()
-		return cryptov4.ErrTransition
+		return nil, cryptov4.ErrTransition
+	}
+	if err := p.reservation.Check(); err != nil {
+		return nil, err
+	}
+	if hosted {
+		if err := p.reservation.CheckSameEnvironment(service); err != nil {
+			return nil, err
+		}
 	}
 	p.started, p.running = true, true
+	p.runner.pair = p
+	return &p.runner, nil
+}
+
+func (p *RelayMessagePair) Run(ctx context.Context) error {
+	if ctx == nil {
+		return cryptov4.ErrConfiguration
+	}
+	run, err := p.claimRun(resourcev4.Reference{}, false)
+	if err != nil {
+		return err
+	}
+	return run.Run(ctx)
+}
+
+func (run *RelayPairRun) Run(ctx context.Context) (err error) {
+	if run == nil || run.pair == nil || ctx == nil {
+		return cryptov4.ErrConfiguration
+	}
+	if !run.used.CompareAndSwap(false, true) {
+		return cryptov4.ErrTransition
+	}
+	p := run.pair
+	p.mu.Lock()
 	local, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
 	p.mu.Unlock()
@@ -264,6 +335,7 @@ func (p *RelayMessagePair) run(parent, ctx context.Context) error {
 		for _, hop := range hops[:acquired] {
 			hop.mu.Lock()
 			hop.forwarding = false
+			hop.settleLocked()
 			hop.mu.Unlock()
 		}
 	}()
@@ -449,14 +521,25 @@ func (p *RelayMessagePair) WaitCleanup(ctx context.Context) error {
 		p.mu.Unlock()
 		return nil
 	}
-	if !p.closed || p.running || p.closing || p.cleaning {
+	if !p.closed || p.cleaning {
 		p.mu.Unlock()
 		return cryptov4.ErrCapacity
 	}
 	p.cleaning = true
-	hops := p.hops
+	settled := p.settled
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.cleaning = false; p.cleanupLocked(); p.mu.Unlock() }()
+	// Close and the original once-owned Run may still be retiring provider
+	// methods. This waiter holds the pair backing until both methods exit;
+	// canceling the wait does not release their charges or start another Run.
+	select {
+	case <-settled:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	p.mu.Lock()
+	hops := p.hops
+	p.mu.Unlock()
 	if err := p.native.waitCleanup(ctx); err != nil {
 		return err
 	}
@@ -475,6 +558,12 @@ func (p *RelayMessagePair) WaitCleanup(ctx context.Context) error {
 }
 
 func (p *RelayMessagePair) cleanupLocked() {
+	if p.closed && !p.running && !p.closing && !p.settledClosed {
+		p.settledClosed = true
+		if p.settled != nil {
+			close(p.settled)
+		}
+	}
 	if !p.closed || p.running || p.closing || p.cleaning || p.references != 0 || p.cleaned {
 		return
 	}
@@ -488,4 +577,18 @@ func (p *RelayMessagePair) cleanupLocked() {
 	p.shared.Release()
 	p.reservation.Release()
 	p.cleaned = true
+}
+
+// CheckEnvironment binds an aggregate service to this pair's original root
+// and Environment. It grants no forwarding, registration or claim authority.
+func (p *RelayMessagePair) CheckEnvironment(reference resourcev4.Reference) error {
+	if p == nil {
+		return cryptov4.ErrConfiguration
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return resourcev4.ErrClosed
+	}
+	return p.reservation.CheckSameEnvironment(reference)
 }

@@ -3,6 +3,7 @@ package cryptov4
 import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // ForkApplicationDelivery captures the exact original authenticated endpoint.
@@ -100,4 +101,62 @@ func (e *Engine) AuthorizationRemainingMS() (uint64, error) {
 		return 0, securityTimeError(err)
 	}
 	return min(remaining, root), nil
+}
+
+// ApplicationAcceptance retains only the original local time/closure gates.
+// It has no traffic keys or provider authority. Publication checks it inside
+// the original endpoint/lease gate without recursively taking the Engine lock.
+type ApplicationAcceptance struct {
+	clock       *timev4.Clock
+	sample      timev4.Sample
+	idle        *timev4.Idle
+	deadline    *timev4.Deadline
+	done        <-chan struct{}
+	publication interface{ WithApplicationPublication(func() error) error }
+}
+
+func (e *Engine) PrepareApplicationAcceptance() (ApplicationAcceptance, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := e.live(); err != nil {
+		return ApplicationAcceptance{}, err
+	}
+	sample, err := e.config.Clock.Sample()
+	if err != nil {
+		return ApplicationAcceptance{}, err
+	}
+	gate, _ := e.config.Authorization.(interface{ WithApplicationPublication(func() error) error })
+	return ApplicationAcceptance{clock: e.config.Clock, sample: sample, idle: e.idle, deadline: e.current.deadline, done: e.done, publication: gate}, nil
+}
+
+func (a ApplicationAcceptance) Check() (timev4.Sample, error) {
+	if a.clock == nil || a.idle == nil || a.deadline == nil {
+		return timev4.Sample{}, ErrConfiguration
+	}
+	select {
+	case <-a.done:
+		return timev4.Sample{}, ErrClosed
+	default:
+	}
+	sample, err := a.clock.RefreshSample(a.sample)
+	if err != nil {
+		return timev4.Sample{}, err
+	}
+	if err := a.idle.CheckAt(sample); err != nil {
+		return timev4.Sample{}, idleError(err)
+	}
+	if err := a.deadline.CheckAt(sample); err != nil {
+		return timev4.Sample{}, securityTimeError(err)
+	}
+	return sample, nil
+}
+
+func (a ApplicationAcceptance) WithPublication(action func() error) error {
+	if action == nil || a.clock == nil {
+		return ErrConfiguration
+	}
+	if a.publication != nil {
+		return a.publication.WithApplicationPublication(action)
+	}
+	return ErrConfiguration
 }

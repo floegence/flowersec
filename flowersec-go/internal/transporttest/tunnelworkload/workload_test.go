@@ -12,11 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/artifactv3"
+	fs "github.com/floegence/flowersec/flowersec-go/v6"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 	"github.com/gorilla/websocket"
 )
@@ -27,6 +24,7 @@ type stalledBulkStream struct {
 }
 
 type reusableBulkStream struct {
+	fs.Stream
 	data        []byte
 	offset      int
 	warmupBytes int
@@ -56,10 +54,12 @@ func (stream *reusableBulkStream) CloseWrite() error {
 func (*reusableBulkStream) Reset() error { return nil }
 
 type protocolWindowBulkStream struct {
+	fs.Stream
 	reader *bytes.Reader
 }
 
 type phaseDelayedBulkStream struct {
+	fs.Stream
 	data          []byte
 	offset        int
 	warmupBytes   int
@@ -102,7 +102,7 @@ func (stream *protocolWindowBulkStream) Read(payload []byte) (int, error) {
 	return stream.reader.Read(payload)
 }
 func (*protocolWindowBulkStream) Write(payload []byte) (int, error) {
-	if len(payload) > protocolv3.MaxDataBytes {
+	if len(payload) > currentBulkChunkBytes {
 		return 0, io.ErrShortWrite
 	}
 	return len(payload), nil
@@ -124,14 +124,14 @@ func TestTransferExactRespectsProtocolFlowControlRecords(t *testing.T) {
 }
 
 type oneBulkStreamSession struct {
-	flowersession.Session
-	opened   flowersession.ByteStream
-	incoming flowersession.IncomingStream
+	tunnelSession
+	opened   fs.Stream
+	incoming fs.AcceptedStream
 	opens    atomic.Int32
 	accepts  atomic.Int32
 }
 
-func (session *oneBulkStreamSession) OpenStream(ctx context.Context, _ string, _ flowersession.Metadata) (flowersession.ByteStream, error) {
+func (session *oneBulkStreamSession) OpenStream(ctx context.Context, _ string, _ fs.StreamMetadata) (fs.Stream, error) {
 	if session.opens.Add(1) == 1 {
 		return session.opened, nil
 	}
@@ -139,12 +139,12 @@ func (session *oneBulkStreamSession) OpenStream(ctx context.Context, _ string, _
 	return nil, ctx.Err()
 }
 
-func (session *oneBulkStreamSession) AcceptStream(ctx context.Context) (flowersession.IncomingStream, error) {
+func (session *oneBulkStreamSession) AcceptStream(ctx context.Context) (fs.AcceptedStream, error) {
 	if session.accepts.Add(1) == 1 {
 		return session.incoming, nil
 	}
 	<-ctx.Done()
-	return flowersession.IncomingStream{}, ctx.Err()
+	return fs.AcceptedStream{}, ctx.Err()
 }
 
 func TestRunBulkReusesDirectionalStreamsAcrossWarmupAndScore(t *testing.T) {
@@ -157,14 +157,14 @@ func TestRunBulkReusesDirectionalStreamsAcrossWarmupAndScore(t *testing.T) {
 	fromServer := &reusableBulkStream{data: bytes.Repeat([]byte{0x5a}, total), warmupBytes: warmup}
 	client := &oneBulkStreamSession{
 		opened: clientOpened,
-		incoming: flowersession.IncomingStream{
-			Kind: "release-tunnel-bulk", Metadata: flowersession.Metadata{"direction": "server-to-client"}, Stream: fromServer,
+		incoming: fs.AcceptedStream{
+			Kind: "release-tunnel-bulk", Metadata: bulkTestMetadata(t, "server-to-client"), Stream: fromServer,
 		},
 	}
 	server := &oneBulkStreamSession{
 		opened: serverOpened,
-		incoming: flowersession.IncomingStream{
-			Kind: "release-tunnel-bulk", Metadata: flowersession.Metadata{"direction": "client-to-server"}, Stream: fromClient,
+		incoming: fs.AcceptedStream{
+			Kind: "release-tunnel-bulk", Metadata: bulkTestMetadata(t, "client-to-server"), Stream: fromClient,
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -197,15 +197,15 @@ func TestRunBulkDoesNotSerializeIndependentDirectionalRecoveryTails(t *testing.T
 	}
 	client := &oneBulkStreamSession{
 		opened: newStream(0, 0, 0),
-		incoming: flowersession.IncomingStream{
-			Kind: "release-tunnel-bulk", Metadata: flowersession.Metadata{"direction": "server-to-client"},
+		incoming: fs.AcceptedStream{
+			Kind: "release-tunnel-bulk", Metadata: bulkTestMetadata(t, "server-to-client"),
 			Stream: newStream(0x5a, 0, recoveryDelay),
 		},
 	}
 	server := &oneBulkStreamSession{
 		opened: newStream(0, 0, 0),
-		incoming: flowersession.IncomingStream{
-			Kind: "release-tunnel-bulk", Metadata: flowersession.Metadata{"direction": "client-to-server"},
+		incoming: fs.AcceptedStream{
+			Kind: "release-tunnel-bulk", Metadata: bulkTestMetadata(t, "client-to-server"),
 			Stream: newStream(0xa5, recoveryDelay, 0),
 		},
 	}
@@ -290,10 +290,10 @@ func TestTunnelPhaseFailurePreservesStageDurationAndFirstError(t *testing.T) {
 func TestEstablishmentTimelineSeparatesTransportAdmissionAndPairing(t *testing.T) {
 	timeline := &establishmentTimeline{}
 	started := time.Date(2026, time.August, 5, 2, 0, 0, 0, time.UTC)
-	timeline.record(1, "client-leg", artifactv3.CarrierRawQUIC, "quic", started, started.Add(1200*time.Millisecond), nil)
-	timeline.record(2, "server-leg", artifactv3.CarrierWebSocket, "tcp_tls", started, started.Add(900*time.Millisecond), nil)
+	timeline.record(1, "client-leg", carrier.KindRawQUIC, "quic", started, started.Add(1200*time.Millisecond), nil)
+	timeline.record(2, "server-leg", carrier.KindWebSocket, "tcp_tls", started, started.Add(900*time.Millisecond), nil)
 	want := errors.New("admission stream reset: 0xf502")
-	timeline.record(1, "client-leg", artifactv3.CarrierRawQUIC, "admission", started.Add(1200*time.Millisecond), started.Add(2*time.Second), want)
+	timeline.record(1, "client-leg", carrier.KindRawQUIC, "admission", started.Add(1200*time.Millisecond), started.Add(2*time.Second), want)
 	timeline.record(0, "", "", "pairing", started, started.Add(2*time.Second), want)
 
 	diagnostic := timeline.compact()
@@ -308,88 +308,16 @@ func TestEstablishmentTimelineSeparatesTransportAdmissionAndPairing(t *testing.T
 	}
 }
 
-func TestDiagnosticAttemptRecordsCarrierAndAdmissionFailures(t *testing.T) {
-	want := errors.New("admission failed")
-	timeline := &establishmentTimeline{}
-	attempt := &diagnosticAttempt{
-		CandidateAttempt: &diagnosticContractAttempt{prepared: &diagnosticContractPrepared{err: want}},
-		timeline:         timeline, role: 1, candidate: artifactv3.Candidate{ID: "client-leg", Carrier: artifactv3.CarrierRawQUIC},
-	}
-	prepared, err := attempt.Ready(context.Background())
-	if err != nil {
-		t.Fatalf("Ready: %v", err)
-	}
-	if _, err := prepared.Commit(context.Background(), func(context.Context) error { return nil }, []byte("FSB3")); !errors.Is(err, want) {
-		t.Fatalf("Commit error = %v, want %v", err, want)
-	}
-	diagnostic := timeline.compact()
-	for _, detail := range []string{`"stage":"quic"`, `"stage":"admission"`, `"first_failure":"admission failed"`} {
-		if !strings.Contains(diagnostic, detail) {
-			t.Fatalf("attempt diagnostic %q lacks %q", diagnostic, detail)
-		}
-	}
-}
-
-type diagnosticContractAttempt struct {
-	prepared connectv3.AdmissionCommit
-}
-
-func (attempt *diagnosticContractAttempt) Ready(context.Context) (connectv3.AdmissionCommit, error) {
-	return attempt.prepared, nil
-}
-
-func (*diagnosticContractAttempt) Abort(context.Context) error { return nil }
-
-type diagnosticContractPrepared struct {
-	err error
-}
-
-func (prepared *diagnosticContractPrepared) Commit(context.Context, func(context.Context) error, []byte) (carrier.Session, error) {
-	return nil, prepared.err
-}
-
-func (*diagnosticContractPrepared) Close(context.Context) error { return nil }
-
 var _ io.ReadWriteCloser = (*stalledBulkStream)(nil)
 
 type terminalCloseSession struct {
-	flowersession.Session
+	tunnelSession
 	closeErr   error
 	terminated chan struct{}
 	closeFn    func()
 }
 
 func (session *terminalCloseSession) Termination() <-chan struct{} { return session.terminated }
-
-func TestTunnelAdmissionRequestsMirrorCandidateSetAndPeerRoles(t *testing.T) {
-	contract, suffix, err := releaseContractWithStreams(protocolv3.SuiteChaCha20Poly1305, defaultMaxInboundStreams)
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint := &Endpoint{candidates: []artifactv3.Candidate{
-		{ID: "client-leg", Carrier: artifactv3.CarrierRawQUIC, URL: "quic://127.0.0.1:10001", WireProfile: "flowersec-tunnel/3", TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA}},
-		{ID: "server-leg", Carrier: artifactv3.CarrierRawQUIC, URL: "quic://127.0.0.1:10002", WireProfile: "flowersec-tunnel/3", TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA}},
-	}}
-	client := endpoint.artifact(contract, "group-"+suffix, 1, "client-"+suffix, "server-"+suffix, "token-c-"+suffix)
-	server := endpoint.artifact(contract, "group-"+suffix, 2, "server-"+suffix, "client-"+suffix, "token-s-"+suffix)
-	clientRequest, err := artifactv3.BuildRequest(client, "client-leg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverRequest, err := artifactv3.BuildRequest(server, "server-leg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if clientRequest.CandidateSetHash != serverRequest.CandidateSetHash {
-		t.Fatal("mirrored tunnel legs changed the candidate-set hash")
-	}
-	if clientRequest.Role != 1 || serverRequest.Role != 2 || client.Path.ExpectedPeerEndpointInstanceID != server.Path.LocalEndpointInstanceID || server.Path.ExpectedPeerEndpointInstanceID != client.Path.LocalEndpointInstanceID || clientRequest.EndpointInstanceID != client.Path.LocalEndpointInstanceID || serverRequest.EndpointInstanceID != server.Path.LocalEndpointInstanceID {
-		t.Fatalf("unpaired tunnel roles: client=%+v server=%+v", clientRequest, serverRequest)
-	}
-	if clientRequest.ChosenCandidateID != "client-leg" || serverRequest.ChosenCandidateID != "server-leg" {
-		t.Fatalf("tunnel roles selected the wrong candidate: client=%q server=%q", clientRequest.ChosenCandidateID, serverRequest.ChosenCandidateID)
-	}
-}
 
 func (session *terminalCloseSession) Close() error {
 	if session.closeFn != nil {
@@ -493,19 +421,23 @@ func TestRunColdStopsSchedulingAndPreservesFirstProductFailure(t *testing.T) {
 	}
 }
 
-func TestReleaseCoordinatorPairTimeoutCoversColdPhase(t *testing.T) {
-	plan := transporttest.ProfilePlan{
-		Cold: transporttest.ColdPlan{
-			OperationDeadlineSeconds: 53,
-			PhaseDeadlineSeconds:     55,
-		},
-	}
-	config, err := releaseCoordinatorConfig(plan)
+func TestCurrentTunnelProfileFreezesIndependentPositionCapacity(t *testing.T) {
+	plan := transporttest.ProfilePlan{Cold: transporttest.ColdPlan{OperationDeadlineSeconds: 53, PhaseDeadlineSeconds: 55, MaxInflight: 2}}
+	endpoint, err := OpenTestEndpointAt(context.Background(), TopologyQW, "127.0.0.1", plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.PairTimeout != 55*time.Second || config.AdmissionResponseTimeout != 30*time.Second || config.ActivationTimeout != 30*time.Second {
-		t.Fatalf("release coordinator timeouts = pair %s response %s activation %s", config.PairTimeout, config.AdmissionResponseTimeout, config.ActivationTimeout)
+	defer endpoint.Close(context.Background())
+	if endpoint.operationDeadlineMS != 53000 {
+		t.Fatal("current profile lost its complete operation deadline")
+	}
+	if len(endpoint.slots) != 2 {
+		t.Fatal("current tunnel profile changed its declared concurrent position count")
+	}
+	plan.Cold.PhaseDeadlineSeconds = 52
+	if endpoint, err := OpenTestEndpointAt(context.Background(), TopologyQW, "127.0.0.1", plan); err == nil {
+		endpoint.Close(context.Background())
+		t.Fatal("accepted a phase deadline shorter than its operation")
 	}
 }
 
@@ -637,3 +569,33 @@ func TestOpenEndpointAtRejectsNonConcreteAddress(t *testing.T) {
 		}
 	}
 }
+
+func bulkTestMetadata(t *testing.T, direction string) fs.StreamMetadata {
+	t.Helper()
+	metadata, err := fs.NewStreamMetadata(map[string]any{"direction": direction})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return metadata
+}
+func (session *terminalCloseSession) WaitCleanup(ctx context.Context) error {
+	select {
+	case <-session.terminated:
+		return nil
+	default:
+	}
+	select {
+	case <-session.terminated:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (session *terminalCloseSession) WaitTermination(ctx context.Context) error {
+	return session.WaitCleanup(ctx)
+}
+
+func (*reusableBulkStream) Finish(context.Context) error       { return nil }
+func (*phaseDelayedBulkStream) Finish(context.Context) error   { return nil }
+func (*protocolWindowBulkStream) Finish(context.Context) error { return nil }
+func (*stalledBulkStream) Finish(context.Context) error        { return nil }

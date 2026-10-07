@@ -2,41 +2,25 @@ package tunnelworkload
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
-	"net"
-	"net/http"
+	"net/netip"
 	"net/url"
-	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/artifactv3"
+	fs "github.com/floegence/flowersec/flowersec-go/v6"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/quicbase"
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/webtransportv3"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v6/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v6/internal/rpcwire"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/tunnelv3"
 )
 
-// BrowserTopology identifies a Chromium WebTransport leg paired with one Go
-// server-role leg. These strings match the frozen performance manifest.
 type BrowserTopology string
 
 const (
@@ -47,516 +31,561 @@ const (
 func BrowserTopologies() []BrowserTopology {
 	return []BrowserTopology{BrowserTunnelWTWSS, BrowserTunnelWTQUIC}
 }
-
-func (topology BrowserTopology) serverCarrier() (carrier.Kind, error) {
-	switch topology {
+func (t BrowserTopology) serverCarrier() (carrier.Kind, error) {
+	switch t {
 	case BrowserTunnelWTWSS:
 		return carrier.KindWebSocket, nil
 	case BrowserTunnelWTQUIC:
 		return carrier.KindRawQUIC, nil
 	default:
-		return "", errors.New("browser tunnel topology must be browser_tunnel_wt_wss or browser_tunnel_wt_quic")
+		return "", errors.New("unsupported original browser tunnel topology")
 	}
 }
 
-// BrowserEndpoint owns the browser WebTransport listener and the paired Go
-// WSS/raw-QUIC listener.
 type BrowserEndpoint struct {
-	endpoint        *Endpoint
-	topology        BrowserTopology
-	certificateHash [sha256.Size]byte
-	certificateDER  []byte
-	roots           *x509.CertPool
+	mu                                sync.Mutex
+	ctx                               context.Context
+	cancel                            context.CancelCauseFunc
+	topology                          BrowserTopology
+	listenHost, origin                string
+	operationDeadlineMS               uint64
+	relayNamespace, endpointNamespace string
+	certificateHash                   [32]byte
+	certificateDER                    []byte
+	certificate                       tls.Certificate
+	roots                             *x509.CertPool
+	trustPEM                          string
+	slots                             []*BrowserArtifact
+	issuing                           []bool
+	construction                      sync.WaitGroup
+	constructionDone                  chan struct{}
+	closed                            bool
+	browserRuntimeBound               bool
 }
 
+// BrowserArtifact owns one original paired PoolService publication. Start arms
+// its real native relay and authenticated server registration. ArtifactJSON is
+// exactly the independently issued client material, including namespace pins.
+type BrowserArtifact struct {
+	endpoint                                      *BrowserEndpoint
+	position                                      int
+	rawJSON                                       string
+	relay                                         *interopharness.PoolRelay
+	server                                        *interopharness.TunnelServer
+	reporters                                     []*interopharness.Reporter
+	ctx                                           context.Context
+	cancel                                        context.CancelCauseFunc
+	mu                                            sync.Mutex
+	started, consumed, closing, cleaning, cleaned bool
+	result                                        browserConnectResult
+	ready                                         chan struct{}
+	acceptDone                                    chan struct{}
+	cleanupDone                                   chan struct{}
+	closeErr                                      error
+}
 type browserConnectResult struct {
-	session flowersession.Session
+	session *fs.Session
 	err     error
 }
 
-// BrowserArtifact is a one-shot browser artifact paired with a production Go
-// server-role connector. The caller must await or cancel it exactly once.
-type BrowserArtifact struct {
-	endpoint           *Endpoint
-	rawJSON            string
-	serverArtifact     artifactv3.Artifact
-	browserExpectation *admissionExpectation
-	serverExpectation  *admissionExpectation
-	result             chan browserConnectResult
-	peerStartError     chan error
-	timeline           *establishmentTimeline
-	ctx                context.Context
-	cancel             context.CancelCauseFunc
-	startOnce          sync.Once
-
-	mu       sync.Mutex
-	consumed bool
+func OpenBrowserEndpointAt(ctx context.Context, topology BrowserTopology, host, origin string) (*BrowserEndpoint, error) {
+	return openCurrentBrowserEndpoint(ctx, topology, host, origin, 128)
 }
-
-// OpenBrowserEndpointAt creates both listeners on an explicit server address.
-// Call IssueBrowserArtifact from a process whose default namespace is the
-// client namespace so the Go server-role leg and Chromium leg cross the link.
-func OpenBrowserEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string) (*BrowserEndpoint, error) {
-	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, tunnelv3.Config{}, defaultMaxInboundStreams)
+func OpenBrowserTestEndpointAt(ctx context.Context, topology BrowserTopology, host, origin string, plan transporttest.ProfilePlan) (*BrowserEndpoint, error) {
+	if plan.Cold.OperationDeadlineSeconds < 1 || plan.Cold.PhaseDeadlineSeconds < plan.Cold.OperationDeadlineSeconds || plan.Cold.MaxInflight < 1 {
+		return nil, errors.New("invalid original browser tunnel profile")
+	}
+	if plan.Cold.OperationDeadlineSeconds > 90 {
+		return nil, errors.New("browser operation exceeds the original supported preparation window")
+	}
+	endpoint, err := openCurrentBrowserEndpoint(ctx, topology, host, origin, plan.Cold.MaxInflight)
+	if err != nil {
+		return nil, err
+	}
+	endpoint.operationDeadlineMS = uint64(plan.Cold.OperationDeadlineSeconds) * 1000
+	return endpoint, nil
 }
-
-// OpenBrowserReleaseEndpointAt binds browser tunnel pairing to the frozen
-// release cold-phase deadline instead of the shorter interactive default.
-func OpenBrowserReleaseEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string, plan transporttest.ProfilePlan) (*BrowserEndpoint, error) {
-	config, err := releaseCoordinatorConfig(plan)
-	if err != nil {
-		return nil, err
+func OpenBrowserCapacityEndpointAt(ctx context.Context, topology BrowserTopology, host, origin string, sessions int) (*BrowserEndpoint, error) {
+	if sessions != 1000 && sessions != 100 {
+		return nil, errors.New("browser tunnel capacity must use an exact supported session count")
 	}
-	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, config, defaultMaxInboundStreams)
+	return openCurrentBrowserEndpoint(ctx, topology, host, origin, sessions)
 }
-
-// OpenBrowserCapacityEndpointAt creates a browser tunnel endpoint that can
-// hold the exact release-capacity session count instead of relying on the
-// larger ordinary product default.
-func OpenBrowserCapacityEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string, sessions int) (*BrowserEndpoint, error) {
-	config, err := capacityCoordinatorConfig(sessions)
-	if err != nil {
-		return nil, err
-	}
-	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, config, defaultMaxInboundStreams)
+func OpenBrowserStreamCapacityEndpointAt(ctx context.Context, topology BrowserTopology, host, origin string) (*BrowserEndpoint, error) {
+	return openCurrentBrowserEndpoint(ctx, topology, host, origin, 100)
 }
-
-// OpenBrowserStreamCapacityEndpointAt provisions exactly 100 sessions with
-// 128 simultaneous logical streams per session for the release-only workload.
-func OpenBrowserStreamCapacityEndpointAt(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string) (*BrowserEndpoint, error) {
-	return openBrowserEndpointAtWithCoordinator(ctx, topology, listenHost, browserOrigin, browserStreamCapacityCoordinatorConfig(), 128)
+func openCurrentBrowserEndpoint(ctx context.Context, topology BrowserTopology, host, origin string, positions int) (*BrowserEndpoint, error) {
+	if ctx == nil || positions < 1 || positions > 1000 {
+		return nil, errors.New("original browser context and finite positions are required")
+	}
+	if _, err := topology.serverCarrier(); err != nil {
+		return nil, err
+	}
+	if err := validateBrowserOrigin(origin); err != nil {
+		return nil, err
+	}
+	address, err := netip.ParseAddr(host)
+	if err != nil || address.IsUnspecified() || address.IsMulticast() || address.Zone() != "" {
+		return nil, errors.New("browser relay requires one explicit unicast host")
+	}
+	certificate, roots, trust, _, err := interopharness.TLSMaterial(host)
+	if err != nil {
+		return nil, err
+	}
+	owner, cancel := context.WithCancelCause(ctx)
+	der := append([]byte(nil), certificate.Certificate[0]...)
+	return &BrowserEndpoint{ctx: owner, cancel: cancel, topology: topology, listenHost: address.String(), origin: origin, certificate: certificate, roots: roots, trustPEM: trust, certificateDER: der, certificateHash: sha256.Sum256(der), slots: make([]*BrowserArtifact, positions), issuing: make([]bool, positions), constructionDone: make(chan struct{})}, nil
 }
-
-func browserStreamCapacityCoordinatorConfig() tunnelv3.Config {
-	config := tunnelv3.DefaultConfig()
-	config.MaxPendingLegs = 200
-	config.MaxActivePairs = 100
-	config.BridgeLimits.CopyBufferBytes = 4 * 1024
-	return config
+func (e *BrowserEndpoint) CertificateHashBase64URL() (string, error) {
+	if e == nil || len(e.certificateDER) == 0 {
+		return "", errors.New("original browser TLS certificate is unavailable")
+	}
+	return base64.RawURLEncoding.EncodeToString(e.certificateHash[:]), nil
 }
-
-func openBrowserEndpointAtWithCoordinator(ctx context.Context, topology BrowserTopology, listenHost, browserOrigin string, coordinatorConfig tunnelv3.Config, maxStreams uint16) (*BrowserEndpoint, error) {
-	serverCarrier, err := topology.serverCarrier()
-	if err != nil {
-		return nil, err
+func (e *BrowserEndpoint) IssueBrowserArtifact() (_ *BrowserArtifact, resultErr error) {
+	if e == nil {
+		return nil, errors.New("original browser endpoint is required")
 	}
-	address := net.ParseIP(listenHost)
-	if address == nil || address.IsUnspecified() || address.IsMulticast() {
-		return nil, errors.New("browser tunnel endpoint requires a concrete unicast IP address")
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		return nil, errEndpointClosed
 	}
-	if err := validateBrowserOrigin(browserOrigin); err != nil {
-		return nil, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	serverTLS, roots, err := browserTunnelTLS(listenHost)
-	if err != nil {
-		return nil, err
-	}
-	endpointCtx, cancel := context.WithCancelCause(ctx)
-	endpoint := &Endpoint{
-		listenHost: listenHost, suite: protocolv3.SuiteChaCha20Poly1305, ctx: endpointCtx, cancel: cancel,
-		maxInboundStreams: maxStreams,
-		expectations:      make(map[[sha256.Size]byte]*admissionExpectation), closeDone: make(chan struct{}),
-	}
-	coordinator, err := tunnelv3.NewCoordinator(coordinatorConfig, endpoint.authorize)
-	if err != nil {
-		cancel(err)
-		return nil, err
-	}
-	endpoint.coordinator = coordinator
-	browserCandidate, err := endpoint.startWebTransportListener("browser-leg", serverTLS.Clone(), browserOrigin)
-	if err != nil {
-		cancel(err)
-		return nil, err
-	}
-	serverCandidate, err := endpoint.startListener("server-leg", serverCarrier, serverTLS.Clone())
-	if err != nil {
-		cancel(err)
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = endpoint.closeListeners(cleanupCtx)
-		cleanupCancel()
-		return nil, err
-	}
-	leaf, err := x509.ParseCertificate(serverTLS.Certificates[0].Certificate[0])
-	if err != nil {
-		cancel(err)
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = endpoint.closeListeners(cleanupCtx)
-		cleanupCancel()
-		return nil, err
-	}
-	digest := sha256.Sum256(leaf.Raw)
-	browserCandidate.TLS = artifactv3.TLSPolicy{
-		Mode: artifactv3.TLSModePin,
-		Pins: []artifactv3.CertificatePin{{
-			Algorithm:      "sha-256",
-			ValueBase64URL: base64.RawURLEncoding.EncodeToString(digest[:]),
-			NotAfterUnixS:  leaf.NotAfter.Unix(),
-		}},
-	}
-	endpoint.candidates = []artifactv3.Candidate{browserCandidate, serverCandidate}
-	factory, err := endpoint.newCandidateFactory(roots)
-	if err != nil {
-		cancel(err)
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = endpoint.closeListeners(cleanupCtx)
-		cleanupCancel()
-		return nil, err
-	}
-	endpoint.factory = factory
-	return &BrowserEndpoint{
-		endpoint: endpoint, topology: topology, certificateHash: digest,
-		certificateDER: append([]byte(nil), serverTLS.Certificates[0].Certificate[0]...), roots: roots,
-	}, nil
-}
-
-func (endpoint *Endpoint) startWebTransportListener(id string, serverTLS *tls.Config, allowedOrigin string) (artifactv3.Candidate, error) {
-	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), endpoint.maxInboundStreams)
-	if err != nil {
-		return artifactv3.Candidate{}, err
-	}
-	server, err := carrierwt.NewServer(serverTLS, limits, func(request *http.Request) bool {
-		return browserOriginAllowed(request.Header.Get("Origin"), allowedOrigin)
-	})
-	if err != nil {
-		return artifactv3.Candidate{}, err
-	}
-	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		session, upgradeErr := server.Upgrade(writer, request)
-		if upgradeErr != nil {
-			return
+	relayScope, endpointScope := namespaceSocketScope(e.relayNamespace), namespaceSocketScope(e.endpointNamespace)
+	position := -1
+	for i := range e.slots {
+		if e.slots[i] == nil && !e.issuing[i] {
+			position = i
+			break
 		}
-		endpoint.legWG.Add(1)
-		go endpoint.serveWebTransport(session)
-	}))
-	packetConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(endpoint.listenHost)})
-	if err != nil {
-		_ = server.Close()
-		return artifactv3.Candidate{}, err
 	}
-	serveDone := make(chan error, 1)
-	endpoint.acceptWG.Add(1)
-	go func() {
-		defer endpoint.acceptWG.Done()
-		serveDone <- server.Serve(packetConn)
+	if position < 0 {
+		e.mu.Unlock()
+		return nil, errors.New("original browser tunnel position capacity exhausted")
+	}
+	e.issuing[position] = true
+	e.construction.Add(1)
+	e.mu.Unlock()
+	ctx, cancel := context.WithCancelCause(e.ctx)
+	artifact := &BrowserArtifact{endpoint: e, position: position, ctx: ctx, cancel: cancel, ready: make(chan struct{})}
+	committed := false
+	defer func() {
+		if !committed {
+			cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
+			resultErr = errors.Join(resultErr, artifact.close(cleanup))
+			stop()
+		}
+		artifact.mu.Lock()
+		cleaned := artifact.cleaned
+		artifact.mu.Unlock()
+		e.mu.Lock()
+		if !committed && !cleaned {
+			e.slots[position] = artifact
+		}
+		e.issuing[position] = false
+		e.mu.Unlock()
+		e.construction.Done()
 	}()
-	endpoint.listeners = append(endpoint.listeners, listenerOwner{close: func(ctx context.Context) error {
-		serverErr := server.Close()
-		packetErr := packetConn.Close()
-		if errors.Is(serverErr, context.Canceled) || errors.Is(serverErr, net.ErrClosed) || strings.Contains(fmt.Sprint(serverErr), "server closed") {
-			serverErr = nil
+	reporter := func() (*interopharness.Reporter, error) {
+		r, err := interopharness.NewPeerReporter()
+		if err == nil {
+			r.OperationDeadlineMS = e.operationDeadlineMS
+			artifact.reporters = append(artifact.reporters, r)
 		}
-		if errors.Is(packetErr, net.ErrClosed) {
-			packetErr = nil
-		}
-		select {
-		case serveErr := <-serveDone:
-			if errors.Is(serveErr, context.Canceled) || errors.Is(serveErr, net.ErrClosed) || strings.Contains(fmt.Sprint(serveErr), "server closed") {
-				serveErr = nil
-			}
-			return errors.Join(serverErr, packetErr, serveErr)
-		case <-ctx.Done():
-			return errors.Join(serverErr, packetErr, context.Cause(ctx))
-		}
-	}})
-	target := (&url.URL{
-		Scheme: "https", Host: net.JoinHostPort(endpoint.listenHost, fmt.Sprint(packetConn.LocalAddr().(*net.UDPAddr).Port)),
-		Path: carrierwt.PathTunnel,
-	}).String()
-	return artifactv3.Candidate{
-		ID: id, Carrier: artifactv3.CarrierWebTransport, URL: target,
-		WireProfile: "flowersec-tunnel/3",
-	}, nil
-}
-
-func (endpoint *Endpoint) serveWebTransport(session *carrierwt.Session) {
-	defer endpoint.legWG.Done()
-	stream, err := carrierwt.OpenAdmissionStream(endpoint.ctx, session)
-	if err != nil {
-		_ = session.Close()
-		return
+		return r, err
 	}
-	pending, err := tunnelv3.NewNativeStreamLeg(session, stream)
-	if err != nil {
-		_ = session.Close()
-		return
-	}
-	_ = endpoint.coordinator.Serve(endpoint.ctx, pending)
-}
-
-// CertificateHashBase64URL returns Chromium's serverCertificateHashes pin.
-func (endpoint *BrowserEndpoint) CertificateHashBase64URL() (string, error) {
-	if endpoint == nil || endpoint.certificateHash == ([sha256.Size]byte{}) {
-		return "", errors.New("browser tunnel certificate hash is unavailable")
-	}
-	return base64.RawURLEncoding.EncodeToString(endpoint.certificateHash[:]), nil
-}
-
-// SetServerDialNamespace binds only the Go server-leg dial sockets to the
-// client side of the test link. It must be set before the first artifact starts.
-func (endpoint *BrowserEndpoint) SetServerDialNamespace(namespace string) {
-	if endpoint != nil && endpoint.endpoint != nil {
-		endpoint.endpoint.serverDialNamespace = namespace
-	}
-}
-
-// IssueBrowserArtifact starts the Go server-role connector and returns the
-// mirrored role-1 artifact for Chromium.
-func (endpoint *BrowserEndpoint) IssueBrowserArtifact() (*BrowserArtifact, error) {
-	if endpoint == nil || endpoint.endpoint == nil || endpoint.endpoint.factory == nil {
-		return nil, errors.New("browser tunnel endpoint is not initialized")
-	}
-	owner := endpoint.endpoint
-	if err := context.Cause(owner.ctx); err != nil {
-		return nil, err
-	}
-	contract, suffix, err := releaseContractWithStreams(owner.suite, owner.maxInboundStreams)
+	relayReporter, err := reporter()
 	if err != nil {
 		return nil, err
 	}
-	browserID, serverID := "browser-"+suffix, "server-"+suffix
-	groupID := "browser-group-" + suffix
-	browserArtifact := owner.artifact(contract, groupID, 1, browserID, serverID, "browser-token-"+suffix)
-	serverArtifact := owner.artifact(contract, groupID, 2, serverID, browserID, "server-token-"+suffix)
-	browserRaw, err := expectedRequest(browserArtifact, "browser-leg")
+	now, err := relayReporter.AuthorityClock().Sample()
 	if err != nil {
 		return nil, err
 	}
-	serverRaw, err := expectedRequest(serverArtifact, "server-leg")
+	leaf, err := x509.ParseCertificate(e.certificateDER)
 	if err != nil {
 		return nil, err
 	}
-	browserExpectation := &admissionExpectation{raw: browserRaw, expectedPeer: serverID}
-	serverExpectation := &admissionExpectation{
-		raw: serverRaw, expectedPeer: browserID, claimedReady: make(chan struct{}),
-	}
-	if err := owner.register(browserExpectation, serverExpectation); err != nil {
+	pin, err := tlspolicy.PinFromDER(e.certificateDER, uint64(leaf.NotBefore.UnixMilli()), uint64(leaf.NotAfter.UnixMilli()), now.Interval)
+	if err != nil {
 		return nil, err
 	}
-	rawJSON, err := artifactv3.MarshalArtifactJSON(browserArtifact)
+	digest := pin.Digest()
+	wirePin, err := protocolv4.EncodeMap(make([]byte, 4096), "TLSPin", []protocolv4.Field{{Name: "leaf_der_sha256", Kind: protocolv4.ByteString, Bytes: digest[:]}, {Name: "not_before_ms", Number: uint64(leaf.NotBefore.UnixMilli())}, {Name: "not_after_ms", Number: uint64(leaf.NotAfter.UnixMilli())}, {Name: "certificate_profile", Kind: protocolv4.TextString, Text: tlspolicy.CertificateProfile}})
 	if err != nil {
-		owner.unregister(browserExpectation, serverExpectation)
 		return nil, err
 	}
-	connectCtx, cancel := context.WithCancelCause(owner.ctx)
-	issued := &BrowserArtifact{
-		endpoint: owner, rawJSON: string(rawJSON), serverArtifact: serverArtifact,
-		browserExpectation: browserExpectation, serverExpectation: serverExpectation,
-		result: make(chan browserConnectResult), peerStartError: make(chan error, 1),
-		timeline: &establishmentTimeline{}, ctx: connectCtx, cancel: cancel,
-	}
-	return issued, nil
-}
-
-// Start begins the paired Go server-role leg and waits until its admission is
-// authorized. The browser can then dial while that leg waits for pairing,
-// without letting batch acquisition bypass the frozen open-loop schedule.
-func (artifact *BrowserArtifact) Start(ctx context.Context) error {
-	if artifact == nil || artifact.endpoint == nil || artifact.serverExpectation == nil || artifact.serverExpectation.claimedReady == nil {
-		return errors.New("browser tunnel artifact is not initialized")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	artifact.startOnce.Do(func() {
-		go func() {
-			session, connectErr := artifact.endpoint.connectSelected(
-				artifact.ctx, artifact.serverArtifact, "server-leg", true, artifact.timeline,
-			)
-			if connectErr != nil {
-				artifact.peerStartError <- connectErr
-			}
-			deliverBrowserConnectResult(artifact.ctx, artifact.result, browserConnectResult{session: session, err: connectErr})
-		}()
-	})
-	select {
-	case <-artifact.serverExpectation.claimedReady:
-		return nil
-	case err := <-artifact.peerStartError:
-		return err
-	case <-artifact.endpoint.ctx.Done():
-		return context.Cause(artifact.endpoint.ctx)
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	}
-}
-
-// deliverBrowserConnectResult transfers a successful session to the receiver.
-// A session is closed only when cancellation wins before that transfer.
-func deliverBrowserConnectResult(ctx context.Context, result chan<- browserConnectResult, value browserConnectResult) {
-	if ctx.Err() != nil {
-		if value.session != nil {
-			_ = value.session.Close()
-		}
-		return
-	}
-	select {
-	case result <- value:
-		return
-	case <-ctx.Done():
-		if value.session != nil {
-			_ = value.session.Close()
-		}
-	}
-}
-
-func (endpoint *Endpoint) connectSelected(
-	ctx context.Context,
-	artifact artifactv3.Artifact,
-	candidateID string,
-	echoRPC bool,
-	timeline *establishmentTimeline,
-) (flowersession.Session, error) {
-	factory := &selectedFactory{base: endpoint.factory, candidateID: candidateID, role: 2, timeline: timeline}
-	var connectorOptions []connectv3.ConnectorOption
-	if echoRPC {
-		router := internalrpc.NewRouter()
-		router.Register(1, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
-			return append(json.RawMessage(nil), payload...), nil
-		})
-		connectorOptions = append(connectorOptions, connectv3.WithRPCRouter(router))
-	}
-	var spent atomic.Bool
-	started := time.Now()
-	connector := connectv3.NewConnector(connectv3.ArtifactLease{
-		Artifact: artifact,
-		CommitSpend: func(context.Context) error {
-			if !spent.CompareAndSwap(false, true) {
-				return errors.New("browser tunnel server artifact was spent more than once")
-			}
-			return nil
-		},
-	}, factory, connectorOptions...)
-	result, err := connector.Connect(ctx)
-	timeline.record(2, candidateID, factory.carrier, "pairing", started, time.Now(), err)
+	// Chromium enforces the signed pin; it does not expose its TLS version for
+	// an additional consumer-side TLS 1.3 check.
+	policy, err := protocolv4.EncodeMap(make([]byte, 8192), "TLSPolicy", []protocolv4.Field{{Name: "mode", Number: 1}, {Name: "pin_kind"}, {Name: "pins", Kind: protocolv4.EncodedArray, Bytes: append([]byte{0x81}, wirePin...)}, {Name: "require_consumer_tls13_verification", Kind: protocolv4.Boolean}})
 	if err != nil {
-		return nil, fmt.Errorf("%w; establishment_stages=%s", err, timeline.compact())
+		return nil, err
 	}
-	if result.Candidate.ID != candidateID {
-		_ = result.Session.Close()
-		return nil, errors.New("browser tunnel connector selected the wrong leg")
+	serverCarrier, err := e.topology.serverCarrier()
+	if err != nil {
+		return nil, err
 	}
-	return result.Session, nil
+	artifact.relay, err = interopharness.NewPoolRelay(ctx, relayReporter, [2]string{"webtransport", relayCarrier(serverCarrier)}, e.origin, interopharness.PoolRelayOptions{EndpointListeners: [2]bool{false, false}, ListenHost: e.listenHost, SocketScope: relayScope, TLS: &interopharness.PoolRelayTLSManifest{Certificate: e.certificate, Roots: e.roots, TrustPEM: e.trustPEM, Policy: policy}})
+	if err != nil {
+		return nil, fmt.Errorf("prepare original browser relay: %w", err)
+	}
+	clientWire, err := artifact.relay.Material[0].JSON()
+	if err != nil {
+		return nil, err
+	}
+	artifact.rawJSON = clientWire
+	serverWire, err := artifact.relay.Material[1].JSON()
+	if err != nil {
+		return nil, err
+	}
+	serverReporter, err := reporter()
+	if err != nil {
+		return nil, err
+	}
+	artifact.server, err = interopharness.NewTunnelServer(ctx, serverReporter, serverWire, artifact.relay.TrustPEM, e.origin, currentBrowserHandlers(), interopharness.TunnelServerOptions{SocketScope: endpointScope})
+	if err != nil {
+		return nil, fmt.Errorf("prepare original browser server: %w", err)
+	}
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		return nil, errEndpointClosed
+	}
+	e.slots[position] = artifact
+	committed = true
+	e.mu.Unlock()
+	return artifact, nil
 }
-
-func (artifact *BrowserArtifact) ArtifactJSON() string {
-	if artifact == nil {
+func (a *BrowserArtifact) ArtifactJSON() string {
+	if a == nil {
 		return ""
 	}
-	return artifact.rawJSON
+	return a.rawJSON
 }
 
-// AwaitServer returns the Go server-role encrypted session after Chromium has
-// completed admission and READY.
-func (artifact *BrowserArtifact) AwaitServer(ctx context.Context) (flowersession.Session, error) {
-	if artifact == nil || artifact.endpoint == nil {
-		return nil, errors.New("browser tunnel artifact is not initialized")
+// PoolClientConfiguration supplies the independently provisioned sender to an
+// original host adapter. Browser Connect still owns the consume and publication.
+func (a *BrowserArtifact) PoolClientConfiguration() (*interopharness.RegisteredPoolClientInstallation, *interopharness.PoolServerAllowBinding, error) {
+	if a == nil || a.server == nil {
+		return nil, nil, errors.New("original browser registration required")
 	}
-	artifact.mu.Lock()
-	if artifact.consumed {
-		artifact.mu.Unlock()
-		return nil, errors.New("browser tunnel artifact was already consumed")
+	return a.server.LocalPoolClientConfiguration()
+}
+
+func (a *BrowserArtifact) Start(ctx context.Context) error {
+	if a == nil || ctx == nil {
+		return errors.New("original browser material and setup context are required")
 	}
-	artifact.consumed = true
-	artifact.mu.Unlock()
-	if ctx == nil {
-		ctx = context.Background()
+	a.mu.Lock()
+	if a.started || a.closing {
+		a.mu.Unlock()
+		return errors.New("original browser material already started or closed")
+	}
+	a.started = true
+	a.acceptDone = make(chan struct{})
+	acceptDone := a.acceptDone
+	a.mu.Unlock()
+	a.relay.Start()
+	go func() {
+		defer close(acceptDone)
+		session, err := a.server.Accept(a.ctx)
+		a.mu.Lock()
+		a.result = browserConnectResult{session, err}
+		close(a.ready)
+		a.mu.Unlock()
+	}()
+	return nil
+}
+func (a *BrowserArtifact) AwaitServer(ctx context.Context) (*fs.Session, error) {
+	if a == nil || ctx == nil {
+		return nil, errors.New("original browser wait context is required")
+	}
+	a.mu.Lock()
+	if !a.started || a.consumed || a.closing {
+		a.mu.Unlock()
+		return nil, errors.New("original browser server result is unavailable")
+	}
+	a.consumed = true
+	a.mu.Unlock()
+	read := func() (*fs.Session, error) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.closing {
+			return nil, errors.Join(errEndpointClosed, a.result.err)
+		}
+		return a.result.session, a.result.err
 	}
 	select {
-	case result := <-artifact.result:
-		artifact.cancel(context.Canceled)
-		artifact.endpoint.unregister(artifact.browserExpectation, artifact.serverExpectation)
-		return result.session, result.err
+	case <-a.ready:
+		return read()
+	default:
+	}
+	select {
+	case <-a.ready:
+		return read()
 	case <-ctx.Done():
-		artifact.cancel(context.Cause(ctx))
-		timer := time.NewTimer(500 * time.Millisecond)
-		defer timer.Stop()
 		select {
-		case result := <-artifact.result:
-			artifact.endpoint.unregister(artifact.browserExpectation, artifact.serverExpectation)
-			return result.session, result.err
-		case <-timer.C:
+		case <-a.ready:
+			return read()
+		default:
 		}
-		artifact.endpoint.unregister(artifact.browserExpectation, artifact.serverExpectation)
+		a.cancel(context.Cause(ctx))
+		// The original acceptance callback remains owned until Cancel or endpoint
+		// Close joins its actual result. Ready failure takes precedence above.
 		return nil, context.Cause(ctx)
-	case <-artifact.endpoint.ctx.Done():
-		artifact.cancel(context.Cause(artifact.endpoint.ctx))
-		artifact.endpoint.unregister(artifact.browserExpectation, artifact.serverExpectation)
-		return nil, context.Cause(artifact.endpoint.ctx)
 	}
 }
-
-func (artifact *BrowserArtifact) Cancel() {
-	if artifact == nil || artifact.endpoint == nil {
+func (a *BrowserArtifact) Cancel() {
+	if a == nil {
 		return
 	}
-	artifact.mu.Lock()
-	if artifact.consumed {
-		artifact.mu.Unlock()
-		return
-	}
-	artifact.consumed = true
-	artifact.mu.Unlock()
-	artifact.cancel(context.Canceled)
-	artifact.endpoint.unregister(artifact.browserExpectation, artifact.serverExpectation)
+	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	_ = a.close(ctx)
 }
-
-func (endpoint *BrowserEndpoint) Close(ctx context.Context) error {
-	if endpoint == nil {
+func (a *BrowserArtifact) close(ctx context.Context) error {
+	if a == nil {
 		return nil
 	}
-	return endpoint.endpoint.Close(ctx)
+	for {
+		a.mu.Lock()
+		if a.cleaned {
+			err := a.closeErr
+			a.mu.Unlock()
+			return err
+		}
+		if a.cleaning {
+			done := a.cleanupDone
+			a.mu.Unlock()
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		a.closing = true
+		a.cleaning = true
+		a.cleanupDone = make(chan struct{})
+		a.cancel(context.Canceled)
+		started, acceptDone := a.started, a.acceptDone
+		a.mu.Unlock()
+		var err error
+		if started {
+			if acceptDone == nil {
+				acceptDone = a.ready
+			}
+			select {
+			case <-acceptDone:
+			case <-ctx.Done():
+				err = ctx.Err()
+			}
+		}
+		a.mu.Lock()
+		session := a.result.session
+		a.mu.Unlock()
+		if err == nil && session != nil {
+			err = errors.Join(transporttest.NormalizeCloseError(session.Close()), session.WaitCleanup(ctx))
+		}
+		if err == nil {
+			for i := len(a.reporters) - 1; i >= 0; i-- {
+				err = errors.Join(err, a.reporters[i].Close())
+			}
+		}
+		a.mu.Lock()
+		a.cleaning = false
+		if err == nil {
+			a.cleaned = true
+			a.reporters = nil
+		}
+		a.closeErr = err
+		cleaned := a.cleaned
+		close(a.cleanupDone)
+		a.mu.Unlock()
+		if cleaned && a.endpoint != nil {
+			a.endpoint.mu.Lock()
+			if a.endpoint.slots[a.position] == a {
+				a.endpoint.slots[a.position] = nil
+			}
+			a.endpoint.mu.Unlock()
+		}
+		return err
+	}
 }
-
+func (e *BrowserEndpoint) Close(ctx context.Context) error {
+	if e == nil {
+		return nil
+	}
+	if ctx == nil {
+		return errors.New("original browser endpoint cleanup context is required")
+	}
+	e.mu.Lock()
+	if !e.closed {
+		e.closed = true
+		e.cancel(errEndpointClosed)
+		go func() { e.construction.Wait(); close(e.constructionDone) }()
+	}
+	done := e.constructionDone
+	e.mu.Unlock()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	e.mu.Lock()
+	artifacts := append([]*BrowserArtifact(nil), e.slots...)
+	e.mu.Unlock()
+	var err error
+	for _, artifact := range artifacts {
+		err = errors.Join(err, artifact.close(ctx))
+	}
+	return err
+}
 func validateBrowserOrigin(raw string) error {
 	origin, err := url.Parse(raw)
-	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.User != nil ||
-		origin.Host == "" || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
-		return errors.New("browser origin must be an absolute HTTP origin")
+	if err != nil || origin.Scheme != "http" && origin.Scheme != "https" || origin.User != nil || origin.Host == "" || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		return errors.New("browser Origin must be one exact HTTP origin")
 	}
-	address := net.ParseIP(origin.Hostname())
-	if address == nil || address.IsUnspecified() || address.IsMulticast() {
-		return errors.New("browser origin must use a concrete unicast IP address")
+	host, err := netip.ParseAddr(origin.Hostname())
+	if err != nil || host.IsUnspecified() || host.IsMulticast() || host.Zone() != "" {
+		return errors.New("browser Origin requires one concrete numeric unicast host")
 	}
 	return nil
 }
-
 func browserOriginAllowed(raw, allowed string) bool {
 	origin, err := url.Parse(raw)
-	if err != nil || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+	if err != nil {
 		return false
 	}
 	want, err := url.Parse(allowed)
-	if err != nil || origin.Scheme != want.Scheme || origin.Hostname() != want.Hostname() {
-		return false
-	}
-	return want.Port() == "" || origin.Port() == want.Port()
+	return err == nil && origin.User == nil && origin.Path == "" && origin.RawQuery == "" && origin.Fragment == "" && origin.Scheme == want.Scheme && origin.Hostname() == want.Hostname() && (want.Port() == "" || origin.Port() == want.Port())
 }
 
-func browserTunnelTLS(listenHost string) (*tls.Config, *x509.CertPool, error) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func (e *BrowserEndpoint) SetNetworkNamespaces(relayNamespace, endpointNamespace string) error {
+	if e == nil || relayNamespace == "" || endpointNamespace == "" {
+		return errors.New("explicit browser relay and endpoint namespaces are required")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return errEndpointClosed
+	}
+	for i := range e.slots {
+		if e.slots[i] != nil || e.issuing[i] {
+			return errors.New("browser network scopes are frozen before original issuance")
+		}
+	}
+	e.relayNamespace, e.endpointNamespace = relayNamespace, endpointNamespace
+	return nil
+}
+
+// InstallOriginalBrowserRunner retains the original committed source material
+// and independently installed native TLS roots through publication. It carries
+// no durable read receipt or consumer-supplied trust declaration.
+func (a *BrowserArtifact) InstallOriginalBrowserRunner(ctx context.Context, owner *interopharness.BrowserRunnerInstallationOwner, observation interopharness.BrowserRuntimeObservation, declaration map[string]any) error {
+	if a == nil || a.endpoint == nil || a.relay == nil {
+		return errors.New("original tunnel browser issuance is required")
+	}
+	return owner.InstallOriginal(ctx, a.rawJSON, a.relay.Material[0], a.relay.TrustPEM, a.endpoint.origin, observation, declaration)
+}
+
+// BindOriginalBrowserRuntimeOrigin fixes the module's actual listener port
+// before any original PoolService issuance creates a native relay deployment.
+func (e *BrowserEndpoint) BindOriginalBrowserRuntimeOrigin(origin string) error {
+	if e == nil {
+		return errors.New("original browser tunnel owner is required")
+	}
+	if err := validateBrowserOrigin(origin); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(origin)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: listenHost},
-		IPAddresses: []net.IP{net.ParseIP(listenHost)}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	installed, err := url.Parse(e.origin)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
-	parsed, err := x509.ParseCertificate(der)
+	if e.closed || e.browserRuntimeBound || parsed.Scheme != installed.Scheme || parsed.Hostname() != installed.Hostname() || parsed.Port() == "" {
+		return errors.New("browser runtime origin differs from its original module host")
+	}
+	for index, slot := range e.slots {
+		if slot != nil || e.issuing[index] {
+			return errors.New("browser runtime must bind before original paired issuance")
+		}
+	}
+	e.origin = origin
+	e.browserRuntimeBound = true
+	return nil
+}
+
+// OriginalBrowserRunnerDeclaration uses the real endpoint's frozen service
+// contracts and the relay's retained original pool publication. Browser native
+// qualification is an independently installed declaration supplied by the host.
+func (a *BrowserArtifact) OriginalBrowserRunnerDeclaration(ctx context.Context, observation interopharness.BrowserRuntimeObservation, installed *interopharness.BrowserNativeInstallation, minimumStreams uint32) (map[string]any, error) {
+	if a == nil || a.relay == nil || a.server == nil {
+		return nil, errors.New("original tunnel browser issuance is required")
+	}
+	application, err := a.server.Client.Runtime.OriginalBrowserApplication(1, "echo")
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	roots := x509.NewCertPool()
-	roots.AddCert(parsed)
-	return &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: privateKey}},
-	}, roots, nil
+	declaration, err := a.relay.Runtime.OriginalBrowserRunnerDeclaration(ctx, a.relay.Material[0], observation, installed, application, minimumStreams)
+	if err != nil {
+		return nil, err
+	}
+	allow, err := a.server.BrowserPoolServerAllowInstallation()
+	if err != nil {
+		return nil, err
+	}
+	declaration["pool_server_allow"] = allow
+	return declaration, nil
+}
+
+func OpenBrowserBatchEndpointAt(ctx context.Context, topology BrowserTopology, host, origin string, plan transporttest.ProfilePlan, positions int) (*BrowserEndpoint, error) {
+	if positions < 1 || positions > 1000 || plan.Cold.MaxInflight < 1 || plan.Cold.MaxInflight > 128 || plan.Cold.OperationDeadlineSeconds < 1 || plan.Cold.OperationDeadlineSeconds > 90 {
+		return nil, errors.New("finite original browser batch profile is required")
+	}
+	endpoint, err := openCurrentBrowserEndpoint(ctx, topology, host, origin, positions)
+	if err != nil {
+		return nil, err
+	}
+	endpoint.operationDeadlineMS = uint64(plan.Cold.OperationDeadlineSeconds) * 1000
+	return endpoint, nil
+}
+func currentBrowserHandlers() interopharness.HandlerConfig {
+	return func(runtime *interopharness.Runtime, role uint8) (fs.StreamHandlerPlanConfig, error) {
+		config, err := currentTunnelHandlers(nil)(runtime, role)
+		if err != nil {
+			return config, err
+		}
+		maximum := runtime.Authority.Admission[role].Core.Open.PerClass[0]
+		for _, kind := range []string{"release-bulk", "native-isolation"} {
+			config.Handlers = append(config.Handlers, fs.RawStreamHandlerConfig{Kind: kind, Manual: true, Slots: maximum, NormalTerminationMS: 5000, WorkClass: fs.WorkResident, AuthorizeOpen: func(ctx context.Context, _ any, _ []byte) error { return ctx.Err() }})
+		}
+		return config, nil
+	}
+}
+func (a *BrowserArtifact) CloseOriginalBrowser(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("original browser cleanup context is required")
+	}
+	return a.close(ctx)
+}
+
+func (a *BrowserArtifact) CheckOriginalBrowserBatchWindow(ctx context.Context, admissionMS, sessionMS uint64) error {
+	if a == nil || a.relay == nil || a.relay.Runtime == nil {
+		return errors.New("original tunnel browser issuance is required")
+	}
+	return a.relay.Runtime.CheckOriginalBrowserBatchWindow(ctx, a.relay.Material[0], admissionMS, sessionMS)
+}
+
+// relayCarrier maps the public carrier vocabulary to the native engineering adapter.
+func relayCarrier(kind carrier.Kind) string {
+	if kind == carrier.KindRawQUIC {
+		return "raw-quic"
+	}
+	return string(kind)
 }

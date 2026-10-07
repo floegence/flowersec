@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql/driver"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
@@ -235,5 +236,66 @@ func TestSQLiteNamespaceUnknownCommitRequiresIndependentRecovery(t *testing.T) {
 	got, n, err := h.LoadNamespace(context.Background(), dst)
 	if err != nil || got != f.anchor || !bytes.Equal(dst[:n], second) {
 		t.Fatal("lost original committed history", err)
+	}
+}
+
+func TestSQLiteNamespaceReopenRejectsCorruptEnvelopeBeforeEpochWrite(t *testing.T) {
+	for _, mutation := range []string{"digest", "shape", "chunk_length"} {
+		t.Run(mutation, func(t *testing.T) {
+			f := newSQLiteNamespaceFixture(t)
+			h, err := f.openHistory(true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wire := f.record(70000, 17)
+			f.anchor, err = h.CommitNamespace(context.Background(), protocolv4.NamespaceContinuityVersion{}, wire)
+			if err != nil {
+				t.Fatal(err)
+			}
+			closeSQLite(t, h.store)
+			h, err = f.openHistory(false)
+			if err != nil {
+				t.Fatal("valid chunked reopen", err)
+			}
+			switch mutation {
+			case "digest":
+				wrong := [32]byte{99}
+				err = h.store.exec("UPDATE manifest SET snapshot_digest=?1", named(1, wrong[:]))
+			case "shape":
+				wire[0] ^= 1
+				digest := sha256.Sum256(wire)
+				err = h.store.exec("UPDATE chunks SET data=?1 WHERE ordinal=0", named(1, wire[:65536]))
+				if err == nil {
+					err = h.store.exec("UPDATE manifest SET snapshot_digest=?1", named(1, digest[:]))
+				}
+			case "chunk_length":
+				// Keep aggregate count/bytes unchanged while moving one byte
+				// across the fixed chunk boundary.
+				err = h.store.exec("UPDATE chunks SET data=?1 WHERE ordinal=0", named(1, wire[:65535]))
+				if err == nil {
+					err = h.store.exec("UPDATE chunks SET data=?1 WHERE ordinal=1", named(1, wire[65535:]))
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			closeSQLite(t, h.store)
+			before, err := os.ReadFile(f.backing.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opened, err := f.openHistory(false)
+			if opened != nil {
+				t.Fatal("corrupt namespace returned owner")
+			}
+			projection := storageFormatProjection(t, err)
+			if projection.Reason != StorageFormatState || projection.ObservedRevision != (StorageRevision{Known: true, Value: 1}) {
+				t.Fatal(projection)
+			}
+			after, err := os.ReadFile(f.backing.path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("refusal rewrote namespace history", err)
+			}
+		})
 	}
 }

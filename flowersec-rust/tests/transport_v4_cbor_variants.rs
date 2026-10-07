@@ -127,7 +127,7 @@ fn shared_closed_variant_corpus() {
         }
         assert_eq!(input, bytes(vector));
     }
-    assert_eq!(counts, [348, 134]);
+    assert_eq!(counts, [349, 134]);
     println!(
         "{} positive and {} variant-negative cases",
         counts[0], counts[1]

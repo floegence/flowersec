@@ -4,7 +4,7 @@ import XCTest
 @testable import Flowersec
 
 // Public-fixture primitive interoperability, not runtime credential validation.
-final class TransportV4SignatureTests: XCTestCase {
+final class TransportSignatureTests: XCTestCase {
   private struct Corpus: Decodable {
     let schema_sha256: String
     let signing_seed_hex: String

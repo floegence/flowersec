@@ -91,6 +91,16 @@ type sqliteDirectIssuePermit struct {
 const directIssueFixedStateBytes uint64 = 1024 + 128
 const directIssuePerLeaseStateBytes uint64 = 92 + 41
 
+// SQLiteDirectIssueStateShareBytes is the minimum original State allocation
+// required for one fixed physical issuance share. Deployment manifests use the
+// same worst-case lease, cohort and header sizes as the durable authority.
+func SQLiteDirectIssueStateShareBytes(outstanding uint32) (uint64, error) {
+	if outstanding == 0 || outstanding > 1<<20 {
+		return 0, ErrConfiguration
+	}
+	return directIssueFixedStateBytes + uint64(outstanding)*directIssuePerLeaseStateBytes, nil
+}
+
 func SQLiteDirectIssueCharge(c SQLiteDirectIssueConfig) (resourcev4.Vector, error) {
 	if c.Policy.Trust == nil || c.Policy.Clock == nil || c.Host == nil || c.MaxOutstanding == 0 || c.MaxOutstanding > 1<<20 || c.StateBytes < directIssueFixedStateBytes+uint64(c.MaxOutstanding)*directIssuePerLeaseStateBytes || c.StateBytes > 1<<32 || c.RequestsPerMinute == 0 || c.RequestsPerMinute > 6000 || c.Burst == 0 || c.Burst > c.RequestsPerMinute || c.WorkMS == 0 || c.WorkMS > 2000 || c.RuntimeBytes == 0 {
 		return resourcev4.Vector{}, ErrConfiguration

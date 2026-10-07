@@ -87,9 +87,9 @@ type publicPublicationFixture struct {
 	access             *controlPublicationAccess
 	identity           ledgerv4.SQLiteIdentity
 	limits             ledgerv4.SQLiteLimits
-	config             controlplane.V4SQLitePublicationConfig
+	config             controlplane.SQLitePublicationConfig
 	backing            *ledgerv4.SQLiteBacking
-	store              *controlplane.V4SQLitePublicationStore
+	store              *controlplane.SQLitePublicationStore
 }
 
 func newPublicPublicationFixture(t *testing.T) *publicPublicationFixture {
@@ -149,7 +149,7 @@ func newPublicPublicationFixture(t *testing.T) *publicPublicationFixture {
 	f.state = encodeControlMap(t, "RevocationState", controlText("schema_revision", "4"), controlText("tenant_id", scope.Tenant), controlText("revocation_authority_id", scope.Authority), controlBytes("namespace_capacity_digest", scope.Capacity[:]), controlNumber("authority_generation", 1), controlArray("credential_revocation_floors", []byte{0x82, 0, 0}), controlText("publication_policy_id", "publication"), controlNumber("publication_policy_revision", 1), controlArray("revoked_issuers", []byte{0x80}), controlArray("revoked_certificates", []byte{0x80}), controlArray("revoked_leases", []byte{0x80}), controlArray("cohort_policy_segments", append([]byte{0x81}, segment...)))
 	f.limits = ledgerv4.SQLiteLimits{MaxPages: 256, MaxRecords: 64, MaxRecordBytes: 65536, RuntimeBytes: 65536, ProviderRuntimeBytes: 1 << 20, DiskOverheadBytes: 65536}
 	f.identity = ledgerv4.SQLiteIdentity{Authority: "authority", StoreID: [32]byte{7}, Generation: 1}
-	f.config = controlplane.V4SQLitePublicationConfig{Scope: scope, Clock: f.clock, Trust: f.trust, Access: f.access, HistorySlots: 4, MaxAuthenticationBytes: 128}
+	f.config = controlplane.SQLitePublicationConfig{Scope: scope, Clock: f.clock, Trust: f.trust, Access: f.access, HistorySlots: 4, MaxAuthenticationBytes: 128}
 	path := filepath.Join(t.TempDir(), "publication.db")
 	cost, err = ledgerv4.SQLiteBackingCharge(f.limits)
 	if err != nil {
@@ -175,15 +175,15 @@ func newPublicPublicationFixture(t *testing.T) *publicPublicationFixture {
 }
 func (f *publicPublicationFixture) open(create bool) {
 	f.t.Helper()
-	a, b, c, err := controlplane.V4SQLitePublicationStoreCharges(f.limits, f.config)
+	a, b, c, err := controlplane.SQLitePublicationStoreCharges(f.limits, f.config)
 	if err != nil {
 		f.t.Fatal(err)
 	}
 	owner, first, second := f.reserve(a), f.reserve(b), f.reserve(c)
 	if create {
-		f.store, err = controlplane.CreateV4SQLitePublicationStore(context.Background(), f.backing, f.identity, controlContinuity{f.identity}, f.config, owner, first, second, f.environment)
+		f.store, err = controlplane.CreateSQLitePublicationStore(context.Background(), f.backing, f.identity, controlContinuity{f.identity}, f.config, owner, first, second, f.environment)
 	} else {
-		f.store, err = controlplane.OpenV4SQLitePublicationStore(context.Background(), f.backing, f.identity, controlContinuity{f.identity}, f.config, owner, first, second, f.environment)
+		f.store, err = controlplane.OpenSQLitePublicationStore(context.Background(), f.backing, f.identity, controlContinuity{f.identity}, f.config, owner, first, second, f.environment)
 	}
 	store := f.store
 	if store != nil {
@@ -196,7 +196,7 @@ func (f *publicPublicationFixture) open(create bool) {
 	first.Release()
 	second.Release()
 }
-func (f *publicPublicationFixture) closeStore(store *controlplane.V4SQLitePublicationStore) {
+func (f *publicPublicationFixture) closeStore(store *controlplane.SQLitePublicationStore) {
 	f.t.Helper()
 	store.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -208,15 +208,15 @@ func (f *publicPublicationFixture) closeStore(store *controlplane.V4SQLitePublic
 		f.t.Fatal(err)
 	}
 }
-func (f *publicPublicationFixture) publisher() *controlplane.V4NamespacePublisher {
+func (f *publicPublicationFixture) publisher() *controlplane.NamespacePublisher {
 	f.t.Helper()
-	c := controlplane.V4NamespacePublisherConfig{Clock: f.clock, Trust: f.trust, Store: f.store, Signer: f.signer, SignerID: f.signerID, Generation: 1, WorkMS: 1000, MinimumValidityMS: 10, RuntimeBytes: 65536}
-	a, b, err := controlplane.V4NamespacePublisherCharges(c)
+	c := controlplane.NamespacePublisherConfig{Clock: f.clock, Trust: f.trust, Store: f.store, Signer: f.signer, SignerID: f.signerID, Generation: 1, WorkMS: 1000, MinimumValidityMS: 10, RuntimeBytes: 65536}
+	a, b, err := controlplane.NamespacePublisherCharges(c)
 	if err != nil {
 		f.t.Fatal(err)
 	}
 	owner, state := f.reserve(a), f.reserve(b)
-	p, err := controlplane.NewV4NamespacePublisher(c, owner, state, f.environment)
+	p, err := controlplane.NewNamespacePublisher(c, owner, state, f.environment)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -233,17 +233,17 @@ func (f *publicPublicationFixture) publisher() *controlplane.V4NamespacePublishe
 	return p
 }
 
-func TestV4NamespacePublicationCommitsSignedSnapshotAndReopens(t *testing.T) {
+func TestNamespacePublicationCommitsSignedSnapshotAndReopens(t *testing.T) {
 	f := newPublicPublicationFixture(t)
 	ctx := context.Background()
 	if version, err := f.store.ReplaceState(ctx, 0, f.state); err != nil || version != 1 {
 		t.Fatal(version, err)
 	}
-	if _, err := f.store.ReplaceState(ctx, 0, f.state); err != controlplane.V4PublicationFailure("publication_conflict") {
+	if _, err := f.store.ReplaceState(ctx, 0, f.state); err != controlplane.PublicationFailure("publication_conflict") {
 		t.Fatal("stale replacement changed authoritative state", err)
 	}
 	state, head := make([]byte, 4096), make([]byte, 1024)
-	if _, _, _, err := f.store.ReadPublished(ctx, []byte("registered-reader"), [32]byte{}, state, head); err != controlplane.V4PublicationFailure("publication_unavailable") {
+	if _, _, _, err := f.store.ReadPublished(ctx, []byte("registered-reader"), [32]byte{}, state, head); err != controlplane.PublicationFailure("publication_unavailable") {
 		t.Fatal("unpublished state escaped", err)
 	}
 	p := f.publisher()
@@ -282,12 +282,12 @@ func TestV4NamespacePublicationCommitsSignedSnapshotAndReopens(t *testing.T) {
 		t.Fatal("restart lost original publication facts", second, err)
 	}
 	f.access.denied.Store(true)
-	if _, n, m, err := f.store.ReadPublished(ctx, []byte("registered-reader"), first.StateDigest, state, head); err != controlplane.V4PublicationFailure("publication_refused") || n != 0 || m != 0 {
+	if _, n, m, err := f.store.ReadPublished(ctx, []byte("registered-reader"), first.StateDigest, state, head); err != controlplane.PublicationFailure("publication_refused") || n != 0 || m != 0 {
 		t.Fatal("known digest bypassed namespace authorization", n, m, err)
 	}
 }
 
-func TestV4NamespaceCloseWaitsForActualSignerWithoutPublishing(t *testing.T) {
+func TestNamespaceCloseWaitsForActualSignerWithoutPublishing(t *testing.T) {
 	f := newPublicPublicationFixture(t)
 	if _, err := f.store.ReplaceState(context.Background(), 0, f.state); err != nil {
 		t.Fatal(err)
@@ -314,7 +314,7 @@ func TestV4NamespaceCloseWaitsForActualSignerWithoutPublishing(t *testing.T) {
 	p.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	if err := p.WaitCleanup(ctx); err != controlplane.V4PublicationFailure("expired") {
+	if err := p.WaitCleanup(ctx); err != controlplane.PublicationFailure("expired") {
 		t.Fatal("cleanup completed before signer", err)
 	}
 	if after := f.root.Snapshot(); after != before {
@@ -332,26 +332,26 @@ func TestV4NamespaceCloseWaitsForActualSignerWithoutPublishing(t *testing.T) {
 	if err := p.WaitCleanup(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := f.store.ReadPublished(context.Background(), []byte("registered-reader"), [32]byte{}, make([]byte, 4096), make([]byte, 1024)); err != controlplane.V4PublicationFailure("publication_unavailable") {
+	if _, _, _, err := f.store.ReadPublished(context.Background(), []byte("registered-reader"), [32]byte{}, make([]byte, 4096), make([]byte, 1024)); err != controlplane.PublicationFailure("publication_unavailable") {
 		t.Fatal("cancelled publication became readable", err)
 	}
 }
 
-func TestV4NamespaceHTTPSRejectsUnauthenticatedReadAndCleansUp(t *testing.T) {
+func TestNamespaceHTTPSRejectsUnauthenticatedReadAndCleansUp(t *testing.T) {
 	f := newPublicPublicationFixture(t)
 	template := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.UnixMilli(0), NotAfter: time.UnixMilli(10000), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, f.rootSigner.key.Public(), f.rootSigner.key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := controlplane.V4NamespaceHTTPSConfig{Clock: f.clock, Trust: f.trust, Scope: f.access.scope, BootstrapSigner: f.rootSigner, ClientCertificateDER: der, RequestsPerMinute: 60, Burst: 20, WorkMS: 1000, BootstrapValidityMS: 1000, RuntimeBytes: 65536}
-	cost, err := controlplane.V4NamespaceHTTPSServiceCharge(c)
+	c := controlplane.NamespaceHTTPSConfig{Clock: f.clock, Trust: f.trust, Scope: f.access.scope, BootstrapSigner: f.rootSigner, ClientCertificateDER: der, RequestsPerMinute: 60, Burst: 20, WorkMS: 1000, BootstrapValidityMS: 1000, RuntimeBytes: 65536}
+	cost, err := controlplane.NamespaceHTTPSServiceCharge(c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	before := f.root.Snapshot()
 	owner := f.reserve(cost)
-	service, err := controlplane.NewV4NamespaceHTTPSService(f.store, c, owner, f.environment)
+	service, err := controlplane.NewNamespaceHTTPSService(f.store, c, owner, f.environment)
 	if err != nil {
 		t.Fatal(err)
 	}

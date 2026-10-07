@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
 )
 
 func TestRepresentativeScenarioConfiguresThePeriodicLossItValidates(t *testing.T) {
@@ -89,7 +89,7 @@ func (reader resetReader) Read([]byte) (int, error) { return 0, reader.err }
 func (resetReader) Close() error                    { return nil }
 
 func TestPeerResetObservationRequiresTheRemoteTerminalError(t *testing.T) {
-	if err := observePeerReset(context.Background(), resetReader{err: protocolv3.ErrStreamReset}); err != nil {
+	if err := observePeerReset(context.Background(), resetReader{err: native.ErrDirectionReset}); err != nil {
 		t.Fatal(err)
 	}
 	if err := observePeerReset(context.Background(), resetReader{err: errors.New("closed without reset")}); err == nil {

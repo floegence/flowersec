@@ -18,6 +18,7 @@ import { ResourceError, ResourceVector, type ProtectedResourceReservation, type 
 import type { ContractQueryServiceStep } from "./contractQueryService.js";
 import { QueryRenewalPosition, type QueryRenewalReservation, type ContractRenewalProtection, type QueryPreparationReservation, type ContractQueryPreparation } from "./queryRenewalPosition.js";
 
+import { DiagnosticActivity, type DiagnosticObserver } from "./diagnosticObservation.js";
 const capability = Symbol("original Environment contract acquisition"), NativePromise = Promise;
 export type ContractQueryFailure = "cancelled" | "deadline_exceeded" | "source_unavailable" | "response_invalid";
 export interface ContractQueryProgress {
@@ -82,9 +83,10 @@ export class ContractQueryAcquisition implements FixedQueryWork {
   #waiter: Waiter | undefined;
   #cleanupWaiter: CleanupWaiter | undefined;
   #reusableProtection = false;
-  constructor(token: symbol, pool: ContractQueryAcquisitions, runtimeBytes: bigint, references: ResourceReference[]) {
+  constructor(token: symbol, pool: ContractQueryAcquisitions, runtimeBytes: bigint, references: ResourceReference[], private readonly diagnostic?: DiagnosticActivity) {
     if (token !== capability || references.length !== 10) throw new RPCProtocolError("rpc_query_owner");
     this.#pool = pool; this.#references = references.slice(1); this.#reference = references[0]!.take(contractQueryAcquisitionCharge(runtimeBytes));
+    diagnostic?.holdPublication();
     Object.freeze(this);
   }
   prepare(token: symbol, group: ApplicationGroup, client: ContractQueryClient, deadline: TrustedDeadline,
@@ -200,6 +202,7 @@ export class ContractQueryAcquisition implements FixedQueryWork {
       this.#check(); const result = this.#result;
       if (this.#phase !== "ready" || result === undefined) throw new RPCProtocolError("query_result_unavailable");
       this.#result = undefined; if (!this.#detachedDelivery) this.#delivered = result; this.#phase = "taken";
+      this.diagnostic?.event({ state: "ready", code: "ok" }); this.diagnostic?.close();
       this.#call?.close(); this.#releaseUnused(); this.#detachContext(); this.#deadline = undefined;
       this.#lease?.release(); this.#lease = undefined;
       this.#notifyWaiter(); return result;
@@ -243,7 +246,7 @@ export class ContractQueryAcquisition implements FixedQueryWork {
   #notifyWaiter(): void { if (this.#phase === "ready" || this.#phase === "taken" || this.#phase === "failed") this.#settleWaiter(); }
   #fail(failure: ContractQueryFailure): void {
     if (this.#closed) return;
-    if (this.#phase !== "taken") { this.#phase = "failed"; this.#failure = failure; }
+    if (this.#phase !== "taken") { this.diagnostic?.failure(new Error(failure === "cancelled" ? "canceled" : failure)); this.#phase = "failed"; this.#failure = failure; }
     this.#closed = true; this.#detachContext(); this.#deadline = undefined;
     this.#lease?.release(); this.#lease = undefined;
     this.#call?.close(); this.#wake?.(); this.#notifyWaiter(); this.#collect();
@@ -262,6 +265,7 @@ export class ContractQueryAcquisition implements FixedQueryWork {
       this.#call = undefined; this.#delivered = undefined; this.#closed = true;
       this.#lease?.release(); this.#lease = undefined; this.#deadline = undefined; this.#detachContext(); this.#windows.length = 0;
       this.#reference?.release(); this.#reference = undefined; this.#cleaned = true;
+      this.diagnostic?.finishPublication(); this.diagnostic?.close();
       const protection = this.#protection; this.#protection = undefined;
       if (this.#reusableProtection) protection?.detach(this); else protection?.close();
       const pool = this.#pool; this.#pool = undefined; pool?.released(capability, this);
@@ -286,7 +290,7 @@ export class ContractQueryAcquisitions {
   #working = false;
   #collecting = false;
   #closed = false;
-  constructor(root: ResourceRoot, private readonly clock: TrustedClock, readonly limit: 2 | 4, readonly runtimeBytes: bigint, references: readonly ResourceReference[]) {
+  constructor(root: ResourceRoot, private readonly clock: TrustedClock, readonly limit: 2 | 4, readonly runtimeBytes: bigint, references: readonly ResourceReference[], private readonly diagnostics?: DiagnosticObserver) {
     const costs = contractQueryAcquisitionsCharges(limit, runtimeBytes);
     if (references.length !== costs.length || !references.every(ref => references[0]!.sameEnvironment(ref))) throw new RPCProtocolError("rpc_query_owner");
     this.#owners = Array<ContractQueryAcquisition | undefined>(limit).fill(undefined);
@@ -319,6 +323,7 @@ export class ContractQueryAcquisitions {
     renewal?: ContractRenewalProtection, preparation?: ContractQueryPreparation): ContractQueryAcquisition {
     this.#check(); if (this.#working) throw new RPCProtocolError("query_busy"); this.#working = true;
     const references: ResourceReference[] = [];
+    const diagnostic = new DiagnosticActivity(this.diagnostics, "application");
     let owner: ContractQueryAcquisition | undefined;
     try {
       if (!deadline.belongsTo(this.clock) || !client.sameEnvironment(this.#reference!) || !group.sameEnvironment(this.#reference!)) throw new RPCProtocolError("rpc_query_owner");
@@ -326,11 +331,11 @@ export class ContractQueryAcquisitions {
       const index = preparation === undefined ? this.#renewal.select(renewal?.environment, targets) : this.#renewal.selectPreparation(preparation.environment);
       if (index < 0) throw new ResourceError("resource_exhausted");
       for (const position of this.#positions[index]!) references.push(position.checkout());
-      owner = new ContractQueryAcquisition(capability, this, this.runtimeBytes, references); this.#owners[index] = owner;
+      owner = new ContractQueryAcquisition(capability, this, this.runtimeBytes, references, diagnostic); this.#owners[index] = owner;
       const destination = typeof delivery === "function" ? delivery() : delivery;
       owner.prepare(capability, group, client, client.acquisitionDeadline(deadline), windows, context, destination, preparation); this.#check();
       owner.start(capability, client, channel, targets, renewal?.session, preparation?.session); this.#check(); return owner;
-    } catch (error) { owner?.close(); throw error; }
+    } catch (error) { diagnostic.failure(error); owner?.close(); throw error; }
     finally { if (owner === undefined) for (const reference of references) reference.release(); this.#working = false; this.#collect(); }
   }
   deliveryReleased(token: symbol, owner: ContractQueryAcquisition): boolean {

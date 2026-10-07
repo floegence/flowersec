@@ -28,6 +28,8 @@ const (
 // restriction on arbitrary application allocation. Payload/codec/input owners
 // have their own original full reservations and are never folded into it.
 type ApplicationExecutorConfig struct {
+	Profile           ApplicationResourceProfile
+	DisableManagement bool
 	// Diagnostics explicitly admits the fixed 2-running/4-ready diagnostic
 	// service. Disabled sinks require no callback service.
 	Diagnostics                           bool
@@ -52,6 +54,7 @@ type applicationTaskSlot struct {
 	result    *ApplicationTask
 	backing   resourcev4.Reference
 	task      resourcev4.Reference
+	service   resourcev4.Reference
 }
 
 // ApplicationExecutor is the one root-scoped ordinary execution gate shared by
@@ -74,6 +77,8 @@ type ApplicationExecutor struct {
 	completionCount, completionRunning uint32
 	completionClaims                   uint32
 	completionOrder                    uint64
+	completionReady                    [4]int
+	completionReadyCount               uint32
 	mu                                 sync.Mutex
 	config                             ApplicationExecutorConfig
 	reservation                        resourcev4.Reference
@@ -95,6 +100,9 @@ func ApplicationExecutorCharge(config ApplicationExecutorConfig) (resourcev4.Vec
 	}
 	if config.Running == 0 || config.ResidentRunning >= config.Running || config.RuntimeBytes == 0 || config.RuntimeBytesPerTask == 0 || config.RuntimeBytesPerTask > math.MaxUint64-metadata {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
+	}
+	if config.Profile != ApplicationProfileCustom {
+		return applicationProfileCharge(config)
 	}
 	fixed, slot := uint64(unsafe.Sizeof(ApplicationExecutor{})), uint64(unsafe.Sizeof(applicationTaskSlot{}))
 	if config.RuntimeBytes > math.MaxUint64-fixed {
@@ -147,6 +155,11 @@ func ApplicationExecutorCharge(config ApplicationExecutorConfig) (resourcev4.Vec
 // these actual task/stack resources must not be counted twice in its metadata.
 // An unstarted permit holds the same complete charge before OPEN acceptance.
 func (e *ApplicationExecutor) TaskCharge() resourcev4.Vector {
+	if e.config.Profile != ApplicationProfileCustom {
+		// Running stacks and bounded handles belong to the original shared
+		// service; this per-invocation reference owns the actual task lifetime.
+		return resourcev4.Vector{resourcev4.Items: 2}
+	}
 	return resourcev4.Vector{resourcev4.SDKBytes: e.config.RuntimeBytesPerTask + max(uint64(unsafe.Sizeof(ApplicationPermit{})), uint64(unsafe.Sizeof(QueuedApplicationTask{}))) + uint64(unsafe.Sizeof(ApplicationTask{})), resourcev4.Items: 2, resourcev4.Tasks: 1, resourcev4.WorkSlots: 1}
 }
 
@@ -187,7 +200,9 @@ func NewApplicationExecutor(config ApplicationExecutorConfig, reservation resour
 	// The fixed lane is admitted with the executor, while its two goroutines
 	// start lazily at the first management call. This keeps an unused executor
 	// immediately reclaimable without creating idle worker tails.
-	e.management = &managementLane{wake: make(chan struct{}, 2), stop: make(chan struct{})}
+	if !config.DisableManagement {
+		e.management = &managementLane{wake: make(chan struct{}, 2), stop: make(chan struct{})}
+	}
 	if config.Diagnostics {
 		e.diagnostics = &diagnosticLane{closing: make(chan struct{})}
 	}
@@ -204,11 +219,15 @@ func NewApplicationExecutor(config ApplicationExecutorConfig, reservation resour
 // or timeout. The caller must provide its original invocation authorization gate
 // inside work: this executor grants resources, never protocol/business authority.
 func (e *ApplicationExecutor) TrySubmit(class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, work func()) (*ApplicationTask, error) {
+	return e.trySubmitInGroup(nil, class, taskReservation, backing, work)
+}
+
+func (e *ApplicationExecutor) trySubmitInGroup(group *applicationGroup, class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, work func()) (*ApplicationTask, error) {
 	if work == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	e.mu.Lock()
-	permit, err := e.acquireLocked(class, taskReservation, backing, false)
+	permit, err := e.acquireGroupLocked(group, class, taskReservation, backing, false)
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
@@ -226,12 +245,12 @@ func (e *ApplicationExecutor) TrySubmit(class ApplicationWorkClass, taskReservat
 // finite SDK join. callbackExited proves all application defers have returned;
 // the public task Done remains closed only after that join and slot release.
 // join is internal cleanup and must never enter application code or wait on it.
-func (e *ApplicationExecutor) trySubmitJoined(class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, work, join func()) (<-chan struct{}, error) {
+func (e *ApplicationExecutor) trySubmitJoined(group *applicationGroup, class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, work, join func()) (<-chan struct{}, error) {
 	if work == nil || join == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	e.mu.Lock()
-	permit, err := e.acquireLocked(class, taskReservation, backing, false)
+	permit, err := e.acquireGroupLocked(group, class, taskReservation, backing, false)
 	if err != nil {
 		e.mu.Unlock()
 		return nil, err
@@ -304,6 +323,57 @@ func (e *ApplicationExecutor) TryAcquireWithBackingBorrow(class ApplicationWorkC
 	return e.acquireLocked(class, taskReservation, backingBorrow, true)
 }
 
+// The original Session group retains actual try-now work after its stream
+// terminates, just as it retains queued work. Dormant ready descriptors are
+// still excluded from activeWork.
+func (e *ApplicationExecutor) tryAcquireInGroup(group *applicationGroup, class ApplicationWorkClass, taskReservation, backing resourcev4.Reference) (*ApplicationPermit, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.acquireGroupLocked(group, class, taskReservation, backing, false)
+}
+
+// A synchronous stage borrows its caller's execution slot, but still retains
+// the target Session's actual work through callback exit.
+func (e *ApplicationExecutor) retainSynchronousWork(group *applicationGroup) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if group == nil {
+		return nil
+	}
+	if group.executor != e || group.closed {
+		return resourcev4.ErrClosed
+	}
+	group.active++
+	group.activeWork.Add(1)
+	return nil
+}
+
+func (e *ApplicationExecutor) releaseSynchronousWork(group *applicationGroup) {
+	if group == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	group.activeWork.Add(^uint64(0))
+	e.releaseApplicationGroupLocked(group)
+}
+
+func (e *ApplicationExecutor) acquireGroupLocked(group *applicationGroup, class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, moveBorrow bool) (*ApplicationPermit, error) {
+	if group != nil && (group.executor != e || group.closed) {
+		return nil, resourcev4.ErrClosed
+	}
+	permit, err := e.acquireLocked(class, taskReservation, backing, moveBorrow)
+	if err != nil {
+		return nil, err
+	}
+	if group != nil {
+		e.slots[permit.index].group = group
+		group.active++
+		group.activeWork.Add(1)
+	}
+	return permit, nil
+}
+
 func (e *ApplicationExecutor) acquireLocked(class ApplicationWorkClass, taskReservation, backing resourcev4.Reference, moveBorrow bool) (*ApplicationPermit, error) {
 	if class > ApplicationResident || taskReservation == backing {
 		return nil, cryptov4.ErrConfiguration
@@ -330,8 +400,17 @@ func (e *ApplicationExecutor) acquireLocked(class ApplicationWorkClass, taskRese
 	if err != nil {
 		return nil, err
 	}
+	var service resourcev4.Reference
+	if e.config.Profile != ApplicationProfileCustom {
+		service, err = e.reservation.BorrowApplicationService(backing)
+		if err != nil {
+			borrow.Release()
+			return nil, err
+		}
+	}
 	task, err := taskReservation.Take(e.TaskCharge())
 	if err != nil {
+		service.Release()
 		borrow.Release()
 		return nil, err
 	}
@@ -341,7 +420,7 @@ func (e *ApplicationExecutor) acquireLocked(class ApplicationWorkClass, taskRese
 	}
 	permit := &ApplicationPermit{index: index}
 	result := &ApplicationTask{done: make(chan struct{})}
-	e.slots[index] = applicationTaskSlot{active: true, class: class, permit: permit, result: result, backing: borrow, task: task}
+	e.slots[index] = applicationTaskSlot{active: true, class: class, permit: permit, result: result, backing: borrow, task: task, service: service}
 	e.running++
 	if class == ApplicationResident {
 		e.resident++
@@ -449,6 +528,10 @@ func (e *ApplicationExecutor) releaseLocked(index int) {
 	}
 	s.backing.Release()
 	s.task.Release()
+	s.service.Release()
+	if s.group != nil {
+		s.group.activeWork.Add(^uint64(0))
+	}
 	e.releaseApplicationGroupLocked(s.group)
 	*s = applicationTaskSlot{}
 	e.running--
@@ -526,13 +609,16 @@ func (e *ApplicationExecutor) Done() <-chan struct{} { return e.done }
 // Running counts occupied positions, including preadmitted unstarted permits.
 // Those permits consume the same resident bound and strict short-work floor.
 type ApplicationExecutorSnapshot struct {
-	DiagnosticReady, DiagnosticRunning                      uint32
-	QueryOwners, QueryReady, QueryRunning                   uint32
-	QueryFailed                                             bool
-	CompletionReserved, CompletionRunning, CompletionClaims uint32
-	Running, ResidentRunning                                uint32
-	Ready, ResidentReady                                    uint32
-	Closed, CleanupComplete                                 bool
+	DiagnosticReady, DiagnosticRunning                                 uint32
+	QueryOwners, QueryReady, QueryRunning                              uint32
+	QueryFailed                                                        bool
+	CompletionReserved, CompletionRunning, CompletionClaims            uint32
+	CompletionReady, CompletionEligible                                uint32
+	Running, ResidentRunning                                           uint32
+	Ready, ResidentReady                                               uint32
+	Closed, CleanupComplete                                            bool
+	Profile                                                            ApplicationResourceProfile
+	OrdinaryServiceBytes, ResidentServiceBytes, CompletionServiceBytes uint64
 }
 
 func (e *ApplicationExecutor) Snapshot() ApplicationExecutorSnapshot {
@@ -543,6 +629,17 @@ func (e *ApplicationExecutor) Snapshot() ApplicationExecutorSnapshot {
 
 func (e *ApplicationExecutor) snapshotLocked() ApplicationExecutorSnapshot {
 	s := ApplicationExecutorSnapshot{CompletionClaims: e.completionClaims, CompletionReserved: e.completionCount, CompletionRunning: e.completionRunning, Running: e.running, ResidentRunning: e.resident, Ready: e.readyCount, ResidentReady: e.residentReady, Closed: e.closed, CleanupComplete: e.cleaned}
+	s.CompletionReady = e.completionReadyCount
+	for i := range e.completions {
+		if slot := &e.completions[i]; slot.active && slot.submitted && !slot.running {
+			s.CompletionEligible++
+		}
+	}
+	s.Profile = e.config.Profile
+	s.OrdinaryServiceBytes, s.ResidentServiceBytes, _ = e.config.profileServiceBytes()
+	if e.config.Profile != ApplicationProfileCustom {
+		s.CompletionServiceBytes = 256 * 1024
+	}
 	if d := e.diagnostics; d != nil {
 		s.DiagnosticReady, s.DiagnosticRunning = d.ready, d.running
 	}

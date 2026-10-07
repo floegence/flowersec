@@ -8,8 +8,8 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-// PrepareTunnel accepts exactly one physical tunnel connection and its empty
-// maintenance stream. It sends no Flowersec credentials. The returned original
+// PrepareTunnel accepts exactly one physical tunnel connection and reserves
+// its maintenance position. It sends no Flowersec credentials. The returned original
 // owner must still complete the applicable server allow, HOP_AUTH and durable
 // activation; accepting this connection grants none of those permissions.
 // A non-nil result owns cleanup even when cancellation accompanies the result.
@@ -21,7 +21,7 @@ func (s *QUICServer) PrepareTunnel(ctx context.Context, c sessionv4.PreparedCarr
 	if _, err := protocolv4.Profile(c.Session.Profile); err != nil {
 		return nil, err
 	}
-	charge, err := sessionv4.PreparedCarrierCharge(c.RuntimeBytes)
+	_, err := sessionv4.PreparedCarrierCharge(c.RuntimeBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -44,12 +44,11 @@ func (s *QUICServer) PrepareTunnel(ctx context.Context, c sessionv4.PreparedCarr
 	}
 	// Move the complete prepared metadata before physical acceptance. A caller
 	// releasing its old alias cannot recycle this original reservation.
-	owned, err := c.Reservation.Take(charge)
+	c, err = c.TakeReservation()
 	if err != nil {
 		return nil, err
 	}
-	defer owned.Release()
-	c.Reservation = owned
+	defer c.Reservation.Release()
 	f, err := s.accept(ctx, sessionv4.AcceptedEntranceConfig{Initial: sessionv4.InitialConfig{Deadline: c.Deadline}})
 	if err != nil {
 		return nil, err
@@ -78,7 +77,7 @@ func (f *QUICIngress) prepareTunnel(ctx context.Context, c sessionv4.PreparedCar
 			_ = provider.Retire()
 		}
 	}()
-	prepareCtx, cancel := context.WithCancelCause(ctx)
+	prepareCtx, cancel := newCarrierPreparationContext(ctx)
 	defer cancel(context.Canceled)
 	f.mu.Lock()
 	f.cancel = func() { cancel(context.Canceled) }
@@ -88,7 +87,7 @@ func (f *QUICIngress) prepareTunnel(ctx context.Context, c sessionv4.PreparedCar
 		return nil, resourcev4.ErrClosed
 	}
 	stop, stopped := make(chan struct{}), make(chan struct{})
-	go watchQUICPreparation(prepareCtx, cancel, c.Deadline, stop, stopped)
+	go watchCarrierPreparation(ctx, prepareCtx, cancel, c.Deadline, stop, stopped)
 	watching := true
 	finishWatch := func() {
 		if watching {
@@ -104,7 +103,7 @@ func (f *QUICIngress) prepareTunnel(ctx context.Context, c sessionv4.PreparedCar
 	if _, err = provider.ConnectionGuarantees(); err != nil {
 		return nil, err
 	}
-	provider.maintenance, err = provider.connection.AcceptMaintenance(prepareCtx)
+	provider.maintenance, err = provider.connection.PrepareMaintenance(prepareCtx)
 	if err != nil {
 		return nil, err
 	}

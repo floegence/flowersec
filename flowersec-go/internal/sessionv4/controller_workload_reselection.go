@@ -39,7 +39,7 @@ func (o *UnaryOperation) beginControllerUnaryLocked(ctx context.Context, r *RPCS
 			workload.workload.environment.signalMaterials()
 		}()
 	}
-	return r.beginUnaryController(ctx, route, h, header, payload, o.class, o.protected, true, &o.dependencies, o.resultPlan, o.decode, &o.controller, o.request, workload)
+	return r.beginUnaryController(ctx, route, h, header, payload, o.class, o.protected, true, &o.dependencies, o.resultPlan, o.decode, &o.controller, o.request, workload, o)
 }
 
 func (o *UnaryOperation) claimSelectedWorkloadLocked(r *RPCServices, h protocolv4.ApplicationHeader) (*unaryWorkloadSlot, bool, error) {

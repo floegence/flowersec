@@ -83,6 +83,129 @@ func TestNotifyPublisherRuntimeExpiresWithoutProviderWake(t *testing.T) {
 	}
 }
 
+func TestNotifyPeerEOFPreservesAcceptedOutputTail(t *testing.T) {
+	ctx, services, fixtures, endpoints, _, _ := notificationRuntimeFixture(t)
+	policy := authorizeNotificationRuntime(t, services[0], fixtures[0])
+	authorizeNotificationRuntime(t, services[1], fixtures[1])
+	observed := make(chan string, 1)
+	subscription, err := services[1].notifications.Subscribe(0, NotificationDropNewest, notificationStrings(func(_ context.Context, value string) error {
+		observed <- value
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		subscription.Close()
+		until := time.Now().Add(3 * time.Second)
+		for !subscription.Status().CleanupComplete && time.Now().Before(until) {
+			services[1].notifications.Advance()
+			runtime.Gosched()
+		}
+		if err := subscription.Release(); err != nil {
+			t.Error(err)
+		}
+	})
+	channel, err := services[0].OpenNotifyChannel(ctx, streamTestDeadline(t, endpoints[0].engine))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var peer *NotifyChannel
+	for peer == nil {
+		services[1].mu.Lock()
+		job := services[1].notifyChannels[0]
+		if job != nil {
+			peer = job.channel
+		}
+		services[1].mu.Unlock()
+		if peer != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("peer notification owner was not published", ctx.Err())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	writer := channel.owner.flow.send.writer
+	writer.mu.Lock()
+	held := &nativeDelayedWriter{destination: writer.writer, entered: make(chan struct{}), returned: make(chan struct{})}
+	writer.writer = held
+	writer.mu.Unlock()
+	released := false
+	defer func() {
+		if !released {
+			close(held.returned)
+		}
+	}()
+	payload := []byte("accepted output survives peer EOF")
+	deadline, err := timev4.NewAge(services[0].clock, 5000, endpoints[0].engine.SessionParameters().SessionNotAfterMS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec, _ := protocolv4.NewApplicationHeaderCodec()
+	var header [512]byte
+	n, _, err := codec.Encode(header[:], "observation_notify", protocolv4.ApplicationHeaderFields{Type: policy.Type, ServiceContractDigest: policy.Digest, PayloadBytes: uint32(len(payload)), DeadlineAtMS: deadline.Cap()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	submission, err := services[0].BeginObservationNotify(ctx, header[:n], payload, deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-held.entered:
+	case <-ctx.Done():
+		t.Fatal("notification was not submitted to the original provider", ctx.Err())
+	}
+	if err := peer.owner.Finish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-channel.readerEnded:
+	case <-ctx.Done():
+		t.Fatal("peer EOF did not end the reader", ctx.Err())
+	}
+	select {
+	case <-channel.done:
+		t.Fatal("peer EOF canceled the accepted provider tail")
+	default:
+	}
+	if channel.availablePublisher() != nil {
+		t.Fatal("ended channel admitted another notification")
+	}
+	close(held.returned)
+	released = true
+	for {
+		services[1].notifications.Advance()
+		select {
+		case value := <-observed:
+			if value != string(payload) {
+				t.Fatal("accepted notification changed", value)
+			}
+			goto delivered
+		case <-ctx.Done():
+			t.Fatal("accepted notification lost after peer EOF", ctx.Err())
+		default:
+			runtime.Gosched()
+		}
+	}
+delivered:
+	select {
+	case <-submission.Done():
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := submission.Release(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-channel.done:
+	case <-ctx.Done():
+		t.Fatal("channel did not finish after its original publication", ctx.Err())
+	}
+}
+
 func TestNotifyChannelsOpenAtSaturatedRootWithoutBusinessCapacity(t *testing.T) {
 	ctx, services, fixtures, endpoints, _, _ := rpcChannelRuntimeFixture(t)
 	var holds [2]resourcev4.Reference
@@ -122,6 +245,138 @@ func TestNotifyChannelsOpenAtSaturatedRootWithoutBusinessCapacity(t *testing.T) 
 		if business != 0 {
 			t.Fatal("notification OPEN consumed business capacity")
 		}
+	}
+}
+
+func TestNotifyBindingInitializationSharesOriginalChannelAtCapacity(t *testing.T) {
+	ctx, services, fixtures, endpoints, _, _ := rpcChannelRuntimeFixture(t)
+	var holds [2]resourcev4.Reference
+	defer func() {
+		for _, hold := range holds {
+			hold.Release()
+		}
+	}()
+	var before [2]resourcev4.Snapshot
+	for role, fixture := range fixtures {
+		snapshot := fixture.root.Snapshot()
+		var spare resourcev4.Vector
+		for i := range spare {
+			spare[i] = snapshot.Limit[i] - snapshot.Charged[i]
+		}
+		holds[role] = fixture.reserve(t, 1, spare)
+		before[role] = fixture.root.Snapshot()
+	}
+	initialization, cancel := context.WithCancel(ctx)
+	defer cancel()
+	r := services[0]
+	deadline := streamTestDeadline(t, endpoints[0].engine)
+	results := make(chan error, 8)
+	for range cap(results) {
+		go func() { results <- r.prepareBindingNotifyChannel(initialization, deadline) }()
+	}
+	for range cap(results) {
+		if err := <-results; err != nil {
+			t.Fatal("binding initialization", err)
+		}
+	}
+	cancel()
+	for role, fixture := range fixtures {
+		after := fixture.root.Snapshot()
+		if after.Charged != before[role].Charged || after.Reservations != before[role].Reservations {
+			t.Fatal("binding initialization allocated outside the admitted channel", before[role], after)
+		}
+		if usage := endpoints[role].admission.Usage(); usage.Active != 2 || usage.Opening != 0 || usage.Pending != 0 {
+			t.Fatal("concurrent bindings opened duplicate channels", usage)
+		}
+	}
+	r.mu.Lock()
+	job := r.notifyChannels[0]
+	live := job != nil && job.context.Err() == nil && job.channel.availablePublisher() != nil
+	r.mu.Unlock()
+	if !live {
+		t.Fatal("completed initialization retained the caller's canceled lifetime")
+	}
+	if err := r.prepareBindingNotifyChannel(ctx, deadline); err != nil {
+		t.Fatal("later binding could not reuse the same accepted channel", err)
+	}
+	if _, err := r.OpenNotifyChannel(ctx, deadline); !errors.Is(err, cryptov4.ErrCapacity) {
+		t.Fatal("original opener position was not retained", err)
+	}
+}
+
+func TestNotifyBindingWaitsForOriginalBootstrap(t *testing.T) {
+	result := make(chan error, 1)
+	ctx, services, _, endpoints, _, _ := rpcChannelRuntimeProfilePrepared(t, "services", nil,
+		func(ctx context.Context, services [2]*RPCServices, endpoints [2]*bootstrapEndpoint) {
+			r := services[0]
+			deadline := streamTestDeadline(t, endpoints[0].engine)
+			observer, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+			if err := r.prepareBindingNotifyChannel(observer, deadline); !errors.Is(err, context.DeadlineExceeded) {
+				t.Error("bootstrap wait lost caller cancellation", err)
+			}
+			cancel()
+			sample, err := endpoints[0].engine.Clock().Sample()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Keep the deadline representable beyond the fixture's trusted
+			// uncertainty interval, with only a short remaining wait.
+			short, err := timev4.NewAgeAt(endpoints[0].engine.Clock(), sample, sample.UpperMS-sample.LowerMS+25, ^uint64(0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := r.prepareBindingNotifyChannel(ctx, short); !errors.Is(err, timev4.ErrExpired) {
+				t.Error("bootstrap wait lost the original admission deadline", err)
+			}
+			go func() { result <- r.prepareBindingNotifyChannel(ctx, deadline) }()
+			select {
+			case err := <-result:
+				t.Error("binding returned before the admitted bootstrap started", err)
+				result <- err
+			case <-time.After(20 * time.Millisecond):
+			}
+		})
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal("binding did not join original initialization", err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if err := services[0].prepareBindingNotifyChannel(ctx, streamTestDeadline(t, endpoints[0].engine)); err != nil {
+		t.Fatal("binding could not reuse its original channel", err)
+	}
+	for _, endpoint := range endpoints {
+		if usage := endpoint.admission.Usage(); usage.Active != 2 || usage.Opening != 0 || usage.Pending != 0 {
+			t.Fatal("bootstrap wait created extra channels", usage)
+		}
+	}
+}
+
+func TestNotifyBindingCanceledWaitDoesNotCancelSharedOpening(t *testing.T) {
+	ctx, services, _, endpoints, _, _ := rpcChannelRuntimeFixture(t)
+	r := services[0]
+	r.mu.Lock()
+	job, err := r.reserveNotifyChannelLocked(ctx, protocolv4.ClientToServer)
+	r.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := streamTestDeadline(t, endpoints[0].engine)
+	waiter, cancel := context.WithCancel(ctx)
+	result := make(chan error, 1)
+	go func() { result <- r.prepareBindingNotifyChannel(waiter, deadline) }()
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatal("canceled binding waited for unrelated initialization", err)
+	}
+	if job.context.Err() != nil {
+		t.Fatal("joining binding canceled the original opening")
+	}
+	go job.prepareDependency(deadline)
+	if err := r.prepareBindingNotifyChannel(ctx, deadline); err != nil {
+		t.Fatal("original channel did not finish after a joiner canceled", err)
 	}
 }
 

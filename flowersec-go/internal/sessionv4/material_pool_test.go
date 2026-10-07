@@ -89,12 +89,12 @@ func newMaterialPoolFixture(t *testing.T, count uint32) *materialPoolFixture {
 	t.Helper()
 	f := &materialPoolFixture{materialBytesFixture: newMaterialBytesFixture(t, "preauthorized_pool")}
 	ctx := context.Background()
-	ec := EnvironmentConfig{Positions: 2, Materials: 8, MaterialPools: 1, MaterialCreateMS: 1000, Clock: f.admissionIntegrationFixture.trust.clock, RuntimeBytes: 65536}
+	ec := EnvironmentConfig{Positions: 2, Materials: 8, MaterialPools: 1, MaterialCreateMS: 1000, Clock: f.authorityFixture.trust.clock, RuntimeBytes: 65536}
 	cost, err := EnvironmentCharge(ec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.environment, err = NewEnvironment(ec, f.reserve(cost), f.admissionIntegrationFixture.environment)
+	f.environment, err = NewEnvironment(ec, f.reserve(cost), f.authorityFixture.environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func newMaterialPoolFixture(t *testing.T, count uint32) *materialPoolFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	backing, err := ledgerv4.NewSQLiteBacking(path, limits, f.reserve(cost), f.admissionIntegrationFixture.environment)
+	backing, err := ledgerv4.NewSQLiteBacking(path, limits, f.reserve(cost), f.authorityFixture.environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func newMaterialPoolFixture(t *testing.T, count uint32) *materialPoolFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.journal, err = ledgerv4.CreateSQLiteTopUpJournal(ctx, backing, id, authority, jc, f.reserve(cost), f.admissionIntegrationFixture.environment)
+	f.journal, err = ledgerv4.CreateSQLiteTopUpJournal(ctx, backing, id, authority, jc, f.reserve(cost), f.authorityFixture.environment)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,49 +1,16 @@
 export * from "../facade.js";
-export { configureV4BrowserWSS, configureV4BrowserWebTransport } from "./clientV4.js";
-export type { V4BrowserWSSClient, V4BrowserWSSClientConfig, V4BrowserWSSClientLimits,
-  V4BrowserWebTransportClient, V4BrowserWebTransportClientConfig, V4BrowserWebTransportClientLimits } from "./clientV4.js";
-export type { V4BrowserWSSDeployment, V4BrowserWSSOptions } from "./wssV4.js";
-export type { V4BrowserWebTransportDeployment, V4BrowserWebTransportOptions } from "./webTransportV4.js";
-export { createV4IndexedDBPoolBacking, openV4IndexedDBPoolStore, V4IndexedDBPoolBacking, V4IndexedDBPoolStore, V4IndexedDBPoolError } from "./indexedDBPoolV4.js";
-export type { V4IndexedDBPoolIdentity, V4IndexedDBPoolLimits, V4IndexedDBPoolContinuity, V4IndexedDBPoolOpenOptions, V4IndexedDBPoolFailure } from "./indexedDBPoolV4.js";
-export {
-  connectV3 as connect,
-  createConnectionControllerV3 as createConnectionController,
-  connectPrivateLoopbackV1,
-  connectHTTPDirectV1,
-  createHTTPDirectConnectionControllerV1,
-  createPrivateLoopbackConnectionControllerV1,
-} from "./connectSessionV3.js";
-export {
-  PRIVATE_LOOPBACK_PROFILE_V1,
-  PrivateLoopbackArtifactErrorV1,
-  createPrivateLoopbackArtifactLeaseV1,
-  parsePrivateLoopbackArtifactV1,
-} from "./privateLoopbackV1.js";
-export type {
-  ConnectionControllerOptionsV3 as ConnectionControllerOptions,
-  SessionOptionsV3 as SessionOptions,
-} from "./connectSessionV3.js";
-export type {
-  PrivateLoopbackConnectionControllerOptionsV1,
-  PrivateLoopbackSessionOptionsV1,
-} from "./connectSessionV3.js";
-export type {
-  PrivateLoopbackArtifactLeaseV1,
-  PrivateLoopbackArtifactSourceResultV1,
-  PrivateLoopbackArtifactSourceV1,
-  PrivateLoopbackArtifactV1,
-} from "./privateLoopbackV1.js";
-
-export {
-  HTTP_DIRECT_PROFILE_V1, HTTPDirectArtifactErrorV1,
-  parseHTTPDirectArtifactV1, createHTTPDirectArtifactLeaseV1,
-} from "./httpDirectV1.js";
-export type {
-  HTTPDirectArtifactV1, HTTPDirectArtifactLeaseV1,
-  HTTPDirectArtifactSourceV1, HTTPDirectArtifactSourceResultV1,
-} from "./httpDirectV1.js";
-export type { HTTPDirectSessionOptionsV1, HTTPDirectConnectionControllerOptionsV1 } from "./connectSessionV3.js";
-
-export { createV4BrowserLiveHTTPS } from "./liveHTTPSV4.js";
-export type { V4BrowserLiveHTTPSDeployment, V4BrowserLiveHTTPSOptions } from "./liveHTTPSV4.js";
+export type { StorageFormatProjection, StorageFormatReason, StorageRevision, StorageTransactionGroup } from "../v4/storageFormat.js";
+export { configureV4BrowserWSS as configureBrowserWSS, configureV4BrowserWebTransport as configureBrowserWebTransport } from "./clientV4.js";
+export type { PoolServerAllowConfiguration, PoolServerAllowPublication, PoolServerAllowRecipient, TunnelServerAllowRequest } from "../v4/runtime/poolServerAllow.js";
+export { createBrowserPoolServerAllow } from "./poolServerAllow.js";
+export type { BrowserPoolServerAllowOptions } from "./poolServerAllow.js";
+export type { V4BrowserWSSClient as BrowserWSSClient, V4BrowserWSSClientConfig as BrowserWSSClientConfig, V4BrowserWSSClientLimits as BrowserWSSClientLimits, V4BrowserWebTransportClient as BrowserWebTransportClient, V4BrowserWebTransportClientConfig as BrowserWebTransportClientConfig, V4BrowserWebTransportClientLimits as BrowserWebTransportClientLimits } from "./clientV4.js";
+export type { V4BrowserWSSDeployment as BrowserWSSDeployment, V4BrowserWSSOptions as BrowserWSSOptions } from "./wssV4.js";
+export type { V4BrowserWebTransportDeployment as BrowserWebTransportDeployment, V4BrowserWebTransportOptions as BrowserWebTransportOptions } from "./webTransportV4.js";
+export { createV4IndexedDBPoolBacking as createIndexedDBPoolBacking, openV4IndexedDBPoolStore as openIndexedDBPoolStore, V4IndexedDBPoolBacking as IndexedDBPoolBacking, V4IndexedDBPoolStore as IndexedDBPoolStore, V4IndexedDBPoolError as IndexedDBPoolError } from "./indexedDBPoolV4.js";
+export type { V4IndexedDBPoolIdentity as IndexedDBPoolIdentity, V4IndexedDBPoolLimits as IndexedDBPoolLimits, V4IndexedDBPoolContinuity as IndexedDBPoolContinuity, V4IndexedDBPoolOpenOptions as IndexedDBPoolOpenOptions, V4IndexedDBPoolFailure as IndexedDBPoolFailure } from "./indexedDBPoolV4.js";
+export { createV4BrowserLiveHTTPS as createBrowserLiveHTTPS } from "./liveHTTPSV4.js";
+export type { V4BrowserLiveHTTPSDeployment as BrowserLiveHTTPSDeployment, V4BrowserLiveHTTPSOptions as BrowserLiveHTTPSOptions } from "./liveHTTPSV4.js";
+export { configureLocalBrowserBridge } from "./clientV4.js";
+export type { LocalBrowserBridge, LocalBrowserBridgeConfig } from "./clientV4.js";
+export type { LocalBrowserBridgeOptions, LocalBrowserBridgeDeployment } from "./localBrowserBridge.js";

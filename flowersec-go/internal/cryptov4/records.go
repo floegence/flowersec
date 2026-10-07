@@ -51,6 +51,19 @@ type usageProfile struct {
 }
 type usage struct{ calls, blocks, bytes uint64 }
 
+// RekeySafetySnapshot is the immutable projection the Session coordinator uses
+// to join the existing rekey cause. Triggered is based on current key, epoch
+// and persistent Session successful-use watermarks or the current root-age soft
+// window; Deadline is the original epoch deadline and is never extended by this
+// projection.
+type RekeySafetySnapshot struct {
+	Epoch     uint32
+	RootID    uint64
+	RootBorn  timev4.Sample
+	Deadline  uint64
+	Triggered bool
+}
+
 // MaintenanceReserve is the precomputed remaining REKEY responsibility for one
 // direction. Ordinary maintenance cannot consume it. It never raises L0 limits.
 type MaintenanceReserve struct{ Calls, Blocks, Bytes uint64 }
@@ -64,6 +77,13 @@ type TicketGuard interface {
 	UnlockTicket(submitted bool)
 }
 
+// DiagnosticEmitter is implemented by the session-owned bounded diagnostic
+// operation. It keeps record classification independent from sessionv4 while
+// allowing detailed datagram drop events to retain the session correlation ID.
+type DiagnosticEmitter interface {
+	EmitDiagnostic(diagnosticv4.Fields) bool
+}
+
 // Config is assembled by the admitted handshake owner, never from a peer's
 // unauthenticated record. Deadlines must already use the trusted time adapter's
 // conservative local projection. RootBorn is sampled before the actual KDF.
@@ -71,6 +91,7 @@ type Config struct {
 	// Diagnostics borrows the original Environment bank through actual Engine
 	// retirement. Trusted composition owns its reservation and lifetime.
 	Diagnostics                         *diagnosticv4.Counters
+	DiagnosticEvents                    DiagnosticEmitter
 	Profile                             string
 	ApplicationProfile                  string
 	Root, HandshakeHash, ContextDigest  [32]byte
@@ -100,14 +121,15 @@ func (e *TicketError) Error() string { return e.Cause.Error() }
 func (e *TicketError) Unwrap() error { return e.Cause }
 
 type recordKey struct {
-	aead      cipher.AEAD
-	usage     usage
-	next      uint64
-	exhausted bool
-	replay    replayWindow
-	busy      bool
-	detached  bool
-	good      usage
+	aead         cipher.AEAD
+	usage        usage
+	reliableUse  usage
+	datagramGood usage
+	next         uint64
+	exhausted    bool
+	replay       replayWindow
+	busy         bool
+	detached     bool
 }
 type scopeKeys struct {
 	bootstrap     bool
@@ -118,11 +140,15 @@ type scopeKeys struct {
 	incoming      *IncomingScope
 }
 type epochState struct {
-	number   uint32
-	root     [32]byte
-	deadline *timev4.Deadline
-	keys     scopeTable
-	usage    [2]usage
+	number       uint32
+	rootID       uint64
+	born         timev4.Sample
+	root         [32]byte
+	deadline     *timev4.Deadline
+	keys         scopeTable
+	usage        [2]usage
+	reliableUse  [2]usage
+	datagramGood [2]usage
 }
 type workspace struct {
 	input, output []byte
@@ -161,6 +187,9 @@ type Engine struct {
 	used                                  [2][]uint64
 	ordinal                               [2]uint64
 	counts                                [2]usage
+	reliableCounts                        [2]usage
+	datagramGood                          [2]usage
+	rootID                                uint64
 	derivations                           uint64
 	ready, closed                         bool
 	initial                               *FinishedHandshake
@@ -257,7 +286,8 @@ func NewEngine(config Config) (*Engine, error) {
 	currentScopes, _ := newScopeTable(scopeCapacity) // Shape checked before allocation.
 	e.spareScopes, _ = newScopeTable(scopeCapacity)
 	e.stageJobs = make([]epochKeyJob, 2*scopeCapacity)
-	e.current = &epochState{root: config.Root, deadline: deadline, keys: currentScopes}
+	e.rootID = 1
+	e.current = &epochState{rootID: e.rootID, born: config.RootBorn, root: config.Root, deadline: deadline, keys: currentScopes}
 	clear(e.config.Root[:])
 	if err := e.current.deadline.Check(); err != nil {
 		e.Close()
@@ -598,6 +628,104 @@ func (e *Engine) ServiceInitializationEpoch() (uint32, error) {
 		return 0, err
 	}
 	return e.current.number, nil
+}
+
+func softRekeyUsage(value usage, limits usageLimits, reserve MaintenanceReserve, open bool) bool {
+	calls := limits.Seal
+	if open {
+		calls = limits.Open
+	}
+	usableCalls := calls - min(calls, reserve.Calls)
+	usableBlocks := limits.Blocks - min(limits.Blocks, reserve.Blocks)
+	usableBytes := limits.Bytes - min(limits.Bytes, reserve.Bytes)
+	soft := func(value, usable uint64) bool {
+		if usable == 0 {
+			return true
+		}
+		threshold := usable - usable/5
+		if threshold == 0 {
+			threshold = 1
+		}
+		return value >= threshold
+	}
+	return soft(value.calls, usableCalls) || soft(value.blocks, usableBlocks) || soft(value.bytes, usableBytes)
+}
+
+// RekeySafety returns a fixed soft-watermark decision for the current epoch.
+// It is read-only: joining the cause and choosing INIT/REQUEST remain owned by
+// sessionv4.RekeyCauses/RekeyService.
+func (e *Engine) RekeySafety() (RekeySafetySnapshot, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if err := e.live(); err != nil {
+		return RekeySafetySnapshot{}, err
+	}
+	if e.current == nil || e.current.deadline == nil {
+		return RekeySafetySnapshot{}, ErrTransition
+	}
+	if err := e.current.deadline.Check(); err != nil {
+		return RekeySafetySnapshot{}, securityTimeError(err)
+	}
+	triggered := false
+	for direction := range 2 {
+		open := protocolv4.Direction(direction) != e.config.SendDirection
+		// Failed inbound datagrams consume the hard ledger, but only unique
+		// authenticated acceptance may contribute to their soft watermark.
+		soft := e.current.reliableUse[direction]
+		addUsage(&soft, e.current.datagramGood[direction])
+		triggered = triggered || softRekeyUsage(soft, e.limits.Epoch, e.config.Maintenance, open)
+		sessionSoft := e.reliableCounts[direction]
+		addUsage(&sessionSoft, e.datagramGood[direction])
+		triggered = triggered || softRekeyUsage(sessionSoft, e.limits.Session, e.config.Maintenance, open)
+	}
+	for scope, keys := range e.current.keys.all() {
+		for direction, key := range keys.keys {
+			if key == nil {
+				continue
+			}
+			soft := key.reliableUse
+			addUsage(&soft, key.datagramGood)
+			reserve := MaintenanceReserve{}
+			if scope == 0 {
+				reserve = e.config.Maintenance
+			}
+			triggered = triggered || softRekeyUsage(soft, e.limits.Key, reserve,
+				protocolv4.Direction(direction) != e.config.SendDirection)
+		}
+	}
+	remaining, err := e.current.deadline.RemainingMS()
+	if err != nil {
+		return RekeySafetySnapshot{}, securityTimeError(err)
+	}
+	// A short authorization/session cap must not masquerade as root-age
+	// exhaustion. Only arm the root-age soft window when that root cap is the
+	// effective parent deadline for this epoch.
+	var rootCap uint64 = math.MaxUint64
+	if e.current.born.LowerMS <= math.MaxUint64-e.limits.RootAge {
+		rootCap = e.current.born.LowerMS + e.limits.RootAge
+	}
+	if e.config.AuthorizationDeadlineMS >= rootCap {
+		window := e.limits.RootAge / 5
+		if window == 0 {
+			window = 1
+		}
+		if remaining <= window {
+			triggered = true
+		}
+	}
+	return RekeySafetySnapshot{Epoch: e.current.number, RootID: e.current.rootID, RootBorn: e.current.born, Deadline: e.current.deadline.Cap(), Triggered: triggered}, nil
+}
+
+// RekeySafetyMatches validates that a sampled safety projection still names the
+// live epoch/root. It deliberately does not refresh the sample or apply a cause.
+func (e *Engine) RekeySafetyMatches(snapshot RekeySafetySnapshot) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed || e.current == nil || e.current.number != snapshot.Epoch || e.current.rootID != snapshot.RootID || e.current.deadline == nil {
+		return false
+	}
+	a, b := e.current.born, snapshot.RootBorn
+	return a.LowerMS == b.LowerMS && a.UpperMS == b.UpperMS && a.Mark.SameEra(b.Mark) && e.current.deadline.Cap() == snapshot.Deadline
 }
 
 func (e *Engine) inputWorkspace(maintenance, datagram bool) (*workspace, error) {
@@ -991,8 +1119,24 @@ func (e *Engine) finish(w *workspace, epoch *epochState, key *recordKey, header 
 			err = ErrScope
 		}
 	}
-	if err == nil && scope != protocolv4.DatagramScope() {
-		e.outgoingPackets++
+	if err == nil {
+		aadBytes := protocolv4.EnvelopePrefixSize + protocolv4.RecordHeaderSize()
+		payload := len(data) - aadBytes - e.profile.TagBytes
+		if payload < 0 {
+			payload = 0
+		}
+		blocks := func(n int) uint64 { return uint64(n/16) + uint64((n%16+15)/16) }
+		cost := usage{calls: 1, blocks: blocks(aadBytes) + blocks(payload) + 1, bytes: uint64(payload + e.profile.TagBytes)}
+		if scope == protocolv4.DatagramScope() {
+			addUsage(&key.datagramGood, cost)
+			addUsage(&epoch.datagramGood[e.config.SendDirection], cost)
+			addUsage(&e.datagramGood[e.config.SendDirection], cost)
+		} else {
+			addUsage(&key.reliableUse, cost)
+			addUsage(&epoch.reliableUse[e.config.SendDirection], cost)
+			addUsage(&e.reliableCounts[e.config.SendDirection], cost)
+			e.outgoingPackets++
+		}
 	}
 	e.mu.Unlock()
 	if err != nil {
@@ -1201,6 +1345,7 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 		err = marker.receiveTicket()
 	}
 	if err == nil {
+		blocks := func(n int) uint64 { return uint64(n/16) + uint64((n%16+15)/16) }
 		if datagram {
 			if gateErr := e.datagramGate(); gateErr != nil {
 				err = gateErr
@@ -1208,8 +1353,10 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 				err = ErrReplay
 			} else {
 				key.replay.accept(header.Sequence)
-				blocks := func(n int) uint64 { return uint64(n/16) + uint64((n%16+15)/16) }
-				addUsage(&key.good, usage{calls: 1, blocks: blocks(len(aad)) + blocks(len(plaintext)) + 1, bytes: uint64(len(ciphertext))})
+				good := usage{calls: 1, blocks: blocks(len(aad)) + blocks(len(plaintext)) + 1, bytes: uint64(len(ciphertext))}
+				addUsage(&key.datagramGood, good)
+				addUsage(&epoch.datagramGood[direction], good)
+				addUsage(&e.datagramGood[direction], good)
 				if queue != nil {
 					queue.appendLocked(epoch.number, *payload)
 					_ = e.idle.Refresh()
@@ -1217,10 +1364,12 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 			}
 		} else if key.next != header.Sequence {
 			err = ErrSequence
-		} else if key.next == math.MaxUint64 {
-			key.exhausted = true
 		} else {
-			key.next++
+			if key.next == math.MaxUint64 {
+				key.exhausted = true
+			} else {
+				key.next++
+			}
 			if keys.incoming != nil {
 				keys.incoming.authenticated = true
 			}
@@ -1230,6 +1379,10 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 			if marker != nil {
 				e.switching.received = true
 			}
+			good := usage{calls: 1, blocks: blocks(len(aad)) + blocks(len(plaintext)) + 1, bytes: uint64(len(ciphertext))}
+			addUsage(&key.reliableUse, good)
+			addUsage(&epoch.reliableUse[direction], good)
+			addUsage(&e.reliableCounts[direction], good)
 		}
 	}
 	if err != nil {
@@ -1296,7 +1449,12 @@ func (e *Engine) stageEpoch(root [32]byte, born timev4.Sample, round *RekeyRound
 		e.mu.Unlock()
 		return ErrUsage
 	}
-	staged := &epochState{number: e.current.number + 1, root: root, deadline: deadline, keys: e.spareScopes}
+	if e.rootID == math.MaxUint64 {
+		e.mu.Unlock()
+		return ErrUsage
+	}
+	e.rootID++
+	staged := &epochState{number: e.current.number + 1, rootID: e.rootID, born: born, root: root, deadline: deadline, keys: e.spareScopes}
 	e.spareScopes = scopeTable{}
 	// The sole staging owner is the reserved rekey work position. Ordinary
 	// record jobs cannot borrow it or block its response with held output bytes.

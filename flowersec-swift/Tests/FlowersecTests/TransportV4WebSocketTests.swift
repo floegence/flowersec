@@ -10,21 +10,30 @@
   @testable import Flowersec
 
   @MainActor
-  final class TransportV4WebSocketTests: XCTestCase {
+  final class TransportWebSocketTests: XCTestCase {
     func route(
       _ fixture: CredentialFixture, port: Int, host: String = "localhost",
-      tls: V4CBORValue = NamespaceFixture.map([0: .uint(0), 1: .bool(true)])
+      tls: V4CBORValue = NamespaceFixture.map([0: .uint(0), 1: .bool(true)]),
+      originPolicy: V4CBORValue? = nil, origin: String? = nil, role: V4CryptoRole = .client
     ) throws
       -> V4WebSocketRoute
     {
-      fixture.candidateLeg = NamespaceFixture.map([
+      var fields: [UInt64: V4CBORValue] = [
         0: .uint(0), 1: .bytes(Data(repeating: 50, count: 16)), 2: .uint(1),
         3: .uint(0), 4: .uint(1), 5: .uint(1), 6: .text(host), 7: .uint(UInt64(port)),
         8: .text("/flowersec/v4/direct"), 9: .text("http/1.1"), 10: .text("flowersec.direct.v4"),
         11: tls,
-      ])
+      ]
+      fields[12] = originPolicy
+      fixture.candidateLeg = NamespaceFixture.map(fields)
       let input = try fixture.input(indices: [0])
-      return try fixture.verify(input).webSocketRoute(in: fixture.base.environment)
+      var configuration = fixture.configuration()
+      configuration.webSocketOrigin = origin
+      let local = V4CredentialInput(artifact: input.artifact, clientCertificate: input.clientCertificate,
+        serverCertificate: input.serverCertificate, activation: input.activation, source: input.source,
+        candidateIndex: input.candidateIndex, localRole: role)
+      return try fixture.base.environment.verifyDirectCredentials(configuration: configuration, input: local)
+        .webSocketRoute(in: fixture.base.environment)
     }
     func roots() throws -> [Data] {
       [
@@ -32,6 +41,33 @@
           contentsOf: Bundle.module.url(
             forResource: "self_signed_ca", withExtension: "pem", subdirectory: "Fixtures")!)
       ]
+    }
+    func testSignedOriginPolicyRejectsMissingAndDifferentDialerOriginBeforePreparation() throws {
+      let fixture = try CredentialFixture()
+      let required = NamespaceFixture.map([0: .array([.text("https://client.example")]), 1: .bool(false)])
+      XCTAssertThrowsError(try route(fixture, port: 443, originPolicy: required))
+      XCTAssertThrowsError(try route(fixture, port: 443, originPolicy: required, origin: "https://other.example"))
+      let allowed = try route(fixture, port: 443, originPolicy: required, origin: "https://client.example")
+      XCTAssertEqual(allowed.origin, "https://client.example")
+      let listener = try route(fixture, port: 443, originPolicy: required, role: .server)
+      XCTAssertNil(listener.origin)
+      XCTAssertFalse(listener.allowAbsentOrigin)
+      XCTAssertEqual(listener.allowedOrigins, ["https://client.example"])
+      let optional = NamespaceFixture.map([0: .array([.text("https://client.example")]), 1: .bool(true)])
+      XCTAssertNil(try route(fixture, port: 443, originPolicy: optional).origin)
+    }
+    func testConfiguredHTTPOriginIsSentOverOriginalTLSWebSocket() async throws {
+      let server = try V4WebSocketTestServer()
+      defer { server.stop() }
+      let fixture = try CredentialFixture()
+      let origin = "http://127.0.0.1:3000"
+      let policy = NamespaceFixture.map([0: .array([.text(origin)]), 1: .bool(false)])
+      let route = try route(fixture, port: server.port, originPolicy: policy, origin: origin)
+      XCTAssertTrue(route.requiresTLS)
+      let socket = try await V4PreparedWebSocket.prepare(route: route, numericAddress: "127.0.0.1", trustRootsPEM: roots())
+      XCTAssertEqual(server.request?.headers["origin"], [origin])
+      socket.close()
+      await socket.waitClosed()
     }
     func testRealTLS13UpgradeBinaryPublicationAndEnvironmentClose() async throws {
       let server = try V4WebSocketTestServer()
@@ -108,6 +144,56 @@
       let output = try fixture.base.environment.cryptoBuffer(capacity: 0)
       try output.store(Data())
       XCTAssertThrowsError(try socket.publish(output))
+    }
+    func testTerminalCloseJoinsSocketWhileTLSPeerHasStoppedReading() async throws {
+      let server = try V4WebSocketTestServer()
+      defer { server.stop() }
+      let fixture = try CredentialFixture()
+      let socket = try await V4PreparedWebSocket.prepare(
+        route: route(fixture, port: server.port),
+        numericAddress: "127.0.0.1", trustRootsPEM: roots())
+      try await server.setReadsEnabled(false)
+      let clock = ContinuousClock(), start = ContinuousClock.now
+      socket.close()
+      await socket.waitClosed()
+      XCTAssertLessThan(start.duration(to: clock.now), .seconds(2),
+        "Terminal cleanup must not wait for the peer's TLS close_notify")
+      XCTAssertTrue(socket.cleanupStatus().complete)
+      try await server.setReadsEnabled(true)
+    }
+    func testCoalescedFrameBurstWaitsForOriginalReceivePositions() async throws {
+      let server = try V4WebSocketTestServer(handler: { _ in V4WebSocketBurstPeer() })
+      defer { server.stop() }
+      let fixture = try CredentialFixture()
+      let socket = try await V4PreparedWebSocket.prepare(route: route(fixture, port: server.port),
+        numericAddress: "127.0.0.1", trustRootsPEM: roots())
+      let trigger = try fixture.base.environment.cryptoBuffer(capacity: 1)
+      try trigger.store(Data([1])); try socket.publish(trigger)
+      // The peer submits more frames in one flush than the carrier's two
+      // decoded record positions, before the application begins consuming.
+      try await Task.sleep(for: .milliseconds(30))
+      for index in 0..<64 {
+        let incoming = try await socket.receive()
+        XCTAssertEqual(try incoming.withBytes { $0 }, Data(repeating: UInt8(index), count: 128))
+        incoming.close()
+      }
+      socket.close(); await socket.waitClosed(); trigger.close()
+    }
+    func testDecodedPolicyFailureClosesInsideDemandPumpWithoutReenteringBuffer() async throws {
+      let server = try V4WebSocketTestServer(handler: { _ in V4WebSocketInvalidFramePeer() })
+      defer { server.stop() }
+      let fixture = try CredentialFixture()
+      let socket = try await V4PreparedWebSocket.prepare(route: route(fixture, port: server.port),
+        numericAddress: "127.0.0.1", trustRootsPEM: roots())
+      let trigger = try fixture.base.environment.cryptoBuffer(capacity: 1)
+      defer { trigger.close() }
+      try trigger.store(Data([1])); try socket.publish(trigger)
+      do {
+        let received = try await socket.receive(); received.close()
+        XCTFail("Text frame passed the binary carrier policy")
+      } catch { XCTAssertEqual(error as? V4WebSocketFailure, .policy) }
+      await socket.waitClosed()
+      XCTAssertTrue(socket.cleanupStatus().complete)
     }
     func testRawQuicCredentialCannotBecomeWebSocketRoute() throws {
       let fixture = try CredentialFixture()
@@ -190,6 +276,33 @@
     }
   }
 
+  private final class V4WebSocketBurstPeer: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = NIOWebSocket.WebSocketFrame
+    typealias OutboundOut = NIOWebSocket.WebSocketFrame
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+      guard unwrapInboundIn(data).opcode == .binary else { return }
+      for index in 0..<64 {
+        var bytes = context.channel.allocator.buffer(capacity: 128)
+        bytes.writeRepeatingByte(UInt8(index), count: 128)
+        context.write(wrapOutboundOut(WebSocketFrame(fin: true, opcode: .binary, data: bytes)), promise: nil)
+      }
+      context.flush()
+    }
+  }
+
+  private final class V4WebSocketInvalidFramePeer: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = NIOWebSocket.WebSocketFrame
+    typealias OutboundOut = NIOWebSocket.WebSocketFrame
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+      guard unwrapInboundIn(data).opcode == .binary else { return }
+      var bytes = context.channel.allocator.buffer(capacity: 1)
+      bytes.writeString("x")
+      // The syntactically valid frame reaches the downstream carrier policy,
+      // which closes the real socket synchronously inside the decoder callback.
+      context.writeAndFlush(wrapOutboundOut(WebSocketFrame(fin: true, opcode: .text, data: bytes)), promise: nil)
+    }
+  }
+
   enum V4PinTestFixture {
     static func certificate(_ name: String) throws -> NIOSSLCertificate {
       try NIOSSLCertificate.fromPEMBytes(
@@ -235,7 +348,7 @@
     }
     init(
       alpn: [String] = ["http/1.1"], subprotocol: String = "flowersec.direct.v4",
-      extensions: Bool = false,
+      extensions: Bool = false, loopbackHTTP: Bool = false,
       certificateName: String = "self_signed_cert", keyName: String = "self_signed_key",
       handler: @escaping @Sendable (any Channel) -> any ChannelHandler = { _ in Echo() }
     ) throws {
@@ -250,7 +363,8 @@
       config.minimumTLSVersion = .tlsv13
       config.maximumTLSVersion = .tlsv13
       config.applicationProtocols = alpn
-      let ssl = try NIOSSLContext(configuration: config)
+      let ssl: NIOSSLContext?
+      if loopbackHTTP { ssl = nil } else { ssl = try NIOSSLContext(configuration: config) }
       group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
       let state = State()
       self.state = state
@@ -273,11 +387,16 @@
             } catch { return channel.eventLoop.makeFailedFuture(error) }
           })
         do {
-          try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: ssl))
+          if let ssl { try channel.pipeline.syncOperations.addHandler(NIOSSLServerHandler(context: ssl)) }
           return channel.pipeline.configureHTTPServerPipeline(
             withServerUpgrade: ([upgrader], { _ in }))
         } catch { return channel.eventLoop.makeFailedFuture(error) }
       }.bind(host: "127.0.0.1", port: 0).wait()
+    }
+    func setReadsEnabled(_ enabled: Bool) async throws {
+      for child in state.lock.withLock({ state.children }) {
+        try await child.setOption(ChannelOptions.autoRead, value: enabled).get()
+      }
     }
     func stop() {
       for child in state.lock.withLock({ state.children }) { try? child.close().wait() }

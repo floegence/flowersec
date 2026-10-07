@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/tunnelworkload"
 )
 
@@ -92,6 +93,24 @@ func runBrowserTunnelCapacityProfile(ctx context.Context, definition capacityCas
 	config.ProfileID = definition.Profile
 	config.Sessions = contract.Sessions
 	config.StreamsPerSession = contract.StreamsPerSession
+	if config.RunnerInstallation == nil {
+		installed, err := interopharness.ReadBrowserNativeInstallation(os.Getenv("FLOWERSEC_BROWSER_NATIVE_INSTALLATION"))
+		if err != nil {
+			return capacityCaseResult{}, nil, err
+		}
+		if installed.Carrier != "webtransport" {
+			return capacityCaseResult{}, nil, errors.New("frozen Chromium capacity requires its independent WebTransport qualification")
+		}
+		config.RunnerInstallation = func(call context.Context, observation interopharness.BrowserRuntimeObservation, artifact browserCapacityArtifact) (map[string]any, error) {
+			source, ok := artifact.(interface {
+				OriginalBrowserRunnerDeclaration(context.Context, interopharness.BrowserRuntimeObservation, *interopharness.BrowserNativeInstallation, uint32) (map[string]any, error)
+			})
+			if !ok {
+				return nil, errors.New("frozen Chromium capacity requires its original Go issuance owner")
+			}
+			return source.OriginalBrowserRunnerDeclaration(call, observation, installed, uint32(contract.StreamsPerSession))
+		}
+	}
 	endpoint, err := openProductionBrowserCapacityEndpoint(ctx, config)
 	if err != nil {
 		return capacityCaseResult{}, nil, err

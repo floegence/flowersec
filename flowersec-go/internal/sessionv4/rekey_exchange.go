@@ -99,7 +99,7 @@ func NewRekeyExchange(a *OpenAdmission, b *Barriers, w *RecordWriter, deadlineMS
 		a.termination.notify()
 	}
 	a.mu.Unlock()
-	timing.startDiagnostics(a.diagnostics)
+	timing.startDiagnostics(a.diagnostics, a.diagnosticOperation)
 	installed = true
 	return x, nil
 }
@@ -492,7 +492,11 @@ func (x *RekeyExchange) Progress(ctx context.Context) (result RecordWriteResult,
 }
 
 func (x *RekeyExchange) complete() error {
-	if err := x.round.Complete(); err != nil {
+	var guard cryptov4.RekeySwitchGuard
+	if x.intent != nil {
+		guard = x.intent
+	}
+	if err := x.round.CompleteWithGuard(guard); err != nil {
 		return err
 	}
 	frontier, err := x.admission.engine.ScopeFrontier(0, x.admission.direction)

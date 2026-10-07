@@ -41,6 +41,9 @@ func (n *LiveNamespace) reserveSubscription(wake chan struct{}, sampleTime bool)
 	if wake == nil || cap(wake) != 1 {
 		return namespaceSubscription{}, CBORFailure("revocation_subscription_owner")
 	}
+	if n.refreshFencing {
+		return namespaceSubscription{}, CBORFailure("revocation_namespace_owner")
+	}
 	if err := n.checkAvailable(); err != nil {
 		return namespaceSubscription{}, err
 	}
@@ -81,7 +84,18 @@ func (s namespaceSubscription) release() {
 	}
 	n := s.owner
 	n.mu.Lock()
-	defer n.mu.Unlock()
+	defer func() {
+		trust, _ := n.trust.(*NamespaceTrustStore)
+		n.mu.Unlock()
+		if trust != nil {
+			trust.mu.Lock()
+			registry := trust.registry
+			trust.mu.Unlock()
+			if registry != nil {
+				registry.signalPressure()
+			}
+		}
+	}()
 	if s.index >= len(n.subscribers) {
 		return
 	}
@@ -138,6 +152,7 @@ type CredentialSubscriptions struct {
 	floor                          *DeliverySubscriptionFloor
 	mu                             sync.Mutex
 	closure                        *EndpointCredentials
+	deliveryOrigin                 *EndpointCredentials
 	bindings                       [5]CredentialValidation
 	refs                           [MaxSourceCredentials]namespaceSubscription
 	count                          int
@@ -188,10 +203,10 @@ func (e *EndpointCredentials) subscribeWithPreparation(bindings []CredentialVali
 	if err != nil {
 		return nil, err
 	}
-	return e.subscribeWithPreparationAt(bindings, hardEnd, reservation, inherited, floor, source, samples)
+	return e.subscribeWithPreparationAt(bindings, hardEnd, reservation, inherited, floor, source, samples, nil)
 }
 
-func (e *EndpointCredentials) subscribeWithPreparationAt(bindings []CredentialValidation, hardEnd uint64, reservation resourcev4.Reference, inherited *timev4.Deadline, floor *DeliverySubscriptionFloor, source *CredentialSubscriptions, samples credentialSamples) (*CredentialSubscriptions, error) {
+func (e *EndpointCredentials) subscribeWithPreparationAt(bindings []CredentialValidation, hardEnd uint64, reservation resourcev4.Reference, inherited *timev4.Deadline, floor *DeliverySubscriptionFloor, source *CredentialSubscriptions, samples credentialSamples, deliveryOrigin *EndpointCredentials) (*CredentialSubscriptions, error) {
 	if e == nil {
 		return nil, CBORFailure("configuration_capacity")
 	}
@@ -220,6 +235,7 @@ func (e *EndpointCredentials) subscribeWithPreparationAt(bindings []CredentialVa
 		s = &CredentialSubscriptions{closure: e, hardEnd: min(hardEnd, e.hardEnd), wake: make(chan struct{}, 1), reservation: owned}
 	}
 	copy(s.bindings[:], bindings)
+	s.deliveryOrigin = deliveryOrigin
 	if inherited == nil {
 		s.hard, err = timev4.NewDeadlineAt(bindings[0].Namespace.clock, samples[0], s.hardEnd)
 	} else if !inherited.BelongsTo(bindings[0].Namespace.clock) {
@@ -236,7 +252,7 @@ func (e *EndpointCredentials) subscribeWithPreparationAt(bindings []CredentialVa
 		return nil, err
 	}
 	if floor != nil {
-		if err := floor.attach(s); err != nil {
+		if err := floor.attach(s, deliveryOrigin); err != nil {
 			s.closeLocked()
 			return nil, err
 		}
@@ -287,10 +303,12 @@ func (s *CredentialSubscriptions) cleanupLocked() {
 		return
 	}
 	s.closure = nil
+	s.deliveryOrigin = nil
 	clear(s.bindings[:])
 	if s.bound == nil {
 		clear(s.authorization.bindings[:])
 		s.authorization.closure, s.authorization.activation = nil, nil
+		s.authorization.deliveryOrigin = nil
 	}
 	if s.floor != nil {
 		s.floor.release(s)

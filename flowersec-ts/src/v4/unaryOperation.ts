@@ -17,6 +17,17 @@ export type V4UnaryStartResult = Readonly<{ status: "admitted" }> |
   Readonly<{ status: "not_admitted"; submission: "not_submitted"; reason: "not_ready" | "resource_exhausted" | "dependency_unavailable" }>;
 const capability = Symbol("original unary operation view"), NativePromise = Promise;
 const preparations = new WeakMap<V4UnaryOperation<unknown>, RPCUnaryPreparation>();
+const dispatchOwners = new WeakMap<RPCUnaryPreparation, object>();
+
+/** Internal provenance; a public handle cannot grant Controller ownership. */
+export function controllerUnaryPreparation(preparation: RPCUnaryPreparation, owner: object): RPCUnaryPreparation {
+  dispatchOwners.set(preparation, owner); return preparation;
+}
+export function dispatchControllerUnary<Value>(operation: V4UnaryOperation<Value>, owner: object, options: RPCUnaryTakeOptions): V4UnaryStartResult {
+  const preparation = preparations.get(operation);
+  if (preparation === undefined || dispatchOwners.get(preparation) !== owner) throw new RPCProtocolError("rpc_request_owner");
+  return V4UnaryOperation.prototype.start.call(operation, options);
+}
 
 export function captureUnaryCallOptions(options: V4UnaryOptions = {}): Readonly<{
   preparation: RPCUnaryPreparationOptions; signal: AbortSignal | undefined; context: V4ApplicationContext | undefined;

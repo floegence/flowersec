@@ -6,7 +6,7 @@ import "github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 // through the public source wrapper. It never acquires material, samples time,
 // issues credentials or starts control I/O. Close retains a running inspection
 // until it returns, just as it retains the original AcquireLease invocation.
-func (s *V4LiveAuthoritySource) PreparationNamespaceSet(clock *V4Clock, environment V4ResourceReference) (set V4MaterialNamespaceSet, err error) {
+func (s *LiveAuthoritySource) PreparationNamespaceSet(clock *Clock, environment ResourceReference) (set MaterialNamespaceSet, err error) {
 	if s == nil || clock == nil {
 		return set, cryptov4.ErrConfiguration
 	}
@@ -26,21 +26,19 @@ func (s *V4LiveAuthoritySource) PreparationNamespaceSet(clock *V4Clock, environm
 		s.mu.Lock()
 		s.active--
 		if s.closed {
-			set, err = V4MaterialNamespaceSet{}, cryptov4.ErrClosed
-			if s.active == 0 {
-				close(s.done)
-			}
+			set, err = MaterialNamespaceSet{}, cryptov4.ErrClosed
 		}
 		s.mu.Unlock()
+		s.closeProviderIfReady()
 	}()
-	if p, ok := provider.(V4MaterialNamespaceSetProvider); ok {
+	if p, ok := provider.(MaterialNamespaceSetProvider); ok {
 		set, err = p.PreparationNamespaceSet(clock, environment)
 		if err == nil && set.Count == 0 {
 			err = cryptov4.ErrConfiguration
 		}
 		return set, err
 	}
-	if p, ok := provider.(V4MaterialNamespaceProvider); ok {
+	if p, ok := provider.(MaterialNamespaceProvider); ok {
 		owners, err := p.PreparationNamespaces(clock, environment)
 		if err != nil {
 			return set, err
@@ -52,4 +50,4 @@ func (s *V4LiveAuthoritySource) PreparationNamespaceSet(clock *V4Clock, environm
 	return set, cryptov4.ErrConfiguration
 }
 
-var _ V4MaterialNamespaceSetProvider = (*V4LiveAuthoritySource)(nil)
+var _ MaterialNamespaceSetProvider = (*LiveAuthoritySource)(nil)

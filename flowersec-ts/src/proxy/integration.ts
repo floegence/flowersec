@@ -2,8 +2,7 @@ import type { OperationOptions } from "../public/contract.js";
 import type { V4ConnectionMaterialSource, V4Session, V4TransportEnvironment } from "../v4/public.js";
 import type { V4ConnectionRequirements } from "../generated/transportV4APIResults.js";
 
-import { createProxyRuntime } from "./runtime.js";
-import { registerServiceWorkerAndEnsureControl } from "./registerServiceWorker.js";
+import { createProxySurface, type ProxySurface, type ProxySurfaceOptions } from "./surface.js";
 import type { ProxyRuntime, ProxyRuntimeOptions } from "./types.js";
 import {
   registerProxyControllerWindow,
@@ -14,7 +13,8 @@ import {
 export type ProxyBrowserConnectOptions = Readonly<{
   connect?: OperationOptions;
   requirements?: Partial<V4ConnectionRequirements>;
-  runtime?: Omit<ProxyRuntimeOptions, "session">;
+  runtime?: Omit<ProxyRuntimeOptions, "session" | "sessionBinding" | "credentialContext" | "registerServiceWorkerBridge">;
+  surface?: Omit<ProxySurfaceOptions, "binding" | "runtime" | "serviceWorker">;
   serviceWorker?: Readonly<{
     scriptUrl: string;
     scope?: string;
@@ -27,6 +27,7 @@ export type ProxyBrowserConnectOptions = Readonly<{
 export type ProxyBrowserHandle = Readonly<{
   session: V4Session;
   runtime: ProxyRuntime;
+  surface: ProxySurface;
   dispose(): Promise<void>;
 }>;
 
@@ -36,20 +37,24 @@ export async function connectProxyBrowser(
   options: ProxyBrowserConnectOptions = {},
 ): Promise<ProxyBrowserHandle> {
   const session = await environment.connect(source, options.requirements, options.connect);
-  let runtime: ProxyRuntime | undefined;
+  let surface: ProxySurface | undefined;
   try {
-    if (options.serviceWorker !== undefined) await registerServiceWorkerAndEnsureControl(options.serviceWorker);
-    runtime = createProxyRuntime({ ...options.runtime, session });
+    const contentOrigin = options.surface?.contentOrigin ?? options.runtime?.externalOrigin ?? globalThis.location?.origin;
+    if (contentOrigin === undefined) throw new TypeError("proxy browser requires an explicit Surface origin");
+    surface = await createProxySurface({ mode: "trusted", hostOrigin: contentOrigin, contentOrigin,
+      requestPolicy: { methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        paths: options.runtime?.pathPolicy ?? {}, allowWebSocket: true }, ...options.surface,
+      binding: { mode: "fixed", session }, ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
+      ...(options.serviceWorker === undefined ? {} : { serviceWorker: options.serviceWorker }), });
     return Object.freeze({
       session,
-      runtime,
+      runtime: surface.runtime, surface,
       dispose: async () => {
-        runtime!.dispose();
-        await session.close();
+        try { await surface!.dispose(); } finally { await session.close(); }
       },
     });
   } catch (error) {
-    runtime?.dispose();
+    await surface?.dispose().catch(() => undefined);
     await session.close().catch(() => undefined);
     throw error;
   }
@@ -73,7 +78,7 @@ export async function connectProxyControllerBrowser(
     controller = registerProxyControllerWindow({ runtime: base.runtime, ...options.controller });
     return Object.freeze({
       session: base.session,
-      runtime: base.runtime,
+      runtime: base.runtime, surface: base.surface,
       controller,
       dispose: async () => {
         controller!.dispose();

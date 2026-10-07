@@ -1,3 +1,4 @@
+import { DiagnosticActivity, type DiagnosticObserver } from "./diagnosticObservation.js";
 import type * as ServiceHandlersTypes from "../serviceHandlers.js";
 import { bindContentSave } from "../streamContent.js";
 import type { CapturedByteEventSource } from "../eventSource.js";
@@ -28,7 +29,6 @@ import { encodeText } from "./rpcUnaryPreparation.js";
 import type { ServiceContractSnapshot } from "./serviceContract.js";
 import type { ServiceInputs } from "./serviceInputs.js";
 import type { SessionCleanup } from "./sessionCleanup.js";
-
 export function rpcStreamingDispatchCharges(method: CapturedMethodDefinition, applicationBytes: bigint, runtimeBytes: bigint, source?: CapturedByteEventSource): readonly ResourceVector[] {
   let resultBytes = 0n;
   for (const codec of [method.response!, ...method.errors.map(error => error.codec)]) {
@@ -37,8 +37,8 @@ export function rpcStreamingDispatchCharges(method: CapturedMethodDefinition, ap
   }
   const inputBytes = method.request.application?.applicationBytes ?? BigInt(method.requestMaxBytes) * 3n;
   return [new ResourceVector([12288n + runtimeBytes * 8n + inputBytes + resultBytes + applicationBytes, 0n, 0n, 24n, 2n, 5n, 2n, 0n, 0n, 0n, 0n]),
-    rpcPayloadCharge(Math.max(method.maxResponseBytes, 256), runtimeBytes), rpcOutputInterestCharge(runtimeBytes),
-    ...(source === undefined ? [] : [eventSourceCharge(source, runtimeBytes)])];
+  rpcPayloadCharge(Math.max(method.maxResponseBytes, 256), runtimeBytes), rpcOutputInterestCharge(runtimeBytes),
+  ...(source === undefined ? [] : [eventSourceCharge(source, runtimeBytes)])];
 }
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const decodeUTF8 = TextDecoder.prototype.decode;
@@ -88,17 +88,26 @@ export class RPCStreamingDispatch {
   #bytes = 0n;
   #timer: ReturnType<typeof setTimeout> | undefined;
   readonly #abort = new AbortController();
+  #diagnostic: DiagnosticActivity | undefined;
   #finished: (() => void) | undefined;
-  constructor(messages: RPCStreamMessages, network: RPCNetwork, ticket: RPCNetworkTicket, inputs: ServiceInputs,
-    contract: ServiceContractSnapshot, method: CapturedMethodDefinition, applicationBytes: bigint, group: ApplicationGroup,
-    authentication: V4AuthenticatedContext, clock: TrustedClock, deadline: TrustedDeadline, delivery: ReceiveDeliveryGate,
-    cleanup: SessionCleanup, runtimeBytes: bigint, references: readonly ResourceReference[], routes?: ContractRoutes, identity?: RPCExecutionIdentity, source?: CapturedByteEventSource,
-    reserveEvent?: (charge: ResourceVector) => ResourceReference) {
+  constructor(messages: RPCStreamMessages, network: RPCNetwork, ticket: RPCNetworkTicket, inputs: ServiceInputs, contract: ServiceContractSnapshot, method: CapturedMethodDefinition, applicationBytes: bigint, group: ApplicationGroup, authentication: V4AuthenticatedContext, clock: TrustedClock, deadline: TrustedDeadline, delivery: ReceiveDeliveryGate, cleanup: SessionCleanup, runtimeBytes: bigint, references: readonly ResourceReference[], routes?: ContractRoutes, identity?: RPCExecutionIdentity, source?: CapturedByteEventSource, reserveEvent?: (charge: ResourceVector) => ResourceReference, diagnostics?: DiagnosticObserver) {
     const costs = rpcStreamingDispatchCharges(method, applicationBytes, runtimeBytes, source);
-    this.#reference = references[0]!.take(costs[0]!); this.#messages = messages; this.#network = network; this.#ticket = ticket; this.#inputs = inputs;
-    this.#group = group; this.#authentication = authentication; this.#clock = clock; this.#deadline = deadline; this.#routes = routes; this.#executionIdentity = identity;
-    this.#cleanup = cleanup; cleanup.startJob(); this.#contract = contract.retain();
+    this.#reference = references[0]!.take(costs[0]!);
+    this.#messages = messages;
+    this.#network = network;
+    this.#ticket = ticket;
+    this.#inputs = inputs;
+    this.#group = group;
+    this.#authentication = authentication;
+    this.#clock = clock;
+    this.#deadline = deadline;
+    this.#routes = routes;
+    this.#executionIdentity = identity;
+    this.#cleanup = cleanup;
+    cleanup.startJob();
+    this.#contract = contract.retain();
     try {
+      this.#diagnostic = new DiagnosticActivity(diagnostics, "application");
       this.#initialDeadline = deadline.forkAgeAt(clock.sample(), 30000n);
       this.#output = new RPCPayload(Math.max(method.maxResponseBytes, 256), runtimeBytes, references[1]!);
       this.#interest = new RPCOutputInterest(runtimeBytes, references[2]!);
@@ -109,8 +118,10 @@ export class RPCStreamingDispatch {
       }
       this.#lease = delivery.retain(this.#reference, () => this.close());
       this.#releaseWork = network.retainStream(ticket, messages);
-      messages.onChange(() => { if ((messages.closed || messages.physicalComplete) && !this.#closed) this.close(); this.#collect(); }); Object.freeze(this);
-    } catch (error) { this.close(); throw error; }
+      messages.onChange(() => { if ((messages.closed || messages.physicalComplete) && !this.#closed) this.close(); this.#collect(); });
+      Object.freeze(this);
+    }
+    catch (error) { this.close(); throw error; }
   }
   onCleanup(callback: () => void): void { if (this.#finished !== undefined) throw new RPCProtocolError("rpc_stream_owner"); this.#finished = callback; this.#collect(); }
   start(): void {
@@ -124,14 +135,17 @@ export class RPCStreamingDispatch {
     if (run) { if (this.#terminal !== undefined) throw new RPCProtocolError(this.#terminal); this.#runDeadline?.check(); }
     if (this.#closed) throw new RPCProtocolError("service_unavailable");
   }
-  #beginRun(): void {
+  async #beginRun(): Promise<void> {
     if (this.#runDeadline === undefined) {
       const run = this.#contract!.uint(this.#contract!.semantics === "execution" ? 18 : 12);
       const cap = run < this.#contract!.uint(26) ? run : this.#contract!.uint(26);
       this.#runDeadline = this.#deadline!.forkAgeAt(this.#clock!.sample(), cap);
       if (this.#timer !== undefined) clearTimeout(this.#timer); this.#tick();
     }
-    if (this.#execution !== undefined && !this.#executionEntered) { this.#execution.enter(); this.#executionEntered = true; }
+    if (this.#execution !== undefined && !this.#executionEntered) {
+      (await this.#execution.enter(() => this.#check())); this.#check();
+      this.#executionEntered = true;
+    }
   }
   readonly #tick = (): void => {
     this.#timer = undefined; if (this.#closed || this.#terminalSent) return;
@@ -143,6 +157,7 @@ export class RPCStreamingDispatch {
     } catch { this.#requestTerminal("deadline_exceeded"); }
   };
   #requestTerminal(code: RPCSDKError): void {
+    if (this.#terminal === undefined) this.#diagnostic?.failure(new Error(code));
     this.#terminal ??= code; this.#source?.close(); this.#execution?.fail(code); this.#abort.abort();
     if (!this.#sending && !this.#terminalTask && !this.#terminalSent && this.#request !== undefined && this.#messages?.eof) {
       this.#terminalTask = true; void this.#sendTerminal();
@@ -171,26 +186,34 @@ export class RPCStreamingDispatch {
         const input = this.#inputs!.openInput(this.#ticket!, request); this.#input = input; return input;
       }, this.#abort.signal);
       if (header === undefined) throw new RPCProtocolError("rpc_stream_incomplete");
-      this.#network!.completeStreamRequest(this.#ticket!, this.#messages!); this.#network!.inputComplete(this.#ticket!, this.#input!.state === "complete");
-      this.#messages!.consume(); await this.#messages!.requireEOF(this.#abort.signal); this.#check();
+      this.#network!.completeStreamRequest(this.#ticket!, this.#messages!);
+      this.#network!.inputComplete(this.#ticket!, this.#input!.state === "complete");
+      this.#messages!.consume();
+      await this.#messages!.requireEOF(this.#abort.signal);
+      this.#check();
       this.#initialDeadline = undefined;
-      if (this.#timer !== undefined) clearTimeout(this.#timer); this.#tick();
+      if (this.#timer !== undefined) clearTimeout(this.#timer);
+      this.#tick();
       if (this.#input!.refusal !== undefined) throw new RPCProtocolError(this.#input!.refusal);
-      this.#route = this.#input!.takeRoute(); const handler = this.#route.streaming;
+      this.#route = this.#input!.takeRoute();
+      const handler = this.#route.streaming;
       if (handler === undefined) throw new RPCProtocolError("service_unavailable");
       handler.admit();
       permit = header.uint(7) === 1n ? this.#group!.tryOrdinary(handler.options.workClass) : await this.#group!.acquire(handler.options.workClass, this.#abort.signal, () => this.#check());
       invocation = this.#group!.context(permit, this.#authentication!, this.#abort.signal);
       const enter = (): void => { if (!this.#callback) { this.#callback = true; this.#cleanup!.enterCallback(); } };
       if (handler.options.authorization !== "authenticated") {
-        this.#beginRun(); enter(); const allowed = await (handler.options.authorization as (context: V4ApplicationContext) => boolean | Promise<boolean>)(invocation.context); this.#check();
+        (await this.#beginRun());
+        (await enter());
+        const allowed = await (handler.options.authorization as (context: V4ApplicationContext) => boolean | Promise<boolean>)(invocation.context);
+        this.#check();
         if (allowed !== true) throw new RPCProtocolError("permission_denied");
       }
       if (this.#contract!.semantics === "execution") {
         if (handler.execution === undefined || this.#routes === undefined || this.#executionIdentity === undefined) throw new RPCProtocolError("service_unavailable");
-        this.#execution = handler.execution.admit(this.#input!, this.#route!, this.#routes, this.#authentication!, this.#executionIdentity,
-          { check: () => this.#check(), current: () => !this.#closed && this.#route?.streaming?.current() === true }, () => this.#abort.abort());
-        this.#routes = undefined; this.#executionIdentity = undefined;
+        this.#execution = (await handler.execution.admit(this.#input!, this.#route!, this.#routes, this.#authentication!, this.#executionIdentity, { check: () => this.#check(), current: () => !this.#closed && this.#route?.streaming?.current() === true }, () => this.#abort.abort()));
+        this.#routes = undefined;
+        this.#executionIdentity = undefined;
         if (!this.#execution.created) {
           // Join observes the one original execution. No request decoder,
           // generator, application permit, or saved-item replay is created.
@@ -200,16 +223,24 @@ export class RPCStreamingDispatch {
           this.#requestTerminal("service_unavailable"); return;
         }
       }
-      borrow = this.#input!.borrow(); const definition = this.#route.definition, codec = definition.request;
+      borrow = this.#input!.borrow();
+      const definition = this.#route.definition, codec = definition.request;
       let request: unknown;
-      if (codec.application === undefined) request = codec.implementation === "bytes" ? borrow.bytes : decodeUTF8.call(utf8, borrow.bytes);
-      else { this.#beginRun(); enter(); request = codec.application.execution === "sync" ? codec.application.decode(invocation.context, borrow.bytes) : await codec.application.decode(invocation.context, borrow.bytes); }
-      this.#check(); this.#beginRun(); enter();
+      if (codec.application === undefined)
+        request = codec.implementation === "bytes" ? borrow.bytes : decodeUTF8.call(utf8, borrow.bytes);
+      else {
+        (await this.#beginRun());
+        (await enter());
+        request = codec.application.execution === "sync" ? codec.application.decode(invocation.context, borrow.bytes) : await codec.application.decode(invocation.context, borrow.bytes);
+      }
+      this.#check();
+      (await this.#beginRun());
+      (await enter());
       const context = invocation.context;
-      unbindContent = bindContentSave(context, (position, payload) => {
+      unbindContent = bindContentSave(context, async (position, payload) => {
         this.#check();
         if (this.#execution === undefined) throw new RPCProtocolError("service_unavailable");
-        return this.#execution.saveContent(position, payload, this.#runDeadline!.cap, () => this.#check());
+        return (await this.#execution.saveContent(position, payload, this.#runDeadline!.cap, () => this.#check()));
       });
       let sourceError: number | undefined;
       if (this.#source !== undefined) {
@@ -221,34 +252,45 @@ export class RPCStreamingDispatch {
         invocation.release(); invocation = undefined; permit.release(); permit = undefined; borrow.release(); borrow = undefined;
         if (this.#callback) { this.#callback = false; this.#cleanup!.exitCallback(); }
         this.#check(); sourceError = await this.#pumpEvents();
-      } else {
-        const writer: V4StreamWriter<unknown> = Object.freeze({ write: (value: unknown) => {
-          if (this.#writeTask !== undefined || !this.#acceptingWrites || this.#closed) return Promise.reject(new RPCProtocolError("write_in_progress"));
-          const task = this.#write(value, context); this.#writeTask = task;
-          void task.then(() => { if (this.#writeTask === task) this.#writeTask = undefined; }, () => { if (this.#writeTask === task) this.#writeTask = undefined; });
-          return task;
-        } });
+      }
+      else {
+        const writer: V4StreamWriter<unknown> = Object.freeze({
+          write: (value: unknown) => {
+            if (this.#writeTask !== undefined || !this.#acceptingWrites || this.#closed) return Promise.reject(new RPCProtocolError("write_in_progress"));
+            const task = this.#write(value, context);
+            this.#writeTask = task;
+            void task.then(() => { if (this.#writeTask === task) this.#writeTask = undefined; }, () => { if (this.#writeTask === task) this.#writeTask = undefined; });
+            return task;
+          }
+        });
         this.#acceptingWrites = true;
         try {
-        const generated = (handler.handler as ServiceHandlersTypes.V4StreamingHandler<unknown, unknown>)(context, request, writer); request = undefined;
-        // Arbitrary generator execution is application work for the complete
-        // production lifetime, including its iterator and network awaits.
-        if (generated !== undefined && typeof (generated as AsyncIterable<unknown>)[Symbol.asyncIterator] === "function") {
-          for await (const value of generated as AsyncIterable<unknown>) { this.#check(); await writer.write(value); }
-        } else await generated;
+          const generated = (handler.handler as ServiceHandlersTypes.V4StreamingHandler<unknown, unknown>)(context, request, writer); request = undefined;
+          // Arbitrary generator execution is application work for the complete
+          // production lifetime, including its iterator and network awaits.
+          if (generated !== undefined && typeof (generated as AsyncIterable<unknown>)[Symbol.asyncIterator] === "function") {
+            for await (const value of generated as AsyncIterable<unknown>) { this.#check(); await writer.write(value); }
+          } else await generated;
         } finally { this.#acceptingWrites = false; unbindContent?.(); unbindContent = undefined; }
       }
-      this.#check(); if (this.#sending) throw new RPCProtocolError("write_in_progress");
-      if (sourceError === undefined) this.#execution?.finishStreaming(this.#runDeadline!.cap);
-      await this.#messages!.closeWrite(); this.#terminalSent = true; await this.#messages!.finish(); this.close();
-    } catch (error) {
+      this.#check();
+      if (this.#sending) throw new RPCProtocolError("write_in_progress");
+      if (sourceError === undefined)
+        (await this.#execution?.finishStreaming(this.#runDeadline!.cap));
+      await this.#messages!.closeWrite();
+      this.#terminalSent = true;
+      await this.#messages!.finish();
+      this.close();
+    }
+    catch (error) {
       const business = serviceError(error);
       if (!this.#closed && this.#source?.failure !== undefined) this.#requestTerminal(this.#source.failure);
       else if (business !== undefined && !this.#closed && this.#terminal === undefined && invocation !== undefined) {
         try { await this.#write(business.value, invocation.context, business.code); await this.#messages!.closeWrite(); this.#terminalSent = true; await this.#messages!.finish(); this.close(); }
         catch { this.#requestTerminal("service_failed"); }
       } else if (!this.#closed) this.#requestTerminal(error instanceof RPCProtocolError && ["permission_denied", "resource_exhausted", "service_contract_mismatch", "response_limit_unsupported", "deadline_exceeded", "service_unavailable", "operation_conflict", "source_overflow"].includes(error.code) ? error.code as RPCSDKError : "service_failed");
-    } finally {
+    }
+    finally {
       unbindContent?.();
       // A handler may return before an already-entered encoder/write does.
       // The same invocation and permit remain charged until that work exits.
@@ -261,8 +303,9 @@ export class RPCStreamingDispatch {
   }
   async #pumpEvents(): Promise<number | undefined> {
     const source = this.#source!, handler = this.#route!.streaming!;
-    for (;;) {
-      this.#check(); if (source.failure !== undefined) throw new RPCProtocolError(source.failure);
+    for (; ;) {
+      this.#check();
+      if (source.failure !== undefined) throw new RPCProtocolError(source.failure);
       if (this.#abort.signal.aborted) throw new RPCProtocolError("service_unavailable");
       let input = source.take();
       if (input === undefined) { if (source.ended) return; await source.wait(); continue; }
@@ -278,29 +321,37 @@ export class RPCStreamingDispatch {
         permit = await this.#group!.acquire(handler.options.workClass, this.#abort.signal, () => {
           this.#check(); if (source.failure !== undefined) throw new RPCProtocolError(source.failure);
         });
-        this.#check(); if (source.failure !== undefined) throw new RPCProtocolError(source.failure);
+        this.#check();
+        if (source.failure !== undefined) throw new RPCProtocolError(source.failure);
         invocation = this.#group!.context(permit, this.#authentication!, this.#abort.signal);
-        this.#callback = true; this.#cleanup!.enterCallback();
-        unbindContent = bindContentSave(invocation.context, (position, payload) => {
+        this.#callback = true;
+        this.#cleanup!.enterCallback();
+        unbindContent = bindContentSave(invocation.context, async (position, payload) => {
           this.#check();
           if (this.#execution === undefined) throw new RPCProtocolError("service_unavailable");
-          return this.#execution.saveContent(position, payload, this.#runDeadline!.cap, () => this.#check());
+          return (await this.#execution.saveContent(position, payload, this.#runDeadline!.cap, () => this.#check()));
         });
         let value = await source.source.map(invocation.context, input);
-        this.#check(); if (source.failure !== undefined) throw new RPCProtocolError(source.failure);
+        this.#check();
+        if (source.failure !== undefined) throw new RPCProtocolError(source.failure);
         // Once the complete encoded item is copied into the original output
         // owner, network backpressure is pure SDK work and holds no permit.
-        const publication = this.#write(value, invocation.context, undefined, release); value = undefined;
+        const publication = this.#write(value, invocation.context, undefined, release);
+        value = undefined;
         await publication;
-      } catch (error) {
+      }
+      catch (error) {
         const business = serviceError(error);
         if (business === undefined || invocation === undefined || this.#closed || this.#terminal !== undefined || source.failure !== undefined) throw error;
         source.close(); await this.#write(business.value, invocation.context, business.code, release); return business.code;
-      } finally { release(); }
+      }
+      finally { release(); }
     }
   }
   async #write(value: unknown, context: V4ApplicationContext, errorCode?: number, encoded?: () => void): Promise<void> {
-    this.#check(); if (this.#sending || this.#terminalSent) throw new RPCProtocolError("write_in_progress"); this.#sending = true;
+    this.#check();
+    if (this.#sending || this.#terminalSent) throw new RPCProtocolError("write_in_progress");
+    this.#sending = true;
     let borrow: RPCPayloadBorrow | undefined;
     try {
       const definition = this.#route!.definition, selected = errorCode === undefined ? undefined : definition.errors.find(error => error.code === errorCode);
@@ -310,10 +361,12 @@ export class RPCStreamingDispatch {
       messageInputBytes(value, codec.implementation, codec.maximum);
       let result: unknown = codec.application === undefined ? codec.implementation === "bytes" ? value as Uint8Array : encodeText(value as string, limit)
         : codec.application.execution === "sync" ? codec.application.encode(context, value) : await codec.application.encode(context, value);
-      let bytes: Uint8Array | undefined = checkApplicationMessageOutput(result, codec.maximum); this.#check();
+      let bytes: Uint8Array | undefined = checkApplicationMessageOutput(result, codec.maximum);
+      this.#check();
       if (this.#source?.failure !== undefined) throw new RPCProtocolError(this.#source.failure);
       if (bytes.length > limit || errorCode === undefined && (this.#items >= this.#contract!.uint(24) || BigInt(bytes.length) > this.#contract!.uint(25) - this.#bytes)) throw new RPCProtocolError("service_failed");
-      this.#output!.write(0, bytes); borrow = this.#output!.borrow(bytes.length);
+      this.#output!.write(0, bytes);
+      borrow = this.#output!.borrow(bytes.length);
       const kind = this.#request!.has(1) ? errorCode === undefined ? "execution_stream_item" : "execution_stream_application_error"
         : errorCode === undefined ? "transient_stream_item" : "transient_stream_application_error";
       const header = this.#messages!.codec().response(this.#request!, kind, bytes.length, errorCode);
@@ -321,11 +374,15 @@ export class RPCStreamingDispatch {
       // A terminal application error is already a complete outcome. Persist
       // its execution metadata after encoding validation and before publishing
       // any terminal bytes, including errors produced by an event source.
-      if (errorCode !== undefined) this.#execution?.finishStreaming(this.#runDeadline!.cap, errorCode);
-      const length = bytes.length; value = result = bytes = undefined; encoded?.();
+      if (errorCode !== undefined)
+        (await this.#execution?.finishStreaming(this.#runDeadline!.cap, errorCode));
+      const length = bytes.length;
+      value = result = bytes = undefined;
+      encoded?.();
       await this.#messages!.send(header, borrow.bytes, () => this.#check(false));
       if (errorCode === undefined) { this.#items++; this.#bytes += BigInt(length); }
-    } finally {
+    }
+    finally {
       borrow?.release(); this.#sending = false;
       if (this.#terminal !== undefined) this.#requestTerminal(this.#terminal); this.#collect();
     }
@@ -357,6 +414,7 @@ export class RPCStreamingDispatch {
       this.#execution?.release(); this.#execution = undefined; this.#routes = undefined; this.#executionIdentity = undefined;
       this.#output?.close(); this.#output = undefined; this.#interest?.endInvocation(); this.#interest = undefined;
       this.#contract?.release(); this.#contract = undefined; this.#group = undefined; this.#authentication = undefined; this.#clock = undefined; this.#deadline = this.#initialDeadline = this.#runDeadline = this.#terminalDeadline = undefined;
+      this.#diagnostic?.close(); this.#diagnostic = undefined;
       this.#reference?.release(); this.#reference = undefined; this.#cleanup?.finishJob(); this.#cleanup = undefined;
       const finished = this.#finished; this.#finished = undefined; finished?.();
     } finally { this.#collecting = false; }

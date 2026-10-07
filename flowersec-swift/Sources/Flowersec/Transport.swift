@@ -6,17 +6,6 @@ private extension UInt8 {
   var isASCIIDigit: Bool { (48...57).contains(self) }
 }
 
-enum CarrierKind: String, Codable, Equatable, Sendable {
-  case webSocket = "websocket"
-  case rawQUIC = "raw_quic"
-  case webTransport = "webtransport"
-}
-
-enum PathKind: String, Codable, Equatable, Sendable {
-  case direct
-  case tunnel
-}
-
 public indirect enum JSONValue: Equatable, Sendable {
   case null
   case bool(Bool)
@@ -123,31 +112,6 @@ public struct SessionTermination: Equatable, Sendable {
   }
 }
 
-/// A bounded application-level error returned by a remote RPC handler.
-public struct RPCError: Error, Equatable, Sendable, CustomStringConvertible,
-  CustomDebugStringConvertible, CustomReflectable
-{
-  public let code: UInt32
-  public let message: String?
-
-  public init(code: UInt32, message: String? = nil) {
-    self.code = code
-    self.message = message
-  }
-
-  public var description: String { "Flowersec.RPCError(code: \(code))" }
-  public var debugDescription: String { description }
-  public var customMirror: Mirror { Mirror(self, children: ["code": code]) }
-}
-
-public enum RPCNotificationError: Error, Equatable, Sendable {
-  case invalidPayload
-}
-
-public protocol RPCNotificationSubscription: Sendable {
-  func cancel() async
-}
-
 public struct StreamMetadata: Equatable, Sendable {
   public static let empty = StreamMetadata()
 
@@ -157,9 +121,9 @@ public struct StreamMetadata: Equatable, Sendable {
   private let v4Projection: V4StreamMetadataProjection?
   private let v4DescriptorProjection: [String: JSONValue]?
 
-  public var v4Namespace: String? { v4Projection?.namespace }
-  public var v4Version: UInt16? { v4Projection?.version }
-  public var v4Values: [String: Data]? { v4Projection?.values }
+  public var namespace: String? { v4Projection?.namespace }
+  public var version: UInt16? { v4Projection?.version }
+  public var byteValues: [String: Data]? { v4Projection?.values }
 
   private init() {
     v4Encoded = nil
@@ -169,26 +133,26 @@ public struct StreamMetadata: Equatable, Sendable {
 
   public init(namespace: String, version: UInt16, values: [String: Data]) throws {
     try self.init(
-      encodedV4: V4StreamMetadataCodec.encode(
+      encoded: V4StreamMetadataCodec.encode(
         namespace: namespace, version: version, values: values))
   }
 
   /// Validates exact deterministic CBOR. Zero bytes is the empty sentinel.
-  public init(encodedV4: Data) throws {
-    try self.init(encodedV4: encodedV4, descriptorProjection: nil)
+  public init(encoded: Data) throws {
+    try self.init(encoded: encoded, descriptorProjection: nil)
   }
 
-  private init(encodedV4: Data, descriptorProjection: [String: JSONValue]?) throws {
-    if encodedV4.isEmpty {
+  private init(encoded: Data, descriptorProjection: [String: JSONValue]?) throws {
+    if encoded.isEmpty {
       self = .empty
       return
     }
-    self.v4Projection = try V4StreamMetadataCodec.decode(encodedV4)
-    self.v4Encoded = encodedV4
+    self.v4Projection = try V4StreamMetadataCodec.decode(encoded)
+    self.v4Encoded = encoded
     self.v4DescriptorProjection = descriptorProjection
   }
 
-  public func encodedV4() throws -> Data { v4Encoded ?? Data() }
+  public func encoded() throws -> Data { v4Encoded ?? Data() }
 
   public func descriptorValues() throws -> [String: JSONValue] {
     guard let values = v4DescriptorProjection else { throw StreamMetadataError.invalidValue }
@@ -196,12 +160,12 @@ public struct StreamMetadata: Equatable, Sendable {
   }
 
   public func applyingRawMetadataContract(_ contract: RawStreamMetadataContract) throws -> StreamMetadata {
-    let encoded = try encodedV4()
+    let encoded = try encoded()
     guard encoded.count <= contract.maxEncodedBytes,
-          v4Namespace == contract.namespace, v4Version == contract.version else {
+          namespace == contract.namespace, version == contract.version else {
       throw StreamMetadataError.invalidValue
     }
-    let bytes = v4Values ?? [:]
+    let bytes = byteValues ?? [:]
     let fields = Dictionary(uniqueKeysWithValues: contract.fields.map { ($0.name, $0) })
     guard bytes.keys.allSatisfy({ fields[$0] != nil }), contract.fields.allSatisfy({ !$0.required || bytes[$0.name] != nil }) else {
       throw StreamMetadataError.invalidValue
@@ -227,7 +191,7 @@ public struct StreamMetadata: Equatable, Sendable {
       guard decoded <= contract.maxDecodedBytes else { throw StreamMetadataError.invalidValue }
       projected[key] = value
     }
-    return try StreamMetadata(encodedV4: encoded, descriptorProjection: projected)
+    return try StreamMetadata(encoded: encoded, descriptorProjection: projected)
   }
 
   /// JSON is an application codec inside the same ordinary v4 byte-map shell.
@@ -345,38 +309,39 @@ public struct IncomingStream: Sendable {
   public let kind: String
   public let metadata: StreamMetadata
   public let stream: any ByteStream
+  public let applicationContext: ApplicationInvocationContext?
+  let preparedMessageHandler: V4PreparedMessageHandler?
 
   public init(
     kind: String,
     metadata: StreamMetadata,
-    stream: any ByteStream
+    stream: any ByteStream,
+    applicationContext: ApplicationInvocationContext? = nil
   ) {
     self.kind = kind
     self.metadata = metadata
     self.stream = stream
+    self.applicationContext = applicationContext
+    preparedMessageHandler = nil
+  }
+
+  init(
+    kind: String, metadata: StreamMetadata, stream: any ByteStream,
+    applicationContext: ApplicationInvocationContext? = nil,
+    preparedMessageHandler: V4PreparedMessageHandler?
+  ) {
+    self.kind = kind; self.metadata = metadata; self.stream = stream
+    self.applicationContext = applicationContext
+    self.preparedMessageHandler = preparedMessageHandler
+  }
+
+  func closeHandlerStream() async {
+    if let preparedMessageHandler { await preparedMessageHandler.close() }
+    else { try? await stream.reset() }
   }
 }
 
-public protocol RPCPeer: Sendable {
-  func call<Request: Encodable & Sendable, Response: Decodable & Sendable>(
-    _ typeID: UInt32,
-    _ request: Request,
-    as responseType: Response.Type,
-    timeout: Duration
-  ) async throws -> Response
-
-  func notify<Payload: Encodable & Sendable>(_ typeID: UInt32, _ payload: Payload) async throws
-
-  func subscribeNotification<Payload: Decodable & Sendable>(
-    _ typeID: UInt32,
-    as payloadType: Payload.Type,
-    handler: @escaping @Sendable (Result<Payload, RPCNotificationError>) async throws -> Void
-  ) async throws -> any RPCNotificationSubscription
-}
-
 public protocol Session: Sendable {
-  var rpc: any RPCPeer { get }
-
   func openStream(kind: String, metadata: StreamMetadata) async throws -> any ByteStream
   func acceptStream() async throws -> IncomingStream
   func rekey() async throws

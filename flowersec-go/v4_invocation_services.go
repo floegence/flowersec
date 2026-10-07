@@ -7,35 +7,35 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-type V4DispatchRequirement = sessionv4.DispatchRequirement
-type V4ServiceDependencyMethod = sessionv4.ServiceDependencyMethod
-type V4ServiceDependency = sessionv4.ServiceDependency
+type DispatchRequirement = sessionv4.DispatchRequirement
+type ServiceDependencyMethod = sessionv4.ServiceDependencyMethod
+type ServiceDependency = sessionv4.ServiceDependency
 
 const (
-	V4RequiredForDispatch = sessionv4.RequiredForDispatch
-	V4OnUse               = sessionv4.OnUse
+	RequiredForDispatch = sessionv4.RequiredForDispatch
+	OnUse               = sessionv4.OnUse
 )
 
-// NewV4ServiceDependency selects an exact method subset of a borrowed client.
+// NewServiceDependency selects an exact method subset of a borrowed client.
 // The owning handler registration validates and copies the bounded declaration.
-func NewV4ServiceDependency(alias string, client *V4ServiceClient, methods []V4ServiceDependencyMethod) V4ServiceDependency {
-	dependency := V4ServiceDependency{Alias: alias, Methods: methods}
+func NewServiceDependency(alias string, client *ServiceClient, methods []ServiceDependencyMethod) ServiceDependency {
+	dependency := ServiceDependency{Alias: alias, Methods: methods}
 	if client != nil {
 		dependency.Client = client.inner
 	}
 	return dependency
 }
 
-// V4InvocationService grants only the methods declared by the current handler.
+// InvocationService grants only the methods declared by the current handler.
 // Copies lose new-work rights when that invocation exits or its declaration closes.
-type V4InvocationService struct{ inner sessionv4.InvocationService }
+type InvocationService struct{ inner sessionv4.InvocationService }
 
-func V4InvocationServiceFromContext(ctx context.Context, alias string) (V4InvocationService, error) {
+func InvocationServiceFromContext(ctx context.Context, alias string) (InvocationService, error) {
 	view, err := sessionv4.InvocationServiceFromContext(ctx, alias)
-	return V4InvocationService{inner: view}, err
+	return InvocationService{inner: view}, err
 }
 
-func (v V4InvocationService) PrepareMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (*OperationHandle, error) {
+func (v InvocationService) PrepareMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (*OperationHandle, error) {
 	op, err := v.inner.Prepare(ctx, method, input, options.internal())
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func (v V4InvocationService) PrepareMethod(ctx context.Context, method V4MethodS
 	return &OperationHandle{inner: op}, nil
 }
 
-func (v V4InvocationService) CallMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (Result, error) {
+func (v InvocationService) CallMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (Result, error) {
 	value, status, err := v.inner.Call(ctx, method, input, options.internal())
 	payload, _ := value.([]byte)
 	result := operationResult(value, payload, status, err)
@@ -53,7 +53,7 @@ func (v V4InvocationService) CallMethod(ctx context.Context, method V4MethodSele
 	return result, err
 }
 
-func (v V4InvocationService) StreamMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (*StreamingOperationHandle, error) {
+func (v InvocationService) StreamMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (*StreamingOperationHandle, error) {
 	op, err := v.inner.Stream(ctx, method, input, options.internal())
 	if err != nil {
 		var failure *sessionv4.StreamingStartFailure
@@ -65,7 +65,7 @@ func (v V4InvocationService) StreamMethod(ctx context.Context, method V4MethodSe
 	return &StreamingOperationHandle{inner: op}, nil
 }
 
-func (v V4InvocationService) PrepareStreamingMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (*StreamingOperationHandle, error) {
+func (v InvocationService) PrepareStreamingMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (*StreamingOperationHandle, error) {
 	op, err := v.inner.PrepareStream(ctx, method, input, options.internal())
 	if err != nil {
 		return nil, err
@@ -73,7 +73,7 @@ func (v V4InvocationService) PrepareStreamingMethod(ctx context.Context, method 
 	return &StreamingOperationHandle{inner: op}, nil
 }
 
-func (v V4InvocationService) PrepareNotifyMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (*NotifyOperationHandle, error) {
+func (v InvocationService) PrepareNotifyMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (*NotifyOperationHandle, error) {
 	op, err := v.inner.PrepareNotify(ctx, method, input, options.internal())
 	if err != nil {
 		return nil, err
@@ -81,7 +81,7 @@ func (v V4InvocationService) PrepareNotifyMethod(ctx context.Context, method V4M
 	return &NotifyOperationHandle{inner: op}, nil
 }
 
-func (v V4InvocationService) NotifyMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (NotificationResult, error) {
+func (v InvocationService) NotifyMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (NotificationResult, error) {
 	r, err := v.inner.Notify(ctx, method, input, options.internal())
 	return NotificationResult{NotificationSubmission: r.PublicationProgress, Reference: OperationReference{inner: r.Reference}, CleanupComplete: r.CleanupComplete}, err
 }

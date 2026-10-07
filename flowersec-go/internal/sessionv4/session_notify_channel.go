@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"time"
+
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
@@ -24,6 +26,9 @@ type notifyChannelOpening struct {
 	context      context.Context
 	cancel       context.CancelFunc
 	done         chan struct{}
+	ready        chan struct{}
+	readySettled bool
+	readyError   error
 	cleanupError error
 }
 
@@ -40,9 +45,6 @@ func (r *RPCServices) reserveNotifyChannelLocked(parent context.Context, opener 
 		default:
 			return nil, cryptov4.ErrNotReady
 		}
-	}
-	if err := r.bootstrap.admission.engine.ApplicationReady(); err != nil {
-		return nil, err
 	}
 	if opener > protocolv4.ServerToClient {
 		return nil, cryptov4.ErrConfiguration
@@ -65,9 +67,136 @@ func (r *RPCServices) reserveNotifyChannelLocked(parent context.Context, opener 
 		parent = r.runtimeContext
 	}
 	ctx, cancel := context.WithCancel(parent)
-	job := &notifyChannelOpening{services: r, position: position, allocation: allocation, context: ctx, cancel: cancel, done: make(chan struct{})}
+	job := &notifyChannelOpening{services: r, position: position, allocation: allocation, context: ctx, cancel: cancel, done: make(chan struct{}), ready: make(chan struct{})}
 	r.notifyChannels[int(opener)] = job
 	return job, nil
+}
+
+// Binding initialization is explicit local channel demand. It shares an
+// original opening position and returns only after its publisher is usable;
+// ordinary notification submission never opens or repairs a channel.
+func (r *RPCServices) prepareBindingNotifyChannel(ctx context.Context, deadline *timev4.Deadline) error {
+	if r == nil || ctx == nil || deadline == nil {
+		return cryptov4.ErrConfiguration
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := deadline.Check(); err != nil {
+		return err
+	}
+	// Connect can publish before the original RPC supervisor is scheduled.
+	// Join its existing bootstrap rendezvous under the binding's unchanged
+	// deadline before asking it to open a notification channel.
+	r.mu.Lock()
+	firstReady, initializing := r.firstReady, r.bootstrap != nil && !r.firstSettled
+	r.mu.Unlock()
+	if firstReady != nil && initializing {
+	waiting:
+		for {
+			remaining, err := deadline.RemainingMS()
+			if err != nil {
+				return err
+			}
+			timer := time.NewTimer(time.Duration(min(remaining, uint64(60000))) * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-firstReady:
+				timer.Stop()
+				if err := deadline.Check(); err != nil {
+					return err
+				}
+				break waiting
+			case <-timer.C:
+			}
+		}
+	}
+	r.mu.Lock()
+	if r.closed || r.retired || r.bootstrap == nil {
+		r.mu.Unlock()
+		return cryptov4.ErrNotReady
+	}
+	var pending *notifyChannelOpening
+	for _, job := range r.notifyChannels {
+		if job == nil {
+			continue
+		}
+		if job.readySettled && job.readyError == nil && job.channel.availablePublisher() != nil {
+			if err := deadline.Check(); err != nil {
+				r.mu.Unlock()
+				return err
+			}
+			r.mu.Unlock()
+			return nil
+		}
+		if !job.readySettled {
+			pending = job
+		}
+	}
+	if pending == nil {
+		if err := deadline.Check(); err != nil {
+			r.mu.Unlock()
+			return err
+		}
+		var err error
+		// Each Bind owns only its wait. The shared OPEN belongs to the
+		// already admitted Session and keeps its first unchanged deadline.
+		pending, err = r.reserveNotifyChannelLocked(nil, r.bootstrap.admission.direction)
+		if err != nil {
+			r.mu.Unlock()
+			return err
+		}
+		go pending.prepareDependency(deadline)
+	}
+	ready := pending.ready
+	r.mu.Unlock()
+readyWait:
+	for {
+		remaining, err := deadline.RemainingMS()
+		if err != nil {
+			return err
+		}
+		timer := time.NewTimer(time.Duration(min(remaining, uint64(60000))) * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-ready:
+			timer.Stop()
+			if err := deadline.Check(); err != nil {
+				return err
+			}
+			break readyWait
+		case <-timer.C:
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if pending.readyError != nil {
+		return pending.readyError
+	}
+	if err := deadline.Check(); err != nil {
+		return err
+	}
+	if r.closed || pending.channel.availablePublisher() == nil {
+		return cryptov4.ErrNotReady
+	}
+	return nil
+}
+
+func (job *notifyChannelOpening) settleReady(err error) {
+	r := job.services
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !job.readySettled {
+		job.readySettled, job.readyError = true, err
+		close(job.ready)
+	}
 }
 
 // OpenNotifyChannel is explicit local demand for the opener's one reusable
@@ -90,6 +219,11 @@ func (r *RPCServices) OpenNotifyChannel(ctx context.Context, deadline *timev4.De
 		return nil, cryptov4.ErrNotReady
 	}
 	a := r.bootstrap.admission
+	r.mu.Unlock()
+	if err := a.engine.ApplicationReady(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
 	job, err := r.reserveNotifyChannelLocked(ctx, a.direction)
 	r.mu.Unlock()
 	if err != nil {
@@ -133,6 +267,9 @@ func (r *RPCServices) dispatchNotifyOpen(h OpenHandle, writer *RecordWriter) (bo
 	if !valid {
 		return true, cryptov4.ErrConfiguration
 	}
+	if err := a.engine.ApplicationReady(); err != nil {
+		return true, err
+	}
 	r.mu.Lock()
 	job, err := r.reserveNotifyChannelLocked(nil, 1-a.direction)
 	r.mu.Unlock()
@@ -160,44 +297,65 @@ func (r *RPCServices) dispatchNotifyOpen(h OpenHandle, writer *RecordWriter) (bo
 	return true, nil
 }
 
-func (job *notifyChannelOpening) bind() (*NotifyChannel, error) {
+func (job *notifyChannelOpening) bind() (_ *NotifyChannel, err error) {
+	defer func() { job.settleReady(err) }()
 	r := job.services
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed || job.context.Err() != nil {
+		r.mu.Unlock()
 		return nil, cryptov4.ErrClosed
 	}
+	// The original opening job retains the charged allocation throughout
+	// construction; Engine/endpoint checks run outside services publication.
+	routes, notifications, runtimeBytes := r.routes, r.notifications, r.runtimeBytes
+	instance, backing := r.owner.Instance, r.owner.Backing
+	receiveConfig, publisherConfig := r.notifyReceiverConfig, r.notifyPublisherConfig
+	receiveConfig.Accounts = r.accounts[:r.accountCount]
+	r.mu.Unlock()
 	owner, err := job.allocation.stream.bind(job.handle.owner, job.handle)
 	if err != nil {
 		return nil, err
 	}
+	r.mu.Lock()
 	job.stream = owner
+	closed := r.closed || job.context.Err() != nil
+	r.mu.Unlock()
+	if closed {
+		_ = owner.Cancel()
+		return nil, cryptov4.ErrClosed
+	}
 	var seed [40]byte
-	copy(seed[:16], r.owner.Instance[:])
-	copy(seed[16:32], r.owner.Backing[:])
+	copy(seed[:16], instance[:])
+	copy(seed[16:32], backing[:])
 	binary.BigEndian.PutUint64(seed[32:], job.handle.scope)
 	digest := sha256.Sum256(seed[:])
 	var identity [16]byte
 	copy(identity[:], digest[:16])
 	refs := job.allocation.notify
-	receiveConfig := r.notifyReceiverConfig
-	receiveConfig.Accounts = r.accounts[:r.accountCount]
-	channel, err := NewNotifyChannel(owner, r.routes, identity, receiveConfig, r.notifyPublisherConfig, refs[0], refs[1], refs[2], refs[3], r.runtimeBytes)
+	channel, err := NewNotifyChannel(owner, routes, identity, receiveConfig, publisherConfig, refs[0], refs[1], refs[2], refs[3], runtimeBytes)
 	if err != nil {
 		return nil, err
 	}
-	job.channel = channel
-	if err = r.protectNotifyChannelLocked(channel.Publisher(), job.position-8); err != nil {
-		channel.Close()
-		return nil, err
+	receiver := channel.Receiver()
+	err = notifications.AttachChannel(receiver)
+	r.mu.Lock()
+	job.channel, job.receiver = channel, receiver
+	closed = r.closed || job.context.Err() != nil
+	if !closed && err == nil {
+		err = r.protectNotifyChannelLocked(channel.Publisher(), job.position-8)
+		if err == nil {
+			job.cancel()
+			job.context, job.cancel = context.WithCancel(r.runtimeContext)
+		}
 	}
-	job.receiver = channel.Receiver()
-	if err = r.notifications.AttachChannel(job.receiver); err != nil {
+	r.mu.Unlock()
+	if closed || err != nil {
 		channel.Close()
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		return nil, cryptov4.ErrClosed
 	}
-	job.cancel()
-	job.context, job.cancel = context.WithCancel(r.runtimeContext)
 	return channel, nil
 }
 
@@ -205,6 +363,7 @@ func (job *notifyChannelOpening) bind() (*NotifyChannel, error) {
 // cannot refund a position while a provider, flow or publisher still owns it.
 func (job *notifyChannelOpening) run() {
 	r := job.services
+	job.settleReady(cryptov4.ErrClosed)
 	if job.channel != nil {
 		_ = job.channel.Run(job.context)
 		job.channel.Close()

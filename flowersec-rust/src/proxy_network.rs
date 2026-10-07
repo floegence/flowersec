@@ -24,6 +24,31 @@ use crate::proxy_server::ProxyServerError;
 const MAX_ADDRESSES: usize = 64;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// The proxy's upstream transport uses independently installed CA roots and
+/// TLS 1.3 for both HTTP and WebSocket. Session protocol selection is unrelated
+/// to this application's upstream connection.
+pub(crate) fn client_tls(
+    trust_roots_der: Vec<Vec<u8>>,
+) -> Result<Arc<rustls::ClientConfig>, ProxyServerError> {
+    if trust_roots_der.is_empty() {
+        return Err(ProxyServerError::InvalidOptions);
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    for certificate in trust_roots_der {
+        roots
+            .add(rustls::pki_types::CertificateDer::from(certificate))
+            .map_err(|_| ProxyServerError::InvalidOptions)?;
+    }
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let mut configuration = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .map_err(|_| ProxyServerError::InvalidOptions)?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    configuration.alpn_protocols = vec![b"http/1.1".to_vec()];
+    Ok(Arc::new(configuration))
+}
+
 #[derive(Debug)]
 struct Prefix {
     address: IpAddr,
@@ -37,9 +62,20 @@ struct NetworkPool {
     completed: Notify,
 }
 
+pub(crate) struct ProxyNativeOwnership {
+    pub(crate) authentication: Option<crate::ApplicationBinding>,
+    pub(crate) _charge: Arc<crate::environment_v4::ResourceCharge>,
+    pub(crate) _tail: Arc<crate::application_tails_v4::ApplicationTail>,
+}
+impl std::fmt::Debug for ProxyNativeOwnership {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ProxyNativeOwnership { <opaque> }")
+    }
+}
 struct NetworkWork {
     pool: Arc<NetworkPool>,
     permit: Option<OwnedSemaphorePermit>,
+    _ownership: Option<Arc<ProxyNativeOwnership>>,
 }
 
 // Ownership follows the actual native I/O, including a detached Hyper task's
@@ -235,7 +271,7 @@ impl ProxyNetworkPolicy {
         Ok(result)
     }
 
-    fn work(&self) -> io::Result<Arc<NetworkWork>> {
+    fn work(&self, ownership: Option<Arc<ProxyNativeOwnership>>) -> io::Result<Arc<NetworkWork>> {
         let permit = self
             .pool
             .permits
@@ -246,6 +282,7 @@ impl ProxyNetworkPolicy {
         Ok(Arc::new(NetworkWork {
             pool: self.pool.clone(),
             permit: Some(permit),
+            _ownership: ownership,
         }))
     }
 
@@ -273,12 +310,21 @@ impl ProxyNetworkPolicy {
         self.validate_answer(addresses)
     }
 
+    #[cfg(test)]
     pub(crate) async fn connect(
         &self,
         deadline: Instant,
         cancellation: &CancellationToken,
     ) -> io::Result<ProxySocket> {
-        let work = self.work()?;
+        self.connect_owned(deadline, cancellation, None).await
+    }
+    pub(crate) async fn connect_owned(
+        &self,
+        deadline: Instant,
+        cancellation: &CancellationToken,
+        ownership: Option<Arc<ProxyNativeOwnership>>,
+    ) -> io::Result<ProxySocket> {
+        let work = self.work(ownership)?;
         let deadline = deadline.min(Instant::now() + CONNECT_TIMEOUT);
         tokio::select! {
             biased;

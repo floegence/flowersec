@@ -53,7 +53,17 @@ func diagnosticLaneCharge(c ApplicationExecutorConfig) (resourcev4.Vector, error
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	return charge.Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
+	charge, err = charge.Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
+	if c.Profile != ApplicationProfileCustom {
+		if charge[resourcev4.SDKBytes] > 256*1024 {
+			return resourcev4.Vector{}, cryptov4.ErrConfiguration
+		}
+		charge[resourcev4.SDKBytes] = 256 * 1024
+	}
+	return charge, nil
 }
 
 // enqueueDiagnostic is used only by the diagnostic pump. It atomically moves

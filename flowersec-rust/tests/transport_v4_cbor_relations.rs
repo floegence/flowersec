@@ -134,7 +134,7 @@ fn shared_stateless_relation_corpus() {
         }
         assert_eq!(input, bytes(vector));
     }
-    assert_eq!(counts, [348, 821, 12]);
+    assert_eq!(counts, [349, 821, 12]);
     println!(
         "{} positives, {} negatives, {} separate text/external-oracle cases",
         counts[0], counts[1], counts[2]

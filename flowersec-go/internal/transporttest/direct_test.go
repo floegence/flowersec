@@ -6,12 +6,14 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,13 +21,24 @@ import (
 	"time"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/artifactv3"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	carrieryamux "github.com/floegence/flowersec/flowersec-go/v6/internal/mux/yamux"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
-	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/quicbase"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	nativewt "github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/webtransport"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 	gorillaws "github.com/gorilla/websocket"
 )
+
+func browserOriginAllowed(raw, allowed string) bool {
+	origin, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	want, err := url.Parse(allowed)
+	return err == nil && origin.User == nil && origin.Path == "" && origin.RawQuery == "" && origin.Fragment == "" && origin.Scheme == want.Scheme && origin.Hostname() == want.Hostname() && (want.Port() == "" || origin.Port() == want.Port())
+}
 
 func requireTransportIntegration(t *testing.T) {
 	t.Helper()
@@ -41,6 +54,7 @@ type roundTripContractStream struct {
 	closeWrites atomic.Int32
 	closes      atomic.Int32
 	resets      atomic.Int32
+	finishes    atomic.Int32
 }
 
 func (stream *roundTripContractStream) Read(buffer []byte) (int, error) {
@@ -58,6 +72,9 @@ func (stream *roundTripContractStream) CloseWrite() error {
 
 func (stream *roundTripContractStream) Close() error {
 	stream.closes.Add(1)
+	if stream.finishes.Load() != 0 {
+		return nil
+	}
 	return stream.Reset()
 }
 
@@ -70,64 +87,40 @@ func (stream *roundTripContractStream) Reset() error {
 	return nil
 }
 
-type roundTripPublicStream struct{ *roundTripContractStream }
-
-func (*roundTripPublicStream) Kind() string                           { return "public-release-roundtrip" }
-func (*roundTripPublicStream) TerminalError() *flowersec.SessionError { return nil }
-
-type roundTripInternalStream struct{ *roundTripContractStream }
-
-func (*roundTripInternalStream) ID() uint64           { return 1 }
-func (*roundTripInternalStream) Kind() string         { return "public-release-roundtrip" }
-func (*roundTripInternalStream) TerminalError() error { return nil }
-
-type roundTripPublicSession struct {
-	flowersec.Session
-	stream flowersec.ByteStream
+func (stream *roundTripContractStream) WriteAll(ctx context.Context, payload []byte) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	return stream.Write(payload)
 }
-
-func (session *roundTripPublicSession) OpenStream(context.Context, string, flowersec.StreamMetadata) (flowersec.ByteStream, error) {
-	return session.stream, nil
+func (stream *roundTripContractStream) Finish(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	stream.finishes.Add(1)
+	return nil
 }
-
-type roundTripInternalSession struct {
-	flowersessionv3.Session
-	stream flowersessionv3.ByteStream
-	kind   string
-}
-
-func (session *roundTripInternalSession) AcceptStream(context.Context) (flowersessionv3.IncomingStream, error) {
-	return flowersessionv3.IncomingStream{
-		ID: 1, Kind: session.kind, Metadata: flowersessionv3.Metadata{"direction": "client-to-server"}, Stream: session.stream,
-	}, nil
-}
-
-func newRoundTripContractPair(kind string) (*ProductDirectPair, *roundTripContractStream, *roundTripContractStream) {
+func newRoundTripContractStreams() (*roundTripContractStream, *roundTripContractStream) {
 	clientReader, serverWriter := io.Pipe()
 	serverReader, clientWriter := io.Pipe()
-	client := &roundTripContractStream{reader: clientReader, writer: clientWriter}
-	server := &roundTripContractStream{reader: serverReader, writer: serverWriter}
-	return &ProductDirectPair{
-		Client: &roundTripPublicSession{stream: &roundTripPublicStream{client}},
-		Server: &roundTripInternalSession{stream: &roundTripInternalStream{server}, kind: kind},
-	}, client, server
+	return &roundTripContractStream{reader: clientReader, writer: clientWriter}, &roundTripContractStream{reader: serverReader, writer: serverWriter}
 }
 
 func TestProductDirectRoundTripCompletesFINWithoutReset(t *testing.T) {
-	pair, client, server := newRoundTripContractPair("public-release-roundtrip")
-	if err := pair.RoundTrip(context.Background(), []byte("request"), []byte("response")); err != nil {
+	client, server := newRoundTripContractStreams()
+	if err := roundTripProductStreams(context.Background(), client, server, "public-release-roundtrip", map[string]any{"direction": "client-to-server"}, []byte("request"), []byte("response")); err != nil {
 		t.Fatal(err)
 	}
 	for label, stream := range map[string]*roundTripContractStream{"client": client, "server": server} {
-		if stream.closeWrites.Load() != 1 || stream.closes.Load() != 0 || stream.resets.Load() != 0 {
+		if stream.closeWrites.Load() != 1 || stream.finishes.Load() != 1 || stream.closes.Load() != 1 || stream.resets.Load() != 0 {
 			t.Fatalf("%s lifecycle = CloseWrite %d, Close %d, Reset %d", label, stream.closeWrites.Load(), stream.closes.Load(), stream.resets.Load())
 		}
 	}
 }
 
 func TestProductDirectRoundTripResetsBothStreamsOnFailure(t *testing.T) {
-	pair, client, server := newRoundTripContractPair("wrong-kind")
-	if err := pair.RoundTrip(context.Background(), []byte("request"), []byte("response")); err == nil {
+	client, server := newRoundTripContractStreams()
+	if err := roundTripProductStreams(context.Background(), client, server, "wrong-kind", map[string]any{"direction": "client-to-server"}, []byte("request"), []byte("response")); err == nil {
 		t.Fatal("round trip accepted the wrong stream kind")
 	}
 	for label, stream := range map[string]*roundTripContractStream{"client": client, "server": server} {
@@ -137,69 +130,213 @@ func TestProductDirectRoundTripResetsBothStreamsOnFailure(t *testing.T) {
 	}
 }
 
-func TestEndpointAdmissionClaimsIssuedRequestExactlyOnce(t *testing.T) {
-	endpoint := &ProductDirectEndpoint{
-		ctx: context.Background(), pending: make(map[[32]byte]*admissionExpectation),
-	}
-	expected := &admissionExpectation{raw: []byte("issued-fsb3"), result: make(chan productServerResult, 1)}
-	if _, err := endpoint.register(expected); err != nil {
-		t.Fatal(err)
-	}
-	request := &artifactv3.DecodedRequest{Raw: append([]byte(nil), expected.raw...)}
-	if _, err := endpoint.authorize(context.Background(), request); err != nil {
-		t.Fatalf("first authorization: %v", err)
-	}
-	if _, err := endpoint.authorize(context.Background(), request); err == nil {
-		t.Fatal("replayed authorization succeeded")
-	}
-}
-
-func TestProductDirectWebTransportUpgradeFailurePreservesSiblingArtifact(t *testing.T) {
-	endpoint := &ProductDirectEndpoint{
-		ctx: context.Background(), pending: make(map[[32]byte]*admissionExpectation),
-	}
-	expected := &admissionExpectation{raw: []byte("pending-sibling"), result: make(chan productServerResult, 1)}
-	digest, err := endpoint.register(expected)
+func newProductMaterialTestClient(t *testing.T, ctx context.Context, endpoint *ProductDirectEndpoint, wire string) *interopharness.Client {
+	t.Helper()
+	reporter, err := interopharness.NewPeerReporter()
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	endpoint.serveWebTransportUpgrade(nil, errors.New("request upgrade failed"))
-
+	reporter.ApplicationProfile = "services"
+	t.Cleanup(func() {
+		if err := reporter.Close(); err != nil {
+			t.Errorf("original consumer cleanup: %v", err)
+		}
+	})
+	client, err := interopharness.NewClient(ctx, reporter, wire, endpoint.server.TrustPEM, endpoint.allowedOrigin, productHandlers(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+func productTestRawWebTransport(t *testing.T, endpoint *ProductDirectEndpoint) *nativewt.Dialer {
+	t.Helper()
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(endpoint.server.TrustPEM)) {
+		t.Fatal("original deployment roots missing")
+	}
+	dialer, err := nativewt.NewDialer(&tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, RootCAs: roots}, quicbase.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := dialer.Close(); err != nil {
+			t.Errorf("original raw native cleanup: %v", err)
+		}
+	})
+	return dialer
+}
+func TestEndpointAdmissionClaimsIssuedRequestExactlyOnce(t *testing.T) {
+	requireTransportIntegration(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	endpoint, err := OpenProductDirectEndpoint(ctx, carrier.KindWebTransport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Close()
+	issued, err := endpoint.IssueBrowserArtifact()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer issued.Cancel()
+	first := newProductMaterialTestClient(t, ctx, endpoint, issued.ArtifactJSON())
+	session, err := first.Connect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := issued.AwaitServer(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !issued.record.Claimed() {
+		t.Fatal("original HELLO did not claim independently installed material")
+	}
+	second := newProductMaterialTestClient(t, ctx, endpoint, issued.ArtifactJSON())
+	replayed, err := second.Connect(ctx)
+	if replayed != nil {
+		_ = replayed.Close()
+	}
+	if err == nil {
+		t.Fatal("same independently signed material was accepted twice")
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.WaitCleanup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.WaitCleanup(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestProductDirectWebTransportUpgradeFailurePreservesSiblingArtifact(t *testing.T) {
+	requireTransportIntegration(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	endpoint, err := OpenProductDirectEndpoint(ctx, carrier.KindWebTransport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Close()
+	sibling, err := endpoint.IssueBrowserArtifact()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sibling.Cancel()
+	diagnostic := make(chan error, 1)
+	endpoint.SetWebTransportUpgradeDiagnostic(func(err error) {
+		select {
+		case diagnostic <- err:
+		default:
+		}
+	})
+	bad := productTestRawWebTransport(t, endpoint)
+	if connection, err := bad.Dial(ctx, endpoint.CandidateURL(), "https://wrong-origin.flowersec.invalid"); err == nil {
+		_ = connection.Close()
+		t.Fatal("original listener accepted a disallowed origin")
+	}
 	select {
-	case result := <-expected.result:
-		t.Fatalf("request-level upgrade failure completed sibling artifact: %v", result.err)
-	default:
+	case err := <-diagnostic:
+		if err == nil {
+			t.Fatal("original native upgrade diagnostic is empty")
+		}
+	case <-ctx.Done():
+		t.Fatal("original native upgrade failure was not reported")
 	}
-	if got := endpoint.lookup(expected.raw); got != expected {
-		t.Fatal("request-level upgrade failure removed sibling artifact")
+	if sibling.record.Claimed() || endpoint.registry.PendingCount() != 1 {
+		t.Fatal("failed native upgrade claimed or withdrew the sibling material")
 	}
-	endpoint.unregister(digest, expected)
+	client := newProductMaterialTestClient(t, ctx, endpoint, sibling.ArtifactJSON())
+	session, err := client.Connect(ctx)
+	if err != nil {
+		t.Fatalf("untouched sibling connect: %v", err)
+	}
+	server, err := sibling.AwaitServer(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair := &ProductDirectPair{Client: session, Server: server}
+	if err := pair.RoundTrip(ctx, []byte("sibling-request"), []byte("sibling-response")); err != nil {
+		t.Fatal(err)
+	}
+	if err := pair.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
-
 func TestProductDirectWebTransportUpgradeFailureReportsDiagnostic(t *testing.T) {
-	endpoint := &ProductDirectEndpoint{
-		ctx: context.Background(), pending: make(map[[32]byte]*admissionExpectation),
+	requireTransportIntegration(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	endpoint, err := OpenProductDirectEndpoint(ctx, carrier.KindWebTransport)
+	if err != nil {
+		t.Fatal(err)
 	}
-	want := errors.New("request upgrade failed")
-	var got error
-	endpoint.SetWebTransportUpgradeDiagnostic(func(err error) { got = err })
-	endpoint.serveWebTransportUpgrade(nil, want)
-	if !errors.Is(got, want) {
-		t.Fatalf("upgrade diagnostic = %v, want %v", got, want)
+	defer endpoint.Close()
+	diagnostic := make(chan error, 1)
+	endpoint.SetWebTransportUpgradeDiagnostic(func(err error) {
+		select {
+		case diagnostic <- err:
+		default:
+		}
+	})
+	dialer := productTestRawWebTransport(t, endpoint)
+	if connection, err := dialer.Dial(ctx, endpoint.CandidateURL(), "https://wrong-origin.flowersec.invalid"); err == nil {
+		_ = connection.Close()
+		t.Fatal("disallowed native origin succeeded")
+	}
+	select {
+	case err := <-diagnostic:
+		if !errors.Is(err, nativewt.ErrOriginPolicyRequired) {
+			t.Fatalf("actual native upgrade error = %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("native upgrade diagnostic did not arrive")
 	}
 }
-
 func TestProductDirectWebTransportAdmissionFailureReportsDiagnostic(t *testing.T) {
-	endpoint := &ProductDirectEndpoint{
-		ctx: context.Background(), pending: make(map[[32]byte]*admissionExpectation),
+	requireTransportIntegration(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	endpoint, err := OpenProductDirectEndpoint(ctx, carrier.KindWebTransport)
+	if err != nil {
+		t.Fatal(err)
 	}
-	want := errors.New("session handshake failed")
-	var got error
-	endpoint.SetWebTransportAdmissionDiagnostic(func(err error) { got = err })
-	endpoint.reportWebTransportAdmissionDiagnostic(want)
-	if !errors.Is(got, want) {
-		t.Fatalf("admission diagnostic = %v, want %v", got, want)
+	defer endpoint.Close()
+	diagnostic := make(chan error, 1)
+	endpoint.SetWebTransportAdmissionDiagnostic(func(err error) {
+		select {
+		case diagnostic <- err:
+		default:
+		}
+	})
+	dialer := productTestRawWebTransport(t, endpoint)
+	connection, err := dialer.Dial(ctx, endpoint.CandidateURL(), endpoint.allowedOrigin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	stream, err := nativewt.OpenAdmissionStream(ctx, connection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Reset()
+	wire, err := (protocolv4.Envelope{FrameType: protocolv4.FrameNegotiate, Payload: []byte{0xff}}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Write(wire); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-diagnostic:
+		if err == nil {
+			t.Fatal("actual malformed HELLO diagnostic is empty")
+		}
+	case <-ctx.Done():
+		t.Fatal("actual malformed HELLO diagnostic did not arrive")
 	}
 }
 
@@ -259,11 +396,11 @@ func roundTripProductDirectDatagrams(ctx context.Context, pair *ProductDirectPai
 	if !bytes.Equal(received, request) {
 		return fmt.Errorf("server datagram receive = %q", received)
 	}
-	serverStatus, err := serverChannel.Send(ctx, response, flowersessionv3.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)})
+	serverStatus, err := serverChannel.Send(ctx, response, flowersec.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)})
 	if err != nil {
 		return fmt.Errorf("server datagram send: %w", err)
 	}
-	if serverStatus != flowersessionv3.UnreliableAccepted {
+	if serverStatus != flowersec.UnreliableAccepted {
 		return fmt.Errorf("server datagram send status = %q", serverStatus)
 	}
 	received, err = clientChannel.Receive(ctx)
@@ -308,9 +445,13 @@ func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pair.Close()
+	defer func() {
+		if err := pair.Close(); err != nil {
+			t.Errorf("original browser workload cleanup: %v", err)
+		}
+	}()
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- ServeBrowserBulkV3(ctx, pair.Server, []int64{64 * 1024, 256 * 1024}) }()
+	go func() { serverDone <- ServeBrowserBulk(ctx, pair.Server, []int64{64 * 1024, 256 * 1024}) }()
 	for _, byteCount := range []int64{64 * 1024, 256 * 1024} {
 		metadata, err := flowersec.NewStreamMetadata(map[string]any{"direction": "client-to-server"})
 		if err != nil {
@@ -320,6 +461,7 @@ func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer outgoing.Close()
 		results := make(chan error, 2)
 		go func() {
 			if err := writeExactFill(ctx, outgoing, byteCount, 0xa5); err != nil {
@@ -339,6 +481,12 @@ func TestBrowserBulkServerUsesNativeBidirectionalStreams(t *testing.T) {
 			_ = outgoing.Reset()
 			t.Fatal(err)
 		}
+		if err := outgoing.Finish(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := outgoing.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
@@ -353,9 +501,13 @@ func TestBrowserNativeIsolationPreservesSiblingFIN(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pair.Close()
+	defer func() {
+		if err := pair.Close(); err != nil {
+			t.Errorf("original browser workload cleanup: %v", err)
+		}
+	}()
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- ServeBrowserNativeIsolationV3(ctx, pair.Server) }()
+	go func() { serverDone <- ServeBrowserNativeIsolation(ctx, pair.Server) }()
 
 	streams := make([]releaseByteStream, 0, 4)
 	for index := range 4 {
@@ -367,6 +519,7 @@ func TestBrowserNativeIsolationPreservesSiblingFIN(t *testing.T) {
 		if openErr != nil {
 			t.Fatal(openErr)
 		}
+		defer stream.Close()
 		streams = append(streams, stream)
 		if count, writeErr := stream.Write([]byte{byte(index)}); writeErr != nil || count != 1 {
 			t.Fatalf("stream %d handshake write = %d, %v", index, count, writeErr)
@@ -403,7 +556,7 @@ func TestBrowserNativeIsolationPreservesSiblingFIN(t *testing.T) {
 				results <- errors.Join(readErr, errors.New("sibling did not finish with FIN"))
 				return
 			}
-			results <- nil
+			results <- errors.Join(stream.Finish(ctx), stream.Close())
 		}()
 	}
 	if err := errors.Join(<-results, <-results, <-results); err != nil {
@@ -412,8 +565,8 @@ func TestBrowserNativeIsolationPreservesSiblingFIN(t *testing.T) {
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
 	}
-	var response string
-	if err := pair.Client.RPC().Call(ctx, 1, "native-isolation-survivor", &response); err != nil || response != "native-isolation-survivor" {
+	response, err := pair.CallEcho(ctx, []byte("native-isolation-survivor"))
+	if err != nil || string(response) != "native-isolation-survivor" {
 		t.Fatalf("post-reset RPC = %q, %v", response, err)
 	}
 }
@@ -447,11 +600,10 @@ func TestBrowserBulkServerFINAcknowledgesPeerReadCompletion(t *testing.T) {
 		closeWrite:  make(chan struct{}),
 		stopped:     make(chan struct{}),
 	}
-	session := singleBrowserBulkSession{stream: stream}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serveBrowserBulkSessionPhaseV3(ctx, session, 1024) }()
+	go func() { done <- serveBrowserBulkBidiPhase(ctx, stream, 1024) }()
 
 	prematureFIN := false
 	select {
@@ -475,11 +627,10 @@ func TestBrowserBulkServerFINAcknowledgesPeerReadCompletion(t *testing.T) {
 
 func TestBrowserBulkServerWaitsForResponseBeforeFIN(t *testing.T) {
 	stream := newOrderedBrowserBidiStream(64 * 1024)
-	session := singleBrowserBulkSession{stream: stream}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serveBrowserBulkSessionPhaseV3(ctx, session, 64*1024) }()
+	go func() { done <- serveBrowserBulkBidiPhase(ctx, stream, 64*1024) }()
 
 	select {
 	case <-stream.firstWrite:
@@ -530,16 +681,16 @@ func TestProductDirectEndpointReusesListenerForConcurrentArtifacts(t *testing.T)
 					defer group.Done()
 					pair, connectErr := endpoint.Connect(ctx)
 					if connectErr != nil {
-						errors <- connectErr
+						errors <- fmt.Errorf("connect: %w", connectErr)
 						return
 					}
 					request := []byte(fmt.Sprintf("request-%d", ordinal))
 					response := []byte(fmt.Sprintf("response-%d", ordinal))
 					if roundTripErr := pair.RoundTrip(ctx, request, response); roundTripErr != nil {
-						errors <- roundTripErr
+						errors <- fmt.Errorf("round trip: %w", roundTripErr)
 					}
 					if closeErr := pair.Close(); closeErr != nil {
-						errors <- closeErr
+						errors <- fmt.Errorf("cleanup: %w", closeErr)
 					}
 				}()
 			}
@@ -594,10 +745,11 @@ func TestProductDirectBrowserEndpointRequiresConcreteOriginAndExposesCertificate
 
 func TestProductDirectBrowserExternalTLSKeepsCandidateHostAndIssuesCAPolicy(t *testing.T) {
 	requireTransportIntegration(t)
-	serverTLS, _, err := localTLSForHost(carrier.KindWebTransport, "127.0.0.1")
+	certificate, _, _, _, err := interopharness.TLSMaterial("public-ca-test.example")
 	if err != nil {
 		t.Fatal(err)
 	}
+	serverTLS := &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}
 	endpoint, err := OpenProductDirectBrowserEndpointAtWithTLS(
 		context.Background(),
 		"127.0.0.1",
@@ -617,14 +769,14 @@ func TestProductDirectBrowserExternalTLSKeepsCandidateHostAndIssuesCAPolicy(t *t
 		t.Fatal(err)
 	}
 	defer issued.Cancel()
-	decoded, err := artifactv3.DecodeArtifactJSON(bytes.NewBufferString(issued.ArtifactJSON()))
-	if err != nil {
-		t.Fatal(err)
+	document := productTestRoute(t, issued.ArtifactJSON())
+	defer document.Release()
+	policy := document.Root().Named("Route", "direct_leg").Named("Leg", "tls_policy")
+	mode, ok := policy.Named("TLSPolicy", "mode").Uint()
+	if !ok || mode != 0 || policy.Named("TLSPolicy", "pins").Len() != 0 {
+		t.Fatal("independently signed browser route does not use the captured CA policy")
 	}
-	if len(decoded.Path.Candidates) != 1 || decoded.Path.Candidates[0].TLS.Mode != artifactv3.TLSModeCA ||
-		len(decoded.Path.Candidates[0].TLS.Pins) != 0 {
-		t.Fatalf("browser artifact TLS policy = %+v, want CA mode", decoded.Path.Candidates)
-	}
+
 }
 
 func TestWebTransportTestCertificateUsesBrowserCompatibleP256(t *testing.T) {
@@ -682,37 +834,38 @@ func TestProductDirectBrowserArtifactsAreFreshAndCancelable(t *testing.T) {
 		t.Fatal("browser artifact was reused")
 	}
 	for _, issued := range []*ProductDirectBrowserArtifact{first, second} {
-		var value map[string]any
-		if err := json.Unmarshal([]byte(issued.ArtifactJSON()), &value); err != nil {
+		var material interopharness.Material
+		if err := json.Unmarshal([]byte(issued.ArtifactJSON()), &material); err != nil {
 			t.Fatal(err)
 		}
-		if value["v"] != float64(3) {
-			t.Fatalf("artifact version = %v", value["v"])
+		if material.WireRevision != interopharness.WireRevision {
+			t.Fatalf("engineering material revision = %d", material.WireRevision)
 		}
-		decoded, err := artifactv3.DecodeArtifactJSON(bytes.NewBufferString(issued.ArtifactJSON()))
-		if err != nil {
-			t.Fatal(err)
+		document := productTestRoute(t, issued.ArtifactJSON())
+		policy := document.Root().Named("Route", "direct_leg").Named("Leg", "tls_policy")
+		mode, ok := policy.Named("TLSPolicy", "mode").Uint()
+		pins := policy.Named("TLSPolicy", "pins")
+		if !ok || mode != 1 || pins.Len() != 1 {
+			document.Release()
+			t.Fatal("independently signed browser route does not have exactly one captured pin")
 		}
-		if len(decoded.Path.Candidates) != 1 || decoded.Path.Candidates[0].TLS.Mode != artifactv3.TLSModePin ||
-			len(decoded.Path.Candidates[0].TLS.Pins) != 1 {
-			t.Fatalf("browser artifact TLS policy = %+v, want one pin", decoded.Path.Candidates)
+		pin := pins.Index(0)
+		digest, ok := pin.Named("TLSPin", "leaf_der_sha256").ByteString()
+		if !ok || !bytes.Equal(digest, endpoint.certificateHash[:]) {
+			document.Release()
+			t.Fatal("independently signed pin differs from the original served DER leaf")
 		}
-		pin := decoded.Path.Candidates[0].TLS.Pins[0]
-		if pin.ValueBase64URL != base64.RawURLEncoding.EncodeToString(endpoint.certificateHash[:]) {
-			t.Fatal("browser artifact pin does not match the served leaf certificate")
-		}
+		expires, ok := pin.Named("TLSPin", "not_after_ms").Uint()
 		certificate, err := x509.ParseCertificate(endpoint.certificateDER)
-		if err != nil || pin.NotAfterUnixS != certificate.NotAfter.Unix() {
-			t.Fatalf("browser artifact pin expiry = %d, certificate = %v", pin.NotAfterUnixS, certificate)
+		document.Release()
+		if err != nil || !ok || expires != uint64(certificate.NotAfter.UnixMilli()) {
+			t.Fatalf("independently signed pin expiry = %d, certificate = %v", expires, certificate)
 		}
 		issued.Cancel()
 		issued.Cancel()
 	}
-	endpoint.pendingMu.Lock()
-	pending := len(endpoint.pending)
-	endpoint.pendingMu.Unlock()
-	if pending != 0 {
-		t.Fatalf("pending artifacts after cancellation = %d", pending)
+	if pending := endpoint.registry.PendingCount(); pending != 0 {
+		t.Fatalf("original pending accepted records after cancellation = %d", pending)
 	}
 	if _, err := first.AwaitServer(context.Background()); err == nil {
 		t.Fatal("canceled artifact could be awaited")
@@ -721,6 +874,8 @@ func TestProductDirectBrowserArtifactsAreFreshAndCancelable(t *testing.T) {
 
 func TestProductDirectWorkloadsUsePersistentEndpoint(t *testing.T) {
 	requireTransportIntegration(t)
+	// Its ephemeral endpoints and stores are private to this workload.
+	t.Parallel()
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindRawQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -817,7 +972,7 @@ func (stream *coordinatedBrowserReadStream) CloseWrite() error {
 	stream.closeWrites.Add(1)
 	return nil
 }
-func (stream *coordinatedBrowserReadStream) Close() error { return stream.Reset() }
+func (*coordinatedBrowserReadStream) Close() error { return nil }
 func (stream *coordinatedBrowserReadStream) Reset() error {
 	stream.resets.Add(1)
 	stream.stopOnce.Do(func() { close(stream.stopped) })
@@ -833,17 +988,6 @@ type coordinatedBrowserWriteStream struct {
 	stopOnce     sync.Once
 	closeWrites  atomic.Int32
 	resets       atomic.Int32
-}
-
-type singleBrowserBulkSession struct {
-	flowersessionv3.Session
-	stream flowersessionv3.ByteStream
-}
-
-func (session singleBrowserBulkSession) AcceptStream(context.Context) (flowersessionv3.IncomingStream, error) {
-	return flowersessionv3.IncomingStream{
-		Kind: "release-bulk", Metadata: flowersessionv3.Metadata{"direction": "client-to-server"}, Stream: session.stream,
-	}, nil
 }
 
 type gatedBrowserBidiStream struct {
@@ -905,7 +1049,7 @@ func (stream *orderedBrowserBidiStream) Write(buffer []byte) (int, error) {
 		<-stream.writeAllowed
 	}
 	if stream.closed.Load() {
-		return 0, protocolv3.ErrStreamClosed
+		return 0, io.ErrClosedPipe
 	}
 	return len(buffer), nil
 }
@@ -973,7 +1117,7 @@ func (stream *coordinatedBrowserWriteStream) CloseWrite() error {
 	stream.closeWrites.Add(1)
 	return nil
 }
-func (stream *coordinatedBrowserWriteStream) Close() error { return stream.Reset() }
+func (*coordinatedBrowserWriteStream) Close() error { return nil }
 func (stream *coordinatedBrowserWriteStream) Reset() error {
 	stream.resets.Add(1)
 	stream.stopOnce.Do(func() { close(stream.stopped) })
@@ -1019,20 +1163,41 @@ func TestNormalizeCloseErrorAcceptsTerminalDeadline(t *testing.T) {
 }
 
 func TestReconcilePublicSessionCloseErrorRequiresAuthoritativeClosedTermination(t *testing.T) {
-	closeErr := errors.New("redacted close failure")
-	if err := reconcilePublicSessionCloseError(closeErr, flowersec.SessionClosed, nil); err != nil {
-		t.Fatalf("reconcile authenticated closed termination = %v", err)
+	requireTransportIntegration(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	pair, err := OpenProductDirect(ctx, carrier.KindWebSocket)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	for _, code := range []flowersec.SessionErrorCode{"", flowersec.SessionOperationFailed, flowersec.SessionGoingAway} {
-		if err := reconcilePublicSessionCloseError(closeErr, code, nil); !errors.Is(err, closeErr) {
-			t.Fatalf("reconcile termination %q = %v, want close failure", code, err)
-		}
+	if err := pair.Server.Close(); err != nil {
+		t.Fatal(err)
 	}
-
-	waitErr := errors.New("termination wait failed")
-	if err := reconcilePublicSessionCloseError(closeErr, flowersec.SessionClosed, waitErr); !errors.Is(err, closeErr) || !errors.Is(err, waitErr) {
-		t.Fatalf("reconcile failed termination wait = %v, want both failures", err)
+	if err := pair.Server.WaitTermination(ctx); err != nil {
+		t.Fatal(err)
+	}
+	closed := pair.Server.Rekey(ctx)
+	var closedFailure *flowersec.SessionError
+	if !errors.As(closed, &closedFailure) || closedFailure.Code() != flowersec.SessionClosed {
+		t.Fatalf("closed original session projection: %v", closed)
+	}
+	unexpectedJoined := errors.New("unrelated cleanup failure")
+	mixed := errors.Join(closed, unexpectedJoined)
+	if remaining := filterSessionClosedErrors(mixed); !errors.Is(remaining, unexpectedJoined) || errors.Is(remaining, closed) {
+		t.Fatalf("joined close filtering hid or retained the wrong cause: %v", remaining)
+	}
+	if isAuthoritativeSessionClosed(mixed) || isAuthoritativeSessionClosed(fmt.Errorf("wrapped: %w", mixed)) {
+		t.Fatal("mixed terminal causes were accepted as authoritative closed")
+	}
+	if err := pair.Close(); err != nil {
+		t.Fatalf("original peer-closed pair cleanup: %v", err)
+	}
+	if err := pair.Close(); err != nil {
+		t.Fatalf("second original pair cleanup: %v", err)
+	}
+	unexpected := errors.New("redacted close failure")
+	if err := normalizeCloseError(unexpected); !errors.Is(err, unexpected) {
+		t.Fatalf("unproven close failure was hidden: %v", err)
 	}
 }
 
@@ -1055,18 +1220,36 @@ func TestNormalizeCloseErrorAcceptsOwnedPeerCloseReasons(t *testing.T) {
 	}
 }
 
-func TestNormalizeCloseErrorAcceptsPeerYamuxResetOnly(t *testing.T) {
-	if normalized := normalizeCloseError(carrieryamux.ErrStreamReset); normalized != nil {
-		t.Fatalf("normalize peer Yamux reset = %v", normalized)
-	}
-
-	for _, unexpected := range []error{
-		carrier.ErrStreamReset,
-		protocolv3.ErrStreamReset,
-		errors.New("stream reset"),
-	} {
+func TestNormalizeCloseErrorPreservesDirectionReset(t *testing.T) {
+	for _, unexpected := range []error{native.ErrDirectionReset, sessionv4.ErrAbandoned, carrier.ErrStreamReset, errors.New("stream reset")} {
 		if normalized := normalizeCloseError(unexpected); normalized == nil {
-			t.Fatalf("normalized unexpected reset %T: %v", unexpected, unexpected)
+			t.Fatalf("unproven direction reset was hidden: %T: %v", unexpected, unexpected)
 		}
 	}
 }
+func productTestRoute(t *testing.T, wire string) *protocolv4.Document {
+	t.Helper()
+	var material interopharness.Material
+	if err := json.Unmarshal([]byte(wire), &material); err != nil {
+		t.Fatal(err)
+	}
+	decoder, err := protocolv4.NewDecoder(16384, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document, err := decoder.DecodeMap(material.Route, "Route", protocolv4.DecodeContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return document
+}
+
+func (*coordinatedBrowserReadStream) Finish(ctx context.Context) error { return ctx.Err() }
+
+func (*coordinatedBrowserWriteStream) Finish(ctx context.Context) error { return ctx.Err() }
+
+func (*gatedBrowserBidiStream) Finish(ctx context.Context) error { return ctx.Err() }
+
+func (*orderedBrowserBidiStream) Finish(ctx context.Context) error { return ctx.Err() }
+
+func (*blockingReleaseStream) Finish(ctx context.Context) error { return ctx.Err() }

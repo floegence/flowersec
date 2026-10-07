@@ -28,6 +28,7 @@ import (
 // dependencies. ProviderBytesPerConnection includes the qualified TLS/HTTP
 // parser and native runtime allowance, separately from the message provider.
 type WebSocketServerConfig struct {
+	AcceptedRouteCapacity uint16
 	// Tunnel bindings name the logical endpoint and actual local relay role.
 	Side                       protocolv4.Direction
 	Relay                      bool
@@ -55,6 +56,7 @@ type webSocketServerSlot struct {
 }
 
 type WebSocketServer struct {
+	acceptedRoutes           acceptedRoutePolicies
 	mu                       sync.Mutex
 	c                        WebSocketServerConfig
 	reservation, shared      resourcev4.Reference
@@ -98,11 +100,15 @@ func WebSocketServerCharge(c WebSocketServerConfig) (resourcev4.Vector, error) {
 	if certBytes > 262144 || c.ProviderBytesPerConnection > (math.MaxUint64-certBytes*16)/uint64(c.Connections) {
 		return resourcev4.Vector{}, resourcev4.ErrConfiguration
 	}
+	alternateBytes, err := acceptedRoutePoliciesBacking(c.AcceptedRouteCapacity, webSocketFactoryRouteBytes, webSocketFactoryRouteNodes)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
 	decoder, err := protocolv4.DecoderBackingBytes(webSocketFactoryRouteBytes, webSocketFactoryRouteNodes)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	metadata := uint64(unsafe.Sizeof(WebSocketServer{})) + decoder + certBytes*16 + uint64(c.Connections)*(uint64(unsafe.Sizeof(webSocketServerSlot{}))+uint64(unsafe.Sizeof(serverWebSocketConn{}))) + 16384
+	metadata := uint64(unsafe.Sizeof(WebSocketServer{})) + alternateBytes + decoder + certBytes*16 + uint64(c.Connections)*(uint64(unsafe.Sizeof(webSocketServerSlot{}))+uint64(unsafe.Sizeof(serverWebSocketConn{}))) + 16384
 	return (resourcev4.Vector{resourcev4.SDKBytes: metadata,
 		resourcev4.ProviderBytes: uint64(c.Connections) * c.ProviderBytesPerConnection,
 		resourcev4.Items:         1 + uint64(c.Connections), resourcev4.Tasks: 1 + 2*uint64(c.Connections),
@@ -138,6 +144,10 @@ func NewWebSocketServer(c WebSocketServerConfig, reservation, dependencies resou
 			s.Close()
 		}
 	}()
+	s.acceptedRoutes, err = newAcceptedRoutePolicies(c.AcceptedRouteCapacity, webSocketFactoryRouteBytes, webSocketFactoryRouteNodes)
+	if err != nil {
+		return nil, err
+	}
 	decoder, err := protocolv4.NewDecoder(webSocketFactoryRouteBytes, webSocketFactoryRouteNodes)
 	if err != nil {
 		return nil, err
@@ -395,7 +405,11 @@ func (s *WebSocketServer) checkAcceptedRoute(endpoint protocolv4.AcceptedWebSock
 		return err
 	}
 	if !bytes.Equal(route, s.document.Bytes()) {
-		return protocolv4.CBORFailure("accepted_listener_binding")
+		now, err := s.sampleLocked()
+		if err != nil {
+			return err
+		}
+		return s.acceptedRoutes.check(route, s.certificates, s.host, s.c.Roots, now.Interval)
 	}
 	return nil
 }
@@ -533,6 +547,7 @@ func (s *WebSocketServer) cleanupLocked() {
 	}
 	s.cleaned = true
 	if s.document != nil {
+		s.acceptedRoutes.release()
 		s.document.Release()
 		s.document = nil
 	}

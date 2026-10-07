@@ -4,7 +4,7 @@ import XCTest
 @testable import Flowersec
 
 @MainActor
-final class TransportV4StreamOwnerTests: XCTestCase {
+final class TransportStreamOwnerTests: XCTestCase {
   func bytes(_ result: V4StreamRead) throws -> Data {
     guard case .data(let buffer) = result else {
       XCTFail("expected data")
@@ -13,6 +13,25 @@ final class TransportV4StreamOwnerTests: XCTestCase {
     defer { buffer.close() }
     return try buffer.withBytes { $0 }
   }
+  func testStreamAcceptanceSurvivesAuthorizationFailureAfterProviderHandoff() throws {
+    let fixture = try CryptoOwnerFixture(.x25519)
+    let (a, b) = try fixture.establish()
+    let client = try a.makeSession(), server = try b.makeSession()
+    let c = CryptoTestPublisher(), s = CryptoTestPublisher()
+    let local = try client.open(kind: "example.echo", receiveWindow: 8, to: c)
+    try server.receive(c.last())
+    let remote = try XCTUnwrap(server.pendingOpen())
+    try server.decideOpen(remote, decision: .accept(receiveWindow: 8), to: s)
+    try client.receive(s.last())
+    let accepted = V4StreamAcceptedTestSnapshot()
+    c.onWrite = { fixture.credentials.base.environment.beginClose() }
+    XCTAssertThrowsError(try client.write(
+      local, data: Data([1, 2, 3]), to: c, accepted: { accepted.record($0) }))
+    // This is a local provider handoff, even though the post-handoff security
+    // check ended the Session before write could return its ordinary count.
+    XCTAssertEqual(accepted.count, 3)
+  }
+
   func testActualReadyToOpenCreditDataFinAndRetirementForBothProfiles() throws {
     for profile in V4CryptoProfile.allCases {
       let fixture = try CryptoOwnerFixture(profile)
@@ -60,12 +79,16 @@ final class TransportV4StreamOwnerTests: XCTestCase {
       try server.receive(c.last())
       XCTAssertEqual(try client.phase(local), .recent)
       XCTAssertEqual(try server.phase(remote), .recent)
+      try client.reset(local)
+      XCTAssertThrowsError(try server.reset(local), "Another Session cannot close the original Stream")
       fixture.credentials.base.source.advance(51)
       XCTAssertTrue(try client.poll(to: c))
       try server.receive(c.last())
       XCTAssertTrue(try server.poll(to: s))
       try client.receive(s.last())
       XCTAssertEqual(try client.phase(local), .stable)
+      try client.reset(local)
+      try client.reset(local)
       XCTAssertTrue(try client.sendFinished(local))
       if case .eof = try client.read(local, maximum: 8) {
       } else {
@@ -364,4 +387,11 @@ final class TransportV4StreamOwnerTests: XCTestCase {
     }
     XCTAssertGreaterThan(count, 20)
   }
+}
+
+private final class V4StreamAcceptedTestSnapshot: @unchecked Sendable {
+  private let lock = NSLock()
+  private var value = 0
+  func record(_ count: Int) { lock.withLock { value += count } }
+  var count: Int { lock.withLock { value } }
 }

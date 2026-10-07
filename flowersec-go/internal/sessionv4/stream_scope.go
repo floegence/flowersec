@@ -133,7 +133,10 @@ func (a *OpenAdmission) StartStreamScope(ctx context.Context, h OpenHandle, opti
 	s := &StreamScope{dependencies: dependencies, dependencyFloor: dependencyFloor, owner: o, reservation: owned, deadline: deadline, cancel: cancel, finishStart: make(chan struct{}), cleanupStart: make(chan struct{}), finishResult: make(chan error, 1), workerDone: make(chan struct{}), ready: make(chan struct{}), done: make(chan struct{})}
 	s.view = &ScopeStream{owner: o, cap: o.cap, idle: make(chan struct{})}
 	s.result.Close.CleanupStatus = protocolv4.V4CleanupStatus{Status: protocolv4.V4CleanupStatePending, CoreCleanup: protocolv4.V4CoreCleanupPending, PendingCallbacks: 1}
-	task, err := executor.TrySubmit(class, taskReservation, owned, func() {
+	o.mu.Lock()
+	group := o.allocationGroup
+	o.mu.Unlock()
+	task, err := executor.trySubmitInGroup(group, class, taskReservation, owned, func() {
 		cause := ErrScopeCallbackExit
 		defer s.dependencies.release()
 		defer func() {

@@ -19,7 +19,7 @@ func liveServerAllowRequest(plan *protocolv4.LiveActivationPlan, fields protocol
 	return config.Request(plan, fields, end)
 }
 
-func publishLiveServerAllow(ctx context.Context, clock *timev4.Clock, config LiveServerAllowConfig, request sessionv4.TunnelServerAllowRequest, grant []byte, check func() error) (err error) {
+func publishLiveServerAllow(ctx context.Context, clock *timev4.Clock, config LiveServerAllowConfig, request sessionv4.TunnelServerAllowRequest, material [2][]byte, check func() error) (err error) {
 	window, err := timev4.NewWindow(clock, 2000)
 	if err != nil {
 		return err
@@ -52,7 +52,7 @@ func publishLiveServerAllow(ctx context.Context, clock *timev4.Clock, config Liv
 	if err = guard(); err != nil {
 		return err
 	}
-	if err = config.Provider.PublishServerAllow(call, request, grant, guard); err != nil {
+	if err = sessionv4.PublishOriginalLiveServerAllow(call, config.Provider, request, material, guard); err != nil {
 		return err
 	}
 	return guard()

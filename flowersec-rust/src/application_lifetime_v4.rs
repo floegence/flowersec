@@ -86,6 +86,7 @@ enum Release {
 /// future. Session core termination and application termination stay distinct.
 pub(crate) struct ApplicationLifetime {
     account: ResourceAccount,
+    group: crate::application_executor_v4::ApplicationGroup,
     limits: ApplicationLimits,
     state: Mutex<State>,
     ordinary: Arc<AtomicUsize>,
@@ -105,14 +106,36 @@ impl ApplicationLifetime {
     ) -> Result<Arc<Self>, EnvironmentError> {
         Self::with_cancellation(account, limits, CancellationToken::new())
     }
+    pub(crate) fn preparation_limits(
+        limits: ApplicationLimits,
+    ) -> Result<ResourceLimits, EnvironmentError> {
+        crate::crypto_v4::connect::candidate_add_limits(
+            limits.charge()?,
+            crate::application_executor_v4::ApplicationGroup::preparation_limits(),
+        )
+    }
     pub(crate) fn with_cancellation(
         account: ResourceAccount,
         limits: ApplicationLimits,
         cancellation: CancellationToken,
     ) -> Result<Arc<Self>, EnvironmentError> {
-        let charge = account.reserve(limits.charge()?)?;
+        let charge = account.reserve(Self::preparation_limits(limits)?)?;
+        Self::with_prepaid(account, limits, cancellation, charge)
+    }
+    pub(crate) fn with_prepaid(
+        account: ResourceAccount,
+        limits: ApplicationLimits,
+        cancellation: CancellationToken,
+        mut backing: ResourceCharge,
+    ) -> Result<Arc<Self>, EnvironmentError> {
+        if !backing.matches(&account, Self::preparation_limits(limits)?) {
+            return Err(EnvironmentError::Configuration);
+        }
+        let charge = backing.split(limits.charge()?)?;
+        let group = account.application_group_prepaid(backing)?;
         Ok(Arc::new(Self {
             account,
+            group,
             limits,
             state: Mutex::new(State {
                 control: false,
@@ -130,6 +153,9 @@ impl ApplicationLifetime {
             cancellation,
             changed: Arc::new(Notify::new()),
         }))
+    }
+    pub(crate) fn application_group(&self) -> crate::application_executor_v4::ApplicationGroup {
+        self.group.clone()
     }
     pub(crate) fn belongs_to(&self, account: &ResourceAccount) -> bool {
         self.account.same_owner(account)
@@ -160,9 +186,6 @@ impl ApplicationLifetime {
     }
     pub(crate) fn ordinary_count(&self) -> Arc<AtomicUsize> {
         self.ordinary.clone()
-    }
-    pub(crate) fn ordinary_capacity(&self) -> usize {
-        self.limits.ordinary_callbacks
     }
     pub(crate) fn cancellation(&self) -> CancellationToken {
         self.cancellation.clone()
@@ -217,6 +240,7 @@ impl ApplicationLifetime {
             }
         }
         self.cancellation.cancel();
+        self.group.close();
         self.wake();
     }
     /// Exactly one final cleanup receipt. An uncertain receipt has no retry
@@ -236,13 +260,14 @@ impl ApplicationLifetime {
         } else {
             Release::Unconfirmed
         };
-        Self::collect(&mut state);
+        self.collect(&mut state);
         drop(state);
         self.cancellation.cancel();
+        self.group.close();
         self.wake();
         Ok(())
     }
-    fn collect(state: &mut State) {
+    fn collect(&self, state: &mut State) {
         if state.release == Release::Confirmed
             && !state.control
             && state.ordinary == 0
@@ -250,6 +275,7 @@ impl ApplicationLifetime {
             && !state.dispatcher
         {
             state.charge.take();
+            self.group.release_descriptor();
         }
     }
     pub(crate) fn cleanup_status(&self) -> CleanupStatus {
@@ -296,7 +322,7 @@ impl Drop for Callback {
                 self.owner.ordinary.store(state.ordinary, Ordering::Release);
             }
         }
-        ApplicationLifetime::collect(&mut state);
+        self.owner.collect(&mut state);
         drop(state);
         self.owner.wake();
     }
@@ -316,6 +342,7 @@ mod tests {
     #[test]
     fn callbacks_are_prepaid_and_cancellation_never_refunds_running_work() {
         let root = environment();
+        let _services = root.application_services().unwrap();
         let account = root.admit([1; 32], bounds()).unwrap();
         let baseline = root.charged();
         let owner = ApplicationLifetime::new(account, limits()).unwrap();

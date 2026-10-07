@@ -5,7 +5,7 @@ import XCTest
 @testable import Flowersec
 
 @MainActor
-final class TransportV4CryptoOwnerTests: XCTestCase {
+final class TransportCryptoOwnerTests: XCTestCase {
   func testActualCredentialNoiseDualReadyAndReliableRecordsForBothProfiles() throws {
     for profile in V4CryptoProfile.allCases {
       let fixture = try CryptoOwnerFixture(profile)
@@ -110,7 +110,7 @@ final class TransportV4CryptoOwnerTests: XCTestCase {
   func testRevocationAndIncompleteStateFenceEveryHandshakeOperation() throws {
     for revoke in [false, true] {
       let fixture = try CryptoOwnerFixture(.x25519)
-      let (client, _, wire, _) = try fixture.noise()
+      let (client, server, wire, serverWire) = try fixture.noise()
       let state =
         revoke
         ? fixture.credentials.state(certificates: [
@@ -127,8 +127,17 @@ final class TransportV4CryptoOwnerTests: XCTestCase {
         XCTAssertThrowsError(
           try fixture.credentials.base.owner!.refresh(head: head, state: Data([0xa0])))
       }
-      XCTAssertThrowsError(try client.submitReady(to: wire))
-      XCTAssertThrowsError(try client.establish())
+      if revoke {
+        XCTAssertThrowsError(try client.submitReady(to: wire))
+        XCTAssertThrowsError(try client.establish())
+      } else {
+        try client.submitReady(to: wire)
+        try server.submitReady(to: serverWire)
+        try client.receiveReady(serverWire.last())
+        try server.receiveReady(wire.last())
+        _ = try client.establish()
+        _ = try server.establish()
+      }
     }
   }
 

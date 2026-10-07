@@ -9,7 +9,7 @@
     "noEmit": true,
     "noUncheckedIndexedAccess": true,
     "paths": {
-      "@floegence/flowersec-core/node": ["../../flowersec-ts/src/node/index.ts"]
+      "@floegence/flowersec-core/node": ["../../flowersec-ts/dist/node/index.d.ts"]
     },
     "skipLibCheck": true,
     "strict": true,

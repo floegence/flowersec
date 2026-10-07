@@ -1,8 +1,9 @@
+import { applicationResumeFeature } from "./checkpointToken.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { OperationOptions } from "../../public/contract.js";
 import { CredentialWork, credentialWorkCharge, credentialDigest, equalCredential, requireCredential, type CredentialResources, type OwnedCredentialMap } from "./credentialSupport.js";
 import type { ClientPreparationFields, VerifiedCredentialClosure } from "./credentialVerifier.js";
-import { EnvelopeDecoder, envelopeDecoderCharge } from "./envelope.js";
+import { EnvelopeDecoder, envelopeDecoderCharge, type EnvelopeFrame } from "./envelope.js";
 import { FixedCBORWriter } from "./openAdmission.js";
 import { ResourceVector, type ResourceReference } from "./resources.js";
 import { table, wireDomains } from "./schemaRegistry.js";
@@ -48,17 +49,17 @@ export class ServerAdmissionExchange {
   constructor(readonly resources: CredentialResources, private readonly transport: ServerAdmissionTransport,
     private readonly signer: ReadyIdentitySigner, private readonly random: RandomFill, reference: ResourceReference,
     private readonly guard: () => void, private readonly bindingMode: "direct_exporter" | "authenticated_context") {
-    requireCredential(transport.role === "server" && transport.mode === "message", "configuration_capacity");
+    requireCredential(transport.role === "server" && (transport.mode === "message" || transport.mode === "stream"), "configuration_capacity");
     this.#reference = reference.take(serverAdmissionCharge(resources.runtimeBytes));
     let work: CredentialWork | undefined, decoder: EnvelopeDecoder | undefined;
     try {
       this.#buffer = new Uint8Array(65536); this.#output = new Uint8Array(65544);
       const request = (kind: string, charge: ResourceVector) => ({ owner: { ...resources.owner, kind }, accounts: resources.accounts, charge });
       const refs = resources.root.reserveBatch([request("server_admission_work", credentialWorkCharge(65536, resources.runtimeBytes)),
-        request("server_admission_envelope", envelopeDecoderCharge({ maxFrame: 65536, mode: "message", runtimeBytes: resources.runtimeBytes }))]);
+      request("server_admission_envelope", envelopeDecoderCharge({ maxFrame: 65536, mode: transport.mode, runtimeBytes: resources.runtimeBytes }))]);
       try {
         this.#work = work = new CredentialWork(resources, 65536, refs[0]!);
-        this.#decoder = decoder = new EnvelopeDecoder({ maxFrame: 65536, mode: "message", runtimeBytes: resources.runtimeBytes }, refs[1]!);
+        this.#decoder = decoder = new EnvelopeDecoder({ maxFrame: 65536, mode: transport.mode, runtimeBytes: resources.runtimeBytes }, refs[1]!);
         work.prepaySignatures(65536, 16384); work.prepayParsers(65536, 16384, 3);
       } finally { for (const ref of refs) ref.release(); }
     } catch (error) { decoder?.close(); work?.close(); this.#reference.release(); throw error; }
@@ -74,8 +75,29 @@ export class ServerAdmissionExchange {
     this.#buffer.fill(0); const w = new FixedCBORWriter(this.#buffer); build(w); return this.#keep(new Uint8Array(w.result()));
   }
   async #read(name: string, schema: string, cap: number, options?: OperationOptions, source?: string): Promise<OwnedCredentialMap> {
-    this.#check(); const bytes = await this.transport.read(cap + 8, options); this.#check(); requireCredential(bytes !== null, "credential_closed");
-    const frame = this.#decoder.message(bytes);
+    this.#check();
+    let frame: EnvelopeFrame;
+    if (this.transport.mode === "message") {
+      const bytes = await this.transport.read(65544, options); this.#check(); requireCredential(bytes !== null, "credential_closed");
+      frame = this.#decoder.message(bytes);
+    } else {
+      // Do not read ahead beyond the original admission envelope. The next
+      // owner must receive the first Noise byte from the same maintenance bidi.
+      const prefix = new Uint8Array(8);
+      let read = 0, expected = 8, candidate: EnvelopeFrame | undefined;
+      try {
+        while (candidate === undefined) {
+          const bytes = await this.transport.read(expected - read, options); this.#check();
+          requireCredential(bytes !== null && bytes.length > 0 && bytes.length <= expected - read, "credential_closed");
+          if (read < 8) prefix.set(bytes, read);
+          const progress = this.#decoder.push(bytes);
+          requireCredential(progress.consumed === bytes.length, "credential_binding");
+          read += progress.consumed; candidate = progress.frame;
+          if (read === 8) expected = 8 + new DataView(prefix.buffer).getUint32(0);
+        }
+        frame = candidate;
+      } finally { prefix.fill(0); }
+    }
     try {
       requireCredential(frame.frameType() === wire.frame_types[name] && frame.payloadBytes() <= cap);
       const size = frame.copyPayload(this.#buffer);
@@ -95,7 +117,13 @@ export class ServerAdmissionExchange {
     try { this.#hello = await this.#read("NEGOTIATE", "ClientHello", 16384, options); return this.#keep(this.#hello.encoded()); }
     finally { this.#reading = false; this.#cleanup(); }
   }
-  async authenticate(closure: VerifiedCredentialClosure, f: ClientPreparationFields, options?: OperationOptions): Promise<void> {
+  prepareClosure(closure: VerifiedCredentialClosure): void {
+    this.#check(); requireCredential(!this.#started && this.#hello !== undefined, "credential_binding");
+    const hello = this.#hello.encoded();
+    try { closure.bindAcceptedLiveAttempt(hello, this.#reference); } finally { hello.fill(0); }
+    this.#check();
+  }
+  async authenticate(closure: VerifiedCredentialClosure, f: ClientPreparationFields, options?: OperationOptions, applicationFeatures = 0n): Promise<void> {
     requireCredential(!this.#started && this.#hello !== undefined);
     if (options?.signal !== undefined) this.#signals.push(options.signal); this.#started = true; this.#running = true;
     let request: OwnedCredentialMap | undefined;
@@ -106,7 +134,7 @@ export class ServerAdmissionExchange {
       for (const [name, expected] of [["artifact_digest", f.artifactDigest], ["candidate_id", f.candidateID], ["route_digest", f.routeDigest], ["attempt_id", f.attempt], ["client_nonce", f.nonce]] as const)
         requireCredential(equalCredential(client.bytes(name), expected));
       requireCredential(client.text("crypto_profile_id") === f.profile);
-      const mode = this.bindingMode === "direct_exporter" ? 0n : 1n, offered = 0n, selected = offered & client.uint("offered_features") & f.allowed;
+      const mode = this.bindingMode === "direct_exporter" ? 0n : 1n, offered = ((this.transport.nativeDatagrams?.maxDatagramBytes() ?? 0) < 76 ? 0n : 1n) | (f.resume ? applicationFeatures & applicationResumeFeature() : 0n), selected = offered & client.uint("offered_features") & f.allowed;
       requireCredential((selected & f.required) === f.required && (client.uint("supported_binding_modes") & (1n << mode)) !== 0n);
       const nonce = this.#keep(new Uint8Array(32)); this.random(nonce); this.#check(); requireCredential(nonce.some(n => n !== 0));
       const server = this.#encode(w => {
@@ -123,7 +151,7 @@ export class ServerAdmissionExchange {
       }
       const context = this.#encode(w => {
         w.map(13).uint(0); text(w, table<string>("profile_revision")!); w.uint(1); text(w, f.profile);
-        w.uint(2).uint(0).uint(3).uint(0).uint(4).data(f.artifactDigest).uint(5).data(f.routeDigest).uint(6).data(f.attempt).uint(7).data(f.nonce)
+        w.uint(2).uint(f.accessClass).uint(3).uint(f.pathKind).uint(4).data(f.artifactDigest).uint(5).data(f.routeDigest).uint(6).data(f.attempt).uint(7).data(f.nonce)
           .uint(8).data(transcript).uint(9).uint(selected).uint(10).uint(mode).uint(11).uint(mode === 0n ? 1 : 0).uint(12).data(exporter);
       });
       const contextDigest = this.#keep(credentialDigest("transport_context_digest", context));
@@ -149,7 +177,7 @@ export class ServerAdmissionExchange {
     try {
       this.#check(); closure.checkPreparation(this.#reference);
       let fsa: Uint8Array | undefined, binding: Uint8Array | undefined;
-      authority.admit(closure, fsb, context, owner, f.preparationDeadline, work, () => { this.#check(); if (options?.signal?.aborted) throw new Error("canceled"); }, response => {
+      await authority.admit(closure, fsb, context, owner, f.preparationDeadline, work, () => { this.#check(); if (options?.signal?.aborted) throw new Error("canceled"); }, response => {
         binding = this.#keep(new Uint8Array(response.admissionBinding));
         const fields = (w: FixedCBORWriter): void => {
           w.uint(0).uint(0).uint(1).uint(0).uint(2).uint(response.serverEpoch).uint(3).data(response.reservationKey).uint(4).data(response.admissionBinding)
@@ -166,8 +194,12 @@ export class ServerAdmissionExchange {
       const accepted = this.#work.parse(fsa, "FSA4", 16384);
       try { this.#work.verify(accepted, f.identityKeys[1]!); } finally { accepted.close(); }
       await this.#send("ADMISSION_RESULT", fsa);
-      return Object.freeze({ context, contextDigest, fsb, fsa, selected, ready: Object.freeze({ localCertificateDigest: f.identities[1]!, peerCertificateDigest: f.identities[0]!,
-        fsbDigest: this.#keep(credentialDigest("fsb_digest", fsb)), fsaDigest: this.#keep(credentialDigest("fsa_digest", fsa)), admissionBinding: binding, transportContextDigest: contextDigest, selectedFeatures: selected }) });
+      return Object.freeze({
+        context, contextDigest, fsb, fsa, selected, ready: Object.freeze({
+          localCertificateDigest: f.identities[1]!, peerCertificateDigest: f.identities[0]!,
+          fsbDigest: this.#keep(credentialDigest("fsb_digest", fsb)), fsaDigest: this.#keep(credentialDigest("fsa_digest", fsa)), admissionBinding: binding, transportContextDigest: contextDigest, selectedFeatures: selected
+        })
+      });
     } finally { this.#running = false; this.#cleanup(); }
   }
   close(): void { this.#closed = true; this.#cleanup(); }

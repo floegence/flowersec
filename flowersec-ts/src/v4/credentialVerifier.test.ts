@@ -1,12 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { ed25519 } from "@noble/curves/ed25519.js";
 import { ClockRate } from "./runtime/timeArithmetic.js";
 import { TrustedClock, trustedClockCharge } from "./runtime/clock.js";
 import { ResourceRoot, ResourceVector } from "./runtime/resources.js";
 import { CredentialNamespace } from "./runtime/credentialNamespace.js";
-import { credentialVerifierCharge, verifyDirectCredentials, type VerifiedCredentialClosure } from "./runtime/credentialVerifier.js";
+import { credentialVerifierCharge, verifyDirectCredentials, TunnelCredentialPreparation, type CredentialInput, type CredentialVerifierConfig, type VerifiedCredentialClosure } from "./runtime/credentialVerifier.js";
+import { prepareRegisteredCarrier } from "./runtime/registeredCarrierPreparation.js";
+import { PreparedGrantDigest } from "./runtime/grantDigest.js";
+import type { Value } from "./testSupport/cbor.js";
+import { Domains } from "./testSupport/domains.js";
+import { emptyContext } from "./testSupport/shape.js";
 import { clearClientPreparation } from "./runtime/clientAdmission.js";
 import { credentialFixture, encode, fill, bytes, text, array, u, map, replace, sign, get, digest, type CredentialFixture } from "./testSupport/credentials.js";
-function fixture(source: "live_authority" | "preauthorized_pool" = "live_authority", profile?: string) {
+function fixture(source: "live_authority" | "preauthorized_pool" = "live_authority", profile?: string, options: Parameters<typeof credentialFixture>[6] = {}) {
   let next = 1n, now = 0n;
   const limit = new ResourceVector([512n << 20n, 0n, 0n, 5000000n, 5000000n, 1000n, 1000n, 1000n, 1000n, 1000n, 1000n]);
   const root = new ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: 8, reservations: 200, references: 400,
@@ -17,8 +23,8 @@ function fixture(source: "live_authority" | "preauthorized_pool" = "live_authori
     () => ({ milliseconds: now, incarnation: "3".repeat(32) }), 128n, reserve("clock", trustedClockCharge(128n)));
   clock.installTrusted(clock.monotonic(), { lowerMS: 1000n, upperMS: 1010n });
   const resources = { root, accounts, owner: { tenant, environment, kind: "credentials", backing: "4".repeat(32) }, runtimeBytes: 1024n };
-  const material = credentialFixture(resources, clock, reserve, source, profile);
-  const verify = (config = material.config, input = material.input()) => {
+  const material = credentialFixture(resources, clock, reserve, source, profile, undefined, options);
+  const verify = (config: CredentialVerifierConfig = material.config, input: CredentialInput = material.input()) => {
     const ref = reserve("verified", credentialVerifierCharge(resources.runtimeBytes));
     try { return verifyDirectCredentials(config, input, ref); } finally { ref.release(); }
   };
@@ -26,8 +32,84 @@ function fixture(source: "live_authority" | "preauthorized_pool" = "live_authori
   return { material, root, clock, reserve, resources, verify, reject, advance: (ms: bigint) => { now = ms; },
     close: () => { material.namespace.close(); clock.close(); expect(root.snapshot().reservations).toBe(0); } };
 }
+function valueItems(value: Value): readonly Value[] { if (value.kind !== "array") throw new Error("test array"); return value.value; }
+function poolTunnelFixture() {
+  const f = fixture("preauthorized_pool"), m = f.material, authorizations = valueItems(get(m.trust, 10));
+  const relayAuthorization = replace(authorizations[1]!, { 0: bytes(fill(13, 16)), 6: bytes(fill(8, 16)), 7: bytes(ed25519.getPublicKey(fill(19))), 14: text("relay"), 16: u(2) });
+  const grantAuthorization = map({ 0: bytes(fill(14, 16)), 1: text("tenant"), 2: text("authority"), 3: bytes(m.cap), 4: u(1), 5: u(2),
+    6: bytes(fill(17, 16)), 7: bytes(ed25519.getPublicKey(fill(18))), 8: text("service"), 9: u(1), 10: u(10000), 11: u(0), 12: u(500), 13: u(100000),
+    16: u(3), 17: text("service"), 18: text("authority"), 19: bytes(m.cap), 20: u(1), 21: bytes(fill(5, 16)), 22: u(0), 23: u(500), 24: array({ kind: "null" }, u(500)) });
+  m.trust = sign("TrustConfig", replace(m.trust, { 10: array(...authorizations, relayAuthorization, grantAuthorization) }), 7);
+  const relay = sign("IdentityCertificate", replace(m.server, { 1: text("relay"), 4: bytes(ed25519.getPublicKey(fill(19))), 5: u(2), 7: bytes(fill(8, 16)) }), 19);
+  const leg = (index: number, role: 0 | 1, carrier: 0 | 2): Value => map({ 0: u(0), 1: bytes(fill(30 + 2 * index + role, 16)), 2: u(role), 3: u(role), 4: u(2),
+    5: u(carrier), 6: text("relay.example"), 7: u(443), 8: text(carrier === 2 ? "/flowersec/webtransport/v4/tunnel" : ""),
+    9: text(carrier === 2 ? "h3" : "flowersec-tunnel/4"), 10: text(""), 11: map({ 0: u(0), 1: { kind: "bool", value: true } }),
+    ...(carrier === 2 ? { 12: map({ 0: array(text("https://client.example")), 1: { kind: "bool", value: true } }) } : {}) });
+  const routes = [0, 1].map(index => map({ 0: u(1), 1: bytes(fill(20 + index, 16)), 3: leg(index, 0, index === 0 ? 0 : 2), 4: leg(index, 1, index === 0 ? 2 : 0) }));
+  const candidates = routes.map(route => map({ 0: get(route, 1), 1: u(0), 2: u(1), 4: get(route, 3), 5: get(route, 4),
+    6: array(map({ 0: text("tenant"), 1: text("authority"), 2: u(1), 3: bytes(m.cap), 4: u(7) })) }));
+  m.artifact = sign("Artifact", replace(m.artifact, { 12: array(...candidates) }), 12);
+  const artifactDigest = digest("artifact_digest", m.artifact), routeDigests = routes.map(route => digest("route_digest", route));
+  const set = map({ 0: bytes(artifactDigest), 1: array(...routes.map((route, index) => map({ 0: u(index), 1: get(route, 1), 2: bytes(routeDigests[index]!) }))) });
+  m.activation = sign("ActivationAuthorization", replace(m.activation, { 6: bytes(artifactDigest),
+    7: replace(get(m.activation, 7), { 0: bytes(artifactDigest), 1: array(u(0), u(1)), 2: bytes(digest("candidate_set_digest", set)) }),
+    8: bytes(digest("route_set_digest", set)) }), 13);
+  const parent = map({ 0: get(m.artifact, 4), 1: get(m.artifact, 21), 2: get(m.artifact, 22), 3: get(m.artifact, 26),
+    4: get(m.artifact, 24), 5: get(m.artifact, 25), 6: get(m.artifact, 5), 7: get(m.artifact, 6), 8: get(m.artifact, 23),
+    9: get(m.artifact, 18), 10: get(m.artifact, 19), 11: get(m.artifact, 20), 12: bytes(artifactDigest) });
+  const grants = routes.map((route, index) => sign("Grant", map({ 0: text("tenant"), 1: bytes(fill(60 + index, 16)), 2: bytes(fill(62 + index)),
+    3: parent, 4: route, 5: bytes(routeDigests[index]!), 6: bytes(m.attemptID), 7: bytes(fill(64 + index, 16)),
+    8: array(get(m.artifact, 9), get(m.artifact, 10)), 9: array(map({ 0: get(get(route, 3), 1), 1: u(0) }), map({ 0: get(get(route, 4), 1), 1: u(1) })),
+    10: text("service"), 11: text("service"), 12: bytes(fill(17, 16)),
+    13: map({ 0: text("tenant"), 1: text("authority"), 2: u(1), 3: bytes(m.cap), 4: u(5), 5: u(9), 6: text("credentials"), 7: u(1) }),
+    14: u(950), 15: u(index === 0 ? 25000 : 12000),
+    16: map({ 0: u(65544), 1: u(1 << 20), 2: u(65536), 3: u(1 << 20), 4: u(65536), 5: u(8), 6: u(8), 7: u(64), 8: u(8) }),
+    17: bytes(digest("session_contract_digest", get(m.artifact, 13))), 18: bytes(digest("certificate_digest", relay)),
+  }), 18));
+  const config: CredentialVerifierConfig = { ...m.config, tunnel: { role: 0, audience: "service", service: "service", relaySubject: "relay", candidateCapacity: 2 } };
+  const input = (): CredentialInput => ({ ...m.input(), tunnel: { grant: encode(grants[0]!), relayCertificate: encode(relay),
+    candidateGrants: [{ candidateIndex: 1, grant: encode(grants[1]!), relayCertificate: encode(relay) }] } });
+  return { ...f, config, input, routes, grants, relay };
+}
+
 function updateArtifact(f: CredentialFixture, changes: Parameters<typeof replace>[1]) { f.artifact = sign("Artifact", replace(f.artifact, changes), 12); f.refreshActivation(); }
 describe("original credential verification closure", () => {
+  for (const profile of ["fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1"]) {
+    it(`installs an actual live activation only from its authenticated client FSB for ${profile}`, () => {
+      const f = fixture("live_authority", profile); f.material.bootstrap();
+      const closure = f.verify(f.material.config, { ...f.material.input(), activation: new Uint8Array() });
+      const admission = f.reserve("server_admission", new ResourceVector([1024n, 0n, 0n, 1n, 1n, 0n, 0n, 0n, 0n, 0n, 0n]));
+      let fields = closure.clientPreparation(admission);
+      try {
+        const hello = map({ 0: text("flowersec/4"), 1: text("4"), 2: text(profile), 3: bytes(fields.artifactDigest),
+          4: bytes(fields.candidateID), 5: bytes(fields.routeDigest), 6: bytes(f.material.attemptID), 7: bytes(fields.nonce),
+          8: u(0), 9: u(2), 10: bytes(new Uint8Array()) });
+        closure.bindAcceptedLiveAttempt(encode(hello), admission); clearClientPreparation(fields); fields = closure.selectClientCandidate(admission, 0);
+        expect(fields.activation.length).toBe(0); expect(fields.attempt).toEqual(f.material.attemptID);
+        closure.prepayHandshakeChecks(admission);
+        const context = map({ 0: text("4"), 1: text(profile), 2: u(0), 3: u(0), 4: bytes(fields.artifactDigest), 5: bytes(fields.routeDigest),
+          6: bytes(fields.attempt), 7: bytes(fields.nonce), 8: bytes(fill(60)), 9: u(0), 10: u(1), 11: u(0), 12: bytes(new Uint8Array()) });
+        const projection = map({ 0: bytes(fields.artifactDigest), 1: text(fields.tenant), 2: bytes(fields.issuer), 3: bytes(fields.lease),
+          4: bytes(fields.nonce), 5: bytes(fields.candidateID), 6: bytes(fields.routeDigest), 7: bytes(fields.attempt), 8: bytes(fill(61)),
+          9: bytes(fill(60)), 10: u(0), 11: u(1), 12: bytes(digest("transport_context_digest", context)),
+          13: bytes(encode(f.material.activation)), 14: bytes(fields.clientCertificate) });
+        expect(() => closure.authenticateClientAdmission(encode(sign("FSB4", projection, 91)), encode(context), admission)).toThrow();
+        const untouched = closure.clientPreparation(admission);
+        try { expect(untouched.activation.length).toBe(0); } finally { clearClientPreparation(untouched); }
+        const request = sign("FSB4", projection, 14);
+        expect(closure.authenticateClientAdmission(encode(request), encode(context), admission)).toEqual(digest("admission_binding", request));
+        const installed = closure.clientPreparation(admission);
+        try { expect(installed.activation).toEqual(encode(f.material.activation)); expect(installed.preparationDeadline.cap).toBe(10000n); }
+        finally { clearClientPreparation(installed); }
+        // Repeated proof checks use the same activation and original parser
+        // positions; they do not install a replacement proof or allocate one.
+        const baseline = f.root.snapshot().reservations;
+        expect(closure.authenticateClientAdmission(encode(request), encode(context), admission)).toEqual(digest("admission_binding", request));
+        expect(f.root.snapshot().reservations).toBe(baseline);
+      } finally { clearClientPreparation(fields); admission.release(); closure.close(); f.close(); }
+    });
+  }
+
   for (const source of ["live_authority", "preauthorized_pool"] as const) for (const profile of ["fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1"]) {
     it(`authenticates ${source} client admission before server success for ${profile}`, () => {
       const f = fixture(source, profile); f.material.bootstrap(); const closure = f.verify();
@@ -159,14 +241,124 @@ describe("original credential verification closure", () => {
   });
 });
 
-function bootstrapResponse(m: CredentialFixture, nonce: Uint8Array, head: Parameters<typeof encode>[0], trust = m.trust): Uint8Array {
-  return encode(sign("TrustBootstrapResponse", map({ 0: text("draft.70"), 1: text("tenant"), 2: text("authority"), 3: bytes(nonce), 4: u(900), 5: u(10000),
+function bootstrapResponse(m: CredentialFixture, nonce: Uint8Array, head: Parameters<typeof encode>[0], trust = m.trust, issued = 900, until = 10000): Uint8Array {
+  return encode(sign("TrustBootstrapResponse", map({ 0: text("draft.70"), 1: text("tenant"), 2: text("authority"), 3: bytes(nonce), 4: u(issued), 5: u(until),
     6: bytes(encode(trust)), 7: bytes(encode(head)), 8: bytes(fill(1, 16)) }), 7));
 }
 function revokedState(m: CredentialFixture, certificate = m.client) {
   return replace(m.state, { 9: array(map({ 0: bytes(digest("certificate_digest", certificate)), 1: u(8), 2: u(50000) })) });
 }
 describe("online namespace original continuity", () => {
+  for (const pending of ["response", "trust", "head", "delegation"] as const) {
+    it(`proves pending bootstrap ${pending} with one original fetch and one wake`, async () => {
+      vi.useFakeTimers(); const f = fixture(), m = f.material;
+      try {
+        const nonce = m.namespace.bootstrapNonce(), state = encode(m.state);
+        let trust = m.trust, head = m.headFor(m.state, 1, pending === "head" || pending === "delegation" ? 1006 : 900);
+        if (pending === "trust") trust = sign("TrustConfig", replace(trust, { 5: u(1005) }), 7);
+        if (pending === "delegation") {
+          const delegation = replace(valueItems(get(trust, 11))[0]!, { 11: u(1005), 12: u(1005) });
+          trust = sign("TrustConfig", replace(trust, { 11: array(delegation) }), 7);
+          head = sign("FreshnessHead", replace(head, { 14: bytes(digest("head_signer_delegation_digest", delegation)) }), 9);
+        }
+        const response = bootstrapResponse(m, nonce, head, trust, pending === "response" ? 1005 : 900);
+        let calls = 0, finished = false;
+        const operation = m.namespace.fetchBootstrap(async (request, responseBuffer, stateBuffer) => {
+          calls++; expect(request.nonce).toEqual(nonce); responseBuffer.set(response); stateBuffer.set(state);
+          return { responseBytes: response.length, stateBytes: state.length };
+        });
+        void operation.then(() => { finished = true; }, () => { finished = true; });
+        expect(m.namespace.fetchBootstrap(async () => { throw new Error("duplicate fetch"); })).toBe(operation);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(calls).toBe(1); expect(finished).toBe(false); expect(vi.getTimerCount()).toBe(1);
+        expect(() => m.namespace.check()).toThrow();
+        expect(() => m.namespace.bootstrap(response, state)).toThrow("credential_closed");
+        expect(m.namespace.bootstrapNonce()).toEqual(nonce);
+        f.advance(6n); await vi.advanceTimersByTimeAsync(6);
+        await expect(operation).resolves.toBe(true); expect(calls).toBe(1); expect(vi.getTimerCount()).toBe(0);
+        m.namespace.check(); f.verify().close();
+      } finally { m.namespace.close(); await m.namespace.waitCleanup(); f.close(); vi.useRealTimers(); }
+    });
+  }
+  it("pins a synchronous pending bootstrap pair and rejects replacement bytes", () => {
+    const f = fixture(), m = f.material, nonce = m.namespace.bootstrapNonce(), state = encode(m.state);
+    const response = bootstrapResponse(m, nonce, m.headFor(m.state), m.trust, 1005);
+    try {
+      expect(() => m.namespace.bootstrap(response, state)).toThrow("time_pending");
+      const replacement = bootstrapResponse(m, nonce, m.headFor(m.state, 2));
+      expect(() => m.namespace.bootstrap(replacement, state)).toThrow("credential_binding");
+      expect(() => m.namespace.fetchBootstrap(async () => { throw new Error("must not query"); })).toThrow("credential_closed");
+      f.advance(5n); m.namespace.bootstrap(response, state); f.verify().close();
+    } finally { f.close(); }
+  });
+  for (const failure of ["state", "future", "head signature"] as const) {
+    it(`rejects independent bootstrap ${failure} before scheduling a pending wait`, async () => {
+      vi.useFakeTimers(); const f = fixture(), m = f.material;
+      try {
+        const state = encode(failure === "state" ? revokedState(m) : m.state);
+        const head = failure === "head signature" ? sign("FreshnessHead", m.headFor(m.state), 8) : m.headFor(m.state);
+        let calls = 0;
+        const operation = m.namespace.fetchBootstrap(async (request, responseBuffer, stateBuffer) => {
+          calls++; const response = bootstrapResponse(m, request.nonce, head, m.trust, failure === "future" ? 1011 : 1005);
+          responseBuffer.set(response); stateBuffer.set(state); return { responseBytes: response.length, stateBytes: state.length };
+        });
+        await expect(operation).rejects.toMatchObject({ code: failure === "future" ? "future_timestamp" : expect.not.stringMatching(/^time_/u) });
+        expect(calls).toBe(1); expect(vi.getTimerCount()).toBe(0); expect(() => m.namespace.check()).toThrow();
+      } finally { m.namespace.close(); await m.namespace.waitCleanup(); f.close(); vi.useRealTimers(); }
+    });
+  }
+  for (const stop of ["close", "cancel", "window", "material", "material anchor"] as const) {
+    it(`terminates the original pending bootstrap on ${stop} without a fresh query`, async () => {
+      vi.useFakeTimers(); const f = fixture("live_authority", undefined, { bootstrapMS: stop === "window" ? 2n : 10000n }), m = f.material;
+      try {
+        const nonce = m.namespace.bootstrapNonce(), state = encode(m.state);
+        const response = bootstrapResponse(m, nonce, m.headFor(m.state), m.trust, 1005, stop.startsWith("material") ? 1012 : 10000);
+        let calls = 0;
+        const operation = m.namespace.fetchBootstrap(async (_request, responseBuffer, stateBuffer) => {
+          calls++; responseBuffer.set(response); stateBuffer.set(state); return { responseBytes: response.length, stateBytes: state.length };
+        });
+        const rejected = expect(operation).rejects.toMatchObject({ code: { close: "credential_closed", cancel: "time_cancelled", window: "time_not_proven", material: "time_expired", "material anchor": "time_expired" }[stop] });
+        await vi.advanceTimersByTimeAsync(0); expect(vi.getTimerCount()).toBe(1);
+        if (stop === "close") m.namespace.close();
+        else if (stop === "cancel") m.namespace.cancelFetch();
+        else {
+          f.advance(2n);
+          if (stop === "material anchor") f.clock.installTrusted(f.clock.monotonic(), { lowerMS: 1002n, upperMS: 1004n });
+          await vi.advanceTimersByTimeAsync(2);
+        }
+        await rejected; expect(calls).toBe(1); expect(vi.getTimerCount()).toBe(0);
+        f.advance(6n); expect(() => m.namespace.bootstrap(response, state)).toThrow();
+        m.namespace.close(); await m.namespace.waitCleanup(); expect(m.namespace.cleanupComplete()).toBe(true);
+      } finally { m.namespace.close(); await m.namespace.waitCleanup(); f.close(); vi.useRealTimers(); }
+    });
+  }
+  it("keeps the original head independent of bootstrap input and enforces its expiry", () => {
+    const f = fixture(), m = f.material;
+    try {
+      const response = m.response(), state = encode(m.state);
+      m.namespace.bootstrap(response, state); response.fill(0); state.fill(0);
+      const reservations = f.root.snapshot().reservations;
+      for (let i = 0; i < 10; i++) m.namespace.check();
+      expect(f.root.snapshot().reservations).toBe(reservations);
+      f.advance(59000n);
+      expect(() => m.namespace.check()).toThrow();
+    } finally { f.close(); }
+  });
+  for (const change of ["retained", "removed", "rejected signer"] as const) {
+    it(`checks the original head against replacement trust with ${change} delegation`, () => {
+      const f = fixture(), m = f.material;
+      try {
+        m.bootstrap(); m.namespace.check();
+        const next = sign("TrustConfig", replace(m.trust, { 4: u(2),
+          ...(change === "removed" ? { 11: array() } : {}),
+          ...(change === "rejected signer" ? { 15: array(bytes(fill(3, 16))) } : {}),
+        }), 7);
+        const encoded = encode(next); m.namespace.updateTrust(encoded); encoded.fill(0);
+        if (change === "retained") expect(() => m.namespace.check()).not.toThrow();
+        else expect(() => m.namespace.check()).toThrow("credential_revoked");
+      } finally { f.close(); }
+    });
+  }
   it("finishes the pinned State while newer Heads advance observed", async () => {
     const f = fixture(), m = f.material; let result: VerifiedCredentialClosure | undefined;
     try {
@@ -302,5 +494,119 @@ describe("online namespace original continuity", () => {
       await start; const count = f.root.snapshot().reservations; m.namespace.failContinuity(); m.namespace.close(); expect(m.namespace.cleanupComplete()).toBe(false); expect(f.root.snapshot().reservations).toBe(count);
       release(); await expect(operation).rejects.toThrow(); await m.namespace.waitCleanup(); expect(m.namespace.cleanupComplete()).toBe(true);
     } finally { f.close(); }
+  });
+});
+
+
+describe("original pool candidate commitment", () => {
+  it("uses the registered unsigned Grant digest for original control acknowledgements", () => {
+    const f = poolTunnelFixture(), owner = new PreparedGrantDigest(f.resources);
+    try {
+      const grant = f.grants[0]!;
+      const reference = new Domains().evaluate("grant_digest", { grant: encode(grant) }, emptyContext(), 1n << 20n);
+      if (reference.output === undefined) throw new Error("grant digest reference output");
+      const expected = reference.output;
+      expect(owner.digest(encode(grant))).toEqual(expected);
+      // A different signature does not change the registered unsigned
+      // projection. Authentication remains the credential owner's job.
+      const resigned = sign("Grant", grant, 19);
+      expect(owner.digest(encode(resigned))).toEqual(expected);
+      expect(owner.digest(encode(sign("Grant", replace(grant, { 15: u(24999) }), 18)))).not.toEqual(expected);
+    } finally { owner.close(); f.close(); }
+  });
+  it("spends the direct member actually selected by carrier preparation", () => {
+    const baseLeg = map({ 0: u(0), 1: bytes(fill(21, 16)), 2: u(1), 3: u(0), 4: u(1), 5: u(1), 6: text("example.com"), 7: u(443),
+      8: text("/flowersec/v4/direct"), 9: text("http/1.1"), 10: text("flowersec.direct.v4"), 11: map({ 0: u(0), 1: { kind: "bool", value: true } }) });
+    const secondLeg = replace(baseLeg, { 1: bytes(fill(22, 16)), 6: text("fallback.example.com") });
+    const f = fixture("preauthorized_pool", undefined, { candidateLegs: [baseLeg, secondLeg] });
+    let closure: VerifiedCredentialClosure | undefined;
+    try {
+      f.material.bootstrap(); closure = f.verify(); const reference = f.reserve("selection_test", new ResourceVector([1024n, 0n, 0n, 1n, 1n, 0n, 0n, 0n, 0n, 0n, 0n]));
+      try {
+        const selected = closure.selectClientCandidate(reference, 1), facts = closure.poolSpendFacts(reference);
+        try {
+          const spent = facts.fields(reference);
+          try {
+            expect(spent.candidateIndex).toBe(1n); expect(spent.candidateID).toEqual(selected.candidateID);
+            expect(spent.routeDigest).toEqual(selected.routeDigest); expect(spent.descriptor).toEqual(encode(secondLeg));
+            expect(() => closure!.selectClientCandidate(reference, 0)).toThrow("credential_binding");
+            expect(() => closure!.clientPreparationForCandidate(reference, 0)).toThrow("credential_binding");
+            const after = closure.clientPreparation(reference);
+            try { expect(after.candidates.map(candidate => candidate.candidateIndex)).toEqual([1]); }
+            finally { clearClientPreparation(after); }
+          } finally { for (const value of Object.values(spent)) if (value instanceof Uint8Array) value.fill(0); for (const identity of spent.identities) identity.fill(0); }
+        } finally { facts.close(); clearClientPreparation(selected); }
+      } finally { reference.release(); }
+    } finally { closure?.close(); f.close(); }
+  });
+
+  it("independently verifies both tunnel Grants and releases the unselected relay and hop", () => {
+    const f = poolTunnelFixture(); let closure: VerifiedCredentialClosure | undefined;
+    try {
+      f.material.bootstrap(); closure = f.verify(f.config, f.input());
+      const reference = f.reserve("selection_test", new ResourceVector([1024n, 0n, 0n, 1n, 1n, 0n, 0n, 0n, 0n, 0n, 0n]));
+      try {
+        const before = closure.clientPreparation(reference), originalRelay = closure.tunnelCredentials(reference), retained = f.root.snapshot().reservations;
+        try { expect(before.candidates.map(candidate => candidate.candidateIndex)).toEqual([0, 1]); } finally { clearClientPreparation(before); }
+        const selected = closure.selectClientCandidate(reference, 1), facts = closure.poolSpendFacts(reference);
+        try {
+          expect(f.root.snapshot().reservations).toBeLessThan(retained); expect(() => originalRelay.check(reference)).toThrow("credential_closed");
+          const actualGrant = closure.tunnelCredentials(reference).grant(reference), spent = facts.fields(reference);
+          try {
+            expect(actualGrant).toEqual(encode(f.grants[1]!)); expect(spent.candidateIndex).toBe(1n);
+            expect(spent.candidateID).toEqual(selected.candidateID); expect(spent.routeDigest).toEqual(digest("route_digest", f.routes[1]!));
+            expect(spent.descriptor).toEqual(encode(get(f.routes[1]!, 3))); expect(spent.sessionEnd).toBe(12000n);
+          } finally { actualGrant.fill(0); for (const value of Object.values(spent)) if (value instanceof Uint8Array) value.fill(0); for (const identity of spent.identities) identity.fill(0); }
+        } finally { facts.close(); clearClientPreparation(selected); }
+      } finally { reference.release(); }
+    } finally { closure?.close(); f.close(); }
+  });
+
+  it("rejects swapped or duplicate candidate Grants and refunds their original owners", () => {
+    const f = poolTunnelFixture();
+    try {
+      f.material.bootstrap();
+      f.reject(() => f.verify(f.config, { ...f.input(), tunnel: { grant: encode(f.grants[0]!), relayCertificate: encode(f.relay),
+        candidateGrants: [{ candidateIndex: 1, grant: encode(f.grants[0]!), relayCertificate: encode(f.relay) }] } }));
+      f.reject(() => f.verify(f.config, { ...f.input(), tunnel: { grant: encode(f.grants[0]!), relayCertificate: encode(f.relay),
+        candidateGrants: [{ candidateIndex: 0, grant: encode(f.grants[1]!), relayCertificate: encode(f.relay) }] } }));
+      f.reject(() => f.verify({ ...f.config, tunnel: { ...f.config.tunnel!, candidateCapacity: 1 } }, f.input()));
+    } finally { f.close(); }
+  });
+
+  it("prepares every configured Grant and hop owner before taking original source material", () => {
+    const f = poolTunnelFixture(); let closure: VerifiedCredentialClosure | undefined, preparation: TunnelCredentialPreparation | undefined;
+    try {
+      f.material.bootstrap(); const before = f.root.snapshot().reservations;
+      preparation = new TunnelCredentialPreparation(f.config); expect(f.root.snapshot().reservations).toBeGreaterThan(before);
+      const reference = f.reserve("verified", credentialVerifierCharge(f.resources.runtimeBytes));
+      try { closure = verifyDirectCredentials(f.config, f.input(), reference, undefined, preparation); } finally { reference.release(); }
+      preparation.close(); preparation = undefined; closure.close(); closure = undefined;
+      expect(f.root.snapshot().reservations).toBe(before);
+    } finally { closure?.close(); preparation?.close(); f.close(); }
+  });
+
+  it("pins original registry and hop ownership to the same selected tunnel member", () => {
+    const f = poolTunnelFixture(); let closure: VerifiedCredentialClosure | undefined;
+    try {
+      f.material.bootstrap(); closure = f.verify(f.config, f.input());
+      const registry = prepareRegisteredCarrier(f.config, f.input(), 1000n), reference = f.reserve("registry_test", new ResourceVector([1024n, 0n, 0n, 1n, 1n, 0n, 0n, 0n, 0n, 0n, 0n]));
+      try {
+        const parent = closure.parentSelectionFields(reference);
+        registry.selectCandidate(1); expect(registry.fields().candidates!.map(candidate => candidate.candidateIndex)).toEqual([1]);
+        expect(() => registry.checkOriginalGrant(closure!.tunnelCredentials(reference), reference)).toThrow("credential_binding");
+        const selected = closure.selectClientCandidate(reference, 1);
+        // The chosen Grant shortens this connection, not the common parent's
+        // signed lifetime stored by relay and endpoint admission.
+        expect(selected.sessionDeadline.cap).toBe(12000n);
+        expect(parent.sessionEnd).toBeGreaterThan(selected.sessionDeadline.cap);
+        expect(closure.parentSelectionFields(reference).sessionEnd).toBe(parent.sessionEnd);
+        clearClientPreparation(selected);
+        registry.checkOriginalGrant(closure.tunnelCredentials(reference), reference);
+        const hop = closure.takeTunnelHopPreparation(reference); expect(hop).toBeDefined();
+        try { expect(closure.takeTunnelHopPreparation(reference)).toBeUndefined(); expect(() => closure!.selectClientCandidate(reference, 0)).toThrow("credential_binding"); }
+        finally { hop?.close(); }
+      } finally { registry.close(); reference.release(); }
+    } finally { closure?.close(); f.close(); }
   });
 });

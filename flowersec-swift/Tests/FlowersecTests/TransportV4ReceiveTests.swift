@@ -4,7 +4,7 @@ import XCTest
 @testable import Flowersec
 
 @MainActor
-final class TransportV4ReceiveTests: XCTestCase {
+final class TransportReceiveTests: XCTestCase {
   private func budget(directions: Int = 4, cursors: Int = 4, bytes: UInt64 = 128 * 1024) throws
     -> V4ReadBudget
   {

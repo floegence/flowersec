@@ -2,6 +2,7 @@
 //! HTTP octets use an exact Latin-1 projection at Rust's string boundary.
 
 use crate::codec_v4::{self as codec, Limits, StateLimits, Value};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value as Json};
 use std::sync::OnceLock;
@@ -27,6 +28,24 @@ fn token(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+}
+fn control_identifier(value: Option<&Json>) -> bool {
+    value.and_then(Json::as_str).is_some_and(|value| {
+        value.len() == 32
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            && value.bytes().any(|byte| byte != b'0')
+    })
+}
+fn credential_context(value: Option<&Json>) -> bool {
+    value.and_then(Json::as_str).is_some_and(|value| {
+        value.len() == 43
+            && URL_SAFE_NO_PAD
+                .decode(value)
+                .ok()
+                .is_some_and(|bytes| bytes.len() == 32 && URL_SAFE_NO_PAD.encode(&bytes) == value)
+    })
 }
 fn semantics(schema: &str, value: &Map<String, Json>) -> Result<()> {
     if schema == "ProxyField" {
@@ -58,6 +77,73 @@ fn semantics(schema: &str, value: &Map<String, Json>) -> Result<()> {
         {
             return Err("proxy_variant");
         }
+    }
+    if matches!(
+        schema,
+        "ProxyCredentialControlRequest" | "ProxyCredentialControlResponse"
+    ) {
+        let action = value
+            .get("action")
+            .and_then(Json::as_u64)
+            .ok_or("credential_control_invalid")?;
+        if !control_identifier(value.get("operation_id")) || !(1..=3).contains(&action) {
+            return Err("credential_control_invalid");
+        }
+        if schema == "ProxyCredentialControlRequest" {
+            if !control_identifier(value.get("surface_owner"))
+                || (action == 1
+                    && (value.contains_key("credential_context")
+                        || !value
+                            .get("content_origin")
+                            .and_then(Json::as_str)
+                            .is_some_and(|origin| {
+                                url::Url::parse(origin).ok().is_some_and(|url| {
+                                    matches!(url.scheme(), "http" | "https")
+                                        && url.origin().ascii_serialization() == origin
+                                })
+                            })))
+                || (action != 1
+                    && (value.contains_key("content_origin")
+                        || !credential_context(value.get("credential_context"))))
+            {
+                return Err("credential_control_invalid");
+            }
+        } else {
+            let success = value
+                .get("ok")
+                .and_then(Json::as_bool)
+                .ok_or("credential_control_invalid")?;
+            let invalidated = value.get("server_invalidated");
+            if success == value.contains_key("error") {
+                return Err("credential_control_invalid");
+            }
+            if !success {
+                if value.contains_key("credential_context")
+                    || invalidated.is_some_and(|value| action == 1 || value.as_bool() != Some(true))
+                {
+                    return Err("credential_control_invalid");
+                }
+            } else if (action == 1
+                && (invalidated.is_some() || !credential_context(value.get("credential_context"))))
+                || (action == 2
+                    && (invalidated.and_then(Json::as_bool) != Some(true)
+                        || !credential_context(value.get("credential_context"))))
+                || (action == 3
+                    && (invalidated.and_then(Json::as_bool) != Some(true)
+                        || value.contains_key("credential_context")))
+            {
+                return Err("credential_control_invalid");
+            }
+        }
+    }
+    if matches!(schema, "ProxyHTTPRequest" | "ProxyWebSocketOpen")
+        && (value.contains_key("credential_context")
+            && !credential_context(value.get("credential_context"))
+            || value.get("credentials").is_some_and(|mode| {
+                !matches!(mode.as_str(), Some("omit" | "same-origin" | "include"))
+            }))
+    {
+        return Err("credential_scope_unavailable");
     }
     Ok(())
 }

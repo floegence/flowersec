@@ -3,7 +3,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportV4DomainTests: XCTestCase {
+final class TransportDomainTests: XCTestCase {
   private static let reference = try! V4TextReference()
   private static let corpus = try! JSONDecoder().decode(V4JSON.self, from: Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/domains.json")))
   private let cap: UInt64 = 1 << 20

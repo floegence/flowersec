@@ -16,7 +16,7 @@ func executionChargeStart(c RPCServicesConfig) (int, error) {
 		return 0, err
 	}
 	position := rpcServicesOwners
-	if c.Native {
+	if c.Native || c.MixedCarrier {
 		position++
 	}
 	for channel := uint32(1); channel < geometry.RPC+geometry.Notify+geometry.Management; channel++ {

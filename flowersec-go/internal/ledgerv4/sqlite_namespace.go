@@ -60,7 +60,7 @@ func SQLiteNamespaceHistoryCharge(l SQLiteLimits, c SQLiteNamespaceConfig) (reso
 	if uint64(l.MaxRecords) < chunks || uint64(l.MaxPages) < pages {
 		return resourcev4.Vector{}, ErrCapacity
 	}
-	return base.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(SQLiteNamespaceHistory{})) + 256, resourcev4.Items: 1})
+	return base.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(SQLiteNamespaceHistory{})) + uint64(unsafe.Sizeof(protocolv4.NamespaceContinuityRecord{})) + 8192, resourcev4.Items: 1})
 }
 
 func newSQLiteNamespaceHistory(s *sqliteStore, c SQLiteNamespaceConfig) (*SQLiteNamespaceHistory, error) {

@@ -27,6 +27,7 @@ for (const profile of profiles) test(`Chromium runs the Service Worker proxy pro
   test.skip(browserName !== "chromium", "requires Chromium Service Worker coverage");
   test.setTimeout(60_000);
   const script = createProxyServiceWorkerScript({
+    runtimeRegistrationToken: "flowersec-proxy-browser-runtime",
     maxRequestBodyBytes: 4,
     passthrough: { paths: ["/", "/proxy-sw.js"], prefixes: ["/dist/", "/node_modules/"] },
     proxyPathPrefix: "/proxy/",
@@ -207,7 +208,8 @@ test("Chromium runs the authenticated controller window proxy bridge", async ({ 
       } finally { patch.uninstall(); app.dispose(); }
     }, site.origin);
     expect(result).toEqual({ status: 200, body: "proxied", echoed: "bridge-echo", closeCode: 1000 });
-    expect(peer.proxyActiveCount()).toBe(0);
+    // The browser close event precedes the remote handler's physical cleanup.
+    await expect.poll(() => peer.proxyActiveCount()).toBe(0);
     expect(peer.failure()).toBeUndefined();
 
     const [otherPage] = await Promise.all([
@@ -245,7 +247,7 @@ test("Chromium runs the authenticated controller window proxy bridge", async ({ 
       } finally { app.dispose(); }
     }, site.origin);
     expect(authorized).toEqual({ status: 200, body: "proxied" });
-    expect(peer.proxyActiveCount()).toBe(0);
+    await expect.poll(() => peer.proxyActiveCount()).toBe(0);
 
     await disposeRuntimePage(page);
     await peer.close();
@@ -263,24 +265,24 @@ type Peer = Awaited<ReturnType<typeof startV4WSSPeer>>;
 async function installRuntimePage(page: Page, peer: Peer, externalOrigin: string, databaseName: string,
   mode: "service_worker" | "controller" = "service_worker"): Promise<void> {
   await page.exposeFunction("bootstrapProxyV4", peer.bootstrap);
-  await page.evaluate(async ({ peer: input, externalOrigin: origin, databaseName: database, p256Public, mode: connectionMode }) => {
+  const installed = await page.evaluate(async ({ peer: input, externalOrigin: origin, databaseName: database, p256Public, mode: connectionMode }) => {
     const proxy = await import("/dist/proxy/index.js");
     const sdk = await import("/dist/browser/index.js");
     const noble = await import("/node_modules/@noble/curves/ed25519.js");
     const bytes = (value: number, count = 32) => new Uint8Array(count).fill(value);
     const value = (data: number[]) => new Uint8Array(data);
-    const limit = new sdk.V4ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
-    const root = new sdk.V4ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: 32, reservations: 256, references: 512,
+    const limit = new sdk.ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
+    const root = new sdk.ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: 32, reservations: 256, references: 512,
       rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
     const start = performance.now(), now = BigInt(Date.now());
-    const environment = sdk.createV4TransportEnvironment({ root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: "2".repeat(32), runtimeBytes: 1024n,
+    const environment = sdk.createTransportEnvironment({ root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: "2".repeat(32), runtimeBytes: 1024n,
       namespaces: 1, sources: 1, acquisitions: 1, materials: 1, sessions: 1, dependencies: 8, acquireMS: 10000n, cleanupMS: 100,
-      clock: { profile: { rate: new sdk.V4ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 1000000n, maxRoundTripMS: 100n },
+      clock: { profile: { rate: new sdk.ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 1000000n, maxRoundTripMS: 100n },
         tick: () => ({ milliseconds: BigInt(Math.floor(performance.now() - start)), incarnation: "3".repeat(32) }), initial: () => ({ lowerMS: now, upperMS: now }) },
       random: (destination: Uint8Array) => { const sample = new Uint8Array(destination.byteLength); crypto.getRandomValues(sample); destination.set(sample); } });
-    const backing = sdk.createV4IndexedDBPoolBacking(environment, database, { maxRecords: 4, maxRecordBytes: 16384, transactionMS: 10000n,
+    const backing = sdk.createIndexedDBPoolBacking(environment, database, { maxRecords: 4, maxRecordBytes: 16384, transactionMS: 10000n,
       runtimeBytes: 1024n, providerRuntimeBytes: 1048576n, storageBytes: 1048576n });
-    const store = await sdk.openV4IndexedDBPoolStore(backing, { create: true, identity: { authority: "spend", storeID: bytes(9), generation: 1n },
+    const store = await sdk.openIndexedDBPoolStore(backing, { create: true, identity: { authority: "spend", storeID: bytes(9), generation: 1n },
       continuity: { check: () => undefined }, bindings: [{ tenant: "tenant", issuer: bytes(5, 16) }] });
     const prefix = (hex: string) => Uint8Array.from(hex.match(/../g)!, byte => Number.parseInt(byte, 16));
     const combine = (a: Uint8Array, b: Uint8Array) => { const result = new Uint8Array(a.length + b.length); result.set(a); result.set(b, a.length); return result; };
@@ -289,7 +291,7 @@ async function installRuntimePage(page: Page, peer: Peer, externalOrigin: string
     const noiseKey = input.profile.includes("x25519")
       ? await crypto.subtle.importKey("pkcs8", combine(prefix("302e020100300506032b656e04220420"), bytes(16)), "X25519", true, ["deriveBits"])
       : await crypto.subtle.importKey("jwk", { kty: "EC", crv: "P-256", d: b64(Array.from(bytes(16))), x: b64(p256Public.slice(1, 33)), y: b64(p256Public.slice(33)) }, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
-    const client = await sdk.configureV4BrowserWSS(environment, { identityKey, noiseKey, poolStore: store,
+    const client = await sdk.configureBrowserWSS(environment, { identityKey, noiseKey, poolStore: store,
       carrier: { deployment: { deploymentID: "browser-proxy-test", revision: "one", endpoint: input.endpoint, applicationOrigin: location.origin, routeDigest: value(input.route),
         notBeforeMS: BigInt(input.timeOrigin), notAfterMS: BigInt(input.timeOrigin) + 50000n,
         terminatorProfile: "tls13-no-early-data-http11-exact-origin-no-extensions", evidenceReference: "test:https-server-tls13-and-upgrade-policy" },
@@ -298,8 +300,12 @@ async function installRuntimePage(page: Page, peer: Peer, externalOrigin: string
         writeDeadlineMS: 1000n, operationDeadlineMS: 1000n, rekeyPrepareMS: 1000n, rekeyProtocolMS: 1000n, rekeyConfirmationMS: 1000n, cryptoKeys: 100 } });
     const namespace = client.namespace({ tenant: "tenant", authority: "authority", rootKeyID: bytes(1, 16), rootPublicKey: noble.ed25519.getPublicKey(bytes(7)),
       maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 8192, stateNodes: 16384 });
-    const bootstrap = await (window as typeof window & { bootstrapProxyV4(nonce: number[]): Promise<{response: number[]; state: number[]}> }).bootstrapProxyV4(Array.from(namespace.bootstrapNonce()));
-    namespace.bootstrap(value(bootstrap.response), value(bootstrap.state));
+    await namespace.fetchBootstrap(async (request, response, state) => {
+      const bootstrap = await (window as typeof window & { bootstrapProxyV4(nonce: number[]): Promise<{response: number[]; state: number[]}> }).bootstrapProxyV4(Array.from(request.nonce));
+      const signed = value(bootstrap.response), content = value(bootstrap.state);
+      try { response.set(signed); state.set(content); return { responseBytes: signed.length, stateBytes: content.length }; }
+      finally { signed.fill(0); content.fill(0); }
+    });
     const material = { artifact: value(input.input.artifact), clientCertificate: value(input.input.clientCertificate), serverCertificate: value(input.input.serverCertificate),
       activation: value(input.input.activation), candidateIndex: 0 };
     const policy = { tenant: "tenant", audience: "service", clientSubject: "client", serverSubject: "server", cryptoProfiles: [input.profile], authorities: ["authority"] };
@@ -308,7 +314,7 @@ async function installRuntimePage(page: Page, peer: Peer, externalOrigin: string
       return { artifact: material.artifact.length, clientCertificate: material.clientCertificate.length,
         serverCertificate: material.serverCertificate.length, activation: material.activation.length, candidateIndex: 0 };
     });
-    const runtimeOptions = { externalOrigin: origin, maxBodyBytes: 4096, maxChunkBytes: 64, maxJsonFrameBytes: 4096, maxWsFrameBytes: 32 };
+    const runtimeOptions = { runtimeRegistrationToken: "flowersec-proxy-browser-runtime", externalOrigin: origin, maxBodyBytes: 4096, maxChunkBytes: 64, maxJsonFrameBytes: 4096, maxWsFrameBytes: 32 };
     const appWindow = (window as typeof window & { __flowersecAppWindow?: Window }).__flowersecAppWindow;
     if (connectionMode === "controller" && appWindow === undefined) throw new Error("app window is unavailable");
     const handle = connectionMode === "controller"
@@ -323,12 +329,15 @@ async function installRuntimePage(page: Page, peer: Peer, externalOrigin: string
       __flowersecProxyRuntime?: typeof handle.runtime;
       __flowersecProxyOwners?: { environment: typeof environment; store: typeof store; backing: typeof backing; root: typeof root; database: string };
     };
+    if (typeof handle.runtime?.fetch !== "function") throw new Error("proxy runtime was not installed");
     holder.__flowersecProxyHandle = handle;
     holder.__flowersecProxyRuntime = handle.runtime;
     holder.__flowersecProxyOwners = { environment, store, backing, root, database };
-    if (connectionMode === "service_worker") await proxy.ensureServiceWorkerRuntimeRegistered();
+    if (connectionMode === "service_worker") await proxy.ensureServiceWorkerRuntimeRegistered({ runtimeRegistrationToken: runtimeOptions.runtimeRegistrationToken });
+    return { installed: typeof holder.__flowersecProxyRuntime?.fetch === "function", url: location.href };
   }, { peer: { endpoint: peer.endpoint, timeOrigin: peer.timeOrigin, route: peer.route, profile: peer.profile, input: peer.input },
     externalOrigin, databaseName, mode, p256Public: Array.from(p256.getPublicKey(new Uint8Array(32).fill(16), false)) });
+  expect(installed).toEqual({ installed: true, url: page.url() });
 }
 
 async function disposeRuntimePage(page: Page): Promise<void> {

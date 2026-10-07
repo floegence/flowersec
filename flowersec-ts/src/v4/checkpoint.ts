@@ -12,15 +12,15 @@ export interface V4CheckpointIssuanceOptions {
 }
 /** A handler result selected only by its original durable invocation. */
 export interface V4CheckpointResult { readonly kind: "checkpoint_result"; }
-type Issuer = (original: ExecutionTarget, checkpoint: V4Checkpoint, options: V4CheckpointIssuanceOptions) => V4CheckpointResult;
+type Issuer = (original: ExecutionTarget, checkpoint: V4Checkpoint, options: V4CheckpointIssuanceOptions) => V4CheckpointResult | Promise<V4CheckpointResult>;
 const issuers = new WeakMap<V4UnaryContext, Issuer>();
 /** Finish this explicit unary execution with the original persisted token.
  * A duplicate joins the stored result and never calls the issuer again. */
-export function issueV4Checkpoint(context: V4UnaryContext, original: ExecutionTarget, checkpoint: V4Checkpoint,
-  options: V4CheckpointIssuanceOptions): V4CheckpointResult {
+export async function issueV4Checkpoint(context: V4UnaryContext, original: ExecutionTarget, checkpoint: V4Checkpoint,
+  options: V4CheckpointIssuanceOptions): Promise<V4CheckpointResult> {
   const issue = issuers.get(context);
   if (issue === undefined) throw new RPCProtocolError("service_unavailable");
-  return issue(original, checkpoint, options);
+  return await issue(original, checkpoint, options);
 }
 export function bindCheckpointIssuer(context: V4UnaryContext, issuer: Issuer): () => void {
   if (issuers.has(context)) throw new RPCProtocolError("rpc_owner");

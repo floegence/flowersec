@@ -6,7 +6,7 @@ import { wireMaps, type WireField } from "../v4/runtime/schemaRegistry.js";
 import { readU32be, u32be } from "../utils/bin.js";
 
 export const PROXY_WIRE_VERSION = policy.version;
-export type ProxySchema = "ProxyHTTPRequest" | "ProxyHTTPResponse" | "ProxyWebSocketOpen" | "ProxyWebSocketResponse" | "ProxyBodyEnd";
+export type ProxySchema = "ProxyHTTPRequest" | "ProxyHTTPResponse" | "ProxyWebSocketOpen" | "ProxyWebSocketResponse" | "ProxyBodyEnd" | "ProxyCredentialControlRequest" | "ProxyCredentialControlResponse";
 const token = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
 const ascii = /^[\x20-\x7e]*$/u;
 const octets = /^[\x09\x20-\x7e\x80-\xff]*$/u;

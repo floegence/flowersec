@@ -48,6 +48,13 @@ type EnvironmentConfig struct {
 	// material and admission against it. Component-only owners without namespace
 	// services may omit it; this does not supply public startup qualification.
 	Verification *protocolv4.NamespaceRegistry
+	// NamespaceRetirement is the optional trusted online history-pressure worker
+	// for this exact registry. Environment borrows it; it never closes a caller's
+	// owner or creates a recovery factory from peer namespace identifiers.
+	NamespaceRetirement *protocolv4.NamespaceRetirementService
+	// DiagnosticSink is an optional caller-owned detailed event destination.
+	// Environment borrows it and never closes it.
+	DiagnosticSink *DiagnosticSink
 }
 
 // Environment owns its admitted Session lifecycles, borrowing the configured
@@ -59,6 +66,7 @@ type Environment struct {
 	dependencyTargets      []dependencyStreamTarget
 	dependencyContracts    dependencyContractBatch
 	counters               diagnosticv4.Counters
+	diagnosticSink         *DiagnosticSink
 	cleanupTimeoutObserved bool
 	services               bool
 	mu                     sync.Mutex
@@ -85,25 +93,29 @@ type Environment struct {
 	queryProtection        *contractQueryProtection
 	// Serializes finite managed registration and coordinator decisions. Close
 	// never waits for this gate; publication still checks the original gates.
-	renewalMu            sync.Mutex
-	renewalEntries       []contractRenewalEntry
-	renewalCursor        uint16
-	queryActive          uint32
-	serviceRegistry      *rpcv4.ServiceRegistry
-	registryBorrow       resourcev4.Reference
-	verification         *protocolv4.NamespaceRegistry
-	verificationBorrow   resourcev4.Reference
-	results              []environmentResultSlot
-	streamDelivery       localOpenGate
-	resultActive         uint32
-	resultCursor         int
-	serviceClients       [64]*UnaryServiceClient
-	serviceClientBinding [64]bool
-	serviceClientActive  uint8
-	maxBoundMethods      uint16
-	boundMethods         uint16
-	staticContractWork   uint8
-	operationsCaps       EnvironmentSnapshot
+	renewalMu                 sync.Mutex
+	renewalEntries            []contractRenewalEntry
+	renewalCursor             uint16
+	queryActive               uint32
+	serviceRegistry           *rpcv4.ServiceRegistry
+	registryBorrow            resourcev4.Reference
+	verification              *protocolv4.NamespaceRegistry
+	verificationBorrow        resourcev4.Reference
+	verificationActive        uint32
+	verificationPreparations  []environmentVerificationPreparation
+	namespaceRetirement       *protocolv4.NamespaceRetirementService
+	namespaceRetirementBorrow resourcev4.Reference
+	results                   []environmentResultSlot
+	streamDelivery            localOpenGate
+	resultActive              uint32
+	resultCursor              int
+	serviceClients            [64]*UnaryServiceClient
+	serviceClientBinding      [64]bool
+	serviceClientActive       uint8
+	maxBoundMethods           uint16
+	boundMethods              uint16
+	staticContractWork        uint8
+	operationsCaps            EnvironmentSnapshot
 }
 
 func environmentResultCapacity(c EnvironmentConfig) (uint32, error) {
@@ -130,7 +142,7 @@ func EnvironmentCharge(c EnvironmentConfig) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	if c.Services && c.Clock == nil || c.ServiceRegistry != nil && !c.Services {
+	if c.Services && c.Clock == nil || c.ServiceRegistry != nil && !c.Services || c.NamespaceRetirement != nil && c.Verification == nil {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
 	if c.Positions == 0 || c.Positions > 65536 || c.RuntimeBytes == 0 {
@@ -147,6 +159,9 @@ func EnvironmentCharge(c EnvironmentConfig) (resourcev4.Vector, error) {
 	}
 	per := uint64(unsafe.Sizeof(EnvironmentSession{})) + uint64(unsafe.Sizeof(environmentEstablishment{})) + uint64(unsafe.Sizeof((*EnvironmentSession)(nil))) + uint64(unsafe.Sizeof((*ServeGroup)(nil))) + uint64(unsafe.Sizeof((*ConnectionController)(nil)))
 	size := uint64(unsafe.Sizeof(Environment{})) + uint64(c.Positions)*per
+	if c.Verification != nil {
+		size += uint64(c.Positions) * (uint64(unsafe.Sizeof(environmentVerificationPreparation{})) + uint64(unsafe.Sizeof(environmentVerificationCancellation{})) + 4*128)
+	}
 	size += uint64(results) * uint64(unsafe.Sizeof(environmentResultSlot{}))
 	size += uint64(c.Materials) * (uint64(unsafe.Sizeof(environmentMaterial{})) + uint64(unsafe.Sizeof(timev4.Window{})) + uint64(unsafe.Sizeof(timev4.Deadline{})))
 	size += uint64(c.MaterialPools) * uint64(unsafe.Sizeof((*MaterialPool)(nil)))
@@ -162,14 +177,22 @@ func EnvironmentCharge(c EnvironmentConfig) (resourcev4.Vector, error) {
 	// a provider-blocked close watcher. Include its timer, wake channels and
 	// runtime allowance before accepting the original Session responsibility.
 	size += uint64(c.Positions) * (uint64(unsafe.Sizeof(time.Timer{})) + 3*128)
-	if c.RuntimeBytes > (math.MaxUint64-size)/(1+uint64(c.Positions)) {
+	runtimeOwners := 1 + uint64(c.Positions)
+	if c.Verification != nil {
+		runtimeOwners += uint64(c.Positions)
+	}
+	if c.RuntimeBytes > (math.MaxUint64-size)/runtimeOwners {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
-	size += c.RuntimeBytes * (1 + uint64(c.Positions))
+	size += c.RuntimeBytes * runtimeOwners
 	if size > uint64(math.MaxInt) {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
 	charge := resourcev4.Vector{resourcev4.SDKBytes: size, resourcev4.Items: 1 + 13*uint64(c.Positions) + uint64(c.Materials), resourcev4.Tasks: 3*uint64(c.Positions) + uint64(c.Materials), resourcev4.WorkSlots: 3*uint64(c.Positions) + uint64(c.Materials), resourcev4.Timers: 2 * uint64(c.Positions)}
+	if c.Verification != nil {
+		charge[resourcev4.Tasks] += uint64(c.Positions)
+		charge[resourcev4.WorkSlots] += uint64(c.Positions)
+	}
 	if c.Services || c.Materials != 0 || c.ContractQueryAcquisitions != 0 {
 		charge[resourcev4.Tasks]++
 		charge[resourcev4.Timers]++
@@ -223,8 +246,23 @@ func NewEnvironment(c EnvironmentConfig, reservation, dependencies resourcev4.Re
 			return nil, err
 		}
 	}
-	e := &Environment{services: c.Services, positions: make([]*EnvironmentSession, c.Positions), groups: make([]*ServeGroup, c.Positions), reservation: owned, shared: shared, done: make(chan struct{}), materialClock: c.Clock, materialCreateMS: c.MaterialCreateMS, queries: make([]*ContractQueryAcquisition, c.ContractQueryAcquisitions), materialExited: !c.Services && c.Materials == 0 && c.ContractQueryAcquisitions == 0, serviceRegistry: c.ServiceRegistry, registryBorrow: registryBorrow}
+	var namespaceRetirementBorrow resourcev4.Reference
+	if c.NamespaceRetirement != nil {
+		namespaceRetirementBorrow, err = c.NamespaceRetirement.BorrowFor(c.Verification, owned)
+		if err != nil {
+			verificationBorrow.Release()
+			registryBorrow.Release()
+			owned.Release()
+			shared.Release()
+			return nil, err
+		}
+	}
+	e := &Environment{services: c.Services, diagnosticSink: c.DiagnosticSink, positions: make([]*EnvironmentSession, c.Positions), groups: make([]*ServeGroup, c.Positions), reservation: owned, shared: shared, done: make(chan struct{}), materialClock: c.Clock, materialCreateMS: c.MaterialCreateMS, queries: make([]*ContractQueryAcquisition, c.ContractQueryAcquisitions), materialExited: !c.Services && c.Materials == 0 && c.ContractQueryAcquisitions == 0, serviceRegistry: c.ServiceRegistry, registryBorrow: registryBorrow}
 	e.verification, e.verificationBorrow = c.Verification, verificationBorrow
+	if c.Verification != nil {
+		e.verificationPreparations = make([]environmentVerificationPreparation, c.Positions)
+	}
+	e.namespaceRetirement, e.namespaceRetirementBorrow = c.NamespaceRetirement, namespaceRetirementBorrow
 	e.maxBoundMethods = c.MaxBoundMethods
 	if e.maxBoundMethods == 0 && c.Services {
 		e.maxBoundMethods = 256
@@ -308,6 +346,8 @@ type PoolSessionInput struct {
 	Authority     ledgerv4.SQLitePoolAuthority
 	Consume       resourcev4.Reference
 	ServerAllow   TunnelServerAllowConfig
+	// Observation is a compact read-only projection of the actual SQLite owner.
+	Observation *ledgerv4.PoolSpendObservation
 }
 
 // LiveSessionInput selects either the in-process reference authority or an
@@ -361,6 +401,22 @@ type environmentEstablishment struct {
 	intake   *acceptedIntake
 	ingress  *acceptedIngress
 	kind     uint8
+}
+
+func (input *environmentEstablishment) profileName() string {
+	if input == nil {
+		return "unknown"
+	}
+	switch input.kind {
+	case 1:
+		return "preauthorized_pool"
+	case 2:
+		return "live_authority"
+	case 3:
+		return ""
+	default:
+		return "unknown"
+	}
 }
 
 func (e *Environment) ConnectPool(ctx context.Context, input PoolSessionInput) (*EnvironmentSession, error) {
@@ -543,6 +599,8 @@ func (e *Environment) admitAt(ctx context.Context, input environmentEstablishmen
 		s.beginDiagnostics()
 	}
 	s.establishment, s.admission, s.entrance = p, a, entrance
+	s.spendObservation = input.pool.Observation
+	s.diagnosticSourceProfile = input.profileName()
 	p.host = s
 	if a != nil {
 		a.host, a.ctx = s, &s.context
@@ -577,7 +635,22 @@ func (e *Environment) Close() {
 		return
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
+	defer func() {
+		e.mu.Unlock()
+		// Cancellation may detach a host context's AfterFunc registration. The
+		// original fixed positions retain their pins until that call exits, so
+		// invoke cancellation outside the Environment gate.
+		for i := 0; ; i++ {
+			e.mu.Lock()
+			if i >= len(e.verificationPreparations) {
+				e.mu.Unlock()
+				break
+			}
+			cancellation := e.verificationPreparations[i].cancellation
+			e.mu.Unlock()
+			cancellation.join()
+		}
+	}()
 	if e.closed {
 		return
 	}
@@ -646,7 +719,7 @@ func (e *Environment) Close() {
 }
 
 func (e *Environment) completeLocked() {
-	if e.closed && e.active == 0 && e.groupsActive == 0 && e.controllersActive == 0 && e.materialActive == 0 && e.poolActive == 0 && e.materialExited && e.queryActive == 0 && e.queryProtection == nil && e.resultActive == 0 && e.serviceClientActive == 0 && !e.cleaned {
+	if e.closed && e.active == 0 && e.groupsActive == 0 && e.controllersActive == 0 && e.materialActive == 0 && e.poolActive == 0 && e.materialExited && e.queryActive == 0 && e.verificationActive == 0 && e.queryProtection == nil && e.resultActive == 0 && e.serviceClientActive == 0 && !e.cleaned {
 		e.cleaned = true
 		close(e.done)
 	}
@@ -687,9 +760,14 @@ func (e *Environment) Retire() error {
 		e.registryBorrow.Release()
 		e.registryBorrow = resourcev4.Reference{}
 		e.serviceRegistry = nil
+		e.namespaceRetirementBorrow.Release()
+		e.namespaceRetirementBorrow = resourcev4.Reference{}
+		e.namespaceRetirement = nil
 		e.verificationBorrow.Release()
 		e.verificationBorrow = resourcev4.Reference{}
 		e.verification = nil
+		e.verificationPreparations = nil
+		e.diagnosticSink = nil
 		e.shared.Release()
 		e.reservation.Release()
 		e.shared, e.reservation = resourcev4.Reference{}, resourcev4.Reference{}

@@ -37,7 +37,7 @@ test("v4.strict_ed25519.torsion: all eight classes have valid cofactored witness
       assert.ok(ed25519.verify(signature, Buffer.from(vector.message_hex, "hex"), key, { zip215: false }), vector.id);
     }
   }
-  for (const side of ["A", "R"]) {
+  for (const side of ["a", "r"]) {
     for (let i = 0; i < 8; i++) assert.ok(witnesses.some(v => v.id === `strict_${side}_torsion_${i}`));
     assert.equal(witnesses.filter(v => v.id.startsWith(`strict_${side}_mixed_`)).length, 7);
   }
@@ -48,7 +48,7 @@ test("v4.strict_ed25519.coverage: domain inputs, malformed points and outputs bi
   assert.equal(corpus.schema_sha256, signatures.schema_sha256);
   assert.equal(corpus.policy_revision, schema.strict_ed25519_policy.revision);
   assert.deepEqual(corpus.vectors.filter(v => v.source_signature).map(v => v.source_signature), signatures.vectors.map(v => v.id));
-  for (const side of ["A", "R"]) for (const kind of ["y_eq_p", "y_above_p", "negative_zero", "nonpoint"]) {
+  for (const side of ["a", "r"]) for (const kind of ["y_eq_p", "y_above_p", "negative_zero", "nonpoint"]) {
     assert.ok(corpus.vectors.some(v => v.id === `strict_${side}_${kind}` && !v.accept));
   }
   for (const domain of schema.domains.filter(d => d.operation === "ed25519")) {

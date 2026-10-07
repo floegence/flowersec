@@ -175,6 +175,8 @@ final class V4LocalIdentity: @unchecked Sendable, CustomStringConvertible, Custo
   private let owner: V4CryptoReservation
   private var signer: Curve25519.Signing.PrivateKey?
   private var dh: V4SoftwareDH?
+  private var activeOperations = 0
+  private var closed = false
   let profile: V4CryptoProfile
   let dhPublicKey: Data
   let identityPublicKey: Data
@@ -210,26 +212,43 @@ final class V4LocalIdentity: @unchecked Sendable, CustomStringConvertible, Custo
     try owner.check()
   }
   func check(in environment: V4EnvironmentFoundation) throws {
-    guard owner.environment === environment, dh != nil, signer != nil else {
-      throw V4CryptoFailure.key
+    try owner.environment.gate.withLock {
+      guard !closed, owner.environment === environment, dh != nil, signer != nil else {
+        throw V4CryptoFailure.key
+      }
+      try owner.check()
     }
-    try owner.check()
+  }
+  private func withKeyOperation<Value>(in environment: V4EnvironmentFoundation,
+    _ operation: (Curve25519.Signing.PrivateKey, V4SoftwareDH) throws -> Value) throws -> Value {
+    let (signer, dh, tail) = try environment.gate.withLock { () throws -> (Curve25519.Signing.PrivateKey, V4SoftwareDH, V4ResourceReference) in
+      try check(in: environment)
+      let tail = try owner.executionTail()
+      activeOperations += 1
+      return (self.signer!, self.dh!, tail)
+    }
+    defer {
+      environment.gate.withLock {
+        activeOperations -= 1
+        if closed && activeOperations == 0 { clearKeys() }
+      }
+      tail.release()
+    }
+    let result = try operation(signer, dh)
+    try check(in: environment)
+    return result
   }
   func shared(_ peer: Data, in environment: V4EnvironmentFoundation) throws -> Data {
-    try environment.gate.withLock {
-      try check(in: environment)
-      return try dh!.shared(peer)
-    }
+    try withKeyOperation(in: environment) { _, dh in try dh.shared(peer) }
   }
   func signHandshake(_ message: Data, in environment: V4EnvironmentFoundation) throws -> Data {
-    try environment.gate.withLock {
-      try check(in: environment)
+    try withKeyOperation(in: environment) { signer, _ in
       guard
-        ["fsb4/signature", "fsa4/signature", "ready-identity"].contains(where: {
+        ["fsb4/signature", "fsa4/signature", "ready-identity", "grant-possession"].contains(where: {
           message.starts(with: Data("flowersec/v4/\($0)\0".utf8))
         })
       else { throw V4CryptoFailure.configuration }
-      let signature = try signer!.signature(for: message)
+      let signature = try signer.signature(for: message)
       guard
         StrictEd25519V4Reference.verify(
           signature: signature, message: message, publicKey: identityPublicKey)
@@ -238,14 +257,60 @@ final class V4LocalIdentity: @unchecked Sendable, CustomStringConvertible, Custo
       return signature
     }
   }
-  func close() {
-    owner.environment.gate.withLock {
-      dh?.close()
-      dh = nil
-      signer = nil
-      owner.seal()
+  func signRegisteredControl(_ message: Data, in environment: V4EnvironmentFoundation) throws -> Data {
+    try environment.gate.withLock {
+      try check(in: environment)
+      let domain = Data("flowersec/original-tunnel-control/1\0".utf8)
+      guard message.starts(with: domain), message.count > domain.count,
+        message.count <= 262_144 + domain.count else { throw V4CryptoFailure.configuration }
+      let signature = try signer!.signature(for: message)
+      guard StrictEd25519V4Reference.verify(signature: signature, message: message,
+        publicKey: identityPublicKey) else { throw V4CryptoFailure.authentication }
+      try check(in: environment)
+      return signature
     }
   }
+  #if os(macOS) || os(iOS)
+  func signRegisteredAuthorization(_ message: Data, in environment: V4EnvironmentFoundation) throws -> Data {
+    try environment.gate.withLock {
+      try check(in: environment)
+      guard (33...1056).contains(message.count), message.prefix(32).contains(where: { $0 != 0 })
+      else { throw V4CryptoFailure.configuration }
+      var request = Data(message.dropFirst(32)); defer { V4Crypto.wipe(&request) }
+      var cursor = V4PoolWireCursor(request, maximum: 1024)
+      try cursor.array(13)
+      guard try cursor.text(maximum: 32) == "live-authorization-1",
+        V4NamespaceRegistry.securityID(try cursor.text(maximum: 128).utf8),
+        V4NamespaceRegistry.securityID(try cursor.text(maximum: 128).utf8),
+        try cursor.text(maximum: 128) == profile.rawValue else { throw V4CryptoFailure.configuration }
+      for size in [16, 16, 16, 32, 32, 32] {
+        let bytes = try cursor.bytes(maximum: size)
+        guard bytes.count == size, bytes.contains(where: { $0 != 0 }) else { throw V4CryptoFailure.configuration }
+      }
+      try cursor.array(3)
+      guard try cursor.uint() < 16 else { throw V4CryptoFailure.configuration }
+      for size in [16, 32] {
+        let bytes = try cursor.bytes(maximum: size)
+        guard bytes.count == size, bytes.contains(where: { $0 != 0 }) else { throw V4CryptoFailure.configuration }
+      }
+      guard try cursor.uint() > 0, try cursor.uint() == 1 else { throw V4CryptoFailure.configuration }
+      try cursor.end()
+      let signature = try signer!.signature(for: message)
+      guard StrictEd25519V4Reference.verify(signature: signature, message: message,
+        publicKey: identityPublicKey) else { throw V4CryptoFailure.authentication }
+      try check(in: environment)
+      return signature
+    }
+  }
+  #endif
+  func close() {
+    owner.environment.gate.withLock {
+      closed = true
+      owner.seal()
+      if activeOperations == 0 { clearKeys() }
+    }
+  }
+  private func clearKeys() { dh?.close(); dh = nil; signer = nil }
 }
 
 // Output aliases retain their actual backing charge after close/cancellation.

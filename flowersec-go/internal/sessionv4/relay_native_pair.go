@@ -16,7 +16,7 @@ import (
 
 // The table and its two direction buffers per position are allocated before
 // HOP_AUTH. Pending native handles, creation tasks and cleanup tails occupy
-// these same positions. Only the exact used-scope set survives retirement.
+// these same positions. Used scopes and ended direction bits survive retirement.
 // No slot is an endpoint OPEN acceptance or an authenticated record result.
 type relayNativePair struct {
 	mu                sync.Mutex
@@ -24,6 +24,7 @@ type relayNativePair struct {
 	slots             []relayNativeSlot
 	queued            [2][]relayQueuedFrame
 	used              []uint64
+	retired           []uint8
 	seed              maphash.Seed
 	total, generation uint64
 	pending, resident uint32
@@ -64,7 +65,7 @@ func relayNativeCharge(c RelayMessagePairConfig) (resourcev4.Vector, error) {
 	count := uint64(c.MaxPendingNativeMappings) + uint64(c.MaxResidentNativeMappings)
 	table := relayScopeTableSize(c.MaxTotalNativeMappings)
 	return resourcev4.Vector{
-		resourcev4.SDKBytes: uint64(unsafe.Sizeof(relayNativePair{})) + count*(uint64(unsafe.Sizeof(relayNativeSlot{}))+2*uint64(unsafe.Sizeof(relayQueuedFrame{}))+2*uint64(c.MaxEnvelopeBytes)+2048) + table*8 + 2*uint64(c.MaxDatagramBytes) + 2048,
+		resourcev4.SDKBytes: uint64(unsafe.Sizeof(relayNativePair{})) + count*(uint64(unsafe.Sizeof(relayNativeSlot{}))+2*uint64(unsafe.Sizeof(relayQueuedFrame{}))+2*uint64(c.MaxEnvelopeBytes)+2048) + table*9 + 2*uint64(c.MaxDatagramBytes) + 2048,
 		resourcev4.Items:    count*3 + 3, resourcev4.WorkSlots: count*3 + 6, resourcev4.Tasks: count*3 + 6,
 	}, nil
 }
@@ -82,7 +83,7 @@ func newRelayNativePair(p *RelayMessagePair) *relayNativePair {
 	if c.MaxPendingNativeMappings == 0 {
 		return nil
 	}
-	n := &relayNativePair{pair: p, seed: maphash.MakeSeed(), slots: make([]relayNativeSlot, c.MaxPendingNativeMappings+c.MaxResidentNativeMappings), used: make([]uint64, relayScopeTableSize(c.MaxTotalNativeMappings)), errors: make(chan error, 1), wake: make(chan struct{}, 2)}
+	n := &relayNativePair{pair: p, seed: maphash.MakeSeed(), slots: make([]relayNativeSlot, c.MaxPendingNativeMappings+c.MaxResidentNativeMappings), used: make([]uint64, relayScopeTableSize(c.MaxTotalNativeMappings)), retired: make([]uint8, relayScopeTableSize(c.MaxTotalNativeMappings)), errors: make(chan error, 1), wake: make(chan struct{}, 2)}
 	for d := 0; d < 2; d++ {
 		n.queued[d] = make([]relayQueuedFrame, len(n.slots))
 	}
@@ -256,6 +257,7 @@ func (n *relayNativePair) bindScopeLocked(s *relayNativeSlot, h protocolv4.Recor
 	// Peer scope parity and authenticated epoch/sequence checks remain endpoint
 	// duties. This opaque binding records only the first visible OPEN identity.
 	n.used[index] = h.Scope
+	n.retired[index] = 0
 	n.resident++
 	s.scope, s.openEpoch, s.live = h.Scope, h.Epoch, true
 	return nil
@@ -353,6 +355,8 @@ func (n *relayNativePair) destroy() {
 		clear(b)
 	}
 	clear(n.used)
+	clear(n.retired)
+	n.retired = nil
 	n.slots, n.used, n.hops, n.connections = nil, nil, [2]*RelayHop{}, [2]native.Connection{}
 	n.datagrams = [2][]byte{}
 	n.queued = [2][]relayQueuedFrame{}

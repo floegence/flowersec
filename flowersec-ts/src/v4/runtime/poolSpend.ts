@@ -8,6 +8,10 @@ export interface PoolSpendOwner {
   readonly carrier: Uint8Array;
   readonly generation: bigint;
   readonly signal?: AbortSignal;
+  /** Original receipt observation; these callbacks confer no storage authority. */
+  readonly spendDispatched?: () => void;
+  readonly spent?: () => void;
+  readonly unspent?: () => void;
 }
 export interface PoolSpendStore {
   consume(facts: VerifiedPoolSpendFacts, owner: PoolSpendOwner, deadline: TrustedDeadline, admission: ResourceReference, check: () => void): void | Promise<void>;

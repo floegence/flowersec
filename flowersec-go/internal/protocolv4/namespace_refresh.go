@@ -82,7 +82,12 @@ func NamespaceRefreshCharge(l NamespaceRefreshLimits, configBytes int) (resource
 	return charge.Add(l.Provider)
 }
 
-func NewNamespaceRefresh(n *LiveNamespace, trust *NamespaceTrustStore, limits NamespaceRefreshLimits, reservation resourcev4.Reference) (_ *NamespaceRefresh, err error) {
+func newNamespaceRefreshOwned(n *LiveNamespace, trust *NamespaceTrustStore, limits NamespaceRefreshLimits, owned resourcev4.Reference) (_ *NamespaceRefresh, err error) {
+	defer func() {
+		if err != nil {
+			owned.Release()
+		}
+	}()
 	if n == nil || trust == nil {
 		return nil, CBORFailure("revocation_namespace_owner")
 	}
@@ -93,25 +98,12 @@ func NewNamespaceRefresh(n *LiveNamespace, trust *NamespaceTrustStore, limits Na
 	if n.destroyed || n.terminal != nil || n.refresh != nil || trust.closed || trust.retired || trust.namespace != n || n.trust != trust {
 		return nil, CBORFailure("revocation_namespace_owner")
 	}
-	if err = reservation.CheckSameEnvironment(n.reservation); err == nil {
-		err = reservation.CheckSameEnvironment(trust.reservation)
+	if err = owned.CheckSameEnvironment(n.reservation); err == nil {
+		err = owned.CheckSameEnvironment(trust.reservation)
 	}
 	if err != nil {
 		return nil, err
 	}
-	charge, err := NamespaceRefreshCharge(limits, trust.limits.ConfigBytes)
-	if err != nil {
-		return nil, err
-	}
-	owned, err := reservation.Take(charge)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if err != nil {
-			owned.Release()
-		}
-	}()
 	r := &NamespaceRefresh{namespace: n, trust: trust, clock: n.clock, limits: limits, reservation: owned, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	limit, err := SchemaByteLimit("FreshnessHead")
 	if err != nil {
@@ -131,6 +123,21 @@ func NewNamespaceRefresh(n *LiveNamespace, trust *NamespaceTrustStore, limits Na
 	return r, nil
 }
 
+func NewNamespaceRefresh(n *LiveNamespace, trust *NamespaceTrustStore, limits NamespaceRefreshLimits, reservation resourcev4.Reference) (*NamespaceRefresh, error) {
+	if n == nil || trust == nil {
+		return nil, CBORFailure("revocation_namespace_owner")
+	}
+	charge, err := NamespaceRefreshCharge(limits, trust.limits.ConfigBytes)
+	if err != nil {
+		return nil, err
+	}
+	owned, err := reservation.Take(charge)
+	if err != nil {
+		return nil, err
+	}
+	return newNamespaceRefreshOwned(n, trust, limits, owned)
+}
+
 func (r *NamespaceRefresh) Start(provider NamespaceRefreshProvider) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -142,7 +149,7 @@ func (r *NamespaceRefresh) Start(provider NamespaceRefreshProvider) error {
 	}
 	r.namespace.mu.Lock()
 	defer r.namespace.mu.Unlock()
-	if r.namespace.terminal != nil || r.ctx.Err() != nil {
+	if r.namespace.terminal != nil || r.namespace.refreshFencing || r.ctx.Err() != nil {
 		return CBORFailure("revocation_namespace_owner")
 	}
 	r.namespace.refreshActive = true
@@ -445,6 +452,31 @@ func (r *NamespaceRefresh) refresh(provider NamespaceRefreshProvider) (err error
 	})
 	installed = err == nil
 	return err
+}
+
+func (r *NamespaceRefresh) waitCleanupBounded() error {
+	if r == nil {
+		return CBORFailure("revocation_namespace_owner")
+	}
+	// Provider calls are admitted with the refresh duration as their watchdog;
+	// include one complete cadence so a canceled worker can leave its timer and
+	// provider-exit tail before the owner is retired.
+	ms := r.limits.DurationMS + r.limits.HeadIntervalMS + r.limits.TrustIntervalMS + 1000
+	if ms < r.limits.DurationMS || ms < r.limits.HeadIntervalMS || ms < r.limits.TrustIntervalMS {
+		return CBORFailure("configuration_capacity")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(ms)*time.Millisecond)
+	defer cancel()
+	return r.WaitCleanup(ctx)
+}
+
+// waitCleanupFinal keeps the refresh owner responsible for the physical
+// provider exit after the bounded observer window expires. The fallback waits
+// on the worker's actual done signal; it never releases the owner speculatively.
+func (r *NamespaceRefresh) waitCleanupFinal() {
+	if err := r.waitCleanupBounded(); err != nil {
+		<-r.done
+	}
 }
 
 func (r *NamespaceRefresh) Close() {

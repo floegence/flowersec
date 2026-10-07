@@ -109,6 +109,7 @@ struct V4ResourceSnapshot: Equatable, Sendable {
   let references: Int
   let executionTails: Int
   let closed: Bool
+  var resourceWaiters: Int = 0
 }
 
 struct V4ResourceAccount: Sendable {
@@ -142,8 +143,13 @@ struct V4ResourceReference: Sendable {
   fileprivate let generation: UInt64
 
   func check() throws { try root.check(self) }
+  func checkRetained() throws { try root.checkRetained(self) }
+  func markExecutionTail() throws { try root.markExecutionTail(self) }
   func borrow(executionTail: Bool = false) throws -> Self {
     try root.borrow(self, tail: executionTail)
+  }
+  func reserveRelated(owner: V4ResourceOwnerKey, value: V4ResourceVector) throws -> Self {
+    try root.reserveRelated(self, owner: owner, value: value)
   }
   func transfer(to account: V4ResourceAccount, owner: V4ResourceOwnerKey) throws -> Self {
     try root.transfer(self, account: account, owner: owner)
@@ -153,7 +159,27 @@ struct V4ResourceReference: Sendable {
   func belongs(to account: V4ResourceAccount) -> Bool { root.belongs(self, account: account) }
 }
 
+private final class V4BudgetResult<Value: Sendable>: @unchecked Sendable {
+  // All writes/read transfers use the original root gate or the continuation
+  // that follows it. No application callback can observe this private holder.
+  var value: Value?
+}
+
+// Shared execution services have one physical backing at the root. Each
+// participant attaches that backing to its original account ancestry; closing
+// one TransportEnvironment cannot release or strand another participant's service.
+final class V4ResourceService: @unchecked Sendable {
+  private let reference: V4ResourceReference
+  fileprivate init(_ reference: V4ResourceReference) { self.reference = reference }
+  func check() throws { try reference.check() }
+  func attach(account: V4ResourceAccount, owner: V4ResourceOwnerKey) throws -> V4ResourceReference {
+    try reference.root.attachService(reference, account: account, owner: owner)
+  }
+  deinit { reference.release() }
+}
+
 final class V4ResourceRoot: @unchecked Sendable {
+  let diagnosticCounters = V4DiagnosticCounters()
   private static let maximumDepth = 8
   let gate = NSRecursiveLock()
   private struct AccountSlot {
@@ -169,6 +195,7 @@ final class V4ResourceRoot: @unchecked Sendable {
     var active = false
     var closed = false
     var cleanupDeadline: ContinuousClock.Instant?
+    var cleanupTimeoutRecorded = false
   }
   private struct ChargeSlot {
     var generation: UInt64 = 0
@@ -176,6 +203,7 @@ final class V4ResourceRoot: @unchecked Sendable {
     var references = 0
     var active = false
     var sealed = false
+    var service = false
   }
   private struct ReferenceSlot {
     var generation: UInt64 = 0
@@ -193,6 +221,35 @@ final class V4ResourceRoot: @unchecked Sendable {
     init(_ account: V4ResourceAccount) { self.account = account }
   }
 
+  private final class BudgetWaiter: @unchecked Sendable {
+    let account: V4ResourceAccount
+    let order: UInt64
+    let attempt: @Sendable () throws -> Void
+    var canceled = false
+    var continuation: CheckedContinuation<Void, Error>?
+    init(account: V4ResourceAccount, order: UInt64, attempt: @escaping @Sendable () throws -> Void) {
+      self.account = account; self.order = order; self.attempt = attempt
+    }
+  }
+  private enum RootWaiter {
+    case cleanup(CleanupWaiter)
+    case budget(BudgetWaiter)
+  }
+  private var budgetOrder: UInt64 = 0
+  private var settlingWaiters = false
+  weak var applicationExecutor: V4ApplicationExecutor?
+  #if os(macOS) || os(iOS)
+  private var diagnosticExecutorOwner: V4DiagnosticExecutor?
+  func diagnosticExecutor() -> V4DiagnosticExecutor {
+    gate.withLock {
+      if let diagnosticExecutorOwner { return diagnosticExecutorOwner }
+      let executor = V4DiagnosticExecutor(root: self)
+      diagnosticExecutorOwner = executor
+      return executor
+    }
+  }
+  #endif
+
   private let limit: V4ResourceVector
   private var used: V4ResourceVector
   private var accounts: [AccountSlot]
@@ -201,7 +258,7 @@ final class V4ResourceRoot: @unchecked Sendable {
   // Exact account reference counts per physical backing. This bounded slab
   // preserves overlapping old/new account charges through explicit transfer.
   private var scopeCounts: [UInt32]
-  private var waiters: [CleanupWaiter?]
+  private var waiters: [RootWaiter?]
   private var closed = false
 
   init(_ configuration: V4ResourceRootConfiguration) throws {
@@ -218,7 +275,9 @@ final class V4ResourceRoot: @unchecked Sendable {
       (configuration.reservations, MemoryLayout<ChargeSlot>.stride),
       (configuration.references, MemoryLayout<ReferenceSlot>.stride),
       (scopeCount, MemoryLayout<UInt32>.stride),
-      (configuration.cleanupWaiters, MemoryLayout<CleanupWaiter?>.stride),
+      // Include the fixed continuation/token/closure storage, not just the
+      // pointer in the shared slab. Arbitrary application captures are absent.
+      (configuration.cleanupWaiters, MemoryLayout<RootWaiter?>.stride + 1024),
     ] {
       let (size, multiplicationOverflow) = UInt64(count).multipliedReportingOverflow(
         by: UInt64(stride))
@@ -346,7 +405,7 @@ final class V4ResourceRoot: @unchecked Sendable {
     account: V4ResourceAccount, owner: V4ResourceOwnerKey,
     value: V4ResourceVector
   ) throws -> V4ResourceReference {
-    try gate.withLock {
+    do { return try gate.withLock {
       let accountIndex = try checkedAccount(account)
       try validateOwner(owner, account: accountIndex)
       guard value != V4ResourceVector() else { throw V4ResourceFailure.configuration }
@@ -369,6 +428,65 @@ final class V4ResourceRoot: @unchecked Sendable {
       used = try used.adding(value)
       return V4ResourceReference(
         root: self, index: reference, generation: references[reference].generation)
+    } } catch {
+      if let failure = error as? V4ResourceFailure {
+        if failure == .capacity { diagnosticCounters.increment(.resourceRefusals) }
+        if failure == .owner { diagnosticCounters.increment(.reservationConflicts) }
+      }
+      throw error
+    }
+  }
+
+  fileprivate func reserveRelated(_ reference: V4ResourceReference,
+    owner: V4ResourceOwnerKey, value: V4ResourceVector) throws -> V4ResourceReference {
+    try gate.withLock {
+      let original = references[try checkedReference(reference)]
+      guard original.account >= 0, original.owner?.environment == owner.environment
+      else { throw V4ResourceFailure.owner }
+      let account = V4ResourceAccount(root: self, index: original.account,
+        generation: accounts[original.account].generation)
+      return try reserve(account: account, owner: owner, value: value)
+    }
+  }
+
+  func reserveService(_ value: V4ResourceVector) throws -> V4ResourceService {
+    try gate.withLock {
+      guard !closed else { throw V4ResourceFailure.closed }
+      guard value != V4ResourceVector() else { throw V4ResourceFailure.configuration }
+      guard limit.contains(try used.adding(value)),
+        let charge = charges.firstIndex(where: { !$0.active && $0.generation < .max }) else {
+        throw V4ResourceFailure.capacity
+      }
+      let index = try freeReference()
+      charges[charge] = ChargeSlot(
+        generation: charges[charge].generation + 1, value: value,
+        references: 1, active: true, service: true)
+      references[index] = ReferenceSlot(
+        generation: references[index].generation + 1, charge: charge,
+        account: -1, active: true)
+      used = try used.adding(value)
+      return V4ResourceService(V4ResourceReference(
+        root: self, index: index, generation: references[index].generation))
+    }
+  }
+
+  fileprivate func attachService(
+    _ source: V4ResourceReference, account: V4ResourceAccount, owner: V4ResourceOwnerKey
+  ) throws -> V4ResourceReference {
+    try gate.withLock {
+      let original = references[try checkedReference(source)]
+      guard original.account == -1, charges[original.charge].service else { throw V4ResourceFailure.owner }
+      let target = try checkedAccount(account)
+      try validateOwner(owner, account: target)
+      guard !references.contains(where: { $0.active && $0.owner == owner }) else { throw V4ResourceFailure.owner }
+      try checkScope(account: target, value: charges[original.charge].value, charge: original.charge)
+      let index = try freeReference()
+      references[index] = ReferenceSlot(
+        generation: references[index].generation + 1, charge: original.charge,
+        account: target, owner: owner, active: true)
+      charges[original.charge].references += 1
+      attachScope(account: target, charge: original.charge)
+      return V4ResourceReference(root: self, index: index, generation: references[index].generation)
     }
   }
 
@@ -382,16 +500,33 @@ final class V4ResourceRoot: @unchecked Sendable {
     let slot = references[reference.index]
     if !allowClosed {
       guard !closed, !charges[slot.charge].sealed else { throw V4ResourceFailure.closed }
-      _ = try checkedAccount(
-        V4ResourceAccount(
-          root: self, index: slot.account,
-          generation: accounts[slot.account].generation))
+      if slot.account < 0 {
+        guard slot.account == -1, slot.owner == nil, charges[slot.charge].service else {
+          throw V4ResourceFailure.owner
+        }
+      } else {
+        _ = try checkedAccount(V4ResourceAccount(
+          root: self, index: slot.account, generation: accounts[slot.account].generation))
+      }
     }
     return reference.index
   }
 
   fileprivate func check(_ reference: V4ResourceReference) throws {
     try gate.withLock { _ = try checkedReference(reference) }
+  }
+
+  fileprivate func checkRetained(_ reference: V4ResourceReference) throws {
+    // Retention proves existing physical custody only; it creates no authority
+    // to admit work or disclose a private protocol input after account close.
+    try gate.withLock { _ = try checkedReference(reference, allowClosed: true) }
+  }
+
+  fileprivate func markExecutionTail(_ reference: V4ResourceReference) throws {
+    try gate.withLock {
+      let index = try checkedReference(reference)
+      references[index].tail = true
+    }
   }
 
   fileprivate func borrow(_ reference: V4ResourceReference, tail: Bool) throws
@@ -539,7 +674,11 @@ final class V4ResourceRoot: @unchecked Sendable {
       V4ResourceSnapshot(
         used: used, reservations: charges.reduce(0) { $0 + ($1.active ? 1 : 0) },
         references: references.reduce(0) { $0 + ($1.active ? 1 : 0) },
-        executionTails: references.reduce(0) { $0 + ($1.active && $1.tail ? 1 : 0) }, closed: closed
+        executionTails: references.reduce(0) { $0 + ($1.active && $1.tail ? 1 : 0) }, closed: closed,
+        resourceWaiters: waiters.reduce(0) { count, waiter in
+          if case .budget = waiter { return count + 1 }
+          return count
+        }
       )
     }
   }
@@ -556,7 +695,11 @@ final class V4ResourceRoot: @unchecked Sendable {
       }
       return V4ResourceSnapshot(
         used: accounts[index].used, reservations: accounts[index].charges,
-        references: refs, executionTails: tails, closed: accounts[index].closed)
+        references: refs, executionTails: tails, closed: accounts[index].closed,
+        resourceWaiters: waiters.reduce(0) { count, slot in
+          if case .budget(let waiter) = slot, isDescendant(waiter.account.index, of: index) { return count + 1 }
+          return count
+        })
     }
   }
 
@@ -579,6 +722,10 @@ final class V4ResourceRoot: @unchecked Sendable {
       tails += 1
     }
     let timedOut = slot.cleanupDeadline.map { ContinuousClock.now >= $0 } ?? false
+    if slot.closed && timedOut && !slot.cleanupTimeoutRecorded {
+      accounts[account.index].cleanupTimeoutRecorded = true
+      diagnosticCounters.increment(.cleanupTimeouts)
+    }
     return CleanupStatus(
       complete: false, cleanupIncomplete: slot.closed && timedOut, pendingCallbacks: tails)
   }
@@ -610,11 +757,11 @@ final class V4ResourceRoot: @unchecked Sendable {
             continuation.resume(throwing: V4ResourceFailure.capacity)
             return
           }
-          waiters[index] = token
+          waiters[index] = .cleanup(token)
           token.timer = Task { [self, token] in
             do { try await ContinuousClock().sleep(until: deadline) } catch {}
             gate.withLock {
-              if waiters[index] === token {
+              if case .cleanup(let active) = waiters[index], active === token {
                 let status = cleanupLocked(account)
                 if let continuation = token.continuation {
                   token.continuation = nil
@@ -638,23 +785,109 @@ final class V4ResourceRoot: @unchecked Sendable {
     }
   }
 
+  func waitForResources<Value: Sendable>(
+    account: V4ResourceAccount,
+    attempt: @escaping @Sendable () throws -> Value
+  ) async throws -> Value {
+    let result = V4BudgetResult<Value>()
+    let token = try gate.withLock { () -> BudgetWaiter in
+      _ = try checkedAccount(account)
+      guard budgetOrder < .max else { throw V4ResourceFailure.capacity }
+      budgetOrder += 1
+      return BudgetWaiter(account: account, order: budgetOrder, attempt: { result.value = try attempt() })
+    }
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        gate.withLock {
+          if token.canceled || Task.isCancelled {
+            continuation.resume(throwing: SessionError.canceled)
+            return
+          }
+          do {
+            _ = try checkedAccount(account)
+            try token.attempt()
+            continuation.resume()
+            return
+          } catch V4ResourceFailure.capacity { }
+          catch { continuation.resume(throwing: error); return }
+          guard let index = waiters.firstIndex(where: { $0 == nil }) else {
+            continuation.resume(throwing: V4ResourceFailure.capacity)
+            return
+          }
+          token.continuation = continuation
+          waiters[index] = .budget(token)
+        }
+      }
+    } onCancel: {
+      self.gate.withLock {
+        token.canceled = true
+        for index in self.waiters.indices {
+          if case .budget(let active) = self.waiters[index], active === token {
+            self.waiters[index] = nil
+          }
+        }
+        let continuation = token.continuation
+        token.continuation = nil
+        continuation?.resume(throwing: SessionError.canceled)
+      }
+    }
+    return try gate.withLock {
+      guard let value = result.value else { throw V4ResourceFailure.owner }
+      result.value = nil
+      return value
+    }
+  }
+
+  func resourcesChanged() { gate.withLock { settleWaitersLocked() } }
+
+  // Account release/close wakes the same bounded waiter slab. Resource attempts
+  // are atomic and never reserve a subset while waiting for the rest.
   private func settleWaitersLocked() {
+    // An unsuccessful factory can release a tentative owner under this same
+    // recursive gate. It must not retry or resume its own waiter recursively.
+    guard !settlingWaiters else { return }
+    settlingWaiters = true
+    defer { settlingWaiters = false }
     for index in waiters.indices {
-      guard let waiter = waiters[index], let continuation = waiter.continuation else { continue }
+      guard case .cleanup(let waiter) = waiters[index], let continuation = waiter.continuation else { continue }
       let status = cleanupLocked(waiter.account)
       if status.complete || status.cleanupIncomplete {
         waiter.continuation = nil
         continuation.resume(returning: status)
-        // Keep the slot occupied until the real timer task exits.
         waiter.timer?.cancel()
       }
     }
+    var previous: UInt64 = 0
+    for _ in waiters.indices {
+      var selected: Int?
+      var order = UInt64.max
+      for index in waiters.indices {
+        if case .budget(let waiter) = waiters[index], waiter.order > previous, waiter.order <= order {
+          selected = index
+          order = waiter.order
+        }
+      }
+      guard let index = selected, case .budget(let waiter) = waiters[index],
+        let continuation = waiter.continuation else { break }
+      previous = order
+      let result: Result<Void, Error>
+      do {
+        _ = try checkedAccount(waiter.account)
+        try waiter.attempt()
+        result = .success(())
+      } catch V4ResourceFailure.capacity { continue }
+      catch { result = .failure(error) }
+      waiter.continuation = nil
+      waiters[index] = nil
+      continuation.resume(with: result)
+    }
   }
+
 }
 
 // Durable disk belongs to the tenant/root, independently of a connection
-// Environment's cleanup. ARC never refunds existing persistent files.
-final class V4PersistentDiskCharge {
+// TransportEnvironment's cleanup. ARC never refunds existing persistent files.
+final class V4PersistentDiskCharge: Sendable {
   private let account: V4ResourceAccount
   private let reference: V4ResourceReference
   fileprivate init(account: V4ResourceAccount, reference: V4ResourceReference) {
@@ -662,6 +895,7 @@ final class V4PersistentDiskCharge {
     self.reference = reference
   }
   func check() throws { try reference.check() }
+  func executionTail() throws -> V4ResourceReference { try reference.borrow(executionTail: true) }
   func retire() {
     account.close()
     reference.release()
@@ -674,7 +908,9 @@ extension V4ResourceRoot {
     try gate.withLock {
       let index = try checkedAccount(tenant)
       guard accounts[index].kind == .tenant, bytes > 0 else { throw V4ResourceFailure.owner }
-      let charge = V4ResourceVector(diskBytes: bytes, items: 1)
+      // Explicit file-removal verification remains available after the
+      // connection Environment closes and retains this original history charge.
+      let charge = V4ResourceVector(sdkBytes: 8192, diskBytes: bytes, items: 1, work: 1)
       let account = try tenant.child(kind: .history, identity: identity, limit: charge)
       do {
         let reference = try account.reserve(

@@ -224,9 +224,7 @@ func (job *streamHandlerInvocation) runStreamService(owner *StreamOwnership) {
 	}
 	job.watchMu.Unlock()
 	if err != nil {
-		owner.Revoke()
-		_ = owner.Cancel()
-		_ = owner.Release()
+		cleanupStreamHandlerOwner(job.handle.owner, job.handle, owner)
 		return
 	}
 	s.handler, s.serve = nil, nil

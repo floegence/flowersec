@@ -55,10 +55,12 @@ func (a *SQLiteAuditArchive) createSchema() (err error) {
 	s.epoch = 1
 	return s.checkpoint()
 }
-func (a *SQLiteAuditArchive) openSchema() (err error) {
+func (a *SQLiteAuditArchive) openSchema(readOnly bool) (err error) {
 	s := a.store.sqliteStore
-	if err = a.secureDelete(); err != nil {
-		return err
+	if !readOnly {
+		if err = a.secureDelete(); err != nil {
+			return err
+		}
 	}
 	version, err := s.scalar("PRAGMA user_version")
 	if err != nil || version != int64(1) {
@@ -78,16 +80,18 @@ func (a *SQLiteAuditArchive) openSchema() (err error) {
 			return ErrStorageFormat
 		}
 	}
-	if err = s.boundPages(); err != nil {
-		return err
+	if !readOnly {
+		if err = s.boundPages(); err != nil {
+			return err
+		}
+		if err = s.checkpoint(); err != nil {
+			return err
+		}
+		if err = s.exec("BEGIN IMMEDIATE"); err != nil {
+			return err
+		}
+		defer namespaceRollback(s, &err)
 	}
-	if err = s.checkpoint(); err != nil {
-		return err
-	}
-	if err = s.exec("BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	defer namespaceRollback(s, &err)
 	var epoch uint64
 	err = s.readOne("SELECT format,revision,CASE WHEN length(CAST(authority AS BLOB))<=128 THEN authority ELSE NULL END,CASE WHEN length(instance)=32 THEN instance ELSE NULL END,CASE WHEN length(generation)=8 THEN generation ELSE NULL END,CASE WHEN length(epoch)=8 THEN epoch ELSE NULL END,max_pages,max_records,max_record_bytes,CASE WHEN length(configuration)<=512 THEN configuration ELSE NULL END FROM manifest WHERE id=1", 10, func(v []driver.Value) error {
 		id, ok := v[3].([]byte)
@@ -106,6 +110,9 @@ func (a *SQLiteAuditArchive) openSchema() (err error) {
 	}
 	if err = a.verifyRecords(); err != nil {
 		return err
+	}
+	if readOnly {
+		return nil
 	}
 	if err = s.continuity.Check(s.identity, epoch, false); err != nil {
 		return err

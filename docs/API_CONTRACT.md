@@ -1,201 +1,197 @@
 # Flowersec Public API Contract
 
-Rust's `V4ContractAcceptance`, `V4ContractRange` and `V4ContractRangeField`
-describe immutable exact or bounded local contract policy. A candidate that
-changes an unapproved canonical field returns `V4ContractPolicyRejected`.
-Explicit digest approval does not override the captured bounded policy.
+Flowersec exposes authenticated Sessions, registered byte Streams and service
+operations through one current Transport API. An application configures a
+`TransportEnvironment`, a material source, its required guarantees and an
+application plan, then connects or accepts a Session under those original
+owners. The environment retains shared resource accounting, clocks, namespace
+trust and service state. Carrier adapters supply physical I/O; credentials,
+private keys and carrier handles remain behind their owning boundaries.
 
-Flowersec exposes opaque artifacts, carrier-neutral one-shot connection functions, sessions, RPC, byte streams, and an optional `ConnectionController` for long-lived connections. Applications cannot inspect candidates, selected carriers, Yamux, QUIC handles, wire frames, credentials, keys, endpoint identities, logical stream IDs, or spend ledgers.
+Go uses `github.com/floegence/flowersec/flowersec-go/v6`, TypeScript uses its
+package root and Node or browser exports, Rust uses its crate root, and Swift
+uses the Flowersec module. Public names are unversioned. The authenticated wire
+is strictly `flowersec/4`; a selected release does not negotiate another
+Flowersec protocol or silently substitute a weaker access or TLS policy.
+Language-specific API shapes preserve the same acquisition, consumption,
+publication, cancellation and cleanup semantics.
 
-The unversioned SDK entrypoints use Transport v3. Explicit v4 Environment
-entrypoints and their current implementation limits are documented below;
-neither entrance negotiates or falls back to the other wire profile. The v3
-wire is strict and fail-closed: artifacts, candidates, TLS policy, FSB3/FSA3,
-and the frame family are versioned. Production artifacts use WSS, QUIC, or
-HTTPS carriers; there is no version negotiation, protocol fallback, or CA/pin downgrade. TLS policy
-is part of candidate identity, canonicalization, candidate-set hashing, and
-admission binding.
+## Environment and connection ownership
 
-Across all four SDKs, an omitted public connection timeout uses the shared ten-second default from `stability/sdk_defaults.json`. The portable core is artifact/lease lifecycle, one-shot connection, authenticated sessions and reliable streams with construction-validated metadata, outbound RPC call/notify, redacted connection/session errors, and the optional single-owner `ConnectionController`. SDK profiles add runtime and carrier capabilities; language conveniences improve syntax and typing without changing wire semantics.
+Finite resource limits and the original resource root are installed before
+constructing an environment, source, listener or application executor. A
+connection admits its complete future Session resource graph before source
+acquisition, including actual execution, result, Completion and namespace
+subscription positions. Local admission failure does not contact the source
+or spend authority. Required carrier guarantees are checked before acquisition
+and again against the authenticated material before consumption.
 
-The runtime registry has 16 portable capability declarations and explicit
-unsupported reasons. Interoperability is measured separately by the v3 vector
-sets for artifact, candidate, TLS policy, FSB3/FSA3, capability, and Controller
-state. These counts describe distinct contracts and are derived from the
-machine-readable registry.
+A source captures identity, namespace dependencies, generation, activation
+profile and provider ownership. A `ConnectionMaterial` owns one immutable
+identity/lease pair. The supported source profiles are `preauthorized_pool`
+and `live_authority`; selecting either profile fixes its consumption authority.
+Pool acquisition takes only verified, durably installed local material. Pool
+maintenance uses the separate TopUp/Ack contract and its independently trusted
+control path. Live acquisition and authorization use the configured
+authenticated authority. Neither source implicitly falls back to another
+provider or activation profile.
 
-| Capability layer | Contract | Go | TypeScript | Swift | Rust |
-| --- | --- | :---: | :---: | :---: | :---: |
-| `portable_core` | Artifact/lease, one-shot connect, session, reliable streams with validated metadata, RPC call/notify, redacted errors, optional connection controller | Yes | Yes | Yes | Yes |
-| `sdk_profile` | Carrier/profile capabilities, unreliable messages, or runtime-owned acceptance | WSS, raw QUIC, WebTransport, direct Acceptor, opaque TunnelRuntime | Browser WSS/WebTransport; Node WSS/raw QUIC, direct Acceptor, opaque TunnelRuntime | Apple WSS client | WSS, raw QUIC, direct Acceptor, opaque TunnelRuntime |
-| `language_convenience` | Language-native additions | Inbound handlers | Generic RPC results and subscriptions | `Codable` RPC | `RpcPeerExt::call_typed` |
+Durable consumption and remote admission are distinct facts. Public failures
+preserve whether a durable operation was not submitted, committed, or remains
+unknown. An uncertain outcome cannot make a possibly consumed credential
+available again. Cancellation fences further publication and irreversible
+work without undoing a completed action. `Close` stops new work;
+`WaitCleanup` observes the actual provider, storage and carrier exit while the
+original resource backing remains owned. A canceled observer does not replace
+or detach that physical cleanup responsibility.
 
-Portable core, accepted-session lifecycle, control-plane issuance/authorization, connection control, RPC/stream lifecycle, and published consumer workflows require same-semantic public entries in every applicable SDK. An unsupported tuple records a stable reason and no executable test ID; supported tuples name their production entrypoint and focused test ID. The protocol carrier set is not a promise that every SDK exposes every carrier; each listener and connector profile declares only exact production-backed tuples.
+The optional `ConnectionController` owns long-lived connection attempts above
+its configured source. It preserves the source incarnation, original attempt
+deadline and admitted application plan, initializes a replacement before
+publishing it, and retains the previous Session according to explicit
+retirement policy. Pool replenishment and application retries do not become a
+second connection scheduler. Supported runtime/carrier tuples and unsupported
+reasons are declared in the current capability registry; availability does not
+imply that every SDK exposes every carrier or that every pair has verified
+interoperability. Engineering acceptance and release packaging are separate
+workflows; release does not run tests.
 
-The named deployment profiles are `native-server-core` for Go, Rust, and
-Node.js; `browser-client` for TypeScript browser clients; `apple-client` for
-Swift clients on Apple platforms; and `webtransport-server`, claimed by Go.
-The native server profile records WebSocket and raw
-QUIC endpoint-client, direct-server, and opaque-tunnel runtime capabilities in
-all three languages. Its 18 tuples are aggregate capabilities, six per native
-runtime, rather than pairwise interoperability results. Go's H4 profile binds
-its WebTransport direct server and tunnel runtime, including encrypted
-DATAGRAM forwarding, to production-adapter tests. Profiles select carrier adapters; they never select a different
-Flowersec application wire. The separate interoperability matrix declares 18
-direct and 18 tunnel coordinates. Its release gate proves all 10 direct cells
-and 14 pairwise tunnel cells that include Go; the remaining 8 direct and 4
-tunnel cells remain explicitly unverified. Four additional WSS client profiles
-prove Swift and browser TypeScript against Go over direct and tunneled paths.
+## Sessions, Streams and service operations
 
-The separate `flowersec-private-loopback/1` product-private profile is not a
-deployment capability registry entry and does not extend the closed
-`flowersec/3` TLS policy. Its complete security and wire boundary is documented
-in `docs/PRIVATE_LOOPBACK_V1.md`.
+Both connection and server admission return an authenticated Session after
+material verification, activation, durable admission and the READY exchange.
+A `Serve` owner aggregates ingress and child Sessions under the original
+environment. The host attaches its configured listener exclusively to that
+owner. Drain fences new ingress and preserves child outcomes; closing the
+Serve owner does not close the shared environment. Tunnel and relay adapters
+retain their own bounded admission, grant and carrier responsibilities while
+preserving the same end-to-end Session protocol.
 
-Trust-root sourcing is policy-specific. CA candidates use platform roots or
-deployment-provided private roots. Pin candidates use only the complete leaf
-DER SHA-256 pin set and never fall back to CA. Browser WebTransport passes only
-active pins through the production `serverCertificateHashes` API; Browser
-WebSocket is CA-only. Native adapters enforce the v3 TLS profile and declare
-unsupported tuples when they cannot do so. None of these choices changes the
-shared ten-second default connection timeout.
+Applications fix stream kinds, metadata descriptors, service contracts and
+handlers in the original application plan before READY. Authorization receives
+the authenticated application context and bounded metadata before an incoming
+Stream or operation is accepted. Reliable Streams preserve backpressure,
+independent read/write closure and final status. Unreliable messages require an
+explicit supported carrier capability and are not a substitute for reliable
+Stream progress.
 
-Browser JavaScript cannot inspect the peer leaf SPKI or independently prove
-P-256-only. Browser WebTransport may accept another non-RSA algorithm according
-to browser policy, so an endpoint requiring P-256-only has no cross-runtime
-profile or interoperability guarantee through JavaScript. The SDK does not
-claim that JavaScript verified P-256-only; deployments requiring that proof use
-a native verifier or an explicitly browser-supported profile.
+Service clients select registered methods and prepare unary, streaming or
+notification operations under captured contract policy and admitted execution
+and result capacity. Exact or bounded contract acceptance rejects unapproved
+canonical field changes; explicit digest approval does not override bounded
+policy. Operation handles retain separate execution, delivery, cancellation
+and cleanup facts. A response becomes flushed only when the final encoded
+record is handed to its original publication owner; a later carrier failure
+cannot reverse that handoff. Maintenance, liveness, rekey and Drain retain
+their original deadlines and owners.
 
-Every production CA-mode TLS connector validates both the certificate chain and the requested target identity; an untrusted root or hostname/IP mismatch fails closed. Pin mode instead uses only the complete leaf DER hashes authorized by the artifact, while still enforcing the certificate profile and the TLS private-key proof; it never adds or falls back to CA chain or hostname authorization. Test-only roots are supplied explicitly by acceptance fixtures or the browser test runner. No production connector has an insecure verification fallback.
+Connection, Session and controller failures expose bounded structured facts
+and redacted diagnostics. Application failures remain application-owned;
+they cannot invent transport authorization, consumption or cleanup facts.
+The following SDK sections describe the concrete public constructors and
+runtime integrations for these contracts.
 
-The public contract is split into four layers. The portable core is the shared artifact, lease, one-shot connector, session, RPC, and stream model implemented by every SDK. An optional `ConnectionController` is the sole Flowersec long-lived connection owner above a refreshable artifact source. Each SDK profile records runtime-owned carrier support, listener support, and platform trust constraints. A language convenience is an ecosystem-specific API shape layered on top of the portable core, not a promise that every SDK exposes the same syntax. Retry decisions are structured as `terminal`, `retryable`, or an absolute `retry_after` deadline. The public connection, session, controller, and unreliable-message codes are frozen cross-language values; only application-defined RPC error-code taxonomies remain SDK-local. Unversioned artifact, lease, connector, error, and controller names are the Transport v3 entrypoints. Explicit v4 Environment APIs are listed in their language-specific sections.
+## Network TLS policy
 
-## Product-private loopback adapter
+Network direct and tunnel routes require their signed TLS policy. Native
+providers enforce TLS 1.3 without early data, resumption or insecure fallback.
+CA mode verifies the certificate chain and requested target identity using
+platform or explicitly installed private roots. Pin mode authorizes only the
+active complete leaf DER SHA-256 hashes and the applicable certificate profile
+and private-key proof; it does not add CA or hostname authorization. A failed
+pin cannot be bypassed with a CA candidate for that same endpoint and policy.
+Namespace trust and application identity remain independent of outer TLS.
 
-The Go server surface adds `flowersec.PrivateLoopbackHandlerOptions` and
-`flowersec.Acceptor.PrivateLoopbackHandler()`. The Go control plane exposes
-`controlplane.PrivateLoopbackProfile`,
-`controlplane.PrivateLoopbackIssueOptions`,
-`controlplane.Issuer.IssuePrivateLoopbackDirect(...)`, and the opaque
-`controlplane.IssuedPrivateLoopbackArtifact`. Its only delivery and durable
-authorization boundaries are
-`controlplane.IssuedPrivateLoopbackArtifact.ArtifactJSON()`,
-`controlplane.IssuedPrivateLoopbackArtifact.AuthorizationRecord()`, and
-`controlplane.IssuedPrivateLoopbackArtifact.LookupKey()`; its
-`controlplane.IssuedPrivateLoopbackArtifact.String()`,
-`controlplane.IssuedPrivateLoopbackArtifact.GoString()`, and
-`controlplane.IssuedPrivateLoopbackArtifact.MarshalJSON()` representations are
-redacted.
+Browser WebSocket uses browser-managed CA verification. Browser WebTransport
+supplies the active signed leaf hashes through `serverCertificateHashes` when
+that browser profile supports them. JavaScript does not independently observe
+TLS version, peer leaf SPKI or a P-256-only verifier. Required consumer TLS
+verification is therefore rejected when the selected provider cannot actually
+guarantee it. A controlled deployment's TLS termination policy cannot be
+reported as an independent JavaScript verification result.
 
-The TypeScript browser entrypoint exposes the runtime values
-`PRIVATE_LOOPBACK_PROFILE_V1`, `PrivateLoopbackArtifactErrorV1`,
-`parsePrivateLoopbackArtifactV1(...)`,
-`createPrivateLoopbackArtifactLeaseV1(...)`,
-`connectPrivateLoopbackV1(...)`, and
-`createPrivateLoopbackConnectionControllerV1(...)`. Its opaque types are
-`PrivateLoopbackArtifactV1`, `PrivateLoopbackArtifactLeaseV1`,
-`PrivateLoopbackArtifactSourceV1`,
-`PrivateLoopbackArtifactSourceResultV1`,
-`PrivateLoopbackSessionOptionsV1`, and
-`PrivateLoopbackConnectionControllerOptionsV1`.
+## Local browser bridge
 
-These APIs accept only the explicit private envelope and exact numeric-loopback
-origin. Ordinary connectors continue to reject it, and the dedicated
-controller preserves the existing attempt, cancellation, timeout, backoff,
-lease, and replacement-session semantics.
+The current signed `local_loopback` access class carries the same authenticated
+Session, Stream and service protocol over an explicitly enabled same-machine
+WebSocket bridge. Its route uses `/flowersec/v4/local` and subprotocol
+`flowersec.local.v4`, a canonical numeric loopback address, an explicit port
+and the exact corresponding HTTP Origin. Host, remote address, route and
+Origin checks precede upgrade. The application must authorize the request;
+same-origin alone does not authenticate a user or authorize bridge access.
 
-## Explicit public HTTP direct adapter
+Bridge tokens belong to the application. Independent namespace trust,
+identity, activation, lifetime limits and single-use admission still apply.
+The route reports consumer TLS verification as not applicable, so a
+requirement demanding that guarantee rejects it before acquisition. It does
+not authorize remote or DNS endpoints, tunnel routes, QUIC or WebTransport.
+Host-instance guarantees may be claimed only when the actual host supplies
+them. Adapter availability must be explicit; the access class does not imply
+an implementation in every SDK. The same cancellation, replacement, Drain
+and cleanup contracts apply. See [PRIVATE_LOOPBACK_V1.md](PRIVATE_LOOPBACK_V1.md).
 
-The Go server surface adds `flowersec.HTTPDirectHandlerOptions` and
-`flowersec.Acceptor.HTTPDirectHandler()`. The Go control plane exposes
-`controlplane.HTTPDirectProfile`,
-`controlplane.HTTPDirectIssueOptions`,
-`controlplane.Issuer.IssueHTTPDirect(...)`, and the opaque
-`controlplane.IssuedHTTPDirectArtifact`. Its only delivery and durable
-authorization boundaries are
-`controlplane.IssuedHTTPDirectArtifact.ArtifactJSON()`,
-`controlplane.IssuedHTTPDirectArtifact.AuthorizationRecord()`, and
-`controlplane.IssuedHTTPDirectArtifact.LookupKey()`; its
-`controlplane.IssuedHTTPDirectArtifact.String()`,
-`controlplane.IssuedHTTPDirectArtifact.GoString()`, and
-`controlplane.IssuedHTTPDirectArtifact.MarshalJSON()` representations are
-redacted.
+## HTTP application integration
 
-The TypeScript browser entrypoint exposes the runtime values
-`HTTP_DIRECT_PROFILE_V1`, `HTTPDirectArtifactErrorV1`,
-`parseHTTPDirectArtifactV1(...)`,
-`createHTTPDirectArtifactLeaseV1(...)`,
-`connectHTTPDirectV1(...)`, and
-`createHTTPDirectConnectionControllerV1(...)`. Its opaque types are
-`HTTPDirectArtifactV1`, `HTTPDirectArtifactLeaseV1`,
-`HTTPDirectArtifactSourceV1`,
-`HTTPDirectArtifactSourceResultV1`,
-`HTTPDirectSessionOptionsV1`, and
-`HTTPDirectConnectionControllerOptionsV1`.
+An application can carry HTTP bytes inside a registered Stream on a current
+authenticated Session. Native stream adapters and the registered ProxyServer
+HTTP and WebSocket kinds retain keep-alive, upgrade, backpressure, half-close
+and the original Session ownership. The application fixes its stream kind and
+validated metadata descriptor before READY and authorizes the specific
+upstream and request target. Metadata projection does not replace user-session,
+password or request-level authorization.
 
-These APIs accept only `flowersec-http-direct/1` and an exact same-origin HTTP
-endpoint on localhost or a canonical IP address. HTTP must be explicitly
-selected; TLS failures never select this profile. The private-loopback
-profile remains loopback-only and application-token admitted.
-
-`flowersec.HTTPDirectServerOptions` and `flowersec.NewHTTPDirectServer(...)`
-compose this explicit handler with an `ApplicationHandler` on one HTTP port.
-The existing TLS server also accepts an `ApplicationHandler` on its TLS port.
-Its optional `WebSocketHTTPServerOptions.AuthorizeWebSocketRequest` callback
-adds application-owned request admission for the direct and tunnel paths before
-upgrade or session authorization. A rejection returns HTTP 403; application
-routes are unaffected. A nil callback preserves existing admission behavior.
-The callback can only restrict admission: TLS policy, configured allowed
-Origins, and session authorization remain independently required. It does not
-change the transport protocol or the carrier-neutral Acceptor interface.
-Both reserve the direct and tunnel protocol paths and preserve server-owned
-connection shutdown. See `docs/HTTP_DIRECT_V1.md` for the admission and security
-contract. Standard v3 connectors remain TLS-only.
+Managed Cookie sessions require explicit scope, authentication and lifecycle
+policy; native credential passthrough is a separately selected policy. Cookie
+control outcomes preserve confirmed invalidation independently of replacement
+allocation or request delivery failure. Network establishment retains the
+signed TLS policy, and a failed secure connection cannot select a plaintext
+LAN or public HTTP listener. An explicit same-machine bridge uses
+`local_loopback` with its independent application admission. See
+[HTTP_DIRECT_V1.md](HTTP_DIRECT_V1.md) for the HTTP integration contract.
 
 ## Go
 
-The supported application import is `github.com/floegence/flowersec/flowersec-go/v6`, conventionally named `flowersec`. Its unversioned application lifecycle uses Transport v3; explicit v4 Environment entrypoints are documented in the Go transport v4 section below.
+The `github.com/floegence/flowersec/flowersec-go/v6` module exposes the current
+transport through `flowersec.NewTransportEnvironment`, `flowersec.Connect`,
+`flowersec.ConnectMaterial`, `flowersec.ConnectPool` and
+`flowersec.NewConnectionController`. Trusted host composition supplies finite
+resources, a clock, namespace verification, immutable material sources and an
+application plan. `flowersec.NewAcceptor` registers the original Serve aggregate;
+current WebSocket, QUIC and WebTransport adapters attach to that owner.
 
-- Artifact lifecycle: `flowersec.Artifact`, `flowersec.ArtifactLease`, `flowersec.ParseArtifact(...)`, `flowersec.NewArtifactLease(...)`, `flowersec.NewArtifactLeaseWithRetirement(...)`, and `flowersec.ErrInvalidArtifact`. The retirement-aware constructor gives an artifact source an explicit cleanup boundary when cancellation wins before spend.
-- Connection: `flowersec.ConnectorOptions`, `flowersec.Connect(...)`, `flowersec.ConnectError`, and `flowersec.ConnectErrorCode`. Optional `ConnectorOptions.RPCHandlers` freezes a reusable `flowersec.RPCHandlers` request/notification definition before session establishment; each one-shot connection and Controller generation creates a fresh RPC router from that definition. Invalid artifacts and options are returned as redacted `flowersec.ConnectError` values. `ConnectorOptions.Origin` may be omitted for artifacts that use non-WebTransport carriers; a non-empty value must be an absolute HTTP(S) origin.
-- Session values: `flowersec.Session`, `flowersec.SessionTermination`, `flowersec.StreamMetadata`, `flowersec.NewStreamMetadata(...)`, `flowersec.EmptyStreamMetadata()`, `flowersec.StreamMetadata.Values()`, `flowersec.ErrInvalidMetadata`, `flowersec.ByteStream`, `flowersec.IncomingStream`, and `flowersec.RPCPeer`. `SessionTermination.Error` is a required `flowersec.SessionError` value; cancellation of the wait is returned separately.
-- Streams: `flowersec.ByteStream.Read(...)`, `flowersec.ByteStream.Write(...)`, `flowersec.ByteStream.Close()`, `flowersec.ByteStream.Kind()`, `flowersec.ByteStream.TerminalError()`, `flowersec.ByteStream.CloseWrite()`, and `flowersec.ByteStream.Reset()`. `CloseWrite` is the only graceful stream FIN operation and preserves the receive direction. `Reset` aborts both directions, and `Close` is its cleanup-oriented alias. A failed write makes that stream terminal because its wire commit boundary is no longer reusable; unrelated streams remain live.
-- RPC: `flowersec.RPCPeer.Call(...)`, `flowersec.RPCPeer.Notify(...)`, `flowersec.RPCPeer.OnNotify(...)`, and sanitized application `flowersec.RPCError` values.
-- Inbound serving: endpoint clients use `flowersec.RPCHandlers` from `flowersec.NewRPCHandlers()`, with `flowersec.RPCHandler` registrations through `flowersec.RPCHandlers.HandleRPC(...)` and `flowersec.RPCNotificationHandler` registrations through `flowersec.RPCHandlers.HandleNotification(...)`; it has no stream or serve API. Any established Session can use carrier-neutral `flowersec.StreamHandlers` from `flowersec.NewStreamHandlers(...)`, with bounded `flowersec.StreamHandlerOptions`, immutable `flowersec.StreamHandler` registrations through `flowersec.StreamHandlers.HandleStream(...)`, and lifecycle ownership through `flowersec.StreamHandlers.Serve(...)`. Accepted server Sessions use `flowersec.SessionHandlers` from `flowersec.NewSessionHandlers(...)` with `flowersec.SessionHandlerOptions`; that accepted-session configuration composes the same stream dispatcher with request and notification registration. Application stream kinds contain 1 through 128 canonical UTF-8 bytes, have no leading or trailing Unicode whitespace or control or unassigned scalars, and exclude Flowersec-reserved RPC names. RPC and notification registrations share one nonzero uint32 namespace. Consumption freezes a reusable definition; later registrations return `flowersec.ErrHandlerRegistryFrozen`, while repeated snapshot reads remain valid. A successful handler closes its write direction; a handler error or failed write close resets and closes only that stream, and unrelated dispatch continues. Notification failures remain isolated. Unhandled or excess streams are reset and closed. Invalid or duplicate registrations return `flowersec.ErrInvalidHandlerRegistration` or `flowersec.ErrHandlerAlreadyExists`. `flowersec.StreamHandlerRegistrar` is sealed to Flowersec registries. Registry string, debug, and JSON representations reveal no registration state.
-- Accepted Session registries also provide `flowersec.SessionHandlers.HandleStream(...)`, `flowersec.SessionHandlers.HandleRPC(...)`, `flowersec.SessionHandlers.HandleNotification(...)`, and `flowersec.SessionHandlers.Serve(...)`; `flowersec.RPCHandlers.String()`, `flowersec.RPCHandlers.GoString()`, `flowersec.RPCHandlers.MarshalJSON()`, `flowersec.StreamHandlers.String()`, `flowersec.StreamHandlers.GoString()`, `flowersec.StreamHandlers.MarshalJSON()`, `flowersec.SessionHandlers.String()`, `flowersec.SessionHandlers.GoString()`, and `flowersec.SessionHandlers.MarshalJSON()` are redacted and reveal no registration state.
-- Server acceptance: `flowersec.AcceptorOptions`, `flowersec.Acceptor`, `flowersec.NewAcceptor(...)`, `flowersec.Acceptor.Handler()`, and `flowersec.Acceptor.Serve(...)` own direct application Sessions. `flowersec.DirectListener`, `flowersec.RawQUICListenerOptions`, `flowersec.WebTransportListenerOptions`, `flowersec.NewWebSocketDirectListener()`, `flowersec.NewRawQUICDirectListener(...)`, and `flowersec.NewWebTransportDirectListener(...)` are the direct-only listener surface. `AcceptorOptions.ResolveHandlers` freezes one `flowersec.SessionHandlers` registry before Session establishment. `flowersec.TunnelListener`, `flowersec.TunnelRuntimeOptions`, `flowersec.TunnelRuntime`, `flowersec.NewTunnelRuntime(...)`, `flowersec.TunnelRuntime.Handler()`, `flowersec.TunnelRuntime.Serve(...)`, `flowersec.NewWebSocketTunnelListener()`, `flowersec.NewRawQUICTunnelListener(...)`, and `flowersec.NewWebTransportTunnelListener(...)` form the supported opaque relay boundary. `flowersec.WebSocketHTTPServerOptions`, `flowersec.WebSocketHTTPServer`, and `flowersec.NewWebSocketHTTPServer(...)` are required for standard TLS direct or tunnel WebSocket handlers; its `flowersec.WebSocketHTTPServer.Serve(...)`, `flowersec.WebSocketHTTPServer.ListenAndServe(...)`, `flowersec.WebSocketHTTPServer.Shutdown(...)`, and `flowersec.WebSocketHTTPServer.Close()` methods own lifecycle. The wrapper owns a private TLS clone, forces TLS 1.3 only, and disables session tickets before handshakes. Direct `Handler()` installation on a caller-owned `http.Server` fails closed. `flowersec.ErrInvalidAcceptor`, `flowersec.ErrInvalidTunnelRuntime`, and `flowersec.ErrInvalidWebSocketServer` are the construction failures. `flowersec.WebSocketDirectPath` and `flowersec.WebSocketTunnelPath` remain fixed wire paths.
-- Server proxy application: `flowersec.ProxyServerOptions`, `flowersec.ProxyServer`, `flowersec.NewProxyServer(...)`, `flowersec.ProxyServer.RegisterStreamHandlers(...)`, `flowersec.ProxyServer.Close()`, and `flowersec.ErrInvalidProxyServer` provide the fixed-upstream HTTP and WebSocket counterpart to `@floegence/flowersec-core/proxy`. Registration is atomic on the sealed carrier-neutral `StreamHandlerRegistrar`; upstream selection, proxy wire framing, header filtering, body/frame limits, cancellation, and reset cleanup remain Flowersec-owned. `ProxyServer.Close()` cancels active upstream work, waits for handler cleanup, and makes previously registered handlers reject future dispatch.
-- Optional unreliable messages: `flowersec.Session.UnreliableMessages()` returns the carrier-neutral `flowersec.UnreliableMessageChannel`; `flowersec.UnreliableMessageChannel.MaxMessageBytes()`, `flowersec.UnreliableMessageChannel.Send(...)`, and `flowersec.UnreliableMessageChannel.Receive(...)` use `flowersec.UnreliableSendOptions` and `flowersec.UnreliableSendStatus` without exposing DATAGRAM or carrier objects. Accepted sends and dropped sends are public outcomes. `flowersec.UnreliableMessageError` exposes only `unavailable`, `invalid_message`, `too_large`, `canceled`, `closed`, or `operation_failed` without mapping to session termination errors.
-- Session lifecycle: `flowersec.Session.RPC()`, `flowersec.Session.OpenStream(...)`, `flowersec.Session.AcceptStream(...)`, `flowersec.Session.Rekey(...)`, `flowersec.Session.ProbeLiveness(...)`, `flowersec.Session.WaitTermination(...)`, and `flowersec.Session.Close()`.
-- Long-lived connection: `flowersec.NewConnectionController(...)`, `flowersec.ConnectionController`, `flowersec.ConnectionControllerOptions`, `flowersec.ArtifactSource`, `flowersec.ArtifactSourceError`, `flowersec.RetryDisposition`, `flowersec.ConnectionState`, `flowersec.ConnectionFailure`, and `flowersec.ConnectionSnapshot`. `Start` is idempotent, `RetryNow` returns whether the current wait was woken, `Snapshot` exposes only the established one-shot session and core lifecycle fields, and `Close` cancels all controller-owned work. `flowersec.ConnectionController.WaitForSession(...)` is passive: it never starts the controller, returns an existing or newly established Session, and reports failed, closed, or canceled through `flowersec.ConnectionControllerError`. `flowersec.ConnectionSnapshot.Diagnostic()` and the error's `Diagnostic()` expose only state, attempt, failure phase/code, and retry disposition. `flowersec.ConnectionFailurePhase` is the closed `artifact`, `connect`, and `session` boundary, exposed by `flowersec.ConnectionFailure.Phase()` through `flowersec.ConnectionFailureArtifact`, `flowersec.ConnectionFailureConnect`, and `flowersec.ConnectionFailureSession` without changing the two-field `flowersec.ConnectionFailure` layout.
-- Redacted failures: `flowersec.ConnectError.Error()`, `flowersec.ConnectError.Unwrap()`, `flowersec.ConnectError.Is(...)`, `flowersec.ConnectError.Code()`, `flowersec.ConnectErrorCode.String()`, `flowersec.SessionError`, `flowersec.SessionErrorCode`, `flowersec.SessionError.Error()`, `flowersec.SessionError.Unwrap()`, `flowersec.SessionError.Code()`, and `flowersec.RPCError.Error()`.
-- Controller ownership: `flowersec.NewConnectionController(...)` accepts only a refreshable `ArtifactSource`, never a bare lease. `RetryNow` wakes the existing wait, `Close` cancels the single scheduler and current session, and a replacement session never inherits streams, RPCs, or writes.
-- Opaque formatting and serialization: `flowersec.Artifact.String()`, `flowersec.Artifact.GoString()`, `flowersec.Artifact.MarshalJSON()`, `flowersec.ArtifactLease.String()`, `flowersec.ArtifactLease.GoString()`, and `flowersec.ArtifactLease.MarshalJSON()`.
-- Connection outcomes: `flowersec.ConnectArtifactInvalid`, `flowersec.ConnectExpired`, `flowersec.ConnectTransportSecurityUnsupported`, `flowersec.ConnectTransportSecurityFailed`, `flowersec.ConnectConnectionFailed`, `flowersec.ErrInvalidConnectorOptions`, and `flowersec.ErrConnectionFailed`.
-- Session outcomes: `flowersec.SessionCanceled`, `flowersec.SessionTimeout`, `flowersec.SessionClosed`, `flowersec.SessionGoingAway`, `flowersec.SessionResourceExhausted`, `flowersec.SessionStreamRejected`, `flowersec.SessionStreamReset`, `flowersec.SessionRekeyFailed`, `flowersec.SessionLivenessFailed`, and `flowersec.SessionOperationFailed`.
-- Unreliable send outcomes: `flowersec.UnreliableAccepted`, `flowersec.UnreliableDroppedExpired`, `flowersec.UnreliableDroppedBudget`, and `flowersec.UnreliableDroppedCarrier`.
+`flowersec.ConnectionMaterial` captures an original authenticated
+`flowersec.ArtifactLease` and `flowersec.ApplicationIdentity`. Static material,
+preauthorized pool and live authority connection inputs use their explicit
+consumption authorities. `flowersec.Session` owns authenticated Streams and
+service operations; cancellation and cleanup observe the same original work.
+`flowersec.ConnectionController` owns replacement, initialization and retirement
+within its original `flowersec.TransportEnvironment`.
 
-Opaque values have fixed redacted string and JSON behavior. Zero-value or deserialized handles cannot establish a session or spend a lease.
+The `github.com/floegence/flowersec/flowersec-go/v6/controlplane` package exposes
+current artifact issuing, activation, spend-query, pool TopUp and relay
+publication owners. Its configured authority and durable SQLite history fix
+issuance and admission independently of peer-supplied fields. Formatting and
+error projections remain redacted; trusted policy selection, tenant decisions
+and upstream routing belong to the host.
 
-### Go server-side control plane
+`flowersec.NamespaceReferenceFactory` is trusted online namespace composition.
+`flowersec.NewNamespaceReferenceFactory` installs finite independently configured
+trust roots, providers, clocks and allocation scopes. Both a cold visit and
+same-slot recovery require complete independent bootstrap.
+`(*flowersec.TransportEnvironment).VerificationNamespace` retains its original
+preparation position and legal registry pin until provider and original context
+cancellation actually return. Close cancels only that Environment's work and
+leaves the shared registry/factory with its original owner.
 
-The Go-only server import `github.com/floegence/flowersec/flowersec-go/v6/controlplane`, conventionally named `controlplane`, issues v3 artifacts and answers the `flowersec-runtime` authorization callback without exposing carrier, candidate, FSB3, PSK, or session-contract objects.
+`flowersec.NamespaceRetirementService` owns bounded pressure-driven independent
+coverage proofs. Failed or unknown coverage retains occupied history. Existing
+Sessions, signed map history and namespace reference backing are never evicted
+only because a waiter canceled or a service is idle.
 
-- Endpoint policy: `controlplane.EndpointSet` is created by `controlplane.NewEndpointSet(...)` from structured `controlplane.EndpointConfig` values containing a URL plus `controlplane.TLSPolicy`; URL schemes and TLS policy are converted to internal candidate fields only during issuance. `controlplane.CAPolicy()` selects CA verification, while `controlplane.PinPolicy(...)` accepts normalized `controlplane.CertificatePin` values. `controlplane.CertificatePin.String()`, `controlplane.CertificatePin.GoString()`, `controlplane.TLSPolicy.String()`, and `controlplane.TLSPolicy.GoString()` are redacted and never reveal pin bytes.
-- Endpoint validation: invalid structured endpoints return `controlplane.ControlPlaneError` with a stable `controlplane.ControlPlaneErrorCode`. `controlplane.ControlPlaneError.Error()`, `controlplane.ControlPlaneError.Code()`, `controlplane.ControlPlaneError.FieldPath()`, and `controlplane.ControlPlaneError.Unwrap()` expose only the bounded failure and field boundary. Callers use `errors.As` to recover `controlplane.ControlPlaneError`; its `Unwrap()` returns only `controlplane.ErrInvalidControlPlaneInput`, which is matched with `errors.Is`. `controlplane.ErrIssuanceFailed` is an independent non-input failure and is never a `controlplane.ControlPlaneError`. The closed codes are `controlplane.InvalidEndpointCount`, `controlplane.InvalidEndpointID`, `controlplane.InvalidEndpointURL`, `controlplane.DuplicateEndpoint`, `controlplane.InvalidTLSPolicy`, and `controlplane.InvalidPin`. The complete public symbol/error inventory is `stability/api_contract_manifest.json`.
-- Issuance: `controlplane.Issuer` from `controlplane.NewIssuer()` accepts carrier-neutral `controlplane.SessionOptions`, bounded `controlplane.Scope` and `controlplane.ArtifactMetadata`, plus either `controlplane.DirectIssueOptions` or `controlplane.TunnelIssueOptions`. `controlplane.Issuer.IssueDirect(...)` returns one `controlplane.IssuedArtifact`; `controlplane.Issuer.IssueTunnelPair(...)` returns one opaque `controlplane.IssuedTunnelPair`.
-- Explicit delivery: `controlplane.IssuedArtifact.ArtifactJSON()` is the only client artifact serialization boundary. `controlplane.IssuedArtifact.LookupKey()` is a non-secret credential hash, and `controlplane.IssuedArtifact.AuthorizationRecord()` returns the matching opaque `controlplane.AuthorizationRecord`.
-- Durable authorization: `controlplane.AuthorizationRecord.Encode()` and `controlplane.ParseAuthorizationRecord(...)` are the explicit secret-storage boundary. The caller must atomically reserve the one-time record before allowing a request; `controlplane.AuthorizationRecord.LookupKey()` never returns the bearer credential.
-- Runtime callback: `controlplane.ParseRuntimeAuthorizationRequest(...)` returns a redacted `controlplane.RuntimeAuthorizationRequest`. Its `controlplane.RuntimeAuthorizationRequest.LookupKey()` locates the record; `controlplane.AuthorizeRuntime(...)` verifies a direct FSB3 and returns `controlplane.AuthorizationResponse`. `controlplane.AuthorizeTunnelRuntime(...)` verifies a tunnel FSB3 and returns the secret-free `controlplane.TunnelAuthorizationResponse`; an application authorizer that performs equivalent admission validation may use `controlplane.AllowTunnelRuntime(...)` to construct the same bounded allow response. Neither path exposes a Session contract or E2EE key to the relay. `controlplane.RejectRuntime(...)` creates only validated reject or retry decisions. `controlplane.AuthorizationResponse.JSON()` and `controlplane.TunnelAuthorizationResponse.JSON()` are the only response serialization boundaries.
-
-### Go application acceptor
-
-Applications that own direct server sessions use `flowersec.NewAcceptor(...)`. Its listeners are direct-only and its handler resolver and `OnSession` callback are never invoked by a relay. `flowersec.NewTunnelRuntime(...)` is the separate untrusted relay boundary: it accepts only tunnel listeners, authorizes pairing claims, and forwards opaque carrier streams through the built-in bounded bridge. It exposes no `Session`, `AcceptedSession`, RPC router, or handler registration.
-
-The root Go proxy server is an application protocol owner. `flowersec.NewProxyServer(...)` validates a fixed upstream and
+The root Go proxy server is an application protocol owner. TypeScript Node exports expose the corresponding `ProxyServer`
+owner. `flowersec.NewProxyServer(...)` validates a fixed upstream and
 resource/header policy; `flowersec.ProxyServer.RegisterStreamHandlers(...)` installs the HTTP
-and WebSocket handlers on a carrier-neutral `StreamHandlers`. The browser/Node
+and WebSocket handlers in a carrier-neutral `StreamHandlerPlanConfig`. The browser/Node
 peer uses the published TypeScript `/proxy` entrypoint. Carrier objects, JSON
 metadata, proxy stream kinds, and WebSocket frames remain internal.
 
@@ -243,318 +239,489 @@ Other responses keep their original finite deadline. Reset, excess input or
 cancellation ends only that request, and idle expiration releases actual native
 I/O before its policy slot becomes available again.
 
-- Opaque formatting: `controlplane.EndpointSet.String()`, `controlplane.EndpointSet.GoString()`, `controlplane.IssuedArtifact.String()`, `controlplane.IssuedArtifact.GoString()`, `controlplane.IssuedArtifact.MarshalJSON()`, `controlplane.AuthorizationRecord.String()`, `controlplane.AuthorizationRecord.GoString()`, `controlplane.AuthorizationRecord.MarshalJSON()`, `controlplane.RuntimeAuthorizationRequest.String()`, `controlplane.RuntimeAuthorizationRequest.GoString()`, `controlplane.RuntimeAuthorizationRequest.MarshalJSON()`, `controlplane.AuthorizationResponse.String()`, `controlplane.AuthorizationResponse.GoString()`, `controlplane.AuthorizationResponse.MarshalJSON()`, `controlplane.TunnelAuthorizationResponse.String()`, `controlplane.TunnelAuthorizationResponse.GoString()`, and `controlplane.TunnelAuthorizationResponse.MarshalJSON()` reveal no credential-bearing content. `controlplane.AuthorizeTunnelRuntime(...)` and `controlplane.RejectTunnelRuntime(...)` return only the secret-free tunnel response.
-- Invalid issuance, record, request, lease, expiry, or binding inputs return only `controlplane.ErrInvalidControlPlaneInput` at the public boundary. An unavailable cryptographic random source returns the stable redacted `controlplane.ErrIssuanceFailed` value.
+`flowersec.ProxyCredentialPolicy` fixes explicit external credentials or
+managed upstream cookie ownership. A `flowersec.ProxyCookieSession` binds the
+original authenticated Surface scope; requests capture the original incarnation
+before body or network work. `ClearUpstreamCredentials` invalidates that original
+association before replacement allocation and preserves independently confirmed
+invalidation even when replacement fails. Cleanup waits for actual native
+transport and body methods to exit.
 
-This package owns transport-neutral issuance and authorization mechanics. Tenant selection, endpoint placement, permissions, billing, durable lease state, and upstream routing decisions remain application control-plane responsibilities.
+See `docs/GO_TRANSPORT_V4.md` and the current symbol inventory below for exact
+component constructors and operation contracts.
 
 ## TypeScript
 
-The supported package entrypoints are `@floegence/flowersec-core`, `@floegence/flowersec-core/browser`, `@floegence/flowersec-core/node`, and `@floegence/flowersec-core/proxy`.
+The supported package entrypoints are `@floegence/flowersec-core`,
+`@floegence/flowersec-core/node`, `@floegence/flowersec-core/browser`, and
+`@floegence/flowersec-core/proxy`. The public SDK uses the current TransportEnvironment and Session lifecycle. It does not select or downgrade to an older
+wire profile.
 
-The root exposes v3 application names: `Artifact`, `ArtifactError`,
-`ArtifactErrorCode`, `ArtifactLease`, `ArtifactLeaseError`, `Session`,
-`SessionTermination`, `RpcPeer`, `JsonValue`, `ByteStream`, `StreamMetadata`,
-`createStreamMetadata(...)`, `createStreamMetadataEnvelope(...)`,
-`StreamMetadataError`, `StreamHandlers`,
-`StreamHandler`, `StreamHandlerOptions`, `HandlerRegistrationError`,
-`ConnectionController`, `ArtifactSource`, `ConnectionSnapshot`,
-`ConnectionControllerError`, `ConnectionDiagnostic`, `RetryDisposition`, typed `RpcResult<Response>`,
-`ConnectError`, and `SessionError`. These unversioned names are the complete
-public application surface for Transport v3. Explicit v4 Environment and WSS
-configuration exports are registered in the TypeScript v4 section below.
+The root entrypoint exposes `createTransportEnvironment(...)`, `connect(...)`,
+`connectMaterial(...)`, `createConnectionController(...)`, `serve(...)`, and
+the opaque TransportEnvironment, ConnectionMaterial, Session, Stream, result, resource,
+and credential contracts. The `./node` and `./browser` entrypoints expose
+runtime-specific `connect(...)` and `createConnectionController(...)` helpers
+along with their supported current carrier configuration. Node additionally
+provides current listeners, `Acceptor`, `ServeHandle`, and trusted tunnel
+owners. Browser WebTransport and WSS require immutable deployment bindings for
+facts the browser cannot independently inspect; those bindings do not constitute
+interoperability evidence.
 
-`StreamHandlers.handleStream(...)` freezes on the first `serve(...)`,
-dispatches application streams on any established browser or Node Session,
-bounds concurrency, resets unknown and excess streams, isolates handler
-rejection, and closes the Session before waiting for active handlers during
-shutdown. Application stream kinds follow the exact OPEN contract: 1 through
-128 canonical UTF-8 bytes, no leading or trailing Unicode whitespace, control,
-or unassigned scalars, and no Flowersec-reserved RPC kind. Immutable
-controller snapshots publish `ConnectionSnapshot.retryDisposition` while the
-corresponding retry decision applies and omit it before a new attempt, after
-connection, and on close.
+The `./proxy` entrypoint reexports the shared core facade and accepts a current
+`Session`. Its browser composition helpers connect through the original
+`TransportEnvironment`; the proxy wire, Service Worker protocol, candidate
+selection, and native carriers remain private. Exact-origin browser bridges
+expose bounded application messages and
+return standard streaming Fetch responses.
 
-`parseArtifact(...)` projects all parser implementation failures to the closed
-`ArtifactError` codes `artifact_too_large` or `invalid_artifact`.
-`RpcPeer.call(...)` requires a successful-response decoder;
-`RpcResult<Response>` is a discriminated union whose success payload has passed
-application validation, while bounded remote application failures remain in
-the `ok: false` branch. RPC calls and notifications accept only `JsonValue`
-payloads and reject unsupported or non-finite values before wire I/O.
-`RpcPeer.call(...)` and `RpcPeer.notify(...)` use the local outbound reserved
-RPC stream. `RpcPeer.onNotify(typeId, decodePayload, handler)` subscribes to
-peer outbound notifications delivered through the local inbound reserved RPC
-stream and requires an explicit decoder; invalid payloads never reach the
-business handler, decoder and handler failures remain isolated, and
-unsubscribe is idempotent. Subscribers are independent from inbound request
-handlers. `Session.waitTermination()` is the sole public termination waiting
-entrypoint. A negotiated session may expose `UnreliableMessageChannel`, which
-sends and receives defensively copied `Uint8Array` values; invalid operations
-return `UnreliableMessageError`.
+`ServiceClient.contract(method).offer` returns the installed execution method's
+frozen `AdmissionOffer`. Its `serviceContractDigest` is the same hexadecimal
+digest as the containing `ServiceContract`; `notBeforeMS` and `notAfterMS` are
+UTC bounds. The value owns no runtime verifier, binding, Session or execution
+capability. Transient, observation and uninstalled methods omit `offer`.
+Refresh leaves earlier values unchanged; `availability` separately describes
+whether the installed advertisement is currently usable.
 
-Browser and Node subpaths each expose `connect(...)` and
-`createConnectionController(...)`; the module path identifies the runtime. The
-Node subpath additionally exposes reusable `RPCHandlers`, direct-only
-`createAcceptor(...)`, `Acceptor`, `AcceptedSession`, and accepted-server-only
-`SessionHandlers`, plus opaque `createTunnelRuntime(...)` and `TunnelRuntime`.
-`RuntimeAuthorizationRequest` is an opaque, non-enumerable callback value whose
-`lookupKey()` returns only a SHA-256 credential digest. An
-`AcceptorOptions.authorize(...)` success returns the opaque `Artifact` created
-by `parseArtifact(...)`; neither the authorization nor handler-resolution
-callback receives raw FSB3, credentials, URLs, candidates, PSK, or pin state.
-Node tunnel authorization uses `verifyTunnelAuthorizationGrant(...)` to verify
-the complete observed FSB3 against the trusted opaque `Artifact`, then returns
-only a request-bound, secret-free `TunnelAuthorizationGrant`. The relay
-consumes that grant and never unwraps or retains the artifact, Session contract,
-or E2EE key material. Direct admission
-uses a configurable `admissionTimeoutMs` with a ten-second default across FSB3
-receive, authorization, handler resolution, FSA3, and Session establishment.
-`AcceptorOptions.resolveHandlers(...)` resolves and freezes the v3 registry
-only after artifact binding and expiry validation and before successful
-admission and session establishment. Every accepted Session receives a fresh
-RPC router, and `AcceptedSession.serve(...)` owns stream-dispatch lifecycle.
-Node one-shot `SessionOptions.rpcHandlers` and
-`ConnectionControllerOptions.rpcHandlers` freeze the same reusable
-RPC/notification definition, while each established Session receives a fresh
-router. The tunnel runtime owns authorization, pairing, opaque forwarding, and
-cleanup but no `Session`, application handler, or PSK. The `flowersec-ts-cli`
-binary composes the same internal Node WebSocket connector and acceptor without
-exporting native carrier handles. Both connectors use a shared ten-second
-connection timeout by default and accept `connectTimeoutMs` without exposing
-internal clock or candidate-cleanup controls. Invalid public connector options
-are projected to `ConnectError`. Low-level carrier factories, capability
-descriptors, candidate diagnostics, wire contracts, and cryptographic state
-are not package exports.
+The `flowersec-ts-cli` binary consumes a trusted local ES module selected with
+`--config`. The module configures the same current TransportEnvironment and either a
+registered client source or a current server `Acceptor`; command-line values do
+not supply credentials, trust roots, or peer-selected endpoint data.
 
-`ConnectError.retryDisposition` is the retry property. For `retry_after`, `notBeforeUnixMilliseconds` is the absolute deadline. `ConnectionController.waitForSession(...)` is passive and returns structured failed, closed, or canceled errors; `connectionDiagnostic(...)` projects snapshots to state, attempt, failure phase/code, and retry disposition without retaining a Session. Unreliable-message failures use only `unavailable`, `invalid_message`, `too_large`, `canceled`, `closed`, and `operation_failed`; accepted and the three `dropped_*` states remain send outcomes.
+See [TypeScript transport profile](TYPESCRIPT_TRANSPORT_V4.md) for supported
+carrier tuples, storage ownership, callback lifetimes, and connection guarantees.
 
-Node `SessionOptions.origin` and `ConnectionControllerOptions.origin` are optional. An absolute HTTP(S) origin enables WebSocket candidates, while an omitted origin leaves only non-WebSocket candidates eligible.
+### Durable pool sources and proxy surfaces
 
-The proxy entrypoint exposes `PROXY_RUNTIME_SCOPE`, `assertProxyRuntimeScope(...)`, `connectProxyBrowser(...)`, `connectProxyControllerBrowser(...)`, `createProxyRuntime(...)`, bounded Service Worker generation and registration, exact-origin controller/app-window bridges, `registerProxyAppWindowWithServiceWorkerRuntime(...)`, and `installWebSocketPatch(...)`. The high-level Service Worker runtime entrypoint composes the existing app-window bridge with Flowersec's private runtime listener and returns only the opaque `ProxyAppWindowHandle`; initialization rolls back partial listeners and disposal is idempotent. Its request envelope, decoder, message constants, ports, flow-control fields, and response protocol remain package-private and are not exported. Composition accepts only an opaque `ArtifactLease`; the runtime accepts only `Session`, returns standard streaming `Response` values for HTTP fetches and `ByteStream` values for WebSockets. Carrier, Yamux, candidate selection, raw artifact scopes, proxy wire frames, and `proxy.runtime@2` remain internal. Window bridges fail closed on origin, source, capability, frame-size, queue, or response-contract mismatch; messages expose only closed proxy status/code values.
+The root, `./node`, `./browser` and `./proxy` entrypoints expose the durable pool source
+contracts `PreauthorizedPoolSource`, `TopUpHandle`, `PoolSourceConfiguration`,
+`TopUpOptions`, `TopUpState`, `TopUpResult`, `TopUpControlTransport`,
+`TopUpExchangeResult`, `PoolControlReplyDecoder`, `TopUpError`,
+`TopUpErrorCode`, `TopUpErrorScope`, `TopUpWireResult`, and `TopUpWriteAction`.
+`createSessionPoolControl` binds the already authenticated Session methods 41006
+and 41007 with bounded byte codecs and a host supplied reply decoder. The
+source uses one original durable journal for pending intent, material
+availability, Applied history and sequence frontier. `topUp` is explicit; the
+source never performs an implicit managed refill.
 
-`ProxyRuntime.fetch(input, init)` runs HTTP over the current Session using the same execution core as Service Worker and window dispatch. Inputs are origin-relative paths or absolute URLs at the configured `externalOrigin`; arbitrary upstream origins, credentials, forbidden headers, and paths outside the policy are rejected or filtered. A response body is demand-driven with at most one chunk in flight. Abort, body cancellation, runtime disposal, and stream errors release admission and reset upstream work; no transport retry or native HTTP fallback occurs.
+A `TopUpHandle` contains only its immutable operation ID. Its `status` keeps the
+original operation's proven state, adopted options and authoritative error even
+when the source is closed, an observation is canceled, or a later operation is
+started. `cleanupStatus` and `waitCleanup` observe only that operation's actual
+proof, control and persistence tails. A stale handle never observes a later
+operation. A lost 41006 response can be read with the same operation ID,
+request digest and original append deadline under a separate bounded recovery
+call. Installed Applied facts can be acknowledged after material consumption
+without reparsing old identity keys or recreating a material. Recovery does not
+renew the original append authority. A pending response containing already
+expired material remains pending with `relink_required`; an authenticated
+terminal response can retire the original intent. `registerDurablePoolSource`
+on a configured Node or browser client binds the source to that client's
+original SQLite or IndexedDB store and fixed signing/static DH owners.
 
-The TypeScript runtime and Go/Node proxy servers recognize persistent SSE only when both the request Accept header and response Content-Type specify `text/event-stream`. Intake and response establishment retain the finite request deadline. Confirmed event responses use a 45-second activity timeout (including stalled consumer backpressure), retain chunk and session buffer limits, and do not accumulate a lifetime byte limit. Finite responses retain their total deadline and body limit. HTTP admission defaults to 24 concurrent requests with at most 16 event candidates, leaving eight slots for finite work. Excess event subscriptions fail with `resource_exhausted` without queueing; non-event responses release their event reservation. Server HTTP/event limits are subordinate to the existing overall proxy/session stream limits and do not increase transport capacity. Each feature owns subscription recovery.
+| Operation | Public signature and ownership |
+| --- | --- |
+| `source.topUp(options?, wait?)` | Returns `Promise<TopUpResult>` for the original adopted intent; concurrent calls join that intent. |
+| `source.topUpStatus(handle, wait?)` | Returns `Promise<TopUpResult>` with the original handle's proven facts and any observation error. |
+| `source.recoverPendingTopUps(tenant, incarnation, wait?)` | Returns original pending handles after a current owner-fence proof. |
+| `handle.cleanupStatus()` | Returns `CleanupStatus` for that original operation's callbacks. |
+| `handle.waitCleanup(options?)` | Returns `Promise<CleanupStatus>`; observer cancellation does not cancel physical cleanup. |
+| `createSessionPoolControl(client, topUpMethod, ackMethod, decoder, timeoutMS)` | Returns `TopUpControlTransport` for one fixed `ServiceClient<Methods>` and its transient unary byte methods. |
 
-The validated proxy scope may declare bounded `http.additionalPathPrefixes` and `http.extraRequestHeaders`. Additional HTTP paths require an explicit `appBasePath`; composition permits that base plus the declared paths while retaining the base-only WebSocket policy. Header names use the same forbidden-header validation as the runtime, and absent HTTP additions grant no extra access. These declarations are immutable acquisition authority, not page-message overrides.
+The Node entrypoint adds `ProxyCredentialPolicy`, `ProxyCookieScope` and
+`ProxyCredentialAuthentication` for authenticated, per-surface credential
+ownership. Cookie updates use bounded replacement storage and revoke the old
+context before Clear allocates a successor. A failed successor allocation
+preserves the independent `server_invalidated` fact in its error response.
 
+The `./proxy` entrypoint exposes `createProxySurface`, `ProxySurface`,
+`ProxySurfaceOptions`, `ProxySurfaceMode`, `ProxySessionBinding`,
+`ProxySurfaceRequestPolicy`, `ProxyPublicationOwner` and `ProxyClearResult`.
+A surface captures its original authenticated Session association, content
+origin and publication generation before asynchronous work. Clear fences the
+original worker and keeps cleanup observations tied to that worker; a canceled
+or failed install does not claim that callbacks have already settled. Isolated
+surfaces require an explicit path scope and do not disclose the Session or
+credential owner to content code. Managed HTTP and WebSocket requests retain
+credential copies until native write, response, socket and cancellation tails
+have actually settled. `ProxyClearResult` reports server invalidation,
+owned delivery fencing, successor installation, reuse readiness and physical
+cleanup separately. Confirmed invalidation does not imply successor readiness
+or completed callback cleanup.
 
 ## Swift
 
-### Transport v3 entrance
+Applications `import Flowersec` from the `Flowersec` product. `TransportEnvironment`
+fixes independent namespace/time trust, numerical endpoints, native TLS policy,
+application resources and durable backing. `ConnectionMaterial` and the closed
+SDK-owned `ConnectionMaterialSource` preserve their original identity generation
+and activation profile. Connect with `connect(environment:source:requirements:)`,
+`connect(environment:material:requirements:)` or the corresponding TransportEnvironment
+methods. `ConnectionRequirements` expresses required guarantees before
+consumption; `CleanupStatus` separates logical close from physical reclamation.
 
-Swift `ConnectorOptions.origin` is required and must be an absolute HTTP(S) origin for the Apple WebSocket admission policy; the API does not provide an implicit origin.
+`ConnectError`, `SessionError` and `RetryDisposition` are the stable redacted
+failure boundary. `ConnectionSourceFailure` retains its source code and retry
+disposition. `ConnectionController` owns current acquisition, initialization,
+retry and explicit replacement. Its configured initializer finishes before
+current publication. An original fixed Session or prepared application handle
+is not rebound after generation changes and is never replayed by the controller.
+`ConnectionSnapshot.diagnostic` removes the live Session. A `retryAfter` deadline
+cannot be bypassed by `retryNow()`.
 
-Applications `import Flowersec` from the `Flowersec` product. The public lifecycle is `parseArtifact(...)`, opaque `Artifact` and `ArtifactLease` values, `ConnectorOptions`, one-shot `connect(lease:options:)`, and `ConnectionController(source:options:maximumAttempts:)`. `RetryDisposition` is the current structured retry contract. Artifact parsing reports `ArtifactError`; invalid stream metadata reports only `StreamMetadataError.invalidValue`, while metadata size limits remain implementation details. The returned `Session` exposes only `RPCPeer`, `ByteStream`, `IncomingStream`, and construction-validated `StreamMetadata`. Carrier-neutral `StreamHandlers`, `StreamHandlerOptions`, `StreamHandler`, and `HandlerRegistrationError` register and serve application streams on any established Session. The registry freezes on first serve, applies the exact 128-byte canonical OPEN kind contract, bounds concurrency, resets unknown, excess, and failed streams, closes successful write directions, and closes the Session before canceling and waiting for active handler tasks. Swift exposes no server `ProxyServer` or registrar and no unreliable-message API. Session, stream, RPC peer, and notification subscription wrappers have fixed opaque description and reflection behavior. `RPCError` description, debug description, and reflection expose only its type and code; applications must explicitly read `message`. `ByteStream.read(maxBytes:)` requires a positive value and rejects invalid input as `SessionError.operationFailed`. `RPCPeer.subscribeNotification(_:as:handler:)` completes only after registration, decodes each payload as the requested `Decodable & Sendable` type, and returns an `RPCNotificationSubscription` whose async `cancel()` is idempotent. Decode failures are delivered as `Result.failure(RPCNotificationError.invalidPayload)` without passing unvalidated data, throwing handlers are isolated, and Session close removes all subscriptions. `ConnectError`, `SessionError`, and structured `RetryDisposition` are the public failure boundary. `ArtifactSourceFailure` exposes the same redacted `ConnectErrorCode` plus its retry disposition, including `artifact_invalid / terminal` for an invalid source contract. Swift represents `retryAfter` as an exact absolute Unix-millisecond `UInt64` while the controller waits on an internal monotonic deadline; retry timing is not publicly configurable. `ConnectionController.waitForSession()` is passive and throws a structured failed, closed, or canceled `ConnectionControllerError`; `ConnectionSnapshot.diagnostic` contains only state, attempt, failure phase/code, and retry disposition. A controller requires a refreshable source and creates a fresh lease and session per attempt; a connected snapshot retains the successful session's 1-based attempt ordinal, while session termination starts a new cycle whose waiting or terminal snapshot has attempt 0 and whose first Acquire advances to 1. A `retryAfter` deadline cannot be bypassed by `retryNow()`, which returns a Boolean. When retries stop, the snapshot retains the last real `ConnectionAttemptFailure` without a policy wrapper. Session work is never replayed. Concrete carrier sessions and runtime capability descriptors are internal.
+`ConnectionAttemptFacts` records spend, admission, network readiness and
+application publication as one-way observations. An uncertain or in-flight
+admission remains unknown to callers; it cannot be retried automatically.
+The TypeScript `LocalReport()` projection is available alongside the stable local report contract.
+`AcceptedSession` identifies the accepted server session handed to application code.
 
-### Configured Swift transport v4 client
+`LocalReport` exposes only the stable constraint, available local facts and
+cleanup actions, without a provider handle or protocol input. `Session.drain`
+returns a stable `SessionDrainOperation`; repeated observations join the same
+drain and a canceled wait does not reopen admission.
 
-`TransportEnvironment` provides `init(configuration:)`,
-`generateApplicationIdentity(profile:)`,
-`importApplicationIdentity(profile:signingSeed:noiseStaticPrivateKey:)`,
-`preparePoolMaterial(_:identity:)`, `connectMaterial(_:requirements:)`,
-`connect(source:requirements:)`, `refreshTrustedTime()`,
-`refreshNamespace(authority:head:state:)`, `invalidateTimeContinuity()`,
-`close()` and `cleanupStatus()`. Its configured native entrance supports one
-direct WSS preauthorized-pool candidate on macOS/iOS, the transport application
-profile, both Noise profiles and no optional features. An unconfigured
-Environment reports `TransportV4AvailabilityError.runtimeUnavailable`.
+### Configured native transport
 
-Configuration types are `TransportV4ClientConfiguration`,
-`TransportV4CryptoProfile`, `TransportV4TrustedTime`, `TransportV4TimePolicy`,
-`TransportV4TrustNamespace`, `TransportV4NamespaceSnapshot`,
-`TransportV4Endpoint` and `TransportV4PoolHistory`. The host independently
-configures trusted time, namespace roots and bootstrap transport, signed-host
-to numerical-address mapping, and a complete-history/anti-rollback continuity
-gate. The SDK verifies the nonce-bound bootstrap, full namespace state,
-credentials and original identity, and owns irreversible SQLite consumption.
+`TransportClientConfiguration`, `TransportTrustNamespace`,
+`TransportPoolHistory` and the configured trusted-time adapter supply original
+trust and once-spend continuity. `TransportApplicationIdentity` exposes public
+keys and a close operation. `TransportPoolCredential` retains exact signed
+pool material. `TransportConnectError` reports native establishment failures;
+no decoded response, historical row or recovery lookup can construct a Session.
 
-`TransportV4ApplicationIdentity` exports only public identity keys and a close
-operation. Exact `TransportV4PoolCredential` bytes become an opaque
-`ConnectionMaterial` attached to that original Environment.
-`ConnectionMaterialSource` supplies such material; `ConnectionRequirements`
-rejects unsupported requirements before acquisition. Material exposes only
-`close()`, `waitCleanup()` and `cleanupStatus()`. `CleanupStatus` reports actual
-retained ownership. Environment close does not pretend a noncooperative source
-has completed, and retained charged aliases can delay resource release.
+TransportEnvironment supports `makePreauthorizedPoolSource(_:identity:role:)`,
+`makeLiveAuthoritySource(_:identity:)`,
+`makeManagedPreauthorizedPoolSource(_:identity:)` and the closed
+`TransportMaterialSourceConfiguration` variants. A finite source consumes
+already issued local records. Live issuance/activation uses independent mTLS
+`TransportControlHTTPSConfiguration` endpoints and a complete
+`TransportLiveAuthoritySourceConfiguration`. Managed replenishment fixes
+`TransportPoolSourceAuthorityConfiguration`,
+`TransportManagedPoolSourceConfiguration` and
+`TransportPoolRefillJournalConfiguration`; retained original intent controls
+TopUp/Ack recovery. Managed Acquire takes only already installed local material
+and returns `source_exhausted` immediately when empty, independently of the
+configured background replenishment worker. Source replacement publishes a complete local snapshot;
+already acquired material keeps its original one-use authority.
 
-The real TLS 1.3 socket validates the signed WSS route and CA or active
-leaf-DER-SHA-256 pin policy before pool consumption. Pin validation checks the
-actual X.509v3 P-256 leaf certificate, its full fourteen-day lifetime bound and
-signed interval; the original active set and matched deadline cannot be
-extended by rotation. HELLO, signed FSB/FSA, KKpsk0 Noise and both READY
-obligations precede Session publication. `TransportV4ConnectError` is the
-redacted connection boundary, including authenticated admission rejection.
-No retry, replay, reconnect or v3 fallback occurs through this entrance.
+The native Apple profile implements direct and tunnel WebSocket dialers and
+listeners, both Noise profiles and the transport/services/execution application
+profiles. `accept(source:)` explicitly requires a listener; `connect(source:)`
+uses the signed physical direction. Network listeners receive independent
+`NativeListenerTLSConfiguration`. Explicit signed loopback HTTP routes use the
+same endpoint handshake. Raw QUIC, WebTransport and datagrams are unavailable in
+this profile; an unsupported requirement is refused without protocol fallback.
 
-The Swift native v4 Session enforces the signed idle duration under its original
-Environment gate. Only a complete protocol-valid authenticated input or an
-actual successful binary record write completion refreshes its monotonic anchor.
-Native WebSocket Ping/Pong, ignored input and queue admission do not refresh it.
-The original window is checked before refresh and every Session operation;
-`SessionError.idleTimeout` and `SessionError.timeUnavailable` distinguish idle
-expiration from clock continuity failure. Rekey and drain never reset the anchor.
+### Original live server and continuous relay
 
-Swift v4 `probeLiveness()` owns at most eight independent samples and measures
-elapsed time from local acceptance. `TransportV4LivenessError` retains the finite
-`TransportV4LivenessFailure` and `TransportV4LivenessProgress` (submitted,
-complete, optional elapsedMilliseconds). Cancellation and the ten-second
-original deadline remove the matcher while retaining actual provider tails.
-Rekey intent interrupts probes before preparing or waiting to publish REQUEST.
-`TransportV4ClientConfiguration.automaticLiveness` optionally captures a
-`TransportV4AutomaticLivenessPolicy`, protecting one of the eight slots. Only
-complete timely publication followed by a full real response budget without
-known local stalls can count a miss. Automatic PONG and successful independent
-rekey reset misses; the threshold reports `SessionError.livenessPathUnresponsive`.
-Automatic probing is disabled by default.
+`TransportEnvironment.makeLiveServerSource(_:identity:)` starts the pinned authority mTLS
+listener described by `TransportServerAllowHTTPSConfiguration` and
+`TransportLiveServerSourceConfiguration`. An independently configured
+`TransportLiveServerMaterial` is registered through
+`TransportLiveServerSource.registerOriginal(_:)`, which returns its original
+`TransportLiveServerBinding`. `LiveServerAdmissionStoreConfiguration` fixes
+separate durable registration and admission history. Only the original final
+ACK write publishes the prepared carrier; an exact duplicate request can
+acknowledge that retained fact without another publication. Complete FSB
+verification and the original admission COMMIT precede FSA and READY. Closing
+the Source fences pending work without canceling a transferred material or Session.
 
-The returned `Session` supports reliable `ByteStream` operations, stream
-acceptance, rekey, liveness, termination and close. V4 `StreamMetadata` adds
-`init(namespace:version:values:)`, `init(encodedV4:)`, `encodedV4()`,
-`v4Namespace`, `v4Version` and `v4Values`. It preserves exact deterministic CBOR
-with the shared namespace, UInt16 version, text-to-bytes map and 4,096-byte
-bounds. Zero bytes is the empty sentinel; an ordinary empty values map retains
-its namespace. `StreamMetadata.init(_:)` encodes the optional `application/json`
-version 1 codec, with each JSON value stored in the same ordinary byte map.
-`jsonValues()` decodes that codec explicitly; binary namespaces remain opaque.
-`JSONValue.number(_:)` accepts finite fractional values, and integer values
-retain their full Int64 range. Invalid values report
-`StreamMetadataError.invalidValue`.
+`TransportEnvironment.serve(_:)` owns a bounded set of server admissions and
+application callback tails. `ServeOptions` fixes the listener, requirements,
+handler resolution, application authorization and release callbacks before an
+admission begins. `ServeHandle.progress()` and `waitDrain()` report accepting,
+pending sessions, outcome and cleanup; `close()` fences new work while each
+admitted Session retains its own cleanup proof. Callback cancellation preserves
+the original callback tail, and a release callback receives the authenticated
+request context only after transport verification.
 
-`ReaderCursor`, `ReaderCursorOptions`, `ReaderCursorSnapshot`, `ReadProgress`,
-`ReadResult`, `ReadWaitStatus`, `ReadStreamStatus`, `ReadCause`,
-`ReadStreamError`, `ReadMethodFailure`, `WriteOperation`, `WriteProgress`,
-`WritePhase`, `WriteTerminalReason`, `NotificationSubscription`,
-`OperationReference`, `OperationStatus`, `ResultPayload` and `OperationHandle`
-are public owned contracts. Their presence does not claim public cursor/write
-factories or completed v4 RPC, execution or notification assembly. The current
-client's `Session.rpc` operations are unavailable. Services, live authority,
-accepted-server v4, tunnel, raw QUIC, WebTransport, datagrams, resume, candidate
-racing and a v4 controller are outside this entrance. See
-[Swift transport v4](SWIFT_TRANSPORT_V4.md).
+Original storage operations claim a finite execution slot under the Environment
+gate, then perform durable work outside that gate. A late successful admission
+COMMIT records admitted even when Drain, cancellation or expiry has already
+fenced that original. Such a completion cannot publish FSA, READY or an
+application Session. Physical storage close retains its original cleanup charge
+until SQLite and file handles have actually closed.
+Source and registration cleanup observers share the original close deadline.
+Canceling an observer withdraws only that wait; the prepaid physical join and
+its resource charge remain until native callbacks, control requests and storage
+handles exit. Transferred material retains its original admission ledger
+independently, so closing the Source does not wait for its future admission.
+The ledger leaves the Source cleanup scope at that transfer. Releasing the last
+material cannot make an already completed Source pending again; the Environment
+continues to account for the ledger's physical close.
+Closing an acquired live server material reports its remaining preparation,
+carrier and control cleanup through the material's own status and bounded wait.
+After a successful Session handoff, the Session owns its carrier independently.
+
+`RelayHost`, `RelayHostConfiguration` and `RelayInitialPublication` own one
+continuous relay and bounded queue. `RelayClaimStoreConfiguration` fixes its
+independent ledger. `TransportLiveRelayRegistration` installs independent
+future scopes and native carriers before client Prepare. Its pinned control
+endpoints accept original `/tunnel/relay-ready`, `/tunnel/relay-prepare` and
+`/tunnel/relay-activate` callbacks. Start `RelayHost.run()` concurrently and await
+`RelayPublication.waitListening()` before connecting a live Source; this joins
+local listener and control binding without consuming a physical child. Client and
+server `relayPreparation` endpoints announce bound listeners without issuing
+authorization. The client sends its
+original TxA request only after native Prepare. Original TxB activation and role
+Grants must match the frozen request; the native final ACK write releases HOP.
+`TransportLiveRelayPublication` carries the original activation proof,
+activation signing key ID, role Grants and independently fixed future scopes.
+`publishOriginal(client:server:)`, `publishLiveOriginal(_:)` and
+`registerLiveOriginal(_:)` admit subsequent independent originals. Both HOP
+possession proofs and the paired durable claim precede relay proof and opaque
+forwarding. Each leg uses its signed dialer/listener role.
+`RelayPublication.waitCompletion()` reports the pair's actual result, while
+cleanup joins its carriers and control callbacks. Stored refusals cannot restart
+a pair or recover its original admission capability.
+
+`ParentWinnerAuthorityConfiguration` independently binds one common CAS authority
+across server and relay admission. Attach the same `parentWinner` configuration
+to server-role `TransportPoolHistory`, `RelayClaimStoreConfiguration` and
+`LiveServerAdmissionStoreConfiguration`. Server-role pool consumption uses this
+same boundary for direct and tunnel candidates: it verifies the original FSB,
+and tunnel HOP when present, then compares the same role-independent projection
+before committing the local spend. Missing common CAS configuration refuses
+server or relay admission; there is no candidate-local fallback. The complete
+public `ParentWinnerSelection` is independent of local role and carrier; an exact
+selection matches and a changed candidate, route or attempt conflicts.
+`TransportEnvironment.makeParentWinnerAuthority(_:)` creates a secure bounded SQLite owner
+from `ParentWinnerStoreConfiguration`; `ParentWinnerAuthority.configuration`
+shares that authority. If server pool history was created without an adapter,
+install the native configuration once through
+`TransportEnvironment.installParentWinnerAuthority(_:)` before server-role pool
+consumption; its authority ID must match the history. A qualified common service
+adapter can instead be supplied in the history during TransportEnvironment creation.
+Original authenticated FSB or both HOP possession proofs precede CAS; original
+local admission or paired-claim COMMIT follows CAS. Pool-spend and
+relay-claim ledgers persist an original-claim refusal before CAS. A live-server
+registration is durably fixed before carrier preparation and remains a refusal
+if admission later fails. A lost selection result cannot be resumed from decoded
+material or history. Uncertainty stops the original run. Public readback and
+durable history cannot mint a native admission capability.
+
+### Named services and streams
+
+A `Session` exposes reliable `ByteStream`, validated `StreamMetadata` and
+`IncomingStream`. `encoded()`, `namespace`, `version` and
+`byteValues` preserve canonical namespace bytes. `StreamHandlers` registers raw
+application streams. `ReaderCursor` fixes independent read progress and
+`WriteOperation` separates accepted bytes from completion. These original
+stream owners do not move between Sessions.
+
+`ServiceClient` and `ControllerServiceClient` bind a locally chosen service,
+method, target, exact canonical contract and codec. `ContractAcceptance.exact`
+or `ContractAcceptance.bounded(_:)` can restrict accepted contract changes to
+explicit ranges without replacing the original binding. `ServiceContractSource`
+refreshes contract snapshots through the ordinary invocation lane. Controller
+bindings select current only before a new preparation. `ServiceOperation`,
+`ServiceNotificationOperation` and `ServiceStreamingOperation` retain the
+original request, Session and response obligations. `OperationReference` query
+and cancellation observe original execution history without authorizing Start.
+`OperationHandle` and `ServiceNotificationSubscription` retain their original
+application owners. Controller notifications report their actual source
+generation, phase and observation gaps without creating execution history.
+
+See `docs/SWIFT_TRANSPORT_V4.md`, `flowersec-swift/README.md` and
+`examples/swift/README.md` for current supported workflows.
 
 ## Rust
 
-The `flowersec` crate exposes strict-v3 `Artifact`, `ArtifactError`, `ArtifactLease`, `ArtifactSpendError`, `ConnectorOptions`, `RpcHandlers`, `StreamHandlers`, `StreamHandlerOptions`, `StreamHandler`, `StreamHandlerRegistrar`, `connect(...)`, `connect_with_cancellation(...)`, `ConnectionController`, `ConnectionControllerOptions`, `ArtifactSource`, `ArtifactSourceError`, `ConnectionState`, `ConnectionFailure`, `ConnectionSnapshot`, `ConnectionDiagnostic`, `RetryDisposition`, `ConnectError`, `ConnectErrorCode`, `Session`, `SessionTermination`, `SessionError`, `RpcPeer`, `RpcPeerExt`, `RpcError`, `RpcCallError`, `ByteStream`, `IncomingStream`, `JsonObject`, `StreamMetadata`, `StreamMetadataError`, and the carrier-neutral optional `UnreliableMessageChannel`. `ArtifactSourceError::code()` and `ConnectionFailure::code()` expose only the canonical redacted `ConnectErrorCode`; neither accessor reveals source, transport, credential, or peer diagnostics. `ConnectorOptions::with_rpc_handlers(...)` consumes a reusable request/notification definition, and every one-shot connection or Controller generation creates a fresh runtime router. `RpcHandlers` has no application-stream method. `StreamHandlers::handle_stream(...)` freezes on the first `StreamHandlers::serve(...)`, dispatches on any established Session, applies the exact 128-byte canonical OPEN kind contract, bounds concurrency, resets unknown, excess, failed, or panicked streams, and closes the Session before waiting for active handlers during shutdown. The default `connect(...)` entrypoint is one-shot; `ConnectError::retry_disposition()` exposes whether that one-shot failure is terminal or retryable with a fresh artifact, while `ConnectionController` alone refreshes artifacts, applies fixed shared backoff, and replaces sessions. `ConnectionController::wait_for_session()` is passive and returns a structured failed, closed, or canceled `ConnectionControllerError`; `ConnectionSnapshot::diagnostic()` contains only state, attempt, failure phase/code, and retry disposition. `ConnectionController::wait_for_snapshot_change(...)` returns immediately for an outdated snapshot, otherwise waits for the next controller transition; dropping the future cancels only that wait, and close wakes it with the closed snapshot. Rust `ByteStream::terminal_error()` and all session operations use the same portable `SessionError` states without an overlapping stream-only error enum. `UnreliableMessageErrorCode` contains only `Unavailable`, `InvalidMessage`, `TooLarge`, `Canceled`, `Closed`, and `OperationFailed`; current `UnreliableMessageError` values map into this closed set. `UnreliableSendOutcome` contains `Accepted`, `DroppedExpired`, `DroppedBudget`, and `DroppedCarrier`, matching the public send-result semantics of Go and TypeScript. `ConnectError::as_str()`, `ConnectErrorCode::as_str()`, `SessionError::as_str()`, and `AcceptErrorCode::as_str()` return canonical public code strings for redacted error text. `ArtifactLease` exposes neither its artifact nor connector-owned commit state. `RpcPeerExt::call_typed(...)` adds typed JSON encoding and decoding while preserving `RpcCallError::Application`. Native strict-v3 server runtimes additionally use direct-only `AcceptorOptions`, `Acceptor`, `AcceptError`, and `AcceptErrorCode`, plus opaque `TunnelRuntimeOptions`, `TunnelAdmissionOptions`, `TunnelRuntime`, `RuntimeAuthorizationRequest`, `TunnelAuthorizationResponse`, and `TunnelAuthorizer`. The v3 relay delegates each opaque deployment authorization request through `TunnelAuthorizer`; the callback receives a cancellation token and must release any application-owned pre-response reservation when cancellation wins. It does not expose an issuer or SDK-owned control-plane record type. `Acceptor::accept_with_handlers(...)` consumes the accepted-server-only `SessionHandlers` registry before establishment and returns `AcceptedSession`; `SessionHandlers` composes the portable stream dispatcher with accepted-session RPC handlers. The sealed registrar exposes only `ProxyServer::register_stream_handlers(...)` for carrier-neutral stream registries. `RpcHandler`, `NotificationHandler`, `SessionHandlerOptions`, and `HandlerRegistrationError` remain application-only. `AcceptedSession::serve(...)` uses the same dispatcher. `TunnelRuntime::bind_websocket(...)` and `TunnelRuntime::bind_raw_quic(...)` use a ten-second admission deadline and 1,024 concurrent admissions; the corresponding `bind_*_with_admission_options(...)` calls accept explicit `TunnelAdmissionOptions`. `TunnelRuntime::close(...)` is a completion barrier for listener release, pending legs, active pairs, and authorization leases; the relay owns no application `Session`, handler, or PSK. `ProxyServer::close().await` cancels active upstream work, waits for handler cleanup, and makes registered handlers reject future dispatch. Quinn connections, admission frames, capability descriptors, candidate plans, session ledgers, and implementation modules remain crate-private.
+The `flowersec` crate exposes one current Rust client path through
+`TransportEnvironment::connect(...)` and the crate-root `connect(...)`
+convenience function. `ConnectionMaterialSource` captures identity, trust,
+material and provider ownership; `ConnectionRequest` fixes semantic
+requirements and an optional handler plan. `MaterialConnectionController`
+provides bounded acquisition, candidate initialization and Session replacement.
+The current server and application APIs use TransportEnvironment-owned Serve, Relay,
+service, stream and operation owners. See [Rust transport](RUST_TRANSPORT_V4.md)
+for their supported workflows.
 
-Rust `ConnectorOptions::new()` creates options without trust roots, and
-`with_trust_roots_der(...)` adds validated explicit roots for TLS candidates.
-Without configured roots, CA candidates use platform trust roots. Configured
-roots replace that source for private-CA deployments. Pin candidates ignore CA
-roots, verify only the active artifact-bound leaf-certificate hashes, and never
-downgrade to CA. Production v3 has no plaintext carrier.
+`PreauthorizedPoolSource` captures `PoolTopUpConfiguration` and one original
+source-owned operation. `TopUpOptions` bounds the request; `TopUpResult` and
+`TopUpRecoveryResult` preserve local installation, acknowledgement and call
+failure separately. `TopUpHandle` observes the retained original operation;
+`TopUpError` and `TopUpErrorCode` do not grant replacement or replay authority.
+Applied recovery verifies durable installation history and the current fence
+without decoding consumed material or replacing the original identity.
 
-### Explicit Rust transport v4
+`UnaryRequestContext::response_publication` returns the original
+`ResponsePublication`; `UnaryRequestContext::maintenance_owner` borrows the
+plan's `MaintenanceOwner`. `MaintenanceOwnerOptions` bounds observation slots.
+`ResponsePublication::transfer_to` returns `ResponseTransferResult` and only
+transfers observation and cleanup responsibility. `ResponsePublicationStatus`
+keeps `ResponsePublicationState` and a finite `ResponsePublicationCause`;
+`flushed` requires the complete original response's provider handoff and never
+reverts because of a later carrier tail failure. `PoolSpendObservation` and
+`PoolSpendState` preserve the original durable consume attempt's outcome without
+providing another acquisition or connection right.
 
-The `V4TransportEnvironment` publishes `identity_keys`, `namespace`,
+### Current Rust transport
+
+The Rust original pool relay surface includes `SQLiteRelayBinding`,
+`SQLiteRelayOptions`, `SQLiteRelayLedger`, `RelayPoolPublicationInput`,
+`OriginalRelayPoolPublication`, `RelayParentRegistration`,
+`ReverseTunnelProviderOptions`, `WssRelayLegOptions`, `WssRelayHostOptions`,
+`WssRelayHost`, `WssRelayPublication`, `RelayOriginalIssuer`,
+`RelayOriginalDeliveryOptions`, `RelayOriginalDeliveryHandle`,
+`OriginalRelayDelivery` and `RemoteRelayPublication`. Live relay installation
+uses `RelayLiveControlDeployment` and `RelayLivePreparationLimits`;
+`RelayOriginalDeliveryHandle::live_forwarding_progress` and
+`wait_live_completion` expose bounded aggregate `RelayLiveForwardingProgress`
+observations from the retained original forwarding tasks without publication or
+recovery authority. Fixed original mTLS delivery consumes the sealed pool publication through
+`TransportEnvironment::original_relay_delivery`,
+`OriginalRelayDelivery::register_pool_original` and
+`RemoteRelayPublication::start_original`. Live tunnel delivery has a separate
+`RemoteLiveTunnelServerPublication` capability: register the exact server-leg
+Artifact, relay identity, service and audience before TxB, then publish the
+confirmed proof and server Grant once. The client-facing live authorization
+response carries only the activation proof and client-leg Grant; the server
+Grant is never returned through that response. Registered JSON deployments
+expose `RegisteredLiveTunnelSourceConfiguration` through
+`LocalDirectMaterialSource::registered_live_tunnel_authority` and
+`registered_live_reverse_tunnel_authority`; one installed original Artifact
+owns one Acquire, physical preparation and signed authorization attempt. B uses
+`OriginalLiveTunnelServerPublication::register_original_control` with
+`RegisteredLiveServerControlConfiguration` and
+`RegisteredLiveServerPreparation`, then consumes
+`RegisteredLiveTunnelServerPublication::receive_original_publication` to verify
+and acknowledge the exact original activation and server Grant on its retained
+Account before Serve. External RelayHost control is independently fixed by
+A's root `relay_preparation` and B's optional `relay_preparation`, with each
+endpoint retaining its registered mTLS identity. A owns original readiness,
+preparation and client activation; B owns reverse listener readiness; the
+original authority TxB invocation owns server Grant delivery. Original Account
+custody, transport backing and the occupied control position survive every
+HTTP driver and final request-body view. The B-host consumes verified
+material through `LiveServerDeliveryHandle::next_tunnel_publication`; this is a
+bounded one-shot handoff with no status lookup or retry path. The dedicated host receiver binds
+`WssRelayHost::serve_original_delivery` with independently installed issuer
+identities and relay mappings. Registered continuations have no query, adoption,
+reopen or retry surface. The original issuer captures the public
+projection through `TransportEnvironment::relay_pool_publication`; the host
+consumes it through `publish_pool`. The common protected parent authority fixes
+one selection across direct admission and relay claims. Public rows and copied
+Grant bytes cannot supply an original forwarding continuation. Physical WSS,
+raw QUIC and WebTransport legs retain their actual cleanup owners and signed
+resource bounds; native scopes remain opaque routing labels.
+
+
+The `TransportEnvironment` publishes `identity_keys`, `namespace`,
 `pool_connection_material`, `sqlite_pool_backing`, `connect_pool_wss`,
-`connect_pool_wss_with_handler_plan` and `serve_pool_wss`.
+`connect_pool_wss_with_handler_plan` and `serve_wss`.
 Its asynchronous `close` returns `Result<CleanupStatus, SessionError>` after a
 bounded observation of the original cleanup operation. Actual tails remain
 charged after `cleanup_incomplete`; an independent `wait_cleanup` timeout does
-not close an active Environment.
+not close an active TransportEnvironment.
 The supported production tuple is one direct network WSS candidate from a
 preauthorized pool, the transport application profile, and no negotiated
 optional features. It requires a Tokio multithread runtime. The original
-Environment provides trusted time, authorization subscriptions, finite resource
+TransportEnvironment provides trusted time, authorization subscriptions, finite resource
 accounts, irreversible SQLite consumption and actual carrier cleanup.
-The unversioned connector and server APIs above continue to use their stated
-strict-v3 contract; they do not establish v4 connections.
 
-Connection material and trust types are `V4IdentityKeys`, `V4Namespace`,
-`V4NamespaceTrustRoot`, `V4PoolCredentialBytes`, `V4PoolConnectionMaterial`,
-`V4WssConnectOptions`, `V4ConnectError` and `V4PostSpendFailure`. Private identity
+Connection material and trust types are `IdentityKeys`, `Namespace`,
+`NamespaceTrustRoot`, `PoolCredentialBytes`, `PoolConnectionMaterial`,
+`WssConnectOptions`, `TransportConnectError` and `PostSpendFailure`. Private identity
 keys stay in original handles; exact signed material is consumed once. Native
 TLS validates TLS 1.3, the signed route and Origin policy, and either explicit
 CA roots or the active complete DER pins. No platform-root fallback, DNS retry,
 redirect, credential replay or fresh connection adoption occurs.
 
-Durable pool types are `V4SQLitePoolBacking`, `V4SQLitePoolStore`,
-`V4SQLitePoolOptions`, `V4SQLitePoolIdentity`, `V4SQLitePoolBinding`,
-`V4SQLitePoolLimits`, `V4SQLitePoolContinuity`, `V4PoolStoreError`,
-`V4PoolStoreFailure` and `V4PoolWriteState`. Continuity must come from independently
+Durable pool types are `SQLitePoolBacking`, `SQLitePoolStore`,
+`SQLitePoolOptions`, `SQLitePoolIdentity`, `SQLitePoolBinding`,
+`SQLitePoolLimits`, `SQLitePoolContinuity`, `PoolStoreError`,
+`PoolStoreFailure` and `PoolWriteState`. Continuity must come from independently
 trusted host history. Closing a store does not release persistent disk backing;
 `release_removed` requires the actual database and journal files to be removed.
 A successful irreversible consume followed by connection failure is explicitly
-`V4ConnectError::Spent`; it never grants retry authority.
+`TransportConnectError::Spent`; it never grants retry authority.
 
-Accepted servers use `V4AcceptedMaterialSource`, `V4WssServeOptions`,
-`V4WssServerIdentity`, `V4ServeHandle`, `V4SQLiteAdmissionBinding` and
-`V4SQLiteAdmissionAuthority`. The material callback supplies lookup bytes;
+Failed Connect attempts close undelivered Sessions and retain their original
+control work reservation while observing cleanup. Each loser has five seconds
+from its close request; the total cleanup deadline is ten seconds from the
+first loser close or winner confirmation, whichever happens first. A timeout
+returns `TransportConnectError::CleanupIncomplete` with the original finite
+failure and `ConnectionAttemptFacts`. Physical owners keep their charges until
+actual exit. The Controller exposes `CleanupIncomplete` and stops automatic
+candidate acquisition for that attempt.
+
+Accepted servers use `AcceptedMaterialSource`, `WssServeOptions`,
+`WssServerIdentity`, `ServeHandle`, `SQLiteAdmissionBinding` and
+`SQLiteAdmissionAuthority`. The material callback supplies lookup bytes;
 the original namespace and accepted socket independently verify admission.
 The authority retains distinct ParentWinner and AdmissionLedger facts in
-SQLite revision 2. `V4ServeHandle` exposes `local_address`, `accept`, `drain`,
+SQLite revision 3. `ServeHandle` exposes `local_address`, `accept`, `drain`,
 `wait_drain`, `close`, `cleanup_status` and `wait_cleanup`. A pending or late
-READY cannot publish after Serve Drain/Close, and shared Environment ownership
+READY cannot publish after Serve Drain/Close, and shared TransportEnvironment ownership
 remains with the caller. Conflict results are `AdmissionConflict` and
-`WinnerConflict` on `V4PoolStoreFailure`.
+`WinnerConflict` on `PoolStoreFailure`.
 
-`V4WssServeOptions` fixes `V4ServeCallbacks`, `V4ApplicationLimits` and parent
-cancellation. `authorize_request` accepts a bounded `V4ServeRequestContext` and
-returns `V4RequestAuthorization` before upgrade. After authenticated FSB and
+`WssServeOptions` fixes `ServeCallbacks`, `ApplicationLimits` and parent
+cancellation. `authorize_request` accepts a bounded `ServeRequestContext` and
+returns `RequestAuthorization` before upgrade. After authenticated FSB and
 identity checks, `resolve_handlers` and `authorize_application` use
-`V4AuthenticatedRequestContext` and its detached `V4ApplicationBinding`.
-`reserve_lease` registers one `V4ApplicationAuthorizationLease` during the
+`AuthenticatedRequestContext` and its detached `ApplicationBinding`.
+`reserve_lease` registers one `ApplicationAuthorizationLease` during the
 original authorization callback, including late success. Only an authorized
-`V4AuthorizeApplicationResult` with that lease reaches durable admission.
-`V4ApplicationAuthorization` records not-started, authorized, rejected or
-unknown authorization in the final `V4ServeReleaseContext`.
+`AuthorizeApplicationResult` with that lease reaches durable admission.
+`ApplicationAuthorization` records not-started, authorized, rejected or
+unknown authorization in the final `ServeReleaseContext`.
 
-`V4TransportEnvironment::handler_plan` captures `V4HandlerPlanOptions` into an
-immutable, Environment-bound `V4HandlerPlan`. `V4StreamDispatch` selects explicit
-manual acceptance or frozen `V4RawStreamRegistration` entries. Registered
-`V4RawStreamHandler` implementations return `V4StreamAuthorization` and own
+`TransportEnvironment::handler_plan` captures `HandlerPlanOptions` into an
+immutable, TransportEnvironment-bound `HandlerPlan`. `StreamDispatch` selects explicit
+manual acceptance or frozen `RawStreamRegistration` entries. Registered
+`RawStreamHandler` implementations return `StreamAuthorization` and own
 bounded authorization/handler work; public `next_open` cannot bypass this
 dispatcher. Closing a plan seals future captures and preserves existing ones.
-The Connect variant accepts the same plan with explicit `V4ApplicationLimits`,
+The Connect variant accepts the same plan with explicit `ApplicationLimits`,
 captures it before durable pool consumption, and attaches it before returning
 the READY Session. Connect cleanup waits for admitted handler work before
 returning the original application charge.
 
 After the original READY publication claim, `on_session` returns
-`V4SessionAcceptance`: Retained, Queue (for `accept`) or Rejected. A later Close
+`SessionAcceptance`: Retained, Queue (for `accept`) or Rejected. A later Close
 cannot cancel the already-claimed call. `release` runs once after real cleanup
 or an explicit incomplete observation. Cancellation closes a registered or
 late lease once, without dropping its running authorizer. Incomplete lease
 observations reuse that owner; an incomplete Release cannot be retried or
-refunded. `V4ServeError` projects `V4ServeFailure` and actual cleanup without
+refunded. `ServeError` projects `ServeFailure` and actual cleanup without
 application error strings. Callback futures must retain their own work until
 exit; independently retained work belongs to the registered lease, whose
 cleanup must not depend on Release starting. Error snapshots grant no new
-background-work ownership. See [Rust transport v4](RUST_TRANSPORT_V4.md) for the
+background-work ownership. See [Rust transport profile](RUST_TRANSPORT_V4.md) for the
 fixed limits and original callback/worker cleanup ordering.
 
-`V4ServeDrainOperation` exposes `result` and `wait` over the original group
-operation. `V4ServeDrainResult` contains the stable `outcome`, bounded `error`
+`ServeDrainOperation` exposes `result` and `wait` over the original group
+operation. `ServeDrainResult` contains the stable `outcome`, bounded `error`
 and current `cleanup` view. Every child uses the earlier of its original Drain
-deadline and the group's first absolute deadline. Historical physical tails
+deadline and the group's first absolute deadline. Existing physical tails
 remain cleanup responsibilities; failures after group closure remain part of
 the group result after the child exits. `wait_drain`, `wait_cleanup` and the
 operation's `wait` return `Result` and share sixteen prepaid pending observer
-slots; full capacity returns `V4ConnectError::Capacity`. Canceled observation
+slots; full capacity returns `TransportConnectError::Capacity`. Canceled observation
 only releases its slot, and terminal observation requires no new slot.
 
-The completed owner exposes `V4Session`, `V4Stream`, `V4OpenRequest`,
-`V4Metadata`, `V4ProbeOutcome`, `V4ProbeResult`, `V4DrainOperation`,
-`V4DrainOutcome` and `V4DrainResult`. Streams implement the existing `ByteStream`
+The completed owner exposes `Session`, `Stream`, `OpenRequest`,
+`Metadata`, `ProbeOutcome`, `ProbeResult`, `DrainOperation`,
+`DrainOutcome` and `DrainResult`. Streams implement the existing `ByteStream`
 contract. Probe, rekey, Drain, termination and cleanup share the original
 Session and carrier. A successful publish waits for actual ordered I/O.
-`V4ProbeResult` retains finite outcome, `submitted`, `complete` and optional
+`ProbeResult` retains finite outcome, `submitted`, `complete` and optional
 elapsed time from original admission. Eight probe owners share the original
 maintenance budget; cancellation and timeout remove their matchers while real
 provider tails retain ownership. Rekey interrupts ordinary samples. Optional
-`V4AutomaticLivenessPolicy` on `TransportEnvironmentOptions::automatic_liveness`
+`AutomaticLivenessPolicy` on `TransportEnvironmentOptions::automatic_liveness`
 reserves one of those owners and counts only fully published, unstalled samples
 with a complete response budget. It defaults to disabled; a configured miss
 threshold reports `SessionError::LivenessPathUnresponsive` without business replay.
-`V4Stream::wait_peer_authenticated` waits for an already accepted offset to be
+`Stream::wait_peer_authenticated` waits for an already accepted offset to be
 covered by a real ACK or normal DRAINED proof, retaining fulfilled observations
 after retirement. Dropping `close_write` or `finish` waits does not revoke the
 original FIN; aborted proof and missing stream state cannot report successful
 Finish.
 
-Environment configuration and observations use `TransportEnvironmentOptions`,
+TransportEnvironment configuration and observations use `TransportEnvironmentOptions`,
 `ResourceLimits`, `EnvironmentError`, `TrustedTimeSource`, `TrustedTimeSample`,
 `TrustedTimeProfile`, `ConnectionRequirements` and `CleanupStatus`. The current
 Rust resource ledger separately bounds all eleven local dimensions:
@@ -570,48 +737,103 @@ Owned read/write helpers are `ReadProgress`, `ReadResult`, `ReadWaitStatus`,
 `ReadStreamStatus`, `ReadCause`, `ReadError`, `ReadErrorCode`, `ReadErrorScope`,
 `ReadRetryDisposition`, `ReadMethodFailure`, `ReadMethodFailureReason`,
 `ReaderCursor`, `ReaderCursorOptions`, `ReaderCursorSnapshot`, `StreamReadOwner`,
-`StreamReadPermit`, `ReadDeliveryAuthorization`, `StreamV4Ext`, `WriteOperation`,
+`StreamReadPermit`, `ReadDeliveryAuthorization`, `StreamExt`, `WriteOperation`,
 `WriteProgress`, `WriteRequestAdmission` and `WriteStagingOwner`. The public
 `OperationHandle`, `OperationReference`, `OperationStatus`, `ResultPayload` and
-`V4NotificationSubscription` types do not imply a completed v4 RPC, service,
+`OperationNotificationSubscription` types do not imply a completed v4 RPC, service,
 execution or notification transport. Those application assemblies,
 candidate racing, live-authority,
 tunnel, raw QUIC, WebTransport, datagrams and controller assembly remain outside
-this Rust client entrance. See [Rust transport v4](RUST_TRANSPORT_V4.md).
+this Rust client entrance. See [Rust transport profile](RUST_TRANSPORT_V4.md).
 
 ## Cross-language semantics
 
-Go preserves RPC error message presence with `RPCError.MessagePresent`, so a missing message remains distinguishable from an explicitly empty message. Swift exposes the same distinction through optional `RPCError.message`.
+Applications use the same authenticated Session, registered Stream and service
+operation semantics across SDKs. A language-specific result type or convenience
+codec does not select another wire protocol or acquire additional authority.
+Service application errors use the method's declared code and payload codec;
+transport errors remain separate. Invalid inbound errors fail at the Session
+or protocol boundary, and invalid outbound handler errors are rejected before
+publication. Application error taxonomies remain local to the captured service
+contract.
 
-A failed DATA, FIN, or stream-rekey write makes that stream terminal because its wire commit boundary is no longer reusable; unrelated streams remain live unless the failed record is required to complete a session rekey. Rekey-assisted receive processing never crosses unread DATA. Rust and TypeScript bound that auxiliary receive queue by the shared `e2ee.max_inbound_buffered_bytes` high-water mark and pause carrier reads until the application consumes buffered DATA.
+Stream reads and writes retain the original admitted buffers, direction owner
+and final status. Cancellation or timeout does not erase already accepted
+bytes, FIN publication or a fulfilled authenticated delivery proof. A provider
+failure is reported with its actual Stream or Session scope. Backpressure and
+maintenance retain finite queue limits; a shared ordered carrier does not
+promise independent progress for another Stream when one Stream stalls.
 
-Remote application RPC failures are semantically separate from session and transport failures across the SDKs. An application error requires a nonzero code, an exact `code`/optional `message` shape, and, when present, a valid UTF-8 message of at most 1024 bytes. Invalid inbound errors fail at the existing session or protocol boundary; invalid outbound handler errors are replaced by the SDK's existing internal application error before wire I/O. The expression is language-native rather than byte-for-byte identical: TypeScript uses typed `RpcResult<Response>` with an `ok: false` application `error`, Go returns `flowersec.RPCError`, Swift throws `RPCError`, and Rust returns `RpcCallError::Application`. Application RPC error-code taxonomies remain SDK-local, while public connection, session, and controller codes remain the shared cross-language values. The portable contract is the RPC application/session boundary plus structured controller dispositions. Session, stream, carrier, handshake, and credential-spend failures remain redacted public connection or session failures instead of application RPC failures.
+Application metadata uses a bounded, construction-validated envelope. Its
+namespace, version and application byte values are captured before opening the
+Stream; JSON convenience values additionally use an explicit local descriptor
+with validated field, number, depth and size limits. Incoming Streams expose
+the same envelope and application authorization boundary. A metadata projection
+does not replace the original bytes or authorize an application request.
 
-Application stream metadata is a construction-validated value in every SDK. Invalid JSON shape, number, depth, or size fails before `openStream`/`open_stream`; incoming streams expose the same validated value model. Each language uses its native constructor and immutable/read-only access conventions.
-
-Unreliable messages are an SDK-profile capability, not a mandatory method shape for every language. Go exposes `flowersec.UnreliableMessageChannel`, TypeScript exposes `UnreliableMessageChannel`, and Rust exposes `UnreliableMessageChannel` when the session negotiated support. Their public failures normalize to `unavailable`, `invalid_message`, `too_large`, `canceled`, `closed`, and `operation_failed`; send outcomes remain `accepted`, `dropped_expired`, `dropped_budget`, and `dropped_carrier`. Swift explicitly reports the capability as unsupported and exposes no placeholder channel.
+Unreliable messages are an SDK-profile capability. Go, TypeScript and Rust
+expose `UnreliableMessageChannel` only when the authenticated Session selected
+the signed feature on a complete supported datagram route. Accepted send means
+local provider submission and does not prove delivery or remote application
+consumption. Size, expiry, budget, receive availability and closure remain
+bounded channel outcomes. Swift explicitly reports the capability as unsupported
+and exposes no placeholder channel.
 
 ## Error Boundary
 
-Public connection and session failures contain only a stable code. They never retain raw artifacts, credential-bearing URLs, tokens, peer payloads, candidate diagnostics, path or stage selection, key material, carrier handles, or implementation objects. `ConnectionDiagnostic` is the only monitoring projection: it contains state, attempt, optional failure phase/code, and optional retry disposition, and never contains a URL, carrier, candidate, raw error, credential, peer identity, or Session. Snapshot, update, and subscription APIs may coalesce intermediate states but always expose their latest state. Sanitized remote application RPC errors may retain only their bounded semantic code and message.
+Public connection and Session failures expose stable bounded codes and the
+original owner's detached facts, including consumption, admission, READY,
+application publication and cleanup when known. They do not retain raw
+credentials, credential-bearing URLs, tokens, peer payloads, private keys,
+carrier handles or arbitrary provider error objects. `ConnectionDiagnostic`
+is the monitoring projection of state, attempt, bounded failure phase and code,
+retry disposition and already-recorded connection facts. Observation performs
+no acquisition, reservation or provider I/O. Snapshot, update and subscription
+APIs may coalesce intermediate states while preserving their latest recorded
+view. Service application errors retain only the declared bounded code and
+payload under their captured codec.
 
-The shared controller decision has only three dispositions: `terminal`, `retryable`, and an absolute `retry_after` deadline in the inclusive safe range `0..253402300799999` Unix milliseconds. `retry_after` is combined with deterministic monotonic backoff using the later deadline; the backoff floor is 250 ms, doubles per failure ordinal, saturates at 30 seconds, and has zero jitter. `retryNow()` cannot cross the absolute wall-clock deadline. `ConnectionController` obtains a fresh artifact for every attempt, uses deterministic exponential backoff, and never reuses a committed credential. It does not migrate streams or replay RPCs and writes. The exact cross-language lifecycle is `testdata/transport_v3/controller_vectors.json`.
+Controller retry decisions distinguish terminal refusal, retryable failure and
+an absolute `retry_after` constraint. Each runtime's bounded scheduler retains
+its original clock, retry policy and attempt deadline; an explicit retry cannot
+bypass an authority's not-before constraint. Each attempt captures fresh source
+preparation and its original identity, provider and generation. A committed
+`ConnectionMaterial` is never silently reused for another attempt. The
+controller does not migrate Streams or replay operations and writes.
 
-### Durable spend integration
+### Durable consumption integration
 
-Applications must durably commit a one-time artifact's spend record before any network send that can consume its credential. Production integrations should use one of these persistence patterns:
+The application or configured activation provider owns the durable record for
+each one-use material acquisition. The Environment admits the complete Session
+graph before acquisition; the selected pool or live source then performs its
+single-use acquisition and reports whether the irreversible operation was not
+submitted, committed, or remains unknown. A source does not fall back to another
+provider after an uncertain result, and an unknown result cannot make the
+possibly consumed material available again.
 
-The first spend callback attempt permanently burns the Lease, including when the callback fails or is canceled. Once the callback begins, the SDK cannot distinguish a definite pre-commit failure from an uncertain durable commit, so retry requires a newly acquired Lease from the `ArtifactSource`.
+Provider integrations should persist the opaque consumption identity with one
+of these patterns:
 
-- **Database uniqueness:** insert the artifact's opaque spend identifier under a unique constraint in the same durable transaction that authorizes the attempt. Network activity may begin only after that transaction commits successfully.
-- **Atomic file:** create a record with create-new/no-overwrite semantics, write the complete record, sync the file, and sync its containing directory before allowing network activity.
-- **Transactional state:** persist the consumed state or an idempotency record in the application's existing durable business transaction, and allow the connection attempt only after that transaction commits.
+- **Database uniqueness:** insert the consumption identity under a unique
+  constraint in the same durable transaction that authorizes the acquisition
+  or attempt. Network activity may begin only after that transaction commits.
+- **Atomic file:** create a record with create-new/no-overwrite semantics, write
+  the complete record, sync the file, and sync its containing directory before
+  allowing network activity.
+- **Transactional state:** persist the consumed state or an idempotency record
+  in the application's existing durable business transaction, and allow the
+  connection attempt only after that transaction commits.
 
-If a persistence commit has an uncertain outcome, fail closed and treat the artifact as spent. An in-memory ledger is not an acceptable production default, and recovery logic must never automatically reuse an artifact whose spend may have committed.
+If a persistence commit has an uncertain outcome, fail closed and treat the
+material as spent or unknown according to the provider's recorded fact. An
+in-memory ledger is not an acceptable production default, and recovery logic
+must never automatically reuse material whose durable consumption may have
+committed. Pool TopUp is a separate authenticated maintenance operation; it does
+not run from a failed Connect path or return consumed material to the pool.
 
 ## Version Scope
 
-The maintained tree uses the v3 module path and the current Flowersec transport,
+The maintained tree uses the current module paths and Flowersec transport,
 session, control-plane, and proxy contracts.
 
 Public changes follow `docs/API_CHANGE_POLICY.md`; stable failures follow `docs/ERROR_MODEL.md`, and the reviewed symbol inventory is `stability/api_contract_manifest.json`.
@@ -650,23 +872,23 @@ Finish while reverse reads continue. Standard pipe options keep their native
 meaning. [The Web Streams contract](TYPESCRIPT_TRANSPORT_V4.md#closure-and-persistent-history)
 describes the queue, backing and cleanup bounds.
 
-## Go transport v4 environment and operations
+## Go TransportEnvironment and operations
 
-The public Go v4 assembly is `flowersec.NewTransportEnvironment(...)`. Its
+The public Go assembly is `flowersec.NewTransportEnvironment(...)`. Its
 explicit clock, verification-continuity registry, executor, resource root and
 same-root account handles are supplied by trusted host composition. The
-Environment hosts immutable connection material and admits its original bounded
+TransportEnvironment hosts immutable connection material and admits its original bounded
 Session position before acquisition, carrier preparation and spend. Source,
 static material and preauthorized pool inputs share that implementation.
 
 `ConnectSource` takes an immutable identity plus an original lease provider;
-`ConnectMaterial` consumes an Environment-hosted material; `ConnectPool` takes a
+`ConnectMaterial` consumes TransportEnvironment-owned material; `ConnectPool` takes a
 complete installed pool item after local admission. Pool acquisition never
 starts a TopUp or falls back to live issuance. An uncertain or canceled Connect
 cannot turn consumed material into a reusable attempt. Pool and live authority
 inputs are explicit and mutually exclusive.
 
-`V4Session` exposes authenticated `Info`, `Drain`/`WaitDrain`, `Rekey`,
+`Session` exposes authenticated `Info`, `Drain`/`WaitDrain`, `Rekey`,
 `ProbeLiveness`, unary preparation, fixed-session service binding, and termination
 and cleanup observation. `OperationHandle` retains the original request,
 contract, publication and deferred result rights. Repeated Start joins the same
@@ -675,14 +897,14 @@ cancellation does not retry the operation or release active provider work.
 `Cancel` ends local result interest; `RequestCancel` requests authenticated
 business cancellation through the management path.
 
-`V4MethodRoutes.InitialOffers` installs bounded, exact admission windows during
+`MethodRoutes.InitialOffers` installs bounded, exact admission windows during
 RPC assembly. `AdvertisedContract` selects one digest from that method's declared
 contracts after its windows are installed. An execution advertisement requires a
 currently usable window; construction does not issue or renew one. The immutable
 connection recipe copies and charges these windows before material acquisition.
 
-Durable service hosts use `V4SQLiteExecutions.ReadRegistration` to read the
-original canonical contract and `V4SQLiteExecutionRegistration` from their
+Durable service hosts use `SQLiteExecutions.ReadRegistration` to read the
+original canonical contract and `SQLiteExecutionRegistration` from their
 explicitly created or reopened execution database. The caller supplies bounded
 contract storage and its original finite trusted registration guard. The result
 contains the persisted revision, enabled state and at most eight unchanged
@@ -690,7 +912,7 @@ windows; it grants no execution rights. Hosts install only applicable original
 windows and advertise only a currently usable one. Expired windows require an
 explicit durable registration update before new admission can be advertised.
 Reopening requires independent continuity evidence and never replays a handler.
-`V4DurableServiceBinding` attaches the original durable owner to the shared
+`DurableServiceBinding` attaches the original durable owner to the shared
 service registry; dispatch, duplicate joins and management reads use that owner.
 
 Restart-flush unary handlers receive their original `ResponsePublication` before
@@ -699,24 +921,167 @@ execution and may transfer its observation once to the invocation's own
 flushed. Handler failure, STOP_OUTPUT, expiry, or owner unavailability cannot
 manufacture that outcome.
 
-`V4PreauthorizedPoolSource.TopUp` joins its one unresolved durable intent.
+`PreauthorizedPoolSource.TopUp` joins its one unresolved durable intent.
 `RecoverPendingTopUps` reconstructs the original journal facts without appending
 new material; `TopUpStatus` reads the exact opaque operation handle without
 control I/O. Installed and acknowledged frontiers remain distinct. Caller wait
 cancellation does not cancel the source worker. Source Close seals new work and
 WaitCleanup joins actual provider tails.
 
-Environment cleanup retires its metadata only after original Session, material,
+TransportEnvironment cleanup retires its metadata only after original Session, material,
 source and provider obligations finish. Shared clocks, resource roots, executors,
 trust stores and durable stores remain caller-owned. See
-[Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup order.
+[Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup order.
 
-The following table registers the current public v4 assembly, owner operations
+Go aggregate diagnostic counters are available through
+`(*flowersec.TransportEnvironment).DiagnosticCounts`. Detailed events are opt-in:
+`flowersec.NewDiagnosticSink` requires the caller's original resource reservation
+and an application executor, and delivers events on its independent diagnostic
+lane. `flowersec.DiagnosticSinkCharge` computes the required reservation. Events
+contain finite diagnostic fields and SDK-generated correlation IDs; raw errors,
+URLs, credentials, payloads and caller-owned identifiers are excluded.
+
+The sink bounds live operations and queued events. A nil sampling setting selects
+1%; an explicit setting accepts 0 through 100 basis points. Close seals the sink;
+WaitCleanup joins actual callback completion before its reservation is released.
+The following table registers the diagnostic vocabulary and callable surface.
+
+| Symbol | Declaration |
+| --- | --- |
+| `(*flowersec.DiagnosticOperation).Close` | method |
+| `(*flowersec.DiagnosticOperation).Emit` | method |
+| `(*flowersec.DiagnosticOperation).EmitDiagnostic` | method |
+| `(*flowersec.DiagnosticOperation).GoString` | method |
+| `(*flowersec.DiagnosticOperation).String` | method |
+| `(*flowersec.DiagnosticSink).Begin` | method |
+| `(*flowersec.DiagnosticSink).CleanupStatus` | method |
+| `(*flowersec.DiagnosticSink).Close` | method |
+| `(*flowersec.DiagnosticSink).Counters` | method |
+| `(*flowersec.DiagnosticSink).Done` | method |
+| `(*flowersec.DiagnosticSink).GoString` | method |
+| `(*flowersec.DiagnosticSink).String` | method |
+| `(*flowersec.DiagnosticSink).WaitCleanup` | method |
+| `(*flowersec.TransportEnvironment).DiagnosticCounts` | method |
+| `flowersec.DiagnosticAttempt` | func |
+| `flowersec.DiagnosticAttemptAtLeastEight` | const |
+| `flowersec.DiagnosticAttemptBucket` | type |
+| `flowersec.DiagnosticAttemptBucket.String` | method |
+| `flowersec.DiagnosticAttemptFourToSeven` | const |
+| `flowersec.DiagnosticAttemptOne` | const |
+| `flowersec.DiagnosticAttemptOther` | const |
+| `flowersec.DiagnosticAttemptTwoToThree` | const |
+| `flowersec.DiagnosticCleanupStatus` | type |
+| `flowersec.DiagnosticCleanupStatus.Validate` | method |
+| `flowersec.DiagnosticCode` | type |
+| `flowersec.DiagnosticCode.String` | method |
+| `flowersec.DiagnosticCodeCancelled` | const |
+| `flowersec.DiagnosticCodeCleanupIncomplete` | const |
+| `flowersec.DiagnosticCodeCurrentDatagramDropped` | const |
+| `flowersec.DiagnosticCodeDiagnosticDropped` | const |
+| `flowersec.DiagnosticCodeFreshnessExpired` | const |
+| `flowersec.DiagnosticCodeFutureDatagramDropped` | const |
+| `flowersec.DiagnosticCodeIdentityRejected` | const |
+| `flowersec.DiagnosticCodeOK` | const |
+| `flowersec.DiagnosticCodeOldDatagramDropped` | const |
+| `flowersec.DiagnosticCodeOther` | const |
+| `flowersec.DiagnosticCodeReservationConflict` | const |
+| `flowersec.DiagnosticCodeResourceExhausted` | const |
+| `flowersec.DiagnosticCodeRevoked` | const |
+| `flowersec.DiagnosticCodeSlowConsumer` | const |
+| `flowersec.DiagnosticCodeSpendUnknown` | const |
+| `flowersec.DiagnosticCodeStoreUnavailable` | const |
+| `flowersec.DiagnosticCodeTLSRejected` | const |
+| `flowersec.DiagnosticCodeTimeout` | const |
+| `flowersec.DiagnosticCounts` | type |
+| `flowersec.DiagnosticDuration` | func |
+| `flowersec.DiagnosticDuration100To999MS` | const |
+| `flowersec.DiagnosticDuration10To99MS` | const |
+| `flowersec.DiagnosticDuration1To9S` | const |
+| `flowersec.DiagnosticDurationAtLeast10S` | const |
+| `flowersec.DiagnosticDurationBucket` | type |
+| `flowersec.DiagnosticDurationBucket.String` | method |
+| `flowersec.DiagnosticDurationOther` | const |
+| `flowersec.DiagnosticDurationUnder10MS` | const |
+| `flowersec.DiagnosticEvent` | type |
+| `flowersec.DiagnosticEvent.AppendJSON` | method |
+| `flowersec.DiagnosticEvent.CorrelationID` | method |
+| `flowersec.DiagnosticEvent.Fields` | method |
+| `flowersec.DiagnosticEvent.GoString` | method |
+| `flowersec.DiagnosticEvent.MarshalJSON` | method |
+| `flowersec.DiagnosticEvent.RetentionDeadline` | method |
+| `flowersec.DiagnosticEvent.String` | method |
+| `flowersec.DiagnosticFields` | type |
+| `flowersec.DiagnosticFields.Normalize` | method |
+| `flowersec.DiagnosticMetric` | type |
+| `flowersec.DiagnosticMetric.String` | method |
+| `flowersec.DiagnosticMetricCleanupTimeout` | const |
+| `flowersec.DiagnosticMetricConnectionAttempt` | const |
+| `flowersec.DiagnosticMetricConnectionFailure` | const |
+| `flowersec.DiagnosticMetricCount` | const |
+| `flowersec.DiagnosticMetricCurrentDatagramDrop` | const |
+| `flowersec.DiagnosticMetricDiagnosticDrop` | const |
+| `flowersec.DiagnosticMetricFutureDatagramDrop` | const |
+| `flowersec.DiagnosticMetricIdentityRejection` | const |
+| `flowersec.DiagnosticMetricOldDatagramDrop` | const |
+| `flowersec.DiagnosticMetricOther` | const |
+| `flowersec.DiagnosticMetricRekeyPhaseCompleted` | const |
+| `flowersec.DiagnosticMetricRekeyStarted` | const |
+| `flowersec.DiagnosticMetricRekeySucceeded` | const |
+| `flowersec.DiagnosticMetricRekeyTimeout` | const |
+| `flowersec.DiagnosticMetricReservationConflict` | const |
+| `flowersec.DiagnosticMetricResourceRejection` | const |
+| `flowersec.DiagnosticMetricSlowConsumer` | const |
+| `flowersec.DiagnosticMetricSpendUnknown` | const |
+| `flowersec.DiagnosticMetricStoreFailure` | const |
+| `flowersec.DiagnosticMetricTLSRejection` | const |
+| `flowersec.DiagnosticOperation` | type |
+| `flowersec.DiagnosticPhase` | type |
+| `flowersec.DiagnosticPhase.String` | method |
+| `flowersec.DiagnosticPhaseActivate` | const |
+| `flowersec.DiagnosticPhaseApplication` | const |
+| `flowersec.DiagnosticPhaseCleanup` | const |
+| `flowersec.DiagnosticPhaseHandshake` | const |
+| `flowersec.DiagnosticPhaseMaterial` | const |
+| `flowersec.DiagnosticPhaseOther` | const |
+| `flowersec.DiagnosticPhasePrepare` | const |
+| `flowersec.DiagnosticPhaseRekeyConfirmation` | const |
+| `flowersec.DiagnosticPhaseRekeyLocalPrepare` | const |
+| `flowersec.DiagnosticPhaseRekeyPrepare` | const |
+| `flowersec.DiagnosticPhaseRekeyProtocolPrepare` | const |
+| `flowersec.DiagnosticPhaseRekeyRetire` | const |
+| `flowersec.DiagnosticPhaseRekeySwitch` | const |
+| `flowersec.DiagnosticPhaseSpend` | const |
+| `flowersec.DiagnosticRetryDisposition` | type |
+| `flowersec.DiagnosticRetryDisposition.String` | method |
+| `flowersec.DiagnosticRetryOther` | const |
+| `flowersec.DiagnosticRetryPreserveFacts` | const |
+| `flowersec.DiagnosticSink` | type |
+| `flowersec.DiagnosticSinkCharge` | func |
+| `flowersec.DiagnosticSinkConfig` | type |
+| `flowersec.DiagnosticState` | type |
+| `flowersec.DiagnosticState.String` | method |
+| `flowersec.DiagnosticStateClosed` | const |
+| `flowersec.DiagnosticStateDraining` | const |
+| `flowersec.DiagnosticStateFailed` | const |
+| `flowersec.DiagnosticStateOther` | const |
+| `flowersec.DiagnosticStateReady` | const |
+| `flowersec.DiagnosticStateStarting` | const |
+| `flowersec.NewDiagnosticSink` | func |
+
+The following table registers the current public Go API, owner operations
 and result vocabulary. Schema/provider qualification is a separate requirement
 and is not implied by symbol availability.
 
 | Symbol | Declaration |
 | --- | --- |
+| `(*flowersec.ConnectError).Code` | method |
+| `(*flowersec.ConnectError).Error` | method |
+| `(*flowersec.ConnectError).Is` | method |
+| `(*flowersec.ConnectError).RetryDisposition` | method |
+| `(*flowersec.ConnectError).Unwrap` | method |
+| `flowersec.ConnectError` | type |
+| `flowersec.ConnectErrorCode` | type |
+| `flowersec.ConnectErrorCode.String` | method |
 | `(*flowersec.ConnectionMaterial).Close` | method |
 | `(*flowersec.ConnectionMaterial).WaitCleanup` | method |
 | `(*flowersec.MaintenanceOwner).Close` | method |
@@ -764,50 +1129,54 @@ and is not implied by symbol availability.
 | `(*flowersec.TypedMessageStream).ReceiveEncoded` | method |
 | `(*flowersec.TypedMessageStream).Send` | method |
 | `(*flowersec.TypedMessageStream).WaitCleanup` | method |
-| `(*flowersec.V4AuthenticatedMaterial).Close` | method |
-| `(*flowersec.V4AuthenticatedMaterial).WaitCleanup` | method |
-| `(*flowersec.V4Environment).Close` | method |
-| `(*flowersec.V4Environment).Connect` | method |
-| `(*flowersec.V4Environment).ConnectMaterial` | method |
-| `(*flowersec.V4Environment).ConnectMaterialLiveSQLite` | method |
-| `(*flowersec.V4Environment).ConnectMaterialPool` | method |
-| `(*flowersec.V4Environment).ConnectPool` | method |
-| `(*flowersec.V4Environment).ConnectSource` | method |
-| `(*flowersec.V4Environment).ConnectSourceLiveSQLite` | method |
-| `(*flowersec.V4Environment).ConnectSourcePool` | method |
-| `(*flowersec.V4Environment).CreateMaterial` | method |
-| `(*flowersec.V4Environment).NewMaterialPool` | method |
-| `(*flowersec.V4Environment).Snapshot` | method |
-| `(*flowersec.V4Environment).WaitCleanup` | method |
-| `(*flowersec.V4PreauthorizedPoolSource).Acquire` | method |
-| `(*flowersec.V4PreauthorizedPoolSource).Close` | method |
-| `(*flowersec.V4PreauthorizedPoolSource).GoString` | method |
-| `(*flowersec.V4PreauthorizedPoolSource).MarshalJSON` | method |
-| `(*flowersec.V4PreauthorizedPoolSource).RecoverPendingTopUps` | method |
-| `(*flowersec.V4PreauthorizedPoolSource).String` | method |
-| `(*flowersec.V4PreauthorizedPoolSource).TopUp` | method |
-| `(*flowersec.V4PreauthorizedPoolSource).TopUpStatus` | method |
-| `(*flowersec.V4PreauthorizedPoolSource).WaitCleanup` | method |
-| `(*flowersec.V4ServiceClient).Call` | method |
-| `(*flowersec.V4ServiceClient).Close` | method |
-| `(*flowersec.V4ServiceClient).CleanupStatus` | method |
-| `(*flowersec.V4ServiceClient).WaitCleanup` | method |
-| `(*flowersec.V4ServiceClient).Dispatch` | method |
-| `(*flowersec.V4ServiceClient).Prepare` | method |
-| `(*flowersec.V4Session).BindService` | method |
-| `(*flowersec.V4Session).CleanupStatus` | method |
-| `(*flowersec.V4Session).Close` | method |
-| `(*flowersec.V4Session).Drain` | method |
-| `(*flowersec.V4Session).Info` | method |
-| `(*flowersec.V4Session).OpenStream` | method |
-| `(*flowersec.V4Session).PrepareUnary` | method |
-| `(*flowersec.V4Session).ProbeLiveness` | method |
-| `(*flowersec.V4Session).QueryOperation` | method |
-| `(*flowersec.V4Session).Rekey` | method |
-| `(*flowersec.V4Session).RequestOperationCancel` | method |
-| `(*flowersec.V4Session).WaitCleanup` | method |
-| `(*flowersec.V4Session).WaitDrain` | method |
-| `(*flowersec.V4Session).WaitTermination` | method |
+| `(*flowersec.ConnectionMaterial).Close` | method |
+| `(*flowersec.ConnectionMaterial).WaitCleanup` | method |
+| `(*flowersec.TransportEnvironment).Close` | method |
+| `(*flowersec.TransportEnvironment).Connect` | method |
+| `(*flowersec.TransportEnvironment).ConnectMaterial` | method |
+| `(*flowersec.TransportEnvironment).ConnectMaterialLiveSQLite` | method |
+| `(*flowersec.TransportEnvironment).ConnectMaterialPool` | method |
+| `(*flowersec.TransportEnvironment).ConnectPool` | method |
+| `(*flowersec.TransportEnvironment).ConnectSource` | method |
+| `(*flowersec.TransportEnvironment).ConnectSourceLiveSQLite` | method |
+| `(*flowersec.TransportEnvironment).ConnectSourcePool` | method |
+| `(*flowersec.TransportEnvironment).CreateMaterial` | method |
+| `(*flowersec.TransportEnvironment).NewMaterialPool` | method |
+| `(*flowersec.TransportEnvironment).Snapshot` | method |
+| `(*flowersec.TransportEnvironment).WaitCleanup` | method |
+| `(*flowersec.PreauthorizedPoolSource).Acquire` | method |
+| `(*flowersec.PreauthorizedPoolSource).Close` | method |
+| `(*flowersec.PreauthorizedPoolSource).GoString` | method |
+| `(*flowersec.PreauthorizedPoolSource).MarshalJSON` | method |
+| `(*flowersec.PreauthorizedPoolSource).RecoverPendingTopUps` | method |
+| `(*flowersec.PreauthorizedPoolSource).String` | method |
+| `(*flowersec.PreauthorizedPoolSource).TopUp` | method |
+| `(*flowersec.PreauthorizedPoolSource).TopUpStatus` | method |
+| `(*flowersec.PreauthorizedPoolSource).WaitCleanup` | method |
+| `(*flowersec.ServiceClient).Call` | method |
+| `(*flowersec.ServiceClient).Close` | method |
+| `(*flowersec.ServiceClient).CleanupStatus` | method |
+| `(*flowersec.ServiceClient).WaitCleanup` | method |
+| `(*flowersec.ServiceClient).Dispatch` | method |
+| `(*flowersec.ServiceClient).Prepare` | method |
+| `(*flowersec.Session).AcceptStream` | method |
+| `(*flowersec.Session).BindService` | method |
+| `(*flowersec.Session).CleanupStatus` | method |
+| `(*flowersec.Session).ConnectionAttemptFacts` | method |
+| `(*flowersec.Session).ConnectionDiagnostic` | method |
+| `(*flowersec.Session).LocalReport` | method |
+| `(*flowersec.Session).Close` | method |
+| `(*flowersec.Session).Drain` | method |
+| `(*flowersec.Session).Info` | method |
+| `(*flowersec.Session).OpenStream` | method |
+| `(*flowersec.Session).PrepareUnary` | method |
+| `(*flowersec.Session).ProbeLiveness` | method |
+| `(*flowersec.Session).QueryOperation` | method |
+| `(*flowersec.Session).Rekey` | method |
+| `(*flowersec.Session).RequestOperationCancel` | method |
+| `(*flowersec.Session).WaitCleanup` | method |
+| `(*flowersec.Session).WaitDrain` | method |
+| `(*flowersec.Session).WaitTermination` | method |
 | `(*flowersec.WriteOperation).Cancel` | method |
 | `(*flowersec.WriteOperation).CleanupStatus` | method |
 | `(*flowersec.WriteOperation).Progress` | method |
@@ -815,6 +1184,11 @@ and is not implied by symbol availability.
 | `(*flowersec.WriteOperation).Wait` | method |
 | `flowersec.ApplicationIdentity` | type |
 | `flowersec.CleanupStatus` | type |
+| `flowersec.ConnectionAttemptFacts` | type |
+| `flowersec.ConnectionCleanupStatus` | type |
+| `flowersec.ConnectionDiagnostic` | type |
+| `flowersec.ConnectionDiagnosticFailure` | type |
+| `flowersec.LocalReport` | type |
 | `flowersec.CloseResult` | type |
 | `flowersec.ConnectionMaterial` | type |
 | `flowersec.ConnectionMaterialSource` | type |
@@ -822,10 +1196,10 @@ and is not implied by symbol availability.
 | `flowersec.ConnectionRequirements` | type |
 | `flowersec.CopyOptions` | type |
 | `flowersec.CopyResult` | type |
-| `flowersec.CreateV4SQLite` | func |
-| `flowersec.CreateV4SQLiteTopUpJournal` | func |
+| `flowersec.CreateSQLite` | func |
+| `flowersec.CreateSQLiteTopUpJournal` | func |
 | `flowersec.DelimiterNotFound` | const |
-| `flowersec.EncodeV4PoolMaterial` | func |
+| `flowersec.EncodePoolMaterial` | func |
 | `flowersec.ErrAlreadyStarted` | var |
 | `flowersec.ErrCleanupIncomplete` | var |
 | `flowersec.ErrOperationClosed` | var |
@@ -839,10 +1213,10 @@ and is not implied by symbol availability.
 | `flowersec.ErrResultAbandoned` | var |
 | `flowersec.ErrResultAlreadyDelivered` | var |
 | `flowersec.ErrTransportUnavailable` | var |
-| `flowersec.ErrV4MaterialNotReady` | var |
-| `flowersec.ErrV4SpendNotObserved` | var |
-| `flowersec.ErrV4StorageFormat` | var |
-| `flowersec.ErrV4StorageUnavailable` | var |
+| `flowersec.ErrMaterialNotReady` | var |
+| `flowersec.ErrSpendNotObserved` | var |
+| `flowersec.ErrStorageFormat` | var |
+| `flowersec.ErrStorageUnavailable` | var |
 | `flowersec.MaintenanceOwner` | type |
 | `flowersec.MessageSendAdmission` | type |
 | `flowersec.MessageSendOptions` | type |
@@ -852,37 +1226,36 @@ and is not implied by symbol availability.
 | `flowersec.MessageStreamDefinition` | type |
 | `flowersec.NewConnectionMaterial` | func |
 | `flowersec.NewTransportEnvironment` | func |
-| `flowersec.NewV4Age` | func |
-| `flowersec.NewV4ApplicationExecutor` | func |
-| `flowersec.NewV4ApplicationIdentity` | func |
-| `flowersec.NewV4ApplicationIdentityFromBytes` | func |
-| `flowersec.NewV4ArtifactLease` | func |
-| `flowersec.NewV4ArtifactLeaseFromBytes` | func |
-| `flowersec.NewV4AuthenticatedMaterial` | func |
-| `flowersec.NewV4Clock` | func |
-| `flowersec.NewV4Deadline` | func |
-| `flowersec.NewV4Environment` | func |
-| `flowersec.NewV4NamespaceDurableBootstrap` | func |
-| `flowersec.NewV4NamespaceOnlineBootstrap` | func |
-| `flowersec.NewV4NamespaceTrustAnchor` | func |
-| `flowersec.NewV4PoolHTTPSTransport` | func |
-| `flowersec.NewV4PoolMaterialDecoder` | func |
-| `flowersec.NewV4PoolResultDecoder` | func |
-| `flowersec.NewV4PreauthorizedPoolSource` | func |
-| `flowersec.NewV4PreparedMessages` | func |
-| `flowersec.NewV4PreparedStream` | func |
-| `flowersec.NewV4ResourceRoot` | func |
-| `flowersec.NewV4SQLiteBacking` | func |
-| `flowersec.NewV4SQLiteLiveMaintenance` | func |
-| `flowersec.NewV4SQLiteLiveSpendRead` | func |
-| `flowersec.NewV4ServiceRegistry` | func |
-| `flowersec.NewV4SessionPlan` | func |
-| `flowersec.NewV4StreamHandlerPlan` | func |
-| `flowersec.NewV4UnaryRegistration` | func |
-| `flowersec.NewV4VerificationNamespaces` | func |
+| `flowersec.NewAge` | func |
+| `flowersec.NewApplicationExecutor` | func |
+| `flowersec.NewApplicationIdentity` | func |
+| `flowersec.NewApplicationIdentityFromBytes` | func |
+| `flowersec.NewArtifactLease` | func |
+| `flowersec.NewArtifactLeaseFromBytes` | func |
+| `flowersec.NewConnectionMaterial` | func |
+| `flowersec.NewClock` | func |
+| `flowersec.NewDeadline` | func |
+| `flowersec.NewNamespaceDurableBootstrap` | func |
+| `flowersec.NewNamespaceOnlineBootstrap` | func |
+| `flowersec.NewNamespaceTrustAnchor` | func |
+| `flowersec.NewPoolHTTPSTransport` | func |
+| `flowersec.NewPoolMaterialDecoder` | func |
+| `flowersec.NewPoolResultDecoder` | func |
+| `flowersec.NewPreauthorizedPoolSource` | func |
+| `flowersec.NewPreparedMessages` | func |
+| `flowersec.NewPreparedStream` | func |
+| `flowersec.NewResourceRoot` | func |
+| `flowersec.NewSQLiteBacking` | func |
+| `flowersec.NewSQLiteLiveMaintenance` | func |
+| `flowersec.NewSQLiteLiveSpendRead` | func |
+| `flowersec.NewServiceRegistry` | func |
+| `flowersec.NewSessionPlan` | func |
+| `flowersec.NewStreamHandlerPlan` | func |
+| `flowersec.NewUnaryRegistration` | func |
+| `flowersec.NewVerificationNamespaces` | func |
 | `flowersec.NotificationSubscription` | type |
-| `flowersec.OpenV4SQLite` | func |
-| `flowersec.OpenV4SQLiteTopUpJournal` | func |
+| `flowersec.OpenSQLite` | func |
+| `flowersec.OpenSQLiteTopUpJournal` | func |
 | `flowersec.OperationAccepted` | const |
 | `flowersec.OperationCompleted` | const |
 | `flowersec.OperationExecuting` | const |
@@ -917,7 +1290,7 @@ and is not implied by symbol availability.
 | `flowersec.ReaderCursorSnapshot` | type |
 | `flowersec.ResponsePublication` | type |
 | `flowersec.ResponsePublicationState` | type |
-| `flowersec.RestoreV4Namespace` | func |
+| `flowersec.RestoreNamespace` | func |
 | `flowersec.Result` | type |
 | `flowersec.ServeHandle` | type |
 | `flowersec.Stream` | type |
@@ -944,327 +1317,330 @@ and is not implied by symbol availability.
 | `flowersec.TransportEnvironmentOptions` | type |
 | `flowersec.TypedMessageStream` | type |
 | `flowersec.UnexpectedEOF` | const |
-| `flowersec.V4AdmissionOffer` | type |
-| `flowersec.V4ApplicationBinding` | type |
-| `flowersec.V4ApplicationExecutor` | type |
-| `flowersec.V4ApplicationExecutorCharge` | func |
-| `flowersec.V4ApplicationExecutorConfig` | type |
-| `flowersec.V4ApplicationIdentity` | type |
-| `flowersec.V4ApplicationIdentityBytesConfig` | type |
-| `flowersec.V4ApplicationIdentityCharge` | func |
-| `flowersec.V4ApplicationIdentityConfig` | type |
-| `flowersec.V4ApplicationLease` | type |
-| `flowersec.V4ArtifactLease` | type |
-| `flowersec.V4ArtifactLeaseBytesConfig` | type |
-| `flowersec.V4ArtifactLeaseCharge` | func |
-| `flowersec.V4ArtifactLeaseConfig` | type |
-| `flowersec.V4AuthenticatedMaterial` | type |
-| `flowersec.V4AuthenticatedRequestContext` | type |
-| `flowersec.V4AuthorizationAuthorized` | const |
-| `flowersec.V4AuthorizationDenied` | const |
-| `flowersec.V4AuthorizationOutcome` | type |
-| `flowersec.V4AuthorizationUnknown` | const |
-| `flowersec.V4AuthorizeApplicationResult` | type |
-| `flowersec.V4AutomaticLivenessPolicy` | type |
-| `flowersec.V4CarrierAttemptBudget` | type |
-| `flowersec.V4CarrierPreparationRequest` | type |
-| `flowersec.V4ClientToServer` | const |
-| `flowersec.V4Clock` | type |
-| `flowersec.V4ClockMark` | type |
-| `flowersec.V4ClockProfile` | type |
-| `flowersec.V4ClockRate` | type |
-| `flowersec.V4ClockTick` | type |
-| `flowersec.V4ConnectOptions` | type |
-| `flowersec.V4ConnectionGuarantees` | type |
-| `flowersec.V4ConnectionMaterialCharge` | func |
-| `flowersec.V4Connections` | const |
-| `flowersec.V4ConsumerCarrierFactory` | type |
-| `flowersec.V4ContractQueryMethod` | type |
-| `flowersec.V4ContractRoutesConfig` | type |
-| `flowersec.V4CredentialPolicy` | type |
-| `flowersec.V4CredentialScope` | type |
-| `flowersec.V4CredentialSubscriptionsCharge` | func |
-| `flowersec.V4CredentialValidation` | type |
-| `flowersec.V4Deadline` | type |
-| `flowersec.V4DecodeContext` | type |
-| `flowersec.V4Direction` | type |
-| `flowersec.V4DirectionAccount` | const |
-| `flowersec.V4DiskBytes` | const |
-| `flowersec.V4DrainDeadlineAborted` | const |
-| `flowersec.V4DrainFailed` | const |
-| `flowersec.V4DrainOutcome` | type |
-| `flowersec.V4DrainPending` | const |
-| `flowersec.V4DrainResult` | type |
-| `flowersec.V4Drained` | const |
-| `flowersec.V4DurableRestore` | const |
-| `flowersec.V4EngineResourceOptions` | type |
-| `flowersec.V4Environment` | type |
-| `flowersec.V4EnvironmentAccount` | const |
-| `flowersec.V4EnvironmentCharge` | func |
-| `flowersec.V4EnvironmentConfig` | type |
-| `flowersec.V4EnvironmentSnapshot` | type |
-| `flowersec.V4EstablishmentCharge` | func |
-| `flowersec.V4EstablishmentLimits` | type |
-| `flowersec.V4FeatureEnvelope` | type |
-| `flowersec.V4HTTPSBootstrapCharge` | func |
-| `flowersec.V4HTTPSBootstrapConfig` | type |
-| `flowersec.V4HelloLimits` | type |
-| `flowersec.V4HelloPolicy` | type |
-| `flowersec.V4IdentitySigner` | type |
-| `flowersec.V4InitialConfig` | type |
-| `flowersec.V4InitialHello` | type |
-| `flowersec.V4InitialLimits` | type |
-| `flowersec.V4InitialMessages` | type |
-| `flowersec.V4IssuerPermission` | type |
-| `flowersec.V4Items` | const |
-| `flowersec.V4LiveActivationFields` | type |
-| `flowersec.V4LiveMaintenanceConfig` | type |
-| `flowersec.V4LiveMaintenanceStatus` | type |
-| `flowersec.V4LiveNamespace` | type |
-| `flowersec.V4LiveProofVerification` | type |
-| `flowersec.V4LiveSessionInput` | type |
-| `flowersec.V4LiveSpendOwner` | type |
-| `flowersec.V4LiveSpendReadAccess` | type |
-| `flowersec.V4LiveSpendReadTarget` | type |
-| `flowersec.V4LiveSpendRetirement` | type |
-| `flowersec.V4LiveSpendRetirementPolicy` | type |
-| `flowersec.V4LivenessResult` | type |
-| `flowersec.V4MaintenanceIngressPolicy` | type |
-| `flowersec.V4MaintenanceMessagePolicy` | type |
-| `flowersec.V4MaintenanceReserve` | type |
-| `flowersec.V4MapSigner` | type |
-| `flowersec.V4MaterialAcquisitionCharge` | func |
-| `flowersec.V4MaterialConnectConfig` | type |
-| `flowersec.V4MaterialGeneration` | type |
-| `flowersec.V4MaterialLeaseProvider` | type |
-| `flowersec.V4MaterialLeaseRequest` | type |
-| `flowersec.V4MaterialPool` | type |
-| `flowersec.V4MaterialPoolCharge` | func |
-| `flowersec.V4MaterialPoolConfig` | type |
-| `flowersec.V4MaterialRequirements` | type |
-| `flowersec.V4MethodRoutes` | type |
-| `flowersec.V4NamespaceAllocation` | type |
-| `flowersec.V4NamespaceBootstrapCharge` | func |
-| `flowersec.V4NamespaceBootstrapLimits` | type |
-| `flowersec.V4NamespaceBootstrapProvider` | type |
-| `flowersec.V4NamespaceBootstrapRequest` | type |
-| `flowersec.V4NamespaceContent` | type |
-| `flowersec.V4NamespaceContinuityLimits` | type |
-| `flowersec.V4NamespaceContinuityScope` | type |
-| `flowersec.V4NamespaceContinuityStore` | type |
-| `flowersec.V4NamespaceContinuityVersion` | type |
-| `flowersec.V4NamespaceDurabilityCharge` | func |
-| `flowersec.V4NamespaceDurabilityConfig` | type |
-| `flowersec.V4NamespaceOnlineBootstrap` | type |
-| `flowersec.V4NamespaceRules` | type |
-| `flowersec.V4NamespaceTrustCharge` | func |
-| `flowersec.V4NamespaceTrustLimits` | type |
-| `flowersec.V4NamespaceTrustRoot` | type |
-| `flowersec.V4NamespaceTrustStore` | type |
-| `flowersec.V4NativeHandles` | const |
-| `flowersec.V4OnlineBootstrap` | const |
-| `flowersec.V4OpenLimits` | type |
-| `flowersec.V4OperationOptions` | type |
-| `flowersec.V4PoolAccount` | const |
-| `flowersec.V4PoolControlResultDecoder` | type |
-| `flowersec.V4PoolHTTPSConfig` | type |
-| `flowersec.V4PoolHTTPSTransport` | type |
-| `flowersec.V4PoolHTTPSTransportCharge` | func |
-| `flowersec.V4PoolIdentityRestorer` | type |
-| `flowersec.V4PoolLeaseDecoder` | type |
-| `flowersec.V4PoolMaterialBundle` | type |
-| `flowersec.V4PoolMaterialDecoder` | type |
-| `flowersec.V4PoolMaterialDecoderCharge` | func |
-| `flowersec.V4PoolMaterialDecoderConfig` | type |
-| `flowersec.V4PoolResultDecoder` | type |
-| `flowersec.V4PoolResultDecoderCharge` | func |
-| `flowersec.V4PoolResultDecoderConfig` | type |
-| `flowersec.V4PoolSessionInput` | type |
-| `flowersec.V4PoolSourceCharge` | func |
-| `flowersec.V4PoolSourceConfig` | type |
-| `flowersec.V4PoolSpendFacts` | type |
-| `flowersec.V4PreauthorizedPoolSource` | type |
-| `flowersec.V4PreparedCarrier` | type |
-| `flowersec.V4PreparedCarrierCharge` | func |
-| `flowersec.V4PreparedCarrierConfig` | type |
-| `flowersec.V4ProviderBytes` | const |
-| `flowersec.V4QueryBinding` | type |
-| `flowersec.V4RPCServicesConfig` | type |
-| `flowersec.V4RPCServicesRequirements` | func |
-| `flowersec.V4RawStreamHandlerConfig` | type |
-| `flowersec.V4RekeyPhaseBudgets` | type |
-| `flowersec.V4RequiredGuarantees` | type |
-| `flowersec.V4ResourceAccount` | type |
-| `flowersec.V4ResourceAccountKey` | type |
-| `flowersec.V4ResourceAccountKind` | type |
-| `flowersec.V4ResourceConfig` | type |
-| `flowersec.V4ResourceOwnerKey` | type |
-| `flowersec.V4ResourceReference` | type |
-| `flowersec.V4ResourceRequest` | type |
-| `flowersec.V4ResourceRoot` | type |
-| `flowersec.V4ResourceVector` | type |
-| `flowersec.V4SDKBytes` | const |
-| `flowersec.V4SQLiteBacking` | type |
-| `flowersec.V4SQLiteBackingCharge` | func |
-| `flowersec.V4SQLiteContinuity` | type |
-| `flowersec.V4SQLiteIdentity` | type |
-| `flowersec.V4SQLiteLimits` | type |
-| `flowersec.V4SQLiteLiveAuthority` | type |
-| `flowersec.V4SQLiteLiveMaintenance` | type |
-| `flowersec.V4SQLiteLiveMaintenanceCharge` | func |
-| `flowersec.V4SQLiteLiveSpendCharges` | func |
-| `flowersec.V4SQLiteLiveSpendRead` | type |
-| `flowersec.V4SQLiteLiveSpendReadCharge` | func |
-| `flowersec.V4SQLitePoolAuthority` | type |
-| `flowersec.V4SQLitePoolSpendCharge` | func |
-| `flowersec.V4SQLiteStore` | type |
-| `flowersec.V4SQLiteStoreCharge` | func |
-| `flowersec.V4SQLiteTopUpAuthority` | type |
-| `flowersec.V4SQLiteTopUpConfig` | type |
-| `flowersec.V4SQLiteTopUpJournal` | type |
-| `flowersec.V4SQLiteTopUpJournalCharge` | func |
-| `flowersec.V4ServeConfig` | type |
-| `flowersec.V4ServeGroup` | type |
-| `flowersec.V4ServerToClient` | const |
-| `flowersec.V4ServiceBinding` | type |
-| `flowersec.V4ServiceClient` | type |
-| `flowersec.V4ServiceRegistry` | type |
-| `flowersec.V4ServiceRegistryCharge` | func |
-| `flowersec.V4ServiceRegistryConfig` | type |
-| `flowersec.V4Session` | type |
-| `flowersec.V4SessionAccount` | const |
-| `flowersec.V4SessionAdmissionConfig` | type |
-| `flowersec.V4SessionAdmissionRequirements` | func |
-| `flowersec.V4SessionCoreConfig` | type |
-| `flowersec.V4SessionInfo` | type |
-| `flowersec.V4SessionPlan` | type |
-| `flowersec.V4SessionPlanCharge` | func |
-| `flowersec.V4SessionPlanConfig` | type |
-| `flowersec.V4SessionPlanFactory` | type |
-| `flowersec.V4SessionPlanFactory.Create` | method |
-| `flowersec.V4SessionRekeyInProgress` | const |
-| `flowersec.V4SessionResourceScope` | type |
-| `flowersec.V4SessionStreamConfig` | type |
-| `flowersec.V4SessionStreamHandlerConfig` | type |
-| `flowersec.V4SessionTimeUnavailable` | const |
-| `flowersec.V4Sessions` | const |
-| `flowersec.V4SharedDiscardPolicy` | type |
-| `flowersec.V4SignedMap` | type |
-| `flowersec.V4SignedMapCodec` | type |
-| `flowersec.V4SourceConnectConfig` | type |
-| `flowersec.V4SourceLiveIssuance` | type |
-| `flowersec.V4SourcePreparationCharge` | func |
-| `flowersec.V4SpendConsumed` | const |
-| `flowersec.V4SpendReceipt` | type |
-| `flowersec.V4SpendSpending` | const |
-| `flowersec.V4SpendState` | type |
-| `flowersec.V4StaticDH` | type |
-| `flowersec.V4StorageFormatBackend` | const |
-| `flowersec.V4StorageFormatError` | type |
-| `flowersec.V4StorageFormatIdentity` | const |
-| `flowersec.V4StorageFormatManifest` | const |
-| `flowersec.V4StorageFormatNewer` | const |
-| `flowersec.V4StorageFormatOlder` | const |
-| `flowersec.V4StorageFormatProjection` | type |
-| `flowersec.V4StorageFormatReason` | type |
-| `flowersec.V4StorageFormatRevisionConflict` | const |
-| `flowersec.V4StorageFormatState` | const |
-| `flowersec.V4StorageRevision` | type |
-| `flowersec.V4StreamHandlerPlan` | type |
-| `flowersec.V4StreamHandlerPlanCharge` | func |
-| `flowersec.V4StreamHandlerPlanConfig` | type |
-| `flowersec.V4StreamOwnership` | type |
-| `flowersec.V4StreamTerminationPolicy` | type |
-| `flowersec.V4TLSHandshakes` | const |
-| `flowersec.V4Tasks` | const |
-| `flowersec.V4TenantAccount` | const |
-| `flowersec.V4TimeInterval` | type |
-| `flowersec.V4Timers` | const |
-| `flowersec.V4TopUpAccess` | type |
-| `flowersec.V4TopUpAcked` | const |
-| `flowersec.V4TopUpControlTransport` | type |
-| `flowersec.V4TopUpEntryFacts` | type |
-| `flowersec.V4TopUpError` | type |
-| `flowersec.V4TopUpErrorCode` | type |
-| `flowersec.V4TopUpErrorCodeCapacityExhausted` | const |
-| `flowersec.V4TopUpErrorCodeConfigurationCapacity` | const |
-| `flowersec.V4TopUpErrorCodeFutureGeneration` | const |
-| `flowersec.V4TopUpErrorCodeFutureOperation` | const |
-| `flowersec.V4TopUpErrorCodeOperationConflict` | const |
-| `flowersec.V4TopUpErrorCodePermissionDenied` | const |
-| `flowersec.V4TopUpErrorCodeRelinkRequired` | const |
-| `flowersec.V4TopUpErrorCodeSequenceGap` | const |
-| `flowersec.V4TopUpErrorCodeSourceContractInvalid` | const |
-| `flowersec.V4TopUpErrorCodeSourceExhausted` | const |
-| `flowersec.V4TopUpErrorCodeSourceResetRequired` | const |
-| `flowersec.V4TopUpErrorCodeSourceStateUnknown` | const |
-| `flowersec.V4TopUpErrorCodeSourceUnavailable` | const |
-| `flowersec.V4TopUpErrorCodeSpentUnknown` | const |
-| `flowersec.V4TopUpErrorCodeStaleGeneration` | const |
-| `flowersec.V4TopUpErrorCodeStaleOperation` | const |
-| `flowersec.V4TopUpErrorCodeTopUpRequestExpired` | const |
-| `flowersec.V4TopUpErrorScope` | type |
-| `flowersec.V4TopUpErrorScopeOperation` | const |
-| `flowersec.V4TopUpErrorScopeRequest` | const |
-| `flowersec.V4TopUpErrorScopeSource` | const |
-| `flowersec.V4TopUpExchangeResult` | type |
-| `flowersec.V4TopUpFailure` | type |
-| `flowersec.V4TopUpFenceAuthority` | type |
-| `flowersec.V4TopUpFenceProvider` | type |
-| `flowersec.V4TopUpHandle` | type |
-| `flowersec.V4TopUpIdentityProvider` | type |
-| `flowersec.V4TopUpInstalled` | const |
-| `flowersec.V4TopUpOptions` | type |
-| `flowersec.V4TopUpPending` | const |
-| `flowersec.V4TopUpPermanentFenceEvidence` | type |
-| `flowersec.V4TopUpPermanentFenceReceipt` | type |
-| `flowersec.V4TopUpRecoveryResult` | type |
-| `flowersec.V4TopUpRequestFacts` | type |
-| `flowersec.V4TopUpResponseFacts` | type |
-| `flowersec.V4TopUpResult` | type |
-| `flowersec.V4TopUpServerSnapshot` | type |
-| `flowersec.V4TopUpState` | type |
-| `flowersec.V4TopUpTerminal` | const |
-| `flowersec.V4TopUpTerminalEvidence` | type |
-| `flowersec.V4TopUpWireResult` | type |
-| `flowersec.V4TopUpWireResultCapacityExhausted` | const |
-| `flowersec.V4TopUpWireResultConfigurationCapacity` | const |
-| `flowersec.V4TopUpWireResultFutureGeneration` | const |
-| `flowersec.V4TopUpWireResultFutureOperation` | const |
-| `flowersec.V4TopUpWireResultOperationConflict` | const |
-| `flowersec.V4TopUpWireResultPermissionDenied` | const |
-| `flowersec.V4TopUpWireResultRelinkRequired` | const |
-| `flowersec.V4TopUpWireResultReplay` | const |
-| `flowersec.V4TopUpWireResultSequenceGap` | const |
-| `flowersec.V4TopUpWireResultSourceContractInvalid` | const |
-| `flowersec.V4TopUpWireResultSourceExhausted` | const |
-| `flowersec.V4TopUpWireResultSourceResetRequired` | const |
-| `flowersec.V4TopUpWireResultSourceStateUnknown` | const |
-| `flowersec.V4TopUpWireResultSourceUnavailable` | const |
-| `flowersec.V4TopUpWireResultSpentUnknown` | const |
-| `flowersec.V4TopUpWireResultStaleGeneration` | const |
-| `flowersec.V4TopUpWireResultStaleOperation` | const |
-| `flowersec.V4TopUpWireResultSuccess` | const |
-| `flowersec.V4TopUpWireResultTopUpRequestExpired` | const |
-| `flowersec.V4TopUpWriteAction` | type |
-| `flowersec.V4TopUpWriteActionNone` | const |
-| `flowersec.V4TopUpWriteActionTerminal` | const |
-| `flowersec.V4UnaryCodec` | type |
-| `flowersec.V4UnaryMethod` | type |
-| `flowersec.V4UnaryRegistration` | type |
-| `flowersec.V4UnaryRequest` | type |
-| `flowersec.V4UnaryRequest.MaintenanceOwner` | method |
-| `flowersec.V4UnaryRequest.ResponsePublication` | method |
-| `flowersec.V4UnaryResponse` | type |
-| `flowersec.V4UnaryResultDecoder` | type |
-| `flowersec.V4VerificationContinuity` | type |
-| `flowersec.V4VerificationNamespaces` | type |
-| `flowersec.V4VerificationNamespacesCharge` | func |
-| `flowersec.V4VerificationNamespacesConfig` | type |
-| `flowersec.V4WorkClass` | type |
-| `flowersec.V4WorkResident` | const |
-| `flowersec.V4WorkShort` | const |
-| `flowersec.V4WorkSlots` | const |
+| `flowersec.AdmissionOffer` | type |
+| `flowersec.ApplicationBinding` | type |
+| `flowersec.ApplicationExecutor` | type |
+| `flowersec.ApplicationExecutorCharge` | func |
+| `flowersec.ApplicationExecutorConfig` | type |
+| `flowersec.ApplicationIdentity` | type |
+| `flowersec.ApplicationIdentityBytesConfig` | type |
+| `flowersec.ApplicationIdentityCharge` | func |
+| `flowersec.ApplicationIdentityConfig` | type |
+| `flowersec.ApplicationLease` | type |
+| `flowersec.ArtifactLease` | type |
+| `flowersec.ArtifactLeaseBytesConfig` | type |
+| `flowersec.ArtifactLeaseCharge` | func |
+| `flowersec.ArtifactLeaseConfig` | type |
+| `flowersec.ConnectionMaterial` | type |
+| `flowersec.AuthenticatedRequestContext` | type |
+| `flowersec.AuthorizationAuthorized` | const |
+| `flowersec.AuthorizationDenied` | const |
+| `flowersec.AuthorizationOutcome` | type |
+| `flowersec.AuthorizationUnknown` | const |
+| `flowersec.AuthorizeApplicationResult` | type |
+| `flowersec.AutomaticLivenessPolicy` | type |
+| `flowersec.CarrierAttemptBudget` | type |
+| `flowersec.CarrierPreparationRequest` | type |
+| `flowersec.ClientToServer` | const |
+| `flowersec.Clock` | type |
+| `flowersec.ClockMark` | type |
+| `flowersec.ClockProfile` | type |
+| `flowersec.ClockRate` | type |
+| `flowersec.ClockTick` | type |
+| `flowersec.ConnectOptions` | type |
+| `flowersec.ConnectionGuarantees` | type |
+| `flowersec.ConnectionMaterialCharge` | func |
+| `flowersec.Connections` | const |
+| `flowersec.ConsumerCarrierFactory` | type |
+| `flowersec.ContractQueryMethod` | type |
+| `flowersec.ContractRoutesConfig` | type |
+| `flowersec.CredentialPolicy` | type |
+| `flowersec.CredentialScope` | type |
+| `flowersec.CredentialSubscriptionsCharge` | func |
+| `flowersec.CredentialValidation` | type |
+| `flowersec.Deadline` | type |
+| `flowersec.DecodeContext` | type |
+| `flowersec.Direction` | type |
+| `flowersec.DirectionAccount` | const |
+| `flowersec.DiskBytes` | const |
+| `flowersec.DrainDeadlineAborted` | const |
+| `flowersec.DrainFailed` | const |
+| `flowersec.DrainOutcome` | type |
+| `flowersec.DrainPending` | const |
+| `flowersec.DrainResult` | type |
+| `flowersec.Drained` | const |
+| `flowersec.DurableRestore` | const |
+| `flowersec.EngineResourceOptions` | type |
+| `flowersec.EnvironmentAccount` | const |
+| `flowersec.EnvironmentCharge` | func |
+| `flowersec.EnvironmentConfig` | type |
+| `flowersec.EnvironmentSnapshot` | type |
+| `flowersec.EstablishmentCharge` | func |
+| `flowersec.EstablishmentLimits` | type |
+| `flowersec.FeatureEnvelope` | type |
+| `flowersec.HTTPSBootstrapCharge` | func |
+| `flowersec.HTTPSBootstrapConfig` | type |
+| `flowersec.HelloLimits` | type |
+| `flowersec.HelloPolicy` | type |
+| `flowersec.IdentitySigner` | type |
+| `flowersec.InitialConfig` | type |
+| `flowersec.InitialHello` | type |
+| `flowersec.InitialLimits` | type |
+| `flowersec.InitialMessages` | type |
+| `flowersec.IssuerPermission` | type |
+| `flowersec.Items` | const |
+| `flowersec.LiveActivationFields` | type |
+| `flowersec.LiveMaintenanceConfig` | type |
+| `flowersec.LiveMaintenanceStatus` | type |
+| `flowersec.LiveNamespace` | type |
+| `flowersec.LiveProofVerification` | type |
+| `flowersec.LiveSessionInput` | type |
+| `flowersec.LiveSpendOwner` | type |
+| `flowersec.LiveSpendReadAccess` | type |
+| `flowersec.LiveSpendReadTarget` | type |
+| `flowersec.LiveSpendRetirement` | type |
+| `flowersec.LiveSpendRetirementPolicy` | type |
+| `flowersec.LivenessResult` | type |
+| `flowersec.MaintenanceIngressPolicy` | type |
+| `flowersec.MaintenanceMessagePolicy` | type |
+| `flowersec.MaintenanceReserve` | type |
+| `flowersec.MapSigner` | type |
+| `flowersec.MaterialAcquisitionCharge` | func |
+| `flowersec.MaterialConnectConfig` | type |
+| `flowersec.MaterialGeneration` | type |
+| `flowersec.ConnectionMaterialSource` | type |
+| `flowersec.MaterialLeaseRequest` | type |
+| `flowersec.MaterialPool` | type |
+| `flowersec.MaterialPoolCharge` | func |
+| `flowersec.MaterialPoolConfig` | type |
+| `flowersec.MaterialRequirements` | type |
+| `flowersec.MethodRoutes` | type |
+| `flowersec.NamespaceAllocation` | type |
+| `flowersec.NamespaceBootstrapCharge` | func |
+| `flowersec.NamespaceBootstrapLimits` | type |
+| `flowersec.NamespaceBootstrapProvider` | type |
+| `flowersec.NamespaceBootstrapRequest` | type |
+| `flowersec.NamespaceContent` | type |
+| `flowersec.NamespaceContinuityLimits` | type |
+| `flowersec.NamespaceContinuityScope` | type |
+| `flowersec.NamespaceContinuityStore` | type |
+| `flowersec.NamespaceContinuityVersion` | type |
+| `flowersec.NamespaceDurabilityCharge` | func |
+| `flowersec.NamespaceDurabilityConfig` | type |
+| `flowersec.NamespaceOnlineBootstrap` | type |
+| `flowersec.NamespaceRules` | type |
+| `flowersec.NamespaceTrustCharge` | func |
+| `flowersec.NamespaceTrustLimits` | type |
+| `flowersec.NamespaceTrustRoot` | type |
+| `flowersec.NamespaceTrustStore` | type |
+| `flowersec.NativeHandles` | const |
+| `flowersec.OnlineBootstrap` | const |
+| `flowersec.OpenLimits` | type |
+| `flowersec.OperationOptions` | type |
+| `flowersec.PoolAccount` | const |
+| `flowersec.PoolControlResultDecoder` | type |
+| `flowersec.PoolHTTPSConfig` | type |
+| `flowersec.PoolHTTPSTransport` | type |
+| `flowersec.PoolHTTPSTransportCharge` | func |
+| `flowersec.PoolIdentityRestorer` | type |
+| `flowersec.PoolLeaseDecoder` | type |
+| `flowersec.PoolMaterialBundle` | type |
+| `flowersec.PoolMaterialDecoder` | type |
+| `flowersec.PoolMaterialDecoderCharge` | func |
+| `flowersec.PoolMaterialDecoderConfig` | type |
+| `flowersec.PoolResultDecoder` | type |
+| `flowersec.PoolResultDecoderCharge` | func |
+| `flowersec.PoolResultDecoderConfig` | type |
+| `flowersec.PoolSessionInput` | type |
+| `flowersec.PoolSourceCharge` | func |
+| `flowersec.PoolSourceConfig` | type |
+| `flowersec.PoolSpendFacts` | type |
+| `flowersec.PreauthorizedPoolSource` | type |
+| `flowersec.PreparedCarrier` | type |
+| `flowersec.PreparedCarrierCharge` | func |
+| `flowersec.PreparedCarrierConfig` | type |
+| `flowersec.PreparedTunnelServerAllowProvider` | type |
+| `flowersec.ProviderBytes` | const |
+| `flowersec.QueryBinding` | type |
+| `flowersec.RPCServicesConfig` | type |
+| `flowersec.RPCServicesRequirements` | func |
+| `flowersec.RawStreamHandlerConfig` | type |
+| `flowersec.RekeyPhaseBudgets` | type |
+| `flowersec.RequiredGuarantees` | type |
+| `flowersec.ResourceAccount` | type |
+| `flowersec.ResourceAccountKey` | type |
+| `flowersec.ResourceAccountKind` | type |
+| `flowersec.ResourceConfig` | type |
+| `flowersec.ResourceOwnerKey` | type |
+| `flowersec.ResourceReference` | type |
+| `flowersec.ResourceRequest` | type |
+| `flowersec.ResourceRoot` | type |
+| `flowersec.ResourceVector` | type |
+| `flowersec.SDKBytes` | const |
+| `flowersec.SQLiteBacking` | type |
+| `flowersec.SQLiteBackingCharge` | func |
+| `flowersec.SQLiteContinuity` | type |
+| `flowersec.SQLiteIdentity` | type |
+| `flowersec.SQLiteLimits` | type |
+| `flowersec.SQLiteLiveAuthority` | type |
+| `flowersec.SQLiteLiveMaintenance` | type |
+| `flowersec.SQLiteLiveMaintenanceCharge` | func |
+| `flowersec.SQLiteLiveSpendCharges` | func |
+| `flowersec.SQLiteLiveSpendRead` | type |
+| `flowersec.SQLiteLiveSpendReadCharge` | func |
+| `flowersec.SQLitePoolAuthority` | type |
+| `flowersec.SQLitePoolSpendCharge` | func |
+| `flowersec.SQLiteStore` | type |
+| `flowersec.SQLiteStoreCharge` | func |
+| `flowersec.SQLiteTopUpAuthority` | type |
+| `flowersec.SQLiteTopUpConfig` | type |
+| `flowersec.SQLiteTopUpJournal` | type |
+| `flowersec.SQLiteTopUpJournalCharge` | func |
+| `flowersec.ServeConfig` | type |
+| `flowersec.ServeGroup` | type |
+| `flowersec.ServerToClient` | const |
+| `flowersec.ServiceBinding` | type |
+| `flowersec.ServiceClient` | type |
+| `flowersec.ServiceRegistry` | type |
+| `flowersec.ServiceRegistryCharge` | func |
+| `flowersec.ServiceRegistryConfig` | type |
+| `flowersec.Session` | type |
+| `flowersec.SessionAccount` | const |
+| `flowersec.SessionAdmissionConfig` | type |
+| `flowersec.SessionAdmissionRequirements` | func |
+| `flowersec.SessionCoreConfig` | type |
+| `flowersec.SessionInfo` | type |
+| `flowersec.SessionPlan` | type |
+| `flowersec.SessionPlanCharge` | func |
+| `flowersec.SessionPlanConfig` | type |
+| `flowersec.SessionPlanFactory` | type |
+| `flowersec.SessionPlanFactory.Create` | method |
+| `flowersec.SessionRekeyInProgress` | const |
+| `flowersec.SessionResourceScope` | type |
+| `flowersec.SessionStreamConfig` | type |
+| `flowersec.SessionStreamHandlerConfig` | type |
+| `flowersec.SessionTimeUnavailable` | const |
+| `flowersec.Sessions` | const |
+| `flowersec.SharedDiscardPolicy` | type |
+| `flowersec.SignedMap` | type |
+| `flowersec.SignedMapCodec` | type |
+| `flowersec.SourceConnectConfig` | type |
+| `flowersec.SourceLiveIssuance` | type |
+| `flowersec.SourcePreparationCharge` | func |
+| `flowersec.PoolSpendObservation` | type |
+| `(*flowersec.PoolSpendObservation).Snapshot` | method |
+| `flowersec.PoolSpendStatus` | type |
+| `flowersec.SpendConsumed` | const |
+| `flowersec.SpendReceipt` | type |
+| `flowersec.SpendSpending` | const |
+| `flowersec.SpendState` | type |
+| `flowersec.StaticDH` | type |
+| `flowersec.StorageFormatBackend` | const |
+| `flowersec.StorageFormatError` | type |
+| `flowersec.StorageFormatIdentity` | const |
+| `flowersec.StorageFormatManifest` | const |
+| `flowersec.StorageFormatNewer` | const |
+| `flowersec.StorageFormatOlder` | const |
+| `flowersec.StorageFormatProjection` | type |
+| `flowersec.StorageFormatReason` | type |
+| `flowersec.StorageFormatRevisionConflict` | const |
+| `flowersec.StorageFormatState` | const |
+| `flowersec.StorageRevision` | type |
+| `flowersec.StreamHandlerPlan` | type |
+| `flowersec.StreamHandlerPlanCharge` | func |
+| `flowersec.StreamHandlerPlanConfig` | type |
+| `flowersec.StreamOwnership` | type |
+| `flowersec.StreamTerminationPolicy` | type |
+| `flowersec.TLSHandshakes` | const |
+| `flowersec.Tasks` | const |
+| `flowersec.TenantAccount` | const |
+| `flowersec.TimeInterval` | type |
+| `flowersec.Timers` | const |
+| `flowersec.TopUpAccess` | type |
+| `flowersec.TopUpAcked` | const |
+| `flowersec.TopUpControlTransport` | type |
+| `flowersec.TopUpEntryFacts` | type |
+| `flowersec.TopUpError` | type |
+| `flowersec.TopUpErrorCode` | type |
+| `flowersec.TopUpErrorCodeCapacityExhausted` | const |
+| `flowersec.TopUpErrorCodeConfigurationCapacity` | const |
+| `flowersec.TopUpErrorCodeFutureGeneration` | const |
+| `flowersec.TopUpErrorCodeFutureOperation` | const |
+| `flowersec.TopUpErrorCodeOperationConflict` | const |
+| `flowersec.TopUpErrorCodePermissionDenied` | const |
+| `flowersec.TopUpErrorCodeRelinkRequired` | const |
+| `flowersec.TopUpErrorCodeSequenceGap` | const |
+| `flowersec.TopUpErrorCodeSourceContractInvalid` | const |
+| `flowersec.TopUpErrorCodeSourceExhausted` | const |
+| `flowersec.TopUpErrorCodeSourceResetRequired` | const |
+| `flowersec.TopUpErrorCodeSourceStateUnknown` | const |
+| `flowersec.TopUpErrorCodeSourceUnavailable` | const |
+| `flowersec.TopUpErrorCodeSpentUnknown` | const |
+| `flowersec.TopUpErrorCodeStaleGeneration` | const |
+| `flowersec.TopUpErrorCodeStaleOperation` | const |
+| `flowersec.TopUpErrorCodeTopUpRequestExpired` | const |
+| `flowersec.TopUpErrorScope` | type |
+| `flowersec.TopUpErrorScopeOperation` | const |
+| `flowersec.TopUpErrorScopeRequest` | const |
+| `flowersec.TopUpErrorScopeSource` | const |
+| `flowersec.TopUpExchangeResult` | type |
+| `flowersec.TopUpFailure` | type |
+| `flowersec.TopUpFenceAuthority` | type |
+| `flowersec.TopUpFenceProvider` | type |
+| `flowersec.TopUpHandle` | type |
+| `flowersec.TopUpIdentityProvider` | type |
+| `flowersec.TopUpInstalled` | const |
+| `flowersec.TopUpOptions` | type |
+| `flowersec.TopUpPending` | const |
+| `flowersec.TopUpPermanentFenceEvidence` | type |
+| `flowersec.TopUpPermanentFenceReceipt` | type |
+| `flowersec.TopUpRecoveryResult` | type |
+| `flowersec.TopUpRequestFacts` | type |
+| `flowersec.TopUpResponseFacts` | type |
+| `flowersec.TopUpResult` | type |
+| `flowersec.TopUpServerSnapshot` | type |
+| `flowersec.TopUpState` | type |
+| `flowersec.TopUpTerminal` | const |
+| `flowersec.TopUpTerminalEvidence` | type |
+| `flowersec.TopUpWireResult` | type |
+| `flowersec.TopUpWireResultCapacityExhausted` | const |
+| `flowersec.TopUpWireResultConfigurationCapacity` | const |
+| `flowersec.TopUpWireResultFutureGeneration` | const |
+| `flowersec.TopUpWireResultFutureOperation` | const |
+| `flowersec.TopUpWireResultOperationConflict` | const |
+| `flowersec.TopUpWireResultPermissionDenied` | const |
+| `flowersec.TopUpWireResultRelinkRequired` | const |
+| `flowersec.TopUpWireResultReplay` | const |
+| `flowersec.TopUpWireResultSequenceGap` | const |
+| `flowersec.TopUpWireResultSourceContractInvalid` | const |
+| `flowersec.TopUpWireResultSourceExhausted` | const |
+| `flowersec.TopUpWireResultSourceResetRequired` | const |
+| `flowersec.TopUpWireResultSourceStateUnknown` | const |
+| `flowersec.TopUpWireResultSourceUnavailable` | const |
+| `flowersec.TopUpWireResultSpentUnknown` | const |
+| `flowersec.TopUpWireResultStaleGeneration` | const |
+| `flowersec.TopUpWireResultStaleOperation` | const |
+| `flowersec.TopUpWireResultSuccess` | const |
+| `flowersec.TopUpWireResultTopUpRequestExpired` | const |
+| `flowersec.TopUpWriteAction` | type |
+| `flowersec.TopUpWriteActionNone` | const |
+| `flowersec.TopUpWriteActionTerminal` | const |
+| `flowersec.UnaryCodec` | type |
+| `flowersec.UnaryMethod` | type |
+| `flowersec.UnaryRegistration` | type |
+| `flowersec.UnaryRequest` | type |
+| `flowersec.UnaryRequest.MaintenanceOwner` | method |
+| `flowersec.UnaryRequest.ResponsePublication` | method |
+| `flowersec.UnaryResponse` | type |
+| `flowersec.UnaryResultDecoder` | type |
+| `flowersec.VerificationContinuity` | type |
+| `flowersec.VerificationNamespaces` | type |
+| `flowersec.VerificationNamespacesCharge` | func |
+| `flowersec.VerificationNamespacesConfig` | type |
+| `flowersec.WorkClass` | type |
+| `flowersec.WorkResident` | const |
+| `flowersec.WorkShort` | const |
+| `flowersec.WorkSlots` | const |
 | `flowersec.WriteOperation` | type |
 | `flowersec.WriteOptions` | type |
 | `flowersec.WritePhase` | type |
@@ -1273,363 +1649,365 @@ and is not implied by symbol availability.
 | `flowersec.WriteRunning` | const |
 | `flowersec.WriteTerminal` | const |
 
-`(*flowersec.V4Session).CleanupStatus` projects the original Session cleanup
+`(*flowersec.Session).CleanupStatus` projects the original Session cleanup
 observation. `flowersec.ErrCleanupIncomplete` means the fixed cleanup observation
 deadline elapsed while physical work remains owned and charged; later observations
 can report actual completion. Canceling one wait does not close or restart cleanup.
 
-## Go v4 owners and control adapters
+## Go owners and control adapters
 
 These entries expose bounded original owners, connection assembly, authenticated
 control transports, issuance authorities and read-only authorization facts. Each
 capability retains its own admission and lifecycle gates. A receipt or reconciled
 fact never grants callback dispatch or connection activation. See
-[Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+[Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
 
 | Symbol | Declaration |
 | --- | --- |
-| `(*flowersec.V4LiveAuthoritySource).AcquireLease` | method |
-| `(*flowersec.V4LiveAuthoritySource).Close` | method |
-| `(*flowersec.V4LiveAuthoritySource).GoString` | method |
-| `(*flowersec.V4LiveAuthoritySource).MarshalJSON` | method |
-| `(*flowersec.V4LiveAuthoritySource).PreparationNamespaceSet` | method |
-| `(*flowersec.V4LiveAuthoritySource).String` | method |
-| `(*flowersec.V4LiveAuthoritySource).WaitCleanup` | method |
-| `(*flowersec.V4MaterialAcquisition).Acquire` | method |
-| `(*flowersec.V4MaterialAcquisition).Close` | method |
-| `(*flowersec.V4MaterialAcquisition).WaitCleanup` | method |
-| `(*flowersec.V4Session).AcceptStream` | method |
-| `(*flowersec.V4StreamingResponse).SaveContent` | method |
+| `(*flowersec.LiveAuthoritySource).AcquireLease` | method |
+| `(*flowersec.LiveAuthoritySource).Close` | method |
+| `(*flowersec.LiveAuthoritySource).GoString` | method |
+| `(*flowersec.LiveAuthoritySource).MarshalJSON` | method |
+| `(*flowersec.LiveAuthoritySource).PreparationNamespaceSet` | method |
+| `(*flowersec.LiveAuthoritySource).String` | method |
+| `(*flowersec.LiveAuthoritySource).WaitCleanup` | method |
+| `(*flowersec.MaterialAcquisition).Acquire` | method |
+| `(*flowersec.MaterialAcquisition).Close` | method |
+| `(*flowersec.MaterialAcquisition).WaitCleanup` | method |
+| `(*flowersec.Session).AcceptStream` | method |
+| `(*flowersec.StreamingResponse).SaveContent` | method |
 | `flowersec.NewStreamMetadataFromBytes` | func |
-| `flowersec.NewV4ArtifactIssueSource` | func |
-| `flowersec.NewV4CarrierSet` | func |
-| `flowersec.NewV4LiveAuthorityMaterialAcquisition` | func |
-| `flowersec.NewV4LiveAuthoritySource` | func |
-| `flowersec.NewV4MaintenanceOwner` | func |
-| `flowersec.NewV4MaterialAcquisition` | func |
-| `flowersec.NewV4PreauthorizedPoolMaterialAcquisition` | func |
-| `flowersec.NewV4PreparedRelayMessages` | func |
-| `flowersec.NewV4PreparedRelayStream` | func |
-| `flowersec.NewV4RelayHop` | func |
-| `flowersec.NewV4RelayMessagePair` | func |
-| `flowersec.NewV4RelayPair` | func |
-| `flowersec.NewV4RelayParentProjection` | func |
-| `flowersec.NewV4SQLiteRelayAuthorityTable` | func |
-| `flowersec.NewV4SQLiteRelayAuthorityTableContext` | func |
-| `flowersec.NewV4TunnelAcceptedEntrance` | func |
-| `flowersec.NewV4TunnelServerAllowHTTPSService` | func |
-| `flowersec.NewV4TunnelServerAllowHTTPSTransport` | func |
-| `flowersec.NewV4TunnelServerAllowRecipient` | func |
-| `flowersec.NewV4TunnelServerAllowRegistration` | func |
-| `flowersec.V4AcceptedEntrance` | type |
-| `flowersec.V4ActivationAuthority` | type |
-| `flowersec.V4ActivationTrustBinding` | type |
-| `flowersec.V4ArtifactIssueSource` | type |
-| `flowersec.V4ArtifactIssueSourceCharge` | func |
-| `flowersec.V4ArtifactIssueSourceConfig` | type |
-| `flowersec.V4ArtifactIssueSourceTunnel` | type |
-| `flowersec.V4ArtifactLeaseTunnel` | type |
-| `flowersec.V4ArtifactLeaseTunnelBytes` | type |
-| `flowersec.V4CarrierEndpoint` | type |
-| `flowersec.V4CarrierSet` | type |
-| `flowersec.V4CarrierSetCharge` | func |
-| `flowersec.V4CarrierSetConfig` | type |
-| `flowersec.V4ContentObservation` | type |
-| `flowersec.V4IncomingStream` | type |
-| `flowersec.V4LiveAuthoritySource` | type |
-| `flowersec.V4LiveGrantPreparation` | type |
-| `flowersec.V4LiveServerAllowConfig` | type |
-| `flowersec.V4LiveTunnelAuthorizationProvider` | type |
-| `flowersec.V4MaintenanceOwnerCharge` | func |
-| `flowersec.V4MaterialAcquisition` | type |
-| `flowersec.V4MaterialNamespaceProvider` | type |
-| `flowersec.V4MaterialNamespaceSet` | type |
-| `flowersec.V4MaterialNamespaceSetProvider` | type |
-| `flowersec.V4PoolTunnelMaterial` | type |
-| `flowersec.V4PoolTunnelTrust` | type |
-| `flowersec.V4RawStreamMetadataContract` | type |
-| `flowersec.V4RawStreamMetadataField` | type |
-| `flowersec.V4RawStreamMetadataType` | type |
-| `flowersec.V4RelayClaimFacts` | type |
-| `flowersec.V4RelayClaimFields` | type |
-| `flowersec.V4RelayDeploymentBinding` | type |
-| `flowersec.V4RelayGrantIssuer` | type |
-| `flowersec.V4RelayGrantLimits` | type |
-| `flowersec.V4RelayHop` | type |
-| `flowersec.V4RelayHopCharges` | func |
-| `flowersec.V4RelayHopConfig` | type |
-| `flowersec.V4RelayHopReservations` | type |
-| `flowersec.V4RelayIssuerMapping` | type |
-| `flowersec.V4RelayMessagePair` | type |
-| `flowersec.V4RelayMessagePairCharge` | func |
-| `flowersec.V4RelayMessagePairConfig` | type |
-| `flowersec.V4RelayPair` | type |
-| `flowersec.V4RelayPairCharge` | func |
-| `flowersec.V4RelayPairConfig` | type |
-| `flowersec.V4RelayParentKey` | type |
-| `flowersec.V4RelayParentProjection` | type |
-| `flowersec.V4RelayParentProjectionBackingBytes` | func |
-| `flowersec.V4RelayParentSelection` | type |
-| `flowersec.V4SQLiteCommittedRelayLeg` | type |
-| `flowersec.V4SQLiteCommittedRelayLegCharge` | func |
-| `flowersec.V4SQLiteLiveRelayPublicationCharge` | func |
-| `flowersec.V4SQLiteLiveRelayPublicationConfig` | type |
-| `flowersec.V4SQLiteRelayAuthority` | type |
-| `flowersec.V4SQLiteRelayAuthorityCharge` | func |
-| `flowersec.V4SQLiteRelayAuthorityConfig` | type |
-| `flowersec.V4SQLiteRelayAuthorityTable` | type |
-| `flowersec.V4SQLiteRelayParentRegistration` | type |
-| `flowersec.V4SourceCarrierCharge` | func |
-| `flowersec.V4TunnelAcceptedEntranceRequirements` | func |
-| `flowersec.V4TunnelServerAllowConfig` | type |
-| `flowersec.V4TunnelServerAllowEndpoint` | type |
-| `flowersec.V4TunnelServerAllowHTTPSConfig` | type |
-| `flowersec.V4TunnelServerAllowHTTPSService` | type |
-| `flowersec.V4TunnelServerAllowHTTPSServiceCharge` | func |
-| `flowersec.V4TunnelServerAllowHTTPSServiceConfig` | type |
-| `flowersec.V4TunnelServerAllowHTTPSTransport` | type |
-| `flowersec.V4TunnelServerAllowHTTPSTransportCharge` | func |
-| `flowersec.V4TunnelServerAllowPrepared` | type |
-| `flowersec.V4TunnelServerAllowProvider` | type |
-| `flowersec.V4TunnelServerAllowRecipient` | type |
-| `flowersec.V4TunnelServerAllowRecipientCharge` | func |
-| `flowersec.V4TunnelServerAllowRegistration` | type |
-| `flowersec.V4TunnelServerAllowRegistrationCharges` | func |
-| `flowersec.V4TunnelServerAllowRegistrationConfig` | type |
-| `flowersec.V4TunnelServerAllowRequest` | type |
-| `(*controlplane.V4ArtifactIssuer).Close` | method |
-| `(*controlplane.V4ArtifactIssuer).GoString` | method |
-| `(*controlplane.V4ArtifactIssuer).IssueArtifactBytes` | method |
-| `(*controlplane.V4ArtifactIssuer).NamespaceClosure` | method |
-| `(*controlplane.V4ArtifactIssuer).String` | method |
-| `(*controlplane.V4ArtifactIssuer).WaitCleanup` | method |
-| `(*controlplane.V4LiveRelayRegistrationService).CaptureRelayLeg` | method |
-| `(*controlplane.V4LiveRelayRegistrationService).Close` | method |
-| `(*controlplane.V4LiveRelayRegistrationService).WaitCleanup` | method |
-| `controlplane.CreateV4SQLiteTopUpServer` | func |
-| `controlplane.DeriveV4LiveGrantPreparation` | func |
-| `controlplane.NewV4ArtifactIssueHTTPSService` | func |
-| `controlplane.NewV4ArtifactIssuer` | func |
-| `controlplane.NewV4LiveActivationPlan` | func |
-| `controlplane.NewV4LiveArtifactHost` | func |
-| `controlplane.NewV4LiveRelayRegistrationService` | func |
-| `controlplane.NewV4PoolActivationPlan` | func |
-| `controlplane.NewV4PoolBatchSigningIssuer` | func |
-| `controlplane.NewV4PoolRelayFactory` | func |
-| `controlplane.NewV4PoolService` | func |
-| `controlplane.NewV4SQLiteLiveRelayPublication` | func |
-| `controlplane.NewV4SQLitePoolRelayPublication` | func |
-| `controlplane.NewV4TopUpCodec` | func |
-| `controlplane.NewV4TunnelServerAllowHTTPSService` | func |
-| `controlplane.OpenV4SQLiteTopUpServer` | func |
-| `controlplane.V4ArtifactIssueAuthority` | type |
-| `controlplane.V4ArtifactIssueFacts` | type |
-| `controlplane.V4ArtifactIssueHTTPSConfig` | type |
-| `controlplane.V4ArtifactIssueHTTPSService` | type |
-| `controlplane.V4ArtifactIssueHTTPSServiceCharge` | func |
-| `controlplane.V4ArtifactIssuePermit` | type |
-| `controlplane.V4ArtifactIssueRequest` | type |
-| `controlplane.V4ArtifactIssueRetention` | type |
-| `controlplane.V4ArtifactIssuer` | type |
-| `controlplane.V4ArtifactIssuerCharge` | func |
-| `controlplane.V4ArtifactIssuerConfig` | type |
-| `controlplane.V4ArtifactRetentionSlot` | type |
-| `controlplane.V4ArtifactTunnelIssueConfig` | type |
-| `controlplane.V4ArtifactTunnelLegIssueConfig` | type |
-| `controlplane.V4AuthenticatedArtifactIssueClient` | func |
-| `controlplane.V4LiveActivationConfig` | type |
-| `controlplane.V4LiveActivationPlan` | type |
-| `controlplane.V4LiveActivationPlanCharge` | func |
-| `controlplane.V4LiveArtifactGrantConfig` | type |
-| `controlplane.V4LiveArtifactHost` | type |
-| `controlplane.V4LiveArtifactHostCharges` | func |
-| `controlplane.V4LiveArtifactHostConfig` | type |
-| `controlplane.V4LiveArtifactPolicy` | type |
-| `controlplane.V4LiveArtifactServerMaterial` | type |
-| `controlplane.V4LiveArtifactServerRegistration` | type |
-| `controlplane.V4LiveArtifactServerResolver` | type |
-| `controlplane.V4LiveArtifactTunnelConfig` | type |
-| `controlplane.V4LiveGrantIssuance` | type |
-| `controlplane.V4LiveGrantPreparationConfig` | type |
-| `controlplane.V4LiveGrantProjection` | type |
-| `controlplane.V4LiveRelayReadAccess` | type |
-| `controlplane.V4LiveRelayRegistrationService` | type |
-| `controlplane.V4LiveRelayRegistrationServiceCharges` | func |
-| `controlplane.V4LiveServerAllowConfig` | type |
-| `controlplane.V4LiveTunnelActivationConfig` | type |
-| `controlplane.V4PoolActivationConfig` | type |
-| `controlplane.V4PoolActivationPlan` | type |
-| `controlplane.V4PoolActivationPlanCapacity` | func |
-| `controlplane.V4PoolActivationPlanCharge` | func |
-| `controlplane.V4PoolAttemptLimits` | type |
-| `controlplane.V4PoolBatchIssuer` | type |
-| `controlplane.V4PoolBatchSigningConfig` | type |
-| `controlplane.V4PoolBatchSigningIssuer` | type |
-| `controlplane.V4PoolBatchSigningIssuerCharge` | func |
-| `controlplane.V4PoolIssuancePolicy` | type |
-| `controlplane.V4PoolIssueResult` | type |
-| `controlplane.V4PoolRelayFactory` | type |
-| `controlplane.V4PoolRelayFactoryCharge` | func |
-| `controlplane.V4PoolRelayFactoryConfig` | type |
-| `controlplane.V4PoolRelayPublicationFactory` | type |
-| `controlplane.V4PoolRelayRouteConfig` | type |
-| `controlplane.V4PoolService` | type |
-| `controlplane.V4PoolServiceCharge` | func |
-| `controlplane.V4PoolServiceConfig` | type |
-| `controlplane.V4PoolTunnelIssueConfig` | type |
-| `controlplane.V4SQLiteLiveRelayPublication` | type |
-| `controlplane.V4SQLiteLiveRelayPublicationCharge` | func |
-| `controlplane.V4SQLiteLiveRelayPublicationConfig` | type |
-| `controlplane.V4SQLitePoolRelayParent` | type |
-| `controlplane.V4SQLitePoolRelayPublication` | type |
-| `controlplane.V4SQLitePoolRelayPublicationCharge` | func |
-| `controlplane.V4SQLitePoolRelayPublicationConfig` | type |
-| `controlplane.V4SQLiteTopUpCommit` | type |
-| `controlplane.V4SQLiteTopUpServer` | type |
-| `controlplane.V4SQLiteTopUpServerAuthority` | type |
-| `controlplane.V4SQLiteTopUpServerCharge` | func |
-| `controlplane.V4SQLiteTopUpServerConfig` | type |
-| `controlplane.V4TopUpAccess` | type |
-| `controlplane.V4TopUpBatch` | type |
-| `controlplane.V4TopUpCodec` | type |
-| `controlplane.V4TopUpCodecBackingBytes` | func |
-| `controlplane.V4TopUpIssueEntry` | type |
-| `controlplane.V4TopUpRequestFacts` | type |
-| `controlplane.V4TopUpServerCommitted` | const |
-| `controlplane.V4TopUpServerEmpty` | const |
-| `controlplane.V4TopUpServerPending` | const |
-| `controlplane.V4TopUpServerRetired` | const |
-| `controlplane.V4TopUpServerSnapshot` | type |
-| `controlplane.V4TopUpServerTerminal` | const |
-| `controlplane.V4TopUpSourceFence` | type |
-| `controlplane.V4TunnelServerAllowHTTPSService` | type |
-| `controlplane.V4TunnelServerAllowHTTPSServiceCharge` | func |
-| `controlplane.V4TunnelServerAllowHTTPSServiceConfig` | type |
+| `flowersec.NewArtifactIssueSource` | func |
+| `flowersec.NewCarrierSet` | func |
+| `flowersec.NewLiveAuthorityMaterialAcquisition` | func |
+| `flowersec.NewLiveAuthoritySource` | func |
+| `flowersec.NewMaintenanceOwner` | func |
+| `flowersec.NewMaterialAcquisition` | func |
+| `flowersec.NewPreauthorizedPoolMaterialAcquisition` | func |
+| `flowersec.NewPreparedRelayMessages` | func |
+| `flowersec.NewPreparedRelayStream` | func |
+| `flowersec.NewRelayHop` | func |
+| `flowersec.NewRelayMessagePair` | func |
+| `flowersec.NewRelayPair` | func |
+| `flowersec.NewRelayParentProjection` | func |
+| `flowersec.NewSQLiteRelayAuthorityTable` | func |
+| `flowersec.NewSQLiteRelayAuthorityTableContext` | func |
+| `flowersec.NewTunnelAcceptedEntrance` | func |
+| `flowersec.NewTunnelServerAllowHTTPSService` | func |
+| `flowersec.NewTunnelServerAllowHTTPSTransport` | func |
+| `flowersec.NewTunnelServerAllowRecipient` | func |
+| `flowersec.NewTunnelServerAllowRegistration` | func |
+| `flowersec.AcceptedEntrance` | type |
+| `flowersec.ActivationAuthority` | type |
+| `flowersec.ActivationTrustBinding` | type |
+| `flowersec.ArtifactIssueSource` | type |
+| `flowersec.ArtifactIssueSourceCharge` | func |
+| `flowersec.ArtifactIssueSourceConfig` | type |
+| `flowersec.ArtifactIssueSourceTunnel` | type |
+| `flowersec.ArtifactLeaseTunnel` | type |
+| `flowersec.ArtifactLeaseTunnelBytes` | type |
+| `flowersec.CarrierEndpoint` | type |
+| `flowersec.CarrierSet` | type |
+| `flowersec.CarrierSetCharge` | func |
+| `flowersec.CarrierSetConfig` | type |
+| `flowersec.ContentObservation` | type |
+| `flowersec.AcceptedStream` | type |
+| `flowersec.IncomingStream` | type |
+| `flowersec.LiveAuthoritySource` | type |
+| `flowersec.LiveGrantPreparation` | type |
+| `flowersec.LiveServerAllowConfig` | type |
+| `flowersec.LiveTunnelAuthorizationProvider` | type |
+| `flowersec.MaintenanceOwnerCharge` | func |
+| `flowersec.MaterialAcquisition` | type |
+| `flowersec.MaterialNamespaceProvider` | type |
+| `flowersec.MaterialNamespaceSet` | type |
+| `flowersec.MaterialNamespaceSetProvider` | type |
+| `flowersec.PoolTunnelMaterial` | type |
+| `flowersec.PoolTunnelTrust` | type |
+| `flowersec.RawStreamMetadataContract` | type |
+| `flowersec.RawStreamMetadataField` | type |
+| `flowersec.RawStreamMetadataType` | type |
+| `flowersec.RelayClaimFacts` | type |
+| `flowersec.RelayClaimFields` | type |
+| `flowersec.RelayDeploymentBinding` | type |
+| `flowersec.RelayGrantIssuer` | type |
+| `flowersec.RelayGrantLimits` | type |
+| `flowersec.RelayHop` | type |
+| `flowersec.RelayHopCharges` | func |
+| `flowersec.RelayHopConfig` | type |
+| `flowersec.RelayHopReservations` | type |
+| `flowersec.RelayIssuerMapping` | type |
+| `flowersec.RelayMessagePair` | type |
+| `flowersec.RelayMessagePairCharge` | func |
+| `flowersec.RelayMessagePairConfig` | type |
+| `flowersec.RelayPair` | type |
+| `flowersec.RelayPairCharge` | func |
+| `flowersec.RelayPairConfig` | type |
+| `flowersec.RelayParentKey` | type |
+| `flowersec.RelayParentProjection` | type |
+| `flowersec.RelayParentProjectionBackingBytes` | func |
+| `flowersec.RelayParentSelection` | type |
+| `flowersec.SQLiteCommittedRelayLeg` | type |
+| `flowersec.SQLiteCommittedRelayLegCharge` | func |
+| `flowersec.SQLiteLiveRelayPublicationCharge` | func |
+| `flowersec.SQLiteLiveRelayPublicationConfig` | type |
+| `flowersec.SQLiteRelayAuthority` | type |
+| `flowersec.SQLiteRelayAuthorityCharge` | func |
+| `flowersec.SQLiteRelayAuthorityConfig` | type |
+| `flowersec.SQLiteRelayAuthorityTable` | type |
+| `flowersec.SQLiteRelayParentRegistration` | type |
+| `flowersec.SourceCarrierCharge` | func |
+| `flowersec.TunnelAcceptedEntranceRequirements` | func |
+| `flowersec.TunnelServerAllowConfig` | type |
+| `flowersec.TunnelServerAllowEndpoint` | type |
+| `flowersec.TunnelServerAllowHTTPSConfig` | type |
+| `flowersec.TunnelServerAllowHTTPSService` | type |
+| `flowersec.TunnelServerAllowHTTPSServiceCharge` | func |
+| `flowersec.TunnelServerAllowHTTPSServiceConfig` | type |
+| `flowersec.TunnelServerAllowHTTPSTransport` | type |
+| `flowersec.TunnelServerAllowHTTPSTransportCharge` | func |
+| `flowersec.TunnelServerAllowPrepared` | type |
+| `flowersec.TunnelServerAllowProvider` | type |
+| `flowersec.TunnelServerAllowPublication` | type |
+| `flowersec.TunnelServerAllowRecipient` | type |
+| `flowersec.TunnelServerAllowRecipientCharge` | func |
+| `flowersec.TunnelServerAllowRegistration` | type |
+| `flowersec.TunnelServerAllowRegistrationCharges` | func |
+| `flowersec.TunnelServerAllowRegistrationConfig` | type |
+| `flowersec.TunnelServerAllowRequest` | type |
+| `(*controlplane.ArtifactIssuer).Close` | method |
+| `(*controlplane.ArtifactIssuer).GoString` | method |
+| `(*controlplane.ArtifactIssuer).IssueArtifactBytes` | method |
+| `(*controlplane.ArtifactIssuer).NamespaceClosure` | method |
+| `(*controlplane.ArtifactIssuer).String` | method |
+| `(*controlplane.ArtifactIssuer).WaitCleanup` | method |
+| `(*controlplane.LiveRelayRegistrationService).CaptureRelayLeg` | method |
+| `(*controlplane.LiveRelayRegistrationService).Close` | method |
+| `(*controlplane.LiveRelayRegistrationService).WaitCleanup` | method |
+| `controlplane.CreateSQLiteTopUpServer` | func |
+| `controlplane.DeriveLiveGrantPreparation` | func |
+| `controlplane.NewArtifactIssueHTTPSService` | func |
+| `controlplane.NewArtifactIssuer` | func |
+| `controlplane.NewLiveActivationPlan` | func |
+| `controlplane.NewLiveArtifactHost` | func |
+| `controlplane.NewLiveRelayRegistrationService` | func |
+| `controlplane.NewPoolActivationPlan` | func |
+| `controlplane.NewPoolBatchSigningIssuer` | func |
+| `controlplane.NewPoolRelayFactory` | func |
+| `controlplane.NewPoolService` | func |
+| `controlplane.NewSQLiteLiveRelayPublication` | func |
+| `controlplane.NewSQLitePoolRelayPublication` | func |
+| `controlplane.NewTopUpCodec` | func |
+| `controlplane.NewTunnelServerAllowHTTPSService` | func |
+| `controlplane.OpenSQLiteTopUpServer` | func |
+| `controlplane.ArtifactIssueAuthority` | type |
+| `controlplane.ArtifactIssueFacts` | type |
+| `controlplane.ArtifactIssueHTTPSConfig` | type |
+| `controlplane.ArtifactIssueHTTPSService` | type |
+| `controlplane.ArtifactIssueHTTPSServiceCharge` | func |
+| `controlplane.ArtifactIssuePermit` | type |
+| `controlplane.ArtifactIssueRequest` | type |
+| `controlplane.ArtifactIssueRetention` | type |
+| `controlplane.ArtifactIssuer` | type |
+| `controlplane.ArtifactIssuerCharge` | func |
+| `controlplane.ArtifactIssuerConfig` | type |
+| `controlplane.ArtifactRetentionSlot` | type |
+| `controlplane.ArtifactTunnelIssueConfig` | type |
+| `controlplane.ArtifactTunnelLegIssueConfig` | type |
+| `controlplane.AuthenticatedArtifactIssueClient` | func |
+| `controlplane.LiveActivationConfig` | type |
+| `controlplane.LiveActivationPlan` | type |
+| `controlplane.LiveActivationPlanCharge` | func |
+| `controlplane.LiveArtifactGrantConfig` | type |
+| `controlplane.LiveArtifactHost` | type |
+| `controlplane.LiveArtifactHostCharges` | func |
+| `controlplane.LiveArtifactHostConfig` | type |
+| `controlplane.LiveArtifactPolicy` | type |
+| `controlplane.LiveArtifactServerMaterial` | type |
+| `controlplane.LiveArtifactServerRegistration` | type |
+| `controlplane.LiveArtifactServerResolver` | type |
+| `controlplane.LiveArtifactTunnelConfig` | type |
+| `controlplane.LiveGrantIssuance` | type |
+| `controlplane.LiveGrantPreparationConfig` | type |
+| `controlplane.LiveGrantProjection` | type |
+| `controlplane.LiveRelayReadAccess` | type |
+| `controlplane.LiveRelayRegistrationService` | type |
+| `controlplane.LiveRelayRegistrationServiceCharges` | func |
+| `controlplane.LiveServerAllowConfig` | type |
+| `controlplane.LiveTunnelActivationConfig` | type |
+| `controlplane.PoolActivationConfig` | type |
+| `controlplane.PoolActivationPlan` | type |
+| `controlplane.PoolActivationPlanCapacity` | func |
+| `controlplane.PoolActivationPlanCharge` | func |
+| `controlplane.PoolAttemptLimits` | type |
+| `controlplane.PoolBatchIssuer` | type |
+| `controlplane.PoolBatchSigningConfig` | type |
+| `controlplane.PoolBatchSigningIssuer` | type |
+| `controlplane.PoolBatchSigningIssuerCharge` | func |
+| `controlplane.PoolIssuancePolicy` | type |
+| `controlplane.PoolIssueResult` | type |
+| `controlplane.PoolRelayFactory` | type |
+| `controlplane.PoolRelayFactoryCharge` | func |
+| `controlplane.PoolRelayFactoryConfig` | type |
+| `controlplane.PoolRelayPublicationFactory` | type |
+| `controlplane.PoolRelayRouteConfig` | type |
+| `controlplane.PoolService` | type |
+| `controlplane.PoolServiceCharge` | func |
+| `controlplane.PoolServiceConfig` | type |
+| `controlplane.PoolTunnelIssueConfig` | type |
+| `controlplane.SQLiteLiveRelayPublication` | type |
+| `controlplane.SQLiteLiveRelayPublicationCharge` | func |
+| `controlplane.SQLiteLiveRelayPublicationConfig` | type |
+| `controlplane.SQLitePoolRelayParent` | type |
+| `controlplane.SQLitePoolRelayPublication` | type |
+| `controlplane.SQLitePoolRelayPublicationCharge` | func |
+| `controlplane.SQLitePoolRelayPublicationConfig` | type |
+| `controlplane.SQLiteTopUpCommit` | type |
+| `controlplane.SQLiteTopUpServer` | type |
+| `controlplane.SQLiteTopUpServerAuthority` | type |
+| `controlplane.SQLiteTopUpServerCharge` | func |
+| `controlplane.SQLiteTopUpServerConfig` | type |
+| `controlplane.TopUpAccess` | type |
+| `controlplane.TopUpBatch` | type |
+| `controlplane.TopUpCodec` | type |
+| `controlplane.TopUpCodecBackingBytes` | func |
+| `controlplane.TopUpIssueEntry` | type |
+| `controlplane.TopUpRequestFacts` | type |
+| `controlplane.TopUpServerCommitted` | const |
+| `controlplane.TopUpServerEmpty` | const |
+| `controlplane.TopUpServerPending` | const |
+| `controlplane.TopUpServerRetired` | const |
+| `controlplane.TopUpServerSnapshot` | type |
+| `controlplane.TopUpServerTerminal` | const |
+| `controlplane.TopUpSourceFence` | type |
+| `controlplane.TunnelServerAllowHTTPSService` | type |
+| `controlplane.TunnelServerAllowHTTPSServiceCharge` | func |
+| `controlplane.TunnelServerAllowHTTPSServiceConfig` | type |
 | `(*controlplane.SpendReceiptService).Close` | method |
 | `(*controlplane.SpendReceiptService).QuerySpendReceiptBytes` | method |
 | `(*controlplane.SpendReceiptService).QuerySpendReceipt` | method |
 | `(*controlplane.SpendReceiptService).WaitCleanup` | method |
-| `(*controlplane.V4DirectIssuer).Close` | method |
-| `(*controlplane.V4DirectIssuer).GoString` | method |
-| `(*controlplane.V4DirectIssuer).IssueArtifactBytes` | method |
-| `(*controlplane.V4DirectIssuer).String` | method |
-| `(*controlplane.V4DirectIssuer).WaitCleanup` | method |
-| `(*flowersec.V4SQLiteLiveSpendRead).Cleanup` | method |
-| `(*flowersec.V4SQLiteLiveSpendRead).Close` | method |
-| `(*flowersec.V4SQLiteLiveSpendRead).Receipt` | method |
-| `(*flowersec.V4SQLiteLiveSpendRead).ReconcileAuthorization` | method |
-| `(*flowersec.V4SQLiteLiveSpendRead).RecoverExpired` | method |
-| `controlplane.EncodeV4LiveAuthorizationRequest` | func |
+| `(*controlplane.DirectIssuer).Close` | method |
+| `(*controlplane.DirectIssuer).GoString` | method |
+| `(*controlplane.DirectIssuer).IssueArtifactBytes` | method |
+| `(*controlplane.DirectIssuer).String` | method |
+| `(*controlplane.DirectIssuer).WaitCleanup` | method |
+| `(*flowersec.SQLiteLiveSpendRead).Cleanup` | method |
+| `(*flowersec.SQLiteLiveSpendRead).Close` | method |
+| `(*flowersec.SQLiteLiveSpendRead).Receipt` | method |
+| `(*flowersec.SQLiteLiveSpendRead).ReconcileAuthorization` | method |
+| `(*flowersec.SQLiteLiveSpendRead).RecoverExpired` | method |
+| `controlplane.EncodeLiveAuthorizationRequest` | func |
 | `controlplane.NewSpendReceiptService` | func |
-| `controlplane.NewV4DirectIssueHTTPSService` | func |
-| `controlplane.NewV4DirectIssuer` | func |
-| `controlplane.NewV4LiveAuthorizationCodec` | func |
-| `controlplane.NewV4LiveAuthorizationHTTPSService` | func |
-| `controlplane.NewV4SQLiteDirectIssueAuthority` | func |
+| `controlplane.NewDirectIssueHTTPSService` | func |
+| `controlplane.NewDirectIssuer` | func |
+| `controlplane.NewLiveAuthorizationCodec` | func |
+| `controlplane.NewLiveAuthorizationHTTPSService` | func |
+| `controlplane.NewSQLiteDirectIssueAuthority` | func |
 | `controlplane.SpendQueryFailure` | type |
 | `controlplane.SpendReceiptServiceCharges` | func |
 | `controlplane.SpendReceiptServiceConfig` | type |
 | `controlplane.SpendReceiptService` | type |
 | `controlplane.SpendReceipt` | type |
-| `controlplane.V4AuthenticatedDirectIssueClient` | func |
-| `controlplane.V4DirectIssueAuthority` | type |
-| `controlplane.V4DirectIssueCommitted` | const |
-| `controlplane.V4DirectIssueFacts` | type |
-| `controlplane.V4DirectIssueHTTPSConfig` | type |
-| `controlplane.V4DirectIssueHTTPSServiceCharge` | func |
-| `controlplane.V4DirectIssueHTTPSService` | type |
-| `controlplane.V4DirectIssueObligationState` | type |
-| `controlplane.V4DirectIssuePermit` | type |
-| `controlplane.V4DirectIssuePolicyConfig` | type |
-| `controlplane.V4DirectIssuePolicyLimits` | type |
-| `controlplane.V4DirectIssueRequest` | type |
-| `controlplane.V4DirectIssueReserved` | const |
-| `controlplane.V4DirectIssueRetired` | const |
-| `controlplane.V4DirectIssuerCharge` | func |
-| `controlplane.V4DirectIssuerConfig` | type |
-| `controlplane.V4DirectIssuer` | type |
-| `controlplane.V4IssueFailure.Error` | method |
-| `controlplane.V4IssueFailure` | type |
-| `controlplane.V4LiveAuthorizationAccess` | type |
-| `controlplane.V4LiveAuthorizationCodecBackingBytes` | func |
-| `controlplane.V4LiveAuthorizationCodec` | type |
-| `controlplane.V4LiveAuthorizationHTTPSConfig` | type |
-| `controlplane.V4LiveAuthorizationHTTPSServiceCharges` | func |
-| `controlplane.V4LiveAuthorizationHTTPSService` | type |
-| `controlplane.V4LiveAuthorizationHost` | type |
-| `controlplane.V4LiveAuthorizationMaterial` | type |
-| `controlplane.V4LiveAuthorizationRequest` | type |
-| `controlplane.V4SQLiteDirectIssueAccess` | type |
-| `controlplane.V4SQLiteDirectIssueAuthority` | type |
-| `controlplane.V4SQLiteDirectIssueCharge` | func |
-| `controlplane.V4SQLiteDirectIssueConfig` | type |
-| `controlplane.V4SQLiteDirectIssueHost` | type |
-| `controlplane.V4SQLiteDirectIssuePublication` | type |
-| `controlplane.V4SQLiteDirectIssueStatus` | type |
-| `flowersec.NewV4DirectIssueSource` | func |
-| `flowersec.NewV4LiveHTTPSTransport` | func |
-| `flowersec.NewV4WebSocketCarrierFactory` | func |
-| `flowersec.V4AuthorizationNotStarted` | const |
-| `flowersec.V4DirectIssueSourceCharge` | func |
-| `flowersec.V4DirectIssueSourceConfig` | type |
-| `flowersec.V4DirectIssueSource` | type |
-| `flowersec.V4LiveAuthorizationFact` | type |
-| `flowersec.V4LiveAuthorizationProvider` | type |
-| `flowersec.V4LiveAuthorizationQuery` | type |
-| `flowersec.V4LiveAuthorizationRequest` | type |
-| `flowersec.V4LiveControlCharge` | func |
-| `flowersec.V4LiveControlConfig` | type |
-| `flowersec.V4LiveHTTPSConfig` | type |
-| `flowersec.V4LiveHTTPSTransportCharge` | func |
-| `flowersec.V4LiveHTTPSTransport` | type |
-| `flowersec.V4WebSocketCarrierFactoryCharge` | func |
-| `flowersec.V4WebSocketCarrierFactory` | type |
-| `flowersec.V4WebSocketFactoryConfig` | type |
-| `flowersec.V4WebSocketProviderOptions` | type |
+| `controlplane.AuthenticatedDirectIssueClient` | func |
+| `controlplane.DirectIssueAuthority` | type |
+| `controlplane.DirectIssueCommitted` | const |
+| `controlplane.DirectIssueFacts` | type |
+| `controlplane.DirectIssueHTTPSConfig` | type |
+| `controlplane.DirectIssueHTTPSServiceCharge` | func |
+| `controlplane.DirectIssueHTTPSService` | type |
+| `controlplane.DirectIssueObligationState` | type |
+| `controlplane.DirectIssuePermit` | type |
+| `controlplane.DirectIssuePolicyConfig` | type |
+| `controlplane.DirectIssuePolicyLimits` | type |
+| `controlplane.DirectIssueRequest` | type |
+| `controlplane.DirectIssueReserved` | const |
+| `controlplane.DirectIssueRetired` | const |
+| `controlplane.DirectIssuerCharge` | func |
+| `controlplane.DirectIssuerConfig` | type |
+| `controlplane.DirectIssuer` | type |
+| `controlplane.IssueFailure.Error` | method |
+| `controlplane.IssueFailure` | type |
+| `controlplane.LiveAuthorizationAccess` | type |
+| `controlplane.LiveAuthorizationCodecBackingBytes` | func |
+| `controlplane.LiveAuthorizationCodec` | type |
+| `controlplane.LiveAuthorizationHTTPSConfig` | type |
+| `controlplane.LiveAuthorizationHTTPSServiceCharges` | func |
+| `controlplane.LiveAuthorizationHTTPSService` | type |
+| `controlplane.LiveAuthorizationHost` | type |
+| `controlplane.LiveAuthorizationMaterial` | type |
+| `controlplane.LiveAuthorizationRequest` | type |
+| `controlplane.SQLiteDirectIssueAccess` | type |
+| `controlplane.SQLiteDirectIssueAuthority` | type |
+| `controlplane.SQLiteDirectIssueCharge` | func |
+| `controlplane.SQLiteDirectIssueConfig` | type |
+| `controlplane.SQLiteDirectIssueHost` | type |
+| `controlplane.SQLiteDirectIssuePublication` | type |
+| `controlplane.SQLiteDirectIssueStatus` | type |
+| `flowersec.NewDirectIssueSource` | func |
+| `flowersec.NewLiveHTTPSTransport` | func |
+| `flowersec.NewWebSocketCarrierFactory` | func |
+| `flowersec.AuthorizationNotStarted` | const |
+| `flowersec.DirectIssueSourceCharge` | func |
+| `flowersec.DirectIssueSourceConfig` | type |
+| `flowersec.DirectIssueSource` | type |
+| `flowersec.LiveAuthorizationFact` | type |
+| `flowersec.LiveAuthorizationProvider` | type |
+| `flowersec.LiveAuthorizationQuery` | type |
+| `flowersec.LiveAuthorizationRequest` | type |
+| `flowersec.LiveControlCharge` | func |
+| `flowersec.LiveControlConfig` | type |
+| `flowersec.LiveHTTPSConfig` | type |
+| `flowersec.LiveHTTPSTransportCharge` | func |
+| `flowersec.LiveHTTPSTransport` | type |
+| `flowersec.WebSocketCarrierFactoryCharge` | func |
+| `flowersec.WebSocketCarrierFactory` | type |
+| `flowersec.WebSocketFactoryConfig` | type |
+| `flowersec.WebSocketProviderOptions` | type |
 | `(*flowersec.ServeHandle).AcceptWebSocket` | method |
-| `(*flowersec.V4Environment).Serve` | method |
-| `flowersec.NewV4WebSocketServer` | func |
-| `flowersec.V4AcceptedEntranceConfig` | type |
-| `flowersec.V4AcceptedMaterialSource` | type |
-| `flowersec.V4AcceptedMaterialSource.ResolveAcceptedMaterial` | interface_method |
-| `flowersec.V4AcceptedSessionInput` | type |
-| `flowersec.V4AcceptedWebSocketEndpoint` | type |
-| `flowersec.V4AdmissionOwner` | type |
-| `flowersec.V4SQLiteAdmissionAuthority` | type |
-| `flowersec.V4ServeCharge` | func |
-| `flowersec.V4ServeOptions` | type |
-| `flowersec.V4WebSocketAcceptOptions` | type |
-| `flowersec.V4WebSocketServer` | type |
-| `flowersec.V4WebSocketServerCharge` | func |
-| `flowersec.V4WebSocketServerConfig` | type |
-| `flowersec.V4WebSocketUpgradeConfig` | type |
-| `flowersec.V4QUICLimits` | type |
-| `flowersec.V4QUICProviderOptions` | type |
-| `flowersec.V4QUICFactoryConfig` | type |
-| `flowersec.V4QUICCarrierFactory` | type |
-| `flowersec.DefaultV4QUICLimits` | func |
-| `flowersec.V4QUICCarrierFactoryCharge` | func |
-| `flowersec.NewV4QUICCarrierFactory` | func |
-| `(*flowersec.V4QUICCarrierFactory).PrepareCarrier` | method |
-| `(*flowersec.V4QUICCarrierFactory).Close` | method |
-| `(*flowersec.V4QUICCarrierFactory).WaitCleanup` | method |
-| `flowersec.V4QUICServerConfig` | type |
-| `flowersec.V4QUICServer` | type |
-| `flowersec.V4QUICIngress` | type |
-| `flowersec.V4QUICServerCharge` | func |
-| `flowersec.NewV4QUICServer` | func |
-| `(*flowersec.V4QUICServer).Accept` | method |
-| `(*flowersec.V4QUICServer).Address` | method |
-| `(*flowersec.V4QUICServer).Close` | method |
-| `(*flowersec.V4QUICServer).WaitCleanup` | method |
-| `(*flowersec.V4QUICIngress).Close` | method |
-| `(*flowersec.V4QUICIngress).WaitCleanup` | method |
-| `flowersec.V4QUICAcceptOptions` | type |
+| `(*flowersec.TransportEnvironment).Serve` | method |
+| `flowersec.NewWebSocketServer` | func |
+| `flowersec.AcceptedEntranceConfig` | type |
+| `flowersec.AcceptedMaterialSource` | type |
+| `flowersec.AcceptedMaterialSource.ResolveAcceptedMaterial` | interface_method |
+| `flowersec.AcceptedSessionInput` | type |
+| `flowersec.AcceptedWebSocketEndpoint` | type |
+| `flowersec.AdmissionOwner` | type |
+| `flowersec.SQLiteAdmissionAuthority` | type |
+| `flowersec.ServeCharge` | func |
+| `flowersec.ServeOptions` | type |
+| `flowersec.WebSocketAcceptOptions` | type |
+| `flowersec.WebSocketServer` | type |
+| `flowersec.WebSocketServerCharge` | func |
+| `flowersec.WebSocketServerConfig` | type |
+| `flowersec.WebSocketUpgradeConfig` | type |
+| `flowersec.QUICLimits` | type |
+| `flowersec.QUICProviderOptions` | type |
+| `flowersec.QUICFactoryConfig` | type |
+| `flowersec.QUICCarrierFactory` | type |
+| `flowersec.DefaultQUICLimits` | func |
+| `flowersec.QUICCarrierFactoryCharge` | func |
+| `flowersec.NewQUICCarrierFactory` | func |
+| `(*flowersec.QUICCarrierFactory).PrepareCarrier` | method |
+| `(*flowersec.QUICCarrierFactory).Close` | method |
+| `(*flowersec.QUICCarrierFactory).WaitCleanup` | method |
+| `flowersec.QUICServerConfig` | type |
+| `flowersec.QUICServer` | type |
+| `flowersec.QUICIngress` | type |
+| `flowersec.QUICServerCharge` | func |
+| `flowersec.NewQUICServer` | func |
+| `(*flowersec.QUICServer).Accept` | method |
+| `(*flowersec.QUICServer).Address` | method |
+| `(*flowersec.QUICServer).Close` | method |
+| `(*flowersec.QUICServer).WaitCleanup` | method |
+| `(*flowersec.QUICIngress).Close` | method |
+| `(*flowersec.QUICIngress).WaitCleanup` | method |
+| `flowersec.QUICAcceptOptions` | type |
 | `(*flowersec.ServeHandle).AcceptQUIC` | method |
 
-## Go v4 Connection Controller
+## Go Connection Controller
 
-The Environment owns the optional Controller's current, candidate and one
+The TransportEnvironment owns the optional Controller's current, candidate and one
 retirement position. Source recipes transfer unused cleanup responsibility;
 complete candidate headroom precedes Acquire. Verification waits reuse the
 original attempt and namespace refresh owner. Initializer failure after entry
@@ -1641,36 +2019,38 @@ construction, retirement, ownership and the implemented dependency boundary.
 
 | Symbol | Declaration |
 | --- | --- |
-| `flowersec.V4ControllerSource` | type |
-| `flowersec.V4ControllerRequest` | type |
-| `flowersec.V4ControllerPreparation` | type |
-| `flowersec.V4ControllerRetirement` | type |
-| `flowersec.V4ControllerReplaceOptions` | type |
-| `flowersec.V4ControllerSourceError` | type |
-| `flowersec.V4ControllerOptions` | type |
-| `flowersec.V4ControllerReplaceResult` | type |
-| `flowersec.V4ControllerSnapshot` | type |
-| `flowersec.V4ConnectionController` | type |
-| `flowersec.NewV4ControllerSourceError` | func |
-| `flowersec.V4ControllerCharges` | func |
-| `flowersec.V4ControllerDrain` | const |
-| `flowersec.V4ControllerRetain` | const |
-| `flowersec.ErrV4ControllerBusy` | var |
-| `flowersec.ErrV4ControllerInitialization` | var |
-| `flowersec.ErrV4RetirementCapacity` | var |
-| `(*flowersec.V4Environment).NewConnectionController` | method |
-| `(*flowersec.V4ConnectionController).Start` | method |
-| `(*flowersec.V4ConnectionController).RetryNow` | method |
-| `(*flowersec.V4ConnectionController).PrepareUnary` | method |
-| `(*flowersec.V4ConnectionController).Dispatch` | method |
-| `(*flowersec.V4ConnectionController).CaptureSession` | method |
-| `(*flowersec.V4ConnectionController).WaitForSession` | method |
-| `(*flowersec.V4ConnectionController).ReplaceSession` | method |
-| `(*flowersec.V4ConnectionController).Snapshot` | method |
-| `(*flowersec.V4ConnectionController).Close` | method |
-| `(*flowersec.V4ConnectionController).WaitCleanup` | method |
-| `(*flowersec.V4ConnectionController).CleanupStatus` | method |
-| `flowersec.V4ControllerSource.PrepareConnection` | interface_method |
+| `flowersec.ControllerSource` | type |
+| `flowersec.ControllerRequest` | type |
+| `flowersec.ControllerPreparation` | type |
+| `flowersec.ControllerRetirement` | type |
+| `flowersec.ControllerReplaceOptions` | type |
+| `flowersec.ControllerSourceError` | type |
+| `flowersec.ControllerOptions` | type |
+| `flowersec.ControllerReplaceResult` | type |
+| `flowersec.ControllerSnapshot` | type |
+| `(*flowersec.ConnectionController).ConnectionDiagnostic` | method |
+| `(*flowersec.ConnectionController).LocalReport` | method |
+| `flowersec.ConnectionController` | type |
+| `flowersec.NewControllerSourceError` | func |
+| `flowersec.ControllerCharges` | func |
+| `flowersec.ControllerDrain` | const |
+| `flowersec.ControllerRetain` | const |
+| `flowersec.ErrControllerBusy` | var |
+| `flowersec.ErrControllerInitialization` | var |
+| `flowersec.ErrRetirementCapacity` | var |
+| `(*flowersec.TransportEnvironment).NewConnectionController` | method |
+| `(*flowersec.ConnectionController).Start` | method |
+| `(*flowersec.ConnectionController).RetryNow` | method |
+| `(*flowersec.ConnectionController).PrepareUnary` | method |
+| `(*flowersec.ConnectionController).Dispatch` | method |
+| `(*flowersec.ConnectionController).CaptureSession` | method |
+| `(*flowersec.ConnectionController).WaitForSession` | method |
+| `(*flowersec.ConnectionController).ReplaceSession` | method |
+| `(*flowersec.ConnectionController).Snapshot` | method |
+| `(*flowersec.ConnectionController).Close` | method |
+| `(*flowersec.ConnectionController).WaitCleanup` | method |
+| `(*flowersec.ConnectionController).CleanupStatus` | method |
+| `flowersec.ControllerSource.PrepareConnection` | interface_method |
 
 ## TypeScript v4 owners and result registry
 
@@ -1681,17 +2061,17 @@ Serve fixes `authorizeRequest`, `resolveHandlers`, `authorizeApplication`,
 `onSession`, and `release` for the original listener lifetime. Authenticated
 application authorization precedes the durable SQLite admission CAS; dual READY
 precedes Session delivery. The opaque `ServeHandle` owns ingress, published
-Sessions, and actual callback cleanup while borrowing its Environment. Its
+Sessions, and actual callback cleanup while borrowing its TransportEnvironment. Its
 Drain outcome and cleanup status remain separate. Startup failures are opaque
 `ServeError` values with the original cleanup snapshot. See
 `docs/TYPESCRIPT_TRANSPORT_V4.md` for lease and Release responsibilities.
 
-`createV4TransportEnvironment(...)` owns resources, trusted time, credential
-namespaces, material acquisition and Session lifetime. `configureV4NodeWSS(...)`
-and `configureV4BrowserWSS(...)` install the actual direct WSS client entrance
+`createTransportEnvironment(...)` owns resources, trusted time, credential
+namespaces, material acquisition and Session lifetime. `configureNodeWSS(...)`
+and `configureBrowserWSS(...)` install the actual direct WSS client entrance
 for explicitly selected `preauthorized_pool` or `live_authority` activation and
 the `transport` application profile, or explicit `services`/`execution` with
-`V4ClientServicesConfig`. `configureV4BrowserWebTransport(...)`
+`ClientServicesConfig`. `configureBrowserWebTransport(...)`
 installs the browser direct WebTransport entrance with the same identity,
 material-source and admission owners and independent native application streams.
 Its current public guarantees remain conservative; required independent
@@ -1710,16 +2090,16 @@ Both return a Session only after actual pool TxA-P or verified live authority
 authorization, HELLO/FSB/FSA, KKpsk0 Noise and authenticated dual READY.
 
 The root, `./node` and `./browser` package entrances export the connection
-configuration types. `V4NamespaceOptions` configures `client.namespace(...)`;
-`V4CredentialPolicy` and `V4CredentialProvider` configure live or pool material
-sources. The provider fills borrowed `V4CredentialBuffers` and returns
-`V4CredentialLengths`, ending every borrow when its promise settles, including
-after cancellation. The resulting `V4ConnectionMaterialSource` is accepted by
-both `environment.connect(...)` and `createV4ConnectionController(...)`.
+configuration types. `NamespaceOptions` configures `client.namespace(...)`;
+`CredentialPolicy` and `CredentialProvider` configure live or pool material
+sources. The provider fills borrowed `CredentialBuffers` and returns
+`CredentialLengths`, ending every borrow when its promise settles, including
+after cancellation. The resulting `ConnectionMaterialSource` is accepted by
+both `environment.connect(...)` and `createConnectionController(...)`.
 
-`V4LiveAuthorizationConfig` captures an independently authenticated host control
+`LiveAuthorizationConfig` captures an independently authenticated host control
 transport, finite concurrency and actual runtime/provider allowances.
-`V4LiveAuthorizationProvider` receives one bounded `V4LiveAuthorizationRequest`
+`LiveAuthorizationProvider` receives one bounded `LiveAuthorizationRequest`
 after carrier preparation and complete Session admission. The original attempt,
 lease, identities and winner remain fixed. Its returned full signed proof is
 independently validated before HELLO; an HTTP result or receipt alone is
@@ -1727,66 +2107,66 @@ insufficient. Live and pool sources do not fall back to one another. The SDK
 does not implement an authority database inside a consumer, and the host must
 provide the real authenticated control transport and authority durability.
 
-`createV4BrowserLiveHTTPS` is the browser HTTPS control adapter.
-`V4BrowserLiveHTTPSOptions` binds one authority, tenant, audience, explicit
+`createBrowserLiveHTTPS` is the browser HTTPS control adapter.
+`BrowserLiveHTTPSOptions` binds one authority, tenant, audience, explicit
 bearer calling credential, expiry and bounded native/SDK allowances.
-`V4BrowserLiveHTTPSDeployment` fixes the canonical endpoint and current
+`BrowserLiveHTTPSDeployment` fixes the canonical endpoint and current
 application origin with independent operator evidence for TLS 1.3, no early
 data and observable response framing. Fetch omits cookies, refuses redirects
 and performs one attempt. Signed activation validation remains in the original
 credential owner. This is a controlled-terminator guarantee, not browser-side
 inspection of the negotiated TLS version.
 
-`V4Session.probeLiveness(...)` returns a finite `V4LivenessResult` with
+`Session.probeLiveness(...)` returns a finite `LivenessResult` with
 `submitted`, `complete` and `elapsedMS`. Elapsed time starts at local acceptance
-and includes queuing; an unavailable elapsed value is `null`. `V4LivenessError`
-retains the same facts with a bounded `V4LivenessFailure`. Cancellation and
+and includes queuing; an unavailable elapsed value is `null`. `LivenessError`
+retains the same facts with a bounded `LivenessFailure`. Cancellation and
 rekey interrupt only this wait; actual provider tails keep their original slot.
 Eight independent owners are admitted, including one protected automatic slot
-when an explicit `V4AutomaticLivenessPolicy` is configured. Automatic liveness
+when an explicit `AutomaticLivenessPolicy` is configured. Automatic liveness
 has no implicit default. Only complete timely publication followed by the full
 response budget without known local stalls can count a miss.
 
-`V4Session.drain` captures one original `V4DrainOperation`, with optional
-`V4DrainOptions` whose `timeoutMS` is capped at thirty seconds. Repeated calls cannot
-extend it. `V4DrainResult` preserves `V4DrainOutcome` (`pending`, `drained`,
+`Session.drain` captures one original `DrainOperation`, with optional
+`DrainOptions` whose `timeoutMS` is capped at thirty seconds. Repeated calls cannot
+extend it. `DrainResult` preserves `DrainOutcome` (`pending`, `drained`,
 `deadline_aborted` or `failed`) separately from actual cleanup status.
-`V4DrainError` reports bounded observer failure; canceled waits do not reopen
+`DrainError` reports bounded observer failure; canceled waits do not reopen
 admission. GOAWAY fixes the historical accepted frontier and pending OPENs
 receive explicit rejection. Existing streams and necessary rekey continue.
-`V4Session.waitCleanup` passively observes actual resource release, with one
+`Session.waitCleanup` passively observes actual resource release, with one
 five-second cleanup deadline after Close; deadline expiry reports incomplete
 cleanup while retained native tails remain charged. Registered authorizers,
 handlers and send encoders keep their execution permits and application
 allowances until actual exit. Core I/O can finish independently, reported as
-`core_cleanup: "complete"` with pending callbacks; the Environment then retains
+`core_cleanup: "complete"` with pending callbacks; the TransportEnvironment then retains
 only the compact cleanup owner and any independently authorized results.
 
-`V4MessageStreamDefinition` binds opener/acceptor message directions through
-`V4MessageDirection` and opaque `V4MessageCodec` values. Built-ins are
-`v4BytesMessageCodec` and `v4UTF8MessageCodec`; `v4ApplicationMessageCodec`
-captures explicit synchronous or asynchronous `V4ApplicationMessageCodec`
+`MessageStreamDefinition` binds opener/acceptor message directions through
+`MessageDirection` and opaque `MessageCodec` values. Built-ins are
+`bytesMessageCodec` and `utf8MessageCodec`; `applicationMessageCodec`
+captures explicit synchronous or asynchronous `ApplicationMessageCodec`
 callbacks with a host allowance. The local execution choice does not change
-the canonical definition or framing. `V4TypedMessageStream` is returned by
+the canonical definition or framing. `TypedMessageStream` is returned by
 Session `openMessageStream`/`acceptMessageStream`, or by `asTypedMessages`
 after exclusive conversion of a matching unused raw stream.
 
-`V4MessageStreamOptions`, `V4MessageSendOptions` and
-`V4MessageReceiveOptions` control the original adapter. `V4MessageSendResult`
-keeps submission separate from cleanup; `V4MessageReceiveResult` keeps EOF
+`MessageStreamOptions`, `MessageSendOptions` and
+`MessageReceiveOptions` control the original adapter. `MessageSendResult`
+keeps submission separate from cleanup; `MessageReceiveResult` keeps EOF
 separate from empty payload and records `application_input_delivered` for
-application decoding. `V4MessageStreamError` exposes a bounded
-`V4MessageFailure`. Typed and encoded Receive use one cursor and one consumption
+application decoding. `MessageStreamError` exposes a bounded
+`MessageFailure`. Typed and encoded Receive use one cursor and one consumption
 right. After an application decoder starts, encoded receive reports
 `result_mode_conflict`; canceled typed waits join the same decode completion.
 Complete private payloads retain original authorization after normal I/O exit.
 
-`V4StreamRegistration` closes future raw or typed handler admission without
-closing already accepted streams. `V4StreamRegistrationOptions` supplies
+`StreamRegistration` closes future raw or typed handler admission without
+closing already accepted streams. `StreamRegistrationOptions` supplies
 concurrency, work class, metadata policy and application allowance.
-`V4StreamOpenAuthorizer`, `V4MessageStreamHandler` and `V4RawStreamHandler`
-receive the original `V4ApplicationContext`, including its immutable
-`V4AuthenticatedContext`. `V4ApplicationWaitOptions` carries explicit dependency
+`StreamOpenAuthorizer`, `MessageStreamHandler` and `RawStreamHandler`
+receive the original `ApplicationContext`, including its immutable
+`AuthenticatedContext`. `ApplicationWaitOptions` carries explicit dependency
 context for bounded cleanup waits. Root-shared ordinary and protected
 Completion services retain actual running callbacks across cancellation.
 Raw registrations may also provide a fixed `RawStreamMetadataContract`. The
@@ -1808,7 +2188,7 @@ idle policy may tighten the duration; rekey, drain and delayed timers do not
 extend it. Local active stream capacity is bounded by the signed stream
 allowance, the configured local limit and 1024.
 
-| Current v4 client capability | Node | Browser |
+| Current client capability | Node | Browser |
 | --- | --- | --- |
 | Durable pool adapter | Actual SQLite transaction | Optional explicit host IndexedDB adapter with strict durability |
 | TLS | TLS 1.3; signed CA or leaf-DER pin policy | Browser CA plus trusted immutable terminator/deployment binding |
@@ -1827,21 +2207,21 @@ pin mode and required consumer TLS verification before consume. The optional
 IndexedDB integration does not require ordinary users to configure a database;
 a remote pool-consume service adapter is not implemented.
 
-The Node entrypoint provides `createV4SQLiteExecutionBacking` and
-`openV4SQLiteExecutionStore` for durable execution history and unary results.
+The Node entrypoint provides `createSQLiteExecutionBacking` and
+`openSQLiteExecutionStore` for durable execution history and unary results.
 The store uses its own `flowersec-v4-node-execution` format and requires explicit
 provisioning, stable identity, finite storage limits and an independent
-`V4SQLiteExecutionContinuity` host proof. Reopening requires proof that the
+`SQLiteExecutionContinuity` host proof. Reopening requires proof that the
 previous owner's real business work has settled or been fenced; a database
 file alone is insufficient. Missing or incompatible history is rejected.
 
-`V4SQLiteExecutionStore.installContract` persists the exact canonical contract
+`SQLiteExecutionStore.installContract` persists the exact canonical contract
 and finite Offer windows using an expected registry revision. `readRegistration`
 copies that original body into caller-supplied storage and returns
-`V4SQLiteExecutionRegistration` with the original revision and windows; it does
+`SQLiteExecutionRegistration` with the original revision and windows; it does
 not extend admission. Use the store's original frozen `service` capability as
 the handler's execution configuration and in management-only `executionServices`.
-Copying the configuration does not copy storage authority. The same Environment
+Copying the configuration does not copy storage authority. The same TransportEnvironment
 cannot replace an execution authority with another backend.
 
 The original execution engine registers before handler entry, persists dispatch
@@ -1863,10 +2243,11 @@ in the same transaction as deletion. `close()` waits for the actual bound
 execution owner; the backing retains disk charges until files are actually
 removed and `releaseRemoved()` succeeds. SQLite execution and pool adapters
 share bounded file/connection accounting, while keeping separate schemas and
-transaction semantics. These Node adapters currently use synchronous SQLite;
-independent scheduling and stall isolation are not qualified.
+transaction semantics. These Node adapters execute SQLite transactions in bounded dedicated workers.
+Their original callback and worker lifetimes remain charged through cancellation;
+independent scheduling and stall isolation require separate qualification.
 
-`createV4NodeLiveHTTPS` with `V4NodeLiveHTTPSOptions` supplies an Environment-owned
+`createNodeLiveHTTPS` with `NodeLiveHTTPSOptions` supplies an TransportEnvironment-owned
 live control adapter for `liveAuthority`. It makes one direct mutual-TLS 1.3
 POST to the independently configured authority's `/live/authorize` endpoint.
 The bounded `live-authorization-1` request matches the Go control service.
@@ -1877,14 +2258,30 @@ is bounded HTTP/1.1 200 with an exact positive Content-Length and
 `application/cbor`; signed proof verification remains with the original
 credential owner. Cancellation retains request buffers and resource charges
 until actual native callbacks and sockets exit. The adapter cannot be installed
-in a different Environment.
+in a different TransportEnvironment.
 
-These TypeScript v4 entrances do not implement raw QUIC, relay/listener roles,
-datagrams, qualified independent stream progress, checkpoint/Resume,
-restart-flush execution recovery, proxy integration or a v4 reconnect controller.
-`V4Session.bindService(...)` returns a fixed-Session `V4ServiceClient` whose
+Node exposes `configureNodeRawQUIC`, `createNodeRawQUICListener`,
+`configureNodeWebTransport` and `createNodeWebTransportListener` with an
+explicitly configured current native provider. An absent or incompatible
+provider fails with `NativeTransportUnavailableError`; a method's presence
+alone is not evidence of carrier negotiation or interoperability. Current
+Node WSS listeners and registered tunnel owners borrow the same original
+Environment. `createConnectionController(...)` captures explicit source,
+initialization and retry policy and does not replay application work from a
+terminated Session. WSS retains shared ordered progress and does not provide
+native datagrams. Browser deployment and independent native carrier guarantees
+remain subject to their documented qualification boundaries.
+
+Checkpoint/Resume and restart-flush execution APIs require their trusted
+execution history, fixed method contract and explicit application callback.
+They do not recreate a Start right or automatically rerun business work.
+`createProxySurface` composes the supported proxy runtime with its original
+Session binding and publication owners; its behavior and credential ownership
+are specified in the TypeScript section above.
+
+`Session.bindService(...)` returns a fixed-Session `ServiceClient` whose
 `prepareOperation(...)` and `call(...)` share the original unary engine.
-`V4ExecutionUnaryOperation.reference()` exposes a compact execution reference.
+`ExecutionUnaryOperation.reference()` exposes a compact execution reference.
 The chosen Session's `queryOperation` and `requestCancel` use the fixed M
 channel with current identity and independent namespace permissions. Queries
 return bounded result metadata. With the trusted fixed `resultRead` tuple,
@@ -1892,43 +2289,43 @@ return bounded result metadata. With the trusted fixed `resultRead` tuple,
 read. Its typed value is `Uint8Array` containing the original encoded result;
 `takeEncodedResult()` exposes those bytes through the same once-only delivery
 gate. It does not infer the original business error/success codec.
-`createV4OperationReferenceCodec(environment)` exports/imports the canonical
+`createOperationReferenceCodec(environment)` exports/imports the canonical
 reference without storage I/O. Import requires the expected local domain, and
 Query/Cancel/read resolve it through the chosen Session's trusted
 `services.referenceTargets` peer mappings. Import grants no Start or local
 operation capability. Imported unary reads reserve the full 1 MiB result bound.
-`createV4StaticServiceContracts` accepts complete canonical local
+`createStaticServiceContracts` accepts complete canonical local
 `ServiceContract` bodies and exact execution `AdmissionOffer` bytes for a
 trusted definition/target. `bindService` can consume this source through
 `contractSource`; all entries are decoded and checked before publication,
 remote contract queries are not performed, and closing the source after Bind
 is safe because the binding retains its original charged snapshots.
 
-For observation notification methods, `V4ServiceClient.notify` composes the same
+For observation notification methods, `ServiceClient.notify` composes the same
 Prepare/Start/WaitSubmission/Close path. `prepareOperation` returns
-`V4ObservationNotifyOperation`, exposing local submission and cleanup state with
+`ObservationNotifyOperation`, exposing local submission and cleanup state with
 no response or execution reference. Complete local `submitted` status does not
 assert peer delivery or handler success. The Session owns the independently
 framed fixed notification channel and its actual publication tails.
 
-`V4Session.notifications.subscribe` returns a typed local
-`V4NotificationSubscription` with serial delivery, isolated mutable decoding,
+`Session.notifications.subscribe` returns a typed local
+`NotificationSubscription` with serial delivery, isolated mutable decoding,
 optional projection, observation status, idempotent Close/Unsubscribe and passive
 bounded WaitClosed. Observation methods can be declared with trusted canonical
 contracts without a business handler. `latest_pending` applies only to
 observation methods and replaces only values that have not entered application
 code. Closing a token retains its slot until actual callback cleanup completes.
 
-Execution notification methods return `V4ExecutionNotifyOperation` from Prepare,
+Execution notification methods return `ExecutionNotifyOperation` from Prepare,
 with the same submission lifecycle and a query-only execution reference.
 PrepareAndSave composes the registered ReferenceStore before explicit Start.
-The volatile receiver uses the original Environment execution key and current
+The volatile receiver uses the original TransportEnvironment execution key and current
 authorization for one business dispatch and one observer fanout. Handler success
 updates queryable execution state without allocating a response or result
 payload; Query/Cancel use M and result reads reject notification references.
 
-`V4ServiceClient.prepareAndSave` uses an optional
-`createV4OperationReferenceStore(environment, policy, save)` adapter. Only a
+`ServiceClient.prepareAndSave` uses an optional
+`createOperationReferenceStore(environment, policy, save)` adapter. Only a
 confirmed durable create-or-compare and the original live delivery gate return
 an operation; the caller then explicitly invokes Start. Unknown/conflict/rejected
 saves and cancellation return bounded metadata and any query-only reference,
@@ -1941,7 +2338,7 @@ to the original caller, namespace, direction, independent query/cancel grants
 and a fixed trusted-time expiry. Incoming access also requires the current
 certificate-bound identity and namespace permissions. A new authorized Session
 can use the original reference without impersonating the caller or changing its
-key. An incoming `executionServices` registration reuses the same Environment's
+key. An incoming `executionServices` registration reuses the same TransportEnvironment's
 history and results without requiring another business handler.
 A failed M channel can be reconstructed after
 its original tasks, physical resources and retirement proof exit, within the
@@ -1949,7 +2346,21 @@ original recovery deadline and 16-allocation Session limit. Ordinary RPC reads
 continue independently; complete native-provider saturation protection remains
 unqualified.
 
-`V4UnaryOperation` provides explicit Start, typed/encoded result collection,
+`DuplexBridge` is the bounded TypeScript bridge for two accepted Flowersec
+Streams in the core, browser and proxy entrypoints. The Node entrypoint also
+supports one explicitly owned Node `net.Socket` or `tls.TLSSocket` paired with
+one accepted Flowersec Stream. It exposes `start`, `wait`, `abort`, `progress`, `cleanupStatus` and
+`waitCleanup`, preserves one bounded unaccepted tail per direction, and uses
+the original endpoint gates for read/write/half-close/finish/reset. Wait signal
+cancellation is passive; an operation signal, finite timeout or `abort()` resets
+both owned endpoints. A Node native socket must be unused, use binary mode,
+set `allowHalfOpen: true`, have no flowing `data` listener or queued writes,
+and keep both high-water marks at or below `readChunkBytes`. The Node bridge
+charges four chunks of native staging/queue capacity plus a separate detached
+result tail against the paired Stream's resource owner. Browser Web Streams,
+WebSockets and other adapters are not native endpoints.
+
+`UnaryOperation` provides explicit Start, typed/encoded result collection,
 metadata status and local Close. See the linked construction guide for result
 ownership and the current application-profile qualification boundary.
 Generated operation/result types describe observations, not executable support
@@ -1962,218 +2373,243 @@ and the exact support boundary, and
 
 | Symbol | Package subpaths |
 | --- | --- |
-| `configureV4BrowserWSS` | `./browser` |
-| `configureV4BrowserWebTransport` | `./browser` |
-| `configureV4NodeWSS` | `./node` |
-| `createV4NodeLiveHTTPS` | `./node` |
-| `V4NodeLiveHTTPSOptions` | `./node` |
-| `connectionAssurance` | `.`, `./node`, `./browser` |
-| `createV4IndexedDBPoolBacking` | `./browser` |
-| `createV4SQLiteExecutionBacking` | `./node` |
-| `openV4SQLiteExecutionStore` | `./node` |
-| `V4SQLiteExecutionBacking` | `./node` |
-| `V4SQLiteExecutionStore` | `./node` |
-| `V4ExecutionStoreError` | `./node` |
-| `V4SQLiteExecutionLimits` | `./node` |
-| `V4SQLiteExecutionIdentity` | `./node` |
-| `V4SQLiteExecutionContinuity` | `./node` |
-| `V4SQLiteExecutionOptions` | `./node` |
-| `V4SQLiteExecutionRegistration` | `./node` |
-| `V4DurableExecutionService` | `./node` |
-| `createV4SQLitePoolBacking` | `./node` |
-| `createV4TransportEnvironment` | `.`, `./node`, `./browser` |
-| `openV4IndexedDBPoolStore` | `./browser` |
-| `openV4SQLitePoolStore` | `./node` |
-| `topUpErrorProjection` | `.`, `./node`, `./browser` |
-| `transportV4APIResultsSchemaSHA256` | `.`, `./node`, `./browser` |
-| `V4ApplicationProfile` | `.`, `./node`, `./browser` |
-| `V4BoundStreamInputIsolation` | `.`, `./node`, `./browser` |
-| `V4BrowserWSSClient` | `./browser` |
-| `V4BrowserWSSClientConfig` | `./browser` |
-| `V4BrowserWSSClientLimits` | `./browser` |
-| `V4BrowserWSSDeployment` | `./browser` |
-| `V4BrowserWSSOptions` | `./browser` |
-| `V4BrowserWebTransportClient` | `./browser` |
-| `V4BrowserWebTransportClientConfig` | `./browser` |
-| `V4BrowserWebTransportClientLimits` | `./browser` |
-| `V4BrowserWebTransportDeployment` | `./browser` |
-| `V4BrowserWebTransportOptions` | `./browser` |
-| `V4CleanupState` | `.`, `./node`, `./browser` |
-| `V4CleanupStatus` | `.`, `./node`, `./browser` |
-| `V4LifecycleObjectKind` | `.`, `./node`, `./browser` |
-| `V4LifecycleState` | `.`, `./node`, `./browser` |
-| `V4LifecycleReason` | `.`, `./node`, `./browser` |
-| `V4LifecycleResult` | `.`, `./node`, `./browser` |
-| `V4ClockRate` | `.`, `./node`, `./browser` |
-| `V4CloseResult` | `.`, `./node`, `./browser` |
-| `V4ConnectionGuaranteeAssumptions` | `.`, `./node`, `./browser` |
-| `V4ConnectionGuarantees` | `.`, `./node`, `./browser` |
-| `V4ConnectionGuaranteeScope` | `.`, `./node`, `./browser` |
-| `V4ConnectionMaterial` | `.`, `./node`, `./browser` |
-| `V4ConnectionRequirements` | `.`, `./node`, `./browser` |
-| `V4ConsumerTLS13Verification` | `.`, `./node`, `./browser` |
-| `V4CoreCleanup` | `.`, `./node`, `./browser` |
-| `V4Direction` | `.`, `./node`, `./browser` |
-| `V4DuplexDirectionResult` | `.`, `./node`, `./browser` |
-| `V4DuplexEndpointKind` | `.`, `./node`, `./browser` |
-| `V4DuplexOutcome` | `.`, `./node`, `./browser` |
-| `V4DuplexResult` | `.`, `./node`, `./browser` |
-| `V4DuplexSendResult` | `.`, `./node`, `./browser` |
-| `V4EnvironmentClockConfig` | `.`, `./node`, `./browser` |
-| `V4EnvironmentConfig` | `.`, `./node`, `./browser` |
-| `V4ErrorCode` | `.`, `./node`, `./browser` |
-| `V4ErrorScope` | `.`, `./node`, `./browser` |
-| `V4IndexedDBPoolBacking` | `./browser` |
-| `V4IndexedDBPoolContinuity` | `./browser` |
-| `V4IndexedDBPoolError` | `./browser` |
-| `V4IndexedDBPoolFailure` | `./browser` |
-| `V4IndexedDBPoolIdentity` | `./browser` |
-| `V4IndexedDBPoolLimits` | `./browser` |
-| `V4IndexedDBPoolOpenOptions` | `./browser` |
-| `V4IndexedDBPoolStore` | `./browser` |
-| `V4NodeWSSClient` | `./node` |
-| `V4NodeWSSClientConfig` | `./node` |
-| `V4NodeWSSClientLimits` | `./node` |
-| `V4NodeWSSOptions` | `./node` |
-| `V4OperationHandle` | `.`, `./node`, `./browser` |
-| `V4OperationStatus` | `.`, `./node`, `./browser` |
-| `V4PoolStoreError` | `./node` |
-| `V4PoolStoreFailure` | `./node` |
-| `V4PublicationTransferResult` | `.`, `./node`, `./browser` |
-| `V4ReadCause` | `.`, `./node`, `./browser` |
-| `V4ReaderCursor` | `.`, `./node`, `./browser` |
-| `V4ReaderCursorSnapshot` | `.`, `./node`, `./browser` |
-| `V4ReadMethodFailure` | `.`, `./node`, `./browser` |
-| `V4ReadMethodFailureReason` | `.`, `./node`, `./browser` |
-| `V4ReadProgress` | `.`, `./node`, `./browser` |
-| `V4ReadResult` | `.`, `./node`, `./browser` |
-| `V4ReadTerminal` | `.`, `./node`, `./browser` |
-| `V4ReliableProgress` | `.`, `./node`, `./browser` |
-| `V4ResourceRoot` | `.`, `./node`, `./browser` |
-| `V4ResourceRootConfig` | `.`, `./node`, `./browser` |
-| `V4ResourceVector` | `.`, `./node`, `./browser` |
-| `V4ResponsePublicationCause` | `.`, `./node`, `./browser` |
-| `V4ResponsePublicationState` | `.`, `./node`, `./browser` |
-| `V4ResponsePublicationStatus` | `.`, `./node`, `./browser` |
-| `V4RetryDisposition` | `.`, `./node`, `./browser` |
-| `V4SessionInfo` | `.`, `./node`, `./browser` |
-| `V4SQLitePoolBacking` | `./node` |
-| `V4SQLitePoolBinding` | `./node` |
-| `V4SQLitePoolContinuity` | `./node` |
-| `V4SQLitePoolIdentity` | `./node` |
-| `V4SQLitePoolLimits` | `./node` |
-| `V4SQLitePoolOpenOptions` | `./node` |
-| `V4SQLitePoolStore` | `./node` |
-| `V4StreamStatus` | `.`, `./node`, `./browser` |
-| `V4TopUpError` | `.`, `./node`, `./browser` |
-| `V4TopUpErrorCode` | `.`, `./node`, `./browser` |
-| `V4TopUpErrorScope` | `.`, `./node`, `./browser` |
-| `V4TopUpWireResult` | `.`, `./node`, `./browser` |
-| `V4TopUpWriteAction` | `.`, `./node`, `./browser` |
-| `V4TransferProgress` | `.`, `./node`, `./browser` |
-| `V4TransportEnvironment` | `.`, `./node`, `./browser` |
-| `V4TypedError` | `.`, `./node`, `./browser` |
-| `V4WaitStatus` | `.`, `./node`, `./browser` |
-| `V4WriteOperation` | `.`, `./node`, `./browser` |
-| `V4WritePhase` | `.`, `./node`, `./browser` |
-| `V4WriteProgress` | `.`, `./node`, `./browser` |
-| `V4WriteTerminalReason` | `.`, `./node`, `./browser` |
+| `AdmissionOffer` | `.`, `./node`, `./browser`, `./proxy` |
+| `ApplicationProfile` | `.`, `./node`, `./browser`, `./proxy` |
+| `BoundStreamInputIsolation` | `.`, `./node`, `./browser`, `./proxy` |
+| `BrowserWSSClient` | `./browser` |
+| `BrowserWSSClientConfig` | `./browser` |
+| `BrowserWSSClientLimits` | `./browser` |
+| `BrowserWSSDeployment` | `./browser` |
+| `BrowserWSSOptions` | `./browser` |
+| `BrowserWebTransportClient` | `./browser` |
+| `BrowserWebTransportClientConfig` | `./browser` |
+| `BrowserWebTransportClientLimits` | `./browser` |
+| `BrowserWebTransportDeployment` | `./browser` |
+| `BrowserWebTransportOptions` | `./browser` |
+| `CleanupState` | `.`, `./node`, `./browser`, `./proxy` |
+| `CleanupStatus` | `.`, `./node`, `./browser`, `./proxy` |
+| `ClockRate` | `.`, `./node`, `./browser`, `./proxy` |
+| `CloseResult` | `.`, `./node`, `./browser`, `./proxy` |
+| `ConnectionGuaranteeAssumptions` | `.`, `./node`, `./browser`, `./proxy` |
+| `ConnectionGuaranteeScope` | `.`, `./node`, `./browser`, `./proxy` |
+| `ConnectionGuarantees` | `.`, `./node`, `./browser`, `./proxy` |
+| `ConnectionMaterial` | `.`, `./node`, `./browser`, `./proxy` |
+| `ConnectionRequirements` | `.`, `./node`, `./browser`, `./proxy` |
+| `ConsumerTLS13Verification` | `.`, `./node`, `./browser`, `./proxy` |
+| `CoreCleanup` | `.`, `./node`, `./browser`, `./proxy` |
+| `Direction` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexBridge` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexBridgeDirectionProgress` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexBridgeError` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexBridgeFailure` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexBridgeOptions` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexBridgeProgress` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexBridgeResult` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexDirectionResult` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexEndpointKind` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexOutcome` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexResult` | `.`, `./node`, `./browser`, `./proxy` |
+| `DuplexSendResult` | `.`, `./node`, `./browser`, `./proxy` |
+| `DurableExecutionService` | `./node` |
+| `EnvironmentClockConfig` | `.`, `./node`, `./browser`, `./proxy` |
+| `EnvironmentConfig` | `.`, `./node`, `./browser`, `./proxy` |
+| `ErrorCode` | `.`, `./node`, `./browser`, `./proxy` |
+| `ErrorScope` | `.`, `./node`, `./browser`, `./proxy` |
+| `ExecutionNotifyOperation` | `.`, `./node`, `./browser`, `./proxy` |
+| `ExecutionStoreError` | `./node` |
+| `IndexedDBPoolBacking` | `./browser` |
+| `IndexedDBPoolContinuity` | `./browser` |
+| `IndexedDBPoolError` | `./browser` |
+| `IndexedDBPoolFailure` | `./browser` |
+| `IndexedDBPoolIdentity` | `./browser` |
+| `IndexedDBPoolLimits` | `./browser` |
+| `IndexedDBPoolOpenOptions` | `./browser` |
+| `IndexedDBPoolStore` | `./browser` |
+| `LifecycleObjectKind` | `.`, `./node`, `./browser`, `./proxy` |
+| `LifecycleReason` | `.`, `./node`, `./browser`, `./proxy` |
+| `LifecycleResult` | `.`, `./node`, `./browser`, `./proxy` |
+| `LifecycleState` | `.`, `./node`, `./browser`, `./proxy` |
+| `MaintenanceOwner` | `.`, `./node`, `./browser`, `./proxy` |
+| `MessageStreamDefinition` | `.`, `./node`, `./browser`, `./proxy` |
+| `MethodDefinition` | `.`, `./node`, `./browser`, `./proxy` |
+| `NodeLiveHTTPSOptions` | `./node` |
+| `NodeWSSClient` | `./node` |
+| `NodeWSSClientConfig` | `./node` |
+| `NodeWSSClientLimits` | `./node` |
+| `NodeWSSOptions` | `./node` |
+| `NotificationSubscription` | `.`, `./node`, `./browser`, `./proxy` |
+| `ObservationNotifyOperation` | `.`, `./node`, `./browser`, `./proxy` |
+| `OperationHandle` | `.`, `./node`, `./browser`, `./proxy` |
+| `OperationReference` | `.`, `./node`, `./browser`, `./proxy` |
+| `OperationReferenceCodec` | `.`, `./node`, `./browser`, `./proxy` |
+| `OperationReferenceStore` | `.`, `./node`, `./browser`, `./proxy` |
+| `OperationStatus` | `.`, `./node`, `./browser`, `./proxy` |
+| `PoolStoreError` | `./node` |
+| `PoolStoreFailure` | `./node` |
+| `PublicationTransferResult` | `.`, `./node`, `./browser`, `./proxy` |
+| `ReadCause` | `.`, `./node`, `./browser`, `./proxy` |
+| `ReadMethodFailure` | `.`, `./node`, `./browser`, `./proxy` |
+| `ReadMethodFailureReason` | `.`, `./node`, `./browser`, `./proxy` |
+| `ReadProgress` | `.`, `./node`, `./browser`, `./proxy` |
+| `ReadResult` | `.`, `./node`, `./browser`, `./proxy` |
+| `ReadTerminal` | `.`, `./node`, `./browser`, `./proxy` |
+| `ReaderCursor` | `.`, `./node`, `./browser`, `./proxy` |
+| `ReaderCursorSnapshot` | `.`, `./node`, `./browser`, `./proxy` |
+| `ReliableProgress` | `.`, `./node`, `./browser`, `./proxy` |
+| `ResourceRoot` | `.`, `./node`, `./browser`, `./proxy` |
+| `ResourceRootConfig` | `.`, `./node`, `./browser`, `./proxy` |
+| `ResourceVector` | `.`, `./node`, `./browser`, `./proxy` |
+| `ResponsePublication` | `.`, `./node`, `./browser`, `./proxy` |
+| `ResponsePublicationCause` | `.`, `./node`, `./browser`, `./proxy` |
+| `ResponsePublicationState` | `.`, `./node`, `./browser`, `./proxy` |
+| `ResponsePublicationStatus` | `.`, `./node`, `./browser`, `./proxy` |
+| `RetryDisposition` | `.`, `./node`, `./browser`, `./proxy` |
+| `SQLiteExecutionBacking` | `./node` |
+| `SQLiteExecutionContinuity` | `./node` |
+| `SQLiteExecutionIdentity` | `./node` |
+| `SQLiteExecutionLimits` | `./node` |
+| `SQLiteExecutionOptions` | `./node` |
+| `SQLiteExecutionRegistration` | `./node` |
+| `SQLiteExecutionStore` | `./node` |
+| `SQLitePoolBacking` | `./node` |
+| `SQLitePoolBinding` | `./node` |
+| `SQLitePoolContinuity` | `./node` |
+| `SQLitePoolIdentity` | `./node` |
+| `SQLitePoolLimits` | `./node` |
+| `SQLitePoolOpenOptions` | `./node` |
+| `SQLitePoolStore` | `./node` |
+| `ServiceClient` | `.`, `./node`, `./browser`, `./proxy` |
+| `ServiceContract` | `.`, `./node`, `./browser`, `./proxy` |
+| `ServiceDefinition` | `.`, `./node`, `./browser`, `./proxy` |
+| `Session` | `.`, `./node`, `./browser`, `./proxy` |
+| `SessionInfo` | `.`, `./node`, `./browser`, `./proxy` |
+| `Stream` | `.`, `./node`, `./browser`, `./proxy` |
+| `StreamStatus` | `.`, `./node`, `./browser`, `./proxy` |
+| `StreamingOperation` | `.`, `./node`, `./browser`, `./proxy` |
+| `TopUpError` | `.`, `./node`, `./browser`, `./proxy` |
+| `TopUpErrorCode` | `.`, `./node`, `./browser`, `./proxy` |
+| `TopUpErrorScope` | `.`, `./node`, `./browser`, `./proxy` |
+| `TopUpWireResult` | `.`, `./node`, `./browser`, `./proxy` |
+| `TopUpWriteAction` | `.`, `./node`, `./browser`, `./proxy` |
+| `TransferProgress` | `.`, `./node`, `./browser`, `./proxy` |
+| `TransportEnvironment` | `.`, `./node`, `./browser`, `./proxy` |
+| `TypedError` | `.`, `./node`, `./browser`, `./proxy` |
+| `TypedMessageStream` | `.`, `./node`, `./browser`, `./proxy` |
+| `UnaryOperation` | `.`, `./node`, `./browser`, `./proxy` |
+| `WaitStatus` | `.`, `./node`, `./browser`, `./proxy` |
+| `WriteOperation` | `.`, `./node`, `./browser`, `./proxy` |
+| `WritePhase` | `.`, `./node`, `./browser`, `./proxy` |
+| `WriteProgress` | `.`, `./node`, `./browser`, `./proxy` |
+| `WriteTerminalReason` | `.`, `./node`, `./browser`, `./proxy` |
+| `configureBrowserWSS` | `./browser` |
+| `configureBrowserWebTransport` | `./browser` |
+| `configureNodeWSS` | `./node` |
+| `connectionAssurance` | `.`, `./node`, `./browser`, `./proxy` |
+| `createIndexedDBPoolBacking` | `./browser` |
+| `createNodeLiveHTTPS` | `./node` |
+| `createSQLiteExecutionBacking` | `./node` |
+| `createSQLitePoolBacking` | `./node` |
+| `createTransportEnvironment` | `.`, `./node`, `./browser`, `./proxy` |
+| `openIndexedDBPoolStore` | `./browser` |
+| `openSQLiteExecutionStore` | `./node` |
+| `openSQLitePoolStore` | `./node` |
+| `topUpErrorProjection` | `.`, `./node`, `./browser`, `./proxy` |
+| `transportAPIResultsSchemaSHA256` | `.`, `./node`, `./browser`, `./proxy` |
+## Go WebTransport and unreliable messages
 
-## Go v4 WebTransport and unreliable messages
-
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
 
 | Symbol | Declaration |
 | --- | --- |
 | `(*flowersec.ServeHandle).AcceptWebTransport` | method |
-| `(*flowersec.V4Session).UnreliableMessages` | method |
-| `(*flowersec.V4WebTransportIngress).Close` | method |
-| `(*flowersec.V4WebTransportIngress).WaitCleanup` | method |
-| `(*flowersec.V4WebTransportServer).Accept` | method |
-| `(*flowersec.V4WebTransportServer).Address` | method |
-| `(*flowersec.V4WebTransportServer).Close` | method |
-| `(*flowersec.V4WebTransportServer).WaitCleanup` | method |
-| `flowersec.DefaultV4WebTransportLimits` | func |
-| `flowersec.NewV4WebSocketCarrierSet` | func |
-| `flowersec.NewV4WebTransportCarrierFactory` | func |
-| `flowersec.NewV4WebTransportServer` | func |
+| `(*flowersec.Session).UnreliableMessages` | method |
+| `(*flowersec.WebTransportIngress).Close` | method |
+| `(*flowersec.WebTransportIngress).WaitCleanup` | method |
+| `(*flowersec.WebTransportServer).Accept` | method |
+| `(*flowersec.WebTransportServer).Address` | method |
+| `(*flowersec.WebTransportServer).Close` | method |
+| `(*flowersec.WebTransportServer).WaitCleanup` | method |
+| `flowersec.DefaultWebTransportLimits` | func |
+| `flowersec.NewWebSocketCarrierSet` | func |
+| `flowersec.NewWebTransportCarrierFactory` | func |
+| `flowersec.NewWebTransportServer` | func |
 | `flowersec.UnreliableMessageReceiveDisabled` | const |
 | `flowersec.UnreliableMessageTemporarilyBlocked` | const |
-| `flowersec.V4WebSocketCarrierSet` | type |
-| `flowersec.V4WebSocketCarrierSetCharge` | func |
-| `flowersec.V4WebSocketEndpoint` | type |
-| `flowersec.V4WebSocketSetConfig` | type |
-| `flowersec.V4WebTransportAcceptOptions` | type |
-| `flowersec.V4WebTransportCarrierFactory` | type |
-| `flowersec.V4WebTransportCarrierFactoryCharge` | func |
-| `flowersec.V4WebTransportFactoryConfig` | type |
-| `flowersec.V4WebTransportIngress` | type |
-| `flowersec.V4WebTransportLimits` | type |
-| `flowersec.V4WebTransportProviderOptions` | type |
-| `flowersec.V4WebTransportServer` | type |
-| `flowersec.V4WebTransportServerCharge` | func |
-| `flowersec.V4WebTransportServerConfig` | type |
+| `flowersec.WebSocketCarrierSet` | type |
+| `flowersec.WebSocketCarrierSetCharge` | func |
+| `flowersec.WebSocketEndpoint` | type |
+| `flowersec.WebSocketSetConfig` | type |
+| `flowersec.WebTransportAcceptOptions` | type |
+| `flowersec.WebTransportCarrierFactory` | type |
+| `flowersec.WebTransportCarrierFactoryCharge` | func |
+| `flowersec.WebTransportFactoryConfig` | type |
+| `flowersec.WebTransportIngress` | type |
+| `flowersec.WebTransportLimits` | type |
+| `flowersec.WebTransportProviderOptions` | type |
+| `flowersec.WebTransportServer` | type |
+| `flowersec.WebTransportServerCharge` | func |
+| `flowersec.WebTransportServerConfig` | type |
 
-## Go v4 owners and control adapters
+## Go owners and control adapters
 
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
-
-| Symbol | Declaration |
-| --- | --- |
-| `(*controlplane.V4NamespaceHTTPSService).Close` | method |
-| `(*controlplane.V4NamespaceHTTPSService).ServeHTTP` | method |
-| `(*controlplane.V4NamespaceHTTPSService).WaitCleanup` | method |
-| `(*controlplane.V4NamespacePublisher).Close` | method |
-| `(*controlplane.V4NamespacePublisher).GoString` | method |
-| `(*controlplane.V4NamespacePublisher).Publish` | method |
-| `(*controlplane.V4NamespacePublisher).String` | method |
-| `(*controlplane.V4NamespacePublisher).WaitCleanup` | method |
-| `(*controlplane.V4SQLitePublicationStore).Close` | method |
-| `(*controlplane.V4SQLitePublicationStore).GoString` | method |
-| `(*controlplane.V4SQLitePublicationStore).ReadPublished` | method |
-| `(*controlplane.V4SQLitePublicationStore).ReplaceState` | method |
-| `(*controlplane.V4SQLitePublicationStore).Retire` | method |
-| `(*controlplane.V4SQLitePublicationStore).String` | method |
-| `(*controlplane.V4SQLitePublicationStore).WaitCleanup` | method |
-| `controlplane.CreateV4SQLitePublicationStore` | func |
-| `controlplane.NewV4NamespaceHTTPSService` | func |
-| `controlplane.NewV4NamespacePublisher` | func |
-| `controlplane.OpenV4SQLitePublicationStore` | func |
-| `controlplane.V4NamespaceHTTPSConfig` | type |
-| `controlplane.V4NamespaceHTTPSService` | type |
-| `controlplane.V4NamespaceHTTPSServiceCharge` | func |
-| `controlplane.V4NamespacePublicationScope` | type |
-| `controlplane.V4NamespacePublicationVersion` | type |
-| `controlplane.V4NamespacePublisher` | type |
-| `controlplane.V4NamespacePublisherCharges` | func |
-| `controlplane.V4NamespacePublisherConfig` | type |
-| `controlplane.V4PublicationAuthority` | type |
-| `controlplane.V4PublicationFailure` | type |
-| `controlplane.V4PublicationFailure.Error` | method |
-| `controlplane.V4SQLitePublicationConfig` | type |
-| `controlplane.V4SQLitePublicationStore` | type |
-| `controlplane.V4SQLitePublicationStoreCharges` | func |
-
-## Go v4 owners and control adapters
-
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
 
 | Symbol | Declaration |
 | --- | --- |
-| `(*flowersec.ProxyServer).V4StreamHandlers` | method |
+| `(*controlplane.NamespaceHTTPSService).Close` | method |
+| `(*controlplane.NamespaceHTTPSService).ServeHTTP` | method |
+| `(*controlplane.NamespaceHTTPSService).WaitCleanup` | method |
+| `(*controlplane.NamespacePublisher).Close` | method |
+| `(*controlplane.NamespacePublisher).GoString` | method |
+| `(*controlplane.NamespacePublisher).Publish` | method |
+| `(*controlplane.NamespacePublisher).String` | method |
+| `(*controlplane.NamespacePublisher).WaitCleanup` | method |
+| `(*controlplane.SQLitePublicationStore).Close` | method |
+| `(*controlplane.SQLitePublicationStore).GoString` | method |
+| `(*controlplane.SQLitePublicationStore).ReadPublished` | method |
+| `(*controlplane.SQLitePublicationStore).ReplaceState` | method |
+| `(*controlplane.SQLitePublicationStore).Retire` | method |
+| `(*controlplane.SQLitePublicationStore).String` | method |
+| `(*controlplane.SQLitePublicationStore).WaitCleanup` | method |
+| `controlplane.CreateSQLitePublicationStore` | func |
+| `controlplane.NewNamespaceHTTPSService` | func |
+| `controlplane.NewNamespacePublisher` | func |
+| `controlplane.OpenSQLitePublicationStore` | func |
+| `controlplane.NamespaceHTTPSConfig` | type |
+| `controlplane.NamespaceHTTPSService` | type |
+| `controlplane.NamespaceHTTPSServiceCharge` | func |
+| `controlplane.NamespacePublicationScope` | type |
+| `controlplane.NamespacePublicationVersion` | type |
+| `controlplane.NamespacePublisher` | type |
+| `controlplane.NamespacePublisherCharges` | func |
+| `controlplane.NamespacePublisherConfig` | type |
+| `controlplane.PublicationAuthority` | type |
+| `controlplane.PublicationFailure` | type |
+| `controlplane.PublicationFailure.Error` | method |
+| `controlplane.SQLitePublicationConfig` | type |
+| `controlplane.SQLitePublicationStore` | type |
+| `controlplane.SQLitePublicationStoreCharges` | func |
+
+## Go owners and control adapters
+
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+
+| Symbol | Declaration |
+| --- | --- |
+| `(*flowersec.ProxyServer).StreamHandlers` | method |
 
 ## Rust carrier binding selection
 
-`V4BindingMode`, `V4BindingMode::DirectExporter` and
-`V4BindingMode::AuthenticatedContext` select the signed transport binding.
-`V4WssConnectOptions::binding_mode` and `V4WssServeOptions::binding_mode` fix
+`BindingMode`, `BindingMode::DirectExporter` and
+`BindingMode::AuthenticatedContext` select the signed transport binding.
+`WssConnectOptions::binding_mode` and `WssServeOptions::binding_mode` fix
 that choice before the original irreversible admission or spend. Native direct
 exporter mode derives its value independently at each actual TLS endpoint.
 See [Rust transport v4 assembly](RUST_TRANSPORT_V4.md).
 
-## Go v4 owners and control adapters
+## Go owners and control adapters
 
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
 
 | Symbol | Declaration |
 | --- | --- |
@@ -2195,27 +2631,27 @@ These entries expose bounded original owners, connection assembly, authenticated
 | `(*flowersec.StreamingOperationHandle).WaitStatus` | method |
 | `(*flowersec.StreamingStartError).Error` | method |
 | `(*flowersec.StreamingStartError).Unwrap` | method |
-| `(*flowersec.V4ConnectionController).GoString` | method |
-| `(*flowersec.V4ConnectionController).MarshalJSON` | method |
-| `(*flowersec.V4ConnectionController).String` | method |
-| `(*flowersec.V4ServiceClient).CallMethod` | method |
-| `(*flowersec.V4ServiceClient).Contract` | method |
-| `(*flowersec.V4ServiceClient).DispatchMethod` | method |
-| `(*flowersec.V4ServiceClient).NotifyMethod` | method |
-| `(*flowersec.V4ServiceClient).PrepareMethod` | method |
-| `(*flowersec.V4ServiceClient).PrepareNotifyMethod` | method |
-| `(*flowersec.V4ServiceClient).PrepareStreamingMethod` | method |
-| `(*flowersec.V4ServiceClient).Refresh` | method |
-| `(*flowersec.V4ServiceClient).StreamMethod` | method |
-| `(*flowersec.V4ServiceClient).UpdateContract` | method |
-| `(*flowersec.V4Session).BindMethods` | method |
-| `(*flowersec.V4Session).BindUnaryService` | method |
-| `(*flowersec.V4Session).PrepareNotify` | method |
-| `(*flowersec.V4Session).PrepareStreaming` | method |
-| `(*flowersec.V4StreamingResponse).SendItemEncoded` | method |
+| `(*flowersec.ConnectionController).GoString` | method |
+| `(*flowersec.ConnectionController).MarshalJSON` | method |
+| `(*flowersec.ConnectionController).String` | method |
+| `(*flowersec.ServiceClient).CallMethod` | method |
+| `(*flowersec.ServiceClient).Contract` | method |
+| `(*flowersec.ServiceClient).DispatchMethod` | method |
+| `(*flowersec.ServiceClient).NotifyMethod` | method |
+| `(*flowersec.ServiceClient).PrepareMethod` | method |
+| `(*flowersec.ServiceClient).PrepareNotifyMethod` | method |
+| `(*flowersec.ServiceClient).PrepareStreamingMethod` | method |
+| `(*flowersec.ServiceClient).Refresh` | method |
+| `(*flowersec.ServiceClient).StreamMethod` | method |
+| `(*flowersec.ServiceClient).UpdateContract` | method |
+| `(*flowersec.Session).BindMethods` | method |
+| `(*flowersec.Session).BindUnaryService` | method |
+| `(*flowersec.Session).PrepareNotify` | method |
+| `(*flowersec.Session).PrepareStreaming` | method |
+| `(*flowersec.StreamingResponse).SendItemEncoded` | method |
 | `flowersec.ErrContractPolicyRejected` | var |
 | `flowersec.ErrContractUpdateInProgress` | var |
-| `flowersec.NewV4StreamRegistration` | func |
+| `flowersec.NewStreamRegistration` | func |
 | `flowersec.NotificationResult` | type |
 | `flowersec.NotificationSubmission` | type |
 | `flowersec.NotifyOperationHandle` | type |
@@ -2223,223 +2659,223 @@ These entries expose bounded original owners, connection assembly, authenticated
 | `flowersec.StreamingOperationHandle` | type |
 | `flowersec.StreamingProgress` | type |
 | `flowersec.StreamingStartError` | type |
-| `flowersec.V4BoundedContractAcceptance` | func |
-| `flowersec.V4CallNotify` | const |
-| `flowersec.V4CallServerStreaming` | const |
-| `flowersec.V4CallUnary` | const |
-| `flowersec.V4ContractAcceptance` | type |
-| `flowersec.V4ContractBounded` | const |
-| `flowersec.V4ContractExact` | const |
-| `flowersec.V4ContractRange` | type |
-| `flowersec.V4ContractSnapshot` | type |
-| `flowersec.V4MethodSelector` | type |
-| `flowersec.V4NotifyMethod` | type |
-| `flowersec.V4ServiceBindOptions` | type |
-| `flowersec.V4ServiceDefinition` | type |
-| `flowersec.V4ServiceMethod` | type |
-| `flowersec.V4ServiceMethodWorkload` | type |
-| `flowersec.V4SessionMethodWorkload` | type |
-| `flowersec.V4StreamRegistration` | type |
-| `flowersec.V4StreamingMethod` | type |
-| `flowersec.V4StreamingRequest` | type |
-| `flowersec.V4StreamingResponse` | type |
-| `flowersec.V4UnaryServiceDefinition` | type |
-| `flowersec.V4UnaryServiceMethod` | type |
+| `flowersec.BoundedContractAcceptance` | func |
+| `flowersec.CallNotify` | const |
+| `flowersec.CallServerStreaming` | const |
+| `flowersec.CallUnary` | const |
+| `flowersec.ContractAcceptance` | type |
+| `flowersec.ContractBounded` | const |
+| `flowersec.ContractExact` | const |
+| `flowersec.ContractRange` | type |
+| `flowersec.ContractSnapshot` | type |
+| `flowersec.MethodSelector` | type |
+| `flowersec.NotifyMethod` | type |
+| `flowersec.ServiceBindOptions` | type |
+| `flowersec.ServiceDefinition` | type |
+| `flowersec.ServiceMethod` | type |
+| `flowersec.ServiceMethodWorkload` | type |
+| `flowersec.SessionMethodWorkload` | type |
+| `flowersec.StreamRegistration` | type |
+| `flowersec.StreamingMethod` | type |
+| `flowersec.StreamingRequest` | type |
+| `flowersec.StreamingResponse` | type |
+| `flowersec.UnaryServiceDefinition` | type |
+| `flowersec.UnaryServiceMethod` | type |
 
-## Go v4 owners and control adapters
+## Go owners and control adapters
 
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
 
 | Symbol | Declaration |
 | --- | --- |
 | `(*flowersec.OperationReferenceCodec).Close` | method |
 | `(*flowersec.OperationReferenceCodec).Export` | method |
 | `(*flowersec.OperationReferenceCodec).Import` | method |
-| `(*flowersec.V4ResumeCodec).Close` | method |
-| `(*flowersec.V4ResumeCodec).DecodeResult` | method |
-| `(*flowersec.V4ResumeCodec).ImportToken` | method |
-| `(*flowersec.V4SQLiteReferenceStore).Binding` | method |
-| `(*flowersec.V4SQLiteReferenceStore).Close` | method |
-| `(*flowersec.V4SQLiteReferenceStore).SaveOperationReference` | method |
-| `(*flowersec.V4SQLiteReferences).Close` | method |
-| `(*flowersec.V4SQLiteReferences).Collect` | method |
-| `(*flowersec.V4SQLiteReferences).GoString` | method |
-| `(*flowersec.V4SQLiteReferences).List` | method |
-| `(*flowersec.V4SQLiteReferences).Load` | method |
-| `(*flowersec.V4SQLiteReferences).MarshalJSON` | method |
-| `(*flowersec.V4SQLiteReferences).Retire` | method |
-| `(*flowersec.V4SQLiteReferences).Save` | method |
-| `(*flowersec.V4SQLiteReferences).String` | method |
-| `(*flowersec.V4SQLiteReferences).WaitCleanup` | method |
-| `(*flowersec.V4ServiceClient).PrepareMethodAndSave` | method |
-| `(*flowersec.V4ServiceClient).PrepareNotifyMethodAndSave` | method |
-| `(*flowersec.V4ServiceClient).PrepareStreamingMethodAndSave` | method |
-| `(*flowersec.V4Session).PrepareNotifyAndSave` | method |
-| `(*flowersec.V4Session).PrepareResume` | method |
-| `(*flowersec.V4Session).PrepareResumeAndSave` | method |
-| `(*flowersec.V4Session).PrepareStreamingAndSave` | method |
-| `(*flowersec.V4Session).PrepareUnaryAndSave` | method |
-| `(*flowersec.V4Session).Resume` | method |
-| `flowersec.CreateV4SQLiteReferences` | func |
+| `(*flowersec.ResumeCodec).Close` | method |
+| `(*flowersec.ResumeCodec).DecodeResult` | method |
+| `(*flowersec.ResumeCodec).ImportToken` | method |
+| `(*flowersec.SQLiteReferenceStore).Binding` | method |
+| `(*flowersec.SQLiteReferenceStore).Close` | method |
+| `(*flowersec.SQLiteReferenceStore).SaveOperationReference` | method |
+| `(*flowersec.SQLiteReferences).Close` | method |
+| `(*flowersec.SQLiteReferences).Collect` | method |
+| `(*flowersec.SQLiteReferences).GoString` | method |
+| `(*flowersec.SQLiteReferences).List` | method |
+| `(*flowersec.SQLiteReferences).Load` | method |
+| `(*flowersec.SQLiteReferences).MarshalJSON` | method |
+| `(*flowersec.SQLiteReferences).Retire` | method |
+| `(*flowersec.SQLiteReferences).Save` | method |
+| `(*flowersec.SQLiteReferences).String` | method |
+| `(*flowersec.SQLiteReferences).WaitCleanup` | method |
+| `(*flowersec.ServiceClient).PrepareMethodAndSave` | method |
+| `(*flowersec.ServiceClient).PrepareNotifyMethodAndSave` | method |
+| `(*flowersec.ServiceClient).PrepareStreamingMethodAndSave` | method |
+| `(*flowersec.Session).PrepareNotifyAndSave` | method |
+| `(*flowersec.Session).PrepareResume` | method |
+| `(*flowersec.Session).PrepareResumeAndSave` | method |
+| `(*flowersec.Session).PrepareStreamingAndSave` | method |
+| `(*flowersec.Session).PrepareUnaryAndSave` | method |
+| `(*flowersec.Session).Resume` | method |
+| `flowersec.CreateSQLiteReferences` | func |
 | `flowersec.ErrOperationReferenceExpired` | var |
 | `flowersec.ErrReferenceSaveUnknown` | var |
 | `flowersec.NewOperationReferenceCodec` | func |
-| `flowersec.NewV4ResumeCodec` | func |
-| `flowersec.NewV4SQLiteReferenceStore` | func |
-| `flowersec.OpenV4SQLiteReferences` | func |
+| `flowersec.NewResumeCodec` | func |
+| `flowersec.NewSQLiteReferenceStore` | func |
+| `flowersec.OpenSQLiteReferences` | func |
 | `flowersec.OperationReferenceCodec` | type |
 | `flowersec.OperationReferenceCodecCharge` | func |
 | `flowersec.OperationReferenceSaveResult` | type |
 | `flowersec.OperationReferenceStore` | type |
 | `flowersec.OperationReferenceStore.SaveOperationReference` | interface_method |
-| `flowersec.V4ReferenceSaveConfirmed` | const |
-| `flowersec.V4ReferenceSaveOutcome` | type |
-| `flowersec.V4ReferenceSaveUnknown` | const |
-| `flowersec.V4ReferenceStoreBinding` | type |
-| `flowersec.V4ResumeAccepted` | const |
-| `flowersec.V4ResumeCheckpoint` | type |
-| `flowersec.V4ResumeClaims` | type |
-| `flowersec.V4ResumeCodec` | type |
-| `flowersec.V4ResumeCodecCharge` | func |
-| `flowersec.V4ResumeMACToken` | const |
-| `flowersec.V4ResumeMethod` | type |
-| `flowersec.V4ResumeRejected` | const |
-| `flowersec.V4ResumeResult` | type |
-| `flowersec.V4ResumeSignedToken` | const |
-| `flowersec.V4ResumeToken` | type |
-| `flowersec.V4ResumeUnknown` | const |
-| `flowersec.V4SQLiteReferenceConfig` | type |
-| `flowersec.V4SQLiteReferenceStore` | type |
-| `flowersec.V4SQLiteReferenceStoreCharge` | func |
-| `flowersec.V4SQLiteReferences` | type |
-| `flowersec.V4SQLiteReferencesCharge` | func |
+| `flowersec.ReferenceSaveConfirmed` | const |
+| `flowersec.ReferenceSaveOutcome` | type |
+| `flowersec.ReferenceSaveUnknown` | const |
+| `flowersec.ReferenceStoreBinding` | type |
+| `flowersec.ResumeAccepted` | const |
+| `flowersec.ResumeCheckpoint` | type |
+| `flowersec.ResumeClaims` | type |
+| `flowersec.ResumeCodec` | type |
+| `flowersec.ResumeCodecCharge` | func |
+| `flowersec.ResumeMACToken` | const |
+| `flowersec.ResumeMethod` | type |
+| `flowersec.ResumeRejected` | const |
+| `flowersec.ResumeResult` | type |
+| `flowersec.ResumeSignedToken` | const |
+| `flowersec.ResumeToken` | type |
+| `flowersec.ResumeUnknown` | const |
+| `flowersec.SQLiteReferenceConfig` | type |
+| `flowersec.SQLiteReferenceStore` | type |
+| `flowersec.SQLiteReferenceStoreCharge` | func |
+| `flowersec.SQLiteReferences` | type |
+| `flowersec.SQLiteReferencesCharge` | func |
 
-## Go v4 owners and control adapters
+## Go owners and control adapters
 
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
 
 | Symbol | Declaration |
 | --- | --- |
-| `(*flowersec.V4ConnectionController).BindMethods` | method |
-| `(*flowersec.V4ConnectionController).BindUnaryMethods` | method |
-| `(*flowersec.V4RecoveryMACKey).Close` | method |
-| `(*flowersec.V4RecoveryMACKey).GoString` | method |
-| `(*flowersec.V4RecoveryMACKey).MarshalJSON` | method |
-| `(*flowersec.V4RecoveryMACKey).String` | method |
-| `(*flowersec.V4RecoveryVerifier).Close` | method |
-| `(*flowersec.V4RecoveryVerifier).GoString` | method |
-| `(*flowersec.V4RecoveryVerifier).MarshalJSON` | method |
-| `(*flowersec.V4RecoveryVerifier).String` | method |
-| `(*flowersec.V4ResumeCodec).CaptureCheckpoint` | method |
-| `(*flowersec.V4Session).QueryServiceContracts` | method |
-| `flowersec.CreateV4SQLiteExecutions` | func |
-| `flowersec.ImportV4RecoveryMACKey` | func |
-| `flowersec.NewV4DurableExecutions` | func |
-| `flowersec.NewV4RecoveryVerifier` | func |
-| `flowersec.NewV4ResumeRegistration` | func |
-| `flowersec.OpenV4SQLiteExecutions` | func |
-| `flowersec.V4AdmissionOfferBounds` | type |
-| `flowersec.V4CheckpointIssuanceOptions` | type |
-| `flowersec.V4ContractQueryRefusal` | type |
-| `flowersec.V4ContractQuerySnapshotInfo` | type |
-| `flowersec.V4ContractQuerySnapshots` | type |
-| `flowersec.V4DurableExecutionConfig` | type |
-| `flowersec.V4DurableExecutions` | type |
-| `flowersec.V4DurableExecutionsCharge` | func |
-| `flowersec.V4DurableServiceBinding` | func |
-| `flowersec.V4ExecutionPrincipal` | type |
-| `flowersec.V4ExecutionService` | type |
-| `flowersec.V4ExecutionSessionIdentity` | type |
-| `flowersec.V4ExecutionTarget` | type |
-| `flowersec.V4RecoveryKey` | type |
-| `flowersec.V4RecoveryMACKey` | type |
-| `flowersec.V4RecoveryMACKeyCharge` | func |
-| `flowersec.V4RecoveryVerifier` | type |
-| `flowersec.V4RecoveryVerifierCharge` | func |
-| `flowersec.V4RecoveryVerifierConfig` | type |
-| `flowersec.V4ResumeStreamBinding` | type |
-| `flowersec.V4SQLiteExecutionConfig` | type |
-| `flowersec.V4SQLiteExecutionContinuity` | type |
-| `flowersec.V4SQLiteExecutionMethod` | type |
-| `flowersec.V4SQLiteExecutionRegistration` | type |
-| `flowersec.V4SQLiteExecutionService` | type |
-| `flowersec.V4SQLiteExecutions` | type |
-| `flowersec.V4SQLiteExecutionsCharge` | func |
-| `flowersec.V4ServiceAuthority` | type |
-| `flowersec.V4ServiceContractPolicy` | type |
-| `flowersec.V4ServiceContractTarget` | type |
+| `(*flowersec.ConnectionController).BindMethods` | method |
+| `(*flowersec.ConnectionController).BindUnaryMethods` | method |
+| `(*flowersec.RecoveryMACKey).Close` | method |
+| `(*flowersec.RecoveryMACKey).GoString` | method |
+| `(*flowersec.RecoveryMACKey).MarshalJSON` | method |
+| `(*flowersec.RecoveryMACKey).String` | method |
+| `(*flowersec.RecoveryVerifier).Close` | method |
+| `(*flowersec.RecoveryVerifier).GoString` | method |
+| `(*flowersec.RecoveryVerifier).MarshalJSON` | method |
+| `(*flowersec.RecoveryVerifier).String` | method |
+| `(*flowersec.ResumeCodec).CaptureCheckpoint` | method |
+| `(*flowersec.Session).QueryServiceContracts` | method |
+| `flowersec.CreateSQLiteExecutions` | func |
+| `flowersec.ImportRecoveryMACKey` | func |
+| `flowersec.NewDurableExecutions` | func |
+| `flowersec.NewRecoveryVerifier` | func |
+| `flowersec.NewResumeRegistration` | func |
+| `flowersec.OpenSQLiteExecutions` | func |
+| `flowersec.AdmissionOfferBounds` | type |
+| `flowersec.CheckpointIssuanceOptions` | type |
+| `flowersec.ContractQueryRefusal` | type |
+| `flowersec.ContractQuerySnapshotInfo` | type |
+| `flowersec.ContractQuerySnapshots` | type |
+| `flowersec.DurableExecutionConfig` | type |
+| `flowersec.DurableExecutions` | type |
+| `flowersec.DurableExecutionsCharge` | func |
+| `flowersec.DurableServiceBinding` | func |
+| `flowersec.ExecutionPrincipal` | type |
+| `flowersec.ExecutionService` | type |
+| `flowersec.ExecutionSessionIdentity` | type |
+| `flowersec.ExecutionTarget` | type |
+| `flowersec.RecoveryKey` | type |
+| `flowersec.RecoveryMACKey` | type |
+| `flowersec.RecoveryMACKeyCharge` | func |
+| `flowersec.RecoveryVerifier` | type |
+| `flowersec.RecoveryVerifierCharge` | func |
+| `flowersec.RecoveryVerifierConfig` | type |
+| `flowersec.ResumeStreamBinding` | type |
+| `flowersec.SQLiteExecutionConfig` | type |
+| `flowersec.SQLiteExecutionContinuity` | type |
+| `flowersec.SQLiteExecutionMethod` | type |
+| `flowersec.SQLiteExecutionRegistration` | type |
+| `flowersec.SQLiteExecutionService` | type |
+| `flowersec.SQLiteExecutions` | type |
+| `flowersec.SQLiteExecutionsCharge` | func |
+| `flowersec.ServiceAuthority` | type |
+| `flowersec.ServiceContractPolicy` | type |
+| `flowersec.ServiceContractTarget` | type |
 
 Owned snapshot, checkpoint and execution storage aliases preserve their original methods:
 
 | Symbol | Declaration |
 | --- | --- |
-| `(*flowersec.V4SQLiteBacking).Limits` | method |
-| `(*flowersec.V4UnaryResponse).IssueCheckpoint` | method |
-| `(*flowersec.V4ContractQuerySnapshots).Count` | method |
-| `(*flowersec.V4ContractQuerySnapshots).Item` | method |
-| `(*flowersec.V4ContractQuerySnapshots).CopyCanonical` | method |
-| `(*flowersec.V4ContractQuerySnapshots).Close` | method |
-| `(*flowersec.V4SQLiteExecutions).InstallContract` | method |
-| `(*flowersec.V4SQLiteExecutions).ReadRegistration` | method |
-| `(*flowersec.V4SQLiteExecutions).Close` | method |
-| `(*flowersec.V4SQLiteExecutions).WaitCleanup` | method |
-| `(*flowersec.V4SQLiteExecutions).Retire` | method |
-| `(*flowersec.V4SQLiteExecutions).SupportsCheckpoints` | method |
-| `(*flowersec.V4SQLiteExecutions).SupportsContent` | method |
-| `(*flowersec.V4DurableExecutions).Close` | method |
-| `(*flowersec.V4DurableExecutions).CleanupComplete` | method |
+| `(*flowersec.SQLiteBacking).Limits` | method |
+| `(*flowersec.UnaryResponse).IssueCheckpoint` | method |
+| `(*flowersec.ContractQuerySnapshots).Count` | method |
+| `(*flowersec.ContractQuerySnapshots).Item` | method |
+| `(*flowersec.ContractQuerySnapshots).CopyCanonical` | method |
+| `(*flowersec.ContractQuerySnapshots).Close` | method |
+| `(*flowersec.SQLiteExecutions).InstallContract` | method |
+| `(*flowersec.SQLiteExecutions).ReadRegistration` | method |
+| `(*flowersec.SQLiteExecutions).Close` | method |
+| `(*flowersec.SQLiteExecutions).WaitCleanup` | method |
+| `(*flowersec.SQLiteExecutions).Retire` | method |
+| `(*flowersec.SQLiteExecutions).SupportsCheckpoints` | method |
+| `(*flowersec.SQLiteExecutions).SupportsContent` | method |
+| `(*flowersec.DurableExecutions).Close` | method |
+| `(*flowersec.DurableExecutions).CleanupComplete` | method |
 
-## Go v4 owners and control adapters
+## Go owners and control adapters
 
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
-
-| Symbol | Declaration |
-| --- | --- |
-| `flowersec.V4ServiceContractSource` | type |
-| `flowersec.V4ServiceContractsRemote` | const |
-| `flowersec.V4ServiceContractsStatic` | const |
-
-## Go v4 owners and control adapters
-
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
 
 | Symbol | Declaration |
 | --- | --- |
-| `flowersec.ErrV4ContractDenied` | var |
-| `flowersec.ErrV4ContractUnavailable` | var |
+| `flowersec.ServiceContractSource` | type |
+| `flowersec.ServiceContractsRemote` | const |
+| `flowersec.ServiceContractsStatic` | const |
 
-## Go v4 owners and control adapters
+## Go owners and control adapters
 
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
-
-| Symbol | Declaration |
-| --- | --- |
-| `flowersec.ErrV4ContractRenewalQualification` | var |
-| `flowersec.V4ContractRenewalPolicy` | type |
-| `flowersec.V4ServiceOfferRefresh` | type |
-| `flowersec.V4ServiceOfferRefreshExplicit` | const |
-| `flowersec.V4ServiceOfferRefreshManaged` | const |
-
-## Go v4 owners and control adapters
-
-These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport v4 assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
 
 | Symbol | Declaration |
 | --- | --- |
-| `flowersec.NewV4ServiceDependency` | func |
-| `flowersec.V4DispatchRequirement` | type |
-| `flowersec.V4InvocationService` | type |
-| `flowersec.V4InvocationService.CallMethod` | method |
-| `flowersec.V4InvocationService.NotifyMethod` | method |
-| `flowersec.V4InvocationService.PrepareMethod` | method |
-| `flowersec.V4InvocationService.PrepareNotifyMethod` | method |
-| `flowersec.V4InvocationService.PrepareStreamingMethod` | method |
-| `flowersec.V4InvocationService.StreamMethod` | method |
-| `flowersec.V4InvocationServiceFromContext` | func |
-| `flowersec.V4OnUse` | const |
-| `flowersec.V4RequiredForDispatch` | const |
-| `flowersec.V4ServiceDependency` | type |
-| `flowersec.V4ServiceDependencyMethod` | type |
+| `flowersec.ErrContractDenied` | var |
+| `flowersec.ErrContractUnavailable` | var |
+
+## Go owners and control adapters
+
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+
+| Symbol | Declaration |
+| --- | --- |
+| `flowersec.ErrContractRenewalQualification` | var |
+| `flowersec.ContractRenewalPolicy` | type |
+| `flowersec.ServiceOfferRefresh` | type |
+| `flowersec.ServiceOfferRefreshExplicit` | const |
+| `flowersec.ServiceOfferRefreshManaged` | const |
+
+## Go owners and control adapters
+
+These entries expose bounded original owners, connection assembly, authenticated control transports, issuance authorities and read-only authorization facts. Each capability retains its own admission and lifecycle gates. See [Go transport assembly](GO_TRANSPORT_V4.md) for construction and cleanup.
+
+| Symbol | Declaration |
+| --- | --- |
+| `flowersec.NewServiceDependency` | func |
+| `flowersec.DispatchRequirement` | type |
+| `flowersec.InvocationService` | type |
+| `flowersec.InvocationService.CallMethod` | method |
+| `flowersec.InvocationService.NotifyMethod` | method |
+| `flowersec.InvocationService.PrepareMethod` | method |
+| `flowersec.InvocationService.PrepareNotifyMethod` | method |
+| `flowersec.InvocationService.PrepareStreamingMethod` | method |
+| `flowersec.InvocationService.StreamMethod` | method |
+| `flowersec.InvocationServiceFromContext` | func |
+| `flowersec.OnUse` | const |
+| `flowersec.RequiredForDispatch` | const |
+| `flowersec.ServiceDependency` | type |
+| `flowersec.ServiceDependencyMethod` | type |
 
 Go ordinary stream metadata preserves the exact v4 application namespace,
 version and byte map. `flowersec.NewStreamMetadataEnvelope` captures opaque
@@ -2448,3 +2884,405 @@ application bytes; `flowersec.StreamMetadata.Namespace`,
 return detached projections. `flowersec.StreamMetadata.JSONValues` recognizes
 only the optional `application/json` version 1 convenience codec. Nonempty
 metadata is canonical CBOR; an empty metadata value uses zero bytes.
+
+## Go namespace composition and managed credentials
+
+These constructors install trusted roots and bounded original owners. A lookup
+cannot choose its own trust provider or restore authority from cached history.
+A retirement operation requires independent signed coverage before it can
+release the exact predecessor backing. Cancellation retains the original pin
+and preparation position until the unique host cancel/stop invocation exits.
+
+| Symbol | Declaration |
+| --- | --- |
+| `flowersec.NamespaceReferenceConfig` | type |
+| `flowersec.NamespaceReferenceFactory` | type |
+| `flowersec.NamespaceReferenceFactoryCharge` | func |
+| `flowersec.NewNamespaceReferenceFactory` | func |
+| `(*flowersec.NamespaceReferenceFactory).Resolve` | method |
+| `(*flowersec.NamespaceReferenceFactory).PrepareNamespaceRetirement` | method |
+| `(*flowersec.NamespaceReferenceFactory).Close` | method |
+| `(*flowersec.NamespaceReferenceFactory).WaitCleanup` | method |
+| `(*flowersec.TransportEnvironment).VerificationNamespace` | method |
+| `flowersec.NamespaceOnlineRetirement` | type |
+| `flowersec.NamespaceOnlineRetirementCharge` | func |
+| `flowersec.NewNamespaceOnlineRetirement` | func |
+| `flowersec.NamespaceRetirementFactory` | type |
+| `flowersec.NamespaceRetirementServiceConfig` | type |
+| `flowersec.NamespaceRetirementServiceStatus` | type |
+| `flowersec.NamespaceRetirementService` | type |
+| `flowersec.NamespaceRetirementServiceCharge` | func |
+| `flowersec.NewNamespaceRetirementService` | func |
+| `flowersec.MaterialAcquisitionBatch` | type |
+| `flowersec.NewMaterialAcquisitionBatch` | func |
+| `(*flowersec.MaterialAcquisitionBatch).Acquire` | method |
+| `(*flowersec.MaterialAcquisitionBatch).Close` | method |
+| `(*flowersec.MaterialAcquisitionBatch).WaitCleanup` | method |
+| `flowersec.ProxyCredentialMode` | type |
+| `flowersec.ProxyCredentialsNone` | const |
+| `flowersec.ProxyCredentialsExternal` | const |
+| `flowersec.ProxyCredentialsCookieSession` | const |
+| `flowersec.ProxyCredentialPolicy` | type |
+| `flowersec.ProxyCredentialScope` | type |
+| `flowersec.ProxyCookieSession` | type |
+| `flowersec.ProxyCredentialClearResult` | type |
+| `flowersec.ErrProxyCredentialScope` | var |
+| `flowersec.ErrProxyCredentialUpdate` | var |
+| `(*flowersec.ProxyServer).NewCookieSession` | method |
+| `(*flowersec.ProxyCookieSession).Attachment` | method |
+| `(*flowersec.ProxyCookieSession).ClearUpstreamCredentials` | method |
+| `(*flowersec.ProxyCookieSession).Close` | method |
+| `(*flowersec.ProxyCookieSession).CleanupStatus` | method |
+| `(*flowersec.ProxyCookieSession).WaitCleanup` | method |
+| `(*flowersec.ProxyCookieSession).String` | method |
+| `(*flowersec.ProxyCookieSession).GoString` | method |
+| `(*flowersec.ProxyCookieSession).MarshalJSON` | method |
+
+Credential scope is supplied by the authenticated host registration. Private
+association values never authorize a different tenant, principal, content
+origin or Surface. Each content request captures one original incarnation.
+Clear fences that incarnation before replacement allocation and retains its
+confirmed invalidation result on failure. Actual native body and transport
+cleanup is independent of a successful logical response.
+
+## Go original tunnel server registration
+
+`flowersec.TunnelServerRegistrationOptions` fixes the authenticated original
+server material, existing resource root and accounts, registered allow provider
+and complete HOP entrance. `flowersec.TunnelServerRegistrationCharge` and
+`flowersec.NewTunnelServerRegistration` preadmit this composition before
+advertising its binding or preparing its native carrier.
+`flowersec.TunnelAcceptOptions` supplies one fresh original application plan.
+
+| Symbol | Declaration |
+| --- | --- |
+| `flowersec.TunnelServerRegistrationOptions` | type |
+| `flowersec.TunnelServerRegistration` | type |
+| `flowersec.TunnelAcceptOptions` | type |
+| `flowersec.TunnelServerRegistrationCharge` | func |
+| `flowersec.NewTunnelServerRegistration` | func |
+| `(*flowersec.TunnelServerRegistration).Handler` | method |
+| `(*flowersec.TunnelServerRegistration).Binding` | method |
+| `(*flowersec.TunnelServerRegistration).ReserveOriginalLivePublication` | method |
+| `(*flowersec.TunnelServerRegistration).Accept` | method |
+| `(*flowersec.TunnelServerRegistration).Close` | method |
+| `(*flowersec.TunnelServerRegistration).WaitCleanup` | method |
+| `(*flowersec.TunnelServerRegistration).String` | method |
+
+Allow dispatch, HOP possession, local admission, FSA, Noise and READY retain
+one original registration and carrier. A taken recipient transfers to the
+original Serve/Environment ingress; closing the registration cannot refund
+that physical work. Cleanup joins the original control and preparation calls.
+
+
+
+Remote application failures are semantically separate from transport failures. TypeScript declares bounded `ApplicationErrorDefinition`; its handlers throw `ServiceError`. Swift exposes `ServiceApplicationError`, and Rust exposes `ServiceError`.
+
+
+## Current manifest symbol index
+
+The following symbols are part of the current public manifest.
+
+| Symbol | Declaration |
+| --- | --- |
+| `(*flowersec.ConnectionController).SubscribeNotification` | manifest entry |
+| `(*flowersec.DuplexBridge).Abort` | manifest entry |
+| `(*flowersec.DuplexBridge).CleanupStatus` | manifest entry |
+| `(*flowersec.DuplexBridge).Progress` | manifest entry |
+| `(*flowersec.DuplexBridge).Start` | manifest entry |
+| `(*flowersec.DuplexBridge).Wait` | manifest entry |
+| `(*flowersec.MessageDefinitionCodec).Close` | manifest entry |
+| `(*flowersec.MessageDefinitionCodec).Define` | manifest entry |
+| `(*flowersec.MessageDefinitionCodec).ImportDefinition` | manifest entry |
+| `(*flowersec.NativeTCP).CleanupStatus` | manifest entry |
+| `(*flowersec.NativeTCP).Close` | manifest entry |
+| `(*flowersec.NativeTCPDial).Cancel` | manifest entry |
+| `(*flowersec.NativeTCPDial).CleanupStatus` | manifest entry |
+| `(*flowersec.NativeTCPDial).Wait` | manifest entry |
+| `(*flowersec.NotificationSubscription).ObservationStatus` | manifest entry |
+| `(*flowersec.NotificationSubscription).Release` | manifest entry |
+| `(*flowersec.NotificationSubscription).ReplaceDependencies` | manifest entry |
+| `(*flowersec.NotificationSubscription).Status` | manifest entry |
+| `(*flowersec.ProxyServer).Close` | manifest entry |
+| `(*flowersec.ProxyServer).RegisterStreamHandlers` | manifest entry |
+| `(*flowersec.QUICServer).InstallAcceptedRoute` | manifest entry |
+| `(*flowersec.QUICServer).InterruptConnections` | manifest entry |
+| `(*flowersec.QUICServer).InterruptTransport` | manifest entry |
+| `(*flowersec.QUICServer).PrepareTunnel` | manifest entry |
+| `(*flowersec.Session).OpenMessageStream` | manifest entry |
+| `(*flowersec.Session).ReplaceServiceDependencies` | manifest entry |
+| `(*flowersec.Session).SubscribeNotification` | manifest entry |
+| `(*flowersec.SessionError).Code` | manifest entry |
+| `(*flowersec.SessionError).Error` | manifest entry |
+| `(*flowersec.SessionError).RetryDisposition` | manifest entry |
+| `(*flowersec.SessionError).Unwrap` | manifest entry |
+| `(*flowersec.TunnelRuntime).Close` | manifest entry |
+| `(*flowersec.TunnelRuntime).ServePair` | manifest entry |
+| `(*flowersec.TunnelRuntime).ServeRoute` | manifest entry |
+| `(*flowersec.TunnelRuntime).WaitCleanup` | manifest entry |
+| `(*flowersec.TypedMessageStream).CopyApplicationMetadata` | manifest entry |
+| `(*flowersec.TypedMessageStream).Definition` | manifest entry |
+| `(*flowersec.UnreliableMessageError).Code` | manifest entry |
+| `(*flowersec.UnreliableMessageError).Error` | manifest entry |
+| `(*flowersec.WebTransportServer).InstallAcceptedRoute` | manifest entry |
+| `(*flowersec.WebTransportServer).InterruptConnections` | manifest entry |
+| `(*flowersec.WebTransportServer).PrepareTunnel` | manifest entry |
+| `flowersec.AcceptorOptions` | manifest entry |
+| `flowersec.AdmissionFacts` | manifest entry |
+| `flowersec.AdmissionFields` | manifest entry |
+| `flowersec.ApplicationExecutorPreset` | manifest entry |
+| `flowersec.ApplicationExecutorSnapshot` | manifest entry |
+| `flowersec.ApplicationMessageCodec` | manifest entry |
+| `flowersec.ApplicationMessageCodecOptions` | manifest entry |
+| `flowersec.ApplicationProfileClient` | manifest entry |
+| `flowersec.ApplicationProfileConstrained` | manifest entry |
+| `flowersec.ApplicationProfileCustom` | manifest entry |
+| `flowersec.ApplicationProfileServer` | manifest entry |
+| `flowersec.ApplicationResourceProfile` | manifest entry |
+| `flowersec.BytesMessageCodec` | manifest entry |
+| `flowersec.ConnectArtifactInvalid` | manifest entry |
+| `flowersec.ConnectConnectionFailed` | manifest entry |
+| `flowersec.ConnectExpired` | manifest entry |
+| `flowersec.ConnectTransportSecurityFailed` | manifest entry |
+| `flowersec.ConnectTransportSecurityUnsupported` | manifest entry |
+| `flowersec.ConnectionControllerOptions` | manifest entry |
+| `flowersec.ConnectorOptions` | manifest entry |
+| `flowersec.ContractBoolean` | manifest entry |
+| `flowersec.ContractByteString` | manifest entry |
+| `flowersec.ContractEncodedArray` | manifest entry |
+| `flowersec.ContractEncodedMap` | manifest entry |
+| `flowersec.ContractTextString` | manifest entry |
+| `flowersec.ContractUnsigned` | manifest entry |
+| `flowersec.ControlledHTTPService` | manifest entry |
+| `flowersec.ControlledHTTPUpgradeConfig` | manifest entry |
+| `flowersec.ControllerNotificationEvent` | manifest entry |
+| `flowersec.ControllerNotificationGap` | manifest entry |
+| `flowersec.ControllerNotificationObserver` | manifest entry |
+| `flowersec.ControllerNotificationOptions` | manifest entry |
+| `flowersec.CredentialBackingBytes` | manifest entry |
+| `flowersec.CurrentWebSocketDirectPath` | manifest entry |
+| `flowersec.CurrentWebSocketTunnelPath` | manifest entry |
+| `flowersec.DelegatedHTTPService` | manifest entry |
+| `flowersec.DelegatedStreamOptions` | type |
+| `flowersec.DelegatedStreamServe` | type |
+| `flowersec.DelegatedStreamService` | type |
+| `flowersec.DuplexAborted` | manifest entry |
+| `flowersec.DuplexBridge` | manifest entry |
+| `flowersec.DuplexBridgeOptions` | manifest entry |
+| `flowersec.DuplexDirectionProgress` | manifest entry |
+| `flowersec.DuplexDirectionResult` | manifest entry |
+| `flowersec.DuplexFailed` | manifest entry |
+| `flowersec.DuplexNormal` | manifest entry |
+| `flowersec.DuplexObservation` | manifest entry |
+| `flowersec.DuplexOutcome` | manifest entry |
+| `flowersec.DuplexProgress` | manifest entry |
+| `flowersec.DuplexResult` | manifest entry |
+| `flowersec.DuplexSendResult` | manifest entry |
+| `flowersec.EmptyStreamMetadata` | manifest entry |
+| `flowersec.EncodeServiceContract` | manifest entry |
+| `flowersec.EncodedMessageReceiveResult` | manifest entry |
+| `flowersec.Environment` | manifest entry |
+| `flowersec.EnvironmentOptions` | manifest entry |
+| `flowersec.ErrConnectionFailed` | manifest entry |
+| `flowersec.ErrDuplexAborted` | manifest entry |
+| `flowersec.ErrDuplexCleanupIncomplete` | manifest entry |
+| `flowersec.ErrInvalidConnectorOptions` | manifest entry |
+| `flowersec.ErrInvalidMetadata` | manifest entry |
+| `flowersec.ErrInvalidProxyServer` | manifest entry |
+| `flowersec.ErrMessageDecodeFailed` | manifest entry |
+| `flowersec.ErrMessageEncodeFailed` | manifest entry |
+| `flowersec.ErrMessageInputDelivered` | manifest entry |
+| `flowersec.ErrMessageWouldBlock` | manifest entry |
+| `flowersec.ExecutorOperationsSnapshot` | manifest entry |
+| `flowersec.FeatureEnvelopePolicy` | manifest entry |
+| `flowersec.HTTPStream` | manifest entry |
+| `flowersec.HTTPStreamCharge` | manifest entry |
+| `flowersec.HTTPStreamUpgrader` | manifest entry |
+| `flowersec.HTTPUpgradePeer` | manifest entry |
+| `flowersec.MessageCodec` | manifest entry |
+| `flowersec.MessageCodecExecution` | manifest entry |
+| `flowersec.MessageCodecIdentity` | manifest entry |
+| `flowersec.MessageCodecIndependent` | manifest entry |
+| `flowersec.MessageCodecSynchronous` | manifest entry |
+| `flowersec.MessageDefinitionCodec` | manifest entry |
+| `flowersec.MessageDefinitionCodecCharge` | manifest entry |
+| `flowersec.MessageDirectionDefinition` | manifest entry |
+| `flowersec.MessageReceiveError` | manifest entry |
+| `flowersec.MessageReceiveResult` | manifest entry |
+| `flowersec.MessageResultModeConflict` | manifest entry |
+| `flowersec.MessageStreamDefinition.Digest` | manifest entry |
+| `flowersec.MessageStreamDefinition.Directions` | manifest entry |
+| `flowersec.MessageStreamDefinition.Kind` | manifest entry |
+| `flowersec.MessageStreamDefinition.Revision` | manifest entry |
+| `flowersec.MessageStreamDirection` | manifest entry |
+| `flowersec.MessageStreamOptions` | manifest entry |
+| `flowersec.MessageWireDefinition` | manifest entry |
+| `flowersec.NamespaceRefresh` | manifest entry |
+| `flowersec.NamespaceRefreshCharge` | manifest entry |
+| `flowersec.NamespaceRefreshConfig` | manifest entry |
+| `flowersec.NamespaceRefreshLimits` | manifest entry |
+| `flowersec.NamespaceRefreshProvider` | manifest entry |
+| `flowersec.NamespaceRefreshRequest` | manifest entry |
+| `flowersec.NativeTCP` | manifest entry |
+| `flowersec.NativeTCPCharge` | manifest entry |
+| `flowersec.NativeTCPDial` | manifest entry |
+| `flowersec.NativeTCPDialCharge` | manifest entry |
+| `flowersec.NativeTCPDialOptions` | manifest entry |
+| `flowersec.NativeTCPOptions` | manifest entry |
+| `flowersec.NewDuplexBridge` | manifest entry |
+| `flowersec.NewMessageDefinitionCodec` | manifest entry |
+| `flowersec.NewMessageStreamDefinition` | manifest entry |
+| `flowersec.NewNamespaceRefresh` | manifest entry |
+| `flowersec.NewNativeDuplexBridge` | manifest entry |
+| `flowersec.NewProtocolDecoder` | manifest entry |
+| `flowersec.NewProxyServer` | manifest entry |
+| `flowersec.NewServiceContractCodec` | manifest entry |
+| `flowersec.NewSignedMapCodec` | manifest entry |
+| `flowersec.NewStreamMetadata` | manifest entry |
+| `flowersec.NewTunnelHop` | manifest entry |
+| `flowersec.NewTunnelPair` | manifest entry |
+| `flowersec.NewTunnelRoute` | manifest entry |
+| `flowersec.NewTunnelRuntime` | manifest entry |
+| `flowersec.NewWebSocketIngress` | manifest entry |
+| `flowersec.NotificationCurrentOnly` | manifest entry |
+| `flowersec.NotificationDrainAware` | manifest entry |
+| `flowersec.NotificationDropNewest` | manifest entry |
+| `flowersec.NotificationGapCapacity` | manifest entry |
+| `flowersec.NotificationGapCoalesced` | manifest entry |
+| `flowersec.NotificationGapContract` | manifest entry |
+| `flowersec.NotificationGapExpired` | manifest entry |
+| `flowersec.NotificationGapHandler` | manifest entry |
+| `flowersec.NotificationGapHandoff` | manifest entry |
+| `flowersec.NotificationGapInvalidPayload` | manifest entry |
+| `flowersec.NotificationGapLateAttachment` | manifest entry |
+| `flowersec.NotificationGapReasons` | manifest entry |
+| `flowersec.NotificationGapSourceClosed` | manifest entry |
+| `flowersec.NotificationLatestPending` | manifest entry |
+| `flowersec.NotificationMethod` | manifest entry |
+| `flowersec.NotificationObservationPolicy` | manifest entry |
+| `flowersec.NotificationObservationStatus` | manifest entry |
+| `flowersec.NotificationObserver` | manifest entry |
+| `flowersec.NotificationPendingPolicy` | manifest entry |
+| `flowersec.NotificationStatus` | manifest entry |
+| `flowersec.PoolSpendFields` | manifest entry |
+| `flowersec.ProtocolDecoder` | manifest entry |
+| `flowersec.ProtocolDecoderBackingBytes` | manifest entry |
+| `flowersec.ProtocolDocument` | manifest entry |
+| `flowersec.ProtocolValue` | manifest entry |
+| `flowersec.ProxyServer` | manifest entry |
+| `flowersec.ProxyServerOptions` | manifest entry |
+| `flowersec.QueryTargetAccess` | manifest entry |
+| `flowersec.QueryTargetAllowed` | manifest entry |
+| `flowersec.QueryTargetDenied` | manifest entry |
+| `flowersec.QueryTargetUnavailable` | manifest entry |
+| `flowersec.ReadTerminalEof` | manifest entry |
+| `flowersec.RegisterMessageStream` | manifest entry |
+| `flowersec.ResourceBackingBytes` | manifest entry |
+| `flowersec.RetryDisposition` | manifest entry |
+| `flowersec.RetryDispositionKind` | manifest entry |
+| `flowersec.RetryDispositionRetryAfter` | manifest entry |
+| `flowersec.RetryDispositionRetryable` | manifest entry |
+| `flowersec.RetryDispositionTerminal` | manifest entry |
+| `flowersec.ServeHTTPStream` | manifest entry |
+| `flowersec.ServiceContract` | manifest entry |
+| `flowersec.ServiceContractBackingBytes` | manifest entry |
+| `flowersec.ServiceContractCodec` | manifest entry |
+| `flowersec.ServiceContractField` | manifest entry |
+| `flowersec.ServiceContractFieldKind` | manifest entry |
+| `flowersec.SessionCanceled` | manifest entry |
+| `flowersec.SessionClosed` | manifest entry |
+| `flowersec.SessionContract` | manifest entry |
+| `flowersec.SessionCoreReferenceSlots` | manifest entry |
+| `flowersec.SessionCoreRequirements` | manifest entry |
+| `flowersec.SessionError` | manifest entry |
+| `flowersec.SessionErrorCode` | manifest entry |
+| `flowersec.SessionGoingAway` | manifest entry |
+| `flowersec.SessionLivenessFailed` | manifest entry |
+| `flowersec.SessionOperationFailed` | manifest entry |
+| `flowersec.SessionParameters` | manifest entry |
+| `flowersec.SessionRekeyFailed` | manifest entry |
+| `flowersec.SessionResourceExhausted` | manifest entry |
+| `flowersec.SessionStreamRejected` | manifest entry |
+| `flowersec.SessionStreamReset` | manifest entry |
+| `flowersec.SessionTimeout` | manifest entry |
+| `flowersec.SignedMapBackingBytes` | manifest entry |
+| `flowersec.StartAcceptedHTTPStream` | manifest entry |
+| `flowersec.StartHTTPStream` | manifest entry |
+| `flowersec.StartNativeTCPDial` | manifest entry |
+| `flowersec.StreamConn` | manifest entry |
+| `flowersec.StreamConnCharge` | manifest entry |
+| `flowersec.StreamConnOptions` | manifest entry |
+| `flowersec.StreamMetadata` | manifest entry |
+| `flowersec.StreamMetadata.Values` | manifest entry |
+| `flowersec.TunnelCarrierPreparation` | manifest entry |
+| `flowersec.TunnelHop` | manifest entry |
+| `flowersec.TunnelHopConfig` | manifest entry |
+| `flowersec.TunnelHopReservations` | manifest entry |
+| `flowersec.TunnelPair` | manifest entry |
+| `flowersec.TunnelPairCharge` | manifest entry |
+| `flowersec.TunnelPairConfig` | manifest entry |
+| `flowersec.TunnelRoute` | manifest entry |
+| `flowersec.TunnelRouteCharge` | manifest entry |
+| `flowersec.TunnelRouteConfig` | manifest entry |
+| `flowersec.TunnelRouteRun` | manifest entry |
+| `flowersec.TunnelRuntime` | manifest entry |
+| `flowersec.TunnelRuntimeCharge` | manifest entry |
+| `flowersec.TunnelRuntimeOptions` | manifest entry |
+| `flowersec.UTF8MessageCodec` | manifest entry |
+| `flowersec.UnreliableAccepted` | manifest entry |
+| `flowersec.UnreliableDroppedBudget` | manifest entry |
+| `flowersec.UnreliableDroppedCarrier` | manifest entry |
+| `flowersec.UnreliableDroppedExpired` | manifest entry |
+| `flowersec.UnreliableMessageCanceled` | manifest entry |
+| `flowersec.UnreliableMessageChannel` | manifest entry |
+| `flowersec.UnreliableMessageChannel.MaxMessageBytes` | manifest entry |
+| `flowersec.UnreliableMessageChannel.Receive` | manifest entry |
+| `flowersec.UnreliableMessageChannel.Send` | manifest entry |
+| `flowersec.UnreliableMessageClosed` | manifest entry |
+| `flowersec.UnreliableMessageError` | manifest entry |
+| `flowersec.UnreliableMessageErrorCode` | manifest entry |
+| `flowersec.UnreliableMessageErrorCode.String` | manifest entry |
+| `flowersec.UnreliableMessageInvalid` | manifest entry |
+| `flowersec.UnreliableMessageOperationFailed` | manifest entry |
+| `flowersec.UnreliableMessageTooLarge` | manifest entry |
+| `flowersec.UnreliableMessageUnavailable` | manifest entry |
+| `flowersec.UnreliableSendOptions` | manifest entry |
+| `flowersec.UnreliableSendStatus` | manifest entry |
+| `flowersec.WebSocketIngress` | manifest entry |
+| `flowersec.WebSocketIngressCharge` | manifest entry |
+| `flowersec.WebSocketIngressConfig` | manifest entry |
+| `controlplane.ArtifactIssueAuthenticationKind` | manifest entry |
+| `controlplane.ArtifactIssueHost` | manifest entry |
+| `controlplane.ArtifactIssueHostCharge` | manifest entry |
+| `controlplane.ArtifactIssueHostConfig` | manifest entry |
+| `controlplane.ArtifactIssueLocalCredential` | manifest entry |
+| `controlplane.ArtifactIssueMutualTLS` | manifest entry |
+| `controlplane.ArtifactIssueShareConfig` | manifest entry |
+| `controlplane.ArtifactIssueStateShareBytes` | manifest entry |
+| `controlplane.NewArtifactIssueHost` | manifest entry |
+| `controlplane.NewPoolHTTPSService` | manifest entry |
+| `controlplane.NewPoolOwnerProofIssuer` | manifest entry |
+| `controlplane.NewPoolSourceAuthority` | manifest entry |
+| `controlplane.NewPoolTunnelAuthority` | manifest entry |
+| `controlplane.NewPoolTunnelDeployment` | manifest entry |
+| `controlplane.NewPoolTunnelDeploymentFromPolicy` | manifest entry |
+| `controlplane.PoolBatchVerificationConfig` | manifest entry |
+| `controlplane.PoolHTTPSService` | manifest entry |
+| `controlplane.PoolHTTPSServiceCharge` | manifest entry |
+| `controlplane.PoolHTTPSServiceConfig` | manifest entry |
+| `controlplane.PoolOwnerProofIssuer` | manifest entry |
+| `controlplane.PoolOwnerProofIssuerCharge` | manifest entry |
+| `controlplane.PoolOwnerProofIssuerConfig` | manifest entry |
+| `controlplane.PoolSourceAuthority` | manifest entry |
+| `controlplane.PoolSourceAuthorityCharge` | manifest entry |
+| `controlplane.PoolSourceAuthorityConfig` | manifest entry |
+| `controlplane.PoolSourceIssuanceLimits` | manifest entry |
+| `controlplane.PoolTunnelAuthority` | manifest entry |
+| `controlplane.PoolTunnelAuthorityCharge` | manifest entry |
+| `controlplane.PoolTunnelAuthorityConfig` | manifest entry |
+| `controlplane.PoolTunnelDeployment` | manifest entry |
+| `controlplane.PoolTunnelDeploymentCharge` | manifest entry |
+| `controlplane.PoolTunnelDeploymentConfig` | manifest entry |
+| `controlplane.PoolTunnelDeploymentPolicyCharge` | manifest entry |
+| `controlplane.PoolTunnelDeploymentPolicyConfig` | manifest entry |
+| `controlplane.PoolTunnelSigningRoute` | manifest entry |

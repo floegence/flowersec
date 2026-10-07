@@ -53,12 +53,15 @@ type NotifyReceiver struct {
 	status       NotifyReceiveStatus
 	failure      error
 	closed       bool
+	borrowed     uint32
+	changed      chan struct{}
 }
 
 // NotifyMessage is one complete physical message, not a business event ID.
 // Independent identical messages have independent fanout guards. Its original
 // route, input and deadline stay live until the finite SDK fanout returns.
 type NotifyMessage struct {
+	receiver    *NotifyReceiver
 	busy        bool
 	mu          sync.Mutex
 	input       *VerifiedInput
@@ -76,7 +79,7 @@ func NotifyReceiverCharge(c NotifyReceiverConfig) (resourcev4.Vector, error) {
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	n += uint64(unsafe.Sizeof(NotifyReceiver{})) + uint64(c.Pending)*uint64(unsafe.Sizeof((*NotifyMessage)(nil)))
+	n += uint64(unsafe.Sizeof(NotifyReceiver{})) + 128 + uint64(c.Pending)*uint64(unsafe.Sizeof((*NotifyMessage)(nil)))
 	return (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 }
 
@@ -105,7 +108,7 @@ func NewNotifyReceiver(routes *ContractRoutes, c NotifyReceiverConfig, reservati
 		owned.Release()
 		return nil, err
 	}
-	r := &NotifyReceiver{parser: parser, routes: routes, root: c.Root, owner: c.Owner, reservation: owned,
+	r := &NotifyReceiver{parser: parser, routes: routes, root: c.Root, owner: c.Owner, reservation: owned, changed: make(chan struct{}, 1),
 		maxCapture: c.MaxCaptureBytes, runtimeBytes: c.RuntimeBytes, accountCount: len(c.Accounts), queue: make([]*NotifyMessage, c.Pending),
 		config: InputConfig{Clock: c.Clock, Capture: true, RuntimeBytes: c.InputRuntimeBytes, HashRuntimeBytes: c.HashRuntimeBytes}}
 	copy(r.accounts[:], c.Accounts)
@@ -280,14 +283,40 @@ func (r *NotifyReceiver) Take() (*NotifyMessage, error) {
 	if r.failure != nil {
 		return nil, r.failure
 	}
-	if r.count == 0 {
+	if r.count == 0 || r.borrowed == math.MaxUint32 {
 		return nil, ErrCapacity
 	}
 	m := r.queue[r.head]
 	r.queue[r.head] = nil
 	r.head = (r.head + 1) % len(r.queue)
 	r.count--
+	r.borrowed++
+	m.receiver = r
 	return m, nil
+}
+
+// WaitDrained joins complete inputs through their original dispatcher handoff.
+// EOF cannot discard a queued message or overtake its accepted callback owner.
+func (r *NotifyReceiver) WaitDrained(ctx context.Context) error {
+	if r == nil || ctx == nil {
+		return ErrConfiguration
+	}
+	for {
+		r.mu.Lock()
+		drained, closed := r.count == 0 && r.borrowed == 0, r.closed
+		r.mu.Unlock()
+		if closed {
+			return ErrClosed
+		}
+		if drained {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-r.changed:
+		}
+	}
 }
 
 // OriginalMethod projects the complete input's immutable route before the
@@ -431,6 +460,20 @@ func (m *NotifyMessage) cleanupLocked() {
 	m.route = ContractRoute{}
 	m.reservation.Release()
 	m.reservation = resourcev4.Reference{}
+	if r := m.receiver; r != nil {
+		m.receiver = nil
+		r.mu.Lock()
+		r.borrowed--
+		if r.closed && r.borrowed == 0 {
+			r.reservation.Release()
+			r.reservation = resourcev4.Reference{}
+		}
+		select {
+		case r.changed <- struct{}{}:
+		default:
+		}
+		r.mu.Unlock()
+	}
 }
 
 func (r *NotifyReceiver) End() error {
@@ -500,6 +543,10 @@ func (r *NotifyReceiver) Close() {
 		return
 	}
 	r.closed = true
+	select {
+	case r.changed <- struct{}{}:
+	default:
+	}
 	r.failLocked(ErrClosed)
 	for _, message := range r.queue {
 		message.Close()
@@ -515,8 +562,10 @@ func (r *NotifyReceiver) Close() {
 	r.routes, r.root = nil, nil
 	r.config = InputConfig{}
 	clear(r.accounts[:])
-	r.reservation.Release()
-	r.reservation = resourcev4.Reference{}
+	if r.borrowed == 0 {
+		r.reservation.Release()
+		r.reservation = resourcev4.Reference{}
+	}
 }
 
 // MessageDeadline captures the same original input deadline before an admitted

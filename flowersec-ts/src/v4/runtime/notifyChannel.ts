@@ -33,6 +33,11 @@ export class NotifyChannel {
   #operation: NotifyPreparation | undefined;
   #write: ReliableWriteRequest | undefined;
   #closed = false;
+  #started = false;
+  #draining = false;
+  #inputEnded = false;
+  #finishing = false;
+  #writeEnded = false;
   #reading = false;
   #publishing = false;
   #physical = false;
@@ -50,7 +55,7 @@ export class NotifyChannel {
       this.#stream.cleanupWith(() => { this.#physical = true; this.#collect(); });
     } catch (error) { this.#codec?.close(); this.#stream?.rollback(); this.#stream = undefined; this.#reference.release(); this.#reference = undefined; throw error; }
   }
-  start(): void { if (this.#reading || this.#closed) return; this.#reading = true; void this.#read(); }
+  start(): void { if (this.#started || this.#closed) return; this.#started = this.#reading = true; void this.#read(); }
   #feed(bytes: Uint8Array): number {
     let at = 0;
     while (at < bytes.length) {
@@ -81,12 +86,18 @@ export class NotifyChannel {
       while (!this.#closed) {
         await this.#stream!.readInto(16384, bytes => this.#feed(bytes), this.#abort.signal);
         if (this.#closed) break;
-        if (this.#stream!.readState().stream_status !== "open") { this.close(); break; }
+        const state = this.#stream!.readState();
+        if (state.stream_status === "eof") {
+          if (this.#have !== 0 || this.#header !== undefined || this.#input !== undefined) throw new RPCProtocolError("notify_truncated");
+          this.#inputEnded = true; this.#finishIdle(); break;
+        }
+        if (state.stream_status === "aborted") throw new RPCProtocolError("notify_aborted");
       }
     } catch { this.close(); }
-    finally { this.#reading = false; this.#stream?.releaseReader(); this.#collect(); }
+    finally { this.#reading = false; this.#stream?.releaseReader(); this.#finishChannel(); this.#collect(); }
   }
-  ready(): boolean { return !this.#closed && this.#reading && this.#operation === undefined && this.#position?.available() === true; }
+  ready(): boolean { return !this.#closed && this.#started && !this.#draining && !this.#inputEnded && !this.#finishing && this.#operation === undefined && this.#position?.available() === true; }
+  businessPending(): boolean { return this.#publishing || this.#operation !== undefined || !this.#closed && (this.#have !== 0 || this.#header !== undefined || this.#input !== undefined); }
   submit(operation: NotifyPreparation): NotifyStartResult {
     if (!this.ready()) return Object.freeze({ status: "not_admitted", submission: "not_submitted", reason: this.#closed ? "not_ready" : "resource_exhausted" });
     operation.checkStart(); this.#stream!.check();
@@ -116,17 +127,33 @@ export class NotifyChannel {
     } catch { if (begun) this.close(); }
     finally {
       if (this.#write !== undefined) { this.#write.terminate(); await this.#write.waitCleanup(); this.#write = undefined; }
-      prefix.fill(0); borrow?.release(); this.#operation = undefined; operation.publicationFinished(submitted); this.#publishing = false; this.#collect();
+      prefix.fill(0); borrow?.release(); this.#operation = undefined; operation.publicationFinished(submitted); this.#publishing = false; this.#finishIdle(); this.#collect();
     }
   }
-  close(): void {
+  drain(): void { if (!this.#closed) { this.#draining = true; this.#finishIdle(); } }
+  #finishIdle(): void {
+    if (this.#closed || this.#finishing || this.#writeEnded || !(this.#draining || this.#inputEnded) || this.#publishing || this.#operation !== undefined) return;
+    this.#finishing = true;
+    void this.#stream!.finish({ signal: this.#abort.signal }).then(() => { this.#writeEnded = true; }, () => this.close()).finally(() => {
+      this.#finishing = false; this.#finishChannel(); this.#collect();
+    });
+  }
+  #finishChannel(): void {
+    if (this.#inputEnded && this.#writeEnded && !this.#reading && !this.#publishing && !this.#finishing) this.#close(false);
+  }
+  close(): void { this.#close(true); }
+  #close(reset: boolean): void {
     if (this.#closed) return; this.#closed = true; this.#abort.abort(); this.#input?.close(); this.#input = undefined; this.#admit = undefined;
     this.#write?.terminate(); this.#operation?.close(); this.#position?.closeAfterUse(); const stream = this.#stream;
-    if (stream !== undefined) { stream.releaseDelivery(); void stream.reset().catch(() => undefined).finally(() => { this.#physical = stream.cleanupStatus().core_cleanup === "complete"; this.#collect(); }); }
+    if (stream !== undefined) {
+      stream.releaseDelivery();
+      if (reset) void stream.reset().catch(() => undefined).finally(() => { this.#physical = stream.cleanupStatus().core_cleanup === "complete"; this.#collect(); });
+      else this.#physical = stream.cleanupStatus().core_cleanup === "complete";
+    }
     this.#collect();
   }
   #collect(): void {
-    if (this.#collecting || !this.#closed || this.#reading || this.#publishing || !this.#physical || this.#position?.cleanupComplete() === false) return; this.#collecting = true;
+    if (this.#collecting || !this.#closed || this.#reading || this.#publishing || this.#finishing || !this.#physical || this.#position?.cleanupComplete() === false) return; this.#collecting = true;
     try {
       this.#codec?.close(); this.#codec = undefined; this.#headerBuffer.fill(0); this.#headerBuffer = new Uint8Array(); this.#header = undefined;
       this.#stream?.application.close(); this.#stream?.release(); this.#stream = undefined; this.#position = undefined;

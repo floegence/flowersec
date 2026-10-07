@@ -18,29 +18,142 @@ mod keys;
 #[path = "crypto_v4_records.rs"]
 mod records;
 pub use connect::{
-    BindingMode, ConnectError, IdentityKeys, Namespace, PoolConnectionMaterial,
-    PoolCredentialBytes, PostSpendFailure, WssConnectOptions,
+    BindingMode, ConnectError, IdentityKeys, Namespace, NamespaceBootstrapRequest,
+    PoolConnectionMaterial, PoolCredentialBytes, PostAuthorizationFailure, PostSpendFailure,
+    TunnelPoolCredentialBytes, TunnelServerAllowConfiguration, WssConnectOptions,
 };
 pub(crate) use keys::LocalKeys;
-#[cfg_attr(
-    not(test),
-    expect(
-        unused_imports,
-        reason = "Native v4 Session carrier assembly is not yet wired"
-    )
-)]
 pub(crate) use records::ReliableSession;
+pub(crate) use records::{
+    DatagramLease, NativeStreamBinding, RecordEngine, ResumeMessageClaim, SessionLink,
+    SessionReceiver, SessionTransport, StreamPreparation, StreamPublicationAdmission,
+};
 pub use records::{
     DrainOperation, DrainOutcome, DrainResult, Metadata, OpenRequest, ProbeOutcome, ProbeResult,
     RawStreamMetadataContract, RawStreamMetadataField, RawStreamMetadataType, Session, Stream,
+    UnreliableMessages,
 };
-pub(crate) use records::{RecordEngine, SessionTransport};
+#[cfg(test)]
+pub(crate) use records::{
+    MaintenanceReceiveProbe, TerminalPublicationProbe, install_maintenance_receive_probe,
+    install_terminal_publication_probe,
+};
 
 /// The original ordered publisher completes the actual publication of these
 /// bytes before returning. It cannot retain a key, reseal, or report only queue
 /// admission. Exclusive &mut access serializes all old records and markers.
+/// A provider's original finite business publication position. It remains
+/// claimed while the same publisher waits for a rekey ticket; maintenance can
+/// continue through its existing reserved path.
+pub(crate) struct DataPublicationClaim {
+    release: Option<Box<dyn FnOnce() + Send>>,
+}
+impl DataPublicationClaim {
+    pub(crate) fn new(release: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            release: Some(Box::new(release)),
+        }
+    }
+}
+impl Drop for DataPublicationClaim {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            release();
+        }
+    }
+}
+pub(crate) struct DeferredStreamCommit {
+    pub(crate) view: Arc<records::StreamView>,
+    pub(crate) scope: u64,
+    pub(crate) end: u64,
+    pub(crate) fin: bool,
+}
+pub(crate) struct DeferredPublication {
+    pub(crate) handoff: Option<Arc<dyn Fn() + Send + Sync>>,
+    pub(crate) stream: Option<DeferredStreamCommit>,
+    pub(crate) published_scope: Option<u64>,
+    pub(crate) rekey_success: bool,
+    pub(crate) probe: Option<records::ProbePublication>,
+    /// Number of sealed records at the point this tail was deferred.
+    /// Successful native prefixes can therefore commit only the tails whose
+    /// records were actually accepted.
+    pub(crate) record_index: usize,
+}
+impl DeferredPublication {
+    pub(crate) fn rekey_success() -> Self {
+        Self {
+            rekey_success: true,
+            ..Self::handoff(None)
+        }
+    }
+    pub(crate) fn handoff(handoff: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
+        Self {
+            handoff,
+            stream: None,
+            published_scope: None,
+            record_index: 0,
+            rekey_success: false,
+            probe: None,
+        }
+    }
+    pub(crate) fn stream(view: Arc<records::StreamView>, scope: u64, end: u64, fin: bool) -> Self {
+        Self {
+            handoff: None,
+            stream: Some(DeferredStreamCommit {
+                view,
+                scope,
+                end,
+                fin,
+            }),
+            published_scope: None,
+            record_index: 0,
+            rekey_success: false,
+            probe: None,
+        }
+    }
+    pub(crate) fn published(scope: u64) -> Self {
+        Self {
+            handoff: None,
+            stream: None,
+            published_scope: Some(scope),
+            record_index: 0,
+            rekey_success: false,
+            probe: None,
+        }
+    }
+}
 pub(crate) trait RecordPublisher {
+    /// Bind the fixed management future to its original allocated scope before
+    /// any OPEN record can consume a sequence or enter native publication.
+    fn prepare_management_stream(&mut self, _scope: u64) -> Result<()> {
+        Ok(())
+    }
+    /// Prepay record staging and every associated completion tail before
+    /// mutating a reliable frontier or consuming its AEAD sequence.
+    fn prepare_publication(&mut self, _record_bytes: usize, _deferred_tails: usize) -> Result<()> {
+        Ok(())
+    }
     fn publish(&mut self, record: &[u8]) -> Result<()>;
+    fn is_deferred(&self) -> bool {
+        false
+    }
+    fn defer_publication(&mut self, _publication: DeferredPublication) {}
+    fn try_claim_data(
+        &mut self,
+        _scope: u64,
+        _maximum_record_bytes: usize,
+    ) -> Result<DataPublicationClaim> {
+        Err(CryptoError::Capacity)
+    }
+    fn data_publication_permitted(&self, _scope: u64) -> bool {
+        true
+    }
+    /// A trusted native publisher may report the actual failure of this
+    /// original application record's write direction. The bool is only the
+    /// native normal-drained hint; it never supplies authenticated drain proof.
+    fn failed_stream_publication(&self, _scope: u64) -> Option<bool> {
+        None
+    }
     /// Sticky generation of known local provider stalls, including those that
     /// began and ended during a synchronous publication callback.
     fn liveness_stall_generation(&self) -> u64 {
@@ -146,10 +259,12 @@ struct Binding {
     context: [u8; 32],
     admission: [u8; 32],
     certificates: [[u8; 32]; 2],
+    service_authorities: [[u8; 32]; 2],
     ed: [[u8; 32]; 2],
     fsb: [u8; 32],
     fsa: [u8; 32],
     features: u64,
+    resume: Option<crate::checkpoint_v4::ResumeSessionPolicy>,
     shape: RecordShape,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -159,6 +274,7 @@ struct RecordShape {
     max_credit: u64,
     idle_duration_ms: u64,
     application_profile: u8,
+    datagrams: bool,
     rekey_envelope: [u64; 3],
     service_ms: u64,
 }
@@ -185,6 +301,7 @@ impl RecordShape {
             max_credit: contract.u("SessionContract", "max_credit")?,
             idle_duration_ms: contract.u("SessionContract", "idle_duration_ms")?,
             application_profile: contract.u("SessionContract", "application_profile")? as u8,
+            datagrams: artifact.u("Artifact", "allowed_features")? & 1 != 0,
             rekey_envelope,
             service_ms,
         })
@@ -293,6 +410,7 @@ fn bind(
         return Err(CryptoError::Authentication);
     }
     let mut ed = [[0; 32]; 2];
+    let mut service_authorities = [[0; 32]; 2];
     let mut dh = [&[][..]; 2];
     for (i, certificate) in [client, server].into_iter().enumerate() {
         if certificate.u("IdentityCertificate", "role")? != i as u64 {
@@ -306,6 +424,26 @@ fn bind(
             "Artifact",
             "crypto_profile_id",
         )?;
+        // A local routing comparison is derived only after credential
+        // admission. It excludes expiry, generation and signature so renewal
+        // preserves logical authority, while tenant/subject/audience and the
+        // independently verified namespace authority remain bound.
+        let mut identity = sha2::Sha256::new();
+        identity.update(b"flowersec/controller-service-authority/v1\0");
+        for name in [
+            "tenant_id",
+            "subject_id",
+            "audience",
+            "revocation_authority_id",
+        ] {
+            let value = certificate
+                .field("IdentityCertificate", name)?
+                .text()?
+                .as_bytes();
+            identity.update((value.len() as u32).to_be_bytes());
+            identity.update(value);
+        }
+        service_authorities[i] = identity.finalize().into();
         ed[i] = certificate.b("IdentityCertificate", "ed25519_public_key")?;
         if !codec::valid_ed25519_key(&ed[i]) {
             return Err(CryptoError::Key);
@@ -404,7 +542,11 @@ fn bind(
         "hello_transcript_digest",
         &transcript,
     )?;
-    if tc.u("TransportContext", "path_kind")? != 0 || tc.u("TransportContext", "access_class")? != 0
+    let tunnel = admission.tunnel.as_ref();
+    if tc.u("TransportContext", "path_kind")? != u64::from(tunnel.is_some())
+        || tc.u("TransportContext", "access_class")? != 0
+        || tunnel
+            .is_some_and(|hop| !hop.authenticated() || hop.endpoint_role as usize != role.index())
     {
         return Err(CryptoError::Configuration);
     }
@@ -413,9 +555,6 @@ fn bind(
         return Err(CryptoError::Authentication);
     }
     let features = sh.u("ServerHello", "selected_features")?;
-    if features & 1 != 0 {
-        return Err(CryptoError::Configuration);
-    }
     let offered = ch.u("ClientHello", "offered_features")?
         & sh.u("ServerHello", "server_offered_features")?
         & artifact.u("Artifact", "allowed_features")?
@@ -465,10 +604,12 @@ fn bind(
             context: context_digest,
             admission: admission_binding,
             certificates,
+            service_authorities,
             ed,
             fsb: codec::digest("fsb_digest", fsb)?,
             fsa: codec::digest("fsa_digest", fsa)?,
             features,
+            resume: crate::checkpoint_v4::ResumeSessionPolicy::capture(artifact, features)?,
             shape,
         },
         psk,
@@ -506,6 +647,8 @@ pub(crate) struct Handshake {
     keys: Option<Arc<LocalKeys>>,
     state: Option<NoiseState>,
     records: Option<RecordEngine>,
+    records_transferred: bool,
+    ready_keys: Option<[Zeroizing<[u8; 32]>; 2]>,
     record_reservation: Option<records::RecordReservation>,
     deadline: Instant,
     initiation_cutoff: u64,
@@ -537,22 +680,48 @@ struct HandshakePreflight {
     scratch: Zeroizing<Vec<u8>>,
 }
 impl HandshakePreflight {
-    fn new(account: ResourceAccount, shape: RecordShape, role: Role) -> Result<Self> {
-        let charge = account.reserve(ResourceLimits {
+    fn handshake_limits() -> ResourceLimits {
+        ResourceLimits {
             sdk_bytes: 262_144,
             items: 4,
             timers: 1,
             work_slots: 1,
             tasks: 1,
-            sessions: 0,
             ..ResourceLimits::default()
-        })?;
+        }
+    }
+    fn preparation_limits(shape: &RecordShape, automatic: bool) -> Result<ResourceLimits> {
+        Ok(connect::candidate_add_limits(
+            Self::handshake_limits(),
+            records::RecordReservation::preparation_limits(shape, automatic)?,
+        )?)
+    }
+    fn new(account: ResourceAccount, shape: RecordShape, role: Role) -> Result<Self> {
+        let charge = account.reserve(Self::preparation_limits(
+            &shape,
+            account.automatic_liveness().is_some(),
+        )?)?;
+        Self::new_prepaid(account, shape, role, charge)
+    }
+    fn new_prepaid(
+        account: ResourceAccount,
+        shape: RecordShape,
+        role: Role,
+        mut backing: ResourceCharge,
+    ) -> Result<Self> {
+        if !backing.matches(
+            &account,
+            Self::preparation_limits(&shape, account.automatic_liveness().is_some())?,
+        ) {
+            return Err(CryptoError::Configuration);
+        }
+        let charge = backing.split(Self::handshake_limits())?;
         let mut scratch = Zeroizing::new(Vec::new());
         scratch
             .try_reserve_exact(65_664)
             .map_err(|_| CryptoError::Capacity)?;
         Ok(Self {
-            records: records::RecordReservation::new(account, shape, role)?,
+            records: records::RecordReservation::new_prepaid(account, shape, role, backing)?,
             charge,
             scratch,
         })
@@ -657,6 +826,8 @@ impl Handshake {
             keys: Some(local),
             state: Some(NoiseState(state)),
             records: None,
+            records_transferred: false,
+            ready_keys: None,
             record_reservation: reservation,
             deadline,
             initiation_cutoff: admission.initiation_not_after_ms,
@@ -752,7 +923,7 @@ impl Handshake {
         })
     }
     fn finish_noise(&mut self) -> Result<()> {
-        if self.records.is_some() {
+        if self.records.is_some() || self.records_transferred {
             return Ok(());
         }
         let mut state = self.state.take().ok_or(CryptoError::State)?;
@@ -835,6 +1006,9 @@ impl Handshake {
         )
     }
     fn ready_key(&self, role: usize) -> Result<Zeroizing<[u8; 32]>> {
+        if let Some(keys) = &self.ready_keys {
+            return Ok(Zeroizing::new(**keys.get(role).ok_or(CryptoError::State)?));
+        }
         let mut info = domain(
             b"flowersec/v4/ready-key\0",
             &[
@@ -908,6 +1082,32 @@ impl Handshake {
             Ok(())
         })
     }
+    /// Transfer only into a private paused Session so its frozen graphs can be
+    /// installed before local READY publication. The handshake retains the
+    /// exact original proof verifier and irreversible continuation gate.
+    pub(crate) fn prepare_session_records(&mut self) -> Result<RecordEngine> {
+        self.check()?;
+        if !self.local_submitted || self.records_transferred {
+            return Err(CryptoError::State);
+        }
+        self.ready_keys = Some([self.ready_key(0)?, self.ready_key(1)?]);
+        let mut records = self.records.take().ok_or(CryptoError::State)?;
+        let now = self.account.security_time()?;
+        self.account.with_security(|| records.start(now))??;
+        self.records_transferred = true;
+        Ok(records)
+    }
+    /// The private prepared Session cannot activate until both original READY
+    /// obligations and the original spend/authorization owner remain valid.
+    pub(crate) fn confirm_prepared_ready(mut self) -> Result<()> {
+        self.check()?;
+        if !self.records_transferred || !self.local_submitted || !self.peer_verified {
+            return Err(CryptoError::State);
+        }
+        self.close();
+        Ok(())
+    }
+    #[cfg(test)]
     pub(crate) fn into_records(mut self) -> Result<RecordEngine> {
         self.check()?;
         if !self.local_submitted || !self.peer_verified {
@@ -927,6 +1127,7 @@ impl Handshake {
         self.keys = None;
         self.pool_activation = None;
         self.ready.zeroize();
+        self.ready_keys = None;
     }
 }
 impl Drop for Handshake {

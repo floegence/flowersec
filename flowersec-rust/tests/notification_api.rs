@@ -1,6 +1,9 @@
 use std::{collections::BTreeSet, sync::Arc};
 
-use flowersec::{NotificationSubscription, RpcPeer, SessionError};
+use flowersec::{
+    MessageCodec, NotificationDropPolicy, NotificationPeer, NotificationSubscription,
+    ServiceContract, ServiceError, ServiceNotificationObserver,
+};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -25,22 +28,33 @@ struct StatePayload {
     state: String,
 }
 
-fn compile_notification_contract(peer: &dyn RpcPeer) -> Result<(), SessionError> {
-    let subscription = peer.subscribe_notification(7, Arc::new(|_payload| {}))?;
-    subscription.cancel();
-    Ok(())
+fn compile_notification_contract<T: Send + 'static>(
+    peer: &NotificationPeer,
+    contract: ServiceContract,
+    codec: Arc<dyn MessageCodec<T>>,
+    observer: Arc<dyn ServiceNotificationObserver<T>>,
+) -> Result<NotificationSubscription<T>, ServiceError> {
+    let subscription = peer.subscribe(
+        contract,
+        codec,
+        NotificationDropPolicy::DropNewest,
+        observer,
+    )?;
+    subscription.close();
+    subscription.close();
+    Ok(subscription)
 }
 
 #[test]
 fn notification_subscription_public_shape_is_stable() {
-    let _ = compile_notification_contract;
-    let _ = std::mem::size_of::<NotificationSubscription>();
+    let _ = compile_notification_contract::<Vec<u8>>;
+    let _ = std::mem::size_of::<NotificationSubscription<Vec<u8>>>();
 }
 
 #[test]
 fn shared_notification_vectors_match_rust_decoding_and_lifecycle_contract() {
     let fixture: NotificationFixture = serde_json::from_str(include_str!(
-        "../../testdata/transport_v3/rpc_notification_vectors.json"
+        "../../testdata/rpc/rpc_notification_vectors.json"
     ))
     .expect("shared notification fixture");
     assert_eq!(fixture.version, 1);

@@ -9,48 +9,48 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-// V4ServiceDefinition freezes one namespace with unary, streaming and notify
+// ServiceDefinition freezes one namespace with unary, streaming and notify
 // descriptors. All methods share the same ServiceClient and Close scope.
-type V4ServiceDefinition = sessionv4.ServiceDefinition
-type V4ServiceMethod = sessionv4.ServiceMethod
-type V4ServiceMethodWorkload = sessionv4.ServiceMethodWorkload
-type V4SessionMethodWorkload = sessionv4.SessionMethodWorkload
-type V4ServiceContractSource = sessionv4.ServiceContractSource
-type V4ServiceOfferRefresh = sessionv4.ServiceOfferRefresh
-type V4ContractRenewalPolicy = sessionv4.ContractRenewalPolicy
+type ServiceDefinition = sessionv4.ServiceDefinition
+type ServiceMethod = sessionv4.ServiceMethod
+type ServiceMethodWorkload = sessionv4.ServiceMethodWorkload
+type SessionMethodWorkload = sessionv4.SessionMethodWorkload
+type ServiceContractSource = sessionv4.ServiceContractSource
+type ServiceOfferRefresh = sessionv4.ServiceOfferRefresh
+type ContractRenewalPolicy = sessionv4.ContractRenewalPolicy
 
 const (
-	V4ServiceContractsStatic      = sessionv4.ServiceContractsStatic
-	V4ServiceContractsRemote      = sessionv4.ServiceContractsRemote
-	V4ServiceOfferRefreshExplicit = sessionv4.ServiceOfferRefreshExplicit
-	V4ServiceOfferRefreshManaged  = sessionv4.ServiceOfferRefreshManaged
+	ServiceContractsStatic      = sessionv4.ServiceContractsStatic
+	ServiceContractsRemote      = sessionv4.ServiceContractsRemote
+	ServiceOfferRefreshExplicit = sessionv4.ServiceOfferRefreshExplicit
+	ServiceOfferRefreshManaged  = sessionv4.ServiceOfferRefreshManaged
 )
 
 var (
-	ErrV4ContractDenied               = sessionv4.ErrContractDenied
-	ErrV4ContractUnavailable          = sessionv4.ErrContractUnavailable
-	ErrV4ContractRenewalQualification = sessionv4.ErrContractRenewalQualification
+	ErrContractDenied               = sessionv4.ErrContractDenied
+	ErrContractUnavailable          = sessionv4.ErrContractUnavailable
+	ErrContractRenewalQualification = sessionv4.ErrContractRenewalQualification
 )
 
 const (
-	V4CallUnary uint8 = iota
-	V4CallServerStreaming
-	V4CallNotify
+	CallUnary uint8 = iota
+	CallServerStreaming
+	CallNotify
 )
 
-// V4StreamingMethod selects the trusted local stream entrance and item codec.
+// StreamingMethod selects the trusted local stream entrance and item codec.
 // Metadata is encoded once through the standard bounded StreamMetadata codec.
-type V4StreamingMethod struct {
-	Method   V4UnaryMethod
+type StreamingMethod struct {
+	Method   UnaryMethod
 	Kind     string
 	Metadata StreamMetadata
 }
 
-// V4NotifyMethod has no response decoder or response-limit configuration.
-type V4NotifyMethod struct {
+// NotifyMethod has no response decoder or response-limit configuration.
+type NotifyMethod struct {
 	Contract                         [32]byte
-	WorkClass                        V4WorkClass
-	Codec                            V4UnaryCodec
+	WorkClass                        WorkClass
+	Codec                            UnaryCodec
 	RequireExecution, RequireDurable bool
 }
 
@@ -72,10 +72,20 @@ type StreamingStartError struct {
 	CleanupComplete bool
 }
 
-func (e *StreamingStartError) Error() string { return e.Err.Error() }
-func (e *StreamingStartError) Unwrap() error { return e.Err }
+func (e *StreamingStartError) Error() string {
+	if e == nil || e.Err == nil {
+		return "Flowersec streaming start failed"
+	}
+	return e.Err.Error()
+}
+func (e *StreamingStartError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
 
-func (s *V4Session) BindMethods(ctx context.Context, definition V4ServiceDefinition, options V4ServiceBindOptions) (*V4ServiceClient, error) {
+func (s *Session) BindMethods(ctx context.Context, definition ServiceDefinition, options ServiceBindOptions) (*ServiceClient, error) {
 	if s == nil || s.bindMethods == nil || ctx == nil {
 		return nil, ErrTransportUnavailable
 	}
@@ -95,12 +105,12 @@ func (s *V4Session) BindMethods(ctx context.Context, definition V4ServiceDefinit
 		c.Close()
 		return nil, ErrOperationClosed
 	}
-	return &V4ServiceClient{inner: c}, nil
+	return &ServiceClient{inner: c}, nil
 }
 
 // BindMethods borrows the Controller and follows only its existing authorized
 // current for new work. Closing the service never closes the Controller.
-func (c *V4ConnectionController) BindMethods(ctx context.Context, definition V4ServiceDefinition, options V4ServiceBindOptions) (*V4ServiceClient, error) {
+func (c *ConnectionController) BindMethods(ctx context.Context, definition ServiceDefinition, options ServiceBindOptions) (*ServiceClient, error) {
 	if c == nil || c.inner == nil {
 		return nil, ErrTransportUnavailable
 	}
@@ -108,10 +118,10 @@ func (c *V4ConnectionController) BindMethods(ctx context.Context, definition V4S
 	if err != nil {
 		return nil, err
 	}
-	return &V4ServiceClient{inner: service}, nil
+	return &ServiceClient{inner: service}, nil
 }
 
-func (c *V4ConnectionController) BindUnaryMethods(ctx context.Context, definition V4ServiceDefinition, options V4ServiceBindOptions) (*V4ServiceClient, error) {
+func (c *ConnectionController) BindUnaryMethods(ctx context.Context, definition ServiceDefinition, options ServiceBindOptions) (*ServiceClient, error) {
 	if c == nil || c.inner == nil {
 		return nil, ErrTransportUnavailable
 	}
@@ -119,10 +129,10 @@ func (c *V4ConnectionController) BindUnaryMethods(ctx context.Context, definitio
 	if err != nil {
 		return nil, err
 	}
-	return &V4ServiceClient{inner: service}, nil
+	return &ServiceClient{inner: service}, nil
 }
 
-func (s *V4Session) PrepareStreaming(ctx context.Context, method V4StreamingMethod, input []byte, options V4OperationOptions) (*StreamingOperationHandle, error) {
+func (s *Session) PrepareStreaming(ctx context.Context, method StreamingMethod, input []byte, options OperationOptions) (*StreamingOperationHandle, error) {
 	if s == nil || s.prepareStreaming == nil || ctx == nil {
 		return nil, ErrTransportUnavailable
 	}
@@ -143,7 +153,7 @@ func (s *V4Session) PrepareStreaming(ctx context.Context, method V4StreamingMeth
 	return &StreamingOperationHandle{inner: op}, nil
 }
 
-func (s *V4Session) PrepareNotify(ctx context.Context, method V4NotifyMethod, input []byte, options V4OperationOptions) (*NotifyOperationHandle, error) {
+func (s *Session) PrepareNotify(ctx context.Context, method NotifyMethod, input []byte, options OperationOptions) (*NotifyOperationHandle, error) {
 	if s == nil || s.prepareNotify == nil || ctx == nil {
 		return nil, ErrTransportUnavailable
 	}
@@ -153,7 +163,7 @@ func (s *V4Session) PrepareNotify(ctx context.Context, method V4NotifyMethod, in
 	if closed {
 		return nil, ErrOperationClosed
 	}
-	op, err := s.prepareNotify(ctx, V4UnaryMethod{Contract: method.Contract, WorkClass: method.WorkClass, Codec: method.Codec, RequireExecution: method.RequireExecution, RequireDurable: method.RequireDurable}, input, options.internal())
+	op, err := s.prepareNotify(ctx, UnaryMethod{Contract: method.Contract, WorkClass: method.WorkClass, Codec: method.Codec, RequireExecution: method.RequireExecution, RequireDurable: method.RequireDurable}, input, options.internal())
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +173,7 @@ func (s *V4Session) PrepareNotify(ctx context.Context, method V4NotifyMethod, in
 	return &NotifyOperationHandle{inner: op}, nil
 }
 
-func (c *V4ServiceClient) PrepareStreamingMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (*StreamingOperationHandle, error) {
+func (c *ServiceClient) PrepareStreamingMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (*StreamingOperationHandle, error) {
 	if c == nil || c.inner == nil {
 		return nil, ErrOperationClosed
 	}
@@ -177,7 +187,7 @@ func (c *V4ServiceClient) PrepareStreamingMethod(ctx context.Context, method V4M
 	return &StreamingOperationHandle{inner: op}, nil
 }
 
-func (c *V4ServiceClient) StreamMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (*StreamingOperationHandle, error) {
+func (c *ServiceClient) StreamMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (*StreamingOperationHandle, error) {
 	if c == nil || c.inner == nil {
 		return nil, ErrOperationClosed
 	}
@@ -195,7 +205,7 @@ func (c *V4ServiceClient) StreamMethod(ctx context.Context, method V4MethodSelec
 	return &StreamingOperationHandle{inner: op}, nil
 }
 
-func (c *V4ServiceClient) PrepareNotifyMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (*NotifyOperationHandle, error) {
+func (c *ServiceClient) PrepareNotifyMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (*NotifyOperationHandle, error) {
 	if c == nil || c.inner == nil {
 		return nil, ErrOperationClosed
 	}
@@ -209,7 +219,7 @@ func (c *V4ServiceClient) PrepareNotifyMethod(ctx context.Context, method V4Meth
 	return &NotifyOperationHandle{inner: op}, nil
 }
 
-func (c *V4ServiceClient) NotifyMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (NotificationResult, error) {
+func (c *ServiceClient) NotifyMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (NotificationResult, error) {
 	if c == nil || c.inner == nil {
 		return NotificationResult{}, ErrOperationClosed
 	}

@@ -51,6 +51,7 @@ func (a *notificationExecutionAccess) withExecutionAccessSample(target rpcv4.Exe
 // Fields are immutable after publication except started/canceled, which share
 // the dispatcher gate. The coordinator retires this owner only after real Done.
 type notificationExecution struct {
+	contractDigest                               [32]byte
 	durableHistory                               *rpcv4.DurableExecutions
 	durableWork                                  *rpcv4.DurableExecutionWork
 	message                                      *rpcv4.NotifyMessage
@@ -83,6 +84,9 @@ func (d *NotificationDispatch) admitExecution(message *rpcv4.NotifyMessage, meth
 		if err != nil {
 			return err
 		}
+		if err := m.method.services.retainRegistration(); err != nil {
+			return err
+		}
 		access = &notificationExecutionAccess{dispatcher: d, method: method, service: rpcv4.ExecutionService{Tenant: identity.Tenant, Audience: identity.Audience, Namespace: policy.Namespace}, caller: identity.Caller}
 		registry, registration = d.executionRegistry, m.method
 		return nil
@@ -90,6 +94,7 @@ func (d *NotificationDispatch) admitExecution(message *rpcv4.NotifyMessage, meth
 	if err != nil {
 		return false, err
 	}
+	defer registration.services.releaseInvocation()
 	if err := registration.services.requiredReady(context.Background()); err != nil {
 		return false, err
 	}
@@ -104,7 +109,7 @@ func (d *NotificationDispatch) admitExecution(message *rpcv4.NotifyMessage, meth
 		if binding.DurableHistory == nil {
 			return false, rpcv4.ErrExecutionUnsupported
 		}
-		return d.admitDurableNotification(message, binding.DurableHistory, access, registration)
+		return d.admitDurableNotification(message, binding.DurableHistory, access, registration, policy.Digest)
 	}
 	if binding.History == nil {
 		return false, rpcv4.ErrExecutionUnsupported
@@ -131,13 +136,18 @@ func (d *NotificationDispatch) admitExecution(message *rpcv4.NotifyMessage, meth
 		if err = d.reserveLocked([]resourcev4.Vector{charge}, refs[:]); err != nil {
 			return err
 		}
+		if err := registration.services.retainRegistration(); err != nil {
+			refs[0].Release()
+			return err
+		}
 		queued, err := d.plan.executor.prepareApplication(d.plan.applicationGroup, registration.WorkClass, task, backing)
 		if err != nil {
+			registration.services.releaseInvocation()
 			refs[0].Release()
 			return err
 		}
 		ctx, cancel := context.WithCancelCause(context.Background())
-		invocation = &notificationExecution{dispatch: d, method: registration, access: access, queued: queued, deadline: deadline, ctx: ctx, cancel: cancel, reservation: refs[0], subscriberBoundary: d.serial}
+		invocation = &notificationExecution{dispatch: d, method: registration, access: access, queued: queued, deadline: deadline, ctx: ctx, cancel: cancel, reservation: refs[0], subscriberBoundary: d.serial, contractDigest: policy.Digest}
 		d.executions[index] = invocation
 		return nil
 	})
@@ -205,8 +215,8 @@ func (i *notificationExecution) run() {
 		// Capture each eligible observer's isolated bytes before the business
 		// handler can mutate its input. A later subscription gets no old event.
 		for _, token := range d.tokens {
-			if token != nil && !token.closed && token.method.method.Method == i.method.Method && token.subscription.identity <= i.subscriberBoundary {
-				if err := token.enqueueLocked(i.deadline, payload, sample); err != nil {
+			if token != nil && !token.closed && token.method.method.Method == i.method.Method && token.identity <= i.subscriberBoundary {
+				if err := token.enqueueLocked(i.deadline, payload, sample, i.contractDigest); err != nil {
 					token.gapLocked("dropped_budget")
 				}
 			}
@@ -246,6 +256,7 @@ func (i *notificationExecution) retireLocked() {
 	i.reservation = resourcev4.Reference{}
 	i.dispatch, i.access, i.work, i.queued, i.deadline = nil, nil, nil, nil, nil
 	i.ctx, i.cancel = nil, nil
+	i.method.services.releaseInvocation()
 	i.method = NotificationMethod{}
 }
 

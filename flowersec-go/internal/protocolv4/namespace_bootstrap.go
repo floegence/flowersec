@@ -81,7 +81,8 @@ func reserveNamespace(rules *NamespaceRules, subscriberSlots uint32, allocation 
 	return refs, nil
 }
 
-func newBootstrappedNamespace(ctx context.Context, clock *timev4.Clock, trust NamespaceTrust, bootstrap NamespaceBootstrap, fetchDuration uint64, attemptLimit uint8, subscriberSlots uint32, refs [3]resourcev4.Reference, initializing bool) (_ *LiveNamespace, err error) {
+func newBootstrappedNamespace(ctx context.Context, clock *timev4.Clock, trust NamespaceTrust, bootstrap NamespaceBootstrap, fetchDuration uint64, attemptLimit uint8, subscriberSlots uint32, refs [3]resourcev4.Reference, initializing bool, pendingHistory ...bool) (_ *LiveNamespace, err error) {
+	allowPendingHistory := len(pendingHistory) != 0 && pendingHistory[0]
 	adopted := false
 	active, err := NewRevocationWorkspace(bootstrap.Rules, refs[0])
 	if err != nil {
@@ -105,7 +106,7 @@ func newBootstrappedNamespace(ctx context.Context, clock *timev4.Clock, trust Na
 	if err != nil {
 		return nil, err
 	}
-	n, err := newLiveNamespace(ctx, clock, trust, pair, spare, fetchDuration, attemptLimit, subscriberSlots, refs[2], initializing)
+	n, err := newLiveNamespace(ctx, clock, trust, pair, spare, fetchDuration, attemptLimit, subscriberSlots, refs[2], initializing, allowPendingHistory)
 	adopted = err == nil
 	return n, err
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
-func TestV4PublicFailuresDoNotExposeProviderDetails(t *testing.T) {
+func TestPublicFailuresDoNotExposeProviderDetails(t *testing.T) {
 	secret := errors.New("private database path and authentication material")
 	for _, tc := range []struct {
 		cause              error
@@ -36,10 +36,10 @@ func TestV4PublicFailuresDoNotExposeProviderDetails(t *testing.T) {
 	} {
 		t.Run(tc.publication+"/"+tc.cause.Error(), func(t *testing.T) {
 			wrapped := fmt.Errorf("%s: %w", secret, tc.cause)
-			if got := v4IssueFailure(wrapped); got != V4IssueFailure(tc.issue) || got.Error() != tc.issue {
+			if got := v4IssueFailure(wrapped); got != IssueFailure(tc.issue) || got.Error() != tc.issue {
 				t.Fatalf("issuance error escaped its public category: %v", got)
 			}
-			if got := v4PublicationFailure(wrapped); got != V4PublicationFailure(tc.publication) || got.Error() != tc.publication {
+			if got := v4PublicationFailure(wrapped); got != PublicationFailure(tc.publication) || got.Error() != tc.publication {
 				t.Fatalf("publication error escaped its public category: %v", got)
 			}
 		})
@@ -61,82 +61,82 @@ func TestV4PublicFailuresDoNotExposeProviderDetails(t *testing.T) {
 	}
 }
 
-func TestV4UninitializedOwnersRefuseWorkWithoutPublishing(t *testing.T) {
+func TestUninitializedOwnersRefuseWorkWithoutPublishing(t *testing.T) {
 	ctx := context.Background()
-	for _, issuer := range []*V4DirectIssuer{nil, {}} {
-		if n, err := issuer.IssueArtifactBytes(ctx, V4DirectIssueRequest{}, nil); n != 0 || err != V4IssueFailure("closed") {
+	for _, issuer := range []*DirectIssuer{nil, {}} {
+		if n, err := issuer.IssueArtifactBytes(ctx, DirectIssueRequest{}, nil); n != 0 || err != IssueFailure("closed") {
 			t.Fatal("uninitialized direct issuer published", n, err)
 		}
 		issuer.Close()
-		if err := issuer.WaitCleanup(ctx); err != V4IssueFailure("closed") {
+		if err := issuer.WaitCleanup(ctx); err != IssueFailure("closed") {
 			t.Fatal(err)
 		}
-		if _, err := NewV4DirectIssueHTTPSService(issuer, V4DirectIssueHTTPSConfig{}, resourcev4.Reference{}, resourcev4.Reference{}); err != V4IssueFailure("closed") {
+		if _, err := NewDirectIssueHTTPSService(issuer, DirectIssueHTTPSConfig{}, resourcev4.Reference{}, resourcev4.Reference{}); err != IssueFailure("closed") {
 			t.Fatal(err)
 		}
-		if fmt.Sprint(issuer) != "V4DirectIssuer(<redacted>)" || fmt.Sprintf("%#v", issuer) != "V4DirectIssuer(<redacted>)" {
+		if fmt.Sprint(issuer) != "DirectIssuer(<redacted>)" || fmt.Sprintf("%#v", issuer) != "DirectIssuer(<redacted>)" {
 			t.Fatal("issuer diagnostic exposed state")
 		}
 	}
-	for _, issuer := range []*V4ArtifactIssuer{nil, {}} {
-		if n, err := issuer.IssueArtifactBytes(ctx, V4ArtifactIssueRequest{}, nil); n != 0 || err != V4IssueFailure("closed") {
+	for _, issuer := range []*ArtifactIssuer{nil, {}} {
+		if n, err := issuer.IssueArtifactBytes(ctx, ArtifactIssueRequest{}, nil); n != 0 || err != IssueFailure("closed") {
 			t.Fatal(n, err)
 		}
-		if _, n, err := issuer.NamespaceClosure(); n != 0 || err != V4IssueFailure("closed") {
+		if _, n, err := issuer.NamespaceClosure(); n != 0 || err != IssueFailure("closed") {
 			t.Fatal(n, err)
 		}
 		issuer.Close()
-		if err := issuer.WaitCleanup(ctx); err != V4IssueFailure("closed") {
+		if err := issuer.WaitCleanup(ctx); err != IssueFailure("closed") {
 			t.Fatal(err)
 		}
-		if _, err := NewV4ArtifactIssueHTTPSService(issuer, V4ArtifactIssueHTTPSConfig{}, resourcev4.Reference{}, resourcev4.Reference{}); err != V4IssueFailure("closed") {
+		if _, err := NewArtifactIssueHTTPSService(issuer, ArtifactIssueHTTPSConfig{}, resourcev4.Reference{}, resourcev4.Reference{}); err != IssueFailure("closed") {
 			t.Fatal(err)
 		}
-		if fmt.Sprint(issuer) != "V4ArtifactIssuer(<redacted>)" || fmt.Sprintf("%#v", issuer) != "V4ArtifactIssuer(<redacted>)" {
+		if fmt.Sprint(issuer) != "ArtifactIssuer(<redacted>)" || fmt.Sprintf("%#v", issuer) != "ArtifactIssuer(<redacted>)" {
 			t.Fatal("issuer diagnostic exposed state")
 		}
 	}
-	for _, store := range []*V4SQLitePublicationStore{nil, {}} {
-		if n, err := store.ReplaceState(ctx, 0, nil); n != 0 || err != V4PublicationFailure("closed") {
+	for _, store := range []*SQLitePublicationStore{nil, {}} {
+		if n, err := store.ReplaceState(ctx, 0, nil); n != 0 || err != PublicationFailure("closed") {
 			t.Fatal(n, err)
 		}
-		if v, n, h, err := store.ReadPublished(ctx, nil, [32]byte{}, nil, nil); v != (V4NamespacePublicationVersion{}) || n != 0 || h != 0 || err != V4PublicationFailure("closed") {
+		if v, n, h, err := store.ReadPublished(ctx, nil, [32]byte{}, nil, nil); v != (NamespacePublicationVersion{}) || n != 0 || h != 0 || err != PublicationFailure("closed") {
 			t.Fatal(v, n, h, err)
 		}
 		store.Close()
-		if err := store.WaitCleanup(ctx); err != V4PublicationFailure("closed") {
+		if err := store.WaitCleanup(ctx); err != PublicationFailure("closed") {
 			t.Fatal(err)
 		}
-		if err := store.Retire(); err != V4PublicationFailure("closed") {
+		if err := store.Retire(); err != PublicationFailure("closed") {
 			t.Fatal(err)
 		}
-		if _, err := NewV4NamespaceHTTPSService(store, V4NamespaceHTTPSConfig{}, resourcev4.Reference{}, resourcev4.Reference{}); err != V4PublicationFailure("configuration_invalid") {
+		if _, err := NewNamespaceHTTPSService(store, NamespaceHTTPSConfig{}, resourcev4.Reference{}, resourcev4.Reference{}); err != PublicationFailure("configuration_invalid") {
 			t.Fatal(err)
 		}
-		if fmt.Sprint(store) != "V4SQLitePublicationStore(<redacted>)" || fmt.Sprintf("%#v", store) != "V4SQLitePublicationStore(<redacted>)" {
+		if fmt.Sprint(store) != "SQLitePublicationStore(<redacted>)" || fmt.Sprintf("%#v", store) != "SQLitePublicationStore(<redacted>)" {
 			t.Fatal("store diagnostic exposed state")
 		}
 	}
-	for _, publisher := range []*V4NamespacePublisher{nil, {}} {
-		if v, err := publisher.Publish(ctx); v != (V4NamespacePublicationVersion{}) || err != V4PublicationFailure("closed") {
+	for _, publisher := range []*NamespacePublisher{nil, {}} {
+		if v, err := publisher.Publish(ctx); v != (NamespacePublicationVersion{}) || err != PublicationFailure("closed") {
 			t.Fatal(v, err)
 		}
 		publisher.Close()
-		if err := publisher.WaitCleanup(ctx); err != V4PublicationFailure("closed") {
+		if err := publisher.WaitCleanup(ctx); err != PublicationFailure("closed") {
 			t.Fatal(err)
 		}
-		if fmt.Sprint(publisher) != "V4NamespacePublisher(<redacted>)" || fmt.Sprintf("%#v", publisher) != "V4NamespacePublisher(<redacted>)" {
+		if fmt.Sprint(publisher) != "NamespacePublisher(<redacted>)" || fmt.Sprintf("%#v", publisher) != "NamespacePublisher(<redacted>)" {
 			t.Fatal("publisher diagnostic exposed state")
 		}
 	}
-	for _, service := range []*V4NamespaceHTTPSService{nil, {}} {
+	for _, service := range []*NamespaceHTTPSService{nil, {}} {
 		response := httptest.NewRecorder()
 		service.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/head", nil))
 		if response.Code != http.StatusServiceUnavailable || response.Body.Len() != 0 {
 			t.Fatal("uninitialized namespace service served content")
 		}
 		service.Close()
-		if err := service.WaitCleanup(ctx); err != V4PublicationFailure("closed") {
+		if err := service.WaitCleanup(ctx); err != PublicationFailure("closed") {
 			t.Fatal(err)
 		}
 	}
@@ -152,7 +152,7 @@ func TestV4UninitializedOwnersRefuseWorkWithoutPublishing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, service := range []*V4LiveRelayRegistrationService{nil, {}} {
+	for _, service := range []*LiveRelayRegistrationService{nil, {}} {
 		if r, err := service.CaptureRelayLeg(ctx, nil, nil, ledgerv4.SQLiteIdentity{}, nil, 0, resourcev4.Reference{}, resourcev4.Reference{}); r != nil || err != SpendQueryFailure("unavailable") {
 			t.Fatal(r, err)
 		}
@@ -163,43 +163,43 @@ func TestV4UninitializedOwnersRefuseWorkWithoutPublishing(t *testing.T) {
 	}
 }
 
-func TestV4PublicConstructorsRequireIndependentConfiguration(t *testing.T) {
+func TestPublicConstructorsRequireIndependentConfiguration(t *testing.T) {
 	ctx, ref := context.Background(), resourcev4.Reference{}
 	checks := []struct {
 		name string
 		run  func() error
 	}{
-		{"direct issuer charge", func() error { _, e := V4DirectIssuerCharge(V4DirectIssuerConfig{}); return e }},
-		{"direct issuer", func() error { _, e := NewV4DirectIssuer(V4DirectIssuerConfig{}, ref, ref); return e }},
-		{"artifact issuer charge", func() error { _, e := V4ArtifactIssuerCharge(V4ArtifactIssuerConfig{}); return e }},
-		{"artifact issuer", func() error { _, e := NewV4ArtifactIssuer(V4ArtifactIssuerConfig{}, ref, ref); return e }},
-		{"direct HTTPS charge", func() error { _, e := V4DirectIssueHTTPSServiceCharge(V4DirectIssueHTTPSConfig{}); return e }},
-		{"artifact HTTPS charge", func() error { _, e := V4ArtifactIssueHTTPSServiceCharge(V4ArtifactIssueHTTPSConfig{}); return e }},
-		{"durable issuer charge", func() error { _, e := V4SQLiteDirectIssueCharge(V4SQLiteDirectIssueConfig{}); return e }},
+		{"direct issuer charge", func() error { _, e := DirectIssuerCharge(DirectIssuerConfig{}); return e }},
+		{"direct issuer", func() error { _, e := NewDirectIssuer(DirectIssuerConfig{}, ref, ref); return e }},
+		{"artifact issuer charge", func() error { _, e := ArtifactIssuerCharge(ArtifactIssuerConfig{}); return e }},
+		{"artifact issuer", func() error { _, e := NewArtifactIssuer(ArtifactIssuerConfig{}, ref, ref); return e }},
+		{"direct HTTPS charge", func() error { _, e := DirectIssueHTTPSServiceCharge(DirectIssueHTTPSConfig{}); return e }},
+		{"artifact HTTPS charge", func() error { _, e := ArtifactIssueHTTPSServiceCharge(ArtifactIssueHTTPSConfig{}); return e }},
+		{"durable issuer charge", func() error { _, e := SQLiteDirectIssueCharge(SQLiteDirectIssueConfig{}); return e }},
 		{"durable issuer", func() error {
-			_, e := NewV4SQLiteDirectIssueAuthority(ctx, nil, V4SQLiteDirectIssueConfig{}, ref, ref)
+			_, e := NewSQLiteDirectIssueAuthority(ctx, nil, SQLiteDirectIssueConfig{}, ref, ref)
 			return e
 		}},
-		{"artifact host charge", func() error { _, _, e := V4LiveArtifactHostCharges(V4LiveArtifactHostConfig{}); return e }},
-		{"artifact host", func() error { _, e := NewV4LiveArtifactHost(V4LiveArtifactHostConfig{}, ref, nil, ref); return e }},
+		{"artifact host charge", func() error { _, _, e := LiveArtifactHostCharges(LiveArtifactHostConfig{}); return e }},
+		{"artifact host", func() error { _, e := NewLiveArtifactHost(LiveArtifactHostConfig{}, ref, nil, ref); return e }},
 		{"publication charge", func() error {
-			_, _, _, e := V4SQLitePublicationStoreCharges(ledgerv4.SQLiteLimits{}, V4SQLitePublicationConfig{})
+			_, _, _, e := SQLitePublicationStoreCharges(ledgerv4.SQLiteLimits{}, SQLitePublicationConfig{})
 			return e
 		}},
 		{"create publication", func() error {
-			_, e := CreateV4SQLitePublicationStore(ctx, nil, ledgerv4.SQLiteIdentity{}, nil, V4SQLitePublicationConfig{}, ref, ref, ref, ref)
+			_, e := CreateSQLitePublicationStore(ctx, nil, ledgerv4.SQLiteIdentity{}, nil, SQLitePublicationConfig{}, ref, ref, ref, ref)
 			return e
 		}},
 		{"open publication", func() error {
-			_, e := OpenV4SQLitePublicationStore(ctx, nil, ledgerv4.SQLiteIdentity{}, nil, V4SQLitePublicationConfig{}, ref, ref, ref, ref)
+			_, e := OpenSQLitePublicationStore(ctx, nil, ledgerv4.SQLiteIdentity{}, nil, SQLitePublicationConfig{}, ref, ref, ref, ref)
 			return e
 		}},
-		{"publisher charge", func() error { _, _, e := V4NamespacePublisherCharges(V4NamespacePublisherConfig{}); return e }},
-		{"publisher", func() error { _, e := NewV4NamespacePublisher(V4NamespacePublisherConfig{}, ref, ref, ref); return e }},
-		{"namespace HTTPS charge", func() error { _, e := V4NamespaceHTTPSServiceCharge(V4NamespaceHTTPSConfig{}); return e }},
+		{"publisher charge", func() error { _, _, e := NamespacePublisherCharges(NamespacePublisherConfig{}); return e }},
+		{"publisher", func() error { _, e := NewNamespacePublisher(NamespacePublisherConfig{}, ref, ref, ref); return e }},
+		{"namespace HTTPS charge", func() error { _, e := NamespaceHTTPSServiceCharge(NamespaceHTTPSConfig{}); return e }},
 		{"spend service", func() error { _, e := NewSpendReceiptService(SpendReceiptServiceConfig{}, ref, ref, ref); return e }},
 		{"relay service", func() error {
-			_, e := NewV4LiveRelayRegistrationService(SpendReceiptServiceConfig{}, ref, ref, ref)
+			_, e := NewLiveRelayRegistrationService(SpendReceiptServiceConfig{}, ref, ref, ref)
 			return e
 		}},
 	}
@@ -210,17 +210,17 @@ func TestV4PublicConstructorsRequireIndependentConfiguration(t *testing.T) {
 				t.Fatal("unconfigured public authority accepted work")
 			}
 			switch err.(type) {
-			case V4IssueFailure, V4PublicationFailure, SpendQueryFailure:
+			case IssueFailure, PublicationFailure, SpendQueryFailure:
 			default:
 				t.Fatalf("internal provider error escaped: %T %v", err, err)
 			}
 		})
 	}
 	for _, ctx := range []context.Context{nil, context.Background(), context.WithValue(context.Background(), "client_identity", [32]byte{1})} {
-		if identity, ok := V4AuthenticatedDirectIssueClient(ctx); ok || identity != ([32]byte{}) {
+		if identity, ok := AuthenticatedDirectIssueClient(ctx); ok || identity != ([32]byte{}) {
 			t.Fatal("caller context conferred authenticated identity")
 		}
-		if identity, ok := V4AuthenticatedArtifactIssueClient(ctx); ok || identity != ([32]byte{}) {
+		if identity, ok := AuthenticatedArtifactIssueClient(ctx); ok || identity != ([32]byte{}) {
 			t.Fatal("caller context conferred authenticated identity")
 		}
 	}

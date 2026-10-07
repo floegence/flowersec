@@ -188,6 +188,8 @@ func (c *ConnectionController) begin(ctx context.Context, options ControllerRepl
 	c.retryWindow, c.retryNotBefore, c.retryRequested, c.retryPending = nil, 0, false, false
 	a := &controllerAttempt{serial: c.serial, automatic: ordinary, ctx: attemptCtx, cancel: cancel, deadline: deadline, retention: retention, options: options, previous: c.current, done: make(chan struct{}), initializer: initializer, completion: completion}
 	c.started = true
+	c.lastError = nil
+	c.lastDiagnostic, c.hasLastDiagnostic = unknownAttemptDiagnostic(a.serial), true
 	c.attempt = a
 	c.signalLocked()
 	go c.establish(a)
@@ -485,7 +487,10 @@ func (c *ConnectionController) establish(a *controllerAttempt) {
 				if err := a.deadline.CheckAt(now); err != nil {
 					return err
 				}
+				c.publishNotificationsLocked(session, a.previous, a.options.Retirement)
 				c.current = session
+				// withControllerAccepting still holds this original Session gate.
+				session.controllerApplicationPublished = true
 				publishedCurrent = true
 				c.retired = a.previous
 				c.retention = a.retention
@@ -493,6 +498,7 @@ func (c *ConnectionController) establish(a *controllerAttempt) {
 				c.retirementStarted = false
 				c.blocked = false
 				c.lastError = nil
+				c.lastDiagnostic, c.hasLastDiagnostic = ConnectionDiagnostic{}, false
 				c.cycleAttempts = 0
 				a.result = ControllerReplaceResult{CurrentSwitched: true, Current: session, Previous: a.previous, Retirement: a.options.Retirement, RetainUntilMS: a.options.RetainUntilMS, PreviousRetained: retained, RetirementError: retirementErr}
 				c.finishLocked(a, nil)

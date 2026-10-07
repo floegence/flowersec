@@ -33,10 +33,12 @@ import (
 // required for a different route or trust policy. Roots are independent CA
 // trust; pin-mode routes use their exact signed leaf-DER policy instead.
 type WebSocketFactoryConfig struct {
+	DialScope NativeDialScope
 	// Role is the logical endpoint. Relay selects local physical role 2.
 	// Tunnel routes require an independent deployment binding.
 	Role          protocolv4.Direction
 	Relay         bool
+	RelayAccounts []resourcev4.Account
 	Deployment    protocolv4.RelayDeploymentBinding
 	Root          *resourcev4.Root
 	Owner         resourcev4.OwnerKey
@@ -45,9 +47,11 @@ type WebSocketFactoryConfig struct {
 	RemoteAddress netip.AddrPort
 	Roots         *x509.CertPool
 	Origin        string
-	Options       websocket.Options
-	Connections   uint16
-	RuntimeBytes  uint64
+	// LocalBridgeToken enables only an exact signed numeric loopback route.
+	LocalBridgeToken string
+	Options          websocket.Options
+	Connections      uint16
+	RuntimeBytes     uint64
 }
 
 // WebSocketCarrierFactory admits each actual provider under the original
@@ -64,6 +68,7 @@ type WebSocketCarrierFactory struct {
 	policy              tlspolicy.Policy
 	host, endpoint      string
 	subprotocol         string
+	localLoopback       bool
 	reservation, shared resourcev4.Reference
 	environment         resourcev4.Reference
 	providerCharge      resourcev4.Vector
@@ -79,9 +84,12 @@ const webSocketFactoryRouteBytes = 16384
 const webSocketFactoryRouteNodes = 1024
 
 func WebSocketCarrierFactoryCharge(c WebSocketFactoryConfig) (resourcev4.Vector, error) {
+	if len(c.RelayAccounts) > resourcev4.MaxAccountsPerCharge || !c.Relay && len(c.RelayAccounts) != 0 {
+		return resourcev4.Vector{}, resourcev4.ErrConfiguration
+	}
 	if c.Root == nil || c.Clock == nil || len(c.Route) == 0 || len(c.Route) > webSocketFactoryRouteBytes ||
 		!c.RemoteAddress.IsValid() || c.RemoteAddress.Port() == 0 || c.RemoteAddress.Addr().Zone() != "" ||
-		c.Connections == 0 || c.Connections > 1024 || c.RuntimeBytes == 0 || len(c.Origin) > 1024 {
+		c.Connections == 0 || c.Connections > 1024 || c.RuntimeBytes == 0 || len(c.Origin) > 1024 || len(c.LocalBridgeToken) > 1024 || strings.ContainsAny(c.LocalBridgeToken, "\r\n") {
 		return resourcev4.Vector{}, resourcev4.ErrConfiguration
 	}
 	if _, err := websocket.Charge(c.Options); err != nil {
@@ -92,7 +100,7 @@ func WebSocketCarrierFactoryCharge(c WebSocketFactoryConfig) (resourcev4.Vector,
 		return resourcev4.Vector{}, err
 	}
 	perSlot := uint64(unsafe.Sizeof(webSocketFactorySlot{})) + uint64(unsafe.Sizeof(factoryWebSocket{})) + uint64(unsafe.Sizeof(factoryPreparation{})) + native.EnvironmentBorrowBytes() + tlspolicy.BackingBytes() + 4096
-	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(WebSocketCarrierFactory{})) + decoder + 4096 + uint64(c.Connections)*perSlot,
+	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(WebSocketCarrierFactory{})) + uint64(len(c.RelayAccounts))*uint64(unsafe.Sizeof(resourcev4.Account{})) + decoder + 4096 + uint64(c.Connections)*perSlot,
 		resourcev4.Items: 3*uint64(c.Connections) + 1, resourcev4.WorkSlots: uint64(c.Connections), resourcev4.Tasks: uint64(c.Connections)}).
 		Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 }
@@ -112,6 +120,7 @@ func NewWebSocketCarrierFactory(c WebSocketFactoryConfig, reservation, environme
 	if err != nil {
 		return nil, err
 	}
+	c.RelayAccounts = append([]resourcev4.Account(nil), c.RelayAccounts...)
 	factory := &WebSocketCarrierFactory{c: c, reservation: owned, environment: environment, done: make(chan struct{})}
 	defer func() {
 		if err != nil {
@@ -140,45 +149,66 @@ func NewWebSocketCarrierFactory(c WebSocketFactoryConfig, reservation, environme
 	port, _ := leg.Named("Leg", "port").Uint()
 	path, _ := leg.Named("Leg", "path").Text()
 	subprotocol, _ := leg.Named("Leg", "subprotocol").Text()
+	access, _ := leg.Named("Leg", "access_class").Uint()
+	factory.localLoopback = access == 1
 	wantPath, wantProtocol := "/flowersec/v4/direct", websocket.SubprotocolDirect
 	if pathKind == 1 {
 		wantPath, wantProtocol = "/flowersec/v4/tunnel", websocket.SubprotocolTunnel
 	}
+	if factory.localLoopback {
+		wantPath, wantProtocol = "/flowersec/v4/local", websocket.SubprotocolLocal
+	}
 	alpn, _ := leg.Named("Leg", "alpn").Text()
-	if host == "" || port != uint64(c.RemoteAddress.Port()) || path != wantPath || subprotocol != wantProtocol || alpn != "http/1.1" {
+	if host == "" || port != uint64(c.RemoteAddress.Port()) || path != wantPath || subprotocol != wantProtocol || !factory.localLoopback && alpn != "http/1.1" {
 		return nil, protocolv4.CBORFailure("carrier_binding_invalid")
 	}
 	if address, parseErr := netip.ParseAddr(host); parseErr == nil && address != c.RemoteAddress.Addr() {
 		return nil, protocolv4.CBORFailure("carrier_binding_invalid")
 	}
-	originPolicy := leg.Named("Leg", "origin_policy")
-	if originPolicy.Encoded() != nil {
-		allowed, _ := originPolicy.Named("OriginPolicy", "allow_absent").Bool()
-		if c.Origin != "" {
-			allowed = false
-			origins := originPolicy.Named("OriginPolicy", "origins")
-			for index := range origins.Len() {
-				origin, _ := origins.Index(index).Text()
-				allowed = allowed || origin == c.Origin
-			}
-		}
-		if !allowed {
+	if factory.localLoopback {
+		numeric, parseErr := netip.ParseAddr(host)
+		origin, _ := leg.Named("Leg", "origin").Text()
+		if parseErr != nil || !numeric.IsLoopback() || numeric != c.RemoteAddress.Addr() || c.Roots != nil || c.LocalBridgeToken == "" || c.Origin != "http://"+c.RemoteAddress.String() || origin != c.Origin || c.Relay || pathKind != 0 {
 			return nil, protocolv4.CBORFailure("carrier_binding_invalid")
 		}
-	} else if c.Origin != "" {
-		return nil, protocolv4.CBORFailure("carrier_binding_invalid")
-	}
-	factory.policy, err = tlspolicy.Capture(leg.Named("Leg", "tls_policy"))
-	if err != nil {
-		return nil, err
-	}
-	if factory.policy.RequiresRoots() && c.Roots == nil || !factory.policy.RequiresRoots() && c.Roots != nil {
-		return nil, resourcev4.ErrConfiguration
+	} else {
+		if c.LocalBridgeToken != "" {
+			return nil, resourcev4.ErrConfiguration
+		}
+		originPolicy := leg.Named("Leg", "origin_policy")
+		if originPolicy.Encoded() != nil {
+			allowed, _ := originPolicy.Named("OriginPolicy", "allow_absent").Bool()
+			if c.Origin != "" {
+				allowed = false
+				origins := originPolicy.Named("OriginPolicy", "origins")
+				for index := range origins.Len() {
+					origin, _ := origins.Index(index).Text()
+					allowed = allowed || origin == c.Origin
+				}
+			}
+			if !allowed {
+				return nil, protocolv4.CBORFailure("carrier_binding_invalid")
+			}
+		} else if c.Origin != "" {
+			return nil, protocolv4.CBORFailure("carrier_binding_invalid")
+		}
+		factory.policy, err = tlspolicy.Capture(leg.Named("Leg", "tls_policy"))
+		if err != nil {
+			return nil, err
+		}
+		if factory.policy.RequiresRoots() && c.Roots == nil || !factory.policy.RequiresRoots() && c.Roots != nil {
+			return nil, resourcev4.ErrConfiguration
+		}
 	}
 	factory.host, factory.subprotocol = host, subprotocol
-	factory.endpoint = "wss://" + net.JoinHostPort(host, strconv.FormatUint(port, 10)) + path
+	scheme := "wss://"
+	if factory.localLoopback {
+		scheme = "ws://"
+	}
+	factory.endpoint = scheme + net.JoinHostPort(host, strconv.FormatUint(port, 10)) + path
 	factory.c.Route = nil // The admitted decoder owns the only retained copy.
 	factory.c.Origin = strings.Clone(c.Origin)
+	factory.c.LocalBridgeToken = strings.Clone(c.LocalBridgeToken)
 	// The CA pool is an independently admitted immutable dependency, just as in
 	// the native provider. Clone its index so caller additions cannot widen it.
 	if c.Roots != nil {
@@ -221,8 +251,11 @@ func (factory *WebSocketCarrierFactory) prepareCarrier(ctx context.Context, requ
 	if err = request.Config.Reservation.CheckSameEnvironment(factory.reservation); err != nil {
 		return nil, err
 	}
-	accounts := [2]resourcev4.Account{request.Scope.Tenant, request.Scope.Session}
-	if err = request.Config.Reservation.CheckAllocationScope(factory.c.Root, factory.c.Owner, accounts[:]); err != nil {
+	accounts := []resourcev4.Account{request.Scope.Tenant, request.Scope.Session}
+	if factory.c.Relay && len(factory.c.RelayAccounts) > 0 {
+		accounts = factory.c.RelayAccounts
+	}
+	if err = request.Config.Reservation.CheckAllocationScope(factory.c.Root, factory.c.Owner, accounts); err != nil {
 		return nil, err
 	}
 	if err = request.Config.Environment.CheckSameEnvironment(factory.environment); err != nil {
@@ -268,7 +301,8 @@ func (factory *WebSocketCarrierFactory) prepareCarrier(ctx context.Context, requ
 	}
 	// The native provider's original timer enforces this shorter preparation
 	// cap. Do not add an unjoined context deadline callback around it.
-	prepareCtx, cancel := context.WithCancel(ctx)
+	prepareCtx, cancelCause := newCarrierPreparationContext(ctx)
+	cancel := func() { cancelCause(context.Canceled) }
 	defer cancel()
 	factory.mu.Lock()
 	closed := factory.closed
@@ -278,6 +312,20 @@ func (factory *WebSocketCarrierFactory) prepareCarrier(ctx context.Context, requ
 		cancel()
 		return nil, resourcev4.ErrClosed
 	}
+	// The factory's admitted task owns parent cancellation and joins before
+	// the original candidate position can be reused. The provider keeps its
+	// existing socket deadline; this observer needs no additional timer.
+	stop, stopped := make(chan struct{}), make(chan struct{})
+	go watchCarrierPreparation(ctx, prepareCtx, cancelCause, nil, stop, stopped)
+	watching := true
+	finishWatch := func() {
+		if watching {
+			watching = false
+			close(stop)
+			<-stopped
+		}
+	}
+	defer finishWatch()
 	var identity [56]byte
 	copy(identity[:16], factory.c.Owner.Backing[:])
 	copy(identity[16:32], request.Config.Attempt[:])
@@ -290,7 +338,7 @@ func (factory *WebSocketCarrierFactory) prepareCarrier(ctx context.Context, requ
 	if floor != nil {
 		reservation, err = floor.Checkout()
 	} else {
-		reservation, err = factory.c.Root.Reserve(owner, factory.providerCharge, accounts[:]...)
+		reservation, err = factory.c.Root.Reserve(owner, factory.providerCharge, accounts...)
 	}
 	if err != nil {
 		return nil, err
@@ -302,9 +350,12 @@ func (factory *WebSocketCarrierFactory) prepareCarrier(ctx context.Context, requ
 	if err != nil {
 		return nil, err
 	}
-	policy, err := factory.policy.Prepare(now.Interval)
-	if err != nil {
-		return nil, err
+	var policy tlspolicy.Prepared
+	if !factory.localLoopback {
+		policy, err = factory.policy.Prepare(now.Interval)
+		if err != nil {
+			return nil, err
+		}
 	}
 	provider := &factoryWebSocket{factory: factory, slot: slot, serial: serial}
 	deadline := request.Config.Deadline
@@ -323,22 +374,38 @@ func (factory *WebSocketCarrierFactory) prepareCarrier(ctx context.Context, requ
 		provider.verification, err = policy.Verify(state, factory.host, factory.c.Roots, sample.Interval)
 		return err
 	}
+	if factory.localLoopback {
+		tlsConfig = nil
+	}
 	header := make(http.Header)
 	if factory.c.Origin != "" {
 		header.Set("Origin", factory.c.Origin)
 	}
+	if factory.localLoopback {
+		header.Set("X-Flowersec-Private-Bridge-Token", factory.c.LocalBridgeToken)
+	}
 	options := factory.c.Options
 	options.HandshakeTimeout = limit
-	provider.Messages, err = websocket.Dial(prepareCtx, websocket.DialConfig{
-		URL: factory.endpoint, RemoteAddress: factory.c.RemoteAddress, Subprotocol: factory.subprotocol,
-		TLSConfig: tlsConfig, Header: header, PrepareBytes: request.Budget.PreauthBytes,
-		CheckPolicy: func(actual *url.URL, address netip.AddrPort, actualHeader http.Header) error {
-			if actual.String() != factory.endpoint || address != factory.c.RemoteAddress || !sameWebSocketOrigin(actualHeader, factory.c.Origin) {
-				return protocolv4.CBORFailure("carrier_binding_invalid")
-			}
-			return deadline.Check()
-		},
-	}, options, reservation, request.Config.Environment, providerEnvironment)
+	defer func() {
+		if !transferred && provider.Messages != nil {
+			_ = provider.Messages.Close()
+			_ = provider.Messages.WaitCleanup(context.Background())
+			_ = provider.Messages.Retire()
+		}
+	}()
+	err = RunNativeDial(prepareCtx, factory.c.DialScope, func() error {
+		provider.Messages, err = websocket.Dial(prepareCtx, websocket.DialConfig{
+			URL: factory.endpoint, RemoteAddress: factory.c.RemoteAddress, Subprotocol: factory.subprotocol,
+			TLSConfig: tlsConfig, Header: header, PrepareBytes: request.Budget.PreauthBytes,
+			CheckPolicy: func(actual *url.URL, address netip.AddrPort, actualHeader http.Header) error {
+				if actual.String() != factory.endpoint || address != factory.c.RemoteAddress || !factory.checkHeaders(actualHeader) {
+					return protocolv4.CBORFailure("carrier_binding_invalid")
+				}
+				return deadline.Check()
+			},
+		}, options, reservation, request.Config.Environment, providerEnvironment)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -348,11 +415,9 @@ func (factory *WebSocketCarrierFactory) prepareCarrier(ctx context.Context, requ
 	}
 	prepared, err := prepare(ctx, request.Config, provider)
 	if err != nil {
-		_ = provider.Messages.Close()
-		_ = provider.Messages.WaitCleanup(context.Background())
-		_ = provider.Messages.Retire()
 		return nil, err
 	}
+	finishWatch()
 	transferred = true
 	factory.mu.Lock()
 	factory.slots[slot].cancel = nil
@@ -361,7 +426,14 @@ func (factory *WebSocketCarrierFactory) prepareCarrier(ctx context.Context, requ
 	if closed {
 		return prepared, resourcev4.ErrClosed
 	}
-	return prepared, prepareCtx.Err()
+	return prepared, context.Cause(prepareCtx)
+}
+
+func (factory *WebSocketCarrierFactory) checkHeaders(header http.Header) bool {
+	if !factory.localLoopback {
+		return sameWebSocketOrigin(header, factory.c.Origin)
+	}
+	return len(header) == 2 && len(header.Values("Origin")) == 1 && header.Get("Origin") == factory.c.Origin && len(header.Values("X-Flowersec-Private-Bridge-Token")) == 1 && header.Get("X-Flowersec-Private-Bridge-Token") == factory.c.LocalBridgeToken
 }
 
 func sameWebSocketOrigin(header http.Header, origin string) bool {
@@ -456,8 +528,10 @@ func (provider *factoryWebSocket) ConnectionGuarantees() (protocolv4.V4Connectio
 	if err != nil {
 		return protocolv4.V4ConnectionGuarantees{}, err
 	}
-	if err = provider.verification.Check(now.Interval); err != nil {
-		return protocolv4.V4ConnectionGuarantees{}, err
+	if !provider.factory.localLoopback {
+		if err = provider.verification.Check(now.Interval); err != nil {
+			return protocolv4.V4ConnectionGuarantees{}, err
+		}
 	}
 	actual, err := provider.Messages.ConnectionGuarantees()
 	if err != nil {

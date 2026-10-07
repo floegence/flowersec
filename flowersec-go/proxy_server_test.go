@@ -19,7 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
+func TestProxyServerHTTPApplicationRoundTrip(t *testing.T) {
 	var wantHost string
 	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.RequestURI() != "/public/../api//items?q=%7euser" {
@@ -38,10 +38,7 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	defer upstream.Close()
 	wantHost = strings.TrimPrefix(upstream.URL, "http://")
 
-	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	handlers := &StreamHandlerPlanConfig{}
 	proxy, err := NewProxyServer(ProxyServerOptions{
 		Upstream: upstream.URL, UpstreamOrigin: upstream.URL,
 		AllowedOrigins:         []string{"https://app.example"},
@@ -51,11 +48,11 @@ func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer proxy.Close()
-	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+	if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
 		t.Fatal(err)
 	}
 
-	client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
+	client := serveProxyTestStream(t, proxy, handlers, proxyHTTPStreamKind)
 	if err := writeProxyMetadata(client, proxyHTTPRequest{
 		Version: proxyWireVersion, RequestID: "request-1", Method: http.MethodGet,
 		Path: "/public/../api//items?q=%7euser", Headers: []proxyHeader{{Name: "accept", Value: "text/plain"}},
@@ -169,20 +166,17 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	handlers := &StreamHandlerPlanConfig{}
 	proxy, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer proxy.Close()
-	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+	if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
 		t.Fatal(err)
 	}
 
-	client := serveProxyTestStream(t, handlers, proxyWSStreamKind)
+	client := serveProxyTestStream(t, proxy, handlers, proxyWSStreamKind)
 	if err := writeProxyMetadata(client, proxyWebSocketOpen{
 		Version: proxyWireVersion, ConnID: "socket-1", Path: "/public/../api//socket?q=%7euser",
 	}); err != nil {
@@ -207,81 +201,102 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 	}
 }
 
-func TestProxyServerWebSocketUpstreamCloseResetsOpenDownstreamAndJoinsRelays(t *testing.T) {
-	upgrader := websocket.Upgrader{
-		CheckOrigin: func(request *http.Request) bool { return request.Header.Get("Origin") != "" },
-	}
-	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		connection, err := upgrader.Upgrade(writer, request, nil)
-		if err != nil {
-			return
+func TestProxyServerWebSocketUpstreamCloseWaitsForDownstreamAndJoinsRelays(t *testing.T) {
+	for _, cancelExchange := range []bool{false, true} {
+		name := "reply"
+		if cancelExchange {
+			name = "cancel"
 		}
-		defer connection.Close()
-		_ = connection.WriteMessage(
-			websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"),
-		)
-	}))
-	defer upstream.Close()
-
-	proxy, err := NewProxyServer(ProxyServerOptions{
-		Upstream: upstream.URL, UpstreamOrigin: upstream.URL,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, server := net.Pipe()
-	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
-	stream := &countingProxyServerTestStream{
-		proxyServerTestStream: proxyServerTestStream{Conn: server, kind: proxyWSStreamKind},
-	}
-	done := make(chan error, 1)
-	go func() {
-		done <- proxy.limit(proxy.serveWebSocket)(context.Background(), IncomingStream{
-			Kind: proxyWSStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
+		t.Run(name, func(t *testing.T) {
+			harness := newProxyWebSocketRelayHarness(t, func(connection *websocket.Conn) {
+				_ = connection.WriteMessage(websocket.TextMessage, []byte("queued-before-close"))
+				_ = connection.WriteMessage(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"))
+				_, _, _ = connection.ReadMessage()
+			})
+			operation, payload, err := readProxyWebSocketFrame(harness.client, 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if operation != 1 || string(payload) != "queued-before-close" {
+				t.Fatalf("queued frame = %d %q", operation, payload)
+			}
+			operation, payload, err = readProxyWebSocketFrame(harness.client, 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if operation != 8 || !bytes.Equal(payload, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done")) {
+				t.Fatalf("close frame = operation %d payload %x", operation, payload)
+			}
+			select {
+			case err := <-harness.done:
+				t.Fatalf("handler completed before downstream Close: %v", err)
+			default:
+			}
+			if harness.stream.resets.Load() != 0 {
+				t.Fatal("stream reset before downstream Close")
+			}
+			if cancelExchange {
+				if err := harness.proxy.Close(); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case err := <-harness.done:
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("cancel error = %v", err)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("canceled exchange did not join both relays")
+				}
+				if harness.stream.resets.Load() != 1 {
+					t.Fatalf("Reset count = %d, want 1", harness.stream.resets.Load())
+				}
+				return
+			}
+			if err := writeProxyWebSocketFrame(harness.client, 8, payload, 1<<20); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-harness.done:
+				if err != nil {
+					t.Fatalf("WebSocket handler error = %v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("WebSocket handler did not join both relays")
+			}
+			if harness.stream.resets.Load() != 0 {
+				t.Fatalf("Reset count = %d, want 0", harness.stream.resets.Load())
+			}
 		})
-	}()
+	}
+}
 
-	if err := writeProxyMetadata(client, proxyWebSocketOpen{
-		Version: proxyWireVersion, ConnID: "upstream-close", Path: "/socket",
-	}); err != nil {
+func TestProxyServerWebSocketDownstreamCloseForwardsUpstreamResponse(t *testing.T) {
+	upstreamRead := make(chan struct{})
+	harness := newProxyWebSocketRelayHarness(t, func(connection *websocket.Conn) {
+		_, _, _ = connection.ReadMessage()
+		close(upstreamRead)
+	})
+
+	payload := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done")
+	if err := writeProxyWebSocketFrame(harness.client, 8, payload, 1<<20); err != nil {
 		t.Fatal(err)
 	}
-	var opened proxyWebSocketResponse
-	if err := readProxyMetadata(client, 1<<20, &opened); err != nil {
-		t.Fatal(err)
+	select {
+	case <-upstreamRead:
+	case <-time.After(time.Second):
+		t.Fatal("upstream WebSocket did not receive downstream close")
 	}
-	if !opened.OK {
-		t.Fatalf("open response = %+v", opened)
-	}
-	operation, payload, err := readProxyWebSocketFrame(client, 1<<20)
+	operation, forwarded, err := readProxyWebSocketFrame(harness.client, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if operation != 8 || len(payload) < 2 || binary.BigEndian.Uint16(payload[:2]) != websocket.CloseNormalClosure {
-		t.Fatalf("close frame = operation %d payload %x", operation, payload)
+	if operation != 8 || len(forwarded) < 2 || binary.BigEndian.Uint16(forwarded[:2]) != websocket.CloseNormalClosure {
+		t.Fatalf("forwarded close frame = operation %d payload %x", operation, forwarded)
 	}
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("WebSocket handler error = %v", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("WebSocket handler did not join both relays")
-	}
-	if stream.resets.Load() != 1 {
-		t.Fatalf("stream Reset count = %d, want 1", stream.resets.Load())
-	}
-
-	closed := make(chan struct{})
-	go func() {
-		_ = proxy.Close()
-		close(closed)
-	}()
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("ProxyServer.Close did not converge after upstream WebSocket close")
+	awaitProxyWebSocketRelayDone(t, harness.done)
+	if harness.stream.resets.Load() != 0 {
+		t.Fatalf("stream Reset count = %d, want 0", harness.stream.resets.Load())
 	}
 }
 
@@ -362,14 +377,11 @@ func TestProxyServerCloseCancelsActiveAndRejectsFutureDispatch(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
 	go func() { _, _ = io.Copy(io.Discard, client) }()
 	stream := &proxyServerTestStream{Conn: server, kind: proxyHTTPStreamKind}
-	handler := proxy.limit(func(ctx context.Context, incoming IncomingStream) error {
-		proxy.serveHTTP(ctx, incoming)
-		return nil
-	})
 	done := make(chan error, 1)
 	go func() {
-		done <- handler(context.Background(), IncomingStream{
-			Kind: proxyHTTPStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
+		done <- proxy.runLimited(context.Background(), stream, func(ctx context.Context) error {
+			proxy.serveHTTPStream(ctx, stream)
+			return nil
 		})
 	}()
 	if err := writeProxyMetadata(client, proxyHTTPRequest{
@@ -393,11 +405,8 @@ func TestProxyServerCloseCancelsActiveAndRejectsFutureDispatch(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("ProxyServer.Close returned before active handler completed")
 	}
-	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := proxy.RegisterStreamHandlers(handlers); !errors.Is(err, ErrInvalidProxyServer) {
+	handlers := &StreamHandlerPlanConfig{}
+	if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); !errors.Is(err, ErrInvalidProxyServer) {
 		t.Fatalf("Register after Close error = %v", err)
 	}
 }
@@ -426,9 +435,7 @@ func TestProxyServerHTTPStreamResetCancelsUpstream(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
 	done := make(chan struct{})
 	go func() {
-		proxy.serveHTTP(context.Background(), IncomingStream{
-			Kind: proxyHTTPStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
-		})
+		proxy.serveHTTPStream(context.Background(), stream)
 		close(done)
 	}()
 	if err := writeProxyMetadata(client, proxyHTTPRequest{
@@ -488,15 +495,12 @@ func TestProxyServerCloseInterruptsPartialHTTPFrames(t *testing.T) {
 			defer client.Close()
 			defer server.Close()
 			started := make(chan struct{})
-			handler := proxy.limit(func(ctx context.Context, incoming IncomingStream) error {
-				close(started)
-				proxy.serveHTTP(ctx, incoming)
-				return nil
-			})
+			stream := &proxyServerTestStream{Conn: server, kind: proxyHTTPStreamKind}
 			go func() {
-				_ = handler(context.Background(), IncomingStream{
-					Kind: proxyHTTPStreamKind, Metadata: EmptyStreamMetadata(),
-					Stream: &proxyServerTestStream{Conn: server, kind: proxyHTTPStreamKind},
+				_ = proxy.runLimited(context.Background(), stream, func(ctx context.Context) error {
+					close(started)
+					proxy.serveHTTPStream(ctx, stream)
+					return nil
 				})
 			}()
 			<-started
@@ -529,24 +533,21 @@ func TestProxyServerRejectsUnsafeAndDuplicateRegistration(t *testing.T) {
 			t.Fatalf("NewProxyServer(%+v) error = %v", options, err)
 		}
 	}
-	handlers, _ := NewSessionHandlers(SessionHandlerOptions{})
+	handlers := &StreamHandlerPlanConfig{}
 	proxy, err := NewProxyServer(ProxyServerOptions{Upstream: "http://127.0.0.1:8080", UpstreamOrigin: "http://127.0.0.1:8080"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+	if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
 		t.Fatal(err)
 	}
-	if err := proxy.RegisterStreamHandlers(handlers); !errors.Is(err, ErrInvalidProxyServer) {
+	if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); !errors.Is(err, ErrInvalidProxyServer) {
 		t.Fatalf("duplicate Register error = %v", err)
 	}
 }
 
-func TestProxyServerRegistersIntoRoleNeutralStreamHandlers(t *testing.T) {
-	handlers, err := NewStreamHandlers(StreamHandlerOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestProxyServerRegistersIntoCurrentApplicationPlan(t *testing.T) {
+	handlers := &StreamHandlerPlanConfig{}
 	proxy, err := NewProxyServer(ProxyServerOptions{
 		Upstream: "http://127.0.0.1:8080", UpstreamOrigin: "http://127.0.0.1:8080",
 	})
@@ -554,32 +555,65 @@ func TestProxyServerRegistersIntoRoleNeutralStreamHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = proxy.Close() })
-	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
-		t.Fatalf("ProxyServer.RegisterStreamHandlers(StreamHandlers) error = %v", err)
+	if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
+		t.Fatalf("ProxyServer.RegisterStreamHandlers(StreamHandlerPlanConfig) error = %v", err)
 	}
-	if err := proxy.RegisterStreamHandlers(handlers); !errors.Is(err, ErrInvalidProxyServer) {
-		t.Fatalf("duplicate ProxyServer.RegisterStreamHandlers(StreamHandlers) error = %v, want ErrInvalidProxyServer", err)
+	if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); !errors.Is(err, ErrInvalidProxyServer) {
+		t.Fatalf("duplicate ProxyServer.RegisterStreamHandlers(StreamHandlerPlanConfig) error = %v, want ErrInvalidProxyServer", err)
 	}
 }
 
-func serveProxyTestStream(t *testing.T, handlers *SessionHandlers, kind string) net.Conn {
+func allowProxyApplicationTestOpen(context.Context, any, []byte) error { return nil }
+
+// Wire-level application tests register the current declarations, then exercise
+// their shared application I/O directly. Original StreamOwnership lifecycle and
+// carrier admission remain covered by the current session integration fixtures.
+func serveProxyTestStream(t *testing.T, proxy *ProxyServer, plan *StreamHandlerPlanConfig, kind string) net.Conn {
 	t.Helper()
+	registered := false
+	for _, declaration := range plan.Handlers {
+		if declaration.Kind != kind {
+			continue
+		}
+		if declaration.Handler == nil || declaration.AuthorizeOpen == nil {
+			t.Fatal("incomplete current proxy declaration")
+		}
+		if err := declaration.AuthorizeOpen(context.Background(), nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		registered = true
+	}
+	if !registered {
+		t.Fatalf("proxy kind %q is absent from current application plan", kind)
+	}
 	client, server := net.Pipe()
-	t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
-	session := &serverTestSession{incoming: make(chan IncomingStream, 1), closed: make(chan struct{})}
+	stream := &proxyServerTestStream{Conn: server, kind: kind}
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
 	done := make(chan error, 1)
-	go func() { done <- handlers.Serve(ctx, session) }()
+	go func() {
+		defer server.Close()
+		done <- proxy.runLimited(ctx, stream, func(ctx context.Context) error {
+			switch kind {
+			case proxyHTTPStreamKind:
+				proxy.serveHTTPStream(ctx, stream)
+				return nil
+			case proxyWSStreamKind:
+				return proxy.serveWebSocketStream(ctx, stream)
+			default:
+				return ErrInvalidProxyServer
+			}
+		})
+	}()
 	t.Cleanup(func() {
 		cancel()
+		_ = client.Close()
+		_ = server.Close()
 		select {
 		case <-done:
 		case <-time.After(time.Second):
-			t.Error("SessionHandlers did not stop")
+			t.Error("proxy application handler did not stop")
 		}
 	})
-	session.incoming <- IncomingStream{Kind: kind, Metadata: EmptyStreamMetadata(), Stream: &proxyServerTestStream{Conn: server, kind: kind}}
 	return client
 }
 
@@ -632,8 +666,8 @@ func newProxyWebSocketRelayHarness(
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- proxy.limit(proxy.serveWebSocket)(context.Background(), IncomingStream{
-			Kind: proxyWSStreamKind, Metadata: EmptyStreamMetadata(), Stream: stream,
+		done <- proxy.runLimited(context.Background(), stream, func(ctx context.Context) error {
+			return proxy.serveWebSocketStream(ctx, stream)
 		})
 	}()
 	if err := writeProxyMetadata(client, proxyWebSocketOpen{
@@ -698,7 +732,7 @@ func (stream *proxyServerTestStream) CloseWrite() error {
 }
 func (stream *proxyServerTestStream) Reset() error { return stream.Close() }
 
-var _ ByteStream = (*proxyServerTestStream)(nil)
+var _ proxyStream = (*proxyServerTestStream)(nil)
 var _ io.ReadWriteCloser = (*proxyServerTestStream)(nil)
 
 func TestProxyServerPreservesContentCodedRepresentation(t *testing.T) {
@@ -723,14 +757,11 @@ func TestProxyServerPreservesContentCodedRepresentation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
-	if err != nil {
+	handlers := &StreamHandlerPlanConfig{}
+	if err := server.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.RegisterStreamHandlers(handlers); err != nil {
-		t.Fatal(err)
-	}
-	client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
+	client := serveProxyTestStream(t, server, handlers, proxyHTTPStreamKind)
 	if err := writeProxyMetadata(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "coded", Method: "GET", Path: "/"}); err != nil {
 		t.Fatal(err)
 	}
@@ -781,19 +812,16 @@ func TestProxyServerPreservesRawTargetAndHeadRepresentationLength(t *testing.T) 
 				w.WriteHeader(http.StatusOK)
 			}))
 			defer upstream.Close()
-			handlers, err := NewSessionHandlers(SessionHandlerOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
+			handlers := &StreamHandlerPlanConfig{}
 			proxy, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer proxy.Close()
-			if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+			if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
 				t.Fatal(err)
 			}
-			client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
+			client := serveProxyTestStream(t, proxy, handlers, proxyHTTPStreamKind)
 			if err := writeProxyMetadata(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "head", Method: http.MethodHead, Path: target}); err != nil {
 				t.Fatal(err)
 			}

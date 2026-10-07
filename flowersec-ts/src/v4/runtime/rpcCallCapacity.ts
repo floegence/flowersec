@@ -52,6 +52,10 @@ export class RPCCallReservation {
     const capacity = owners.get(this)?.capacity;
     if (capacity === undefined) throw new RPCProtocolError("rpc_call_closed"); capacity.inheritClass(this, workClass);
   }
+  workClass(): ApplicationWorkClass {
+    const capacity = owners.get(this)?.capacity;
+    if (capacity === undefined) throw new RPCProtocolError("rpc_call_closed"); return capacity.workClass(this);
+  }
   close(): void { owners.get(this)?.capacity?.release(this); }
   networkComplete(): boolean {
     const capacity = owners.get(this)?.capacity; return capacity === undefined || capacity.networkComplete(this);
@@ -163,6 +167,7 @@ export class RPCCallCapacity {
     if (this.#short === 1 && this.#used >= this.limit) throw new ResourceError("resource_exhausted");
     slot.workClass = "resident"; this.#short--;
   }
+  workClass(handle: RPCCallReservation): ApplicationWorkClass { this.check(handle); return this.#slot(handle).workClass; }
   networkComplete(handle: RPCCallReservation): boolean {
     const slot = this.#slot(handle); return slot.association === undefined && slot.tails === 0;
   }

@@ -5,7 +5,7 @@ import XCTest
 
 // Public fixture composition only, not authenticated credentials or dual-READY
 // Session publication, lifecycle, resource or authorization ownership.
-final class TransportV4ReadyTests: XCTestCase {
+final class TransportReadyTests: XCTestCase {
   private struct Field: Decodable {
     let name, type: String
     let length: Int?

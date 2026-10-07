@@ -4,7 +4,7 @@ import XCTest
 @testable import Flowersec
 
 // Fixed public fixtures. No live READY, epoch/scope, replay or key-use authority.
-final class TransportV4RecordTests: XCTestCase {
+final class TransportRecordTests: XCTestCase {
   private struct Field: Decodable {
     let name: String
     let type: String

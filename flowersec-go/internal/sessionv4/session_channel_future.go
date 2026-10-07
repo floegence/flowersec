@@ -47,7 +47,7 @@ type internalChannelAllocation struct {
 // Its order is stable for the original admission batch and later checkouts.
 func futureChannelCharges(c RPCServicesConfig, position uint32) (v [internalChannelOwners]resourcev4.Vector, count int, err error) {
 	defer func() {
-		if err == nil && c.Native {
+		if err == nil && (c.Native || c.MixedCarrier) {
 			v[internalChannelNativeOwner], err = NativeDataAssemblyCharge(math.MaxInt64, protocolv4.ServerToClient, c.CryptoProfile, c.Session.Limits().MaxFrame)
 			count = internalChannelOwners
 		}
@@ -80,6 +80,10 @@ func futureChannelCharges(c RPCServicesConfig, position uint32) (v [internalChan
 		return
 	}
 	if position >= 8 {
+		v[0], err = v[0].Add(resourcev4.Vector{resourcev4.SDKBytes: 128})
+		if err != nil {
+			return
+		}
 		v[4], err = NotifyChannelCharge(c.RuntimeBytes)
 		if err != nil {
 			return
@@ -129,7 +133,7 @@ func appendFutureChannelCharges(c RPCServicesConfig, charges *[rpcServicesOwnerC
 		return 0, err
 	}
 	count := rpcServicesOwners
-	if c.Native {
+	if c.Native || c.MixedCarrier {
 		first, _, err := futureChannelCharges(c, 0)
 		if err != nil {
 			return 0, err
@@ -174,7 +178,7 @@ func (r *RPCServices) adoptFutureChannels(c RPCServicesConfig) error {
 		return err
 	}
 	position := rpcServicesOwners
-	if c.Native {
+	if c.Native || c.MixedCarrier {
 		r.firstFuture.owners[internalChannelNativeOwner], err = resourcev4.NewProtectedReservation(r.refs[position], first[internalChannelNativeOwner])
 		if err != nil {
 			return err

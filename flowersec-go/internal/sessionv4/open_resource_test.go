@@ -12,11 +12,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
-func openResourceLimits() OpenLimits {
-	return OpenLimits{Active: 2, Opening: 2, Terminal: 6, RejectionReserve: 1, IngressItems: 2, IngressBytes: 64 << 10,
-		PerClass: [3]uint32{2}, PerOpener: [2][3]uint32{{2}, {2}}, Lifetime: [2][3]uint64{{1024}, {1024}}}
-}
-
 func cleanupOpenResource(t *testing.T, a *OpenAdmission) {
 	t.Helper()
 	a.Close()

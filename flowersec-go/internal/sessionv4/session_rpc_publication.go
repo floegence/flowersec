@@ -81,7 +81,7 @@ func (i *unaryInvocation) WithRequestPublication(h protocolv4.ApplicationHeader,
 	return a.WithCurrentAuthorization(func() error {
 		services.mu.Lock()
 		defer services.mu.Unlock()
-		if services.closed || services.draining.Load() {
+		if services.closed {
 			return cryptov4.ErrClosed
 		}
 		l.mu.Lock()
@@ -98,6 +98,9 @@ func (i *unaryInvocation) WithRequestPublication(h protocolv4.ApplicationHeader,
 			return err
 		}
 		begun := i.publication.Progress().HeaderAccepted
+		if services.draining.Load() && !begun {
+			return cryptov4.ErrClosed
+		}
 		if err := i.checkRequestTimeAt(now, begun); err != nil {
 			return err
 		}

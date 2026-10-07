@@ -130,6 +130,7 @@ type serviceChannel struct {
 }
 
 type ServiceDispatch struct {
+	declarationPreparing                  bool
 	streamMethods                         []serviceStreamMethod
 	streamSlots                           []*serviceStreamCall
 	durableNotifications                  *NotificationDispatch
@@ -189,6 +190,8 @@ type serviceInvocation struct {
 	reservation               resourcev4.Reference
 	response                  UnaryResponse
 	started, returned, closed bool
+	diagnosticOperation       *DiagnosticOperation
+	failure                   error
 }
 
 func ServiceDispatchCharge(c ServiceDispatchConfig) (resourcev4.Vector, error) {
@@ -614,7 +617,10 @@ func (d *ServiceDispatch) Admit(receiver *rpcv4.Receiver, publisher *rpcv4.Publi
 			verified.Close()
 		}
 	}()
-	refuse := func(code string, err error) error { _ = publisher.QueueRefusal(ticket, code); return err }
+	refuse := func(code string, err error) error {
+		_ = publisher.QueueRefusal(ticket, code)
+		return err
+	}
 	// read_result_request is a fixed SDK route. It never enters the ordinary
 	// method table or application executor; the complete target and current
 	// authorization are checked before the original result bytes are copied.
@@ -699,8 +705,13 @@ func (d *ServiceDispatch) Admit(receiver *rpcv4.Receiver, publisher *rpcv4.Publi
 		return refuse("service_unavailable", err)
 	}
 	// Reserve the finite index before leaving the gate for clock/authority checks.
+	if err := registration.services.retainRegistration(); err != nil {
+		d.mu.Unlock()
+		return refuse("service_unavailable", err)
+	}
 	ctx, cancel := context.WithCancelCause(context.Background())
-	i := &serviceInvocation{dispatcher: d, plan: d.plan, method: registration, header: header, input: verified, borrow: borrow, ctx: ctx, cancel: cancel}
+	plan := d.plan
+	i := &serviceInvocation{dispatcher: d, plan: plan, method: registration, header: header, input: verified, borrow: borrow, ctx: ctx, cancel: cancel}
 	i.response.invocation = i
 	d.slots[index] = i
 	d.active++
@@ -710,6 +721,8 @@ func (d *ServiceDispatch) Admit(receiver *rpcv4.Receiver, publisher *rpcv4.Publi
 	d.serial++
 	serial := d.serial
 	d.mu.Unlock()
+	i.diagnosticOperation = plan.beginApplicationDiagnostic()
+	i.ctx = withDiagnosticOperation(i.ctx, i.diagnosticOperation)
 	// Unpublished construction is still an actual in-flight owner. Advance skips
 	// it until the complete references and its once-only dispatch outcome exist.
 	success := false
@@ -796,7 +809,7 @@ func (d *ServiceDispatch) Admit(receiver *rpcv4.Receiver, publisher *rpcv4.Publi
 		}
 		work := func() { i.run(policy.TransientRunMS) }
 		if header.Fields().AdmissionMode == 1 {
-			i.task, err = d.plan.executor.TrySubmit(registration.WorkClass, refs[1], i.reservation, work)
+			i.task, err = d.plan.executor.trySubmitInGroup(d.plan.applicationGroup, registration.WorkClass, refs[1], i.reservation, work)
 		} else {
 			i.queued, err = d.plan.executor.queueApplication(d.plan.applicationGroup, registration.WorkClass, refs[1], i.reservation, work)
 		}
@@ -988,6 +1001,7 @@ func (i *serviceInvocation) run(duration uint64) {
 			})
 		}
 		i.mu.Lock()
+		i.failure = failure
 		i.returned = true
 		i.cancel(cryptov4.ErrClosed)
 		if failure != nil && !i.closed {
@@ -1040,6 +1054,9 @@ func (i *serviceInvocation) run(duration uint64) {
 }
 
 func (d *ServiceDispatch) rollback(index int, i *serviceInvocation) {
+	finishApplicationDiagnosticError(i.diagnosticOperation, cryptov4.ErrClosed)
+	i.diagnosticOperation = nil
+	i.method.services.releaseInvocation()
 	// No callback was dispatched when construction failed.
 	if i.observation != nil {
 		i.observation.EndInvocation()
@@ -1067,6 +1084,9 @@ func (i *serviceInvocation) stop(cause error) {
 		return
 	}
 	i.closed = true
+	if i.failure == nil {
+		i.failure = cause
+	}
 	i.cancel(cause)
 	if i.queued != nil {
 		i.queued.Cancel()
@@ -1180,6 +1200,7 @@ func (d *ServiceDispatch) Advance() {
 		class := i.method.WorkClass
 		i.dispatcher = nil
 		i.plan = nil
+		i.method.services.releaseInvocation()
 		i.method = UnaryRegistration{}
 		i.input = nil
 		i.result = nil
@@ -1187,6 +1208,8 @@ func (d *ServiceDispatch) Advance() {
 		i.observation = nil
 		i.deadline = nil
 		i.runDeadline = nil
+		finishApplicationDiagnosticError(i.diagnosticOperation, i.failure)
+		i.diagnosticOperation = nil
 		i.ctx = nil
 		i.cancel = nil
 		i.queued = nil
@@ -1238,7 +1261,7 @@ func (d *ServiceDispatch) Close() {
 	d.Advance()
 }
 func (d *ServiceDispatch) cleanupLocked() {
-	if !d.closed || d.cleaned || d.active != 0 || d.advancing || d.admitting || d.closingResources || d.durableStarted && !d.durableExited || d.durableNotifications != nil {
+	if !d.closed || d.cleaned || d.active != 0 || d.advancing || d.admitting || d.declarationPreparing || d.closingResources || d.durableStarted && !d.durableExited || d.durableNotifications != nil {
 		return
 	}
 	d.cleaned = true

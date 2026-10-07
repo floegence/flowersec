@@ -76,7 +76,7 @@ func TestLanguageCapabilitiesDeclareNamedDeploymentProfiles(t *testing.T) {
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
-	if document.DeploymentProfiles.ApplicationWire != "flowersec/3" {
+	if document.DeploymentProfiles.ApplicationWire != "flowersec/4" {
 		t.Fatalf("deployment profile application wire = %q", document.DeploymentProfiles.ApplicationWire)
 	}
 	wantProfiles := []string{"native-server-core", "browser-client", "apple-client", "webtransport-server"}
@@ -112,7 +112,7 @@ func TestLanguageCapabilitiesDeclareNamedDeploymentProfiles(t *testing.T) {
 	}
 	invalidWire := manifest.DeploymentProfiles
 	invalidWire.ApplicationWire = "runtime_private_wire"
-	if err := validateDeploymentProfileTransportBindings(invalidWire, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), "flowersec/3") {
+	if err := validateDeploymentProfileTransportBindings(invalidWire, manifest.ServerParityContract); err == nil || !strings.Contains(err.Error(), "flowersec/4") {
 		t.Fatalf("mutated profile wire validation error = %v", err)
 	}
 }
@@ -247,7 +247,7 @@ func TestSDKReadmesDescribePublicCapabilities(t *testing.T) {
 			"Supported Connections",
 		},
 		"flowersec-swift/README.md": {
-			"connect(lease:options:)",
+			"connect(source:requirements:)",
 			"ConnectionController",
 			"Supported Connections",
 		},
@@ -293,10 +293,10 @@ func TestCapabilityManifestRequiresPortableContractsAndSharedFixtures(t *testing
 	t.Run("session handler fixture", func(t *testing.T) {
 		copy := cloneCapabilityManifest(t, manifest)
 		copy.SharedFixtures = slices.DeleteFunc(copy.SharedFixtures, func(fixture sharedFixture) bool {
-			return fixture.ID == "session_handlers_v3"
+			return fixture.ID == "transport_v4_signatures"
 		})
 		_, err := loadCapabilityManifest(writeCapabilityManifest(t, &copy))
-		if err == nil || !strings.Contains(err.Error(), "missing required shared fixture session_handlers_v3") {
+		if err == nil || !strings.Contains(err.Error(), "missing required shared fixture transport_v4_signatures") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -373,6 +373,8 @@ func TestCapabilityManifestRejectsUnverifiableServerClaims(t *testing.T) {
 		copy := cloneCapabilityManifest(t, manifest)
 		capability := portableCapabilityByID(t, &copy, "server_acceptor_session")
 		implementation := capability.Implementations["swift"]
+		implementation.Status = "unsupported"
+		implementation.Reason = "This test profile does not provide a listener."
 		implementation.Entrypoint = ""
 		implementation.TestIDs = nil
 		capability.Implementations["swift"] = implementation
@@ -537,8 +539,8 @@ func TestRequiredInteropMatrixContainsOnlyWebSocketAndRawQUIC(t *testing.T) {
 	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
 		t.Fatal(err)
 	}
-	if len(matrix.DirectCells) != 18 || len(matrix.TunnelTopologies) != 18 {
-		t.Fatalf("required matrix dimensions = direct:%d tunnel:%d, want 18/18", len(matrix.DirectCells), len(matrix.TunnelTopologies))
+	if len(matrix.DirectCells) != 18 || len(matrix.TunnelTopologies) != 36 {
+		t.Fatalf("required matrix dimensions = direct:%d tunnel:%d, want 18/36", len(matrix.DirectCells), len(matrix.TunnelTopologies))
 	}
 	for _, cell := range matrix.DirectCells {
 		if cell.Carrier == "webtransport" {
@@ -561,48 +563,29 @@ func TestInteropMatrixPublishesOnlyCompleteGoBaselineEvidence(t *testing.T) {
 	if err := decodeStrictJSONFile(filepath.Join(repoRoot, interopMatrixPath), &matrix); err != nil {
 		t.Fatal(err)
 	}
-	directSupported, directUnsupported := 0, 0
+	directSupported, tunnelSupported := 0, 0
 	for _, cell := range matrix.DirectCells {
-		switch cell.Status {
-		case "supported":
+		if cell.Status == "supported" {
 			directSupported++
-			if cell.Client != "go" && cell.Server != "go" {
-				t.Fatalf("direct cell %s claims support without the Go baseline", cell.ID)
+			if len(cell.TestIDs) != 1 || cell.TestIDs[0] != "interop/v4/native/direct/go-baseline" || cell.Reason != "" {
+				t.Fatalf("direct cell %s lacks its current native entrypoint", cell.ID)
 			}
-			if len(cell.TestIDs) != 1 || cell.TestIDs[0] != "interop/v3/native/direct/go-baseline" || cell.Reason != "" {
-				t.Fatalf("direct cell %s does not use the complete parameterized release gate", cell.ID)
-			}
-		case "unsupported":
-			directUnsupported++
-			if len(cell.TestIDs) != 0 || cell.Reason != "No release-gating v3 interoperability test exercises the complete executable case set for this cell." {
-				t.Fatalf("direct cell %s has an invalid unverified declaration", cell.ID)
-			}
+		} else if cell.Status != "unsupported" || len(cell.TestIDs) != 0 || cell.Reason == "" {
+			t.Fatalf("direct cell %s has an invalid declaration", cell.ID)
 		}
 	}
-	if directSupported != 10 || directUnsupported != 8 {
-		t.Fatalf("direct evidence = supported:%d unsupported:%d, want 10/8", directSupported, directUnsupported)
-	}
-
-	tunnelSupported, tunnelUnsupported := 0, 0
 	for _, topology := range matrix.TunnelTopologies {
-		switch topology.Status {
-		case "supported":
+		if topology.Status == "supported" {
 			tunnelSupported++
-			if topology.EndpointA != "go" && topology.TunnelRuntime != "go" && topology.EndpointB != "go" {
-				t.Fatalf("tunnel topology %s claims support without the Go baseline", topology.ID)
+			if len(topology.TestIDs) != 1 || topology.TestIDs[0] != "interop/v4/native/tunnel/go-baseline" || topology.Reason != "" {
+				t.Fatalf("tunnel topology %s lacks its current native entrypoint", topology.ID)
 			}
-			if len(topology.TestIDs) != 1 || topology.TestIDs[0] != "interop/v3/native/tunnel/go-baseline" || topology.Reason != "" {
-				t.Fatalf("tunnel topology %s does not use the complete parameterized release gate", topology.ID)
-			}
-		case "unsupported":
-			tunnelUnsupported++
-			if len(topology.TestIDs) != 0 || topology.Reason != "No release-gating v3 interoperability test exercises the complete executable case set for this topology." {
-				t.Fatalf("tunnel topology %s has an invalid unverified declaration", topology.ID)
-			}
+		} else if topology.Status != "unsupported" || len(topology.TestIDs) != 0 || topology.Reason == "" {
+			t.Fatalf("tunnel topology %s has an invalid declaration", topology.ID)
 		}
 	}
-	if tunnelSupported != 14 || tunnelUnsupported != 4 {
-		t.Fatalf("tunnel evidence = supported:%d unsupported:%d, want 14/4", tunnelSupported, tunnelUnsupported)
+	if directSupported == 0 || tunnelSupported == 0 {
+		t.Fatal("current native matrix has no executable cells")
 	}
 
 	if len(matrix.ClientProfiles) != 4 {
@@ -751,4 +734,55 @@ func writeCapabilityManifest(t *testing.T, manifest *capabilityManifest) string 
 		t.Fatal(err)
 	}
 	return root
+}
+
+func TestCapabilityConsumersRequireEveryRuntimeTest(t *testing.T) {
+	registryIDs := map[string]struct{}{"server/swift-acceptor": {}, "server/swift-acceptor/ios-simulator": {}}
+	for _, ids := range [][]string{
+		{"server/swift-acceptor"},
+		{"server/swift-acceptor", "server/swift-acceptor/ios-simulator"},
+	} {
+		if err := requireCapabilityConsumers(registryIDs, "Swift acceptor", ids); err != nil {
+			t.Fatalf("valid independent runtime evidence rejected: %v", err)
+		}
+	}
+	for _, ids := range [][]string{
+		nil,
+		{"server/swift-acceptor", "server/swift-acceptor"},
+		{"server/swift-acceptor", " "},
+		{"server/swift-acceptor", "server/swift-acceptor/unknown-runtime"},
+	} {
+		if err := requireCapabilityConsumers(registryIDs, "Swift acceptor", ids); err == nil {
+			t.Fatalf("invalid runtime evidence accepted: %v", ids)
+		}
+	}
+}
+
+func TestSwiftCapabilitiesDeclareMacOSAndIOSEvidence(t *testing.T) {
+	repoRoot, err := repoRootFromWD()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := loadCapabilityManifest(repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range manifest.PortableCapabilities {
+		var testID string
+		switch capability.ID {
+		case "server_acceptor_session", "server_admission_paths":
+			testID = "server/swift-acceptor"
+		case "server_session_handlers":
+			testID = "server/swift-session-handlers"
+		case "client_rpc_handlers":
+			testID = "controller/swift-client-handlers"
+		default:
+			continue
+		}
+		implementation := capability.Implementations["swift"]
+		if implementation.Status != "supported" || !strings.Contains(implementation.Entrypoint, "macOS/iOS") ||
+			!slices.Contains(implementation.TestIDs, testID) || !slices.Contains(implementation.TestIDs, testID+"/ios-simulator") {
+			t.Fatalf("%s must retain separate macOS and iOS server evidence: %+v", capability.ID, implementation)
+		}
+	}
 }

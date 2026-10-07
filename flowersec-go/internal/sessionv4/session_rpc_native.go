@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
@@ -37,13 +38,36 @@ func (r *RPCServices) prepareNativeBootstrap(n *nativeStreamTransport, pool *Rec
 	if err != nil {
 		return nil, err
 	}
+	var management [1]*nativeStreamProtection
+	if r.session.Limits().ApplicationProfile == "execution" && a.direction == protocolv4.ClientToServer {
+		// This same provider and association position survives every M
+		// generation. Ordinary native creation cannot consume its promise.
+		if err = n.protectLocal(management[:]); err != nil {
+			allocation.release()
+			return nil, err
+		}
+		// The bootstrap still needs its original local creation position.
+		// Reject insufficient admission before READY instead of stalling it.
+		n.mu.Lock()
+		bootstrapAvailable := n.openingAvailableLocked(nil)
+		n.mu.Unlock()
+		if !bootstrapAvailable {
+			management[0].close()
+			allocation.release()
+			return nil, cryptov4.ErrCapacity
+		}
+	}
 	b, err := a.PrepareBootstrap(BootstrapReservation{StreamReservation: allocation.stream.reservation,
 		Receiver: n.readers[0].receiver, reusableReceiver: true})
 	if err != nil {
+		if management[0] != nil {
+			management[0].close()
+		}
 		allocation.release()
 		return nil, err
 	}
 	r.firstAllocation, r.bootstrap, r.native = allocation, b, n
+	r.managementNative = management[0]
 	return b, nil
 }
 
@@ -51,10 +75,21 @@ func (r *RPCServices) prepareNativeBootstrap(n *nativeStreamTransport, pool *Rec
 // management generation. The fixed future already owns its receive workspace;
 // native creation cannot turn pressure into a second channel allocation.
 func (r *RPCServices) openInternal(ctx context.Context, class StreamClass, kind string, allocation *internalChannelAllocation, deadline *timev4.Deadline) (OpenHandle, RecordWriteResult, error) {
+	return r.openInternalObserved(ctx, class, kind, allocation, deadline, nil)
+}
+
+func (r *RPCServices) openInternalObserved(ctx context.Context, class StreamClass, kind string, allocation *internalChannelAllocation, deadline *timev4.Deadline, observe func(*nativeStreamSlot, uint64)) (OpenHandle, RecordWriteResult, error) {
 	a := r.bootstrap.admission
 	association := &CarrierAssociation{shared: a.sharedIngress}
 	if r.native != nil {
-		s, err := r.native.open(ctx)
+		var protection *nativeStreamProtection
+		if class == ManagementStream {
+			protection = r.managementNative
+			if protection == nil {
+				return OpenHandle{}, RecordWriteResult{}, cryptov4.ErrConfiguration
+			}
+		}
+		s, err := r.native.openProtectedObserved(ctx, protection, observe)
 		if err != nil {
 			return OpenHandle{}, RecordWriteResult{}, err
 		}

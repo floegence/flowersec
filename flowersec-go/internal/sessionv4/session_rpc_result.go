@@ -564,8 +564,10 @@ func (c *UnaryCall) failResultDecode(cause error) error {
 		if d.consumed {
 			return ErrUnaryResultDelivered
 		}
-		d.failure = ErrUnaryPayloadUnavailable
-		return cause
+		// Keep the payload category and the original SDK admission/authority
+		// failure. Later waiters otherwise lose the reason the handoff failed.
+		d.failure = errors.Join(ErrUnaryPayloadUnavailable, cause)
+		return d.failure
 	}
 	if !d.decoded {
 		d.failure, d.decoded = ErrUnaryDecodeFailed, true
@@ -641,7 +643,7 @@ func (c *UnaryCall) advanceResult() bool {
 	var closeAuthorization *protocolv4.DeliveryAuthorization
 	var closeFuture *CompletionReservation
 	if terminal && d.authorization == authorization && !d.inputDelivered && !d.consumed {
-		d.failure = ErrUnaryPayloadUnavailable
+		d.failure = errors.Join(ErrUnaryPayloadUnavailable, authorityError)
 		if d.input != nil {
 			d.input.Close()
 			d.input = nil

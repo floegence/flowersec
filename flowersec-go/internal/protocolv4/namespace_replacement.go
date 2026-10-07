@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 // ReplaceFailed reserves the same namespace slot for an independently configured
@@ -27,7 +29,10 @@ func (r *NamespaceRegistry) ReplaceFailed(previous, next *NamespaceTrustStore) e
 			break
 		}
 	}
-	if entry == nil || entry.historyCount == len(entry.history) {
+	if entry == nil || entry.retirement != nil || entry.historyCount == len(entry.history) {
+		if entry != nil && entry.historyCount == len(entry.history) {
+			r.requestPressureLocked()
+		}
 		return CBORFailure("configuration_capacity")
 	}
 	previous.mu.Lock()
@@ -93,6 +98,11 @@ func (r *NamespaceRegistry) ReplaceFailed(previous, next *NamespaceTrustStore) e
 	entry.history[entry.historyCount] = namespaceRegistryHistory{trust: previous, pin: entry.pin}
 	entry.historyCount++
 	entry.trust, entry.pin = next, pin
+	// Explicit recovery establishes a new baseline but does not renew the
+	// pressure attempt that failed. A new capacity demand may reconsider it.
+	if entry.historyCount == len(entry.history) {
+		r.requestPressureLocked()
+	}
 	return nil
 }
 
@@ -103,17 +113,24 @@ func (t *NamespaceTrustStore) checkReplacementCoverage(next *LiveNamespace) erro
 	t.mu.Lock()
 	previous := t.replacementOf
 	t.mu.Unlock()
+	pending := false
 	for previous != nil {
 		if err := t.checkPreviousCoverage(previous, next); err != nil {
-			return err
+			if err != timev4.ErrPending {
+				return err
+			}
+			pending = true
 		}
 		previous = previous.replacementOf
+	}
+	if pending {
+		return timev4.ErrPending
 	}
 	return nil
 }
 
 func (t *NamespaceTrustStore) checkPreviousCoverage(previous *NamespaceTrustStore, next *LiveNamespace) error {
-	sample, err := t.sampleCurrent()
+	sample, err := t.clock.Sample()
 	if err != nil {
 		return err
 	}
@@ -137,8 +154,12 @@ func (t *NamespaceTrustStore) checkPreviousCoverage(previous *NamespaceTrustStor
 	if !t.rules.Matches(previous.rules.capacity, previous.rules.publication) {
 		return CBORFailure("revocation_namespace_binding")
 	}
+	pending := false
 	if err := t.checkCurrentLockedAt(sample); err != nil {
-		return err
+		if err != timev4.ErrPending {
+			return err
+		}
+		pending = true
 	}
 	current := &t.configurations[t.count-1]
 	if err := previous.checkHistory(current); err != nil {
@@ -175,7 +196,13 @@ func (t *NamespaceTrustStore) checkPreviousCoverage(previous *NamespaceTrustStor
 			}
 		}
 	}
-	return t.stateHistoryLocked(next.active)
+	if err := t.stateHistoryLocked(next.active); err != nil {
+		return err
+	}
+	if pending {
+		return timev4.ErrPending
+	}
+	return nil
 }
 
 func replacementHeadFollows(next, previous *NamespaceHead) error {

@@ -16,22 +16,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
-func (p poolSQLiteAuthority) CheckAdmission(i ledgerv4.SQLiteIdentity, facts protocolv4.AdmissionFacts) error {
-	f, err := facts.Fields()
-	if err != nil || i != p.identity || f.Tenant != p.original.Tenant || f.Issuer != p.original.Issuer || f.ServerIdentity != p.original.ServerIdentity || f.Audience != p.original.Audience {
-		return ledgerv4.ErrConflict
-	}
-	return nil
-}
-
-func (p poolSQLiteAuthority) CheckParentWinner(i ledgerv4.SQLiteIdentity, facts protocolv4.AdmissionFacts) error {
-	f, err := facts.Fields()
-	if err != nil || f.WinnerAuthority == "" || f.WinnerAuthority != p.original.WinnerAuthority {
-		return ledgerv4.ErrConflict
-	}
-	return p.CheckAdmission(i, facts)
-}
-
 func TestSessionEstablishmentSourcesToAdmissionReadyAndDuplex(t *testing.T) {
 	for _, source := range []string{"preauthorized_pool", "live_authority"} {
 		t.Run(source, func(t *testing.T) { sessionEstablishmentDuplex(t, source) })
@@ -742,25 +726,6 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 	if err := f.environment.Check(); err != nil {
 		t.Fatal("host closed a borrowed dependency", err)
 	}
-}
-
-type liveSQLiteAuthority struct {
-	acceptedSQLiteAuthority
-	original protocolv4.LiveActivationFields
-}
-
-func (a liveSQLiteAuthority) CheckLiveSpend(identity ledgerv4.SQLiteIdentity, fields protocolv4.LiveActivationFields) error {
-	if identity != a.identity || fields != a.original {
-		return ledgerv4.ErrConflict
-	}
-	return nil
-}
-func (a liveSQLiteAuthority) CheckAdmission(identity ledgerv4.SQLiteIdentity, facts protocolv4.AdmissionFacts) error {
-	f, err := facts.Fields()
-	if err != nil || identity != a.identity || f.Tenant != a.original.Tenant || f.Issuer != a.original.Issuer || f.ServerIdentity != a.original.ServerIdentity || f.Audience != a.original.Audience {
-		return ledgerv4.ErrConflict
-	}
-	return nil
 }
 
 func TestSessionApplicationSourcesToAdmissionReadyAndDuplex(t *testing.T) {

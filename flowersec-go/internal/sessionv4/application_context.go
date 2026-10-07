@@ -30,6 +30,8 @@ const (
 )
 
 type applicationContextKey struct{}
+type diagnosticOperationKey struct{}
+type diagnosticOperationOwnerKey struct{}
 type cleanupOnlyContextKey struct{}
 
 // Cleanup inherits only its original finite cancellation/deadline. The SDK
@@ -65,21 +67,22 @@ func (c *applicationContext) Value(key any) any {
 // cannot retain an old Session, input or executor after actual callback exit.
 // A known SDK child pins the original metadata with a real reference below.
 type applicationContextState struct {
-	mu              sync.Mutex
-	services        *invocationServices
-	executor        *ApplicationExecutor
-	result          *UnaryCall
-	streamResult    *StreamMessages
-	messageResult   *typedMessageDecode
-	backing         resourcev4.Reference
-	dependencyFloor *resourcev4.BorrowPool
-	lane            applicationLane
-	class           ApplicationWorkClass
-	live            bool
-	deadline        time.Time
-	serial          [maxApplicationAncestors]uint64
-	depth           int
-	sequence        uint64
+	mu                  sync.Mutex
+	diagnosticOperation *DiagnosticOperation
+	services            *invocationServices
+	executor            *ApplicationExecutor
+	result              *UnaryCall
+	streamResult        *StreamMessages
+	messageResult       *typedMessageDecode
+	backing             resourcev4.Reference
+	dependencyFloor     *resourcev4.BorrowPool
+	lane                applicationLane
+	class               ApplicationWorkClass
+	live                bool
+	deadline            time.Time
+	serial              [maxApplicationAncestors]uint64
+	depth               int
+	sequence            uint64
 }
 
 type applicationDependencies struct {
@@ -91,6 +94,38 @@ type applicationDependencies struct {
 
 func applicationContextBytes() uint64 {
 	return uint64(unsafe.Sizeof(applicationContext{})) + uint64(unsafe.Sizeof(applicationContextState{}))
+}
+
+func withDiagnosticOperation(ctx context.Context, operation *DiagnosticOperation) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	ctx = context.WithValue(ctx, diagnosticOperationKey{}, operation)
+	return context.WithValue(ctx, diagnosticOperationOwnerKey{}, false)
+}
+
+func withOwnedDiagnosticOperation(ctx context.Context, operation *DiagnosticOperation) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	ctx = context.WithValue(ctx, diagnosticOperationKey{}, operation)
+	return context.WithValue(ctx, diagnosticOperationOwnerKey{}, operation != nil)
+}
+
+func diagnosticOperationOwnedFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	owned, _ := ctx.Value(diagnosticOperationOwnerKey{}).(bool)
+	return owned
+}
+
+func diagnosticOperationFromContext(ctx context.Context) *DiagnosticOperation {
+	if ctx == nil {
+		return nil
+	}
+	op, _ := ctx.Value(diagnosticOperationKey{}).(*DiagnosticOperation)
+	return op
 }
 
 // enterApplicationContext is used only by an already running SDK application
@@ -126,22 +161,30 @@ func enterApplicationContextState(parent context.Context, executor *ApplicationE
 	if dependencies != nil {
 		dependencyFloor = dependencies.floor
 	}
-	s := &applicationContextState{deadline: deadline, executor: executor, backing: backing, dependencyFloor: dependencyFloor, lane: lane, class: class, live: true}
+	diagnosticOperation := diagnosticOperationFromContext(parent)
+	// An application callback may use this context to start a new operation;
+	// the prepared owner marker is consumed at the admission boundary and must
+	// not leak into descendants.
+	parent = withDiagnosticOperation(parent, diagnosticOperation)
+	s := &applicationContextState{diagnosticOperation: diagnosticOperation, deadline: deadline, executor: executor, backing: backing, dependencyFloor: dependencyFloor, lane: lane, class: class, live: true}
 	c := &applicationContext{Context: parent, state: s}
 	if dependencies != nil {
 		c.ancestors, c.count = dependencies.states, dependencies.count
 	}
 	return c, func() {
 		s.mu.Lock()
+		services := s.services
 		s.live = false
 		s.services = nil
 		s.executor = nil
 		s.result = nil
 		s.streamResult = nil
 		s.messageResult = nil
+		s.diagnosticOperation = nil
 		s.backing = resourcev4.Reference{}
 		s.dependencyFloor = nil
 		s.mu.Unlock()
+		services.releaseInvocation()
 	}, nil
 }
 

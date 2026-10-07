@@ -82,6 +82,8 @@ type SourceConnectConfig struct {
 	Subscriptions, CarrierReservation                       resourcev4.Reference
 	RuntimeBytes, MaterialRuntimeBytes, CarrierRuntimeBytes uint64
 	ParallelCandidates, AddressAttempts                     uint8
+	CandidateStartIntervalMS                                uint64
+	CandidateStartIntervalConfigured                        bool
 	AttemptBudget                                           CarrierAttemptBudget
 	LiveIssuance                                            SourceLiveIssuance
 }
@@ -109,7 +111,7 @@ func SourcePreparationCharge(c SourceConnectConfig) (resourcev4.Vector, error) {
 	if c.RuntimeBytes == 0 || c.Limits.Hello.RouteBytes <= 0 || c.Limits.Hello.RouteBytes > 1<<20 ||
 		len(c.Hello.IdentityHint) > c.Limits.Hello.HelloBytes || len(c.Hello.Policy.Exporter) != 0 ||
 		c.Hello.Policy.BindingMode > 1 || c.Hello.BindingModes == 0 || c.Hello.BindingModes & ^uint64(3) != 0 || c.Hello.BindingModes&(1<<c.Hello.Policy.BindingMode) == 0 ||
-		c.ParallelCandidates > 2 || c.AddressAttempts > 8 || c.AttemptBudget.PreauthBytes == 0 || c.AttemptBudget.PreauthBytes > 262144 || c.AttemptBudget.WorkUnits == 0 || c.AttemptBudget.WorkUnits > 256 {
+		c.ParallelCandidates > 2 || c.CandidateStartIntervalMS > 30000 || !c.CandidateStartIntervalConfigured && c.CandidateStartIntervalMS != 0 || c.AddressAttempts > 8 || c.AttemptBudget.PreauthBytes == 0 || c.AttemptBudget.PreauthBytes > 262144 || c.AttemptBudget.WorkUnits == 0 || c.AttemptBudget.WorkUnits > 256 {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
 	a := c.LiveIssuance
@@ -210,7 +212,7 @@ func (e *Environment) startSourcePrepared(ctx context.Context, c SourceConnectCo
 		return nil, false, ErrConnectionRequirementUnavailable
 	}
 	if c.Requirements.Connection.Datagram && !c.Admission.Core.Datagrams ||
-		(c.Requirements.Connection.IndependentReliableReadProgress || c.Requirements.Connection.BoundStreamInputIsolation) && !c.Admission.Core.Native {
+		(c.Requirements.Connection.IndependentReliableReadProgress || c.Requirements.Connection.BoundStreamInputIsolation) && !c.Admission.Core.Native && !c.Admission.Core.MixedCarrier {
 		return nil, false, protocolv4.ErrRequiredGuaranteeUnavailable
 	}
 	charge, err := SourcePreparationCharge(c)
@@ -327,6 +329,12 @@ func (e *Environment) startSourcePrepared(ctx context.Context, c SourceConnectCo
 	source.references.shared = resourcev4.Reference{}
 	s.source = source
 	if c.controllerOwner != nil {
+		s.notificationController = c.controllerOwner
+		// This original candidate is not yet exposed to Controller observers.
+		// Session delivery enables its initializer; only the later atomic
+		// current-switch gate proves application publication by the Controller.
+		s.controllerManaged = true
+		s.controllerDiagnosticAttempt = c.controller.serial
 		if err = c.controllerOwner.attach(c.controller, s); err != nil {
 			source.selection.close()
 			application.undoPreparation(s)

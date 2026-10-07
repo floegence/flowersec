@@ -1,43 +1,37 @@
 package transporttest
 
 import (
+	"bytes"
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/artifactv3"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/candidatev3"
+	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/rawquicv3"
-	carrierwsv3 "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/websocketv3"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/connectv3"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
-	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
-	gorillaws "github.com/gorilla/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-// AdaptiveCandidate binds one manifest candidate ID to one production carrier.
+// AdaptiveCandidate maps a manifest label to one signed original route.
 type AdaptiveCandidate struct {
 	ID   string       `json:"id"`
 	Kind carrier.Kind `json:"carrier"`
 }
-
-// AdaptiveEndpoint owns all listeners participating in one equal-candidate race.
 type AdaptiveEndpoint struct {
 	candidates []AdaptiveCandidate
 	endpoints  map[string]*ProductDirectEndpoint
-	trustRoots *x509.CertPool
+	reporter   *interopharness.Reporter
+	trustPEM   string
 	closeOnce  sync.Once
 	closeErr   error
 }
-
-// AdaptiveConnectOperation records one real equal-candidate connection.
 type AdaptiveConnectOperation struct {
 	ConnectOperation
 	StartedCandidates    []string `json:"started_candidates"`
@@ -45,270 +39,272 @@ type AdaptiveConnectOperation struct {
 	CommitCount          int32    `json:"commit_count"`
 	CredentialWriteCount int      `json:"credential_write_count"`
 }
-
-type adaptivePair struct {
-	client    flowersessionv3.Session
-	server    flowersessionv3.Session
-	closeOnce sync.Once
-	closeErr  error
-}
-
-// OpenAdaptiveEndpointAt starts every real candidate listener on one server
-// address. The returned endpoint uses the production connector state machine.
-func OpenAdaptiveEndpointAt(ctx context.Context, listenHost string, candidates []AdaptiveCandidate) (*AdaptiveEndpoint, error) {
-	if len(candidates) != 2 {
-		return nil, errors.New("adaptive release endpoint requires exactly two candidates")
-	}
-	seenIDs := make(map[string]struct{}, len(candidates))
-	seenKinds := make(map[carrier.Kind]struct{}, len(candidates))
-	endpoint := &AdaptiveEndpoint{
-		candidates: append([]AdaptiveCandidate(nil), candidates...),
-		endpoints:  make(map[string]*ProductDirectEndpoint, len(candidates)),
-		trustRoots: x509.NewCertPool(),
-	}
-	for _, candidate := range candidates {
-		if candidate.ID == "" {
-			_ = endpoint.Close()
-			return nil, errors.New("adaptive candidate ID is required")
-		}
-		if _, duplicate := seenIDs[candidate.ID]; duplicate {
-			_ = endpoint.Close()
-			return nil, errors.New("adaptive candidate IDs must be unique")
-		}
-		if _, duplicate := seenKinds[candidate.Kind]; duplicate {
-			_ = endpoint.Close()
-			return nil, errors.New("adaptive candidate carriers must be unique")
-		}
-		if err := candidate.Kind.Validate(); err != nil {
-			_ = endpoint.Close()
-			return nil, err
-		}
-		seenIDs[candidate.ID], seenKinds[candidate.Kind] = struct{}{}, struct{}{}
-		opened, err := OpenProductDirectEndpointAt(ctx, candidate.Kind, listenHost)
-		if err != nil {
-			_ = endpoint.Close()
-			return nil, err
-		}
-		certificate, err := x509.ParseCertificate(opened.certificateDER)
-		if err != nil {
-			_ = opened.Close()
-			_ = endpoint.Close()
-			return nil, err
-		}
-		endpoint.trustRoots.AddCert(certificate)
-		endpoint.endpoints[candidate.ID] = opened
-	}
-	return endpoint, nil
-}
-
-func (endpoint *AdaptiveEndpoint) Connect(ctx context.Context) (*adaptivePair, []string, string, int32, int, error) {
-	if endpoint == nil || len(endpoint.candidates) != 2 || len(endpoint.endpoints) != 2 || endpoint.trustRoots == nil {
-		return nil, nil, "", 0, 0, errors.New("adaptive endpoint is not initialized")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	contract, err := releaseSessionContractV3(protocolv3.SuiteChaCha20Poly1305)
-	if err != nil {
-		return nil, nil, "", 0, 0, err
-	}
-	artifact := directArtifactV3(endpoint.candidates[0].Kind, endpoint.endpoints[endpoint.candidates[0].ID].candidateURL, contract)
-	artifact.Path.Candidates = make([]artifactv3.Candidate, 0, len(endpoint.candidates))
-	for _, definition := range endpoint.candidates {
-		kind := artifactv3.CarrierWebSocket
-		switch definition.Kind {
-		case carrier.KindRawQUIC:
-			kind = artifactv3.CarrierRawQUIC
-		case carrier.KindWebTransport:
-			kind = artifactv3.CarrierWebTransport
-		}
-		artifact.Path.Candidates = append(artifact.Path.Candidates, artifactv3.Candidate{
-			ID: definition.ID, Carrier: kind, URL: endpoint.endpoints[definition.ID].candidateURL, WireProfile: rawquicv3.ALPNDirect,
-			TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
-		})
-	}
-
-	type registered struct {
-		endpoint *ProductDirectEndpoint
-		expected *admissionExpectation
-		digest   [32]byte
-	}
-	type preparedRegistration struct {
-		candidate artifactv3.Candidate
-		raw       []byte
-	}
-	preparedRegistrations := make([]preparedRegistration, 0, len(artifact.Path.Candidates))
-	for _, candidate := range artifact.Path.Candidates {
-		request, buildErr := artifactv3.BuildRequest(artifact, candidate.ID)
-		if buildErr != nil {
-			return nil, nil, "", 0, 0, buildErr
-		}
-		raw, marshalErr := artifactv3.MarshalRequest(request)
-		if marshalErr != nil {
-			return nil, nil, "", 0, 0, marshalErr
-		}
-		preparedRegistrations = append(preparedRegistrations, preparedRegistration{candidate: candidate, raw: raw})
-	}
-	registrations := make(map[string]registered, len(endpoint.candidates))
-	for _, prepared := range preparedRegistrations {
-		candidate, raw := prepared.candidate, prepared.raw
-		owner := endpoint.endpoints[candidate.ID]
-		expected := &admissionExpectation{raw: raw, contract: contract, result: make(chan productServerResult, 1)}
-		digest, registerErr := owner.register(expected)
-		if registerErr != nil {
-			for _, previous := range registrations {
-				previous.endpoint.abandon(previous.digest, previous.expected)
-			}
-			return nil, nil, "", 0, 0, registerErr
-		}
-		registrations[candidate.ID] = registered{endpoint: owner, expected: expected, digest: digest}
-	}
-	winnerID := ""
-	defer func() {
-		for candidateID, registration := range registrations {
-			if candidateID == winnerID {
-				registration.endpoint.unregister(registration.digest, registration.expected)
-			} else {
-				registration.endpoint.abandon(registration.digest, registration.expected)
-			}
-		}
-	}()
-
-	baseTLS := &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, RootCAs: endpoint.trustRoots.Clone()}
-	webSocketClient := *gorillaws.DefaultDialer
-	webSocketClient.TLSClientConfig = baseTLS.Clone()
-	webSocketDial, err := candidatev3.NewWebSocketCarrierDial(candidatev3.WebSocketDialConfig{
-		Dialer: &webSocketClient, Resources: carrierwsv3.DefaultResourcePolicy(), Origin: releaseRunnerOrigin,
-	})
-	if err != nil {
-		return nil, nil, "", 0, 0, err
-	}
-	rawQUICDial, err := candidatev3.NewRawQUICCarrierDial(candidatev3.RawQUICDialConfig{
-		TLSConfig: baseTLS.Clone(), Limits: quicbase.DefaultLimits(), Dial: rawquicv3.Dial,
-	})
-	if err != nil {
-		return nil, nil, "", 0, 0, err
-	}
-	webTransportDial, err := candidatev3.NewWebTransportCarrierDial(candidatev3.WebTransportDialConfig{
-		TLSConfig: baseTLS.Clone(), Limits: quicbase.DefaultLimits(), Origin: releaseRunnerOrigin,
-	})
-	if err != nil {
-		return nil, nil, "", 0, 0, err
-	}
-	dials := map[artifactv3.Carrier]candidatev3.Dial{
-		artifactv3.CarrierWebSocket: webSocketDial, artifactv3.CarrierRawQUIC: rawQUICDial, artifactv3.CarrierWebTransport: webTransportDial,
-	}
-	started := make(map[string]*atomic.Int32, len(endpoint.candidates))
-	for index, candidate := range endpoint.candidates {
-		counter := &atomic.Int32{}
-		started[candidate.ID] = counter
-		kind := artifact.Path.Candidates[index].Carrier
-		base := dials[kind]
-		dials[kind] = func(ctx context.Context, value artifactv3.Candidate, contract artifactv3.SessionContract, attemptNow time.Time) (candidatev3.ReadyCarrier, error) {
-			started[value.ID].Add(1)
-			return base(ctx, value, contract, attemptNow)
-		}
-	}
-	factory, err := candidatev3.NewFactory(dials)
-	if err != nil {
-		return nil, nil, "", 0, 0, err
-	}
-	spends := &atomic.Int32{}
-	connector := connectv3.NewConnector(connectv3.ArtifactLease{
-		Artifact: artifact,
-		CommitSpend: func(context.Context) error {
-			if spends.Add(1) != 1 {
-				return errors.New("adaptive artifact spend callback invoked more than once")
-			}
-			return nil
-		},
-	}, factory)
-	result, err := connector.Connect(ctx)
-	if err != nil {
-		return nil, nil, "", spends.Load(), 0, err
-	}
-	winnerID = result.Candidate.ID
-	registration, ok := registrations[winnerID]
-	if !ok {
-		_ = result.Session.Close()
-		return nil, nil, "", spends.Load(), 0, errors.New("adaptive connector selected an unknown candidate")
-	}
-	var server productServerResult
-	select {
-	case server = <-registration.expected.result:
-	case <-ctx.Done():
-		_ = result.Session.Close()
-		return nil, nil, "", spends.Load(), 0, context.Cause(ctx)
-	}
-	if server.err != nil {
-		_ = result.Session.Close()
-		return nil, nil, "", spends.Load(), 0, server.err
-	}
-	if server.session == nil {
-		_ = result.Session.Close()
-		return nil, nil, "", spends.Load(), 0, errors.New("adaptive winner returned no server session")
-	}
-	startedIDs := make([]string, 0, len(endpoint.candidates))
-	for _, candidate := range endpoint.candidates {
-		if started[candidate.ID].Load() != 1 {
-			_ = result.Session.Close()
-			_ = server.session.Close()
-			return nil, nil, "", spends.Load(), 0, fmt.Errorf("adaptive candidate %s started %d times", candidate.ID, started[candidate.ID].Load())
-		}
-		startedIDs = append(startedIDs, candidate.ID)
-	}
-	credentialWrites := 0
-	for _, value := range registrations {
-		value.endpoint.pendingMu.Lock()
-		if value.expected.claimed {
-			credentialWrites++
-		}
-		value.endpoint.pendingMu.Unlock()
-	}
-	if spends.Load() != 1 || credentialWrites != 1 {
-		_ = result.Session.Close()
-		_ = server.session.Close()
-		return nil, nil, "", spends.Load(), credentialWrites, errors.New("adaptive connector did not commit exactly one winner")
-	}
-	return &adaptivePair{client: result.Session, server: server.session}, startedIDs, winnerID, spends.Load(), credentialWrites, nil
-}
+type adaptivePair struct{ pair *ProductDirectPair }
 
 func (pair *adaptivePair) Close() error {
 	if pair == nil {
 		return nil
 	}
-	pair.closeOnce.Do(func() {
-		if pair.client != nil {
-			pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.client.Close()))
-			select {
-			case <-pair.client.Termination():
-			case <-time.After(3 * time.Second):
-				pair.closeErr = errors.Join(pair.closeErr, errors.New("adaptive client did not terminate after local close"))
-			}
-		}
-		if pair.server != nil {
-			select {
-			case <-pair.server.Termination():
-			case <-time.After(3 * time.Second):
-				pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.server.Close()))
-				select {
-				case <-pair.server.Termination():
-				case <-time.After(time.Second):
-					pair.closeErr = errors.Join(pair.closeErr, errors.New("adaptive server did not terminate after forced close"))
-				}
-			}
-		}
-	})
-	return pair.closeErr
+	return pair.pair.Close()
 }
 
+// OpenAdaptiveEndpointAt installs distinct listeners under one explicit
+// advancing engineering authority time domain. Each connection will receive
+// one signed multi-candidate pool and one original once-only consumption.
+func OpenAdaptiveEndpointAt(ctx context.Context, listenHost string, candidates []AdaptiveCandidate) (result *AdaptiveEndpoint, resultErr error) {
+	if ctx == nil || len(candidates) != 2 {
+		return nil, errors.New("adaptive release endpoint requires two original candidates")
+	}
+	reporter, err := interopharness.NewPeerReporter()
+	if err != nil {
+		return nil, err
+	}
+	reporter.ApplicationProfile = "services"
+	endpoint := &AdaptiveEndpoint{candidates: append([]AdaptiveCandidate(nil), candidates...), endpoints: make(map[string]*ProductDirectEndpoint, 2), reporter: reporter}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, endpoint.Close())
+		}
+	}()
+	kinds := make(map[carrier.Kind]bool, 2)
+	var trust strings.Builder
+	for _, candidate := range candidates {
+		if candidate.ID == "" || endpoint.endpoints[candidate.ID] != nil || kinds[candidate.Kind] {
+			return nil, errors.New("adaptive candidate labels and carriers must be distinct")
+		}
+		if _, err := productCarrier(candidate.Kind); err != nil {
+			return nil, err
+		}
+		child, err := reporter.ForkEndpointAuthority()
+		if err != nil {
+			return nil, err
+		}
+		opened, err := openProductDirectEndpoint(ctx, candidate.Kind, listenHost, listenHost, releaseRunnerOrigin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, nil, child)
+		if err != nil {
+			return nil, err
+		}
+		kinds[candidate.Kind] = true
+		endpoint.endpoints[candidate.ID] = opened
+		trust.WriteString(opened.server.TrustPEM)
+	}
+	endpoint.trustPEM = trust.String()
+	return endpoint, nil
+}
+
+// adaptiveCarrierObserver forwards every original preadmission and native
+// preparation. Counts record original method entry; they create no transport,
+// spend, winner or admission outcome.
+type adaptiveCarrierObserver struct {
+	original *flowersec.CarrierSet
+	started  [2]atomic.Int32
+	entered  [2]chan struct{}
+}
+
+func (o *adaptiveCarrierObserver) recordEntry(index uint64) {
+	if o.started[index].Add(1) == 1 {
+		close(o.entered[index])
+	}
+}
+
+type adaptiveObservedPreparation struct {
+	owner    *adaptiveCarrierObserver
+	original sessionv4.CarrierPreparation
+}
+
+func (o *adaptiveCarrierObserver) PrepareCarrier(ctx context.Context, request sessionv4.CarrierPreparationRequest) (*sessionv4.PreparedCarrier, error) {
+	if request.Config.Candidate.Index >= 2 {
+		return nil, errors.New("original adaptive candidate index is outside the signed set")
+	}
+	o.recordEntry(request.Config.Candidate.Index)
+	return o.original.PrepareCarrier(ctx, request)
+}
+func (o *adaptiveCarrierObserver) PreparationParallelism() uint8 {
+	return o.original.PreparationParallelism()
+}
+func (o *adaptiveCarrierObserver) AdmitPreparations(request sessionv4.CarrierPreparationAdmissionRequest, output []sessionv4.CarrierPreparation) error {
+	if len(output) > 2 {
+		return errors.New("original adaptive preparation output exceeds its admitted two positions")
+	}
+	var originals [2]sessionv4.CarrierPreparation
+	err := o.original.AdmitPreparations(request, originals[:len(output)])
+	for index, original := range originals[:len(output)] {
+		if original != nil {
+			output[index] = &adaptiveObservedPreparation{owner: o, original: original}
+		}
+	}
+	return err
+}
+func (p *adaptiveObservedPreparation) Matches(factory sessionv4.ConsumerCarrierFactory) bool {
+	return factory == p.owner && p.original.Matches(p.owner.original)
+}
+func (p *adaptiveObservedPreparation) Check() error { return p.original.Check() }
+func (p *adaptiveObservedPreparation) Close()       { p.original.Close() }
+func (p *adaptiveObservedPreparation) PrepareCarrier(ctx context.Context, request sessionv4.CarrierPreparationRequest) (*sessionv4.PreparedCarrier, error) {
+	if request.Config.Candidate.Index >= 2 {
+		return nil, errors.New("original adaptive candidate index is outside the signed set")
+	}
+	p.owner.recordEntry(request.Config.Candidate.Index)
+	return p.original.PrepareCarrier(ctx, request)
+}
+
+var _ sessionv4.AdmittingConsumerCarrierFactory = (*adaptiveCarrierObserver)(nil)
+
+func (endpoint *AdaptiveEndpoint) Connect(ctx context.Context) (result *adaptivePair, started []string, winner string, commits int32, writes int, resultErr error) {
+	if endpoint == nil || ctx == nil || len(endpoint.candidates) != 2 {
+		return nil, nil, "", 0, 0, errors.New("original adaptive endpoint and context are required")
+	}
+	// These candidates have equal signed priority. Keep every index mapping
+	// in the same canonical candidate-ID order as the issued Artifact.
+	candidates := slices.Clone(endpoint.candidates)
+	slices.SortFunc(candidates, func(a, b AdaptiveCandidate) int {
+		left := endpoint.endpoints[a.ID].reporter.AuthorityCandidateID()
+		right := endpoint.endpoints[b.ID].reporter.AuthorityCandidateID()
+		return bytes.Compare(left[:], right[:])
+	})
+	routes := make([][]byte, 2)
+	for index, candidate := range candidates {
+		routes[index] = endpoint.endpoints[candidate.ID].server.Runtime.Authority.Route
+	}
+	first := endpoint.endpoints[candidates[0].ID]
+	authority, err := first.server.IssueDirectRouteSet(routes)
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	records := make([]*interopharness.AcceptedRecord, 2)
+	var reporter *interopharness.Reporter
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			for _, record := range records {
+				resultErr = errors.Join(resultErr, record.Close())
+			}
+			if reporter != nil {
+				resultErr = errors.Join(resultErr, reporter.Close())
+			}
+		}
+	}()
+	for index, candidate := range candidates {
+		accepting := *authority
+		accepting.Route = authority.DirectRoutes[index]
+		accepting.BrowserRouteDigest = authority.DirectRouteDigests[index]
+		accepting.Hello.Index = uint64(index)
+		records[index], err = endpoint.endpoints[candidate.ID].registry.Install(&accepting)
+		if err != nil {
+			return nil, nil, "", 0, 0, err
+		}
+	}
+	reporter, err = interopharness.NewPeerReporter()
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	reporter.ApplicationProfile = "services"
+	material := first.server.MaterialFor(authority)
+	wire, err := material.JSON()
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	var definition *interopharness.RPCDefinition
+	client, err := interopharness.NewClient(ctx, reporter, wire, endpoint.trustPEM, releaseRunnerOrigin, productHandlers(&definition))
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	h := client.Runtime.Authority
+	h.Admission[0].Core.MixedCarrier = true
+	h.Admission[0].Core.MessageRuntimeBytes = 65536
+	h.Admission[0].RPC.MixedCarrier = true
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(endpoint.trustPEM)) {
+		return nil, nil, "", 0, 0, errors.New("original adaptive deployment roots are missing")
+	}
+	config := flowersec.CarrierSetConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Role: protocolv4.ClientToServer, ConnectionsPerRoute: 1, RuntimeBytes: 65536, FactoryRuntimeBytes: 65536, Endpoints: make([]flowersec.CarrierEndpoint, 2)}
+	for index, candidate := range candidates {
+		opened := endpoint.endpoints[candidate.ID]
+		entry := flowersec.CarrierEndpoint{Route: authority.DirectRoutes[index], RemoteAddress: opened.server.Address, Roots: roots}
+		switch candidate.Kind {
+		case carrier.KindWebSocket:
+			entry.Carrier = 1
+			entry.Origin = releaseRunnerOrigin
+			entry.WebSocket = interopharness.WebSocketProvider()
+		case carrier.KindRawQUIC:
+			entry.QUIC = interopharness.QUICProviderFor(h.Admission[0].Core.Session.Contract.Limits().MaxStreams)
+		case carrier.KindWebTransport:
+			entry.Carrier = 2
+			entry.Origin = releaseRunnerOrigin
+			entry.WebTransport = interopharness.WebTransportProviderFor(h.Admission[0].Core.Session.Contract.Limits().MaxStreams)
+		}
+		config.Endpoints[index] = entry
+	}
+	cost, err := flowersec.CarrierSetCharge(config)
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	set, err := flowersec.NewCarrierSet(config, h.Reserve(cost), h.Environment)
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	reporter.Cleanup(func() {
+		set.Close()
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		reporter.ErrorIf(set.WaitCleanup(cleanup))
+	})
+	observed := &adaptiveCarrierObserver{original: set, entered: [2]chan struct{}{make(chan struct{}), make(chan struct{})}}
+	session, err := client.Runtime.ConnectCandidates(ctx, observed, 2)
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	selected := client.Runtime.SelectedCandidate[0].Load()
+	if selected >= 2 || client.Runtime.Authorized[0].Load() != 1 {
+		return nil, nil, "", 0, 0, errors.New("original adaptive application did not authorize one selected candidate")
+	}
+	server, err := records[selected].WaitSession(ctx)
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	echo, err := definition.Bind(ctx, session)
+	if err != nil {
+		return nil, nil, "", 0, 0, err
+	}
+	pair := &ProductDirectPair{Client: session, Server: server, Profile: material.Profile, spend: client.Runtime.PoolSpend, echo: echo, closers: []func() error{reporter.Close}}
+	for index, candidate := range candidates {
+		// Publication can outrun scheduling of a canceled competitor's already
+		// dispatched method. Observe its actual wrapper entry before reading the
+		// count; this gate delays neither original native preparation nor racing.
+		select {
+		case <-observed.entered[index]:
+		case <-ctx.Done():
+			return nil, nil, "", 0, 0, context.Cause(ctx)
+		}
+		count := observed.started[index].Load()
+		if count != 1 {
+			return nil, nil, "", 0, 0, fmt.Errorf("original adaptive candidate %s started %d times", candidate.ID, count)
+		}
+		started = append(started, candidate.ID)
+		if records[index].Claimed() {
+			writes++
+		}
+		pair.closers = append(pair.closers, records[index].Close)
+	}
+	winner = candidates[selected].ID
+	commits = pair.SpendCount()
+	if commits != 1 || writes != 1 {
+		return nil, nil, "", commits, writes, errors.New("original adaptive connector did not spend and admit exactly one winner")
+	}
+	succeeded = true
+	return &adaptivePair{pair: pair}, started, winner, commits, writes, nil
+}
 func (endpoint *AdaptiveEndpoint) Close() error {
 	if endpoint == nil {
 		return nil
 	}
 	endpoint.closeOnce.Do(func() {
 		for index := len(endpoint.candidates) - 1; index >= 0; index-- {
-			endpoint.closeErr = errors.Join(endpoint.closeErr, endpoint.endpoints[endpoint.candidates[index].ID].Close())
+			if opened := endpoint.endpoints[endpoint.candidates[index].ID]; opened != nil {
+				endpoint.closeErr = errors.Join(endpoint.closeErr, opened.Close())
+			}
+		}
+		if endpoint.reporter != nil {
+			endpoint.closeErr = errors.Join(endpoint.closeErr, endpoint.reporter.Close())
 		}
 	})
 	return endpoint.closeErr

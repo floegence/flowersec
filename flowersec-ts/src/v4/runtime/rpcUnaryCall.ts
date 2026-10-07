@@ -5,6 +5,8 @@ import { RPCUnaryResultRecipient } from "./rpcUnaryResultRecipient.js";
 import { RPCProtocolError } from "./rpcFragment.js";
 
 const promiseThen = Promise.prototype.then;
+const callCleanup = new WeakMap<Promise<unknown>, Promise<void>>();
+export function rpcUnaryCallCleanup(value: Promise<unknown>): Promise<void> { return callCleanup.get(value) ?? Promise.resolve(); }
 const signalAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
 const addListener = EventTarget.prototype.addEventListener, removeListener = EventTarget.prototype.removeEventListener;
 function aborted(signal?: AbortSignal): boolean { return signal !== undefined && signalAborted.call(signal) as boolean; }
@@ -21,6 +23,8 @@ export class RPCUnaryCall {
   #exchange: RPCUnaryExchange | undefined;
   #context: V4ApplicationContext | undefined;
   #finished: (() => void) | undefined;
+  #cleanupResolve!: () => void;
+  readonly #cleanupPromise = new Promise<void>(resolve => { this.#cleanupResolve = resolve; });
   #signal: AbortSignal | undefined;
   #preparing = false;
   #entering = false;
@@ -31,6 +35,7 @@ export class RPCUnaryCall {
     this.#context = context; this.#signal = signal; this.#finished = finished;
     this.#recipient = new RPCUnaryResultRecipient({ signal: this.#abort.signal, ...(context === undefined ? {} : { context }) });
     this.#recipient.onSettled(() => this.#settled());
+    callCleanup.set(this.#recipient.promise, this.#cleanupPromise);
     // Validate native signal brands before attaching either retained listener.
     aborted(signal); aborted(context?.signal);
     try { listen(signal, this.#cancel); listen(context?.signal, this.#cancel); }
@@ -54,6 +59,10 @@ export class RPCUnaryCall {
           const started = preparation.start(this.#context, this.#abort.signal);
           if (started.status === "not_admitted") throw new RPCProtocolError(started.reason);
           this.#exchange = started.exchange;
+          // The recipient may settle as soon as its result handoff commits, but
+          // the real unary request/response/call tails still belong to this
+          // convenience scope until the exchange releases its final owner.
+          started.exchange.onCleanup(() => this.#collect());
           if (this.#closed) { started.exchange.close(); return; }
           started.exchange.receiveResult(this.#recipient);
         } catch (error) { this.fail(error); }
@@ -81,9 +90,10 @@ export class RPCUnaryCall {
     unlisten(this.#context?.signal, this.#cancel); this.#context = undefined; this.#collect();
   }
   #collect(): void {
-    if (!this.#done || this.#preparing || this.#entering) return;
+    if (!this.#done || this.#preparing || this.#entering || this.#exchange?.cleanupComplete() === false) return;
     this.#preparation = undefined; this.#exchange = undefined;
     const finished = this.#finished; this.#finished = undefined; finished?.();
+    this.#cleanupResolve(); this.#cleanupResolve = () => undefined;
   }
 }
 Object.freeze(RPCUnaryCall.prototype); Object.freeze(RPCUnaryCall);

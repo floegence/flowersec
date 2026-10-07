@@ -211,6 +211,10 @@ type capacityQuiescingEndpoint interface {
 	Quiesce(context.Context) error
 }
 
+type capacityPreparer interface {
+	PrepareCapacity(context.Context, int) error
+}
+
 type resourceSnapshotFunc func() (transporttest.ResourceSnapshot, error)
 
 type capacityCaseResult struct {
@@ -307,6 +311,12 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		return result, fmt.Errorf("capture capacity resource baseline: %w", err)
 	}
 	result.Baseline = caseResourceRecord{Phase: "baseline", AtNS: 0, RSSBytes: base.RSSBytes, OpenFDs: base.OpenFDs, Goroutines: base.Goroutines, Tasks: base.Tasks}
+	// Deployment preparation remains part of CPU and cleanup accounting.
+	if preparer, ok := endpoint.(capacityPreparer); ok {
+		if err := preparer.PrepareCapacity(ctx, contract.Sessions); err != nil {
+			return result, fmt.Errorf("prepare capacity deployment: %w", err)
+		}
+	}
 	started := time.Now()
 	watchdogAt := started.Add(contract.Watchdog)
 
@@ -934,17 +944,22 @@ type directCapacityEndpoint struct {
 	endpoint *transporttest.ProductDirectEndpoint
 }
 
+func (endpoint *directCapacityEndpoint) PrepareCapacity(ctx context.Context, sessions int) error {
+	if endpoint == nil || endpoint.endpoint == nil {
+		return errors.New("direct capacity endpoint is unavailable")
+	}
+	return endpoint.endpoint.PrepareCapacity(ctx, sessions)
+}
+
 func (endpoint *directCapacityEndpoint) Connect(ctx context.Context) (capacitySession, error) {
 	pair, err := endpoint.endpoint.Connect(ctx)
 	if err != nil {
 		return nil, err
 	}
-	clientTermination := make(chan struct{})
-	go func() {
-		_, _ = pair.Client.WaitTermination(context.Background())
-		close(clientTermination)
-	}()
-	return &directCapacitySession{pair: pair, id: fmt.Sprintf("direct-%p", pair), termination: joinTermination(clientTermination, pair.Server.Termination())}, nil
+	clientTermination, serverTermination := make(chan struct{}), make(chan struct{})
+	go func() { _ = pair.Client.WaitTermination(context.Background()); close(clientTermination) }()
+	go func() { _ = pair.Server.WaitTermination(context.Background()); close(serverTermination) }()
+	return &directCapacitySession{pair: pair, id: fmt.Sprintf("direct-%p", pair), termination: joinTermination(clientTermination, serverTermination)}, nil
 }
 
 func (endpoint *directCapacityEndpoint) Close(context.Context) error {
@@ -960,7 +975,7 @@ type directCapacitySession struct {
 func (session *directCapacitySession) ID() string                   { return session.id }
 func (session *directCapacitySession) Termination() <-chan struct{} { return session.termination }
 func (session *directCapacitySession) ProbeLiveness(ctx context.Context) error {
-	_, err := session.pair.Client.ProbeLiveness(ctx)
+	_, err := session.pair.Client.ProbeLiveness(ctx, 5000)
 	return err
 }
 func (session *directCapacitySession) Close(ctx context.Context) error {
@@ -976,12 +991,22 @@ func (session *directCapacitySession) Close(ctx context.Context) error {
 
 type tunnelCapacityEndpoint struct{ endpoint *tunnelworkload.Endpoint }
 
+func (endpoint *tunnelCapacityEndpoint) PrepareCapacity(ctx context.Context, sessions int) error {
+	if endpoint == nil || endpoint.endpoint == nil {
+		return errors.New("tunnel capacity endpoint is unavailable")
+	}
+	return endpoint.endpoint.PrepareCapacity(ctx, sessions)
+}
+
 func (endpoint *tunnelCapacityEndpoint) Connect(ctx context.Context) (capacitySession, error) {
 	pair, err := endpoint.endpoint.Connect(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &tunnelCapacitySession{pair: pair, id: fmt.Sprintf("tunnel-%p", pair), termination: joinTermination(pair.Client.Termination(), pair.Server.Termination())}, nil
+	clientTermination, serverTermination := make(chan struct{}), make(chan struct{})
+	go func() { _ = pair.Client.WaitTermination(context.Background()); close(clientTermination) }()
+	go func() { _ = pair.Server.WaitTermination(context.Background()); close(serverTermination) }()
+	return &tunnelCapacitySession{pair: pair, id: fmt.Sprintf("tunnel-%p", pair), termination: joinTermination(clientTermination, serverTermination)}, nil
 }
 
 func (endpoint *tunnelCapacityEndpoint) Close(ctx context.Context) error {
@@ -997,7 +1022,7 @@ type tunnelCapacitySession struct {
 func (session *tunnelCapacitySession) ID() string                   { return session.id }
 func (session *tunnelCapacitySession) Termination() <-chan struct{} { return session.termination }
 func (session *tunnelCapacitySession) ProbeLiveness(ctx context.Context) error {
-	_, err := session.pair.Client.ProbeLiveness(ctx)
+	_, err := session.pair.Client.ProbeLiveness(ctx, 5000)
 	return err
 }
 func (session *tunnelCapacitySession) Close(ctx context.Context) error {

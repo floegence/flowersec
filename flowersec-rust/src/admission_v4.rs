@@ -24,6 +24,22 @@ pub struct SQLiteAdmissionAuthority {
     bindings: Vec<SQLiteAdmissionBinding>,
     _charge: EnvironmentCharge,
 }
+// Shared durable admission facts are never a consumer spend capability.
+// Both constructors below consume the original verified credential account.
+struct AdmissionFacts<'a> {
+    tenant: &'a str,
+    issuer: [u8; 16],
+    lease: [u8; 16],
+    authority: &'a str,
+    winner_authority: &'a str,
+    proof: &'a [u8],
+    selection: &'a [u8],
+    route_set: [u8; 32],
+    issued_at: u64,
+    parent_initiation_end: u64,
+    session_end: u64,
+    session_nonce: [u8; 32],
+}
 impl SQLiteAdmissionAuthority {
     pub fn new(
         store: Arc<SQLitePoolStore>,
@@ -81,6 +97,118 @@ impl SQLiteAdmissionAuthority {
             .pool
             .as_ref()
             .ok_or(fail(PoolStoreFailure::OwnerUnavailable))?;
+        let facts = AdmissionFacts {
+            tenant: &facts.tenant,
+            issuer: facts.issuer,
+            lease: facts.lease,
+            authority: &facts.authority,
+            winner_authority: &facts.winner_authority,
+            proof: &facts.proof,
+            selection: &facts.selection,
+            route_set: facts.route_set,
+            issued_at: facts.issued_at,
+            parent_initiation_end: facts.parent_initiation_end,
+            session_end: facts.session_end,
+            session_nonce: facts.session_nonce,
+        };
+        if admission.source != ActivationSource::PreauthorizedPool
+            || admission.pool_activation.is_some()
+        {
+            return Err(fail(PoolStoreFailure::OwnerUnavailable));
+        }
+        self.admit_facts(admission, artifact, facts, binding, owner)
+    }
+    pub(crate) fn admit_live(
+        self: &Arc<Self>,
+        admission: &CredentialAdmission,
+        artifact: &[u8],
+        activation: &[u8],
+        binding: [u8; 32],
+        owner: PoolSpendOwner,
+    ) -> Result<Admitted> {
+        if admission.source != ActivationSource::LiveAuthority
+            || admission.pool.is_some()
+            || admission.pool_activation.is_some()
+        {
+            return Err(fail(PoolStoreFailure::OwnerUnavailable));
+        }
+        let configuration = || fail(PoolStoreFailure::Configuration);
+        let a = codec::decode_context(
+            artifact,
+            "Artifact",
+            Limits {
+                bytes: 65536,
+                nodes: 16384,
+            },
+            None,
+            Context::default(),
+        )
+        .map_err(|_| configuration())?;
+        let proof = codec::decode_context(
+            activation,
+            "ActivationAuthorization",
+            Limits {
+                bytes: 4096,
+                nodes: 4096,
+            },
+            None,
+            Context::with_activation_source(ActivationSource::LiveAuthority),
+        )
+        .map_err(|_| configuration())?;
+        if codec::digest("activation_digest", proof).map_err(|_| configuration())?
+            != admission.activation_digest
+            || codec::digest("artifact_digest", a).map_err(|_| configuration())?
+                != admission.artifact_digest
+        {
+            return Err(configuration());
+        }
+        let facts = AdmissionFacts {
+            tenant: a
+                .field("Artifact", "tenant_id")
+                .and_then(codec::Value::text)
+                .map_err(|_| configuration())?,
+            issuer: a
+                .b("Artifact", "issuer_key_id")
+                .map_err(|_| configuration())?,
+            lease: a.b("Artifact", "lease_id").map_err(|_| configuration())?,
+            // The logical authority is a trusted service deployment binding,
+            // never an identifier supplied by HELLO or selected by a caller.
+            authority: &self.parent.identity.authority,
+            winner_authority: &self.parent.identity.authority,
+            proof: activation,
+            selection: proof
+                .field("ActivationAuthorization", "candidate_selection")
+                .map_err(|_| configuration())?
+                .raw(),
+            route_set: admission.route_digest,
+            issued_at: proof
+                .u("ActivationAuthorization", "issued_at_ms")
+                .map_err(|_| configuration())?,
+            parent_initiation_end: a
+                .u("Artifact", "initiation_not_after_ms")
+                .map_err(|_| configuration())?,
+            session_end: a
+                .u("Artifact", "session_not_after_ms")
+                .map_err(|_| configuration())?
+                .min(
+                    proof
+                        .u("ActivationAuthorization", "session_not_after_ms")
+                        .map_err(|_| configuration())?,
+                ),
+            session_nonce: a
+                .b("Artifact", "session_nonce")
+                .map_err(|_| configuration())?,
+        };
+        self.admit_facts(admission, artifact, facts, binding, owner)
+    }
+    fn admit_facts(
+        self: &Arc<Self>,
+        admission: &CredentialAdmission,
+        artifact: &[u8],
+        facts: AdmissionFacts<'_>,
+        binding: [u8; 32],
+        owner: PoolSpendOwner,
+    ) -> Result<Admitted> {
         let a = codec::decode_context(
             artifact,
             "Artifact",
@@ -96,11 +224,9 @@ impl SQLiteAdmissionAuthority {
             .field("Artifact", "audience")
             .and_then(codec::Value::text)
             .map_err(|_| fail(PoolStoreFailure::Configuration))?;
-        if admission.source != ActivationSource::PreauthorizedPool
-            || admission.pool_activation.is_some()
-            || !admission
-                .account
-                .belongs_to(&self.store.backing.environment)
+        if !admission
+            .account
+            .belongs_to(&self.store.backing.environment)
             || facts.winner_authority != self.parent.identity.authority
             || !self.bindings.iter().any(|b| {
                 b.tenant == facts.tenant
@@ -148,21 +274,27 @@ impl SQLiteAdmissionAuthority {
         lease.extend_from_slice(&facts.lease);
         let mut projection = Zeroizing::new(Vec::with_capacity(maximum as usize));
         codec::encode_head(&mut projection, 4, 22);
-        text(&mut projection, "flowersec/rust-parent-admission/1");
+        text(
+            &mut projection,
+            match admission.source {
+                ActivationSource::PreauthorizedPool => "flowersec/rust-parent-admission/1",
+                ActivationSource::LiveAuthority => "flowersec/rust-parent-live-admission/1",
+            },
+        );
         for value in [
-            &facts.tenant,
-            &facts.winner_authority,
+            facts.tenant,
+            facts.winner_authority,
             &self.store.identity.authority,
             audience,
-            &facts.authority,
+            facts.authority,
         ] {
             text(&mut projection, value);
         }
         for value in [
             &admission.artifact_digest[..],
             &admission.activation_digest,
-            &facts.proof,
-            &facts.selection,
+            facts.proof,
+            facts.selection,
             &facts.route_set,
             &admission.candidate_id,
             &admission.route_digest,
@@ -185,6 +317,25 @@ impl SQLiteAdmissionAuthority {
         if projection.len() > maximum as usize {
             return Err(fail(PoolStoreFailure::Capacity));
         }
+        let parent_projection = super::parent::ParentWinnerSelection {
+            source: admission.source,
+            tenant: facts.tenant,
+            authority: facts.winner_authority,
+            server_authority: &self.store.identity.authority,
+            audience,
+            artifact: admission.artifact_digest,
+            activation: admission.activation_digest,
+            proof: facts.proof,
+            candidate: admission.candidate_id,
+            route: admission.route_digest,
+            attempt: admission.attempt_id,
+            identities: admission.certificate_digests,
+            parent_initiation_end: facts.parent_initiation_end,
+            parent_session_end: a
+                .u("Artifact", "session_not_after_ms")
+                .map_err(|_| fail(PoolStoreFailure::Configuration))?,
+        }
+        .encode(maximum as usize)?;
         let mut any_committed = false;
         let result: Result<(u64, [u8; 32])> = (|| {
             // Equal rows establish only the immutable shared fact; local
@@ -198,7 +349,7 @@ impl SQLiteAdmissionAuthority {
                     )
                     .optional()?;
                 if let Some(previous) = previous {
-                    if previous != *projection {
+                    if previous != parent_projection {
                         return Err(fail(PoolStoreFailure::WinnerConflict));
                     }
                     return Ok(());
@@ -208,7 +359,7 @@ impl SQLiteAdmissionAuthority {
                     "INSERT INTO parent_winner VALUES(?,?,?,?)",
                     params![
                         lease,
-                        projection.as_slice(),
+                        parent_projection.as_slice(),
                         epoch.to_be_bytes(),
                         retained.to_be_bytes()
                     ],
@@ -326,14 +477,19 @@ impl Admitted {
 fn capacity(db: &Connection, limits: SQLitePoolLimits) -> Result<()> {
     if scalar::<u64>(
         db,
-        "SELECT spend_rows+winner_rows+admission_rows FROM manifest WHERE id=1",
+        "SELECT spend_rows+winner_rows+admission_rows+(SELECT count(*) FROM top_up_material) FROM manifest WHERE id=1",
     )? >= u64::from(limits.max_records)
     {
         return Err(fail(PoolStoreFailure::Capacity));
     }
     Ok(())
 }
-pub(super) fn validate(db: &Connection, limits: SQLitePoolLimits, epoch: u64) -> Result<()> {
+pub(super) fn validate(
+    db: &Connection,
+    identity: &SQLitePoolIdentity,
+    limits: SQLitePoolLimits,
+    epoch: u64,
+) -> Result<()> {
     let (winners, admissions): (u64, u64) = db.query_row(
         "SELECT winner_rows,admission_rows FROM manifest WHERE id=1",
         [],
@@ -343,7 +499,7 @@ pub(super) fn validate(db: &Connection, limits: SQLitePoolLimits, epoch: u64) ->
         || scalar::<u64>(db, "SELECT count(*) FROM admission")? != admissions
         || scalar::<u64>(
             db,
-            "SELECT spend_rows+winner_rows+admission_rows FROM manifest WHERE id=1",
+            "SELECT spend_rows+winner_rows+admission_rows+(SELECT count(*) FROM top_up_material) FROM manifest WHERE id=1",
         )? > u64::from(limits.max_records)
     {
         return Err(fail(PoolStoreFailure::StorageFormat));
@@ -368,10 +524,10 @@ pub(super) fn validate(db: &Connection, limits: SQLitePoolLimits, epoch: u64) ->
     if bad != 0 {
         return Err(fail(PoolStoreFailure::StorageFormat));
     }
-    Ok(())
+    super::records::validate_admission(db, identity, limits, epoch)
 }
 impl SQLitePoolStore {
-    fn transaction<T>(
+    pub(crate) fn transaction<T>(
         &self,
         guard: &dyn Fn() -> Result<()>,
         action: impl FnOnce(&Connection, u64) -> Result<T>,
@@ -418,8 +574,13 @@ impl SQLitePoolStore {
             if uncertain {
                 self.closed.store(true, Ordering::Release);
                 error = PoolStoreError {
-                    code: PoolStoreFailure::SpentUnknown,
+                    code: if self.relay_format {
+                        PoolStoreFailure::RelayClaimUnknown
+                    } else {
+                        PoolStoreFailure::SpentUnknown
+                    },
                     write_state: PoolWriteState::Unknown,
+                    format: None,
                 };
             } else if committed {
                 error.write_state = PoolWriteState::Committed;
@@ -427,6 +588,7 @@ impl SQLitePoolStore {
             if self.closed.load(Ordering::Acquire) {
                 self.cleanup(&mut state);
             }
+            self.observe_transaction_failure(error);
             return Err(error);
         }
         result
@@ -501,7 +663,7 @@ mod tests {
             a.admit(&f.reserve().unwrap(), &f.artifact, [82; 32], owner())
                 .unwrap_err()
                 .code,
-            PoolStoreFailure::WinnerConflict
+            PoolStoreFailure::AdmissionConflict
         );
         local.store.close();
         assert!(admitted.check().is_err());
@@ -514,6 +676,41 @@ mod tests {
             PoolStoreFailure::AdmissionConflict
         );
         reopened.close();
+    }
+    #[test]
+    fn current_admission_and_winner_reject_changed_original_projections() {
+        for winner in [false, true] {
+            let f = fixture();
+            let (local, parent) = pair(&f);
+            let a = authority(&f, &local.store, &parent.store);
+            let admitted = a
+                .admit(&f.reserve().unwrap(), &f.artifact, [81; 32], owner())
+                .unwrap();
+            drop(admitted);
+            let target = if winner { &parent } else { &local };
+            target.store.close();
+            let db = Connection::open(&target.backing.inner.path).unwrap();
+            let table = if winner { "parent_winner" } else { "admission" };
+            let wire: Vec<u8> = db
+                .query_row(&format!("SELECT projection FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            let changed = super::super::records::fixtures::alter_array(
+                &wire,
+                if winner { 6 } else { 7 },
+                crate::codec_v4::tests::b(&[0; 32]),
+            );
+            db.execute(&format!("UPDATE {table} SET projection=?"), [changed])
+                .unwrap();
+            drop(db);
+            let before = fs::read(&target.backing.inner.path).unwrap();
+            assert_eq!(
+                target.reopen().unwrap_err().code,
+                PoolStoreFailure::StorageFormat
+            );
+            assert_eq!(fs::read(&target.backing.inner.path).unwrap(), before);
+        }
     }
     #[test]
     fn winner_is_shared_before_different_service_admission() {

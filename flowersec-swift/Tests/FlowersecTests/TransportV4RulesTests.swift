@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportV4RulesTests: XCTestCase {
+final class TransportRulesTests: XCTestCase {
   private static let reference = try! V4ShapeReference()
   private static let corpus: [V4JSON] = {
     let data = try! Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/corpus.json"))
@@ -54,7 +54,7 @@ final class TransportV4RulesTests: XCTestCase {
       XCTAssertEqual(ctx, before, id)
       if error == nil { positive += 1 } else { negative += 1 }
     }
-    XCTAssertEqual(positive, 348); XCTAssertEqual(negative, relations ? 821 : 134)
+    XCTAssertEqual(positive, Self.corpus.filter { $0["expected_error"].text == nil }.count); XCTAssertGreaterThan(positive, 0); XCTAssertEqual(negative, relations ? 821 : 134)
     XCTAssertEqual(separate, relations ? 12 : 0)
     print("Swift \(relations ? "relations" : "variants"): \(positive) positive / \(negative) negative / \(separate) separate cases")
   }

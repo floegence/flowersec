@@ -104,6 +104,11 @@ func (m *TypedMessageStream) CloseWrite(ctx context.Context) error {
 		return cryptov4.ErrConfiguration
 	}
 	m.mu.Lock()
+	if m.outputClosed {
+		err := m.finError
+		m.mu.Unlock()
+		return err
+	}
 	if m.closed || m.ioEnded || !m.bound {
 		err := m.errorLocked()
 		m.mu.Unlock()
@@ -140,6 +145,9 @@ func (m *TypedMessageStream) CloseWrite(ctx context.Context) error {
 	case <-m.ioContext.Done():
 		m.mu.Lock()
 		err := m.errorLocked()
+		if m.outputClosed {
+			err = m.finError
+		}
 		m.mu.Unlock()
 		return err
 	case <-m.finDone:
@@ -155,18 +163,44 @@ func (m *TypedMessageStream) Finish(ctx context.Context) error {
 		return err
 	}
 	m.mu.Lock()
-	if m.closed || m.owner == nil {
-		err := m.errorLocked()
-		m.mu.Unlock()
-		return err
-	}
 	if m.closeWaiters == 4 {
 		m.mu.Unlock()
 		return cryptov4.ErrCapacity
 	}
 	m.closeWaiters++
-	o := m.owner
 	m.mu.Unlock()
 	defer func() { m.mu.Lock(); m.closeWaiters--; m.signal(); m.mu.Unlock() }()
-	return o.queue.waitCloseOwned(ctx, true, o)
+	for {
+		m.mu.Lock()
+		if m.finishSettled {
+			err := m.finishError
+			m.mu.Unlock()
+			return err
+		}
+		o := m.owner
+		if o != nil {
+			if settled, failure := o.queue.completion.result(true); settled {
+				m.finishSettled, m.finishError = true, failure
+				m.mu.Unlock()
+				return failure
+			}
+		}
+		if m.closed || m.failure != nil || o == nil {
+			err := m.errorLocked()
+			m.mu.Unlock()
+			return err
+		}
+		// CloseWrite already requested and completed this one original FIN.
+		// Normal inbound EOF may retire the I/O capability while its peer drain
+		// proof is still arriving. Wait on that original bounded observation;
+		// neither local retirement nor a second Finish fabricates success.
+		drained := o.queue.completion.drainDone
+		m.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-drained:
+		case <-m.changed:
+		}
+	}
 }

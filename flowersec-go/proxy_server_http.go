@@ -18,10 +18,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
-func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStream) {
-	server.serveHTTPStream(ctx, incoming.Stream)
-}
-
 func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStream) {
 	if stream == nil {
 		server.report(ErrInvalidProxyServer)
@@ -51,7 +47,7 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 	})
 	defer joinOuterReset()
 	requestMeta := proxyHTTPRequest{}
-	if err := readProxyMetadata(stream, server.config.maxJSONFrame, &requestMeta); err != nil {
+	if err := readProxyMetadata(stream, server.config.maxMetadata, &requestMeta); err != nil {
 		server.writeHTTPError(stream, "unknown", "invalid_request_meta")
 		server.report(err)
 		return
@@ -62,6 +58,10 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 	if requestMeta.Version != proxyWireVersion || requestMeta.RequestID == "" || !protocolv4.ProxyASCIIToken(requestMeta.Method) || requestMeta.Method == http.MethodConnect || err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
 		server.report(ErrInvalidProxyServer)
+		return
+	}
+	if path.Path == proxyCredentialControlPath {
+		server.serveCredentialControl(handlerContext, stream, requestMeta, path)
 		return
 	}
 	timeout, err := server.proxyTimeout(requestMeta.TimeoutMS)
@@ -93,6 +93,28 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 		return
 	}
 	requestHeaders := requestHeaderResult.Header
+	target := *server.config.upstream
+	target.Path, target.RawPath, target.RawQuery, target.Fragment = path.Path, path.RawPath, path.RawQuery, ""
+	target.ForceQuery = path.ForceQuery
+	credentials, err := server.captureCredentials(requestContext, stream, &target, requestMeta.CredentialContext, requestMeta.Credentials, requestMeta.RequestOrigin, requestMeta.Headers, requestHeaders)
+	if err != nil {
+		server.writeHTTPError(stream, requestMeta.RequestID, "credential_scope_unavailable")
+		server.report(err)
+		return
+	}
+	defer credentials.finish()
+	client := server.httpClient
+	if credentials != nil {
+		requestContext = context.WithValue(credentials.ctx, proxyCredentialRequestKey{}, credentials)
+		client = credentials.owner.client
+		credentialStopped := make(chan struct{})
+		stop := context.AfterFunc(requestContext, func() { defer close(credentialStopped); cancelRequest() })
+		defer func() {
+			if !stop() {
+				<-credentialStopped
+			}
+		}()
+	}
 	eventRequested := acceptsProxyEventStream(requestHeaders.Get("Accept"))
 	eventPermit := false
 	releaseEvent := func() {
@@ -151,7 +173,7 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 	var bodyErrors chan error
 	requestTrailers := make(http.Header)
 	var intakeTotal int64
-	first, firstTrailers, bodyDone, err := readProxyBodyPart(stream, server.config.maxChunk, &intakeTotal, server.config.maxBody, server.config.maxJSONFrame)
+	first, firstTrailers, bodyDone, err := readProxyBodyPart(stream, server.config.maxChunk, &intakeTotal, server.config.maxBody, server.config.maxMetadata)
 	if err != nil || requestHeaderResult.HasLength && (intakeTotal > requestHeaderResult.ContentLength || bodyDone && intakeTotal != requestHeaderResult.ContentLength) {
 		server.writeHTTPError(stream, requestMeta.RequestID, "request_body_invalid")
 		server.report(err)
@@ -199,9 +221,6 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 		defer body.Close()
 	}
 
-	target := *server.config.upstream
-	target.Path, target.RawPath, target.RawQuery, target.Fragment = path.Path, path.RawPath, path.RawQuery, ""
-	target.ForceQuery = path.ForceQuery
 	request, err := http.NewRequestWithContext(requestContext, requestMeta.Method, target.String(), body)
 	if err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "invalid_request_meta")
@@ -219,7 +238,7 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 		server.report(err)
 		return
 	}
-	response, err := server.httpClient.Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		if bodyErrors != nil {
 			select {
@@ -238,12 +257,23 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 		return
 	}
 	defer response.Body.Close()
+	if err := credentials.check(); err != nil {
+		server.writeHTTPError(stream, requestMeta.RequestID, "credential_scope_unavailable")
+		server.report(err)
+		return
+	}
 	responseFacts, err := inspectProxyHeaders(proxyNativeHeaders(response.Header))
 	if err != nil {
 		server.writeHTTPError(stream, requestMeta.RequestID, "upstream_request_failed")
 		server.report(err)
 		return
 	}
+	if err := credentials.update(&target, response.Header); err != nil {
+		server.writeHTTPError(stream, requestMeta.RequestID, "credential_update_failed")
+		server.report(err)
+		return
+	}
+
 	_, hiddenCoding := responseFacts.connection["content-encoding"]
 	if hiddenCoding && response.Header.Get("Content-Encoding") != "" {
 		server.writeHTTPError(stream, requestMeta.RequestID, "upstream_request_failed")
@@ -266,6 +296,11 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 	_, lengthHop := responseFacts.connection["content-length"]
 	if response.ContentLength >= 0 && response.Header.Get("Content-Length") == "" && !lengthHop {
 		responseHeaders = append(responseHeaders, proxyHeader{Name: "content-length", Value: strconv.FormatInt(response.ContentLength, 10)})
+	}
+	if err := credentials.check(); err != nil {
+		resetStream()
+		server.report(err)
+		return
 	}
 	if err := writeProxyMetadata(stream, proxyHTTPResponse{
 		Version: proxyWireVersion, RequestID: requestMeta.RequestID, OK: true,
@@ -304,6 +339,11 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 				total = 0
 				maximum = int64(server.config.maxChunk)
 			}
+			if err := credentials.check(); err != nil {
+				resetStream()
+				server.report(err)
+				return
+			}
 			if err := writeProxyChunk(stream, buffer[:count], server.config.maxChunk, &total, maximum); err != nil {
 				resetStream()
 				server.report(err)
@@ -323,6 +363,14 @@ func (server *ProxyServer) serveHTTPStream(ctx context.Context, stream proxyStre
 					}
 				}
 				if err := proxyValidateTrailers(proxyNativeHeaders(response.Trailer)); err != nil {
+					resetStream()
+					server.report(err)
+					return
+				}
+				if credentials != nil {
+					response.Trailer.Del("Set-Cookie")
+				}
+				if err := credentials.check(); err != nil {
 					resetStream()
 					server.report(err)
 					return
@@ -370,7 +418,7 @@ func (server *ProxyServer) copyProxyBodyFrom(ctx context.Context, reader io.Read
 			return nil, context.Cause(ctx)
 		default:
 		}
-		payload, trailers, done, err := readProxyBodyPart(reader, server.config.maxChunk, &total, server.config.maxBody, server.config.maxJSONFrame)
+		payload, trailers, done, err := readProxyBodyPart(reader, server.config.maxChunk, &total, server.config.maxBody, server.config.maxMetadata)
 		if err != nil {
 			return nil, err
 		}

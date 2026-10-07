@@ -14,15 +14,18 @@ import (
 )
 
 type managementChannelOpening struct {
-	services     *RPCServices
-	allocation   *internalChannelAllocation
-	handle       OpenHandle
-	stream       *StreamOwnership
-	channel      *ManagementChannel
-	context      context.Context
-	cancel       context.CancelFunc
-	done         chan struct{}
-	cleanupError error
+	services         *RPCServices
+	allocation       *internalChannelAllocation
+	handle           OpenHandle
+	burned           bool
+	nativeSlot       *nativeStreamSlot
+	nativeGeneration uint64
+	stream           *StreamOwnership
+	channel          *ManagementChannel
+	context          context.Context
+	cancel           context.CancelFunc
+	done             chan struct{}
+	cleanupError     error
 }
 
 func (r *RPCServices) signalManagementLocked() {
@@ -51,13 +54,6 @@ func (r *RPCServices) reserveManagementLocked() (*managementChannelOpening, erro
 	if r.management != nil {
 		return nil, cryptov4.ErrCapacity
 	}
-	a := r.bootstrap.admission
-	a.mu.Lock()
-	draining := a.draining || a.peerGoAway.set || a.closed
-	a.mu.Unlock()
-	if draining {
-		return nil, cryptov4.ErrClosed
-	}
 	allocation, err := r.checkoutInternalChannelLocked(10)
 	if err != nil {
 		return nil, err
@@ -78,6 +74,20 @@ func (r *RPCServices) reserveManagementLocked() (*managementChannelOpening, erro
 // The client initializer runs independently; the server never opens an M ID.
 // Neither readiness waiting nor a local retry automatically republishes a call.
 func (r *RPCServices) ManagementRequest(ctx context.Context, cancel bool, target rpcv4.ExecutionTarget, deadline *timev4.Deadline, access rpcv4.ExecutionAccess) (rpcv4.ManagementResponse, error) {
+	return r.managementRequestWithDiagnostic(ctx, cancel, target, deadline, access, nil)
+}
+
+func (r *RPCServices) managementRequestWithDiagnostic(ctx context.Context, cancel bool, target rpcv4.ExecutionTarget, deadline *timev4.Deadline, access rpcv4.ExecutionAccess, diagnosticOperation *DiagnosticOperation) (response rpcv4.ManagementResponse, err error) {
+	ownedDiagnostic := diagnosticOperation != nil
+	if diagnosticOperation == nil && r != nil && r.plan != nil {
+		diagnosticOperation = r.plan.beginApplicationDiagnostic()
+		ownedDiagnostic = true
+	}
+	defer func() {
+		if ownedDiagnostic {
+			finishApplicationDiagnosticError(diagnosticOperation, err)
+		}
+	}()
 	if r == nil || ctx == nil || deadline == nil || access == nil {
 		return rpcv4.ManagementResponse{}, cryptov4.ErrConfiguration
 	}
@@ -141,16 +151,17 @@ func (r *RPCServices) ManagementRequest(ctx context.Context, cancel bool, target
 		if r.management != nil && r.management.channel != nil {
 			channel := r.management.channel
 			r.mu.Unlock()
-			return channel.Request(ctx, cancel, target, deadline, access)
+			ownedDiagnostic = false
+			return channel.requestWithDiagnostic(ctx, cancel, target, deadline, access, diagnosticOperation)
 		}
-		stopped, changed := r.managementStopped, r.managementChanged
-		if r.bootstrap != nil {
-			a := r.bootstrap.admission
+		stopped, changed, bootstrap := r.managementStopped, r.managementChanged, r.bootstrap
+		r.mu.Unlock()
+		if bootstrap != nil {
+			a := bootstrap.admission
 			a.mu.Lock()
-			stopped = stopped || a.draining || a.peerGoAway.set
+			stopped = stopped || a.closed || a.draining || a.peerGoAway.set
 			a.mu.Unlock()
 		}
-		r.mu.Unlock()
 		if stopped {
 			return rpcv4.ManagementResponse{}, rpcv4.ErrManagementClosed
 		}
@@ -175,11 +186,11 @@ func (r *RPCServices) runManagement(ctx context.Context) {
 		return
 	}
 	a := r.bootstrap.admission
+	deadline, err := timev4.NewAge(r.clock, spec.MaxLifetimeMS, a.engine.SessionParameters().SessionNotAfterMS)
+	if err != nil {
+		return
+	}
 	for {
-		deadline, err := timev4.NewAge(r.clock, spec.MaxLifetimeMS, a.engine.SessionParameters().SessionNotAfterMS)
-		if err != nil {
-			return
-		}
 		var job *managementChannelOpening
 		for {
 			a.mu.Lock()
@@ -195,9 +206,19 @@ func (r *RPCServices) runManagement(ctx context.Context) {
 			// must not allocate a replacement ordinal on every wake.
 			err = a.engine.ApplicationReady()
 			if err == nil {
-				r.mu.Lock()
-				job, err = r.reserveManagementLocked()
-				r.mu.Unlock()
+				// Keep the original drain/lifetime gate through allocation, using
+				// admission before services as controller publication does.
+				a.mu.Lock()
+				stop = a.closed || a.draining || a.peerGoAway.set || a.lifetime[protocolv4.ClientToServer][ManagementStream] >= uint64(spec.LifetimeChannels)
+				if !stop {
+					r.mu.Lock()
+					job, err = r.reserveManagementLocked()
+					r.mu.Unlock()
+				}
+				a.mu.Unlock()
+				if stop {
+					return
+				}
 			}
 			if err == nil {
 				break
@@ -217,12 +238,19 @@ func (r *RPCServices) runManagement(ctx context.Context) {
 		}
 		openCtx, stopOpen := context.WithTimeout(job.context, time.Duration(remaining)*time.Millisecond)
 		for {
-			job.handle, _, err = r.openInternal(openCtx, ManagementStream, spec.Kind, job.allocation, deadline)
+			var result RecordWriteResult
+			job.handle, result, err = r.openInternalObserved(openCtx, ManagementStream, spec.Kind, job.allocation, deadline, func(slot *nativeStreamSlot, generation uint64) {
+				job.nativeSlot, job.nativeGeneration = slot, generation
+			})
+			job.burned = job.handle.owner != nil && err != nil && !result.Submitted
 			// A handle means the actual allocation has already spent its lifetime
 			// count. Finish that owner before considering another generation.
 			if err == nil || job.handle.owner != nil {
 				break
 			}
+			// A provider miss can still own a native creation/close tail even
+			// when no ordinal was allocated. Join it before another attempt.
+			job.waitNativeRetired()
 			if !errors.Is(err, cryptov4.ErrCapacity) && !errors.Is(err, ErrOpenPending) {
 				break
 			}
@@ -240,8 +268,17 @@ func (r *RPCServices) runManagement(ctx context.Context) {
 		if err != nil {
 			job.cancel()
 		}
-		job.run()
-		if job.cleanupError != nil || err != nil && job.handle.owner == nil {
+		var beginRebuild func()
+		var rebuildErr error
+		if err == nil {
+			beginRebuild = func() {
+				// Only a channel that actually became usable starts a new
+				// rebuild episode. Its physical cleanup consumes that deadline.
+				deadline, rebuildErr = timev4.NewAge(r.clock, spec.MaxLifetimeMS, a.engine.SessionParameters().SessionNotAfterMS)
+			}
+		}
+		job.runWithRetirement(beginRebuild)
+		if job.cleanupError != nil || rebuildErr != nil || err != nil && job.handle.owner == nil {
 			return
 		}
 	}
@@ -293,9 +330,15 @@ func (r *RPCServices) dispatchManagementOpen(h OpenHandle, writer *RecordWriter)
 	if !valid {
 		return true, cryptov4.ErrConfiguration
 	}
+	a.mu.Lock()
+	if a.closed || a.draining || a.peerGoAway.set {
+		a.mu.Unlock()
+		return true, cryptov4.ErrClosed
+	}
 	r.mu.Lock()
 	job, err := r.reserveManagementLocked()
 	r.mu.Unlock()
+	a.mu.Unlock()
 	if err != nil {
 		return true, err
 	}
@@ -322,27 +365,53 @@ func (r *RPCServices) dispatchManagementOpen(h OpenHandle, writer *RecordWriter)
 func (job *managementChannelOpening) bind() (*ManagementChannel, error) {
 	r := job.services
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed || job.context.Err() != nil {
+		r.mu.Unlock()
 		return nil, cryptov4.ErrClosed
 	}
+	clock, executor, resolver, runtimeBytes := r.clock, r.plan.executor, r.managementResolver, r.runtimeBytes
+	r.mu.Unlock()
+	// The opening job retains its original slot and allocation until run exits.
+	// Stream binding and constructor authorization cannot hold services.mu.
 	owner, err := job.allocation.stream.bind(job.handle.owner, job.handle)
 	if err != nil {
 		return nil, err
 	}
+	r.mu.Lock()
 	job.stream = owner
-	channel, err := NewManagementChannel(owner, r.clock, r.plan.executor, r.managementResolver, job.allocation.management, r.runtimeBytes)
+	closed := r.closed || job.context.Err() != nil
+	r.mu.Unlock()
+	if closed {
+		_ = owner.Cancel()
+		return nil, cryptov4.ErrClosed
+	}
+	channel, err := NewManagementChannel(owner, clock, executor, resolver, job.allocation.management, runtimeBytes)
 	if err != nil {
 		return nil, err
 	}
+	r.mu.Lock()
 	job.channel = channel
+	closed = r.closed || job.context.Err() != nil
 	r.signalManagementLocked()
+	r.mu.Unlock()
+	if closed {
+		channel.Close()
+		return nil, cryptov4.ErrClosed
+	}
 	return channel, nil
 }
+
 func (job *managementChannelOpening) run() {
+	job.runWithRetirement(nil)
+}
+
+func (job *managementChannelOpening) runWithRetirement(afterChannel func()) {
 	r := job.services
 	if job.channel != nil {
 		_ = job.channel.Run(job.context)
+		if afterChannel != nil {
+			afterChannel()
+		}
 		job.channel.Close()
 	} else if job.stream != nil {
 		_ = job.stream.Cancel()
@@ -358,6 +427,7 @@ func (job *managementChannelOpening) run() {
 		job.allocation.release()
 		r.management = nil
 		job.allocation, job.services, job.stream, job.channel = nil, nil, nil, nil
+		job.nativeSlot = nil
 		// Keep the allocated handle as a bounded fact for the original supervisor.
 		job.context, job.cancel = nil, nil
 	}
@@ -366,13 +436,14 @@ func (job *managementChannelOpening) run() {
 }
 func (job *managementChannelOpening) cleanup() error {
 	if job.handle.owner == nil {
+		job.waitNativeRetired()
 		return nil
 	}
 	a := job.handle.owner
 	for {
 		if err := a.waitStreamCleanupReady(context.Background(), job.handle); err != nil {
 			if errors.Is(err, ErrOpenAssociation) && job.stream == nil {
-				return nil
+				return job.waitRetired()
 			}
 			return err
 		}
@@ -390,8 +461,57 @@ func (job *managementChannelOpening) cleanup() error {
 		if err == nil && job.services.native == nil {
 			err = a.CarrierClosed(job.handle)
 		}
+		if err == nil {
+			return job.waitRetired()
+		}
 		if !errors.Is(err, ErrOpenPending) && !errors.Is(err, ErrTerminal) {
 			return err
 		}
 	}
+}
+
+// The original channel position survives physical flow cleanup until the
+// terminal detail is actually collected. A stable bitmap alone still permits
+// held proof references, so it cannot authorize a replacement M generation.
+// This observer must not pin the slot whose retirement it is joining.
+func (job *managementChannelOpening) waitRetired() error {
+	a := job.handle.owner
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	defer timer.Stop()
+	for {
+		a.mu.Lock()
+		closed := a.closed
+		_, err := a.slot(job.handle)
+		// A failed local pre-ticket allocation has no peer proof. Its
+		// original OpenLocal return already joined preparation discard.
+		retired := errors.Is(err, ErrOpenAssociation) && (job.burned || a.isStable(job.handle.scope))
+		a.mu.Unlock()
+		// Session closure ends proof publication rights. The original physical
+		// cleanup above remains mandatory before this branch can be reached.
+		if closed || retired {
+			job.waitNativeRetired()
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		timer.Reset(20 * time.Millisecond)
+		<-timer.C
+	}
+}
+
+func (job *managementChannelOpening) waitNativeRetired() {
+	if job.nativeSlot == nil {
+		return
+	}
+	native := job.services.native
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	defer timer.Stop()
+	for !native.slotRetired(job.nativeSlot, job.nativeGeneration) {
+		timer.Reset(20 * time.Millisecond)
+		<-timer.C
+	}
+	job.nativeSlot = nil
 }

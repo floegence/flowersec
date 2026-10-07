@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use std::{
     collections::VecDeque,
     sync::{
@@ -9,10 +11,9 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use flowersec::{
-    ByteStream, OperationHandle, OperationStatus, ReadCause, ReadError, ReadErrorCode,
-    ReadMethodFailureReason, ReadStreamStatus, ReadWaitStatus, ReaderCursor, ReaderCursorOptions,
-    SessionError, StreamReadOwner, StreamV4Ext, WriteOperation, WriteRequestAdmission,
-    WriteStagingOwner,
+    ByteStream, ReadCause, ReadError, ReadErrorCode, ReadMethodFailureReason, ReadStreamStatus,
+    ReadWaitStatus, ReaderCursor, ReaderCursorOptions, SessionError, StreamExt, StreamReadOwner,
+    WriteOperation, WriteRequestAdmission, WriteStagingOwner,
 };
 use futures_util::poll;
 use tokio::sync::{Notify, Semaphore};
@@ -370,13 +371,61 @@ async fn read_owner_canceled_writes_preserve_real_acceptance_without_resetting_t
 }
 
 #[test]
-fn read_owner_unavailable_execution_owner_never_creates_remote_execution_facts() {
-    let operation = OperationHandle::prepare();
-    assert_eq!(operation.start(), Err(SessionError::OperationFailed));
-    assert_eq!(operation.status(), OperationStatus::NotStarted);
-    assert!(operation.cleanup_status().complete);
-    operation.request_cancel();
-    assert_eq!(operation.status(), OperationStatus::NotStarted);
+fn read_owner_without_execution_cannot_fabricate_a_service_operation() {
+    // The execution handle can only come from a bound ServiceClient. A read
+    // owner cannot manufacture a placeholder with remote execution authority.
+    let dependencies = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_owned();
+    let library = std::fs::read_dir(&dependencies)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("libflowersec-")
+                && path
+                    .extension()
+                    .is_some_and(|extension| extension == "rlib")
+        })
+        .max_by_key(|path| std::fs::metadata(path).unwrap().modified().unwrap())
+        .expect("compiled Flowersec library");
+    let scratch_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let scratch = tempfile::Builder::new()
+        .prefix("flowersec-operation-opacity-")
+        .tempdir_in(scratch_root)
+        .unwrap();
+    let source = scratch.path().join("probe.rs");
+    std::fs::write(&source, "use flowersec::OperationHandle;\nfn fabricate() { let _ = OperationHandle::<Vec<u8>>::prepare(); }\n").unwrap();
+    let output =
+        std::process::Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+            .args(["--edition=2024", "--crate-type=lib", "--emit=metadata"])
+            .arg(&source)
+            .arg("--out-dir")
+            .arg(scratch.path())
+            .arg("-L")
+            .arg(format!("dependency={}", dependencies.display()))
+            .arg("--extern")
+            .arg(format!("flowersec={}", library.display()))
+            .output()
+            .unwrap();
+    let diagnostics = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a read owner can fabricate an execution handle"
+    );
+    assert!(
+        diagnostics.contains("associated function `prepare` is private"),
+        "operation opacity probe failed for an unrelated reason: {diagnostics}"
+    );
 }
 
 #[tokio::test]
@@ -518,9 +567,9 @@ async fn read_owner_delivery_gate_rejects_a_retained_prefix_after_owner_revocati
 #[tokio::test]
 async fn prepared_write_rejects_payloads_beyond_the_shared_staging_cap() {
     let (stream, _send) = ControlledStream::new(0);
-    let payload = Bytes::from(vec![0_u8; 1_048_577]);
+    let payload = Bytes::from(vec![0_u8; 2_162_689]);
     assert_eq!(
-        StreamV4Ext::prepare_write(stream, payload).unwrap_err(),
+        StreamExt::prepare_write(stream, payload).unwrap_err(),
         SessionError::ResourceExhausted
     );
 }

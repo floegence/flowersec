@@ -10,53 +10,62 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-// V4UnaryMethod fixes the exact contract and local codec definition. Prepare
+// UnaryMethod fixes the exact contract and local codec definition. Prepare
 // reserves its input before Encode and TakeResult decodes on Completion.
-type V4UnaryMethod = sessionv4.UnaryMethodDefinition
+type UnaryMethod = sessionv4.UnaryMethodDefinition
 
-// V4UnaryServiceDefinition freezes one namespace and its finite typed methods.
+// UnaryServiceDefinition freezes one namespace and its finite typed methods.
 // Binding copies these local options; later caller mutations have no effect.
-type V4UnaryServiceDefinition = sessionv4.UnaryServiceDefinition
-type V4UnaryServiceMethod = sessionv4.UnaryServiceMethod
-type V4MethodSelector = sessionv4.UnaryMethodSelector
-type V4ServiceBindOptions = sessionv4.UnaryServiceBindOptions
-type V4ContractSnapshot = sessionv4.UnaryContractSnapshot
-type V4ContractAcceptance = protocolv4.ContractAcceptance
-type V4ContractRange = protocolv4.ContractRange
+type UnaryServiceDefinition = sessionv4.UnaryServiceDefinition
+type UnaryServiceMethod = sessionv4.UnaryServiceMethod
+type MethodSelector = sessionv4.UnaryMethodSelector
+type ServiceBindOptions = sessionv4.UnaryServiceBindOptions
+type ContractSnapshot = sessionv4.UnaryContractSnapshot
+type ContractAcceptance = protocolv4.ContractAcceptance
+type ContractRange = protocolv4.ContractRange
 
 const (
-	V4ContractExact   = protocolv4.ContractExact
-	V4ContractBounded = protocolv4.ContractBounded
+	ContractExact   = protocolv4.ContractExact
+	ContractBounded = protocolv4.ContractBounded
 )
 
-func V4BoundedContractAcceptance(ranges ...V4ContractRange) (V4ContractAcceptance, error) {
+func BoundedContractAcceptance(ranges ...ContractRange) (ContractAcceptance, error) {
 	return protocolv4.BoundedContractAcceptance(ranges...)
 }
 
-type V4UnaryCodec = sessionv4.SynchronousUnaryCodec
-type V4UnaryResultDecoder = sessionv4.UnaryResultDecoder
-type V4WorkClass = sessionv4.ApplicationWorkClass
+type UnaryCodec = sessionv4.SynchronousUnaryCodec
+type UnaryResultDecoder = sessionv4.UnaryResultDecoder
+type WorkClass = sessionv4.ApplicationWorkClass
+
+const ReadTerminalEof = protocolv4.V4ReadTerminalEof
 
 const (
-	V4WorkShort    = sessionv4.ApplicationShort
-	V4WorkResident = sessionv4.ApplicationResident
+	WorkShort    = sessionv4.ApplicationShort
+	WorkResident = sessionv4.ApplicationResident
 )
 
-type V4OperationOptions struct {
+type OperationOptions struct {
 	DeadlineAtMS, DefaultLifetimeMS, AdmissionNotAfterMS uint64
-	ResponseLimitBytes                                   uint32
+	// DurationMS is a compatibility alias for DefaultLifetimeMS used by the
+	// maintained parity helpers. When both are set, DefaultLifetimeMS wins.
+	DurationMS         uint64
+	ResponseLimitBytes uint32
 	// Set ExplicitResponseLimit when selecting zero. A nonzero value is explicit.
 	// Omission selects the method's local default, then its exact contract maximum.
 	ExplicitResponseLimit            bool
 	AdmissionMode                    uint8
 	ExplicitAdmissionMode            bool
 	RequireExecution, RequireDurable bool
-	Offer                            V4AdmissionOffer
+	Offer                            AdmissionOffer
 }
-type V4AdmissionOffer = protocolv4.AdmissionOfferBounds
+type AdmissionOffer = protocolv4.AdmissionOfferBounds
 
-func (o V4OperationOptions) internal() rpcv4.UnaryPreparation {
-	return rpcv4.UnaryPreparation{DeadlineAtMS: o.DeadlineAtMS, DefaultLifetimeMS: o.DefaultLifetimeMS, AdmissionNotAfterMS: o.AdmissionNotAfterMS, ResponseLimitBytes: o.ResponseLimitBytes, ExplicitResponseLimit: o.ExplicitResponseLimit, AdmissionMode: o.AdmissionMode, ExplicitAdmissionMode: o.ExplicitAdmissionMode, RequireExecution: o.RequireExecution, RequireDurable: o.RequireDurable, Offer: o.Offer}
+func (o OperationOptions) internal() rpcv4.UnaryPreparation {
+	lifetime := o.DefaultLifetimeMS
+	if lifetime == 0 {
+		lifetime = o.DurationMS
+	}
+	return rpcv4.UnaryPreparation{DeadlineAtMS: o.DeadlineAtMS, DefaultLifetimeMS: lifetime, AdmissionNotAfterMS: o.AdmissionNotAfterMS, ResponseLimitBytes: o.ResponseLimitBytes, ExplicitResponseLimit: o.ExplicitResponseLimit, AdmissionMode: o.AdmissionMode, ExplicitAdmissionMode: o.ExplicitAdmissionMode, RequireExecution: o.RequireExecution, RequireDurable: o.RequireDurable, Offer: o.Offer}
 }
 
 // OperationReference is an immutable query locator without Start authority.
@@ -113,10 +122,10 @@ type OperationStartResult struct {
 // joins it; canceled waits retain its result and physical cleanup owner.
 type OperationHandle struct{ inner *sessionv4.UnaryOperation }
 
-func PrepareOperation(ctx context.Context, session *V4Session, method V4UnaryMethod, input []byte, options V4OperationOptions) (*OperationHandle, error) {
+func PrepareOperation(ctx context.Context, session *Session, method UnaryMethod, input []byte, options OperationOptions) (*OperationHandle, error) {
 	return session.PrepareUnary(ctx, method, input, options)
 }
-func (s *V4Session) PrepareUnary(ctx context.Context, method V4UnaryMethod, input []byte, options V4OperationOptions) (*OperationHandle, error) {
+func (s *Session) PrepareUnary(ctx context.Context, method UnaryMethod, input []byte, options OperationOptions) (*OperationHandle, error) {
 	if s == nil || s.prepareUnary == nil || ctx == nil {
 		return nil, ErrTransportUnavailable
 	}
@@ -139,26 +148,35 @@ func (s *V4Session) PrepareUnary(ctx context.Context, method V4UnaryMethod, inpu
 
 // A Session close or canceled preparation competes with this one public
 // handoff. A late encoder cannot publish an unmanageable prepared operation.
-func (s *V4Session) handoffOperation(ctx context.Context, close func()) error {
-	s.mu.Lock()
+func (s *Session) handoffOperation(ctx context.Context, close func()) error {
+	transferred := false
+	defer func() {
+		if !transferred {
+			close()
+		}
+	}()
 	err := ctx.Err()
+	s.mu.Lock()
 	if s.closed {
 		err = ErrOperationClosed
 	}
 	s.mu.Unlock()
 	if err != nil {
-		close()
+		return err
 	}
-	return err
+	transferred = true
+	return nil
 }
 
-// V4ServiceClient captures a fixed Session and method table. It does not follow a
-// controller replacement, refresh a contract implicitly, or retry a request.
-type V4ServiceClient struct {
+// ServiceClient owns one finite method table over its borrowed source. A Session
+// binding stays fixed; a Controller binding selects its already accepting
+// current for new work and may reselect queued unary before BEGIN. Ordinary
+// calls neither acquire connections nor refresh contracts implicitly.
+type ServiceClient struct {
 	inner *sessionv4.UnaryServiceClient
 }
 
-func (s *V4Session) BindUnaryService(ctx context.Context, definition V4UnaryServiceDefinition, options V4ServiceBindOptions) (*V4ServiceClient, error) {
+func (s *Session) BindUnaryService(ctx context.Context, definition UnaryServiceDefinition, options ServiceBindOptions) (*ServiceClient, error) {
 	if s == nil || s.bindUnaryMethods == nil {
 		return nil, ErrTransportUnavailable
 	}
@@ -178,22 +196,22 @@ func (s *V4Session) BindUnaryService(ctx context.Context, definition V4UnaryServ
 		client.Close()
 		return nil, ErrOperationClosed
 	}
-	return &V4ServiceClient{inner: client}, nil
+	return &ServiceClient{inner: client}, nil
 }
 
-func (c *V4ServiceClient) Contract(method V4MethodSelector) V4ContractSnapshot {
+func (c *ServiceClient) Contract(method MethodSelector) ContractSnapshot {
 	if c == nil || c.inner == nil {
-		return V4ContractSnapshot{Type: method.Type, Error: ErrOperationClosed}
+		return ContractSnapshot{Type: method.Type, Error: ErrOperationClosed}
 	}
 	if err := c.inner.SelectMethod(method); err != nil {
-		return V4ContractSnapshot{Type: method.Type, Error: err}
+		return ContractSnapshot{Type: method.Type, Error: err}
 	}
 	return c.inner.Contract(method.Type)
 }
 
 // Refresh fills caller-owned output with independent method outcomes. A top
 // level error means selection or aggregate work admission failed before work.
-func (c *V4ServiceClient) Refresh(ctx context.Context, methods []V4MethodSelector, output []V4ContractSnapshot) error {
+func (c *ServiceClient) Refresh(ctx context.Context, methods []MethodSelector, output []ContractSnapshot) error {
 	if c == nil || c.inner == nil {
 		return ErrOperationClosed
 	}
@@ -210,17 +228,17 @@ func (c *V4ServiceClient) Refresh(ctx context.Context, methods []V4MethodSelecto
 	return c.inner.Refresh(ctx, selected[:len(methods)], output)
 }
 
-func (c *V4ServiceClient) UpdateContract(ctx context.Context, method V4MethodSelector, digest [32]byte) (V4ContractSnapshot, error) {
+func (c *ServiceClient) UpdateContract(ctx context.Context, method MethodSelector, digest [32]byte) (ContractSnapshot, error) {
 	if c == nil || c.inner == nil {
-		return V4ContractSnapshot{}, ErrOperationClosed
+		return ContractSnapshot{}, ErrOperationClosed
 	}
 	if err := c.inner.SelectMethod(method); err != nil {
-		return V4ContractSnapshot{Type: method.Type, Error: err}, err
+		return ContractSnapshot{Type: method.Type, Error: err}, err
 	}
 	return c.inner.UpdateContract(ctx, method.Type, digest)
 }
 
-func (c *V4ServiceClient) PrepareMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (*OperationHandle, error) {
+func (c *ServiceClient) PrepareMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (*OperationHandle, error) {
 	if c == nil || c.inner == nil {
 		return nil, ErrOperationClosed
 	}
@@ -234,7 +252,7 @@ func (c *V4ServiceClient) PrepareMethod(ctx context.Context, method V4MethodSele
 	return &OperationHandle{inner: op}, nil
 }
 
-func (c *V4ServiceClient) DispatchMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (*OperationHandle, OperationStartResult, error) {
+func (c *ServiceClient) DispatchMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (*OperationHandle, OperationStartResult, error) {
 	o, err := c.PrepareMethod(ctx, method, input, options)
 	if err != nil {
 		return nil, OperationStartResult{}, err
@@ -242,7 +260,7 @@ func (c *V4ServiceClient) DispatchMethod(ctx context.Context, method V4MethodSel
 	return o, o.StartContext(ctx), nil
 }
 
-func (c *V4ServiceClient) CallMethod(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions) (Result, error) {
+func (c *ServiceClient) CallMethod(ctx context.Context, method MethodSelector, input []byte, options OperationOptions) (Result, error) {
 	if c == nil || c.inner == nil {
 		return Result{}, ErrOperationClosed
 	}
@@ -258,8 +276,8 @@ func (c *V4ServiceClient) CallMethod(ctx context.Context, method V4MethodSelecto
 	return result, err
 }
 
-func (s *V4Session) BindService(method V4UnaryMethod) (*V4ServiceClient, error) {
-	if s == nil || s.bindUnaryService == nil || method.Decode == nil || method.Contract == [32]byte{} || method.WorkClass > V4WorkResident {
+func (s *Session) BindService(method UnaryMethod) (*ServiceClient, error) {
+	if s == nil || s.bindUnaryService == nil || method.Decode == nil || method.Contract == [32]byte{} || method.WorkClass > WorkResident {
 		return nil, ErrTransportUnavailable
 	}
 	s.mu.Lock()
@@ -278,9 +296,9 @@ func (s *V4Session) BindService(method V4UnaryMethod) (*V4ServiceClient, error) 
 		client.Close()
 		return nil, ErrOperationClosed
 	}
-	return &V4ServiceClient{inner: client}, nil
+	return &ServiceClient{inner: client}, nil
 }
-func (c *V4ServiceClient) Prepare(ctx context.Context, input []byte, options V4OperationOptions) (*OperationHandle, error) {
+func (c *ServiceClient) Prepare(ctx context.Context, input []byte, options OperationOptions) (*OperationHandle, error) {
 	if c == nil || c.inner == nil {
 		return nil, ErrOperationClosed
 	}
@@ -290,7 +308,7 @@ func (c *V4ServiceClient) Prepare(ctx context.Context, input []byte, options V4O
 	}
 	return &OperationHandle{inner: op}, nil
 }
-func (c *V4ServiceClient) Dispatch(ctx context.Context, input []byte, options V4OperationOptions) (*OperationHandle, OperationStartResult, error) {
+func (c *ServiceClient) Dispatch(ctx context.Context, input []byte, options OperationOptions) (*OperationHandle, OperationStartResult, error) {
 	o, err := c.Prepare(ctx, input, options)
 	if err != nil {
 		return nil, OperationStartResult{}, err
@@ -298,7 +316,7 @@ func (c *V4ServiceClient) Dispatch(ctx context.Context, input []byte, options V4
 	started := o.StartContext(ctx)
 	return o, started, nil
 }
-func (c *V4ServiceClient) Call(ctx context.Context, input []byte, options V4OperationOptions) (Result, error) {
+func (c *ServiceClient) Call(ctx context.Context, input []byte, options OperationOptions) (Result, error) {
 	if c == nil || c.inner == nil {
 		return Result{}, ErrOperationClosed
 	}
@@ -314,18 +332,18 @@ func (c *V4ServiceClient) Call(ctx context.Context, input []byte, options V4Oper
 	return result, err
 }
 
-func (c *V4ServiceClient) Close() {
+func (c *ServiceClient) Close() {
 	if c != nil && c.inner != nil {
 		c.inner.Close()
 	}
 }
-func (c *V4ServiceClient) CleanupStatus() CleanupStatus {
+func (c *ServiceClient) CleanupStatus() CleanupStatus {
 	if c == nil || c.inner == nil {
 		return CleanupStatus{Complete: true, Status: protocolv4.V4CleanupStateComplete, CoreCleanup: protocolv4.V4CoreCleanupComplete}
 	}
 	return publicCleanupStatus(c.inner.CleanupStatus())
 }
-func (c *V4ServiceClient) WaitCleanup(ctx context.Context) error {
+func (c *ServiceClient) WaitCleanup(ctx context.Context) error {
 	if c == nil || c.inner == nil {
 		return ErrOperationClosed
 	}
@@ -455,13 +473,13 @@ func (o *OperationHandle) WaitCleanup(ctx context.Context) error {
 type OperationObservation = rpcv4.ExecutionObservation
 type OperationManagementResult = rpcv4.ManagementResponse
 
-func (s *V4Session) QueryOperation(ctx context.Context, ref OperationReference, timeoutMS uint64) (OperationManagementResult, error) {
+func (s *Session) QueryOperation(ctx context.Context, ref OperationReference, timeoutMS uint64) (OperationManagementResult, error) {
 	if s == nil || s.referenceManagement == nil {
 		return OperationManagementResult{}, ErrTransportUnavailable
 	}
 	return s.referenceManagement(ctx, ref.inner, false, timeoutMS)
 }
-func (s *V4Session) RequestOperationCancel(ctx context.Context, ref OperationReference, timeoutMS uint64) (OperationManagementResult, error) {
+func (s *Session) RequestOperationCancel(ctx context.Context, ref OperationReference, timeoutMS uint64) (OperationManagementResult, error) {
 	if s == nil || s.referenceManagement == nil {
 		return OperationManagementResult{}, ErrTransportUnavailable
 	}

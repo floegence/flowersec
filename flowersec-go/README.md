@@ -1,7 +1,8 @@
 # Flowersec for Go
 
-The Go v4 module lets services open end-to-end encrypted sessions and use RPC,
-notifications, and reliable byte streams without managing connection details.
+The Go SDK opens end-to-end encrypted sessions with reliable streams, typed
+application services, notifications and bounded connection ownership. The
+selected module release determines the transport protocol.
 
 ## Install
 
@@ -9,157 +10,126 @@ notifications, and reliable byte streams without managing connection details.
 go get github.com/floegence/flowersec/flowersec-go/v6
 ```
 
-## Public API
+## Supported Connections
 
-### One-shot client
+`Connect` establishes authenticated direct or tunneled sessions over the current Flowersec v4 WebSocket and raw QUIC carriers. `NewConnectionController` manages qualified reconnections while preserving each Session's ownership.
+
+## One-shot connections
+
+Trusted host composition supplies the original clock, verification registry,
+resource accounts, identity, material source and explicit pool or live spend
+authority. Applications use one `TransportEnvironment` for these owners.
 
 ```go
-artifact, err := flowersec.ParseArtifact(encoded)
-lease, err := flowersec.NewArtifactLease(artifact, commitSpend)
-rpcHandlers := flowersec.NewRPCHandlers()
-err = rpcHandlers.HandleRPC(typeID, rpcHandler)
-err = rpcHandlers.HandleNotification(notificationID, notificationHandler)
-session, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{
-    TrustRoots: trustRoots,
-    Origin: "https://app.example",
-    RPCHandlers: rpcHandlers,
+environment, err := flowersec.NewTransportEnvironment(environmentOptions)
+if err != nil {
+    return err
+}
+session, err := flowersec.Connect(ctx, source, flowersec.ConnectorOptions{
+    Environment: environment,
+    ConnectOptions: connectOptions,
 })
+if err != nil {
+    return err
+}
 metadata, err := flowersec.NewStreamMetadata(map[string]any{"request_id": "req-1"})
+if err != nil {
+    return err
+}
 stream, err := session.OpenStream(ctx, "example", metadata)
 ```
 
-### Long-lived client
+A source returns an opaque `ArtifactLease`. `NewArtifactLeaseFromBytes` verifies
+bounded signed material with the supplied trust owners; `NewConnectionMaterial`
+captures the original lease and identity. `ConnectMaterial` consumes already
+acquired material. `ConnectPool` uses only installed, unspent local pool material
+and never replenishes it during acquisition. Pool and live authority inputs
+remain explicit and cannot silently substitute for one another.
 
-```go
-rpcHandlers := flowersec.NewRPCHandlers()
-_ = rpcHandlers.HandleRPC(typeID, rpcHandler)
-controller, err := flowersec.NewConnectionController(source, flowersec.ConnectionControllerOptions{
-    Connector: flowersec.ConnectorOptions{
-        TrustRoots: trustRoots,
-        Origin: "https://app.example",
-        RPCHandlers: rpcHandlers,
-    },
-})
-controller.Start(ctx)
-snapshot := controller.Snapshot()
-```
+`Session` exposes stream operations, typed service binding, liveness, rekey,
+Drain, termination and cleanup observation. Application plans, method contracts
+and finite reservations are captured before material acquisition. Each accepted
+stream retains its original metadata and owner; cancellation does not replay
+an operation or move a stream into a replacement Session.
 
-The same frozen handler definition is installed in every new Session. Each
-generation has a fresh router and old Session operations are never replayed.
+## Long-lived connections
 
-For the complete durable `ArtifactLease` spend workflow, see the
-[Go cookbook](example_client_test.go). The spend record must be committed
-before the connector can send connection credentials.
+`NewConnectionController` takes `ConnectionControllerOptions` containing the
+original environment and `ControllerOptions`. Its `ControllerSource` creates
+one fresh local preparation per attempt. `ControllerCharges` supplies the
+admission charges before construction. A source preparation transfers cleanup
+responsibility even when it also returns an error.
 
-### Accepted server Session
+The controller publishes only qualified Sessions and retains retiring Sessions
+until physical cleanup completes. `WaitForSession` observes publication;
+`RetryNow` wakes the existing retry wait without bypassing the applicable
+absolute deadline. Replacement never inherits or replays streams, RPCs or
+writes. See the [connection controller guide](../docs/GO_TRANSPORT_V4.md#connection-controller).
 
-```go
-handlers, err := flowersec.NewSessionHandlers(flowersec.SessionHandlerOptions{})
-err = handlers.HandleRPC(typeID, rpcHandler)
-err = handlers.HandleNotification(notificationID, notificationHandler)
-err = handlers.HandleStream("files/read", streamHandler)
-acceptor, err := flowersec.NewAcceptor(flowersec.AcceptorOptions{
-    AllowedOrigins: []string{"https://app.example"},
-    Authorize: authorizeRuntime,
-    ResolveHandlers: func(context.Context, controlplane.RuntimeAuthorizationRequest) (*flowersec.SessionHandlers, error) {
-        return handlers, nil
-    },
-    OnSession: serveSession,
-})
-httpServer, err := flowersec.NewWebSocketHTTPServer(flowersec.WebSocketHTTPServerOptions{
-    Handler: acceptor.Handler(), TLSConfig: tlsConfig,
-})
-listener, err := net.Listen("tcp", ":8443")
-go httpServer.Serve(listener)
-```
+## Accepted Sessions and listeners
 
-`SessionHandlers` belongs only to accepted server Sessions. The Acceptor
-creates a fresh RPC router and owns `SessionHandlers.Serve(...)` for each
-accepted Session. `Handler()` is intentionally fail-closed when installed on a
-caller-owned `http.Server`; `NewWebSocketHTTPServer(...)` owns the TLS boundary,
-forces TLS 1.3 only, and disables session tickets before the first handshake.
+`NewAcceptor(ctx, AcceptorOptions{Environment: environment, ServeOptions: options})`
+returns the original `ServeHandle`. Its carrier-specific accept methods perform
+verification, durable admission, Noise and READY before returning an
+authenticated `Session`. `ServeOptions` contains the admitted aggregate
+configuration and original reservation.
 
-An application that already owns an authenticated numeric-loopback HTTP
-bridge may use `Issuer.IssuePrivateLoopbackDirect(...)` together with
-`Acceptor.PrivateLoopbackHandler(...)`. This is the separate
-`flowersec-private-loopback/1` profile: it requires a fixed direct path, exact
-same-origin loopback requests, and an application authorization callback
-before WebSocket upgrade. It does not add a TLS mode to `flowersec/3` or
-weaken `Acceptor.Handler()`.
+`NewWebSocketServer`, `NewQUICServer` and `NewWebTransportServer` own the native
+listener boundary and finite provider budgets. `ServeHandle.AcceptWebSocket`
+reports whether the request was physically hijacked, including on error; a host
+must not write another HTTP response after hijack. Shared environments, trust
+roots and key providers retain independent ownership. See the
+[Go transport guide](../docs/GO_TRANSPORT_V4.md) for complete construction and
+cleanup order, accepted material sources and signed-route admission.
 
-The complete boundary is documented in the
-[private loopback profile](../docs/PRIVATE_LOOPBACK_V1.md).
+Application services are installed in the original application plan. Raw stream
+handlers retain their original `StreamOwnership`; typed service and message
+handlers retain their own schema, publication and cleanup contracts. The native
+`ServeHTTPStream` and `StartHTTPStream` entry points serve HTTP, keep-alive and
+upgrade on an already authorized current Stream without opening a listener port.
 
-For application streams on any established connector or accepted Session, use
-`NewStreamHandlers(...)`, register handlers with `HandleStream(...)`, and run
-`Serve(...)` under the Session owner's context. The same bounded dispatcher is
-composed by `SessionHandlers`.
+## Relay and proxy services
 
-Additional server runtimes use the same server registry:
+`NewTunnelRuntime` owns a bounded set of original relay pairs and routes. Relay
+work remains separate from application Sessions and end-to-end keys. Pair and
+route registration retains original durable claim, authorization and cleanup
+owners.
 
-```go
+`NewProxyServer` binds a finite upstream configuration and original handler plan.
+HTTP and WebSocket proxy operations keep their cancellation, backpressure and
+cleanup ownership. Upstream routing and application authorization remain part
+of the supplied current service configuration.
 
-tunnel, err := flowersec.NewTunnelRuntime(flowersec.TunnelRuntimeOptions{
-    Listeners: []flowersec.TunnelListener{flowersec.NewWebSocketTunnelListener()},
-    Authorize: authorizeTunnelRuntime,
-})
-httpServer, err := flowersec.NewWebSocketHTTPServer(flowersec.WebSocketHTTPServerOptions{
-    Handler: tunnel.Handler(), TLSConfig: tlsConfig,
-})
-listener, err := net.Listen("tcp", ":8443")
-go httpServer.Serve(listener)
+## Cleanup
 
-proxy, err := flowersec.NewProxyServer(flowersec.ProxyServerOptions{
-    Upstream: upstreamURL,
-})
-err = proxy.RegisterStreamHandlers(handlers)
+Close seals new work. Drain preserves already accepted work on its original
+Session. `WaitCleanup` observes real completion; canceling a cleanup wait neither
+releases provider work nor manufactures completion. Shared clocks, resource
+roots, executors, trust stores and durable stores remain caller-owned.
 
-streamHandlers, err := flowersec.NewStreamHandlers(flowersec.StreamHandlerOptions{})
-err = proxy.RegisterStreamHandlers(streamHandlers)
-```
+`ExampleConnect` exercises current material acquisition, typed RPC,
+notification, reliable streams and cleanup with an engineering host fixture.
+It checks the original SQLite spend commitment and writes a separate
+synchronized receipt containing no artifact or key material. Its host setup
+currently imports the internal interoperability harness, so it is not a
+standalone public SDK consumer example.
 
-RPC and notification registrations share one nonzero uint32 namespace. Consuming
-a registry freezes it; later registrations return `ErrHandlerRegistryFrozen`.
-Stream kinds contain 1 through 128 canonical UTF-8 bytes, reject leading or
-trailing Unicode whitespace, controls, and unassigned scalars, and reserve the
-Flowersec-reserved RPC names.
-`NewStreamMetadata(...)` validates and
-defensively copies metadata before a stream is opened. Handler and connection
-state remain private, and public failures are bounded `ConnectError` and
-`SessionError` values.
+Public host composition can import bounded signed credentials with
+`NewSignedMapCodec` and canonical method contracts with `NewServiceContractCodec`.
+Their backing-byte functions expose finite allocation requirements; these
+codecs do not grant service access or admission authority. A
+`PoolSpendObservation` attached to `PoolSessionInput` reports the original
+SQLite consumer's status and cannot replace its durable history.
 
-The executable `ExampleConnect` compiles the complete consumer lifecycle,
-including an atomically created and synchronized durable spend record. Reusing
-the record key fails closed; the record contains no artifact or key material.
+## Server control plane
 
-An omitted `ConnectorOptions.ConnectTimeout` uses the shared ten-second default. `ConnectorOptions.Origin` may be empty when the artifact uses WSS or raw QUIC; a non-empty absolute HTTP(S) origin registers WebTransport eligibility, whose secure dial path still requires HTTPS. Go enforces CA and pin policies from each v3 candidate. A nil `ConnectorOptions.TrustRoots` uses platform roots for CA candidates, while deployment-provided roots support private CAs; pin candidates use the declared active leaf-certificate SHA-256 set as the sole identity decision. Invalid connector inputs and options are returned as `ConnectError` values. `RPCError.Message` is optional; `RPCError.MessagePresent` distinguishes an explicitly empty message from an omitted message. `Session.WaitTermination(...)` is the sole public termination waiting entrypoint and returns a redacted `SessionTermination` with the stable close reason; cancellation of the wait is returned separately. A long-lived connection uses `NewConnectionController(...)` with a refreshable `ArtifactSource`; every attempt acquires a fresh lease and establishes a new one-shot `Session`. Its structured decisions are `terminal`, `retryable`, or an absolute `retry_after` deadline. `RetryNow` only wakes the current wait, and streams, RPCs, and writes from a terminated session are never migrated or replayed.
-
-## Supported Connections
-
-The Go SDK supports WebSocket, raw QUIC, and WebTransport across H4: direct
-endpoint dial, client and server endpoint tunnel dial, direct listen, and
-tunnel listener pairing. `NewTunnelRuntime(...)` composes
-`NewWebTransportTunnelListener(...)` for opaque paired stream and datagram
-forwarding. These production-backed direct and tunnel paths make Go the H4
-runtime that claims the complete `webtransport-server` profile. The SDK provides
-the direct-only `NewAcceptor` for application-owned
-server sessions, the separate `NewTunnelRuntime` for opaque tunnel pairing and
-forwarding, and `NewProxyServer` for bounded browser HTTP/WebSocket proxy
-handling. A tunnel runtime never owns a `Session`, application handler, or E2EE
-PSK.
-
-## Server Control Plane
-
-Go service control planes use `github.com/floegence/flowersec/flowersec-go/v6/controlplane` to issue direct artifacts or complementary tunnel pairs and to validate `flowersec-runtime` authorization callbacks. Endpoint sets, issued artifacts, authorization records, runtime requests, and responses are opaque. Artifact and record bytes cross only explicit serialization methods; the caller owns permissions, placement, durable one-time lease state, and upstream selection.
-
-See the executable `controlplane.ExampleIssuer_IssueTunnelPair` example for artifact delivery and authorization-record persistence. The package exposes opaque endpoint, issuance, authorization-record, and runtime callback types.
-
-## Connection Notes
-
-Direct and relayed connections return the same `Session`. WebSocket, raw QUIC,
-and WebTransport are selected internally for either artifact-bound direct or
-tunnel path when the candidate and runtime capability match. The SDK keeps
-credentials, routing, and transport state out of the application API.
+Go service control planes use
+`github.com/floegence/flowersec/flowersec-go/v6/controlplane` for current issuance,
+paired tunnel publication, live authorization and independent durable store
+owners. `flowersec-runtime` installs `relay`, `direct-server` or `direct-client`
+from independently supplied host inputs. See
+[runtime deployment](../docs/RUNTIME_DEPLOYMENT.md) for the finite schema,
+service bindings and execution continuity requirements.
 
 ## Verify
 
@@ -167,4 +137,7 @@ credentials, routing, and transport state out of the application API.
 go test ./...
 ```
 
-See the [API contract](../docs/API_CONTRACT.md), [Transport v3 architecture](../docs/TRANSPORT_V3_ARCHITECTURE.md), [threat model](../docs/THREAT_MODEL.md), and [error model](../docs/ERROR_MODEL.md).
+See the [API contract](../docs/API_CONTRACT.md),
+[Go transport guide](../docs/GO_TRANSPORT_V4.md),
+[threat model](../docs/THREAT_MODEL.md), and
+[error model](../docs/ERROR_MODEL.md).

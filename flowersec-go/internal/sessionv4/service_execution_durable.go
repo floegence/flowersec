@@ -99,7 +99,7 @@ func (d *ServiceDispatch) stepDurableProvider(i *serviceInvocation, x *serviceEx
 				}
 				var err error
 				if i.header.Fields().AdmissionMode == 1 {
-					x.permit, err = i.plan.executor.TryAcquire(i.method.WorkClass, task, backing)
+					x.permit, err = i.plan.executor.tryAcquireInGroup(i.plan.applicationGroup, i.method.WorkClass, task, backing)
 				} else {
 					i.queued, err = i.plan.executor.prepareApplication(i.plan.applicationGroup, i.method.WorkClass, task, backing)
 				}
@@ -200,6 +200,9 @@ func (i *serviceInvocation) runDurableExecution() {
 			failure = nil
 		}
 		i.mu.Lock()
+		// Preserve the same final outcome for diagnostic cleanup: a committed
+		// result wins over a later callback or application cleanup failure.
+		i.failure = failure
 		i.returned = true
 		i.publication.endHandler()
 		if failure != nil && !i.execution.outputFinished {

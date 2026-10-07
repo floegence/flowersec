@@ -1,3 +1,4 @@
+import { DiagnosticActivity, type DiagnosticObserver } from "./diagnosticObservation.js";
 import { beginReferenceSave, referenceStoreRetention, referenceSaveFailure, referenceSaveReport, type V4OperationReferenceStore, type ReferenceSaveReport } from "../operationReferenceStore.js";
 import type { ServiceBindingTarget } from "./serviceBindingConfig.js";
 import { operationReference, type V4OperationReference } from "../operationReference.js";
@@ -51,6 +52,7 @@ export interface RPCUnaryPreparationOptions {
   readonly admission?: "queued" | "try_now";
 }
 export interface RPCUnaryTransfer {
+  readonly diagnostic?: DiagnosticActivity | undefined;
   readonly header: ApplicationHeader;
   readonly contract: ServiceContractSnapshot;
   readonly request: RPCPayload;
@@ -102,7 +104,14 @@ class UnaryPublication implements RPCPublicationGuard {
   }
   current(): boolean { return !this.#closed && this.source.current(); }
   close(): void { this.#closed = true; }
-  admitted(): void { this.#submitted = true; }
+  admitted(): void { this.#submitted = true; this.source.admitted?.(); }
+  reroute(source: RPCPublicationGuard): RPCPublicationGuard {
+    if (this.#closed || this.#submitted) throw new RPCProtocolError("rpc_request_owner");
+    // The original preparation, execution deadline, Offer cutoff and not-before
+    // remain exact. No route selection creates another age window.
+    this.preparation.check(); this.cutoff?.check(); this.deadline.check();
+    return new UnaryPublication(source, this.deadline, this.preparation, this.cutoff, this.notBefore);
+  }
   publicationRemainingMS(): bigint {
     let remaining = this.deadline.remainingMS();
     if (!this.#submitted) {
@@ -146,6 +155,7 @@ export function rpcUnaryPreparationCharges(contract: Pick<ServiceContractSnapsho
  * An application encoder may outlive cancellation; only its actual exit frees
  * its input/output allowance and permit. */
 export class RPCUnaryPreparation<Exchange extends RPCPreparedExchange = RPCUnaryExchange> {
+  #diagnostic: DiagnosticActivity | undefined;
   #operationReference: V4OperationReference | undefined;
   readonly #localAuthority: string | undefined;
   readonly #namespace: string;
@@ -194,7 +204,7 @@ export class RPCUnaryPreparation<Exchange extends RPCPreparedExchange = RPCUnary
     clock: TrustedClock, parent: TrustedDeadline, random: RandomFill, delivery: ReceiveDeliveryGate,
     group: ApplicationGroup, authentication: V4AuthenticatedContext, cleanup: SessionCleanup,
     call: RPCCallReservation, completion: CompletionReservation, workClass: ApplicationWorkClass,
-    inputBytes: number, runtimeBytes: bigint, references: readonly ResourceReference[], localAuthority?: string, destination?: ServiceBindingTarget, resume = false) {
+    inputBytes: number, runtimeBytes: bigint, references: readonly ResourceReference[], localAuthority?: string, destination?: ServiceBindingTarget, resume = false, diagnostics?: DiagnosticObserver) {
     this.#localAuthority = localAuthority; this.#namespace = namespace; this.#destination = destination;
     this.#workClass = workClass; this.#inputBytes = inputBytes; this.#clock = clock;
     const limit = unaryResponseLimit(contract, options), charges = rpcUnaryPreparationCharges(contract, method, limit, inputBytes, runtimeBytes);
@@ -207,6 +217,7 @@ export class RPCUnaryPreparation<Exchange extends RPCPreparedExchange = RPCUnary
     this.#method = method; this.#target = target; this.#call = call; this.#completion = completion;
     this.#group = group; this.#authentication = authentication; this.#cleanup = cleanup; this.#busy = true;
     try {
+      this.#diagnostic = new DiagnosticActivity(diagnostics, "application");
       cleanup.startJob(); this.#job = true;
       this.#exchangeReference = references[0]!.take(charges[0]!); this.#responseReference = references[2]!.take(charges[2]!);
       this.#request = new RPCPayload(contract.requestMaxBytes, runtimeBytes, references[1]!);
@@ -391,11 +402,12 @@ export class RPCUnaryPreparation<Exchange extends RPCPreparedExchange = RPCUnary
       // No host callback, await or observer occurs between this scalar gate
       // and sealing authority. Subsequent failures can never restore it.
       this.#call!.inheritClass(workClass); this.#state = "starting";
-      const transfer: RPCUnaryTransfer = { header: this.#header!, contract: this.#contract!, request: this.#request!,
+      const transfer: RPCUnaryTransfer = { diagnostic: this.#diagnostic, header: this.#header!, contract: this.#contract!, request: this.#request!,
         deadline: this.#guard!.deadline, guard: this.#guard!, references: [this.#exchangeReference!, this.#responseReference!],
         ...(this.#completionDeadline === undefined ? {} : { completionDeadline: this.#completionDeadline }),
         call: this.#call!, completion: this.#completion!, method: this.#method! };
       this.#exchange = reserved === undefined ? this.#target!.start(transfer, claim) : reserved.start(transfer, claim); claim = undefined;
+      this.#diagnostic = undefined;
       this.#checkLive();
       this.#request = undefined; this.#exchangeReference = this.#responseReference = undefined;
       this.#call = undefined; this.#completion = undefined; this.#state = "started";
@@ -471,7 +483,7 @@ export class RPCUnaryPreparation<Exchange extends RPCPreparedExchange = RPCUnary
     if (this.#observed) throw new RPCProtocolError("rpc_request_owner"); this.#observed = true;
     if (this.#reference === undefined || this.#state === "closed" || this.#state === "failed" || this.#state === "started") callback(); else this.#detached = callback;
   }
-  #fail(error: unknown): void { this.#failure ??= error; this.#guard?.close(); this.#exchange?.close(); this.#state = "failed"; this.#collect(); }
+  #fail(error: unknown): void { this.#diagnostic?.failure(error); this.#failure ??= error; this.#guard?.close(); this.#exchange?.close(); this.#state = "failed"; this.#collect(); }
   close(): void {
     if (this.#exchange !== undefined) { this.#exchange.close(); return; }
     if (this.#state === "closed" || this.#state === "failed") return; this.#guard?.close(); this.#state = "closed"; this.#collect();
@@ -493,6 +505,7 @@ export class RPCUnaryPreparation<Exchange extends RPCPreparedExchange = RPCUnary
     const detached = this.#detached; this.#detached = undefined; detached?.();
     this.#abort.abort();
     if (this.#encoding || this.#saving || this.#saveTail) return;
+    this.#diagnostic?.close(); this.#diagnostic = undefined;
     this.#clearEncoding(); this.#request?.close(); this.#request = undefined;
     this.#call?.close(); this.#call = undefined; this.#completion?.close(); this.#completion = undefined;
     this.#exchangeReference?.release(); this.#exchangeReference = undefined; this.#responseReference?.release(); this.#responseReference = undefined;

@@ -14,6 +14,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 type serviceDispatchFixture struct {
@@ -444,6 +445,63 @@ func TestServiceDispatchTryNowRefusesAndQueuedCancellationKeepsInput(t *testing.
 	a.Close()
 	b.Close()
 }
+func TestServiceDispatchIndependentClockLifetimeBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		inside   uint64
+		accepted bool
+	}{
+		{"sender_maximum_exceeds_receiver_by_one", 0, false},
+		{"exact_receiver_maximum", 1, true},
+		{"inside_both_windows", 15000, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Uint32
+			f := newServiceDispatchFixture(t, func(_ context.Context, _ UnaryRequest, output *UnaryResponse) (uint32, error) {
+				calls.Add(1)
+				_, err := output.Write([]byte("accepted"))
+				return 0, err
+			})
+			receiver, err := f.trust.clock.Sample()
+			if err != nil {
+				t.Fatal(err)
+			}
+			sender, err := timev4.NewClock(timev4.Profile{Rate: timev4.Rate{Denominator: 1}, MaxWidthMS: 2000, MaxAgeMS: 100000, MaxRoundTripMS: 1000}, func() (timev4.Tick, error) {
+				return timev4.Tick{Incarnation: [16]byte{2}}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sender.Close()
+			mark, err := sender.Monotonic()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Independent valid intervals overlap even when their lower bounds
+			// differ. The receiver still enforces its exact signed horizon.
+			if err = sender.InstallTrusted(mark, timev4.Interval{LowerMS: receiver.LowerMS + 1, UpperMS: receiver.UpperMS + 1}); err != nil {
+				t.Fatal(err)
+			}
+			deadline, err := timev4.NewAge(sender, f.policy.MessageLifetimeMS-tc.inside, ^uint64(0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.request(t, []byte("input"), 0, deadline.Cap())
+			if err = f.dispatch.Admit(f.receiver, f.publisher); tc.accepted && err != nil {
+				t.Fatal(err)
+			}
+			header, body := f.response(t)
+			if tc.accepted {
+				if header.IsSDKError() || string(body) != "accepted" || calls.Load() != 1 {
+					t.Fatal("valid receiver horizon rejected", header.Kind(), body, calls.Load())
+				}
+			} else if !header.IsSDKError() || !bytes.Equal(body, []byte{0xa1, 0, 8}) || calls.Load() != 0 {
+				t.Fatal("out-of-window request reached application", header.Kind(), body, calls.Load())
+			}
+		})
+	}
+}
+
 func TestServiceDispatchDeadlineClosesOutputButRetainsActualCallback(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once

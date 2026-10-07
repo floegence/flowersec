@@ -132,6 +132,7 @@ type ContractQueryAcquisition struct {
 	failure                               error
 	dependencies                          applicationDependencies
 	knownOwners                           [8]*ContractQuerySnapshots
+	diagnosticOperation                   *DiagnosticOperation
 }
 
 // BeginContractQuery admits the complete detached destination and finite
@@ -251,7 +252,20 @@ func (e *Environment) beginContractQuery(ctx context.Context, s *EnvironmentSess
 		return nil, err
 	}
 	snapshots := &ContractQuerySnapshots{backing: backing, count: len(targets)}
-	q := &ContractQueryAcquisition{environment: e, session: s, plan: plan, ctx: ctx, deadline: deadline, publisher: publisher, initiator: initiator, snapshots: snapshots, count: len(targets), ready: make(chan struct{}), done: make(chan struct{}), protection: protection}
+	diagnosticOperation := diagnosticOperationFromContext(ctx)
+	if claim != nil && claim.diagnosticOperation != nil {
+		diagnosticOperation = claim.diagnosticOperation
+	} else if !diagnosticOperationOwnedFromContext(ctx) {
+		diagnosticOperation = nil
+	}
+	if diagnosticOperation == nil {
+		diagnosticOperation = plan.beginApplicationDiagnostic()
+		if claim != nil {
+			claim.diagnosticOperation = diagnosticOperation
+		}
+	}
+	ctx = withDiagnosticOperation(ctx, diagnosticOperation)
+	q := &ContractQueryAcquisition{environment: e, session: s, plan: plan, ctx: ctx, deadline: deadline, publisher: publisher, initiator: initiator, snapshots: snapshots, count: len(targets), ready: make(chan struct{}), done: make(chan struct{}), protection: protection, diagnosticOperation: diagnosticOperation}
 	for i, target := range targets {
 		q.targets[i] = target
 		q.targets[i].Namespace = strings.Clone(target.Namespace)
@@ -270,6 +284,10 @@ func (e *Environment) beginContractQuery(ctx context.Context, s *EnvironmentSess
 	if err != nil {
 		q.mu.Unlock()
 		snapshots.Close()
+		finishApplicationDiagnosticError(diagnosticOperation, err)
+		if claim != nil && claim.diagnosticOperation == diagnosticOperation {
+			claim.diagnosticOperation = nil
+		}
 		return nil, err
 	}
 	e.queries[slot] = q
@@ -608,6 +626,8 @@ func (e *Environment) watchContractQueriesLocked() bool {
 						q.knownOwners[i] = nil
 					}
 				}
+				finishApplicationDiagnosticError(q.diagnosticOperation, q.failure)
+				q.diagnosticOperation = nil
 				q.environment, q.session, q.ctx, q.deadline = nil, nil, nil, nil
 				q.call = rpcv4.ContractQueryCall{}
 				q.registration = nil

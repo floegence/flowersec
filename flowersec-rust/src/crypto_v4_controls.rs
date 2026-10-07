@@ -105,6 +105,17 @@ struct ProbeSlot {
     eligible: bool,
     stall_generation: u64,
 }
+pub(crate) struct ProbePublication {
+    probe: Arc<Probe>,
+    stall_generation: u64,
+}
+impl ProbePublication {
+    pub(crate) fn complete(&self) {
+        // Native acceptance is independent of a concurrent terminal result or
+        // Session close. It must remain observable through the original probe.
+        self.probe.result.lock().expect("v4 probe result").complete = true;
+    }
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DrainOutcome {
     Pending,
@@ -163,22 +174,35 @@ pub(in super::super) struct State {
     pub(super) drain: Option<Arc<Drain>>,
 }
 impl State {
-    pub(super) fn new(idle_duration_ms: u64, account: &ResourceAccount) -> Result<Self> {
-        let time_profile = account.security_time_profile();
-        let automatic = account.automatic_liveness();
-        let automatic_charge = if automatic.is_some() {
-            Some(Arc::new(account.reserve(ResourceLimits {
+    pub(super) fn preparation_limits(automatic: bool) -> ResourceLimits {
+        if automatic {
+            ResourceLimits {
                 sdk_bytes: 1024,
                 items: 1,
                 timers: 1,
                 work_slots: 1,
                 tasks: 1,
-                sessions: 0,
                 ..ResourceLimits::default()
-            })?))
+            }
         } else {
-            None
-        };
+            ResourceLimits::default()
+        }
+    }
+    pub(super) fn new_prepaid(
+        idle_duration_ms: u64,
+        account: &ResourceAccount,
+        charge: Option<ResourceCharge>,
+    ) -> Result<Self> {
+        let time_profile = account.security_time_profile();
+        let automatic = account.automatic_liveness();
+        if automatic.is_some() != charge.is_some()
+            || charge
+                .as_ref()
+                .is_some_and(|charge| !charge.matches(account, Self::preparation_limits(true)))
+        {
+            return Err(CryptoError::Configuration);
+        }
+        let automatic_charge = charge.map(Arc::new);
         if idle_duration_ms != 0 && idle_duration_ms <= time_profile.elapsed(Duration::ZERO)?.1 {
             return Err(CryptoError::Configuration);
         }
@@ -528,6 +552,7 @@ impl ReliableSession {
         }
         Ok(())
     }
+    #[cfg(test)]
     pub(super) fn start_drain(&mut self, timeout: Duration) -> Result<Arc<Drain>> {
         self.start_drain_bounded(timeout, None)
     }
@@ -581,6 +606,9 @@ impl ReliableSession {
             if slot.phase == Phase::Pending {
                 slot.forced_rejection = Some(Rejection::Draining);
             }
+            if slot.class == Class::Management && slot.phase == Phase::Opening {
+                slot.cancel = true;
+            }
         }
         Ok(drain)
     }
@@ -613,6 +641,11 @@ impl ReliableSession {
                     ceiling: value.u("GOAWAY", "accept_ceiling")?,
                     reason: value.u("GOAWAY", "reason")?,
                 });
+                for slot in &mut self.engine.streams.slots {
+                    if slot.class == Class::Management && slot.phase == Phase::Opening {
+                        slot.cancel = true;
+                    }
+                }
             }
             14 => {
                 let nonce = decode(body, "PING", self.engine.max_frame, Context::default())?
@@ -643,12 +676,26 @@ impl ReliableSession {
         Ok(())
     }
     fn communication_drained(&self) -> bool {
-        self.application
-            .as_ref()
-            .is_none_or(|application| application.ordinary_count().load(Ordering::Acquire) == 0)
+        !self.engine.account.business_work_pending()
+            && self
+                .application
+                .as_ref()
+                .is_none_or(|application| application.ordinary_count().load(Ordering::Acquire) == 0)
             && self.engine.streams.slots.iter().all(|s| {
                 !matches!(s.phase, Phase::Opening | Phase::Pending | Phase::Accepted)
                     && s.queue.is_empty()
+            })
+    }
+    fn business_communication_drained(&self) -> bool {
+        !self.engine.account.business_work_pending()
+            && self
+                .application
+                .as_ref()
+                .is_none_or(|application| application.ordinary_count().load(Ordering::Acquire) == 0)
+            && self.engine.streams.slots.iter().all(|s| {
+                s.class == Class::Management
+                    || (!matches!(s.phase, Phase::Opening | Phase::Pending | Phase::Accepted)
+                        && s.queue.is_empty())
             })
     }
     pub(super) fn poll_lifecycle_deadlines(&mut self) -> Result<bool> {
@@ -666,6 +713,18 @@ impl ReliableSession {
             drain.finish(DrainOutcome::DeadlineAborted);
             self.engine.fail();
             return Ok(true);
+        }
+        if self.engine.streams.draining && self.business_communication_drained() {
+            // The original Session gate seals the management exception once
+            // business communication has ended. Existing store/publication
+            // tails keep their owners; they cannot prolong business Drain.
+            for index in 0..self.engine.streams.slots.len() {
+                let slot = &self.engine.streams.slots[index];
+                if slot.class == Class::Management && slot.accepted() && !slot.cancel {
+                    self.reset_index(index, false)?;
+                    changed = true;
+                }
+            }
         }
         Ok(changed)
     }
@@ -740,6 +799,8 @@ impl ReliableSession {
         let mut body = map(1, 20)?;
         uint(&mut body, 0);
         bytes(&mut body, &probe.nonce);
+        publisher
+            .prepare_publication(body.len().checked_add(44).ok_or(CryptoError::Capacity)?, 1)?;
         if !probe.automatic {
             self.local_liveness_stall();
         }
@@ -772,30 +833,63 @@ impl ReliableSession {
                 sealed?
             };
             publisher.publish(&out[..size])?;
-            let now = self.engine.account.security_time()?;
-            {
-                let mut result = probe.result.lock().expect("v4 probe result");
-                if result.outcome == ProbeOutcome::Pending {
-                    result.complete = true;
-                }
+            let publication = ProbePublication {
+                probe,
+                stall_generation,
+            };
+            if publisher.is_deferred() {
+                let mut tail = crate::crypto_v4::DeferredPublication::handoff(None);
+                tail.probe = Some(publication);
+                publisher.defer_publication(tail);
+                Ok(())
+            } else {
+                self.complete_probe_publication(
+                    publication,
+                    publisher.liveness_stalled(),
+                    publisher.liveness_stall_generation(),
+                )
             }
-            probe.observe(Some(now));
-            if probe.automatic {
-                let submission_ms = self
-                    .engine
-                    .streams
-                    .controls
-                    .automatic
-                    .unwrap()
-                    .submission_ms;
-                let slot = self.engine.streams.controls.probes[index]
-                    .as_mut()
-                    .ok_or(CryptoError::State)?;
+        })();
+        out.as_mut_slice().zeroize();
+        self.engine.streams.output = out;
+        result?;
+        Ok(true)
+    }
+    pub(super) fn complete_probe_publication(
+        &mut self,
+        publication: ProbePublication,
+        liveness_stalled: bool,
+        current_stall_generation: u64,
+    ) -> Result<()> {
+        publication.complete();
+        let ProbePublication {
+            probe,
+            stall_generation,
+        } = publication;
+        let now = self.engine.account.security_time()?;
+        probe.observe(Some(now));
+        if probe.automatic {
+            let submission_ms = self
+                .engine
+                .streams
+                .controls
+                .automatic
+                .ok_or(CryptoError::State)?
+                .submission_ms;
+            if let Some(slot) = self
+                .engine
+                .streams
+                .controls
+                .probes
+                .iter_mut()
+                .flatten()
+                .find(|slot| Arc::ptr_eq(&slot.owner, &probe))
+            {
                 slot.handoff = Some(now);
                 slot.stall_generation = stall_generation;
                 slot.eligible = probe.raw().outcome == ProbeOutcome::Pending
-                    && !publisher.liveness_stalled()
-                    && publisher.liveness_stall_generation() == stall_generation
+                    && !liveness_stalled
+                    && current_stall_generation == stall_generation
                     && now.clock_incarnation == probe.started.clock_incarnation
                     && now
                         .monotonic_sample
@@ -803,13 +897,9 @@ impl ReliableSession {
                         .and_then(|delta| probe.profile.elapsed(delta).ok())
                         .is_some_and(|(_, upper)| upper <= submission_ms);
             }
-            self.check()?;
-            self.engine.streams.controls.activity(now)
-        })();
-        out.as_mut_slice().zeroize();
-        self.engine.streams.output = out;
-        result?;
-        Ok(true)
+        }
+        self.check()?;
+        self.engine.streams.controls.activity(now)
     }
     pub(super) fn poll_slow_consumers(&mut self) -> Result<()> {
         let now = self.engine.account.security_time()?.monotonic_sample;

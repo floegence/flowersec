@@ -87,31 +87,23 @@ Flowersec はアプリケーションセッションを、それを運ぶネッ�
 | アプリケーションストリームハンドラー | 対応 | 対応 | 対応 | 対応 |
 | 長時間接続の自動復旧 | 対応 | 対応 | 対応 | 対応 |
 | ネゴシエート済み非信頼メッセージ | 対応 | 対応 | 非対応 | 対応 |
-| クライアント RPC ハンドラー | 対応 | 対応 | 非対応 | 対応 |
-| サーバー側セッション受け入れ | 対応 | 対応 | 非対応 | 対応 |
-| サーバーセッションハンドラー | 対応 | 対応 | 非対応 | 対応 |
+| クライアント RPC ハンドラー | 対応 | 対応 | 対応 | 対応 |
+| サーバー側セッション受け入れ | 対応 | 対応 | 対応 | 対応 |
+| サーバーセッションハンドラー | 対応 | 対応 | 対応 | 対応 |
 | コントロールプレーンでの発行と認可 | 対応 | 非対応 | 非対応 | 非対応 |
-| 直接接続とトンネルのアドミッション | 対応 | 対応 | 非対応 | 対応 |
+| 直接接続とトンネルのアドミッション | 対応 | 対応 | 対応 | 対応 |
 | HTTP と WebSocket ProxyServer | 対応 | 対応 | 非対応 | 対応 |
 | キャリア非依存のストリーム契約 | 対応 | 対応 | 対応 | 対応 |
-| Transport v3 ワイヤーセキュリティ | 対応 | 対応 | 対応 | 対応 |
+| Transport v4 ワイヤーセキュリティ | 対応 | 対応 | 対応 | 対応 |
 <!-- capability-table:end -->
-デプロイ profile は、プラットフォームでの利用可否と共通の Flowersec アプリケーションプロトコルを分離します。
 
-| Profile | ランタイム | 必須の carrier と role | オプション |
-| --- | --- | --- | --- |
-| `native-server-core` | Go、Rust、Node.js | WebSocket と raw QUIC の endpoint client、direct server、opaque tunnel runtime | WebTransport adapter |
-| `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
-| `apple-client` | Apple プラットフォームの Swift | WSS endpoint client | なし |
-| `webtransport-server` | Go | WebTransport direct server と opaque tunnel runtime | なし |
+デプロイ profile は必要なネイティブまたはブラウザーの carrier と役割を記述します。各 SDK ガイドは現在の API と provider の適格性を分けて説明します。ソースの宣言は実行検証を意味しません。
 
-機械可読な native-server-core profile には、native runtime ごとに 6 個、合計 18 個の集約 runtime-role-carrier tuple と、対応済みの path 固有 server unit 24 個があります。Go H4 は、WebTransport server tuple 2 個と path 固有 unit 2 個を追加します。interoperability matrix は direct cell 18 個と tunnel cell 18 個を別に宣言します。release gate は Go を含む direct cell 10 個と pairwise tunnel cell 14 個をすべて検証し、残る direct cell 8 個と tunnel cell 4 個は明示的に未検証です。さらに 4 個の WSS client profile が、Swift と browser TypeScript から Go への direct および tunnel path を検証します。profile が Artifact、handshake、RPC、stream、close、rekey、authorization の wire semantics を変更することはありません。
+現在のプロトコルは認証された接続材料、独立した名前空間の信頼、有界セッション、型付きサービスと明示的な cleanup を使用します。直接接続とトンネルの相互運用性は実行可能なマトリクスと元の provider で検証します。リリースはパッケージの公開と registry readback を行い、受け入れテストは実行しません。
 
-各パッケージが対応するプラットフォームと接続方式の組み合わせは、SDK ガイドで確認してください。
+WebTransport には設定されたネイティブまたはブラウザー provider が必要です。ブラウザー対応は実際の WebTransport API と証明書ポリシー機能によって決まります。現在の carrier、listener、relay の範囲は各 SDK ガイドを参照してください。
 
-WebTransport は必須の native-server carrier contract に含まれないオプションの adapter です。Go は独立した完全な H4 webtransport-server profile を宣言し、Browser profile はブラウザーの WebTransport API が利用可能な場合に H3 を使用します。Node.js と Rust は現在 production WebTransport adapter を提供しません。Go、Rust、Node.js の native-server carrier surface は WebSocket と raw QUIC であり、pairwise interoperability は matrix の supported entry だけが宣言します。
-
-`flowersec-private-loopback/1` は公開 deployment capability registry の外にある製品専用 profile です。専用の Go server と TypeScript browser API は、application が認証する numeric-loopback HTTP bridge だけに制限されます。
+署名された `local_loopback` アクセスクラスは、同一マシン上でアプリケーションが認証する HTTP ブリッジを提供します。現在のセッションプロトコルを使用し、ローカル provider の設定を必要とします。
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -119,14 +111,14 @@ WebTransport は必須の native-server carrier contract に含まれないオ�
 ## セキュリティ
 
 - 直接接続とリレー接続のどちらでも、アプリケーションデータはエンドツーエンドで暗号化されます。
-- TLS 信頼ポリシーは各 v3 トランスポート候補に結び付けられます。公開またはデプロイ提供の CA ルートと明示的なリーフ証明書 pin は排他的で、失敗後に降格しません。
-- `flowersec-private-loopback/1` は分離された transport envelope であり、`flowersec/3` の TLS mode や capability ではありません。専用 API は authority が同じ numeric-loopback origin と一致し、server application が upgrade 前に request を認可した場合に限り、変更されていない CA-mode v3 candidate を `ws://` にマップします。通常の Go、TypeScript、Rust、Swift、Provider、tunnel path はこの envelope を拒否します。
+- TLS 信頼ポリシーは各 v4 トランスポート候補に結び付けられます。公開またはデプロイ提供の CA ルートと明示的なリーフ証明書 pin は排他的で、失敗後に降格しません。
+- `local_loopback` は、署名された数値ループバック endpoint に対してのみ `ws://` を許可し、正確な Origin と upgrade 前のアプリケーション認可を要求します。外側の TLS 検証や平文へのフォールバックは提供しません。
 - 接続招待は不透明で、有効期間が短く、1 回だけ使用できます。
 - 認証情報は使用前に消費済みとして確定されるため、使用済み招待は再利用できません。
 - リレーは暗号化トラフィックだけを転送し、アプリケーションセッションを終端しません。
 - 無効または未対応の接続は安全に失敗し、公開エラーの情報量は制限されます。
 
-プロトコルと脅威モデルの詳細は、[API コントラクト](docs/API_CONTRACT.md)、[トランスポートアーキテクチャ](docs/TRANSPORT_V3_ARCHITECTURE.md)、[脅威モデル](docs/THREAT_MODEL.md)を参照してください。
+プロトコルと脅威モデルの詳細は、[API コントラクト](docs/API_CONTRACT.md)、[トランスポートアーキテクチャ](docs/TRANSPORT_V4_BINDING.md)、[脅威モデル](docs/THREAT_MODEL.md)を参照してください。
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -135,7 +127,7 @@ WebTransport は必須の native-server carrier contract に含まれないオ�
 
 - [API コントラクト](docs/API_CONTRACT.md)：SDK 間で共有される安定したアプリケーション動作。
 - [エラーモデル](docs/ERROR_MODEL.md)：公開される接続、セッション、RPC エラー。
-- [トランスポートアーキテクチャ](docs/TRANSPORT_V3_ARCHITECTURE.md)：直接接続とリレー接続の設計。
+- [トランスポートアーキテクチャ](docs/TRANSPORT_V4_BINDING.md)：直接接続とリレー接続の設計。
 - [サンプル](examples/README.md)：実行可能な SDK の使用例。
 
 Flowersec は [MIT License](LICENSE) で提供されます。公開済みパッケージとリリースノートは [GitHub Releases](https://github.com/floegence/flowersec/releases)で確認できます。

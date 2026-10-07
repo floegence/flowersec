@@ -69,9 +69,6 @@ func (r *RPCServices) reserveChannelLocked(parent context.Context, opener protoc
 			return nil, cryptov4.ErrNotReady
 		}
 	}
-	if err := r.bootstrap.admission.engine.ApplicationReady(); err != nil {
-		return nil, err
-	}
 	start, end := int(opener)*4, int(opener)*4+4
 	if local {
 		start += int(class) * 2
@@ -127,6 +124,11 @@ func (r *RPCServices) OpenChannel(ctx context.Context, class RPCChannelClass, de
 		return nil, cryptov4.ErrNotReady
 	}
 	a := r.bootstrap.admission
+	r.mu.Unlock()
+	if err := a.engine.ApplicationReady(); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
 	job, err := r.reserveChannelLocked(ctx, a.direction, class, true)
 	r.mu.Unlock()
 	if err != nil {
@@ -173,6 +175,9 @@ func (r *RPCServices) dispatchRPCOpen(h OpenHandle, writer *RecordWriter) (handl
 	if !valid {
 		return true, cryptov4.ErrConfiguration
 	}
+	if err := a.engine.ApplicationReady(); err != nil {
+		return true, err
+	}
 	r.mu.Lock()
 	job, err := r.reserveChannelLocked(nil, 1-a.direction, RPCInteractive, false)
 	r.mu.Unlock()
@@ -203,35 +208,56 @@ func (r *RPCServices) dispatchRPCOpen(h OpenHandle, writer *RecordWriter) (handl
 func (job *rpcChannelOpening) bind() (*RPCChannel, error) {
 	r := job.services
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed || job.context.Err() != nil {
+		r.mu.Unlock()
 		return nil, cryptov4.ErrClosed
 	}
+	// The original opening job pins its allocation until run/cleanup finishes.
+	// Constructors must not enter Engine/endpoint checks while holding r.mu.
+	network, inputs, dispatch, runtimeBytes := r.network, r.inputs, r.dispatch, r.runtimeBytes
+	instance, backing := r.owner.Instance, r.owner.Backing
+	r.mu.Unlock()
 	owner, err := job.allocation.stream.bind(job.handle.owner, job.handle)
 	if err != nil {
 		return nil, err
 	}
+	r.mu.Lock()
 	job.stream = owner
+	closed := r.closed || job.context.Err() != nil
+	r.mu.Unlock()
+	if closed {
+		_ = owner.Cancel()
+		return nil, cryptov4.ErrClosed
+	}
 	var seed [40]byte
-	copy(seed[:16], r.owner.Instance[:])
-	copy(seed[16:32], r.owner.Backing[:])
+	copy(seed[:16], instance[:])
+	copy(seed[16:32], backing[:])
 	binary.BigEndian.PutUint64(seed[32:], job.handle.scope)
 	digest := sha256.Sum256(seed[:])
 	var identity [16]byte
 	copy(identity[:], digest[:16])
 	refs := job.allocation.rpc
-	channel, err := NewRPCChannel(owner, r.network, identity, r.inputs, refs[0], refs[1], refs[2], refs[3], r.runtimeBytes)
+	channel, err := NewRPCChannel(owner, network, identity, inputs, refs[0], refs[1], refs[2], refs[3], runtimeBytes)
 	if err != nil {
 		return nil, err
 	}
-	job.channel = channel
-	job.receiver = channel.Receiver()
-	if err = r.dispatch.AttachChannel(job.receiver, channel.Publisher()); err != nil {
-		channel.Close()
-		return nil, err
+	receiver := channel.Receiver()
+	err = dispatch.AttachChannel(receiver, channel.Publisher())
+	r.mu.Lock()
+	job.channel, job.receiver = channel, receiver
+	closed = r.closed || job.context.Err() != nil
+	if !closed && err == nil {
+		job.cancel()
+		job.context, job.cancel = context.WithCancel(r.runtimeContext)
 	}
-	job.cancel()
-	job.context, job.cancel = context.WithCancel(r.runtimeContext)
+	r.mu.Unlock()
+	if closed || err != nil {
+		channel.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, cryptov4.ErrClosed
+	}
 	return channel, nil
 }
 

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 import path from "node:path";
@@ -8,11 +9,16 @@ import {
   SERVER_PARITY_CARRIERS,
   SERVER_PARITY_RUNTIMES,
 } from "./server-parity-matrix.mjs";
-import { prepareServerParityNativeAddon } from "./server-parity-native-addon.mjs";
+import { prepareBrowserParityInstallation, signalParityProcess, parityProcessDeadline, cleanupParityArtifact } from "./server-parity-browser-installation.mjs";
+import { prepareServerParityNativeAddon, prepareServerParityRustPeer, prepareServerParitySwiftClient, resolveRustTargetDirectory } from "./server-parity-native-addon.mjs";
 import { readToolchains } from "./toolchains.mjs";
+import { assertCurrentPeer, assertCurrentMaterial } from "./server-parity-material.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const toolchains = readToolchains(repositoryRoot);
+const rustCoverageEnvironment = readRustCoverageEnvironment();
+const rustEnvironment = rustCoverageEnvironment === undefined ? {} : { ...rustCoverageEnvironment, FLOWERSEC_PARITY_RUST_PEER_READY: "1" };
+const rustTargetDirectory = resolveRustTargetDirectory(repositoryRoot, { ...process.env, ...rustEnvironment });
 const matrix = JSON.parse(await readFile(path.join(repositoryRoot, "stability/interop_matrix.json"), "utf8"));
 const clientProfile = process.env.FLOWERSEC_PARITY_CLIENT_PROFILE?.trim();
 const clientProfileTestID = process.env.FLOWERSEC_PARITY_TEST_ID?.trim();
@@ -45,11 +51,8 @@ const peers = {
   },
   rust: {
     cwd: repositoryRoot,
-    command: "rustup",
-    arguments: [
-      "run", toolchains.rust.version, "cargo", "run", "--quiet", "--manifest-path", "flowersec-rust/Cargo.toml",
-      "--example", "server_parity_peer", "--",
-    ],
+    command: path.join(rustTargetDirectory, "debug/examples", process.platform === "win32" ? "server_parity_peer.exe" : "server_parity_peer"),
+    arguments: [],
   },
   "node-typescript": {
     cwd: path.join(repositoryRoot, "flowersec-ts"),
@@ -62,16 +65,22 @@ const selectedCells = clientProfile === undefined
   ? matrix.direct_cells.filter((cell) => cell.status === "supported" && clients.includes(cell.client) && servers.includes(cell.server) && carriers.includes(cell.carrier))
   : [selectClientProfileCell()];
 if (clientProfile === undefined && selectedCells.length === 0) {
-  throw new Error("server parity direct matrix selected no supported v3 cells");
+  throw new Error("server parity direct matrix selected no supported current cells");
 }
+await prepareServerParitySwiftClient(repositoryRoot, clientProfile === "swift");
+await prepareServerParityRustPeer(repositoryRoot, selectedCells.some(cell =>
+  cell.client === "rust" || cell.server === "rust"), { environment: rustEnvironment });
 const nativeAddon = await prepareServerParityNativeAddon(repositoryRoot, selectedCells.some((cell) =>
   cell.client === "node-typescript" || cell.server === "node-typescript"
 ));
+let processFailure;
 try {
   for (const cell of selectedCells) await runCell(cell);
   console.log(`server parity direct matrix OK: ${selectedCells.length} supported production cells`);
+} catch (error) {
+  processFailure = error; throw error;
 } finally {
-  await nativeAddon.cleanup();
+  await cleanupParityArtifact(processFailure, () => nativeAddon.cleanup());
 }
 
 function selectedValues(environmentName, allowed) {
@@ -115,43 +124,37 @@ async function runCell(cell) {
   const id = `${cell.client}/${cell.server}/${cell.carrier}`;
   const expectedCases = [...commonCases, ...(datagramCarriers.has(cell.carrier) ? ["datagram"] : [])];
   const serverPeer = startPeer(cell.server, ["server", "--carrier", cell.carrier]);
-  let clientPeer;
-  const timer = setTimeout(() => {
-    serverPeer.kill("SIGKILL");
-    clientPeer?.kill("SIGKILL");
-  }, cellTimeoutMS);
+  let clientPeer, failure;
+  const deadline = parityProcessDeadline(() => [serverPeer, clientPeer], cellTimeoutMS, `${id}: cell deadline exceeded`);
   try {
-    const ready = await serverPeer.stdout.nextJSON();
+    const ready = await deadline.wait(nextPeerJSON(serverPeer, `${id} server protocol`));
     assertMessage(ready, "ready", id);
     if (ready.runtime !== cell.server || ready.carrier !== cell.carrier || ready.path !== "direct") {
       throw new Error(`${id}: server ready dimensions do not match the requested cell`);
     }
-    if (typeof ready.artifact_json !== "string" || ready.artifact_json.length === 0) {
-      throw new Error(`${id}: server did not publish an artifact issued through its public control plane`);
-    }
+    assertCurrentMaterial(ready.artifact_json, id, ready);
 
     clientPeer = startPeer(cell.client, ["client", "--carrier", cell.carrier]);
     clientPeer.child.stdin.end(`${JSON.stringify(ready)}\n`);
-    const clientResult = await clientPeer.stdout.nextJSON();
+    const clientResult = await deadline.wait(nextPeerJSON(clientPeer, `${id} client protocol`));
     assertResult(clientResult, "client-result", cell.client, cell.carrier, expectedCases, id);
     assertNoSyntheticCleanupCounters(clientResult, id);
-    await requireSuccessfulExit(clientPeer, `${id} client`);
+    await deadline.wait(requireSuccessfulExit(clientPeer, `${id} client`));
 
-    const serverResult = await serverPeer.stdout.nextJSON();
+    const serverResult = await deadline.wait(nextPeerJSON(serverPeer, `${id} server protocol`));
     assertResult(serverResult, "server-result", cell.server, cell.carrier, expectedCases, id);
     assertNoSyntheticCleanupCounters(serverResult, id);
-    await requireSuccessfulExit(serverPeer, `${id} server`);
+    await deadline.wait(requireSuccessfulExit(serverPeer, `${id} server`));
   } catch (error) {
-    serverPeer.kill("SIGKILL");
-    clientPeer?.kill("SIGKILL");
+    await deadline.stop();
     const diagnostics = [serverPeer, clientPeer]
       .filter(Boolean)
       .map((peer) => peer.stderr.text())
       .filter((value) => value.length > 0)
       .join("\n");
-    throw new Error(`${id}: ${error instanceof Error ? error.message : String(error)}${diagnostics === "" ? "" : `\n${diagnostics}`}`);
+    failure = new Error(`${id}: ${error instanceof Error ? error.message : String(error)}${diagnostics === "" ? "" : `\n${diagnostics}`}`, { cause: error });
   } finally {
-    clearTimeout(timer);
+    await deadline.finish(failure);
   }
 }
 
@@ -171,48 +174,49 @@ async function runClientProfileCell(cell) {
   const id = cell.test_id;
   const browserPort = clientProfile === "browser" ? await reserveLoopbackPort() : undefined;
   const origin = browserPort === undefined ? "https://client.example" : `http://127.0.0.1:${browserPort}`;
+  const browserInstallation = clientProfile === "browser" ? await prepareBrowserParityInstallation(repositoryRoot, id) : undefined;
   const serverPeer = startPeer(cell.server, ["server", "--carrier", "websocket"], {
+    ...browserInstallation?.environment,
     FLOWERSEC_PARITY_CLIENT_PROFILE: clientProfile,
     FLOWERSEC_PARITY_ORIGIN: origin,
   });
   let externalClient;
-  const timer = setTimeout(() => {
-    serverPeer.kill("SIGKILL");
-    externalClient?.kill("SIGKILL");
-  }, cellTimeoutMS);
+  let failure;
+  const deadline = parityProcessDeadline(() => [serverPeer, externalClient], cellTimeoutMS, `${id}: cell deadline exceeded`);
   try {
-    const ready = await serverPeer.stdout.nextJSON();
+    const ready = await deadline.wait(nextPeerJSON(serverPeer, `${id} server protocol`));
     assertMessage(ready, "ready", id);
     if (ready.runtime !== cell.server || ready.carrier !== "websocket" || ready.path !== "direct" || ready.origin !== origin) {
       throw new Error(`${id}: server ready dimensions do not match the client-profile cell`);
     }
-    externalClient = startExternalClient(ready, "direct", browserPort);
-    await requireSuccessfulExit(externalClient, `${id} ${clientProfile} client`);
-    const serverResult = await serverPeer.stdout.nextJSON();
+    assertCurrentMaterial(ready.artifact_json, id, ready);
+    externalClient = startExternalClient(ready, "direct", browserPort, browserInstallation);
+    await deadline.wait(requireSuccessfulExit(externalClient, `${id} ${clientProfile} client`));
+    const serverResult = await deadline.wait(nextPeerJSON(serverPeer, `${id} server protocol`));
     assertResult(serverResult, "server-result", cell.server, "websocket", commonCases, id);
-    await requireSuccessfulExit(serverPeer, `${id} server`);
+    await deadline.wait(requireSuccessfulExit(serverPeer, `${id} server`));
   } catch (error) {
-    serverPeer.kill("SIGKILL");
-    externalClient?.kill("SIGKILL");
+    await deadline.stop();
     const diagnostics = [serverPeer, externalClient].filter(Boolean).map((peer) => peer.stderr.text()).filter(Boolean).join("\n");
-    throw new Error(`${id}: ${error instanceof Error ? error.message : String(error)}${diagnostics === "" ? "" : `\n${diagnostics}`}`);
+    failure = new Error(`${id}: ${error instanceof Error ? error.message : String(error)}${diagnostics === "" ? "" : `\n${diagnostics}`}`, { cause: error });
   } finally {
-    clearTimeout(timer);
+    await deadline.finish(failure, () => browserInstallation?.cleanup(failure));
   }
 }
 
-function startExternalClient(ready, pathKind, browserPort) {
+function startExternalClient(ready, pathKind, browserPort, browserInstallation) {
   const encoded = Buffer.from(JSON.stringify(ready)).toString("base64");
   if (clientProfile === "swift") {
-    return startProcess("swift", ["test", "--filter", "ServerParityTests/testClientProfile"], path.join(repositoryRoot, "flowersec-swift"), {
+    return startProcess("swift", ["test", "--skip-build", "--cache-path", ".flowersec/swiftpm-cache", "--skip-update", "--only-use-versions-from-resolved-file", "--filter", "ServerParityTests/testClientProfile"], repositoryRoot, {
       FLOWERSEC_PARITY_READY_BASE64: encoded,
       FLOWERSEC_PARITY_PATH: pathKind,
     });
   }
-  return startProcess("npm", ["--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", "Chromium runs the WebSocket client profile"], repositoryRoot, {
+  return startProcess("npm", ["--prefix", "flowersec-ts", "run", "test:browser:chromium", "--", "--grep", "Chromium runs the current WebSocket client profile"], repositoryRoot, {
     FLOWERSEC_PARITY_READY_BASE64: encoded,
     FLOWERSEC_PARITY_PATH: pathKind,
     FLOWERSEC_BROWSER_SITE_PORT: String(browserPort),
+    ...browserInstallation?.environment,
   });
 }
 
@@ -227,33 +231,69 @@ async function reserveLoopbackPort() {
 
 function startPeer(runtime, roleArguments, environment = {}) {
   const peer = peers[runtime];
+  const coveragePrefix = runtime === "rust" && rustCoverageEnvironment !== undefined ? `direct-${randomUUID()}-` : undefined;
+  const profileDirectory = coveragePrefix === undefined ? undefined : path.dirname(rustCoverageEnvironment.LLVM_PROFILE_FILE);
+  const profileEnvironment = coveragePrefix === undefined ? {} : {
+    LLVM_PROFILE_FILE: path.join(profileDirectory, `${coveragePrefix}%p-%m.profraw`),
+  };
   const child = spawn(peer.command, [...peer.arguments, ...roleArguments], {
     cwd: peer.cwd,
-    env: { ...process.env, ...nativeAddon.environment, ...environment, FLOWERSEC_SERVER_PARITY_PEER: "1" },
+    detached: process.platform !== "win32",
+    env: { ...process.env, ...nativeAddon.environment, ...environment, ...(runtime === "rust" ? rustEnvironment : {}), ...profileEnvironment, FLOWERSEC_SERVER_PARITY_PEER: "1", FLOWERSEC_PARITY_TEST_ONLY: "1" },
     stdio: ["pipe", "pipe", "pipe"],
   });
+  const observation = observeProcess(child);
+  if (coveragePrefix !== undefined) {
+    observation.completion = observation.completion.then(async exit => {
+      if (exit.code !== 0 || exit.error !== undefined) return exit;
+      try {
+        const files = (await readdir(profileDirectory)).filter(name => name.startsWith(coveragePrefix) && name.endsWith(".profraw"));
+        const sizes = await Promise.all(files.map(name => stat(path.join(profileDirectory, name))));
+        if (sizes.length !== 1 || !sizes[0].isFile() || sizes[0].size === 0) {
+          throw new Error(`Rust ${roleArguments[0]} exited without its fresh nonempty coverage profile`);
+        }
+        return exit;
+      } catch (error) { return { ...exit, error }; }
+    });
+  }
   const stderr = collectText(child.stderr);
-  return {
-    child,
-    stderr,
-    stdout: jsonLines(child.stdout),
-    kill(signal) {
-      if (child.exitCode === null && child.signalCode === null) child.kill(signal);
-    },
-  };
+  return { child, ...observation, stderr, stdout: jsonLines(child.stdout), kill(signal) { if (!observation.isComplete()) signalParityProcess(child, signal); } };
 }
 
+function readRustCoverageEnvironment() {
+  const raw = process.env.FLOWERSEC_PARITY_RUST_COVERAGE_ENV;
+  if (raw === undefined) return undefined;
+  const environment = JSON.parse(raw);
+  if (environment === null || typeof environment !== "object" || Array.isArray(environment)
+      || Object.values(environment).some(value => typeof value !== "string")
+      || !path.isAbsolute(environment.CARGO_TARGET_DIR ?? "")
+      || !path.isAbsolute(environment.LLVM_PROFILE_FILE ?? "")
+      || !(environment.__CARGO_LLVM_COV_RUSTC_WRAPPER_RUSTFLAGS ?? "").includes("instrument-coverage")
+      || typeof environment.RUSTC_WRAPPER !== "string" || environment.RUSTC_WRAPPER.length === 0) {
+    throw new Error("Rust parity coverage requires the instrumented show-env environment and absolute target/profile paths");
+  }
+  return environment;
+}
 function startProcess(command, arguments_, cwd, environment) {
-  const child = spawn(command, arguments_, { cwd, env: { ...process.env, ...environment }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(command, arguments_, { cwd, detached: process.platform !== "win32", env: { ...process.env, ...environment }, stdio: ["ignore", "pipe", "pipe"] });
+  const observation = observeProcess(child);
   const stdout = collectText(child.stdout);
   const stderr = collectText(child.stderr);
-  return { child, stderr: { text: () => `${stdout.text()}\n${stderr.text()}` }, kill(signal) { if (child.exitCode === null && child.signalCode === null) child.kill(signal); } };
+  return { child, ...observation, stderr: { text: () => `${stdout.text()}\n${stderr.text()}` }, kill(signal) { if (!observation.isComplete()) signalParityProcess(child, signal); } };
+}
+function observeProcess(child) {
+  let failure, complete = false;
+  child.on("error", error => { failure ??= error; });
+  for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.on("error", error => { failure ??= error; });
+  const completion = new Promise(resolve => child.once("close", (code, signal) => { complete = true; resolve({ code, signal, error: failure }); }));
+  return { completion, isComplete: () => complete };
 }
 
 function assertMessage(message, type, cellID) {
   if (message === null || typeof message !== "object" || message.type !== type) {
     throw new Error(`${cellID}: expected ${type} peer message`);
   }
+  assertCurrentPeer(message, cellID);
 }
 
 function assertResult(message, type, runtime, carrier, expectedCases, cellID) {
@@ -274,11 +314,22 @@ function assertNoSyntheticCleanupCounters(message, cellID) {
 }
 
 async function requireSuccessfulExit(peer, label) {
-  const exit = await new Promise((resolve) => {
-    if (peer.child.exitCode !== null) resolve({ code: peer.child.exitCode, signal: peer.child.signalCode });
-    else peer.child.once("exit", (code, signal) => resolve({ code, signal }));
-  });
+  const exit = await peer.completion;
+  if (exit.error !== undefined) throw new Error(`${label} failed: ${exit.error.message}`);
   if (exit.code !== 0) throw new Error(`${label} exited with code=${exit.code} signal=${exit.signal}`);
+}
+async function nextPeerJSON(peer, label) {
+  try {
+    return await Promise.race([
+      peer.stdout.nextJSON(),
+      peer.completion.then(exit => { throw new Error(exit.error === undefined
+        ? `peer closed before its next protocol message: code=${exit.code} signal=${exit.signal}`
+        : `peer failed before its next protocol message: ${exit.error.message}`); }),
+    ]);
+  } catch (error) {
+    const diagnostic = peer.stderr.text();
+    throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)}${diagnostic === "" ? "" : `; stderr=${diagnostic}`}`);
+  }
 }
 
 function collectText(stream) {
@@ -290,31 +341,45 @@ function collectText(stream) {
 
 function jsonLines(stream) {
   stream.setEncoding("utf8");
-  let buffered = "";
-  const queued = [];
-  const waiters = [];
-  let ended = false;
-  stream.on("data", (chunk) => {
+  const maximumLineBytes = 16_777_216, maximumQueuedMessages = 4;
+  let buffered = "", bufferedBytes = 0, ended = false, failure;
+  const queued = [], waiters = [];
+  function fail(error) {
+    if (failure !== undefined) return;
+    failure = error; buffered = ""; bufferedBytes = 0; queued.length = 0;
+    for (const waiter of waiters.splice(0)) waiter.reject(error);
+    stream.destroy();
+  }
+  stream.on("data", chunk => {
+    if (failure !== undefined) return;
+    bufferedBytes += Buffer.byteLength(chunk);
     buffered += chunk;
     while (true) {
-      const newline = buffered.indexOf("\n");
-      if (newline < 0) break;
-      const line = buffered.slice(0, newline).trim();
-      buffered = buffered.slice(newline + 1);
-      if (line !== "") deliver(JSON.parse(line));
+      const newline = buffered.indexOf("\n"); if (newline < 0) break;
+      const raw = buffered.slice(0, newline + 1), rawBytes = Buffer.byteLength(raw), line = raw.trim();
+      if (rawBytes > maximumLineBytes) { fail(new Error("peer JSON output exceeds its input bound")); return; }
+      buffered = buffered.slice(newline + 1); bufferedBytes -= rawBytes;
+      if (line === "") continue;
+      try {
+        const value = JSON.parse(line);
+        if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("peer JSON output must be an object");
+        const waiter = waiters.shift();
+        if (waiter !== undefined) waiter.resolve(value);
+        else { if (queued.length >= maximumQueuedMessages) throw new Error("peer JSON output exceeds its message queue bound"); queued.push(value); }
+      } catch { fail(new Error("peer emitted invalid or excessive protocol JSON")); return; }
     }
+    if (bufferedBytes > maximumLineBytes) fail(new Error("peer JSON output exceeds its input bound"));
   });
+  stream.on("error", fail);
   stream.on("end", () => {
     ended = true;
+    if (buffered.trim() !== "") { fail(new Error("peer stdout ended during a protocol message")); return; }
+    buffered = ""; bufferedBytes = 0;
     for (const waiter of waiters.splice(0)) waiter.reject(new Error("peer stdout ended before the next protocol message"));
   });
-  function deliver(value) {
-    const waiter = waiters.shift();
-    if (waiter === undefined) queued.push(value);
-    else waiter.resolve(value);
-  }
   return {
     async nextJSON() {
+      if (failure !== undefined) throw failure;
       if (queued.length > 0) return queued.shift();
       if (ended) throw new Error("peer stdout ended before the next protocol message");
       return await new Promise((resolve, reject) => waiters.push({ resolve, reject }));

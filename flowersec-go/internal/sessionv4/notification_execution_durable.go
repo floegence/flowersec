@@ -9,7 +9,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
-func (d *NotificationDispatch) admitDurableNotification(message *rpcv4.NotifyMessage, history *rpcv4.DurableExecutions, access *notificationExecutionAccess, registration NotificationMethod) (bool, error) {
+func (d *NotificationDispatch) admitDurableNotification(message *rpcv4.NotifyMessage, history *rpcv4.DurableExecutions, access *notificationExecutionAccess, registration NotificationMethod, digest [32]byte) (bool, error) {
 	deadline, err := message.MessageDeadline(d.clock)
 	if err != nil {
 		return false, err
@@ -40,8 +40,12 @@ func (d *NotificationDispatch) admitDurableNotification(message *rpcv4.NotifyMes
 	if err = d.reserveLocked([]resourcev4.Vector{charge}, refs[:]); err != nil {
 		return false, err
 	}
+	if err := registration.services.retainRegistration(); err != nil {
+		refs[0].Release()
+		return false, err
+	}
 	ctx, cancel := context.WithCancelCause(context.Background())
-	i := &notificationExecution{dispatch: d, method: registration, access: access, deadline: deadline, ctx: ctx, cancel: cancel, reservation: refs[0], subscriberBoundary: d.serial, started: true, durableHistory: history, message: message}
+	i := &notificationExecution{dispatch: d, method: registration, access: access, deadline: deadline, ctx: ctx, cancel: cancel, reservation: refs[0], subscriberBoundary: d.serial, started: true, durableHistory: history, message: message, contractDigest: digest}
 	d.executions[index] = i
 	d.durableProvider.signalDurable()
 	return true, nil
@@ -180,8 +184,8 @@ func (i *notificationExecution) runDurable() {
 			return err
 		}
 		for _, token := range d.tokens {
-			if token != nil && !token.closed && token.method.method.Method == i.method.Method && token.subscription.identity <= i.subscriberBoundary {
-				if err := token.enqueueLocked(i.deadline, payload, sample); err != nil {
+			if token != nil && !token.closed && token.method.method.Method == i.method.Method && token.identity <= i.subscriberBoundary {
+				if err := token.enqueueLocked(i.deadline, payload, sample, i.contractDigest); err != nil {
 					token.gapLocked("dropped_budget")
 				}
 			}

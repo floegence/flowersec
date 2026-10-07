@@ -34,6 +34,57 @@ func (j *SQLiteTopUpJournal) CheckBinding(tenant string, source [16]byte, genera
 	return j.store.reservation.CheckSameEnvironment(environment)
 }
 
+// decodePoolRecord lends bounded row slices to the current synchronous reader.
+// It checks persisted facts only; expired material and unavailable key providers
+// remain valid history and are not consulted during storage admission.
+func (j *SQLiteTopUpJournal) decodePoolRecord(v []driver.Value, state TopUpRecovery, after uint64) (out TopUpPoolRead, cert, key, value []byte, err error) {
+	for i, dst := range []*uint64{&out.Entry.Sequence, &out.Entry.Generation, &out.Entry.ExpiryMS} {
+		*dst, err = readSQLiteUint(v[i])
+		if err != nil {
+			return out, nil, nil, nil, ErrStorageFormat
+		}
+	}
+	digest, dok := v[3].([]byte)
+	identity, iok := v[4].([]byte)
+	record, rok := v[5].([]byte)
+	if !dok || len(digest) != 32 || !iok || len(identity) != 32 || !rok || len(record) == 0 || uint64(len(record)) > uint64(j.store.backing.limits.MaxRecordBytes) || out.Entry.Sequence <= after || out.Entry.Sequence > state.ArtifactFrontier || out.Entry.Generation == 0 || out.Entry.Generation > state.BindingGeneration || out.Entry.ExpiryMS == 0 {
+		return out, nil, nil, nil, ErrStorageFormat
+	}
+	copy(out.Entry.Material[:], digest)
+	copy(out.Entry.Identity[:], identity)
+	reader := topUpReader{data: record}
+	certLen := reader.uint()
+	if certLen == 0 || certLen > uint64(j.config.IdentityBytes) {
+		return out, nil, nil, nil, ErrStorageFormat
+	}
+	cert = reader.take(int(certLen))
+	keyLen := reader.uint()
+	if keyLen == 0 || keyLen > uint64(j.config.KeyReferenceBytes) {
+		return out, nil, nil, nil, ErrStorageFormat
+	}
+	key = reader.take(int(keyLen))
+	materialLen := reader.uint()
+	if materialLen == 0 || materialLen > 65536 {
+		return out, nil, nil, nil, ErrStorageFormat
+	}
+	value = reader.take(int(materialLen))
+	if reader.done() != nil {
+		return out, nil, nil, nil, ErrStorageFormat
+	}
+	certDigest, e := protocolv4.TopUpIdentityDigest(cert)
+	if e != nil || certDigest != out.Entry.Identity || sha256.Sum256(value) != out.Entry.Material {
+		return out, nil, nil, nil, ErrStorageFormat
+	}
+	// Entries may have been taken since Applied. A surviving member of the
+	// latest batch still has to match its immutable recorded tuple exactly.
+	for _, entry := range state.Response.Entries[:state.Response.Count] {
+		if entry.Sequence == out.Entry.Sequence && entry != out.Entry {
+			return out, nil, nil, nil, ErrStorageFormat
+		}
+	}
+	return out, cert, key, value, nil
+}
+
 // ReadPoolNext copies at most one installed item into preadmitted caller
 // buffers. It neither removes the item nor authorizes it. The original source
 // serializes restoration and reads in sequence order with a fixed item ceiling.
@@ -67,44 +118,11 @@ func (j *SQLiteTopUpJournal) ReadPoolNext(ctx context.Context, after uint64, cer
 		return out, ErrFenced
 	}
 	err = j.store.readOne("SELECT CASE WHEN length(sequence)=8 THEN sequence ELSE NULL END,CASE WHEN length(generation)=8 THEN generation ELSE NULL END,CASE WHEN length(expiry)=8 THEN expiry ELSE NULL END,CASE WHEN length(material_digest)=32 THEN material_digest ELSE NULL END,CASE WHEN length(identity_digest)=32 THEN identity_digest ELSE NULL END,CASE WHEN length(record)<=?2 THEN record ELSE NULL END FROM pool WHERE sequence>?1 ORDER BY sequence LIMIT 1", 6, func(v []driver.Value) error {
-		var e error
-		for i, dst := range []*uint64{&out.Entry.Sequence, &out.Entry.Generation, &out.Entry.ExpiryMS} {
-			*dst, e = readSQLiteUint(v[i])
-			if e != nil {
-				return e
-			}
-		}
-		digest, dok := v[3].([]byte)
-		identity, iok := v[4].([]byte)
-		record, rok := v[5].([]byte)
-		if !dok || len(digest) != 32 || !iok || len(identity) != 32 || !rok || out.Entry.Sequence <= after || out.Entry.Sequence > state.ArtifactFrontier || out.Entry.Generation == 0 || out.Entry.Generation > state.BindingGeneration || out.Entry.ExpiryMS == 0 {
-			return ErrStorageFormat
-		}
-		copy(out.Entry.Material[:], digest)
-		copy(out.Entry.Identity[:], identity)
-		reader := topUpReader{data: record}
-		certLen := reader.uint()
-		if certLen == 0 || certLen > uint64(j.config.IdentityBytes) {
-			return ErrStorageFormat
-		}
-		cert := reader.take(int(certLen))
-		keyLen := reader.uint()
-		if keyLen == 0 || keyLen > uint64(j.config.KeyReferenceBytes) {
-			return ErrStorageFormat
-		}
-		key := reader.take(int(keyLen))
-		materialLen := reader.uint()
-		if materialLen == 0 || materialLen > 65536 {
-			return ErrStorageFormat
-		}
-		value := reader.take(int(materialLen))
-		if e = reader.done(); e != nil {
+		decoded, cert, key, value, e := j.decodePoolRecord(v, state, after)
+		if e != nil {
 			return e
 		}
-		certDigest, e := protocolv4.TopUpIdentityDigest(cert)
-		if e != nil || certDigest != out.Entry.Identity || sha256.Sum256(value) != out.Entry.Material {
-			return ErrStorageFormat
-		}
+		out = decoded
 		out.CertificateBytes = copy(certificate, cert)
 		out.KeyReferenceBytes = copy(keyReference, key)
 		out.MaterialBytes = copy(material, value)

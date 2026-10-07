@@ -1,3 +1,7 @@
+import { ConnectionError } from "./connectionDiagnostic.js";
+import { DiagnosticActivity } from "./runtime/diagnosticObservation.js";
+import type { DiagnosticFields } from "./diagnostics.js";
+import { V4MessageStreamDefinition } from "./messageDefinition.js";
 import type * as ServiceClientTypes from "./serviceClient.js";
 import type * as StreamingOperationTypes from "./streamingOperation.js";
 import type * as ServiceBindingPoolTypes from "./runtime/serviceBindingPool.js";
@@ -17,11 +21,14 @@ import { createMaintenanceOwner, type V4MaintenanceOwner, type V4ResponsePublica
 import { saveV4StreamContent, readV4RetainedContent, type V4ContentObservation } from "./streamContent.js";
 import { v4RecoveryProgress } from "./resume.js";
 import { RPCStreamMessages, rpcStreamMessagesCharges } from "./runtime/rpcStreamMessages.js";
+import { ReliableWriteRequest } from "./runtime/writeRequest.js";
 import { applicationGroup } from "./runtime/applicationExecutor.js";
 import { createHash, createHmac, createPublicKey, verify as verifySignature } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { promiseHooks } from "node:v8";
 import { issueV4Checkpoint } from "./checkpoint.js";
 import { applicationResumeFeature } from "./runtime/checkpointToken.js";
-import { operationReferenceState } from "./operationReference.js";
+import { importOperationReference, operationReferenceState } from "./operationReference.js";
 import { v4BytesMessageCodec } from "./messageDefinition.js";
 import { v4ByteEventSource, type V4ByteEventPublisher } from "./eventSource.js";
 import { applicationHasPermit, applicationWorkload } from "./runtime/applicationExecutor.js";
@@ -29,6 +36,7 @@ import type { V4ApplicationContext } from "./streamHandlers.js";
 import type { V4NotificationSubscription } from "./notificationSubscription.js";
 import { createStaticServiceContracts, type V4StaticServiceContracts } from "./staticServiceContracts.js";
 import { DatabaseSync } from "node:sqlite";
+import { SQLiteWorkerDatabase } from "../node/sqliteWorkerV4.js";
 import { openV4SQLiteExecutionStore, type V4SQLiteExecutionStore } from "../node/sqliteExecutionV4.js";
 import { createOperationReferenceStore, type V4OperationReferenceStore } from "./operationReferenceStore.js";
 import { createOperationReferenceCodec } from "./operationReferenceCodec.js";
@@ -44,10 +52,12 @@ import type { RPCApplicationConfig } from "./runtime/rpcApplication.js";
 import { AdmissionOffer, ServiceContractSnapshot, serviceContractCharge, serviceContractDecoderCharge } from "./runtime/serviceContract.js";
 import { createStreamMetadataEnvelope } from "../public/streamMetadata.js";
 import { asNodeDuplex } from "../node/streamDuplexV4.js";
+import { ProxyServer } from "../node/proxyServer.js";
 import { asWebStreams } from "./webStreams.js";
+import { V4DuplexBridge } from "./duplexBridge.js";
 import { credentialFixture, encode, map, text, u, bytes, fill, digest, sign, array, replace } from "./testSupport/credentials.js";
 import { createSQLitePoolBacking, openV4SQLitePoolStore } from "../node/sqlitePoolV4.js";
-import type { PoolSpendStore } from "./runtime/poolSpend.js";
+import { registerPoolSpendStore, type PoolSpendStore } from "./runtime/poolSpend.js";
 import type { ActivationSource } from "./runtime/credentialVerifier.js";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -56,6 +66,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
 import { p256 } from "@noble/curves/nist.js";
 import type { OperationOptions } from "../public/contract.js";
+import { createProxyRuntime } from "../proxy/runtime.js";
 import { TrustedDeadline } from "./runtime/deadline.js";
 import { ClockRate } from "./runtime/timeArithmetic.js";
 import { ResourceRoot, ResourceVector } from "./runtime/resources.js";
@@ -64,14 +75,23 @@ import { inspectEnvelopePrefix, inspectRecordPrefix } from "./runtime/envelope.j
 import { wire } from "./runtime/wireRegistry.js";
 import type { V4AuthenticatedSessionRuntime, V4AuthenticatedTransport } from "./runtime/session.js";
 import { V4EnvironmentRuntime, type V4EnvironmentSessionSpec } from "./runtime/environment.js";
-
+const originalDiagnosticEvent = DiagnosticActivity.prototype.event;
+function observeApplicationDiagnostics() {
+  const activities = new Map<DiagnosticActivity, Partial<DiagnosticFields>[]>();
+  const original = originalDiagnosticEvent;
+  const spy = vi.spyOn(DiagnosticActivity.prototype, "event").mockImplementation(function (this: DiagnosticActivity, fields, metric) {
+    if (fields.phase === "application") activities.set(this, []);
+    activities.get(this)?.push(fields);
+    original.call(this, fields, metric);
+  });
+  return { activities, close: () => spy.mockRestore() };
+}
 async function transportEvent(event: Promise<void>): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([event, new Promise<void>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("transport_event_timeout")), 2000); })]);
   } finally { if (timer !== undefined) clearTimeout(timer); }
 }
-
 class MemoryTransport implements V4AuthenticatedTransport {
   readonly createdAtMS = performance.now();
   peer!: MemoryTransport;
@@ -79,14 +99,17 @@ class MemoryTransport implements V4AuthenticatedTransport {
   waiter: ((bytes: Uint8Array | null) => void) | undefined;
   ended = false;
   completionDelayMS = 0;
+  nativeSubmissionsPending = 0;
+  submissionCompleted: (() => void) | undefined;
   submissionTail: ((bytes: Uint8Array) => Promise<void> | undefined) | undefined;
+  beforeNativeSubmit: ((bytes: Uint8Array) => void) | undefined;
   deferDelivery: ((bytes: Uint8Array) => boolean) | undefined;
   #readMax = 0;
   #spaceWaiter: (() => void) | undefined;
   #hold: Promise<void> | undefined;
   done!: () => void;
   readonly termination = new Promise<void>(resolve => { this.done = resolve; });
-  constructor(readonly role: "client" | "server", readonly mode: "message" | "stream") {}
+  constructor(readonly role: "client" | "server", readonly mode: "message" | "stream") { }
   #take(max: number): Uint8Array {
     const first = this.queue[0]!, size = this.mode === "message" ? first.length : Math.min(max, 17, first.length);
     if (size === first.length) {
@@ -119,112 +142,378 @@ class MemoryTransport implements V4AuthenticatedTransport {
     let release!: () => void;
     this.#hold = new Promise<void>(resolve => { release = resolve; }); return release;
   }
-  submit(bytes: Uint8Array, admitted: () => void): { completion: Promise<void> } | undefined {
-    if (this.ended || this.peer.ended) return undefined; admitted(); this.push(bytes);
+  submit(bytes: Uint8Array, admitted: () => void, beforeSubmit?: () => void): { completion: Promise<void> } | undefined {
+    if (this.ended || this.peer.ended) return undefined;
+    this.beforeNativeSubmit?.(bytes); beforeSubmit?.(); admitted(); this.push(bytes);
     const observed = this.submissionTail?.(bytes);
-    const completion = this.#hold ?? observed ?? (this.completionDelayMS === 0 ? Promise.resolve() : new Promise<void>(resolve => setTimeout(resolve, this.completionDelayMS)));
-    this.#hold = undefined; return { completion: Promise.all([completion, this.#waitCapacity()]).then(() => undefined) };
+    const completion = Promise.all([this.#hold ?? observed ?? (this.completionDelayMS === 0 ? Promise.resolve() : new Promise<void>(resolve => setTimeout(resolve, this.completionDelayMS))), this.#waitCapacity()]).then(() => undefined);
+    this.#hold = undefined; this.nativeSubmissionsPending++;
+    void completion.then(() => { this.nativeSubmissionsPending--; this.submissionCompleted?.(); }, () => { this.nativeSubmissionsPending--; this.submissionCompleted?.(); });
+    return { completion };
   }
   close(): Promise<void> {
     this.ended = true; this.waiter?.(null); this.waiter = undefined; this.#spaceWaiter?.(); this.#spaceWaiter = undefined; this.done(); return Promise.resolve();
   }
   waitTermination(): Promise<void> { return this.termination; }
 }
-function endpoint(role: "client" | "server", transport: MemoryTransport, profile: "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1" | "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1", source: ActivationSource = "live_authority", operationDeadlineMS = 1000n, services?: (environment: V4EnvironmentRuntime, material: ReturnType<typeof credentialFixture>) => RPCApplicationConfig,
-  serviceOptions: { resourceAccounts?: number; sessions?: number; sessionNotAfterMS?: number; resume?: boolean; writeDeadlineMS?: bigint; profile?: "services" | "execution"; operationEntropy?: Uint8Array; environment?: V4EnvironmentRuntime; clockOriginMS?: number; clockMS?: () => bigint; clientSubject?: string; authorizedClientSubjects?: readonly string[]; connectionSeed?: number } = {}) {
-  const limit = new ResourceVector([512n * 1024n * 1024n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 1000n, 1000n, 1000n, 1000n, 1000n, 1000n]);
+function endpoint(role: "client" | "server", transport: MemoryTransport, profile: "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1" | "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1", source: ActivationSource = "live_authority", operationDeadlineMS = 1000n, services?: (environment: V4EnvironmentRuntime, material: ReturnType<typeof credentialFixture>) => RPCApplicationConfig | Promise<RPCApplicationConfig>, serviceOptions: { maxDataBytes?: number; resourceAccounts?: number; sessions?: number; sessionNotAfterMS?: number; resume?: boolean; writeDeadlineMS?: bigint; profile?: "services" | "execution"; operationEntropy?: Uint8Array; environment?: V4EnvironmentRuntime; clockOriginMS?: number; clockMS?: () => bigint; clientSubject?: string; authorizedClientSubjects?: readonly string[]; connectionSeed?: number } = {}) {
+  const limit = new ResourceVector([512n * 1024n * 1024n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
   // Include Session/Environment accounts and all 13 protected direction positions.
-  const root = serviceOptions.environment?.resources.root ?? new ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: serviceOptions.resourceAccounts ?? (services === undefined ? 16 : 32), reservations: services === undefined ? 200 : 2000, references: services === undefined ? 400 : 4000,
-    rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
+  const root = serviceOptions.environment?.resources.root ?? new ResourceRoot({
+    profileRevision: "1".repeat(64), limit, accounts: serviceOptions.resourceAccounts ?? (services === undefined ? 16 : 64), reservations: services === undefined ? 200 : 2000, references: services === undefined ? 400 : 4000,
+    rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n
+  });
   const start = performance.now();
   const serviceOrigin = services === undefined ? undefined : (serviceOptions.clockOriginMS ?? Math.min(transport.createdAtMS, transport.peer.createdAtMS));
-  const environment = serviceOptions.environment ?? new V4EnvironmentRuntime({ root, tenantID: "1".repeat(32), environmentID: "2".repeat(32), tenantLimit: limit, limit,
+  const environment = serviceOptions.environment ?? new V4EnvironmentRuntime({
+    root, tenantID: "1".repeat(32), environmentID: "2".repeat(32), tenantLimit: limit, limit,
     runtimeBytes: 1024n, namespaces: 1, sources: 1, acquisitions: 1, materials: serviceOptions.sessions ?? 1, sessions: serviceOptions.sessions ?? 1, acquireMS: 10000n, cleanupMS: 25,
-    clock: { profile: { rate: new ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 1000000n, maxRoundTripMS: 100n },
+    clock: {
+      profile: { rate: new ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 1000000n, maxRoundTripMS: 100n },
       tick: () => ({ milliseconds: serviceOptions.clockMS?.() ?? BigInt(Math.floor(performance.now() - start)), incarnation: "3".repeat(32) }), initial: () => {
         // Service peers model the same UTC instant despite separate setup work.
         const elapsed = serviceOptions.clockMS?.() ?? (serviceOrigin === undefined ? 0n : BigInt(Math.floor(performance.now() - serviceOrigin)));
         return { lowerMS: 1000n + elapsed, upperMS: 1000n + elapsed + (serviceOrigin === undefined ? 0n : 1n) };
-      } },
+      }
+    },
     random: bytes => {
       // Deliberate test-only operation ID collision exercises the real join gate.
       if (bytes.length === 24 && serviceOptions.operationEntropy !== undefined) bytes.set(serviceOptions.operationEntropy);
       else crypto.getRandomValues(bytes);
-    } });
+    }
+  });
   const clock = environment.clock, direction = role === "client" ? 0 : 1;
-  const namespace = environment.namespace({ tenant: "tenant", authority: "authority", rootKeyID: fill(1, 16), rootPublicKey: ed25519.getPublicKey(fill(7)),
-    maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 8192, stateNodes: 16384 });
+  const namespace = environment.namespace({
+    tenant: "tenant", authority: "authority", rootKeyID: fill(1, 16), rootPublicKey: ed25519.getPublicKey(fill(7)),
+    maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 8192, stateNodes: 16384
+  });
   const material = credentialFixture(environment.resources, clock, () => { throw new Error("all reservations belong to Environment"); }, source, profile, namespace, { ...serviceOptions, ...(services === undefined ? {} : { applicationProfile: serviceOptions.profile ?? "services" }) });
   const application = services?.(environment, material);
   if (serviceOptions.environment === undefined) material.bootstrap();
   const credentials = environment.verify({ ...material.config, authorities: ["authority"] }, material.input());
   const execution = application !== undefined && serviceOptions.profile === "execution";
-  const limits: OpenAdmissionConfig = { direction, maxActive: 8, maxPending: 8, ingressItems: 4, ingressBytes: 16384, terminalCapacity: 32, rejectionReserve: 4,
-    runtimeBytes: 1024n, perClass: [8, application === undefined ? 0 : 8, execution ? 1 : 0], perOpener: [[8, application === undefined ? 0 : 8, execution ? 1 : 0], [8, application === undefined ? 0 : 8, 0]], protected: [[0, application === undefined ? 0 : 1, execution ? 1 : 0], [0, 0, 0]] };
+  const limits: OpenAdmissionConfig = {
+    direction, maxActive: application === undefined ? 8 : execution ? 19 : 18, maxPending: 8, ingressItems: 4, ingressBytes: 16384, terminalCapacity: 32, rejectionReserve: 4,
+    runtimeBytes: 1024n, perClass: [8, application === undefined ? 0 : 10, execution ? 1 : 0], perOpener: [[8, application === undefined ? 0 : 5, execution ? 1 : 0], [8, application === undefined ? 0 : 5, 0]], protected: [[0, application === undefined ? 0 : 5, execution ? 1 : 0], [0, application === undefined ? 0 : 5, 0]]
+  };
   const features = serviceOptions.resume ? applicationResumeFeature() : 0n;
-  const context = map({ 0: text("4"), 1: text(profile), 2: u(0), 3: u(0), 4: bytes(digest("artifact_digest", material.artifact)), 5: bytes(material.route), 6: bytes(material.attemptID),
-    7: bytes(material.sessionNonce), 8: bytes(fill(28)), 9: u(features), 10: u(1), 11: u(0), 12: bytes(new Uint8Array()) });
+  const context = map({
+    0: text("4"), 1: text(profile), 2: u(0), 3: u(0), 4: bytes(digest("artifact_digest", material.artifact)), 5: bytes(material.route), 6: bytes(material.attemptID),
+    7: bytes(material.sessionNonce), 8: bytes(fill(28)), 9: u(features), 10: u(1), 11: u(0), 12: bytes(new Uint8Array())
+  });
   const contextDigest = digest("transport_context_digest", context);
-  const fsb = sign("FSB4", map({ 0: bytes(digest("artifact_digest", material.artifact)), 1: text("tenant"), 2: bytes(fill(5, 16)), 3: bytes(material.leaseID), 4: bytes(material.sessionNonce),
+  const fsb = sign("FSB4", map({
+    0: bytes(digest("artifact_digest", material.artifact)), 1: text("tenant"), 2: bytes(fill(5, 16)), 3: bytes(material.leaseID), 4: bytes(material.sessionNonce),
     5: bytes(fill(20, 16)), 6: bytes(material.route), 7: bytes(material.attemptID), 8: bytes(fill(26)), 9: bytes(fill(28)), 10: u(features), 11: u(1), 12: bytes(contextDigest),
-    13: bytes(encode(material.activation)), 14: bytes(encode(material.client)) }), 14);
+    13: bytes(encode(material.activation)), 14: bytes(encode(material.client))
+  }), 14);
   const admission = digest("admission_binding", fsb), clientDigest = digest("certificate_digest", material.client), serverDigest = digest("certificate_digest", material.server);
-  const fsa = sign("FSA4", map({ 0: u(0), 1: u(0), 2: u(1), 3: bytes(fill(27)), 4: bytes(admission), 5: bytes(material.route), 6: bytes(fill(28)), 7: u(features), 8: u(1), 9: bytes(contextDigest),
-    10: bytes(clientDigest), 11: bytes(serverDigest), 12: bytes(encode(material.server)) }), 15);
+  const fsa = sign("FSA4", map({
+    0: u(0), 1: u(0), 2: u(1), 3: bytes(fill(27)), 4: bytes(admission), 5: bytes(material.route), 6: bytes(fill(28)), 7: u(features), 8: u(1), 9: bytes(contextDigest),
+    10: bytes(clientDigest), 11: bytes(serverDigest), 12: bytes(encode(material.server))
+  }), 15);
   const seed = fill(role === "client" ? 14 : 15), peerSeed = fill(role === "client" ? 15 : 14);
   const cs = fill(16), ss = fill(17);
   const publicKey = (secret: Uint8Array) => profile.includes("x25519") ? x25519.getPublicKey(secret) : p256.getPublicKey(secret, false);
-  const ready = { localCertificateDigest: role === "client" ? clientDigest : serverDigest, peerCertificateDigest: role === "client" ? serverDigest : clientDigest,
-    fsbDigest: digest("fsb_digest", fsb), fsaDigest: digest("fsa_digest", fsa), admissionBinding: admission, transportContextDigest: contextDigest, selectedFeatures: features };
-  const config: V4EnvironmentSessionSpec = {
-    ...(application === undefined ? {} : { application }),
-    transport, maxFrame: 65536, maxReceiveDirections: 8,
+  const ready = {
+    localCertificateDigest: role === "client" ? clientDigest : serverDigest, peerCertificateDigest: role === "client" ? serverDigest : clientDigest,
+    fsbDigest: digest("fsb_digest", fsb), fsaDigest: digest("fsa_digest", fsa), admissionBinding: admission, transportContextDigest: contextDigest, selectedFeatures: features
+  };
+  let config: V4EnvironmentSessionSpec = {
+    ...(application === undefined || application instanceof Promise ? {} : { application }),
+    transport, maxFrame: 65536, maxReceiveDirections: application === undefined ? 8 : execution ? 19 : 18,
     crypto: { keys: 100, maintenance: { calls: 10n, blocks: 100n, bytes: 10000n } },
-    noise: { authorizationDeadline: new TrustedDeadline(clock, BigInt(serviceOptions.sessionNotAfterMS ?? 30000)), preparationDeadline: new TrustedDeadline(clock, 10000n), profile, role,
+    noise: {
+      authorizationDeadline: new TrustedDeadline(clock, BigInt(serviceOptions.sessionNotAfterMS ?? 30000)), preparationDeadline: new TrustedDeadline(clock, 10000n), profile, role,
       localStaticPrivate: role === "client" ? cs : ss, localStaticPublic: publicKey(role === "client" ? cs : ss), peerStaticPublic: publicKey(role === "client" ? ss : cs),
       psk: fill(24),
-      contextDigest, fsb: encode(fsb), fsa: encode(fsa) },
+      contextDigest, fsb: encode(fsb), fsa: encode(fsa)
+    },
     signer: { publicKey: ed25519.getPublicKey(seed), sign: bytes => ed25519.sign(bytes, seed) }, ready, peerReadyPublicKey: ed25519.getPublicKey(peerSeed),
-    streams: { limits,
+    streams: {
+      limits,
       ...(application === undefined ? {} : { rpcMaxGeneralOutstanding: 4 }),
-      receive: { maxDataBytes: 128, queueBytes: application === undefined ? 256 : 16384, maxCursorBytes: application === undefined ? 1024 : 16384, receiveLimit: application === undefined ? 256n : 16384n, runtimeBytes: 1024n, cursorRuntimeBytes: 1024n, decoderRuntimeBytes: 1024n },
-      maxWriteBytes: application === undefined ? 1024 : 16384, writeDeadlineMS: serviceOptions.writeDeadlineMS ?? 1000n, operationDeadlineMS, rekeyBurst: 10n, rekeyRefillMS: 1000n, rekeyPrepareMS: 1000n, rekeyProtocolMS: 1000n, rekeyConfirmationMS: 1000n },
-    info: { application_profile: application === undefined ? "transport" : serviceOptions.profile ?? "services", selected_features: features, guarantees: { reliable_progress: "shared_ordered", bound_stream_input_isolation: "shared_failure_scope",
-      datagram: false, local_consumer_tls13_verification: "not_applicable", scope: "complete_direct_path", assumptions: "authenticated_peer_within_transport_profile" } },
+      receive: { maxDataBytes: serviceOptions.maxDataBytes ?? 128, queueBytes: application === undefined ? 256 : 16384, maxCursorBytes: application === undefined ? 1024 : 16384, receiveLimit: application === undefined ? 256n : 16384n, runtimeBytes: 1024n, cursorRuntimeBytes: 1024n, decoderRuntimeBytes: 1024n },
+      maxWriteBytes: application === undefined ? 1024 : 16384, writeDeadlineMS: serviceOptions.writeDeadlineMS ?? 1000n, operationDeadlineMS, rekeyBurst: 10n, rekeyRefillMS: 1000n, rekeyPrepareMS: 1000n, rekeyProtocolMS: 1000n, rekeyConfirmationMS: 1000n
+    },
+    info: {
+      application_profile: application === undefined ? "transport" : serviceOptions.profile ?? "services", selected_features: features, guarantees: {
+        reliable_progress: "shared_ordered", bound_stream_input_isolation: "shared_failure_scope",
+        datagram: false, local_consumer_tls13_verification: "not_applicable", scope: "complete_direct_path", assumptions: "authenticated_peer_within_transport_profile"
+      }
+    },
   };
-  return { config, material, environment, discardPrepared: () => credentials.closeMaterial(), establishMaterial: (acquired: V4EnvironmentMaterial, signal?: AbortSignal) => environment.establishVerified(acquired, config, encode(context), signal === undefined ? undefined : { signal }), establish: (store?: PoolSpendStore) => store === undefined ? environment.establishVerified(credentials, config, encode(context)) : environment.establishPoolVerified(credentials, config, encode(context), store), close: async () => {
-    await environment.close(); expect((await environment.waitCleanup()).status).toBe("complete"); expect(root.snapshot().reservations).toBe(0);
-  } };
+  const applicationReady = Promise.resolve(application).then(value => {
+    if (value !== undefined)
+      config = { ...config, application: value };
+  });
+  return {
+    get config() { return config; }, material, environment, discardPrepared: () => credentials.closeMaterial(),
+    establishMaterial: async (acquired: V4EnvironmentMaterial, signal?: AbortSignal, store?: PoolSpendStore) => { await applicationReady; return store === undefined ? environment.establishVerified(acquired, config, encode(context), signal === undefined ? undefined : { signal }) : environment.establishPoolVerified(acquired, config, encode(context), store, signal === undefined ? undefined : { signal }); },
+    establish: async (store?: PoolSpendStore) => { await applicationReady; return store === undefined ? environment.establishVerified(credentials, config, encode(context)) : environment.establishPoolVerified(credentials, config, encode(context), store); },
+    close: async () => { await applicationReady.catch(() => undefined); await environment.close(); expect((await environment.waitCleanup()).status).toBe("complete"); expect(root.snapshot().reservations).toBe(0); }
+  };
+}
+async function controllerNotificationFixture(count = 1, holdDecode?: (value: string) => Promise<void>) {
+  const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+  const decoded: string[] = [];
+  const schema = { schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 };
+  const codec = holdDecode === undefined ? v4ApplicationMessageCodec<string>(schema, {
+    execution: "sync", applicationBytes: 1024n,
+    encode: (_context, value) => new TextEncoder().encode(value),
+    decode: (_context, bytes) => { const value = new TextDecoder().decode(bytes); decoded.push(value); return value; },
+  }) : v4ApplicationMessageCodec<string>(schema, {
+    execution: "async", applicationBytes: 1024n,
+    encode: async (_context, value) => new TextEncoder().encode(value),
+    decode: async (_context, bytes) => { const value = new TextDecoder().decode(bytes); decoded.push(value); await holdDecode(value); return value; },
+  });
+  const method = new V4MethodDefinition({ typeID: 42, shape: "notify", notifySemantics: "observation", request: codec,
+    requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false });
+  const definition = new V4ServiceDefinition({ namespace: "example.controller.observe", methods: { changed: method } });
+  const contract = encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
+    8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(128), 27: array() }));
+  const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
+  const pairs: { client: ReturnType<typeof endpoint>; server: ReturnType<typeof endpoint>; transport: MemoryTransport }[] = [];
+  const peers: V4Session[] = [], services: ServiceClientTypes.V4ServiceClient<{ changed: typeof method }>[] = [], contracts: V4StaticServiceContracts[] = [];
+  const origin = performance.now();
+  for (let index = 0; index < count; index++) {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const config = { sessions: 4, connectionSeed: 100 + index, clockOriginMS: origin };
+    const client = endpoint("client", a, profile, "live_authority", 10000n, () => ({ ...common,
+      notificationMethods: [{ namespace: definition.namespace, method, contract, permission: "allowed" }] }),
+      { ...config, ...(pairs.length === 0 ? {} : { environment: pairs[0]!.client.environment }) });
+    await client.discardPrepared();
+    const server = endpoint("server", b, profile, "live_authority", 10000n, () => common, config);
+    pairs.push({ client, server, transport: a });
+  }
+  const environment = pairs[0]!.client.environment;
+  let selected = 0, acquisitions = 0, initialize: (() => Promise<void>) | undefined;
+  const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "live_authority", async (_request, destination) => {
+    selected = acquisitions++; const input = pairs[selected]!.client.material.input();
+    for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
+    return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+      activation: input.activation.length, candidateIndex: input.candidateIndex };
+  }));
+  environment.installClientConnector({ applicationProfile: "services", reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config),
+    checkRequirements: () => undefined, connect: async (material, options) => {
+      const index = selected, pair = pairs[index]!;
+      const [runtime, remote] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]);
+      const peer = new V4Session(remote); peers[index] = peer;
+      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "server",
+        peers: [{ subject: "client", identityDigest: Buffer.from(digest("certificate_digest", pair.client.material.client)).toString("hex") }] };
+      const contractsOwner = createStaticServiceContracts(pair.server.environment, definition, [{ method, contract }], { target, maximumOfferWindowMS: 10000n });
+      contracts.push(contractsOwner);
+      services[index] = await peer.bindService(definition, { target, maximumOfferWindowMS: 10000n, contractSource: contractsOwner });
+      await services[index]!.notify(method, `early-${index}`);
+      return runtime;
+    } });
+  const controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
+    requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false, local_consumer_tls13_verification: false, application_profile: "services" },
+    initializeApplicationBytes: 1024n, initializeSession: async () => { await initialize?.(); }, attemptTimeoutMS: 10000n });
+  return { controller, environment, method, decoded, pairs,
+    holdInitialization: (callback: () => Promise<void>) => { initialize = callback; },
+    send: async (index: number, value: string) => { expect(await services[index]!.notify(method, value)).toMatchObject({ submission: "submitted" }); },
+    close: async () => {
+      for (const service of services) service?.close(); for (const owner of contracts) owner.close();
+      await controller.close(); expect((await controller.waitCleanup()).status).toBe("complete");
+      for (const peer of peers) await peer?.close(); for (const pair of pairs) await pair.server.close(); await pairs[0]!.client.close();
+    }
+  };
 }
 describe("original v4 reliable Session assembly", () => {
+  for (const outcome of ["preparation", "spent", "unknown", "ready", "eof", "store_failure", "invalid_frame"] as const) it(`reacquires fresh Controller material after original ${outcome} transport failure and physical cleanup`, async () => {
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const transports = Array.from({ length: 3 }, () => {
+      const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a; return [a, b] as const;
+    });
+    const pairs: { client: ReturnType<typeof endpoint>; server: ReturnType<typeof endpoint> }[] = [];
+    for (let i = 0; i < transports.length; i++) {
+      const [a, b] = transports[i]!;
+      const options = { sessions: 4, connectionSeed: 42 + i * 10, sessionNotAfterMS: 30000 };
+      const client = endpoint("client", a, profile, "preauthorized_pool", 10000n, undefined,
+        { ...options, ...(pairs.length === 0 ? {} : { environment: pairs[0]!.client.environment }) });
+      const server = endpoint("server", b, profile, "preauthorized_pool", 10000n, undefined, options);
+      await client.discardPrepared(); pairs.push({ client, server });
+    }
+    const environment = pairs[0]!.client.environment;
+    let acquisitions = 0, selected = 0, consumes = 0, releaseCleanup!: () => void, cleanupEntered!: () => void;
+    const entered = new Promise<void>(resolve => { cleanupEntered = resolve; });
+    const cleanup = new Promise<void>(resolve => { releaseCleanup = resolve; });
+    const acquired: V4EnvironmentMaterial[] = [];
+    // The original store fixture withholds a positive receipt in the unknown
+    // case. A new acquisition cannot rewrite the earlier observation.
+    const store: PoolSpendStore = { consume: (_facts, owner) => {
+      consumes++; owner.spendDispatched?.(); if (outcome !== "unknown") owner.spent?.();
+      if (outcome === "store_failure") throw new Error("carrier_failed");
+    } };
+    registerPoolSpendStore(store);
+    const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "preauthorized_pool", async (_request, destination) => {
+      selected = acquisitions++; const input = pairs[selected]!.client.material.input();
+      for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
+      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length,
+        serverCertificate: input.serverCertificate.length, activation: input.activation.length, candidateIndex: input.candidateIndex };
+    }));
+    for (let i = 0; i < 2; i++) {
+      const transport = transports[i]![0];
+      if (outcome === "ready") transport.submit = () => { throw new Error("carrier_failed"); };
+      else if (outcome === "eof") transport.read = async () => null;
+      else if (outcome === "invalid_frame") transport.read = async () => new Uint8Array(8);
+      else transport.write = async () => { throw new Error("carrier_failed"); };
+      if (i === 0) transport.waitTermination = async () => { cleanupEntered(); await cleanup; };
+    }
+    environment.installClientConnector({ applicationProfile: "transport", reserveAdmission: () => environment.reserveClientAdmission(pairs[selected]!.client.config),
+      checkRequirements: () => undefined, connect: async (material, options) => {
+        acquired.push(material); const pair = pairs[selected]!;
+        if (selected < 2 && outcome === "preparation") return environment.establishPoolClient(material, store, async () => {
+          if (selected === 0) { cleanupEntered(); await cleanup; }
+          throw new Error("carrier_failed");
+        }, options);
+        if (selected < 2 && outcome !== "ready") return pair.client.establishMaterial(material, options?.signal, store);
+        const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal, store), pair.server.establish()]); return runtime;
+      } });
+    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
+      requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
+        local_consumer_tls13_verification: false, application_profile: "transport" }, attemptTimeoutMS: 10000n });
+    try {
+      controller.start(); await transportEvent(entered);
+      expect(acquisitions).toBe(1); expect(controller.status().pending).toBe(true);
+      expect(controller.retryNow()).toBe(false);
+      releaseCleanup();
+      if (outcome === "store_failure" || outcome === "invalid_frame") {
+        await expect.poll(() => controller.status().pending).toBe(false);
+        expect(controller.retryNow()).toBe(false); expect(acquisitions).toBe(1);
+        expect(controller.diagnostic().connection).toMatchObject({ spendState: "spent", networkReady: "not_started" });
+        await expect(controller.waitForSession()).rejects.toThrow(); return;
+      }
+      await expect.poll(() => controller.diagnostic().state).toBe("waiting");
+      const first = controller.diagnostic().connection!;
+      expect(first.spendState).toBe(outcome === "preparation" ? "unspent" : outcome === "unknown" ? "unknown" : "spent");
+      expect(first.admissionState).toBe("not_started"); expect(first.networkReady).toBe("not_started");
+      expect(controller.retryNow()).toBe(true);
+      await expect.poll(() => acquisitions).toBe(2);
+      await expect.poll(() => controller.diagnostic().state).toBe("waiting");
+      expect(controller.retryNow()).toBe(true);
+      const session = await controller.waitForSession();
+      expect(acquisitions).toBe(3); expect(controller.status().attempts).toBe(3n);
+      expect(new Set(acquired).size).toBe(3); expect(first.spendState).toBe(outcome === "preparation" ? "unspent" : outcome === "unknown" ? "unknown" : "spent");
+      await expect(environment.connectMaterial(acquired[0]!)).rejects.toThrow("material_unavailable");
+      expect(consumes).toBe(outcome === "preparation" ? 1 : 3);
+      await session.probeLiveness();
+    } finally {
+      releaseCleanup(); await controller.close(); await controller.waitCleanup();
+      for (const pair of pairs) await pair.server.close(); await pairs[0]!.client.close();
+    }
+  }, 15000);
+  for (const outcome of ["read", "eof", "output", "protocol", "initializer"] as const) it(`keeps Controller reconnection tied to original current ${outcome} failure`, async () => {
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const pairs: { client: ReturnType<typeof endpoint>; server: ReturnType<typeof endpoint>; transport: MemoryTransport }[] = [];
+    for (let i = 0; i < 2; i++) {
+      const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+      const options = { sessions: 3, connectionSeed: 100 + i * 10 };
+      const client = endpoint("client", a, profile, "preauthorized_pool", 10000n, undefined,
+        { ...options, ...(pairs.length === 0 ? {} : { environment: pairs[0]!.client.environment }) });
+      const server = endpoint("server", b, profile, "preauthorized_pool", 10000n, undefined, options);
+      await client.discardPrepared(); pairs.push({ client, server, transport: a });
+    }
+    const environment = pairs[0]!.client.environment;
+    let selected = 0, acquisitions = 0, initializations = 0, releaseCleanup!: () => void, cleanupEntered!: () => void;
+    const entered = new Promise<void>(resolve => { cleanupEntered = resolve; });
+    const cleanup = new Promise<void>(resolve => { releaseCleanup = resolve; });
+    pairs[0]!.transport.waitTermination = async () => { cleanupEntered(); await cleanup; };
+    const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "preauthorized_pool", async (_request, destination) => {
+      selected = acquisitions++; const input = pairs[selected]!.client.material.input();
+      for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
+      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length,
+        serverCertificate: input.serverCertificate.length, activation: input.activation.length, candidateIndex: input.candidateIndex };
+    }));
+    environment.installClientConnector({ applicationProfile: "transport", reserveAdmission: () => environment.reserveClientAdmission(pairs[0]!.client.config),
+      checkRequirements: () => undefined, connect: async (material, options) => {
+        const pair = pairs[selected]!;
+        const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); return runtime;
+      } });
+    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
+      requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
+        local_consumer_tls13_verification: false, application_profile: "transport" }, attemptTimeoutMS: 10000n,
+      ...(outcome !== "initializer" ? {} : { initializeApplicationBytes: 1024n,
+        initializeSession: () => { initializations++; throw new Error("carrier_failed"); } }) });
+    try {
+      controller.start();
+      if (outcome !== "initializer") {
+        const current = await controller.waitForSession(), transport = pairs[0]!.transport;
+        if (outcome === "read") {
+          transport.read = async () => { throw new Error("carrier_failed"); };
+          await current.probeLiveness();
+        } else if (outcome === "output") {
+          transport.submissionTail = () => Promise.reject(new Error("carrier_failed"));
+          await expect(current.probeLiveness()).rejects.toThrow();
+        } else if (outcome === "eof") await transport.close();
+        else await transport.peer.write(new Uint8Array(8));
+      }
+      await transportEvent(entered);
+      expect(acquisitions).toBe(1); expect(controller.retryNow()).toBe(false);
+      releaseCleanup();
+      if (outcome === "protocol" || outcome === "initializer") {
+        await expect.poll(() => controller.status().pending).toBe(false);
+        expect(controller.retryNow()).toBe(false); expect(acquisitions).toBe(1);
+        expect(initializations).toBe(outcome === "initializer" ? 1 : 0);
+        if (outcome === "initializer") {
+          await expect(controller.waitForSession()).rejects.toThrow("initialization_blocked");
+          expect(controller.diagnostic().connection).toMatchObject({ spendState: "spent", networkReady: "ready", applicationPublish: "failed" });
+        } else expect(() => controller.captureSession()).toThrow("not_ready");
+      } else {
+        await expect.poll(() => controller.diagnostic().state).toBe("waiting");
+        expect(controller.retryNow()).toBe(true);
+        const next = await controller.waitForSession();
+        expect(acquisitions).toBe(2); await next.probeLiveness();
+      }
+    } finally {
+      releaseCleanup(); await controller.close(); await controller.waitCleanup();
+      for (const pair of pairs) await pair.server.close(); await pairs[0]!.client.close();
+    }
+  }, 15000);
   // The existing ten-second attempt and real setup/cleanup need a longer runner bound.
   it("initializes a Controller through required accepted streaming and notification paths", async () => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const events = new V4MethodDefinition({ typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 2, maxStreamPayloadBytes: 256n, maxStreamDurationMS: 10000n, restartFlush: false });
-    const changed = new V4MethodDefinition({ typeID: 44, shape: "notify", notifySemantics: "observation", request: codec,
-      requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false });
+    const events = new V4MethodDefinition({
+      typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 2, maxStreamPayloadBytes: 256n, maxStreamDurationMS: 10000n, restartFlush: false
+    });
+    const changed = new V4MethodDefinition({
+      typeID: 44, shape: "notify", notifySemantics: "observation", request: codec,
+      requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.initializer", methods: { events, changed } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
-    const notifyContract = encode(map({ 0: text(definition.namespace), 1: u(44), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
-      8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(128), 27: array() }));
+    const notifyContract = encode(map({
+      0: text(definition.namespace), 1: u(44), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
+      8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(128), 27: array()
+    }));
     const calls: string[] = [], notifications: string[] = [];
     let contract!: ServiceContractSnapshot;
     const client = endpoint("client", a, profile, "live_authority", 3000n, () => common); await client.discardPrepared();
     const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
       const r = environment.resources, refs = r.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-        accounts: r.accounts, owner: { ...r.owner, kind: `initializer_stream_contract_${index}` }, charge })));
-      try { contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
-        6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-        21: { kind: "bool", value: false }, 23: u(128), 24: u(2), 25: u(256), 26: u(10000), 27: array() })), 1024n, refs[0]!, refs[1]!); }
+        accounts: r.accounts, owner: { ...r.owner, kind: `initializer_stream_contract_${index}` }, charge
+      })));
+      try {
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
+          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
+          21: { kind: "bool", value: false }, 23: u(128), 24: u(2), 25: u(256), 26: u(10000), 27: array()
+        })), 1024n, refs[0]!, refs[1]!);
+      }
       finally { for (const ref of refs) ref.release(); }
-      return { ...common, queryPermissions: [{ namespace: definition.namespace, method: events, permission: "allowed" }, { namespace: definition.namespace, method: changed, permission: "allowed" }],
+      return {
+        ...common, queryPermissions: [{ namespace: definition.namespace, method: events, permission: "allowed" }, { namespace: definition.namespace, method: changed, permission: "allowed" }],
         notificationMethods: [{ namespace: definition.namespace, method: changed, contract: notifyContract, permission: "allowed" }],
-        streamingHandlers: [{ namespace: definition.namespace, method: events, kind: "example.initializer.events", contract,
+        streamingHandlers: [{
+          namespace: definition.namespace, method: events, kind: "example.initializer.events", contract,
           handler: async (_context, value: string, writer) => { calls.push(value); await writer.write(value + ":typed"); await writer.write(value + ":encoded"); },
-          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+        }]
+      };
     });
     let acquisitions = 0, peer: V4Session | undefined, subscription: V4NotificationSubscription<string> | undefined;
     const environment = client.environment;
@@ -232,21 +521,32 @@ describe("original v4 reliable Session assembly", () => {
       expect(request.requirements).toEqual({ independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false, local_consumer_tls13_verification: false, application_profile: "services" });
       acquisitions++; const input = client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
-    environment.installClientConnector({ applicationProfile: client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(client.config), checkRequirements: requirements => {
-      expect(requirements.application_profile).toBe("services");
-    }, connect: async (material, options) => {
-      const [runtime, remote] = await Promise.all([client.establishMaterial(material, options?.signal), server.establish()]);
-      peer = new V4Session(remote); subscription = peer.notifications.subscribe(changed, (_context, value) => { notifications.push(value); },
-        { workClass: "short", applicationBytes: 1024n, authorization: "authenticated" }); return runtime;
-    } });
-    const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
-    const initial = v4ServiceDependency(definition, { binding: { target, maximumOfferWindowMS: 10000n,
-      methods: [{ method: events, streamKind: "example.initializer.events" }] }, methods: { events, changed } });
-    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
+    environment.installClientConnector({
+      applicationProfile: client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(client.config), checkRequirements: requirements => {
+        expect(requirements.application_profile).toBe("services");
+      }, connect: async (material, options) => {
+        const [runtime, remote] = await Promise.all([client.establishMaterial(material, options?.signal), server.establish()]);
+        peer = new V4Session(remote); subscription = peer.notifications.subscribe(changed, (_context, value) => { notifications.push(value); },
+          { workClass: "short", applicationBytes: 1024n, authorization: "authenticated" }); return runtime;
+      }
+    });
+    const target = {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+    };
+    const initial = v4ServiceDependency(definition, {
+      binding: {
+        target, maximumOfferWindowMS: 10000n,
+        methods: [{ method: events, streamKind: "example.initializer.events" }]
+      }, methods: { events, changed }
+    });
+    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), {
+      source,
       initializeServices: { initial }, attemptTimeoutMS: 10000n, initializeApplicationBytes: 1024n,
       initializeSession: async (context, candidate) => {
         expect(await context.services.initial.changed("initializing")).toMatchObject({ submission: "submitted" });
@@ -258,7 +558,8 @@ describe("original v4 reliable Session assembly", () => {
         } finally { stream.close(); }
         expect((await stream.waitCleanup({ context })).status).toBe("complete");
         await candidate.probeLiveness();
-      } });
+      }
+    });
     try {
       const result = await controller.replaceSession(); expect(controller.captureSession()).toBe(result.current);
       expect(result.current.info().application_profile).toBe("services");
@@ -282,17 +583,25 @@ describe("original v4 reliable Session assembly", () => {
       expect(applicationWorkload(environment.resources.root)?.ordinaryRunning).toBe(0);
       const input = client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
-    environment.installClientConnector({ applicationProfile: client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(limitedKeys ? { ...client.config, crypto: { ...client.config.crypto, keys: 6 } } : client.config), checkRequirements: () => undefined, connect: async (material, options) => {
-      const [runtime, remote] = await Promise.all([client.establishMaterial(material, options?.signal), server.establish()]);
-      peer = new V4Session(remote); return runtime;
-    } });
-    const requirements = { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
-      local_consumer_tls13_verification: false, application_profile: "transport" as const };
-    const oversized = createV4ConnectionController(wrapTransportEnvironment(environment), { source, requirements,
-      initializeStreams: [{ kind: "example/raw", handler: () => undefined, options: { applicationBytes: 4096n, maxConcurrentStreams: 19 } }] });
+    environment.installClientConnector({
+      applicationProfile: client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(limitedKeys ? { ...client.config, crypto: { ...client.config.crypto, keys: 6 } } : client.config), checkRequirements: () => undefined, connect: async (material, options) => {
+        const [runtime, remote] = await Promise.all([client.establishMaterial(material, options?.signal), server.establish()]);
+        peer = new V4Session(remote); return runtime;
+      }
+    });
+    const requirements = {
+      independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
+      local_consumer_tls13_verification: false, application_profile: "transport" as const
+    };
+    const oversized = createV4ConnectionController(wrapTransportEnvironment(environment), {
+      source, requirements,
+      initializeStreams: [{ kind: "example/raw", handler: () => undefined, options: { applicationBytes: 4096n, maxConcurrentStreams: 19 } }]
+    });
     await expect(oversized.replaceSession()).rejects.toThrow(/resource_exhausted|would_block/);
     expect(acquisitions).toBe(0); await oversized.close(); await oversized.waitCleanup();
     const metadata = createStreamMetadataEnvelope("code/http_v1", 1, { method: new TextEncoder().encode(JSON.stringify("GET")) });
@@ -304,20 +613,28 @@ describe("original v4 reliable Session assembly", () => {
         expect((await out.read(1n)).data).toEqual(Uint8Array.of(8));
       } finally { await out.close(); }
     };
-    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source, requirements,
+    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), {
+      source, requirements,
       attemptTimeoutMS: 10000n, initializeApplicationBytes: 1024n,
-      initializeStreams: [{ kind: "example/raw", authorize: (context, value) => {
-        expect(applicationHasPermit(context)).toBe(true); expect(value.descriptorValues()).toEqual({ method: "GET" }); authorized++; return true;
-      }, handler: async (stream, context, value) => {
-        expect(applicationHasPermit(context)).toBe(true); expect(value.descriptorValues()).toEqual({ method: "GET" });
-        expect((await stream.read(1n)).data).toEqual(Uint8Array.of(7));
-        await stream.write(Uint8Array.of(8)); handled++;
-      }, options: { applicationBytes: 4096n, maxConcurrentStreams: 1, metadataContract: { contractID: "http-v1", namespace: "code/http_v1", version: 1,
-        codec: "application/json", fields: [{ name: "method", type: "string", required: true }] } } }],
+      initializeStreams: [{
+        kind: "example/raw", authorize: (context, value) => {
+          expect(applicationHasPermit(context)).toBe(true); expect(value.descriptorValues()).toEqual({ method: "GET" }); authorized++; return true;
+        }, handler: async (stream, context, value) => {
+          expect(applicationHasPermit(context)).toBe(true); expect(value.descriptorValues()).toEqual({ method: "GET" });
+          expect((await stream.read(1n)).data).toEqual(Uint8Array.of(7));
+          await stream.write(Uint8Array.of(8)); handled++;
+        }, options: {
+          applicationBytes: 4096n, maxConcurrentStreams: 1, metadataContract: {
+            contractID: "http-v1", namespace: "code/http_v1", version: 1,
+            codec: "application/json", fields: [{ name: "method", type: "string", required: true }]
+          }
+        }
+      }],
       initializeSession: async () => {
         expect(() => controller.captureSession()).toThrow("initialization_blocked");
         await exchange();
-      } });
+      }
+    });
     try {
       // Memory capacity alone cannot promise future key counters. Both
       // directions reserve actual slots before source invocation.
@@ -336,17 +653,238 @@ describe("original v4 reliable Session assembly", () => {
       await peer?.close(); await Promise.all([client.close(), server.close()]);
     }
   });
+  it("preinstalls Controller observation before READY and retains healthy subscriptions and callback tails", async () => {
+    const fixture = await controllerNotificationFixture();
+    let releaseInitialization!: () => void, enteredInitialization!: () => void, releaseCallback!: () => void;
+    const initializing = new Promise<void>(resolve => { enteredInitialization = resolve; });
+    const initialization = new Promise<void>(resolve => { releaseInitialization = resolve; });
+    const callback = new Promise<void>(resolve => { releaseCallback = resolve; });
+    fixture.holdInitialization(async () => { enteredInitialization(); await initialization; });
+    const projected: string[] = [], values: string[] = [], gaps: string[] = [];
+    const token = fixture.controller.Notifications.Subscribe(fixture.method, async (_context, event) => {
+      if (event.kind === "observation_gap") { gaps.push(...event.gap.reasons); return; }
+      values.push(event.value); if (event.value === "blocked") await callback;
+    }, { workClass: "short", applicationBytes: 1024n, authorization: "authenticated", project: (_context, value) => { projected.push(value); return value; } });
+    let readyObserved = false;
+    fixture.pairs[0]!.transport.submissionTail = frame => {
+      if (inspectEnvelopePrefix(frame, 65536).frameType === wire.frame_types.READY) {
+        readyObserved = true; expect(token.observationStatus()).toMatchObject({ observedSources: 1, attachedToCurrent: false });
+      }
+      return undefined;
+    };
+    const replacement = fixture.controller.replaceSession();
+    try {
+      await Promise.race([transportEvent(initializing), replacement.then(() => { throw new Error("initializer did not block"); })]);
+      await expect.poll(() => token.observationStatus().pending).toBe(1);
+      expect(readyObserved).toBe(true); expect(fixture.decoded).toEqual([]); expect(projected).toEqual([]); expect(values).toEqual([]);
+      releaseInitialization(); await replacement;
+      await expect.poll(() => values).toEqual(["early-0"]);
+      // A passive wait expiring never closes or detaches the real source owner.
+      expect(await token.waitClosed({ timeoutMS: 5100n })).toMatchObject({ closed: false, wait: "deadline_exceeded", cleanupStatus: { status: "pending" } });
+      await fixture.send(0, "after-five-seconds"); await expect.poll(() => values.length).toBe(2);
+      expect(token.observationStatus()).toMatchObject({ observedSources: 1, attachedToCurrent: true });
+      await fixture.send(0, "blocked"); await expect.poll(() => values.length).toBe(3);
+      const before = fixture.environment.resources.root.snapshot().reservations;
+      token.close();
+      expect(token.cleanupStatus()).toMatchObject({ status: "pending", pending_callbacks: 1n });
+      expect(await token.waitClosed({ timeoutMS: 1n })).toMatchObject({ closed: true, wait: "deadline_exceeded", cleanupStatus: { status: "pending" } });
+      expect(fixture.environment.resources.root.snapshot().reservations).toBeGreaterThan(0);
+      releaseCallback(); expect(await token.waitClosed()).toMatchObject({ wait: "complete", cleanupStatus: { status: "complete" } });
+      expect(fixture.environment.resources.root.snapshot().reservations).toBeLessThan(before);
+      expect(projected).toEqual(values); expect(gaps).toEqual([]);
+    } finally { releaseInitialization(); releaseCallback(); token.close(); await replacement.catch(() => undefined); await fixture.close(); }
+  }, 15000);
+  for (const phase of ["current", "retained"] as const) for (const stage of ["decoder", "project"] as const)
+    it(`projects original ${phase} Controller source Drain after an entered ${stage}`, async () => {
+      let release!: () => void, entered!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      const entering = new Promise<void>(resolve => { entered = resolve; });
+      const block = async (value: string): Promise<void> => { if (value === "held") { entered(); await held; } };
+      const fixture = await controllerNotificationFixture(phase === "retained" ? 2 : 1, stage === "decoder" ? block : undefined);
+      const values: { value: string; generation: bigint; phase: string }[] = [];
+      const token = fixture.controller.Notifications.Subscribe(fixture.method, (_context, event) => {
+        if (event.kind === "notification") values.push({ value: event.value, generation: event.sourceGeneration, phase: event.sourcePhase });
+      }, { observation: "drain_aware", workClass: "short", applicationBytes: 1024n, authorization: "authenticated",
+        ...(stage === "project" ? { project: async (_context: V4ApplicationContext, value: string) => { await block(value); return value; } } : {}) });
+      try {
+        await fixture.controller.replaceSession();
+        const original = fixture.controller.captureSession();
+        await expect.poll(() => values.length).toBe(1);
+        await fixture.send(0, "held"); await transportEvent(entering);
+        if (phase === "retained") await fixture.controller.replaceSession({ retirement: "retain", retainUntilMS: 20000n });
+        const drain = original.drain({ timeoutMS: 5000n });
+        expect(token.observationStatus().callbackActive).toBe(true);
+        expect(token.cleanupStatus().pending_callbacks).toBe(1n);
+        expect(drain.status().cleanup_status.status).not.toBe("complete");
+        expect(fixture.environment.resources.root.snapshot().reservations).toBeGreaterThan(0);
+        expect(values.some(value => value.value === "held")).toBe(false);
+        release();
+        await expect.poll(() => values.find(value => value.value === "held")).toEqual({ value: "held", generation: 1n, phase: "draining" });
+        await expect.poll(() => token.observationStatus().callbackActive).toBe(false);
+        token.close(); expect(await token.waitClosed()).toMatchObject({ wait: "complete", cleanupStatus: { status: "complete" } });
+        await original.close(); expect((await original.waitCleanup()).status).toBe("complete");
+      } finally { release(); token.close(); await token.waitClosed(); await fixture.close(); }
+    });
+  it("bounds Controller roots and passive waits without a current Session", async () => {
+    const fixture = await controllerNotificationFixture();
+    const options = { workClass: "short" as const, applicationBytes: 1024n, authorization: "authenticated" as const };
+    const tokens: ReturnType<typeof fixture.controller.Notifications.Subscribe>[] = [];
+    try {
+      for (let index = 0; index < 32; index++) tokens.push(fixture.controller.Notifications.Subscribe(fixture.method, () => undefined, options));
+      expect(() => fixture.controller.Notifications.Subscribe(fixture.method, () => undefined, options)).toThrow("resource_exhausted");
+      expect(fixture.controller.status().attempts).toBe(0n);
+      const abort = new AbortController(), token = tokens[0]!;
+      const waiting = Array.from({ length: 4 }, () => token.waitClosed({ signal: abort.signal }));
+      await expect(token.waitClosed()).rejects.toThrow("resource_exhausted"); abort.abort();
+      expect((await Promise.all(waiting)).every(result => result.wait === "canceled")).toBe(true);
+      token.close(); expect(await token.waitClosed()).toMatchObject({ wait: "complete" });
+      tokens.push(fixture.controller.Notifications.Subscribe(fixture.method, () => undefined, options));
+    } finally { for (const token of tokens) token.close(); await fixture.close(); }
+  });
+  it("records a throwing Controller gap callback once and keeps ordinary tasks progressing", async () => {
+    const fixture = await controllerNotificationFixture();
+    let gaps = 0;
+    try {
+      await fixture.controller.replaceSession();
+      const token = fixture.controller.Notifications.Subscribe(fixture.method, (_context, event) => {
+        if (event.kind === "observation_gap") { gaps++; throw new Error("observer failure"); }
+      }, { workClass: "short", applicationBytes: 1024n, authorization: "authenticated" });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(gaps).toBe(1); expect(token.observationStatus().gap?.reasons).toEqual(expect.arrayContaining(["late_attachment", "handler_error"]));
+      await fixture.controller.captureSession().probeLiveness();
+      token.close(); expect(await token.waitClosed()).toMatchObject({ wait: "complete" });
+    } finally { await fixture.close(); }
+  });
+  for (const candidate of ["retain", "fail"] as const) it(`shares Controller input capacity while a candidate will ${candidate}`, async () => {
+    const fixture = await controllerNotificationFixture(2);
+    let releaseCallback!: () => void, releaseInitialization!: () => void, enteredInitialization!: () => void;
+    const callback = new Promise<void>(resolve => { releaseCallback = resolve; });
+    const initialization = new Promise<void>(resolve => { releaseInitialization = resolve; });
+    const initializing = new Promise<void>(resolve => { enteredInitialization = resolve; });
+    const values: { value: string; phase: string }[] = [], gaps: string[][] = [];
+    const token = fixture.controller.Notifications.Subscribe(fixture.method, async (_context, event) => {
+      if (event.kind === "observation_gap") { gaps.push([...event.gap.reasons]); return; }
+      values.push({ value: event.value, phase: event.sourcePhase }); if (event.value === "hold") await callback;
+    }, { observation: "drain_aware", workClass: "short", applicationBytes: 1024n, authorization: "authenticated" });
+    let replacement: ReturnType<typeof fixture.controller.replaceSession> | undefined;
+    try {
+      await fixture.controller.replaceSession(); await expect.poll(() => values.length).toBe(1);
+      await fixture.send(0, "hold"); await expect.poll(() => values.length).toBe(2);
+      fixture.holdInitialization(async () => { enteredInitialization(); await initialization; if (candidate === "fail") throw new Error("candidate_failed"); });
+      replacement = fixture.controller.replaceSession({ retirement: "retain", retainUntilMS: 20000n });
+      await Promise.race([transportEvent(initializing), replacement.then(() => { throw new Error("initializer did not block"); })]);
+      await expect.poll(() => token.observationStatus().pending).toBe(1);
+      for (let index = 0; index < 20; index++) await fixture.send(index % 2, `queued-${index}`);
+      await expect.poll(() => token.observationStatus().gap?.knownDropped).toBe(5n);
+      expect(token.observationStatus()).toMatchObject({ observedSources: 2, pending: 16, callbackActive: true });
+      expect(fixture.decoded).toEqual(["early-0", "hold"]);
+      releaseInitialization();
+      if (candidate === "fail") {
+        await expect(replacement).rejects.toThrow();
+        await expect.poll(() => token.observationStatus().observedSources).toBe(1);
+        expect(token.observationStatus().attachedToCurrent).toBe(true);
+      } else {
+        await replacement; expect(token.observationStatus()).toMatchObject({ observedSources: 2, pending: 16, callbackActive: true });
+      }
+      // Full data admission cannot spend the root's reserved gap responsibility.
+      expect(gaps).toEqual([]); expect(token.observationStatus().gap?.reasons).toContain("dropped_budget");
+      releaseCallback(); await expect.poll(() => token.observationStatus().pending).toBe(0);
+      await expect.poll(() => token.observationStatus().callbackActive).toBe(false);
+      expect(gaps.length).toBeGreaterThan(0);
+      if (candidate === "fail") expect(fixture.decoded).not.toContain("early-1");
+      else {
+        expect(values).toContainEqual({ value: "early-1", phase: "current" });
+        expect(values).toContainEqual({ value: "queued-0", phase: "retained" });
+      }
+      token.close(); expect(await token.waitClosed()).toMatchObject({ wait: "complete" });
+    } finally { releaseInitialization(); releaseCallback(); token.close(); await replacement?.catch(() => undefined); await fixture.close(); }
+  });
+  it("keeps latest Controller pending input eligible across an unpublished candidate", async () => {
+    const fixture = await controllerNotificationFixture(2);
+    let releaseCallback!: () => void, releaseInitialization!: () => void, enteredInitialization!: () => void;
+    const callback = new Promise<void>(resolve => { releaseCallback = resolve; });
+    const initialization = new Promise<void>(resolve => { releaseInitialization = resolve; });
+    const initializing = new Promise<void>(resolve => { enteredInitialization = resolve; });
+    const values: string[] = [];
+    const token = fixture.controller.Notifications.Subscribe(fixture.method, async (_context, event) => {
+      if (event.kind !== "notification") return;
+      values.push(event.value); if (event.value === "hold") await callback;
+    }, { pendingPolicy: "latest_pending", workClass: "short", applicationBytes: 1024n, authorization: "authenticated" });
+    let replacement: ReturnType<typeof fixture.controller.replaceSession> | undefined;
+    try {
+      await fixture.controller.replaceSession(); await expect.poll(() => values.length).toBe(1);
+      await fixture.send(0, "hold"); await expect.poll(() => values.length).toBe(2);
+      fixture.holdInitialization(async () => { enteredInitialization(); await initialization; });
+      replacement = fixture.controller.replaceSession(); await transportEvent(initializing);
+      await expect.poll(() => token.observationStatus().pending).toBe(1);
+      await fixture.send(0, "eligible-current");
+      await expect.poll(() => token.observationStatus().gap?.reasons.includes("coalesced")).toBe(true);
+      await fixture.send(1, "unpublished-candidate");
+      await expect.poll(() => token.observationStatus().gap?.reasons.includes("dropped_budget")).toBe(true);
+      expect(token.observationStatus()).toMatchObject({ pending: 1, callbackActive: true });
+      releaseCallback(); await expect.poll(() => values).toEqual(["early-0", "hold", "eligible-current"]);
+      expect(fixture.decoded).not.toContain("unpublished-candidate"); expect(fixture.decoded).not.toContain("early-1");
+      releaseInitialization(); await replacement;
+      await fixture.send(1, "published-current"); await expect.poll(() => values.length).toBe(4);
+      expect(values[3]).toBe("published-current"); token.close(); expect(await token.waitClosed()).toMatchObject({ wait: "complete" });
+    } finally { releaseInitialization(); releaseCallback(); token.close(); await replacement?.catch(() => undefined); await fixture.close(); }
+  });
+  it("keeps Controller gap callbacks in the original executor through physical cleanup", async () => {
+    const fixture = await controllerNotificationFixture();
+    let release!: () => void, entered!: () => void, selfWait: string | undefined, calls = 0;
+    const held = new Promise<void>(resolve => { release = resolve; }), entering = new Promise<void>(resolve => { entered = resolve; });
+    try {
+      await fixture.controller.replaceSession();
+      const token = fixture.controller.Notifications.Subscribe(fixture.method, async (context, event) => {
+        if (event.kind !== "observation_gap") return;
+        calls++; expect(applicationHasPermit(context)).toBe(true);
+        token.close(); selfWait = (await token.waitClosed({ context })).wait; entered(); await held;
+      }, { workClass: "short", applicationBytes: 1024n, authorization: "authenticated" });
+      await transportEvent(entering);
+      expect(selfWait).toBe("dependency_unavailable");
+      expect(token.cleanupStatus()).toMatchObject({ status: "pending", pending_callbacks: 1n });
+      expect(await token.waitClosed({ timeoutMS: 1n })).toMatchObject({ wait: "deadline_exceeded", cleanupStatus: { status: "pending" } });
+      release(); expect(await token.waitClosed()).toMatchObject({ wait: "complete" }); expect(calls).toBe(1);
+    } finally { release(); await fixture.close(); }
+  });
+  it("coalesces a Controller executor waiter without adding a second logical latest slot", async () => {
+    const fixture = await controllerNotificationFixture();
+    const resources = fixture.environment.resources;
+    const group = applicationGroup(resources.root, resources.accounts, { ...resources.owner, kind: "test_notification_saturation" }, resources.runtimeBytes, false);
+    const permits: ReturnType<typeof group.tryOrdinary>[] = [];
+    const values: string[] = [];
+    const token = fixture.controller.Notifications.Subscribe(fixture.method, (_context, event) => { if (event.kind === "notification") values.push(event.value); },
+      { pendingPolicy: "latest_pending", workClass: "short", applicationBytes: 1024n, authorization: "authenticated" });
+    try {
+      await fixture.controller.replaceSession(); await expect.poll(() => values).toEqual(["early-0"]);
+      for (let index = 0; index < 128; index++) { try { permits.push(group.tryOrdinary("short")); } catch { break; } }
+      expect(permits.length).toBeGreaterThan(0);
+      await fixture.send(0, "waiting-one"); await expect.poll(() => token.observationStatus().pending).toBe(1);
+      await fixture.send(0, "waiting-two"); await expect.poll(() => token.observationStatus().gap?.reasons.includes("coalesced")).toBe(true);
+      expect(token.observationStatus()).toMatchObject({ pending: 1, callbackActive: false }); expect(fixture.decoded).toEqual(["early-0"]);
+      for (const permit of permits.splice(0)) permit.release();
+      await expect.poll(() => values).toEqual(["early-0", "waiting-two"]);
+      expect(fixture.decoded).toEqual(values); token.close(); expect(await token.waitClosed()).toMatchObject({ wait: "complete" });
+    } finally { for (const permit of permits) permit.release(); group.close(); token.close(); await fixture.close(); }
+  });
   it("renews Controller accepted stream demand and notification routing on replacement", async () => {
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const events = new V4MethodDefinition({ typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 2, maxStreamPayloadBytes: 256n, maxStreamDurationMS: 10000n, restartFlush: false });
-    const changed = new V4MethodDefinition({ typeID: 44, shape: "notify", notifySemantics: "observation", request: codec,
-      requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false });
+    const events = new V4MethodDefinition({
+      typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 2, maxStreamPayloadBytes: 256n, maxStreamDurationMS: 10000n, restartFlush: false
+    });
+    const changed = new V4MethodDefinition({
+      typeID: 44, shape: "notify", notifySemantics: "observation", request: codec,
+      requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.controller.streams", methods: { events, changed } });
-    const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
-    const notificationContract = encode(map({ 0: text(definition.namespace), 1: u(44), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
-      8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(128), 27: array() }));
+    const notificationContract = encode(map({
+      0: text(definition.namespace), 1: u(44), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
+      8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(128), 27: array()
+    }));
+    const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128,
+      notificationMethods: [{ namespace: definition.namespace, method: changed, contract: notificationContract, permission: "allowed" as const }] };
     const pairs: { client: ReturnType<typeof endpoint>; server: ReturnType<typeof endpoint>; contract: ServiceContractSnapshot }[] = [];
     const peers: V4Session[] = [], subscriptions: V4NotificationSubscription<string>[] = [], notifications: string[] = [], calls: string[] = [];
     const origin = performance.now(); let releaseOld!: () => void;
@@ -359,19 +897,28 @@ describe("original v4 reliable Session assembly", () => {
       let contract!: ServiceContractSnapshot;
       const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
         const r = environment.resources, refs = r.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-          accounts: r.accounts, owner: { ...r.owner, kind: `controller_stream_contract_${index}` }, charge })));
-        try { contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 24: u(2), 25: u(256), 26: u(10000), 27: array() })), 1024n, refs[0]!, refs[1]!); }
+          accounts: r.accounts, owner: { ...r.owner, kind: `controller_stream_contract_${index}` }, charge
+        })));
+        try {
+          contract = new ServiceContractSnapshot(encode(map({
+            0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
+            6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
+            21: { kind: "bool", value: false }, 23: u(128), 24: u(2), 25: u(256), 26: u(10000), 27: array()
+          })), 1024n, refs[0]!, refs[1]!);
+        }
         finally { for (const ref of refs) ref.release(); }
-        return { ...common, queryPermissions: [{ namespace: definition.namespace, method: events, permission: "allowed" }, { namespace: definition.namespace, method: changed, permission: "allowed" }],
+        return {
+          ...common, queryPermissions: [{ namespace: definition.namespace, method: events, permission: "allowed" }, { namespace: definition.namespace, method: changed, permission: "allowed" }],
           notificationMethods: [{ namespace: definition.namespace, method: changed, contract: notificationContract, permission: "allowed" }],
-          streamingHandlers: [{ namespace: definition.namespace, method: events, kind: "example.controller.events", contract,
+          streamingHandlers: [{
+            namespace: definition.namespace, method: events, kind: "example.controller.events", contract,
             handler: async (_context, value: string, writer) => {
               calls.push(`${i}:${value}`); await writer.write(`${i}:${value}:typed`);
               if (value === "old") await held;
               await writer.write(`${i}:${value}:encoded`);
-            }, options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+            }, options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       }, options);
       pairs.push({ client, server, contract });
     }
@@ -379,30 +926,46 @@ describe("original v4 reliable Session assembly", () => {
     const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "live_authority", async (_request, destination) => {
       selected = acquisitions++; const input = pairs[selected]!.client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
-    environment.installClientConnector({ applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
-      const index = selected, pair = pairs[index]!;
-      const [runtime, remote] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]);
-      const peer = new V4Session(remote); peers.push(peer);
-      subscriptions.push(peer.notifications.subscribe(changed, (_context, value) => { notifications.push(`${index}:${value}`); },
-        { workClass: "short", applicationBytes: 1024n, authorization: "authenticated" })); return runtime;
-    } });
-    const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }] };
-    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
-      requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false, local_consumer_tls13_verification: false, application_profile: "services" }, attemptTimeoutMS: 10000n });
+    environment.installClientConnector({
+      applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
+        const index = selected, pair = pairs[index]!;
+        const [runtime, remote] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]);
+        const peer = new V4Session(remote); peers.push(peer);
+        subscriptions.push(peer.notifications.subscribe(changed, (_context, value) => { notifications.push(`${index}:${value}`); },
+          { workClass: "short", applicationBytes: 1024n, authorization: "authenticated" })); return runtime;
+      }
+    });
+    const target = {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }]
+    };
+    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), {
+      source,
+      requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false, local_consumer_tls13_verification: false, application_profile: "services" }, attemptTimeoutMS: 10000n
+    });
     let service: ServiceClientTypes.V4ServiceClient<{ events: typeof events; changed: typeof changed }> | undefined;
+    let controllerSubscription: ReturnType<typeof controller.Notifications.Subscribe> | undefined;
     const streams: StreamingOperationTypes.V4StreamingOperation<string>[] = [];
     try {
       await controller.replaceSession();
-      service = await controller.bindService(definition, { target, maximumOfferWindowMS: 10000n,
-        methods: [{ method: events, streamKind: "example.controller.events", preacceptStream: true }] });
+      service = await controller.bindService(definition, {
+        target, maximumOfferWindowMS: 10000n,
+        methods: [{ method: events, streamKind: "example.controller.events", preacceptStream: true }, { method: changed }]
+      });
+      controllerSubscription = controller.Notifications.Subscribe(changed, () => undefined, {
+        observation: "drain_aware", workClass: "short", applicationBytes: 1024n, authorization: "authenticated"
+      });
+      expect(controllerSubscription.observationStatus().attachedToCurrent).toBe(true);
       const old = await service.stream(events, "old", { admission: "try_now" }); streams.push(old);
       const first = await old.readNext(); expect(first).toMatchObject({ kind: "value", value: "0:old:typed" }); if ("release" in first) first.release();
       const preparedNotify = await service.prepareOperation(changed, "prepared");
       await controller.replaceSession({ retirement: "retain", retainUntilMS: 20000n });
+      expect(controllerSubscription.observationStatus()).toMatchObject({ attachedToCurrent: true, observedSources: 2 });
       const next = await service.prepareStreamOperation(events, "new", { admission: "try_now" }); streams.push(next);
       // Start only observes already-declared demand. It cannot create a pool.
       await expect.poll(() => next.start().status).toBe("admitted");
@@ -420,7 +983,7 @@ describe("original v4 reliable Session assembly", () => {
       expect(calls).toEqual(["0:old", "1:new"]); expect(acquisitions).toBe(2);
       await controller.captureSession().probeLiveness();
     } finally {
-      releaseOld(); service?.close(); for (const stream of streams) stream.close(); for (const subscription of subscriptions) subscription.close();
+      releaseOld(); service?.close(); controllerSubscription?.close(); for (const stream of streams) stream.close(); for (const subscription of subscriptions) subscription.close();
       await controller.close(); expect((await controller.waitCleanup()).status).toBe("complete");
       for (const peer of peers) await peer.close();
       for (const pair of pairs) { pair.contract.release(); await pair.server.close(); }
@@ -430,14 +993,18 @@ describe("original v4 reliable Session assembly", () => {
   it("renews managed Controller execution offers after a blocked source is replaced", async () => {
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const optionalCodec = v4ApplicationMessageCodec<string>({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 }, {
       execution: "sync", applicationBytes: 1024n, encode: (_ctx, value) => new TextEncoder().encode(value),
       decode: (_ctx, value) => new TextDecoder().decode(value),
     });
-    const optional = new V4MethodDefinition({ typeID: 44, shape: "unary", unarySemantics: "transient", request: optionalCodec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const optional = new V4MethodDefinition({
+      typeID: 44, shape: "unary", unarySemantics: "transient", request: optionalCodec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.controller.managed", methods: { echo: method, optional } });
     const common = { resultRead: { typeID: 45, contractDigest: fill(33) }, query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
     const pairs: { client: ReturnType<typeof endpoint>; server: ReturnType<typeof endpoint>; contract: ServiceContractSnapshot }[] = [];
@@ -447,31 +1014,43 @@ describe("original v4 reliable Session assembly", () => {
     for (let i = 0; i < 3; i++) {
       const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
       const options = { profile: "execution" as const, sessions: 3, connectionSeed: 90 + i, clockOriginMS: origin };
-      const client = endpoint("client", a, profile, "live_authority", 3000n, (_environment, material) => ({ ...common, localExecutionAuthority: "3".repeat(64),
-        referenceTargets: [{ authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-          peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }] }] }),
+      const client = endpoint("client", a, profile, "live_authority", 3000n, (_environment, material) => ({
+        ...common, localExecutionAuthority: "3".repeat(64),
+        referenceTargets: [{
+          authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+          peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }]
+        }]
+      }),
         { ...options, ...(pairs.length === 0 ? {} : { environment: pairs[0]!.client.environment }) });
       await client.discardPrepared();
       let contract!: ServiceContractSnapshot;
       const server = endpoint("server", b, profile, "live_authority", 3000n, (environment, material) => {
         const r = environment.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 128, arrayItems: 8, runtimeBytes: 1024n };
         const refs = r.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n), cborDecoderCharge(offerConfig)].map((charge, index) => ({
-          accounts: r.accounts, owner: { ...r.owner, kind: `controller_contract_${index}` }, charge })));
+          accounts: r.accounts, owner: { ...r.owner, kind: `controller_contract_${index}` }, charge
+        })));
         let decoder: CBORDecoder | undefined, offer!: AdmissionOffer;
-        try { contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(1),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 13: u(0), 14: u(30000), 15: u(30000),
-          16: u(10000), 17: u(60000), 18: u(10000), 19: u(1),
-          21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, refs[0]!, refs[1]!);
+        try {
+          contract = new ServiceContractSnapshot(encode(map({
+            0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(1),
+            6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 13: u(0), 14: u(30000), 15: u(30000),
+            16: u(10000), 17: u(60000), 18: u(10000), 19: u(1),
+            21: { kind: "bool", value: false }, 23: u(128), 27: array()
+          })), 1024n, refs[0]!, refs[1]!);
           const digest = new Uint8Array(32); contract.copyDigest(digest); decoder = new CBORDecoder(offerConfig, refs[2]!);
           const document = decoder.decodeMap(encode(map({ 0: bytes(digest), 1: u(900), 2: u(500000 + i * 50000) })), "AdmissionOffer");
           try { offer = new AdmissionOffer(document, contract, 700000n, new Uint8Array(32)); } finally { document.release(); }
         } finally { decoder?.close(); for (const ref of refs) ref.release(); }
-        return { ...common, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
+        return {
+          ...common, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
           executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }],
           queryPermissions: [{ namespace: definition.namespace, method, permission: i === 1 ? "denied" as const : "allowed" as const }],
-          unaryHandlers: [{ namespace: definition.namespace, method, contract, offer, maximumOfferWindowMS: 700000n, execution, handler: (_context, value: string) => {
-            calls.push(`${i}:${value}`); return `${i}:${value}`;
-          }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+          unaryHandlers: [{
+            namespace: definition.namespace, method, contract, offer, maximumOfferWindowMS: 700000n, execution, handler: (_context, value: string) => {
+              calls.push(`${i}:${value}`); return `${i}:${value}`;
+            }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       }, options);
       pairs.push({ client, server, contract });
     }
@@ -479,36 +1058,58 @@ describe("original v4 reliable Session assembly", () => {
     const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "live_authority", async (_request, destination) => {
       selected = acquisitions++; const input = pairs[selected]!.client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
-    environment.installClientConnector({ applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
-      const pair = pairs[selected]!;
-      const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); return runtime;
-    } });
-    const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }] };
-    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
-      requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
-        local_consumer_tls13_verification: false, application_profile: "execution" }, attemptTimeoutMS: 10000n });
+    environment.installClientConnector({
+      applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
+        const pair = pairs[selected]!;
+        const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); return runtime;
+      }
+    });
+    const target = {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }]
+    };
+    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), {
+      source,
+      requirements: {
+        independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
+        local_consumer_tls13_verification: false, application_profile: "execution"
+      }, attemptTimeoutMS: 10000n
+    });
     try {
       await controller.replaceSession(); const first = controller.captureSession();
       const service = await controller.bindService(definition, { target, maximumOfferWindowMS: 700000n, initialMethods: [method], offerRefresh: "managed" }); services.push(service);
       const plan = environment.serviceBindings(256).offers;
       expect(plan.envelope()).toMatchObject({ methods: 1, groups: 1, batches: 1 });
-      const digest = service.contract(method).digest;
+      const installed = service.contract(method), digest = installed.digest, originalOffer = installed.offer;
+      expect(originalOffer).toEqual({ serviceContractDigest: digest, notBeforeMS: 900n, notAfterMS: 500000n });
+      expect(Object.isFrozen(installed)).toBe(true); expect(Object.isFrozen(originalOffer)).toBe(true);
+      expect(Object.getPrototypeOf(originalOffer)).toBe(Object.prototype);
+      expect(Object.keys(originalOffer!).sort()).toEqual(["notAfterMS", "notBeforeMS", "serviceContractDigest"]);
+      expect(Reflect.set(originalOffer!, "notAfterMS", 0n)).toBe(false);
       const prepared = await service.prepareOperation(method, "old");
       await controller.replaceSession({ retirement: "retain", retainUntilMS: 20000n });
       await expect.poll(() => service.contract(method), { timeout: 3000 }).toMatchObject({ refresh: "blocked", reason: "permission_denied" });
-      expect(prepared.start().status).toBe("admitted");
+      expect(service.contract(method).offer).toEqual(originalOffer);
+      expect(controller.dispatch(prepared).status).toBe("admitted");
+      expect(controller.Dispatch(prepared).status).toBe("admitted");
       const old = await prepared.takeResult(); expect(old).toMatchObject({ kind: "value", value: "0:old" }); if ("release" in old) old.release(); prepared.close();
       await first.close(); await expect.poll(() => controller.status().retired).toBe(false);
       await controller.replaceSession({ retirement: "retain", retainUntilMS: 20000n });
-      await expect.poll(() => service.contract(method), { timeout: 4000 }).toMatchObject({ refresh: "installed", availability: "available", digest });
+      await expect.poll(() => service.contract(method), { timeout: 4000 }).toMatchObject({ refresh: "installed", availability: "available", digest,
+        offer: { serviceContractDigest: digest, notBeforeMS: 900n, notAfterMS: 600000n } });
+      expect(controller.localReport()).toMatchObject({ code: "unknown", constraint: "unavailable", reservation: "not_reserved", connection: { phase: "ready" }, actions: [] });
+      expect(controller.LocalReport()).toEqual(controller.localReport());
+      expect(originalOffer).toEqual({ serviceContractDigest: digest, notBeforeMS: 900n, notAfterMS: 500000n });
       expect(plan.envelope()).toMatchObject({ methods: 1, groups: 1, batches: 1 });
       const fresh = await service.call(method, "current"); expect(fresh).toMatchObject({ kind: "value", value: "2:current" }); if ("release" in fresh) fresh.release();
       expect(calls).toEqual(["0:old", "2:current"]); expect(acquisitions).toBe(3);
       service.close(); expect(plan.envelope().methods).toBe(0);
+      expect(originalOffer).toEqual({ serviceContractDigest: digest, notBeforeMS: 900n, notAfterMS: 500000n });
       await controller.captureSession().probeLiveness();
     } finally {
       for (const service of services) service.close(); await controller.close(); expect((await controller.waitCleanup()).status).toBe("complete");
@@ -519,14 +1120,18 @@ describe("original v4 reliable Session assembly", () => {
   it("constructs owned and borrowed Controller services with one acquisition and exact cleanup ownership", async () => {
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const optionalCodec = v4ApplicationMessageCodec<string>({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 }, {
       execution: "sync", applicationBytes: 1024n, encode: (_ctx, value) => new TextEncoder().encode(value),
       decode: (_ctx, value) => new TextDecoder().decode(value),
     });
-    const optional = new V4MethodDefinition({ typeID: 44, shape: "unary", unarySemantics: "transient", request: optionalCodec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const optional = new V4MethodDefinition({
+      typeID: 44, shape: "unary", unarySemantics: "transient", request: optionalCodec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.controller", methods: { echo: method, optional } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
     const pairs: { client: ReturnType<typeof endpoint>; server: ReturnType<typeof endpoint>; contract: ServiceContractSnapshot }[] = [];
@@ -542,15 +1147,24 @@ describe("original v4 reliable Session assembly", () => {
       const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
         const r = environment.resources;
         const refs = r.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-          accounts: r.accounts, owner: { ...r.owner, kind: `controller_contract_${index}` }, charge })));
-        try { contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(i === 2 ? 64 : 128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, refs[0]!, refs[1]!); }
+          accounts: r.accounts, owner: { ...r.owner, kind: `controller_contract_${index}` }, charge
+        })));
+        try {
+          contract = new ServiceContractSnapshot(encode(map({
+            0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0),
+            6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(i === 2 ? 64 : 128), 11: u(30000), 12: u(10000),
+            21: { kind: "bool", value: false }, 23: u(128), 27: array()
+          })), 1024n, refs[0]!, refs[1]!);
+        }
         finally { for (const ref of refs) ref.release(); }
-        return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" as const }],
-          unaryHandlers: [{ namespace: definition.namespace, method, contract, handler: (_context, value: string) => {
-            calls.push(`${i}:${value}`); return `${i}:${value}`;
-          }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+        return {
+          ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" as const }],
+          unaryHandlers: [{
+            namespace: definition.namespace, method, contract, handler: (_context, value: string) => {
+              calls.push(`${i}:${value}`); return `${i}:${value}`;
+            }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       }, options);
       pairs.push({ client, server, contract });
     }
@@ -559,18 +1173,28 @@ describe("original v4 reliable Session assembly", () => {
     const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "live_authority", async (_request, destination) => {
       selected = acquisitions++; const input = pairs[selected]!.client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
-    environment.installClientConnector({ applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
-      const pair = pairs[selected]!;
-      const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); runtimes.push(runtime); return runtime;
-    } });
-    const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }] };
+    environment.installClientConnector({
+      applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
+        const pair = pairs[selected]!;
+        const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); runtimes.push(runtime); return runtime;
+      }
+    });
+    const target = {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }]
+    };
     const binding = { target, maximumOfferWindowMS: 10000n, initialMethods: [method] };
-    const config = { source, requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
-      local_consumer_tls13_verification: false, application_profile: "services" as const }, attemptTimeoutMS: 10000n };
+    const config = {
+      source, requirements: {
+        independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
+        local_consumer_tls13_verification: false, application_profile: "services" as const
+      }, attemptTimeoutMS: 10000n
+    };
     const owned = { ownership: "owned" as const, environment: wrapTransportEnvironment(environment), controller: config };
     const controller = createV4ConnectionController(owned.environment, config);
     try {
@@ -607,8 +1231,10 @@ describe("original v4 reliable Session assembly", () => {
   it("routes a two-group service through joint admission, disjoint methods and owned or borrowed cleanup", async () => {
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = (typeID: number) => new V4MethodDefinition({ typeID, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const method = (typeID: number) => new V4MethodDefinition({
+      typeID, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const interactive = method(42), bulk = method(44);
     const definition = new V4ServiceDefinition({ namespace: "example.groups", methods: { interactive, bulk } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
@@ -616,7 +1242,7 @@ describe("original v4 reliable Session assembly", () => {
     const calls: string[] = [], origin = performance.now();
     for (let i = 0; i < 4; i++) {
       const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
-      const options = { sessions: 2, connectionSeed: 100 + i, clockOriginMS: origin };
+      const options = { resourceAccounts: 128, sessions: 2, connectionSeed: 100 + i, clockOriginMS: origin };
       const client = endpoint("client", a, profile, "live_authority", 3000n, () => common,
         { ...options, ...(pairs.length === 0 ? {} : { environment: pairs[0]!.client.environment }) });
       await client.discardPrepared();
@@ -625,15 +1251,24 @@ describe("original v4 reliable Session assembly", () => {
       const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
         const r = environment.resources;
         const refs = r.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-          accounts: r.accounts, owner: { ...r.owner, kind: `group_contract_${index}` }, charge })));
-        try { contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(selectedMethod.typeID), 2: u(0), 3: u(0),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, refs[0]!, refs[1]!); }
+          accounts: r.accounts, owner: { ...r.owner, kind: `group_contract_${index}` }, charge
+        })));
+        try {
+          contract = new ServiceContractSnapshot(encode(map({
+            0: text(definition.namespace), 1: u(selectedMethod.typeID), 2: u(0), 3: u(0),
+            6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
+            21: { kind: "bool", value: false }, 23: u(128), 27: array()
+          })), 1024n, refs[0]!, refs[1]!);
+        }
         finally { for (const ref of refs) ref.release(); }
-        return { ...common, queryPermissions: [{ namespace: definition.namespace, method: selectedMethod, permission: "allowed" as const }],
-          unaryHandlers: [{ namespace: definition.namespace, method: selectedMethod, contract, handler: (_context, value: string) => {
-            calls.push(`${i}:${value}`); return `${i}:${value}`;
-          }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+        return {
+          ...common, queryPermissions: [{ namespace: definition.namespace, method: selectedMethod, permission: "allowed" as const }],
+          unaryHandlers: [{
+            namespace: definition.namespace, method: selectedMethod, contract, handler: (_context, value: string) => {
+              calls.push(`${i}:${value}`); return `${i}:${value}`;
+            }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       }, options);
       pairs.push({ client, server, contract });
     }
@@ -642,18 +1277,28 @@ describe("original v4 reliable Session assembly", () => {
     const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "live_authority", async (_request, destination) => {
       selected = acquisitions++; const input = pairs[selected]!.client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
-    environment.installClientConnector({ applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
-      const pair = pairs[selected]!;
-      const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); runtimes.push(runtime); return runtime;
-    } });
-    const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }] };
+    environment.installClientConnector({
+      applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
+        const pair = pairs[selected]!;
+        const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); runtimes.push(runtime); return runtime;
+      }
+    });
+    const target = {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }]
+    };
     const binding = { target, maximumOfferWindowMS: 10000n, initialMethods: [interactive] };
-    const config = { source, requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
-      local_consumer_tls13_verification: false, application_profile: "services" as const }, attemptTimeoutMS: 10000n };
+    const config = {
+      source, requirements: {
+        independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
+        local_consumer_tls13_verification: false, application_profile: "services" as const
+      }, attemptTimeoutMS: 10000n
+    };
     const owned = { ownership: "owned" as const, environment: wrapTransportEnvironment(environment), controller: config };
     const routes = [{ method: interactive, group: "interactive" as const }, { method: bulk, group: "bulk" as const }];
     const grouped = { groups: { interactive: owned, bulk: owned }, routes };
@@ -715,8 +1360,10 @@ describe("original v4 reliable Session assembly", () => {
   it("replaces grouped Controllers using real reserved headroom while old operations retain their Sessions", async () => {
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = (typeID: number) => new V4MethodDefinition({ typeID, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const method = (typeID: number) => new V4MethodDefinition({
+      typeID, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const interactive = method(42), bulk = method(44);
     const definition = new V4ServiceDefinition({ namespace: "example.groups", methods: { interactive, bulk } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
@@ -724,7 +1371,7 @@ describe("original v4 reliable Session assembly", () => {
     const calls: string[] = [], origin = performance.now();
     for (let i = 0; i < 4; i++) {
       const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
-      const options = { resourceAccounts: 64, sessions: 4, connectionSeed: 100 + i, clockOriginMS: origin };
+      const options = { resourceAccounts: 128, sessions: 4, connectionSeed: 100 + i, clockOriginMS: origin };
       const client = endpoint("client", a, profile, "live_authority", 3000n, () => common,
         { ...options, ...(pairs.length === 0 ? {} : { environment: pairs[0]!.client.environment }) });
       await client.discardPrepared();
@@ -733,15 +1380,24 @@ describe("original v4 reliable Session assembly", () => {
       const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
         const r = environment.resources;
         const refs = r.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-          accounts: r.accounts, owner: { ...r.owner, kind: `group_contract_${index}` }, charge })));
-        try { contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(selectedMethod.typeID), 2: u(0), 3: u(0),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, refs[0]!, refs[1]!); }
+          accounts: r.accounts, owner: { ...r.owner, kind: `group_contract_${index}` }, charge
+        })));
+        try {
+          contract = new ServiceContractSnapshot(encode(map({
+            0: text(definition.namespace), 1: u(selectedMethod.typeID), 2: u(0), 3: u(0),
+            6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
+            21: { kind: "bool", value: false }, 23: u(128), 27: array()
+          })), 1024n, refs[0]!, refs[1]!);
+        }
         finally { for (const ref of refs) ref.release(); }
-        return { ...common, queryPermissions: [{ namespace: definition.namespace, method: selectedMethod, permission: "allowed" as const }],
-          unaryHandlers: [{ namespace: definition.namespace, method: selectedMethod, contract, handler: (_context, value: string) => {
-            calls.push(`${i}:${value}`); return `${i}:${value}`;
-          }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+        return {
+          ...common, queryPermissions: [{ namespace: definition.namespace, method: selectedMethod, permission: "allowed" as const }],
+          unaryHandlers: [{
+            namespace: definition.namespace, method: selectedMethod, contract, handler: (_context, value: string) => {
+              calls.push(`${i}:${value}`); return `${i}:${value}`;
+            }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       }, options);
       pairs.push({ client, server, contract });
     }
@@ -750,25 +1406,37 @@ describe("original v4 reliable Session assembly", () => {
     const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "live_authority", async (_request, destination) => {
       selected = acquisitions++; const input = pairs[selected]!.client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
-    environment.installClientConnector({ applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => { admissions++; return environment.reserveClientAdmission(pairs[0]!.client.config); }, checkRequirements: () => undefined, connect: async (material, options) => {
-      const pair = pairs[selected]!;
-      const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); runtimes.push(runtime); return runtime;
-    } });
-    const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }] };
+    environment.installClientConnector({
+      applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => { admissions++; return environment.reserveClientAdmission(pairs[0]!.client.config); }, checkRequirements: () => undefined, connect: async (material, options) => {
+        const pair = pairs[selected]!;
+        const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); runtimes.push(runtime); return runtime;
+      }
+    });
+    const target = {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }]
+    };
     const binding = { target, maximumOfferWindowMS: 10000n, initialMethods: [interactive] };
-    const config = { source, handoffHeadroom: true, requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
-      local_consumer_tls13_verification: false, application_profile: "services" as const }, attemptTimeoutMS: 10000n };
+    const config = {
+      source, handoffHeadroom: true, requirements: {
+        independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
+        local_consumer_tls13_verification: false, application_profile: "services" as const
+      }, attemptTimeoutMS: 10000n
+    };
     const owned = { ownership: "owned" as const, environment: wrapTransportEnvironment(environment), controller: config };
     const controllers = [createV4ConnectionController(owned.environment, config), createV4ConnectionController(owned.environment, config)];
     const routes = [{ method: interactive, group: "interactive" as const }, { method: bulk, group: "bulk" as const }];
-    const grouped = { groups: {
-      interactive: { ownership: "borrowed" as const, controller: controllers[0]! },
-      bulk: { ownership: "borrowed" as const, controller: controllers[1]! },
-    }, routes };
+    const grouped = {
+      groups: {
+        interactive: { ownership: "borrowed" as const, controller: controllers[0]! },
+        bulk: { ownership: "borrowed" as const, controller: controllers[1]! },
+      }, routes
+    };
     let service: ServiceClientTypes.V4ServiceClient<typeof definition.methods> | undefined;
     const operations: UnaryOperationTypes.V4UnaryOperation<string>[] = [];
     try {
@@ -815,8 +1483,10 @@ describe("original v4 reliable Session assembly", () => {
   it("constructs owned groups with prepaid headroom and reconnects one source without migrating its peer group", async () => {
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = (typeID: number) => new V4MethodDefinition({ typeID, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const method = (typeID: number) => new V4MethodDefinition({
+      typeID, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const interactive = method(42), bulk = method(44);
     const definition = new V4ServiceDefinition({ namespace: "example.groups", methods: { interactive, bulk } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
@@ -824,7 +1494,7 @@ describe("original v4 reliable Session assembly", () => {
     const calls: string[] = [], origin = performance.now();
     for (let i = 0; i < 4; i++) {
       const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
-      const options = { resourceAccounts: 64, sessions: 4, connectionSeed: 100 + i, clockOriginMS: origin };
+      const options = { resourceAccounts: 128, sessions: 4, connectionSeed: 100 + i, clockOriginMS: origin };
       const client = endpoint("client", a, profile, "live_authority", 3000n, () => common,
         { ...options, ...(pairs.length === 0 ? {} : { environment: pairs[0]!.client.environment }) });
       await client.discardPrepared();
@@ -833,15 +1503,24 @@ describe("original v4 reliable Session assembly", () => {
       const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
         const r = environment.resources;
         const refs = r.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-          accounts: r.accounts, owner: { ...r.owner, kind: `group_contract_${index}` }, charge })));
-        try { contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(selectedMethod.typeID), 2: u(0), 3: u(0),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, refs[0]!, refs[1]!); }
+          accounts: r.accounts, owner: { ...r.owner, kind: `group_contract_${index}` }, charge
+        })));
+        try {
+          contract = new ServiceContractSnapshot(encode(map({
+            0: text(definition.namespace), 1: u(selectedMethod.typeID), 2: u(0), 3: u(0),
+            6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
+            21: { kind: "bool", value: false }, 23: u(128), 27: array()
+          })), 1024n, refs[0]!, refs[1]!);
+        }
         finally { for (const ref of refs) ref.release(); }
-        return { ...common, queryPermissions: [{ namespace: definition.namespace, method: selectedMethod, permission: "allowed" as const }],
-          unaryHandlers: [{ namespace: definition.namespace, method: selectedMethod, contract, handler: (_context, value: string) => {
-            calls.push(`${i}:${value}`); return `${i}:${value}`;
-          }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+        return {
+          ...common, queryPermissions: [{ namespace: definition.namespace, method: selectedMethod, permission: "allowed" as const }],
+          unaryHandlers: [{
+            namespace: definition.namespace, method: selectedMethod, contract, handler: (_context, value: string) => {
+              calls.push(`${i}:${value}`); return `${i}:${value}`;
+            }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       }, options);
       pairs.push({ client, server, contract });
     }
@@ -850,22 +1529,36 @@ describe("original v4 reliable Session assembly", () => {
     const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "live_authority", async (_request, destination) => {
       selected = acquisitions++; const input = pairs[selected]!.client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
-    environment.installClientConnector({ applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => { admissions++; return environment.reserveClientAdmission(pairs[0]!.client.config); }, checkRequirements: () => undefined, connect: async (material, options) => {
-      const pair = pairs[selected]!;
-      const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); runtimes.push(runtime); return runtime;
-    } });
-    const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }] };
+    environment.installClientConnector({
+      applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => { admissions++; return environment.reserveClientAdmission(pairs[0]!.client.config); }, checkRequirements: () => undefined, connect: async (material, options) => {
+        const pair = pairs[selected]!;
+        const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); runtimes.push(runtime); return runtime;
+      }
+    });
+    const target = {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }]
+    };
     const binding = { target, maximumOfferWindowMS: 10000n, initialMethods: [interactive] };
-    const config = { source, handoffHeadroom: true, requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
-      local_consumer_tls13_verification: false, application_profile: "services" as const }, attemptTimeoutMS: 10000n };
+    const config = {
+      source, handoffHeadroom: true, requirements: {
+        independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
+        local_consumer_tls13_verification: false, application_profile: "services" as const
+      }, attemptTimeoutMS: 10000n
+    };
     const owned = { ownership: "owned" as const, environment: wrapTransportEnvironment(environment), controller: config };
     const candidates: V4Session[] = [];
-    const configured = { ...owned, controller: { ...config, initializeApplicationBytes: 1024n,
-      initializeSession: (_context: V4ApplicationContext, candidate: V4Session) => { candidates.push(candidate); } } };
+    const configured = {
+      ...owned, controller: {
+        ...config, initializeApplicationBytes: 1024n,
+        initializeSession: (_context: V4ApplicationContext, candidate: V4Session) => { candidates.push(candidate); }
+      }
+    };
     const routes = [{ method: interactive, group: "interactive" as const }, { method: bulk, group: "bulk" as const }];
     let service: ServiceClientTypes.V4ServiceClient<typeof definition.methods> | undefined;
     try {
@@ -895,14 +1588,18 @@ describe("original v4 reliable Session assembly", () => {
   it("keeps a Controller service across replacement without rebinding or moving prepared calls", async () => {
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const optionalCodec = v4ApplicationMessageCodec<string>({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 }, {
       execution: "sync", applicationBytes: 1024n, encode: (_ctx, value) => new TextEncoder().encode(value),
       decode: (_ctx, value) => new TextDecoder().decode(value),
     });
-    const optional = new V4MethodDefinition({ typeID: 44, shape: "unary", unarySemantics: "transient", request: optionalCodec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const optional = new V4MethodDefinition({
+      typeID: 44, shape: "unary", unarySemantics: "transient", request: optionalCodec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.controller", methods: { echo: method, optional } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
     const pairs: { client: ReturnType<typeof endpoint>; server: ReturnType<typeof endpoint>; contract: ServiceContractSnapshot }[] = [];
@@ -918,15 +1615,24 @@ describe("original v4 reliable Session assembly", () => {
       const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
         const r = environment.resources;
         const refs = r.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-          accounts: r.accounts, owner: { ...r.owner, kind: `controller_contract_${index}` }, charge })));
-        try { contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(i === 2 ? 64 : 128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, refs[0]!, refs[1]!); }
+          accounts: r.accounts, owner: { ...r.owner, kind: `controller_contract_${index}` }, charge
+        })));
+        try {
+          contract = new ServiceContractSnapshot(encode(map({
+            0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0),
+            6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(i === 2 ? 64 : 128), 11: u(30000), 12: u(10000),
+            21: { kind: "bool", value: false }, 23: u(128), 27: array()
+          })), 1024n, refs[0]!, refs[1]!);
+        }
         finally { for (const ref of refs) ref.release(); }
-        return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" as const }],
-          unaryHandlers: [{ namespace: definition.namespace, method, contract, handler: (_context, value: string) => {
-            calls.push(`${i}:${value}`); return `${i}:${value}`;
-          }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+        return {
+          ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" as const }],
+          unaryHandlers: [{
+            namespace: definition.namespace, method, contract, handler: (_context, value: string) => {
+              calls.push(`${i}:${value}`); return `${i}:${value}`;
+            }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       }, options);
       pairs.push({ client, server, contract });
     }
@@ -938,20 +1644,28 @@ describe("original v4 reliable Session assembly", () => {
     const source = wrapCredentialSource(environment.registerSource({ ...pairs[0]!.client.material.config, authorities: ["authority"] }, "live_authority", async (_request, destination) => {
       selected = acquisitions++; const input = pairs[selected]!.client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
-    environment.installClientConnector({ applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
-      const pair = pairs[selected]!;
-      const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); return runtime;
-    } });
-    const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }] };
+    environment.installClientConnector({
+      applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
+        const pair = pairs[selected]!;
+        const [runtime] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); return runtime;
+      }
+    });
+    const target = {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }]
+    };
     const binding = { target, maximumOfferWindowMS: 10000n, initialMethods: [method] };
-    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
+    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), {
+      source,
       requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false, local_consumer_tls13_verification: false, application_profile: "services" },
       attemptTimeoutMS: 10000n, initializeApplicationBytes: 1024n,
-      initializeSession: async () => { if (++initializations === 2) { enterReplacement(); await release; } } });
+      initializeSession: async () => { if (++initializations === 2) { enterReplacement(); await release; } }
+    });
     const call = async (service: typeof services[number], value: string, expected: string) => {
       const result = await service.call(method, value); expect(result).toMatchObject({ kind: "value", value: expected });
       if ("release" in result) result.release();
@@ -1004,15 +1718,19 @@ describe("original v4 reliable Session assembly", () => {
   it("publishes Controller candidates, retains fixed business calls and blocks unknown initialization", async () => {
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     let optionalEncodes = 0;
     const optionalCodec = v4ApplicationMessageCodec<string>({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 }, {
       execution: "sync", applicationBytes: 1024n, encode: (_ctx, value) => { optionalEncodes++; return new TextEncoder().encode(value); },
       decode: (_ctx, value) => new TextDecoder().decode(value),
     });
-    const optional = new V4MethodDefinition({ typeID: 44, shape: "unary", unarySemantics: "transient", request: optionalCodec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const optional = new V4MethodDefinition({
+      typeID: 44, shape: "unary", unarySemantics: "transient", request: optionalCodec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.controller", methods: { echo: method, optional } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
     const pairs: { client: ReturnType<typeof endpoint>; server: ReturnType<typeof endpoint>; contract: ServiceContractSnapshot }[] = [];
@@ -1028,15 +1746,24 @@ describe("original v4 reliable Session assembly", () => {
       const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
         const r = environment.resources;
         const refs = r.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-          accounts: r.accounts, owner: { ...r.owner, kind: `controller_contract_${index}` }, charge })));
-        try { contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, refs[0]!, refs[1]!); }
+          accounts: r.accounts, owner: { ...r.owner, kind: `controller_contract_${index}` }, charge
+        })));
+        try {
+          contract = new ServiceContractSnapshot(encode(map({
+            0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0),
+            6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
+            21: { kind: "bool", value: false }, 23: u(128), 27: array()
+          })), 1024n, refs[0]!, refs[1]!);
+        }
         finally { for (const ref of refs) ref.release(); }
-        return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" as const }],
-          unaryHandlers: [{ namespace: definition.namespace, method, contract, handler: (_context, value: string) => {
-            calls.push(`${i}:${value}`); return `${i}:${value}`;
-          }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+        return {
+          ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" as const }],
+          unaryHandlers: [{
+            namespace: definition.namespace, method, contract, handler: (_context, value: string) => {
+              calls.push(`${i}:${value}`); return `${i}:${value}`;
+            }, options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       }, options);
       pairs.push({ client, server, contract });
     }
@@ -1048,8 +1775,10 @@ describe("original v4 reliable Session assembly", () => {
     };
     const queryProbe = (direction: 0 | 1 = 0) => {
       const r = environment.resources, group = executorProbe();
-      const reference = r.root.reserve({ accounts: r.accounts, owner: { ...r.owner, kind: `controller_query_probe_${probeOrdinal}` },
-        charge: new ResourceVector([4096n, 0n, 0n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]) });
+      const reference = r.root.reserve({
+        accounts: r.accounts, owner: { ...r.owner, kind: `controller_query_probe_${probeOrdinal}` },
+        charge: new ResourceVector([4096n, 0n, 0n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n])
+      });
       try {
         const protection = direction === 0 ? group.protectQueries(reference) : group.protectQueryAcquisition(reference);
         return () => { protection.close(); group.close(); };
@@ -1058,8 +1787,10 @@ describe("original v4 reliable Session assembly", () => {
     };
     const acquisitionProbe = () => {
       const r = environment.resources;
-      const reference = r.root.reserve({ accounts: r.accounts, owner: { ...r.owner, kind: `controller_acquisition_probe_${++probeOrdinal}` },
-        charge: new ResourceVector([4096n, 0n, 0n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]) });
+      const reference = r.root.reserve({
+        accounts: r.accounts, owner: { ...r.owner, kind: `controller_acquisition_probe_${++probeOrdinal}` },
+        charge: new ResourceVector([4096n, 0n, 0n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n])
+      });
       try { return environment.contractQueries(4).protectPreparation(reference); }
       finally { reference.release(); }
     };
@@ -1088,17 +1819,23 @@ describe("original v4 reliable Session assembly", () => {
       }
       selected = acquisitions++; const input = pairs[selected]!.client.material.input();
       for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-        activation: input.activation.length, candidateIndex: input.candidateIndex };
+      return {
+        artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+        activation: input.activation.length, candidateIndex: input.candidateIndex
+      };
     }));
     // The test connector reuses original verified material and encrypted READY.
     // Production native carrier/TxA/TxB qualification remains a separate path.
-    environment.installClientConnector({ applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
-      const pair = pairs[selected]!;
-      const [client] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); return client;
-    } });
-    const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }] };
+    environment.installClientConnector({
+      applicationProfile: pairs[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(pairs[acquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, options) => {
+        const pair = pairs[selected]!;
+        const [client] = await Promise.all([pair.client.establishMaterial(material, options?.signal), pair.server.establish()]); return client;
+      }
+    });
+    const target = {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }]
+    };
     const registration = v4ServiceDependency(definition, {
       binding: { target, maximumOfferWindowMS: 10000n }, methods: { register: method, optional },
       dispatchRequirements: { optional: "on_use" },
@@ -1110,20 +1847,23 @@ describe("original v4 reliable Session assembly", () => {
     const secondRegistration = v4ServiceDependency(definition, {
       binding: { target, maximumOfferWindowMS: 10000n, contractCheckIntervalMS: 90000n }, methods: { register: method },
     });
-    const oversized = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
+    const oversized = createV4ConnectionController(wrapTransportEnvironment(environment), {
+      source,
       requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false, local_consumer_tls13_verification: false, application_profile: "services" },
       initializeServices: { registration }, initializeApplicationBytes: 1024n,
       initializeWorkload: { inputBytes: 1073741824 },
       initializeSession: () => { throw new Error("unexpected_initializer"); },
     });
-    const excessiveCalls = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
+    const excessiveCalls = createV4ConnectionController(wrapTransportEnvironment(environment), {
+      source,
       requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false, local_consumer_tls13_verification: false, application_profile: "services" },
       initializeServices: { registration }, initializeApplicationBytes: 1024n,
       initializeWorkload: { callsPerMethod: 3 },
       initializeSession: () => { throw new Error("unexpected_initializer"); },
     });
     let escaped: ((value: string) => Promise<unknown>) | undefined;
-    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
+    const controller = createV4ConnectionController(wrapTransportEnvironment(environment), {
+      source,
       requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false, local_consumer_tls13_verification: false, application_profile: "services" },
       initializeServices: { registration, registrationCopy: registration, optionalOnly, secondRegistration }, attemptTimeoutMS: 10000n, initializeApplicationBytes: 1024n,
       initializeSession: async (context, candidate) => {
@@ -1150,10 +1890,13 @@ describe("original v4 reliable Session assembly", () => {
         }
         escaped ??= context.services.registration.register;
         await candidate.probeLiveness(); if (initializations === 3) throw new Error("registration_unknown");
-      } });
+      }
+    });
     const bind = async (session: V4Session) => {
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }] };
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", pairs[0]!.server.material.server)).toString("hex") }]
+      };
       const service = await session.bindService(definition, { target, maximumOfferWindowMS: 10000n, initialMethods: [method] }); services.push(service); return service;
     };
     const call = async (service: typeof services[number], value: string, expected: string) => {
@@ -1219,7 +1962,24 @@ describe("original v4 reliable Session assembly", () => {
       const current = await bind(replacement.current); await call(current, "new", "1:new");
       old.close(); first.drain({ timeoutMS: 1000n }); await first.waitCleanup();
       await expect.poll(() => controller.status().retired).toBe(false);
-      await expect(controller.replaceSession()).rejects.toThrow("registration_unknown");
+      const failedReplacement = controller.replaceSession();
+      await expect(failedReplacement).rejects.toThrow("initialization_failed");
+      await expect(failedReplacement).rejects.toMatchObject({
+        name: "ConnectionError", code: "initialization_failed", connection: {
+          phase: "ready", spent: true, spendState: "spent", admissionState: "admitted",
+          networkReady: "ready", applicationPublish: "failed",
+        },
+      });
+      const failure = await failedReplacement.catch(error => error as ConnectionError);
+      expect(failure).toBeInstanceOf(ConnectionError);
+      if (!(failure instanceof ConnectionError)) throw new Error("missing connection failure facts");
+      expect(Object.isFrozen(failure.connection)).toBe(true);
+      for (const field of ["session", "carrier", "artifact", "identity", "candidate"]) expect(field in failure.connection).toBe(false);
+      expect(controller.diagnostic()).toMatchObject({ failure: { phase: "session", code: "initialization_failed" }, connection: failure.connection });
+      const canceledObservation = new AbortController(); canceledObservation.abort();
+      const observation = controller.waitForDiagnostic(controller.diagnostic(), { signal: canceledObservation.signal });
+      await expect(observation).rejects.toThrow("canceled");
+      expect(controller.status().closed).toBe(false);
       expect(() => controller.captureSession()).toThrow("initialization_blocked");
       await expect(controller.waitForSession()).rejects.toThrow("initialization_blocked");
       controller.start(); expect(acquisitions).toBe(3); expect(initializations).toBe(3);
@@ -1238,17 +1998,24 @@ describe("original v4 reliable Session assembly", () => {
   it.each([false, true])("connects static services BindService, Prepare/Call, handler, typed/encoded results and Close (restart flush: %s)", async restartFlush => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
-    const direction = { schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 };
+    const direction = { schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 1024 };
     const request = v4UTF8MessageCodec(direction);
     let decodes = 0, calls = 0;
     let maintenance: V4MaintenanceOwner | undefined;
     const publications: V4ResponsePublication[] = [];
-    const response = v4ApplicationMessageCodec<string>(direction, { execution: "sync", applicationBytes: 1024n,
+    const publicationValues: string[] = [];
+    let releaseStoppedHandler!: () => void;
+    const stoppedHandler = new Promise<void>(resolve => { releaseStoppedHandler = resolve; });
+    const response = v4ApplicationMessageCodec<string>(direction, {
+      execution: "sync", applicationBytes: 1024n,
       encode: (_context, value) => new TextEncoder().encode(value),
-      decode: (_context, value) => { decodes++; return new TextDecoder().decode(value); } });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "transient", request, response,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, ...(restartFlush ? { restartFlush: true as const, restartFlushDeadlineMS: 5000n } : { restartFlush: false as const }),
-      errors: [{ code: 7, codec: request, maxPayloadBytes: 128 }] });
+      decode: (_context, value) => { decodes++; return new TextDecoder().decode(value); }
+    });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "unary", unarySemantics: "transient", request, response,
+      requestMaxBytes: 1024, minResponseLimitBytes: 0, maxResponseBytes: 1024, ...(restartFlush ? { restartFlush: true as const, restartFlushDeadlineMS: 5000n } : { restartFlush: false as const }),
+      errors: [{ code: 7, codec: request, maxPayloadBytes: 1024 }]
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.echo", methods: { echo: method } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
     let contract: ServiceContractSnapshot | undefined, staticContracts: V4StaticServiceContracts | undefined;
@@ -1256,17 +2023,23 @@ describe("original v4 reliable Session assembly", () => {
     const server = endpoint("server", b, profile, "live_authority", 1000n, environment => {
       if (restartFlush) maintenance = createMaintenanceOwner(environment, 4);
       const resources = environment.resources, charges = [serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)];
-      const references = resources.root.reserveBatch(charges.map((charge, index) => ({ accounts: resources.accounts,
-        owner: { ...resources.owner, kind: `test_contract_${index}` }, charge })));
+      const references = resources.root.reserveBatch(charges.map((charge, index) => ({
+        accounts: resources.accounts,
+        owner: { ...resources.owner, kind: `test_contract_${index}` }, charge
+      })));
       try {
-        contract = new ServiceContractSnapshot(encode(map({ 0: text("example.echo"), 1: u(42), 2: u(0), 3: u(0),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: restartFlush }, ...(restartFlush ? { 22: u(5000) } : {}), 23: u(128), 27: array(map({ 0: u(7), 1: text("text-v1"), 2: u(128), 3: bytes(fill(31)) })) })),
-        1024n, references[0]!, references[1]!);
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text("example.echo"), 1: u(42), 2: u(0), 3: u(0),
+          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(1024), 11: u(30000), 12: u(10000),
+          21: { kind: "bool", value: restartFlush }, ...(restartFlush ? { 22: u(5000) } : {}), 23: u(1024), 27: array(map({ 0: u(7), 1: text("text-v1"), 2: u(1024), 3: bytes(fill(31)) }))
+        })),
+          1024n, references[0]!, references[1]!);
       } finally { for (const reference of references) reference.release(); }
-      return { ...common, ...(maintenance === undefined ? {} : { maintenanceOwner: maintenance }), queryPermissions: [{ namespace: definition.namespace, method, permission: "denied" }],
-        unaryHandlers: [{ namespace: definition.namespace, method, contract,
-          handler: (context, value: string) => {
+      return {
+        ...common, ...(maintenance === undefined ? {} : { maintenanceOwner: maintenance }), queryPermissions: [{ namespace: definition.namespace, method, permission: "denied" }],
+        unaryHandlers: [{
+          namespace: definition.namespace, method, contract,
+          handler: async (context, value: string) => {
             if (restartFlush) {
               expect(context.maintenanceOwner).toBe(maintenance);
               expect(context.responsePublication).toBe(context.responsePublication);
@@ -1274,15 +2047,28 @@ describe("original v4 reliable Session assembly", () => {
               expect(context.responsePublication.transferTo(maintenance!)).toBe("success");
               expect(context.responsePublication.transferTo(maintenance!)).toBe("already_transferred");
               publications.push(context.responsePublication);
+              publicationValues.push(value);
             } else expect(context.responsePublication.state()).toEqual({ state: "not_applicable" });
-            calls++; if (value === "fail") throw new V4ServiceError(7, "declined"); return value.toUpperCase(); },
-          options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+            calls++;
+            if (value === "held-stop") await stoppedHandler;
+            if (value === "fail") throw new V4ServiceError(7, "declined");
+            if (value === "maximum-error") throw new V4ServiceError(7, "é".repeat(512));
+            if (value === "oversized-error") throw new V4ServiceError(7, "é".repeat(512) + "a");
+            if (value === "invalid-utf8-error") throw new V4ServiceError(7, "\ud800");
+            if (value === "undeclared-error") throw new V4ServiceError(8, "declined");
+            return value.toUpperCase();
+          },
+          options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+        }]
+      };
     });
     let c: V4Session | undefined, s: V4Session | undefined;
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+      };
       const contractBytes = new Uint8Array(contract!.encodedBytes()); contract!.copyEncoded(contractBytes);
       staticContracts = createStaticServiceContracts(client.environment, definition, [{ method, contract: contractBytes }], { target, maximumOfferWindowMS: 10000n });
       contractBytes.fill(0);
@@ -1292,6 +2078,7 @@ describe("original v4 reliable Session assembly", () => {
       const currentDigest = new Uint8Array(32); contract!.copyDigest(currentDigest);
       const refreshed = await service.updateContract(method, currentDigest);
       expect(refreshed[0]!.contract).toMatchObject({ availability: "available", refresh: "installed" });
+      expect(service.contract(method).offer).toBeUndefined();
       staticContracts.close();
       const operation = await service.prepareOperation(method, "prepared");
       expect(operation.status()).toMatchObject({ state: "prepared", submission: "not_submitted" }); expect(calls).toBe(0);
@@ -1303,6 +2090,15 @@ describe("original v4 reliable Session assembly", () => {
       expect(called).toMatchObject({ kind: "value", encoding: "typed", value: "CALLED" }); if ("release" in called) called.release();
       const failure = await service.call(method, "fail");
       expect(failure).toMatchObject({ kind: "application_error", encoding: "typed", error: "declined" }); if ("release" in failure) failure.release();
+      const maximumError = await service.call(method, "maximum-error");
+      expect(maximumError).toMatchObject({ kind: "application_error", encoding: "typed", error: "é".repeat(512) });
+      if ("release" in maximumError) maximumError.release();
+      for (const value of ["oversized-error", "invalid-utf8-error", "undeclared-error"]) {
+        const rejectedError = await service.call(method, value);
+        expect(rejectedError, value).toMatchObject({ kind: "sdk_error", code: "service_failed" });
+        if ("release" in rejectedError) rejectedError.release();
+      }
+      const stoppedOperation = restartFlush ? await service.prepareOperation(method, "held-stop") : undefined;
       const encodedOperation = await service.prepareOperation(method, "encoded");
       service.close(); service.close();
       expect(encodedOperation.start().status).toBe("admitted");
@@ -1310,26 +2106,377 @@ describe("original v4 reliable Session assembly", () => {
       expect(encoded).toMatchObject({ kind: "value", encoding: "encoded", bytes: new TextEncoder().encode("ENCODED") });
       encodedOperation.close();
       if ("bytes" in encoded) { expect(new TextDecoder().decode(encoded.bytes)).toBe("ENCODED"); encoded.release(); }
-      expect(calls).toBe(4); expect(decodes).toBe(2);
+      expect(calls).toBe(8); expect(decodes).toBe(2);
       if (restartFlush) {
-        expect(publications.length).toBe(4);
-        for (const publication of publications) expect(await publication.wait()).toEqual({ state: "flushed" });
+        expect(publications.length).toBe(8);
+        for (let index = 0; index < publications.length; index++) {
+          const publication = publications[index]!, value = publicationValues[index]!;
+          if (["oversized-error", "invalid-utf8-error", "undeclared-error"].includes(value)) {
+            expect(await publication.wait()).toEqual({ state: "unknown", cause: "response_superseded" });
+          } else expect(await publication.wait()).toEqual({ state: "flushed" });
+        }
+        // STOP can publish its SDK replacement before the running handler
+        // returns. Keep that publication owned until both sides have retired.
+        expect(stoppedOperation!.start().status).toBe("admitted");
+        await expect.poll(() => publications.length).toBe(9);
+        stoppedOperation!.close();
+        await expect.poll(() => stoppedOperation!.cleanupStatus().status).toBe("complete");
+        expect(await publications[8]!.wait()).toEqual({ state: "unknown", cause: "response_superseded" });
         maintenance!.close();
-        for (const publication of publications) expect(publication.state()).toEqual({ state: "flushed" });
+        expect(maintenance!.cleanupComplete()).toBe(false);
+        releaseStoppedHandler();
         await expect.poll(() => maintenance!.cleanupComplete()).toBe(true);
+        for (let index = 0; index < publications.length; index++) {
+          expect(publications[index]!.state()).toEqual(["oversized-error", "invalid-utf8-error", "undeclared-error", "held-stop"].includes(publicationValues[index]!)
+            ? { state: "unknown", cause: "response_superseded" } : { state: "flushed" });
+        }
+        expect(calls).toBe(9);
       }
       expect((await c.probeLiveness()).elapsedMS).toBeGreaterThanOrEqual(0n);
     } finally {
-      maintenance?.close(); staticContracts?.close(); await Promise.all([c?.close(), s?.close()]); contract?.release();
+      releaseStoppedHandler(); maintenance?.close(); staticContracts?.close(); await Promise.all([c?.close(), s?.close()]); contract?.release();
       await Promise.all([client.close(), server.close()]);
     }
   });
-  it("checks bounded advertisements and preserves the old prepared call through Close", async () => {
+  it("keeps public Call capacity owned through its final resolver and reentrant Close", async () => {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const direction = { schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 };
+    let releaseEncoders!: () => void, encodersEntered!: () => void, heldEncoders = 0;
+    const held = new Promise<void>(resolve => { releaseEncoders = resolve; });
+    const entered = new Promise<void>(resolve => { encodersEntered = resolve; });
+    const request = v4ApplicationMessageCodec<string>(direction, {
+      execution: "async", applicationBytes: 1024n,
+      encode: async (_context, value) => {
+        if (value.startsWith("held:")) { if (++heldEncoders === 3) encodersEntered(); await held; }
+        return new TextEncoder().encode(value);
+      },
+      decode: async (_context, value) => new TextDecoder().decode(value),
+    });
+    const response = v4UTF8MessageCodec(direction);
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "unary", unarySemantics: "transient", request, response,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false,
+    });
+    const definition = new V4ServiceDefinition({ namespace: "example.call-owner", methods: { echo: method } });
+    const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
+    const calls: string[] = [];
+    let contract: ServiceContractSnapshot | undefined;
+    const client = endpoint("client", a, profile, "live_authority", 10000n, () => common);
+    const server = endpoint("server", b, profile, "live_authority", 10000n, environment => {
+      const resources = environment.resources;
+      const references = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
+        accounts: resources.accounts, owner: { ...resources.owner, kind: `call_owner_contract_${index}` }, charge,
+      })));
+      try {
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0),
+          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
+          21: { kind: "bool", value: false }, 23: u(128), 27: array(),
+        })), 1024n, references[0]!, references[1]!);
+      } finally { for (const reference of references) reference.release(); }
+      return {
+        ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
+        unaryHandlers: [{
+          namespace: definition.namespace, method, contract,
+          handler: (_context, value: string) => { calls.push(value); return value.toUpperCase(); },
+          options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" },
+        }],
+      };
+    });
+    let c: V4Session | undefined, s: V4Session | undefined;
+    let service: ServiceClientTypes.V4ServiceClient<{ echo: typeof method }> | undefined;
+    let output: Promise<UnaryOperationTypes.V4UnaryResult<string>> | undefined;
+    let probe: Promise<UnaryOperationTypes.V4UnaryResult<string>> | undefined;
+    let stop: (() => void) | undefined, observed = false;
+    const pending: Promise<UnaryOperationTypes.V4UnaryResult<string>>[] = [];
+    try {
+      const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }],
+      };
+      service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n });
+      await c.probeLiveness();
+      const stopHook = promiseHooks.createHook({ settled(promise) {
+        if (promise !== output) return;
+        observed = true;
+        // The caller's own resolver is still inside the original handoff.
+        // Reusing its fourth convenience slot here would publish completion
+        // through an earlier private Promise instead of this final recipient.
+        probe = service!.call(method, "premature-reuse"); pending.push(probe); void probe.catch(() => undefined);
+        service!.close();
+      } });
+      stop = () => { stopHook(); };
+      for (const value of ["held:one", "held:two", "held:three"]) {
+        const call = service.call(method, value); pending.push(call); void call.catch(() => undefined);
+      }
+      await transportEvent(entered);
+      output = service.call(method, "visible"); pending.push(output);
+      const result = await output;
+      expect(observed).toBe(true);
+      expect(result).toMatchObject({ kind: "value", encoding: "typed", value: "VISIBLE" });
+      expect(probe).toBeDefined(); await expect(probe!).rejects.toThrow("resource_exhausted");
+      expect(calls).toEqual(["visible"]);
+      await expect(service.call(method, "closed")).rejects.toThrow("service_binding_closed");
+      expect((await c.probeLiveness()).submitted).toBe(true);
+    } finally {
+      stop?.(); service?.close(); releaseEncoders();
+      for (const result of await Promise.allSettled(pending)) if (result.status === "fulfilled" && "release" in result.value) result.value.release();
+      await Promise.all([c?.close(), s?.close()]); contract?.release(); await Promise.all([client.close(), server.close()]);
+    }
+  }, 20000);
+  it.each(["services", "execution"] as const)("bounds real ordinary RPC channels and reuses a retired position with a new OPEN: %s", async applicationProfile => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
     const method = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false, errors: [] });
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const definition = new V4ServiceDefinition({ namespace: "example.rpc-channels", methods: { echo: method } });
+    const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
+    const calls: string[] = [], opened: bigint[][] = [[], []];
+    const observeOpen = (side: number, frame: Uint8Array): void => {
+      const prefix = inspectEnvelopePrefix(frame, 65536);
+      if (prefix.frameType === wire.frame_types.OPEN_STREAM) opened[side]!.push(inspectRecordPrefix(frame, prefix.payloadBytes, profile).scope);
+    };
+    a.submissionTail = frame => { observeOpen(0, frame); return undefined; };
+    b.submissionTail = frame => { observeOpen(1, frame); return undefined; };
+    let contract: ServiceContractSnapshot | undefined;
+    const client = endpoint("client", a, profile, "live_authority", 10000n, () => common, { profile: applicationProfile, writeDeadlineMS: 10000n });
+    const server = endpoint("server", b, profile, "live_authority", 10000n, environment => {
+      const resources = environment.resources;
+      const refs = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
+        accounts: resources.accounts, owner: { ...resources.owner, kind: `rpc_channel_contract_${index}` }, charge,
+      })));
+      try {
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0), 6: text("text-v1"), 7: text("text-v1"),
+          8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000), 21: { kind: "bool", value: false }, 23: u(128), 27: array(),
+        })), 1024n, refs[0]!, refs[1]!);
+      } finally { for (const ref of refs) ref.release(); }
+      return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }], unaryHandlers: [{
+        namespace: definition.namespace, method, contract,
+        handler: (_context, value: string) => { calls.push(value); return value.toUpperCase(); },
+        options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" },
+      }] };
+    }, { profile: applicationProfile, writeDeadlineMS: 10000n });
+    let c: V4AuthenticatedSessionRuntime | undefined, s: V4AuthenticatedSessionRuntime | undefined;
+    let service: ServiceClientTypes.V4ServiceClient<{ echo: typeof method }> | undefined;
+    let pending: Promise<UnaryOperationTypes.V4UnaryResult<string>> | undefined, reset: Promise<unknown> | undefined;
+    let releaseTail!: () => void, sawTail!: () => void, intercepted = false;
+    const tail = new Promise<void>(resolve => { releaseTail = resolve; }), submitted = new Promise<void>(resolve => { sawTail = resolve; });
+    const acceptAbort = new AbortController();
+    try {
+      [c, s] = await Promise.all([client.establish(), server.establish()]);
+      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n });
+      const before = await service.call(method, "before");
+      expect(before).toMatchObject({ kind: "value", value: "BEFORE" }); if ("release" in before) before.release();
+      if (applicationProfile === "execution") await expect.poll(() => c!.rpcApplication().managementReady()).toBe(true);
+      const initialClientChannels = applicationProfile === "execution" ? 2 : 1;
+      // A real raw accept waits across all internal OPENs and can receive only
+      // the later application kind, even while reserved channels are pending.
+      const accepting = s.acceptStream({ signal: acceptAbort.signal }); void accepting.catch(() => undefined);
+      for (const channelClass of ["interactive", "bulk", "bulk"] as const) await c.openRPCChannel(channelClass);
+      for (const channelClass of ["interactive", "interactive", "bulk", "bulk"] as const) await s.openRPCChannel(channelClass);
+      expect(opened[0]).toHaveLength(initialClientChannels + 3); expect(opened[1]).toHaveLength(4);
+      expect(new Set([...opened[0]!, ...opened[1]!]).size).toBe(initialClientChannels + 7);
+      for (const owner of [c, s]) for (const channelClass of ["interactive", "bulk"] as const)
+        expect(() => owner.openRPCChannel(channelClass)).toThrow("resource_exhausted");
+      const rawOpening = c.openStream("example/after-internal"), raw = await accepting, outgoing = await rawOpening;
+      expect(raw.kind).toBe("example/after-internal"); await Promise.all([outgoing.close(), raw.stream.close()]);
+      await c.probeLiveness();
+      const bootstrap = c.bootstrapStream(); expect(bootstrap).toBeDefined();
+      a.submissionTail = frame => {
+        observeOpen(0, frame);
+        const prefix = inspectEnvelopePrefix(frame, 65536);
+        if (!intercepted && prefix.frameType === wire.frame_types.STREAM_DATA && inspectRecordPrefix(frame, prefix.payloadBytes, profile).scope === 1n) {
+          intercepted = true; sawTail(); return tail;
+        }
+        return undefined;
+      };
+      pending = service.call(method, "never-replay"); void pending.catch(() => undefined);
+      await transportEvent(submitted);
+      reset = bootstrap!.reset(); void reset.catch(() => undefined);
+      // Both interactive positions remain occupied while the original DATA
+      // provider still owns its completion. Logical reset cannot refund one.
+      expect(() => c!.openRPCChannel("interactive")).toThrow("resource_exhausted");
+      releaseTail(); await reset;
+      const ended = await pending.catch(error => error as Error);
+      expect(ended).not.toMatchObject({ kind: "value" }); if ("release" in ended) ended.release();
+      const previous = opened[0]!.length;
+      await expect.poll(async () => {
+        try { await c!.openRPCChannel("interactive"); return true; }
+        catch (error) { if (error instanceof Error && error.message === "resource_exhausted") return false; throw error; }
+      }).toBe(true);
+      expect(opened[0]).toHaveLength(previous + 1);
+      expect(opened[0]!.filter(scope => scope === 1n)).toHaveLength(1);
+      expect(opened[0]!.at(-1)).toBeGreaterThan(1n);
+      const after = await service.call(method, "after");
+      expect(after).toMatchObject({ kind: "value", value: "AFTER" }); if ("release" in after) after.release();
+      expect(calls).toEqual(["before", "after"]);
+      expect((await c.probeLiveness()).submitted).toBe(true);
+    } finally {
+      acceptAbort.abort(); releaseTail(); a.submissionTail = b.submissionTail = undefined;
+      service?.close(); await pending?.catch(() => undefined); await reset?.catch(() => undefined);
+      await Promise.all([c?.close(), s?.close()]); contract?.release(); await Promise.all([client.close(), server.close()]);
+    }
+  }, 20000);
+  for (const step of [1n, 2n, 3n, 4n, 5n]) {
+    it(`preserves Drain deadline classification with ${step}ms between clock observations`, async () => {
+      const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+      const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+      let tick = 0n, advancing = false;
+      const client = endpoint("client", a, profile), server = endpoint("server", b, profile, "live_authority", 1000n, undefined,
+        { clockMS: () => { if (advancing) tick += step; return tick; } });
+      const [c, s] = await Promise.all([client.establish(), server.establish()]);
+      try {
+        await Promise.all([c.openStream("example/drain-deadline"), s.acceptStream()]);
+        advancing = true;
+        const drain = s.drain({ timeoutMS: 50n });
+        expect((await drain.wait()).outcome).toBe("deadline_aborted");
+        expect(s.drain()).toBe(drain);
+      } finally { advancing = false; await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
+    });
+  }
+  it("applies peer GOAWAY as a persistent RPC and Notify drain", async () => {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
+    const rpc = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const notify = new V4MethodDefinition({ typeID: 44, shape: "notify", notifySemantics: "observation", request: codec,
+      requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false });
+    const definition = new V4ServiceDefinition({ namespace: "example.peer-goaway", methods: { rpc, changed: notify } });
+    const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 2, maxCaptureBytes: 128 };
+    let rpcContract: ServiceContractSnapshot | undefined, notifyContract: ServiceContractSnapshot | undefined;
+    const rpcValues: string[] = [], notifyValues: string[] = [];
+    let releaseRPC!: () => void, releaseNotify!: () => void, enteredRPC!: () => void, enteredNotify!: () => void;
+    const rpcEntered = new Promise<void>(resolve => { enteredRPC = resolve; }), notifyEntered = new Promise<void>(resolve => { enteredNotify = resolve; });
+    const rpcHeld = new Promise<void>(resolve => { releaseRPC = resolve; }), notifyHeld = new Promise<void>(resolve => { releaseNotify = resolve; });
+    const client = endpoint("client", a, profile, "live_authority", 5000n, () => common);
+    const server = endpoint("server", b, profile, "live_authority", 5000n, environment => {
+      const resources = environment.resources;
+      const references = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n), serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
+        accounts: resources.accounts, owner: { ...resources.owner, kind: `peer_goaway_contract_${index}` }, charge
+      })));
+      try {
+        rpcContract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0), 6: text("text-v1"), 7: text("text-v1"),
+          8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000), 21: { kind: "bool", value: false }, 23: u(128), 27: array()
+        })), 1024n, references[0]!, references[1]!);
+        notifyContract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(44), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
+          8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(128), 27: array()
+        })), 1024n, references[2]!, references[3]!);
+      } finally { for (const reference of references) reference.release(); }
+      return {
+        ...common,
+        queryPermissions: [{ namespace: definition.namespace, method: rpc, permission: "allowed" }, { namespace: definition.namespace, method: notify, permission: "allowed" }],
+        unaryHandlers: [{ namespace: definition.namespace, method: rpc, contract: rpcContract,
+          handler: async (_context, value: string) => { rpcValues.push(value); enteredRPC(); await rpcHeld; return value.toUpperCase(); },
+          options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }],
+        notificationHandlers: [{ namespace: definition.namespace, method: notify, contract: notifyContract,
+          handler: async (_context, value: string) => { notifyValues.push(value); enteredNotify(); await notifyHeld; },
+          options: { workClass: "short", applicationBytes: 1024n, authorization: "authenticated" } }]
+      };
+    });
+    let c: V4AuthenticatedSessionRuntime | undefined, s: V4AuthenticatedSessionRuntime | undefined;
+    let service: ServiceClientTypes.V4ServiceClient<{ rpc: typeof rpc; changed: typeof notify }> | undefined;
+    let rpcResult: Promise<UnaryOperationTypes.V4UnaryResult<string>> | undefined;
+    let drain: ReturnType<V4AuthenticatedSessionRuntime["drain"]> | undefined;
+    try {
+      [c, s] = await Promise.all([client.establish(), server.establish()]);
+      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n });
+      rpcResult = service.call(rpc, "held"); void rpcResult.catch(() => undefined);
+      await rpcEntered;
+      expect(await service.notify(notify, "held")).toMatchObject({ submission: "submitted" });
+      await notifyEntered;
+      drain = s.drain({ timeoutMS: 5000n });
+      await expect.poll(() => !c!.rpcApplication().notifyReady()).toBe(true);
+      await expect(service.call(rpc, "late")).rejects.toThrow(/unavailable|drain/);
+      await expect(service.prepareOperation(notify, "late", { deadlineAtMS: 40000n, admissionNotAfterMS: 5000n })).rejects.toThrow(/unavailable|drain/);
+      expect(drain.status().outcome).toBe("pending");
+
+      releaseRPC(); releaseNotify();
+      const rpcValue = await rpcResult; expect(rpcValue).toMatchObject({ kind: "value", value: "HELD" }); if ("release" in rpcValue) rpcValue.release();
+      await expect.poll(() => !c!.rpcApplication().notifyReady()).toBe(true);
+      expect((await drain.wait()).outcome).toBe("drained");
+      expect(rpcValues).toEqual(["held"]); expect(notifyValues).toEqual(["held"]);
+    } finally {
+      releaseRPC(); releaseNotify(); service?.close(); await rpcResult?.catch(() => undefined); drain?.wait().catch(() => undefined);
+      await Promise.all([c?.close(), s?.close()]); await Promise.all([c?.waitCleanup(), s?.waitCleanup()]); rpcContract?.release(); notifyContract?.release(); await new Promise(resolve => setTimeout(resolve, 50)); await Promise.all([client.close(), server.close()]);
+    }
+  }, 20000);
+  it("repairs the only ordinary RPC channel inside its original Session without replay", async () => {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
+    const method = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const definition = new V4ServiceDefinition({ namespace: "example.rpc-repair", methods: { echo: method } });
+    const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
+    const calls: string[] = [], scopes: bigint[] = [];
+    let contract: ServiceContractSnapshot | undefined;
+    const client = endpoint("client", a, profile, "live_authority", 10000n, () => common);
+    const server = endpoint("server", b, profile, "live_authority", 10000n, environment => {
+      const resources = environment.resources;
+      const refs = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
+        accounts: resources.accounts, owner: { ...resources.owner, kind: `rpc_repair_contract_${index}` }, charge,
+      })));
+      try {
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0), 6: text("text-v1"), 7: text("text-v1"),
+          8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000), 21: { kind: "bool", value: false }, 23: u(128), 27: array(),
+        })), 1024n, refs[0]!, refs[1]!);
+      } finally { for (const ref of refs) ref.release(); }
+      return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }], unaryHandlers: [{
+        namespace: definition.namespace, method, contract, handler: (_context, value: string) => { calls.push(value); return value.toUpperCase(); },
+        options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" },
+      }] };
+    });
+    let c: V4AuthenticatedSessionRuntime | undefined, s: V4AuthenticatedSessionRuntime | undefined;
+    let service: ServiceClientTypes.V4ServiceClient<{ echo: typeof method }> | undefined;
+    let repaired!: () => void;
+    const repair = new Promise<void>(resolve => { repaired = resolve; });
+    const observe = (frame: Uint8Array): void => {
+      const prefix = inspectEnvelopePrefix(frame, 65536);
+      if (prefix.frameType !== wire.frame_types.OPEN_STREAM) return;
+      const scope = inspectRecordPrefix(frame, prefix.payloadBytes, profile).scope; scopes.push(scope); if (scope !== 1n) repaired();
+    };
+    a.submissionTail = b.submissionTail = frame => { observe(frame); return undefined; };
+    try {
+      [c, s] = await Promise.all([client.establish(), server.establish()]);
+      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n });
+      const before = await service.call(method, "before"); if ("release" in before) before.release();
+      const original = c.bootstrapStream(); expect(original).toBeDefined();
+      await original!.reset(); await transportEvent(repair);
+      // Publication and accepted reader binding are separate real events.
+      await expect.poll(() => c!.rpcApplication().channelsReady() && s!.rpcApplication().channelsReady()).toBe(true);
+      const after = await service.call(method, "after");
+      expect(after).toMatchObject({ kind: "value", value: "AFTER" }); if ("release" in after) after.release();
+      expect(scopes.filter(scope => scope === 1n)).toHaveLength(1);
+      expect(scopes.some(scope => scope > 1n)).toBe(true); expect(new Set(scopes).size).toBe(scopes.length);
+      expect(calls).toEqual(["before", "after"]);
+      expect((await c.probeLiveness()).submitted).toBe(true);
+    } finally {
+      a.submissionTail = b.submissionTail = undefined; service?.close(); await Promise.all([c?.close(), s?.close()]);
+      contract?.release(); await Promise.all([client.close(), server.close()]);
+    }
+  }, 20000);
+  it("checks bounded advertisements and preserves the old prepared call through Close", async () => {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false, errors: []
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.advertisement", methods: { echo: method } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
     const snapshots: ServiceContractSnapshot[] = [];
@@ -1339,27 +2486,41 @@ describe("original v4 reliable Session assembly", () => {
       const resources = environment.resources;
       for (const maximum of [64, 128]) {
         const costs = [serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)];
-        const refs = resources.root.reserveBatch(costs.map((charge, index) => ({ accounts: resources.accounts,
-          owner: { ...resources.owner, kind: `advertisement_${maximum}_${index}` }, charge })));
-        try { snapshots.push(new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0),
-          6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(maximum), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, refs[0]!, refs[1]!)); }
+        const refs = resources.root.reserveBatch(costs.map((charge, index) => ({
+          accounts: resources.accounts,
+          owner: { ...resources.owner, kind: `advertisement_${maximum}_${index}` }, charge
+        })));
+        try {
+          snapshots.push(new ServiceContractSnapshot(encode(map({
+            0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0),
+            6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(maximum), 11: u(30000), 12: u(10000),
+            21: { kind: "bool", value: false }, 23: u(128), 27: array()
+          })), 1024n, refs[0]!, refs[1]!));
+        }
         finally { for (const ref of refs) ref.release(); }
       }
-      return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
-        unaryHandlers: [{ namespace: definition.namespace, method, contract: snapshots[0]!,
+      return {
+        ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
+        unaryHandlers: [{
+          namespace: definition.namespace, method, contract: snapshots[0]!,
           handler: (_context, value: string) => { calls++; return value.toUpperCase(); },
-          options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+          options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+        }]
+      };
     }, { sessionNotAfterMS: 38000 });
     let c: V4Session | undefined, s: V4Session | undefined;
     let service: ServiceClientTypes.V4ServiceClient<{ echo: typeof method }> | undefined;
     let old: UnaryOperationTypes.V4UnaryOperation<string> | undefined;
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
-      service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n, contractCheckIntervalMS: 30000n,
-        methods: [{ method, acceptance: { mode: "bounded", ranges: [{ field: "max_response_bytes", lower: 64n, upper: 128n }] } }] });
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+      };
+      service = await c.bindService(definition, {
+        target, maximumOfferWindowMS: 10000n, contractCheckIntervalMS: 30000n,
+        methods: [{ method, acceptance: { mode: "bounded", ranges: [{ field: "max_response_bytes", lower: 64n, upper: 128n }] } }]
+      });
       const previous = service.contract(method).digest;
       // Keep the real 30s minimum; all credentials explicitly cover this test.
       await new Promise(resolve => setTimeout(resolve, 29000));
@@ -1395,37 +2556,52 @@ describe("original v4 reliable Session assembly", () => {
         decodes++; const value = new TextDecoder().decode(bytes);
         if (value === "retained:two") { decoderEntered(); await held; }
         return value;
-      } });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request, response,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 3, maxStreamPayloadBytes: 384n, maxStreamDurationMS: 10000n, restartFlush: false });
+      }
+    });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request, response,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 3, maxStreamPayloadBytes: 384n, maxStreamDurationMS: 10000n, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.events", methods: { events: method } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
     let contract: ServiceContractSnapshot | undefined;
     const client = endpoint("client", a, profile, "live_authority", 1000n, () => common);
     const server = endpoint("server", b, profile, "live_authority", 1000n, environment => {
       const resources = environment.resources, charges = [serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)];
-      const references = resources.root.reserveBatch(charges.map((charge, index) => ({ accounts: resources.accounts,
-        owner: { ...resources.owner, kind: `test_stream_contract_${index}` }, charge })));
+      const references = resources.root.reserveBatch(charges.map((charge, index) => ({
+        accounts: resources.accounts,
+        owner: { ...resources.owner, kind: `test_stream_contract_${index}` }, charge
+      })));
       try {
-        contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
           6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 24: u(3), 25: u(384), 26: u(10000), 27: array() })), 1024n, references[0]!, references[1]!);
+          21: { kind: "bool", value: false }, 23: u(128), 24: u(3), 25: u(384), 26: u(10000), 27: array()
+        })), 1024n, references[0]!, references[1]!);
       } finally { for (const reference of references) reference.release(); }
-      return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
-        streamingHandlers: [{ namespace: definition.namespace, method, kind: "example.events.stream", contract,
+      return {
+        ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
+        streamingHandlers: [{
+          namespace: definition.namespace, method, kind: "example.events.stream", contract,
           handler: async (_context, value: string, writer) => {
             calls++; if (value === "failed") throw new Error("business failure");
             await writer.write(value + ":one"); await writer.write(value + ":two");
           },
-          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+        }]
+      };
     });
     let c: V4Session | undefined, s: V4Session | undefined;
     const operations: Array<{ close(): void }> = [];
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const service = await c.bindService(definition, { target: { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] },
-        maximumOfferWindowMS: 10000n, methods: [{ method, streamKind: "example.events.stream" }] });
+      const service = await c.bindService(definition, {
+        target: {
+          authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+          peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+        },
+        maximumOfferWindowMS: 10000n, methods: [{ method, streamKind: "example.events.stream" }]
+      });
       const prepared = await service.prepareStreamOperation(method, "prepared", { maxItemBytes: 64 }); operations.push(prepared);
       expect(prepared.status()).toMatchObject({ state: "prepared", submission: "not_submitted" }); expect(calls).toBe(0);
       expect(prepared.abandonResult()).toMatchObject({ outcome: "not_started", status: { state: "prepared" } });
@@ -1485,36 +2661,49 @@ describe("original v4 reliable Session assembly", () => {
     const decodersHeld = new Promise<void>(resolve => { releaseDecoders = resolve; });
     const response = v4ApplicationMessageCodec<string>({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 }, {
       execution: "async", applicationBytes: 1024n, encode: async (_context, value) => new TextEncoder().encode(value),
-      decode: async (_context, bytes) => { decodes++; await decodersHeld; return new TextDecoder().decode(bytes); } });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request, response,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 3, maxStreamPayloadBytes: 384n, maxStreamDurationMS: 10000n, restartFlush: false });
+      decode: async (_context, bytes) => { decodes++; await decodersHeld; return new TextDecoder().decode(bytes); }
+    });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request, response,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 3, maxStreamPayloadBytes: 384n, maxStreamDurationMS: 10000n, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.events", methods: { events: method } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
     let contract: ServiceContractSnapshot | undefined;
     const client = endpoint("client", a, profile, "live_authority", 1000n, () => common);
     const server = endpoint("server", b, profile, "live_authority", 1000n, environment => {
       const resources = environment.resources, charges = [serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)];
-      const references = resources.root.reserveBatch(charges.map((charge, index) => ({ accounts: resources.accounts,
-        owner: { ...resources.owner, kind: `test_stream_contract_${index}` }, charge })));
+      const references = resources.root.reserveBatch(charges.map((charge, index) => ({
+        accounts: resources.accounts,
+        owner: { ...resources.owner, kind: `test_stream_contract_${index}` }, charge
+      })));
       try {
-        contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
           6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 24: u(3), 25: u(384), 26: u(10000), 27: array() })), 1024n, references[0]!, references[1]!);
+          21: { kind: "bool", value: false }, 23: u(128), 24: u(3), 25: u(384), 26: u(10000), 27: array()
+        })), 1024n, references[0]!, references[1]!);
       } finally { for (const reference of references) reference.release(); }
-      return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
-        streamingHandlers: [{ namespace: definition.namespace, method, kind: "example.events.stream", contract,
+      return {
+        ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
+        streamingHandlers: [{
+          namespace: definition.namespace, method, kind: "example.events.stream", contract,
           handler: async (_context, value: string, writer) => {
             calls++; if (value === "deadline") { await handlerHeld; return; }
             await writer.write(value);
           },
-          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+        }]
+      };
     });
     let c: V4Session | undefined, s: V4Session | undefined;
     const owners: Array<{ close(): void }> = [];
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+      };
       const service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n, methods: [{ method, streamKind: "example.events.stream" }] }); owners.push(service);
       const deadline = await service.stream(method, "deadline", { timeoutMS: 250n }); owners.push(deadline);
       expect(await deadline.readNextEncoded()).toMatchObject({ kind: "sdk_error", code: "deadline_exceeded" });
@@ -1548,11 +2737,15 @@ describe("original v4 reliable Session assembly", () => {
     }
   });
   it("connects controlled Watch setup, bounded events, overflow and real unsubscribe cleanup", async () => {
-    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message");
+    a.peer = b;
+    b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 10, maxStreamPayloadBytes: 1280n, maxStreamDurationMS: 10000n, restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 10, maxStreamPayloadBytes: 1280n, maxStreamDurationMS: 10000n, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.watch", methods: { watch: method } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
     let contract: ServiceContractSnapshot | undefined, setups = 0, maps = 0, disposals = 0;
@@ -1561,10 +2754,14 @@ describe("original v4 reliable Session assembly", () => {
     const overflowHeld = new Promise<void>(resolve => { releaseOverflow = resolve; });
     const disposerHeld = new Promise<void>(resolve => { releaseDisposer = resolve; });
     const publishers = new Map<string, V4ByteEventPublisher>(), contexts = new Map<string, V4ApplicationContext>();
-    const source = v4ByteEventSource<string, string>({ maxEventInputBytes: 128, maxPendingItems: 2, maxPendingBytes: 16384n,
+    const source = v4ByteEventSource<string, string>({
+      maxEventInputBytes: 128, maxPendingItems: 2, maxPendingBytes: 16384n,
       setup: async (context, value, publisher) => {
-        setups++; contexts.set(value, context); publishers.set(value, publisher);
-        expect(applicationHasPermit(context)).toBe(true); expect("outputInterest" in context).toBe(false);
+        setups++;
+        contexts.set(value, context);
+        publishers.set(value, publisher);
+        expect(applicationHasPermit(context)).toBe(true);
+        expect("outputInterest" in context).toBe(false);
         if (value === "setup") {
           const input = new TextEncoder().encode("snapshot"); expect(publisher.tryPublish(input)).toBe("accepted"); input.fill(0);
           publisher.complete(); await setupHeld;
@@ -1580,27 +2777,37 @@ describe("original v4 reliable Session assembly", () => {
         maps++; expect(applicationHasPermit(context)).toBe(true);
         expect([...contexts.values()].includes(context)).toBe(false);
         return new TextDecoder().decode(input);
-      } });
+      }
+    });
     const client = endpoint("client", a, profile, "live_authority", 1000n, () => common);
     const server = endpoint("server", b, profile, "live_authority", 1000n, environment => {
       const resources = environment.resources;
       const references = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-        accounts: resources.accounts, owner: { ...resources.owner, kind: `test_watch_contract_${index}` }, charge })));
+        accounts: resources.accounts, owner: { ...resources.owner, kind: `test_watch_contract_${index}` }, charge
+      })));
       try {
-        contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
           6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 24: u(10), 25: u(1280), 26: u(10000), 27: array() })), 1024n, references[0]!, references[1]!);
+          21: { kind: "bool", value: false }, 23: u(128), 24: u(10), 25: u(1280), 26: u(10000), 27: array()
+        })), 1024n, references[0]!, references[1]!);
       } finally { for (const reference of references) reference.release(); }
-      return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
-        streamingHandlers: [{ namespace: definition.namespace, method, kind: "example.watch.stream", contract, handler: source,
-          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 2048n, authorization: "authenticated" } }] };
+      return {
+        ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
+        streamingHandlers: [{
+          namespace: definition.namespace, method, kind: "example.watch.stream", contract, handler: source,
+          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 2048n, authorization: "authenticated" }
+        }]
+      };
     });
     let c: V4Session | undefined, s: V4Session | undefined;
     const owners: Array<{ close(): void }> = [];
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+      };
       const service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n, methods: [{ method, streamKind: "example.watch.stream" }] }); owners.push(service);
       const setup = await service.stream(method, "setup"); owners.push(setup);
       let delivered = false; const pending = setup.readNext().then(item => { delivered = true; return item; });
@@ -1642,15 +2849,21 @@ describe("original v4 reliable Session assembly", () => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "server_streaming", serverStreamingSemantics: "execution", request: codec, response: codec,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 3, maxStreamPayloadBytes: 384n, maxStreamDurationMS: 10000n, restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "server_streaming", serverStreamingSemantics: "execution", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 3, maxStreamPayloadBytes: 384n, maxStreamDurationMS: 10000n, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.execution.stream", methods: { events: method } });
     const execution = { tenant: "tenant", audience: "service", namespace: definition.namespace, callerAuthorities: ["3".repeat(64)], maxRecords: 16, maxActive: 4, resultBytes: 1048576n };
     const common = { query: { typeID: 43, contractDigest: fill(32) }, resultRead: { typeID: 44, contractDigest: fill(33) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
-    const targetFor = (material: ReturnType<typeof credentialFixture>) => ({ authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }] });
-    const clientConfig = (_environment: V4EnvironmentRuntime, material: ReturnType<typeof credentialFixture>) => ({ ...common,
-      localExecutionAuthority: "3".repeat(64), referenceTargets: [targetFor(material)] });
+    const targetFor = (material: ReturnType<typeof credentialFixture>) => ({
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }]
+    });
+    const clientConfig = (_environment: V4EnvironmentRuntime, material: ReturnType<typeof credentialFixture>) => ({
+      ...common,
+      localExecutionAuthority: "3".repeat(64), referenceTargets: [targetFor(material)]
+    });
     let calls = 0, cancellationObserved = false, releaseHandler!: () => void, enteredHandler!: () => void;
     const held = new Promise<void>(resolve => { releaseHandler = resolve; }), entered = new Promise<void>(resolve => { enteredHandler = resolve; });
     let contract: ServiceContractSnapshot | undefined;
@@ -1658,26 +2871,33 @@ describe("original v4 reliable Session assembly", () => {
     const server = endpoint("server", b, profile, "live_authority", 1000n, (environment, material) => {
       const resources = environment.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 128, arrayItems: 8, runtimeBytes: 1024n };
       const references = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n), cborDecoderCharge(offerConfig)].map((charge, index) => ({
-        accounts: resources.accounts, owner: { ...resources.owner, kind: `test_execution_stream_contract_${index}` }, charge })));
+        accounts: resources.accounts, owner: { ...resources.owner, kind: `test_execution_stream_contract_${index}` }, charge
+      })));
       let decoder: CBORDecoder | undefined;
       try {
-        contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(1),
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(1),
           6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 13: u(0), 14: u(30000),
           16: u(10000), 17: u(60000), 18: u(10000), 19: u(1), 21: { kind: "bool", value: false }, 23: u(128),
-          24: u(3), 25: u(384), 26: u(10000), 27: array(), 28: map({ 0: u(0) }) })), 1024n, references[0]!, references[1]!);
+          24: u(3), 25: u(384), 26: u(10000), 27: array(), 28: map({ 0: u(0) })
+        })), 1024n, references[0]!, references[1]!);
         const contractDigest = new Uint8Array(32); contract.copyDigest(contractDigest);
         decoder = new CBORDecoder(offerConfig, references[2]!);
         const document = decoder.decodeMap(encode(map({ 0: bytes(contractDigest), 1: u(900), 2: u(10000) })), "AdmissionOffer");
         let offer: AdmissionOffer;
         try { offer = new AdmissionOffer(document, contract, 10000n, new Uint8Array(32)); } finally { document.release(); }
-        return { ...common, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
+        return {
+          ...common, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
           executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }],
           queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
-          streamingHandlers: [{ namespace: definition.namespace, method, kind: "example.execution.stream", contract, offer, maximumOfferWindowMS: 10000n, execution,
+          streamingHandlers: [{
+            namespace: definition.namespace, method, kind: "example.execution.stream", contract, offer, maximumOfferWindowMS: 10000n, execution,
             handler: async (context, value: string, writer) => {
               calls++; enteredHandler(); await held; cancellationObserved = context.signal.aborted;
               await writer.write(`${value}:one`); await writer.write(`${value}:two`);
-            }, options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+            }, options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       } finally { decoder?.close(); for (const reference of references) reference.release(); }
     }, { profile: "execution" });
     let c: V4Session | undefined, s: V4Session | undefined, nextClient: ReturnType<typeof endpoint> | undefined;
@@ -1686,13 +2906,17 @@ describe("original v4 reliable Session assembly", () => {
     const owners: Array<{ close(): void }> = [];
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const service = await c.bindService(definition, { target: targetFor(client.material), maximumOfferWindowMS: 10000n,
-        methods: [{ method, streamKind: "example.execution.stream" }] }); owners.push(service);
+      const service = await c.bindService(definition, {
+        target: targetFor(client.material), maximumOfferWindowMS: 10000n,
+        methods: [{ method, streamKind: "example.execution.stream" }]
+      }); owners.push(service);
       directory = mkdtempSync(join(realpathSync(tmpdir()), "flowersec-ts-stream-reference-"));
       db = new DatabaseSync(join(directory, "references.sqlite"));
       db.exec("PRAGMA synchronous=FULL; CREATE TABLE saved (identity TEXT PRIMARY KEY, canonical BLOB NOT NULL)");
-      store = createOperationReferenceStore(client.environment, { targetDomain: "authority", durability: "durable_create_or_compare", storage: "application_owned",
-        maxRecords: 1, maxStoredBytes: 2048n, retentionMS: 60000n, maxConcurrentSaves: 1, applicationBytes: 65536n }, async (_context, record) => {
+      store = createOperationReferenceStore(client.environment, {
+        targetDomain: "authority", durability: "durable_create_or_compare", storage: "application_owned",
+        maxRecords: 1, maxStoredBytes: 2048n, retentionMS: 60000n, maxConcurrentSaves: 1, applicationBytes: 65536n
+      }, async (_context, record) => {
         const previous = db!.prepare("SELECT canonical FROM saved WHERE identity=?").get(record.identity);
         if (previous !== undefined) return Buffer.from(previous.canonical as Uint8Array).equals(record.canonical) ? "confirmed" : "conflict";
         db!.prepare("INSERT INTO saved VALUES (?,?)").run(record.identity, record.canonical); return "confirmed";
@@ -1724,17 +2948,23 @@ describe("original v4 reliable Session assembly", () => {
       const conflict = await service.stream(method, "different", options); owners.push(conflict);
       expect(await conflict.readNextEncoded()).toMatchObject({ kind: "sdk_error", code: "operation_conflict" }); conflict.close();
       expect((await conflict.waitCleanup()).status).toBe("complete");
-      expect(await c.queryOperation(saved.reference)).toMatchObject({ status: "ok", observation: { state: "completed", workActive: false,
-        resultAvailable: false, resultDeleted: false, resultBytes: 0, cancelRequested: true } });
+      expect(await c.queryOperation(saved.reference)).toMatchObject({
+        status: "ok", observation: {
+          state: "completed", workActive: false,
+          resultAvailable: false, resultDeleted: false, resultBytes: 0, cancelRequested: true
+        }
+      });
       service.close(); await Promise.all([c.close(), s.close()]);
       expect((await c.waitCleanup()).status).toBe("complete"); expect((await s.waitCleanup()).status).toBe("complete");
       await client.close();
       const nextA = new MemoryTransport("client", "message"), nextB = new MemoryTransport("server", "message"); nextA.peer = nextB; nextB.peer = nextA;
       const nextOptions = { profile: "execution" as const, connectionSeed: 70, clockOriginMS: Math.min(a.createdAtMS, b.createdAtMS) };
       nextClient = endpoint("client", nextA, profile, "live_authority", 1000n, clientConfig, nextOptions);
-      const nextServer = endpoint("server", nextB, profile, "live_authority", 1000n, (_environment, material) => ({ ...common,
+      const nextServer = endpoint("server", nextB, profile, "live_authority", 1000n, (_environment, material) => ({
+        ...common,
         executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
-        executionServices: [execution], executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }] }), { ...nextOptions, environment: server.environment });
+        executionServices: [execution], executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }]
+      }), { ...nextOptions, environment: server.environment });
       const pair = await Promise.all([nextClient.establish(), nextServer.establish()]); nextC = new V4Session(pair[0]); nextS = new V4Session(pair[1]);
       const referenceCodec = createOperationReferenceCodec(nextClient.environment); owners.push(referenceCodec);
       const imported = referenceCodec.import(db.prepare("SELECT canonical FROM saved").get()!.canonical as Uint8Array, "authority"); referenceCodec.close();
@@ -1755,43 +2985,59 @@ describe("original v4 reliable Session assembly", () => {
     const request = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
     let calls = 0;
     const response = request;
-    const method = new V4MethodDefinition({ typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request, response,
-      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 3, maxStreamPayloadBytes: 384n, maxStreamDurationMS: 10000n, restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "server_streaming", serverStreamingSemantics: "transient", request, response,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, maxItemCount: 3, maxStreamPayloadBytes: 384n, maxStreamDurationMS: 10000n, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.events", methods: { events: method } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
     let contract: ServiceContractSnapshot | undefined;
     const client = endpoint("client", a, profile, "live_authority", 1000n, () => common);
     const server = endpoint("server", b, profile, "live_authority", 1000n, environment => {
       const resources = environment.resources, charges = [serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)];
-      const references = resources.root.reserveBatch(charges.map((charge, index) => ({ accounts: resources.accounts,
-        owner: { ...resources.owner, kind: `test_stream_contract_${index}` }, charge })));
+      const references = resources.root.reserveBatch(charges.map((charge, index) => ({
+        accounts: resources.accounts,
+        owner: { ...resources.owner, kind: `test_stream_contract_${index}` }, charge
+      })));
       try {
-        contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(1), 4: u(0),
           6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000),
-          21: { kind: "bool", value: false }, 23: u(128), 24: u(3), 25: u(384), 26: u(10000), 27: array() })), 1024n, references[0]!, references[1]!);
+          21: { kind: "bool", value: false }, 23: u(128), 24: u(3), 25: u(384), 26: u(10000), 27: array()
+        })), 1024n, references[0]!, references[1]!);
       } finally { for (const reference of references) reference.release(); }
-      return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
-        streamingHandlers: [{ namespace: definition.namespace, method, kind: "example.events.stream", contract,
+      return {
+        ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
+        streamingHandlers: [{
+          namespace: definition.namespace, method, kind: "example.events.stream", contract,
           handler: async (_context, value: string, writer) => {
             calls++; if (value === "failed") throw new Error("business failure");
             await writer.write(value + ":one"); await writer.write(value + ":two");
           },
-          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+          options: { workClass: "resident", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+        }]
+      };
     });
     let c: V4Session | undefined, s: V4Session | undefined;
     const owners: Array<{ close(): void }> = [];
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+      };
       const plain = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n, methods: [{ method, streamKind: "example.events.stream" }] }); owners.push(plain);
       const prepared = await plain.prepareStreamOperation(method, "first", { admission: "try_now" }); owners.push(prepared);
       expect(prepared.start()).toMatchObject({ status: "not_admitted", submission: "not_submitted", reason: "not_ready" });
       expect(prepared.status().state).toBe("prepared"); expect(calls).toBe(0);
-      const required = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n,
-        methods: [{ method, streamKind: "example.events.stream", requiredForDispatch: true }] }); owners.push(required);
-      const shared = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n,
-        methods: [{ method, streamKind: "example.events.stream", preacceptStream: true }] }); owners.push(shared);
+      const required = await c.bindService(definition, {
+        target, maximumOfferWindowMS: 10000n,
+        methods: [{ method, streamKind: "example.events.stream", requiredForDispatch: true }]
+      }); owners.push(required);
+      const shared = await c.bindService(definition, {
+        target, maximumOfferWindowMS: 10000n,
+        methods: [{ method, streamKind: "example.events.stream", preacceptStream: true }]
+      }); owners.push(shared);
       required.close(); expect(calls).toBe(0);
       const competitor = await shared.prepareStreamOperation(method, "second", { admission: "try_now" }); owners.push(competitor);
       expect(prepared.start().status).toBe("admitted");
@@ -1816,12 +3062,17 @@ describe("original v4 reliable Session assembly", () => {
       await Promise.all([c?.close(), s?.close()]); contract?.release(); await Promise.all([client.close(), server.close()]);
     }
   });
+  // These complete encrypted lifecycles include signing, multiple handshakes and
+  // physical cleanup. Allow V8 instrumentation within a bounded test budget;
+  // each application operation keeps its independently configured deadline.
   it("connects observation NOTIFY preparation, complete submission, serial handlers and Close", async () => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const request = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 40000 });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "notify", notifySemantics: "observation", request,
-      requestMaxBytes: 40000, responseRevision: "none-v1", restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "notify", notifySemantics: "observation", request,
+      requestMaxBytes: 40000, responseRevision: "none-v1", restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.events", methods: { changed: method } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 40000 };
     let contract: ServiceContractSnapshot | undefined, source: V4StaticServiceContracts | undefined;
@@ -1834,24 +3085,33 @@ describe("original v4 reliable Session assembly", () => {
     const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
       const resources = environment.resources;
       const refs = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-        accounts: resources.accounts, owner: { ...resources.owner, kind: `notify_contract_${index}` }, charge })));
+        accounts: resources.accounts, owner: { ...resources.owner, kind: `notify_contract_${index}` }, charge
+      })));
       try {
-        contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
-          8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(40000), 27: array() })), 1024n, refs[0]!, refs[1]!);
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
+          8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(40000), 27: array()
+        })), 1024n, refs[0]!, refs[1]!);
       } finally { for (const ref of refs) ref.release(); }
-      return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "denied" }], notificationHandlers: [{ namespace: definition.namespace, method, contract,
-        options: { workClass: "short", applicationBytes: 4096n, authorization: () => permission },
-        handler: async (_context, value: string) => {
-          running++; maximumRunning = Math.max(maximumRunning, running);
-          try { values.push(value); if (value.startsWith("first")) { entered(); await held; } if (value === "last") delivered(); }
-          finally { running--; }
-        } }] };
+      return {
+        ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "denied" }], notificationHandlers: [{
+          namespace: definition.namespace, method, contract,
+          options: { workClass: "short", applicationBytes: 4096n, authorization: () => permission },
+          handler: async (_context, value: string) => {
+            running++; maximumRunning = Math.max(maximumRunning, running);
+            try { values.push(value); if (value.startsWith("first")) { entered(); await held; } if (value === "last") delivered(); }
+            finally { running--; }
+          }
+        }]
+      };
     });
     let c: V4Session | undefined, s: V4Session | undefined;
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+      };
       const bytes = new Uint8Array(contract!.encodedBytes()); contract!.copyEncoded(bytes);
       source = createStaticServiceContracts(client.environment, definition, [{ method, contract: bytes }], { target, maximumOfferWindowMS: 10000n }); bytes.fill(0);
       const service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n, contractSource: source });
@@ -1873,9 +3133,11 @@ describe("original v4 reliable Session assembly", () => {
       await expect.poll(() => values.length, { timeout: 1500 }).toBe(3); await last; expect(values).toEqual(["first" + "x".repeat(33000), "second", "last"]); expect(maximumRunning).toBe(1);
       expect((await c.probeLiveness()).elapsedMS).toBeGreaterThanOrEqual(0n);
     } finally { release(); source?.close(); await Promise.all([c?.close(), s?.close()]); contract?.release(); await Promise.all([client.close(), server.close()]); }
-  });
+  }, 15000);
   it("fans out local observation subscriptions with isolated decoding, latest pending and real closure", async () => {
-    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message");
+    a.peer = b;
+    b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     let decodes = 0;
     const codec = v4ApplicationMessageCodec<string>({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 }, {
@@ -1883,17 +3145,24 @@ describe("original v4 reliable Session assembly", () => {
       encode: (_context, value) => new TextEncoder().encode(value),
       decode: (_context, bytes) => { const value = new TextDecoder().decode(bytes); bytes.fill(0); decodes++; return value; },
     });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "notify", notifySemantics: "observation", request: codec,
-      requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "notify", notifySemantics: "observation", request: codec,
+      requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.snapshots", methods: { changed: method } });
-    const contract = encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
-      8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(128), 27: array() }));
+    const contract = encode(map({
+      0: text(definition.namespace), 1: u(42), 2: u(2), 5: u(0), 6: text("text-v1"), 7: text("none-v1"),
+      8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(128), 27: array()
+    }));
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
     const client = endpoint("client", a, profile, "live_authority", 3000n, () => common);
-    const server = endpoint("server", b, profile, "live_authority", 3000n, () => ({ ...common,
-      notificationMethods: [{ namespace: definition.namespace, method, contract, permission: "allowed" }] }));
+    const server = endpoint("server", b, profile, "live_authority", 3000n, () => ({
+      ...common,
+      notificationMethods: [{ namespace: definition.namespace, method, contract, permission: "allowed" }]
+    }));
     let c: V4Session | undefined, s: V4Session | undefined, source: V4StaticServiceContracts | undefined;
-    let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
     const tokens: V4NotificationSubscription<any>[] = [];
     const options = { workClass: "short" as const, applicationBytes: 2048n, authorization: "authenticated" as const };
     const events = new Map<string, () => void>();
@@ -1902,9 +3171,13 @@ describe("original v4 reliable Session assembly", () => {
     let selfWait!: { closed: boolean; wait: string }, selfDone!: () => void;
     const selfFinished = new Promise<void>(resolve => { selfDone = resolve; });
     try {
-      const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      const established = await Promise.all([client.establish(), server.establish()]);
+      c = new V4Session(established[0]);
+      s = new V4Session(established[1]);
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+      };
       source = createStaticServiceContracts(client.environment, definition, [{ method, contract }], { target, maximumOfferWindowMS: 10000n });
       const service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n, contractSource: source });
       const fifo = s.notifications.subscribe(method, async (_context, value) => { fifoValues.push(value); if (value === "one") await held; }, options);
@@ -1915,44 +3188,65 @@ describe("original v4 reliable Session assembly", () => {
       const fast = s.notifications.subscribe(method, (_context, value) => { fastValues.push(value); events.get(value)?.(); events.delete(value); }, options);
       tokens.push(fifo, latest, errors, fast);
       const send = async (value: string): Promise<void> => { const observed = watch(value); expect(await service.notify(method, value)).toMatchObject({ submission: "submitted" }); await observed; };
-      await send("one"); expect(fifoValues).toEqual(["one"]); expect(latestValues).toEqual(["one"]);
-      const late = s.notifications.subscribe(method, (_context, value) => { lateValues.push(value); }, options); tokens.push(late);
-      const passive = await late.waitClosed({ timeoutMS: 1n }); expect(passive).toMatchObject({ closed: false, wait: "deadline_exceeded", cleanupStatus: { status: "pending" } });
-      expect(late.observationStatus().closed).toBe(false); expect(lateValues).toEqual([]);
-      await send("two"); await send("three");
+      await send("one");
+      expect(fifoValues).toEqual(["one"]);
+      expect(latestValues).toEqual(["one"]);
+      const late = s.notifications.subscribe(method, (_context, value) => { lateValues.push(value); }, options);
+      tokens.push(late);
+      const passive = await late.waitClosed({ timeoutMS: 1n });
+      expect(passive).toMatchObject({ closed: false, wait: "deadline_exceeded", cleanupStatus: { status: "pending" } });
+      expect(late.observationStatus().closed).toBe(false);
+      expect(lateValues).toEqual([]);
+      await send("two");
+      await send("three");
       expect(latest.observationStatus()).toMatchObject({ pending: 1, running: 1, knownDropped: 1n, lastGap: "coalesced_pending" });
       expect(fifo.observationStatus()).toMatchObject({ pending: 2, running: 1, knownDropped: 0n });
       expect(errors.observationStatus()).toMatchObject({ knownDropped: 2n, lastGap: "handler_error" });
-      expect(fastValues).toEqual(["one", "two", "three"]); expect(lateValues).toEqual(["two", "three"]);
+      expect(fastValues).toEqual(["one", "two", "three"]);
+      expect(lateValues).toEqual(["two", "three"]);
       // Every token gets independent mutable decoder bytes. Coalesced data was
       // never decoded and a late subscriber did not receive the first event.
       expect(decodes).toBe(10);
-      const fillers = Array.from({ length: 27 }, () => s!.notifications.subscribe(method, () => undefined, options)); tokens.push(...fillers);
+      const fillers = Array.from({ length: 27 }, () => s!.notifications.subscribe(method, () => undefined, options));
+      tokens.push(...fillers);
       expect(() => s!.notifications.subscribe(method, () => undefined, options)).toThrow("resource_exhausted");
-      latest.close(); latest.close(); expect(latest.observationStatus()).toMatchObject({ closed: true, running: 1, pending: 0 });
+      latest.close();
+      latest.close();
+      expect(latest.observationStatus()).toMatchObject({ closed: true, running: 1, pending: 0 });
       expect(() => s!.notifications.subscribe(method, () => undefined, options)).toThrow("resource_exhausted");
-      release(); expect(await latest.waitClosed()).toMatchObject({ closed: true, wait: "complete", cleanupStatus: { status: "complete" } });
+      release();
+      expect(await latest.waitClosed()).toMatchObject({ closed: true, wait: "complete", cleanupStatus: { status: "complete" } });
       expect(latestValues).toEqual(["one"]);
-      const replacement = s.notifications.subscribe(method, () => undefined, options); tokens.push(replacement);
-      for (const token of fillers) token.close(); replacement.close();
+      const replacement = s.notifications.subscribe(method, () => undefined, options);
+      tokens.push(replacement);
+      for (const token of fillers) token.close();
+      replacement.close();
       const self = s.notifications.subscribe(method, async (context, value) => {
         if (value !== "self") return; self.close(); selfWait = await self.waitClosed({ context }); selfDone();
-      }, options); tokens.push(self);
-      await send("self"); await selfFinished;
+      }, options);
+      tokens.push(self);
+      await send("self");
+      await selfFinished;
       expect(selfWait).toMatchObject({ closed: true, wait: "dependency_unavailable", cleanupStatus: { status: "cleanup_incomplete" } });
       expect(await self.waitClosed()).toMatchObject({ wait: "complete", cleanupStatus: { status: "complete" } });
       expect(fifoValues).toEqual(["one", "two", "three", "self"]);
-      service.close(); source.close();
+      service.close();
+      source.close();
       for (const token of tokens) { token.close(); expect(await token.waitClosed()).toMatchObject({ closed: true, wait: "complete" }); }
       expect((await c.probeLiveness()).elapsedMS).toBeGreaterThanOrEqual(0n);
-    } finally { release(); for (const token of tokens) token.close(); source?.close(); await Promise.all([c?.close(), s?.close()]); await Promise.all([client.close(), server.close()]); }
+    }
+    finally { release(); for (const token of tokens) token.close(); source?.close(); await Promise.all([c?.close(), s?.close()]); await Promise.all([client.close(), server.close()]); }
   });
   it("connects execution NOTIFY with one business dispatch, observer fanout, saved reference and management", async () => {
-    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message");
+    a.peer = b;
+    b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const request = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
-    const method = new V4MethodDefinition({ typeID: 42, shape: "notify", notifySemantics: "execution", request,
-      requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "notify", notifySemantics: "execution", request,
+      requestMaxBytes: 128, responseRevision: "none-v1", restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.jobs", methods: { enqueue: method } });
     const common = { query: { typeID: 43, contractDigest: fill(32) }, resultRead: { typeID: 44, contractDigest: fill(33) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
     const execution = { tenant: "tenant", audience: "service", namespace: definition.namespace, callerAuthorities: ["3".repeat(64)], maxRecords: 16, maxActive: 4, resultBytes: 1048576n };
@@ -1960,9 +3254,13 @@ describe("original v4 reliable Session assembly", () => {
     let contract: ServiceContractSnapshot | undefined, release!: () => void, entered!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; }), began = new Promise<void>(resolve => { entered = resolve; });
     const business: string[] = [], observed: string[] = [], late: string[] = [];
-    const client = endpoint("client", a, profile, "live_authority", 3000n, (_environment, material) => ({ ...common, localExecutionAuthority: "3".repeat(64),
-      referenceTargets: [{ authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }] }] }),
+    const client = endpoint("client", a, profile, "live_authority", 3000n, (_environment, material) => ({
+      ...common, localExecutionAuthority: "3".repeat(64),
+      referenceTargets: [{
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }]
+      }]
+    }),
       { profile: "execution", operationEntropy: fill(48, 24) });
     const server = endpoint("server", b, profile, "live_authority", 3000n, (environment, material) => {
       const resources = environment.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 128, arrayItems: 8, runtimeBytes: 1024n };
@@ -1970,27 +3268,38 @@ describe("original v4 reliable Session assembly", () => {
         .map((charge, index) => ({ accounts: resources.accounts, owner: { ...resources.owner, kind: `notify_execution_contract_${index}` }, charge })));
       let decoder: CBORDecoder | undefined;
       try {
-        contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(2), 5: u(1),
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(2), 5: u(1),
           6: text("text-v1"), 7: text("none-v1"), 8: u(0), 9: u(0), 10: u(0), 13: u(0), 14: u(30000),
-          16: u(10000), 17: u(60000), 18: u(10000), 19: u(1), 21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, refs[0]!, refs[1]!);
-        const contractDigest = new Uint8Array(32); contract.copyDigest(contractDigest); decoder = new CBORDecoder(offerConfig, refs[2]!);
+          16: u(10000), 17: u(60000), 18: u(10000), 19: u(1), 21: { kind: "bool", value: false }, 23: u(128), 27: array()
+        })), 1024n, refs[0]!, refs[1]!);
+        const contractDigest = new Uint8Array(32);
+        contract.copyDigest(contractDigest);
+        decoder = new CBORDecoder(offerConfig, refs[2]!);
         const document = decoder.decodeMap(encode(map({ 0: bytes(contractDigest), 1: u(900), 2: u(10000) })), "AdmissionOffer");
         let offer: AdmissionOffer;
         try { offer = new AdmissionOffer(document, contract, 10000n, new Uint8Array(32)); } finally { document.release(); }
-        return { ...common, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
+        return {
+          ...common, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
           executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }],
           queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
-          notificationHandlers: [{ namespace: definition.namespace, method, contract, execution, offer, maximumOfferWindowMS: 10000n, options: observerOptions,
-            handler: async (_context, value: string) => { business.push(value); if (value === "first") { entered(); await held; } } }] };
-      } finally { decoder?.close(); for (const ref of refs) ref.release(); }
+          notificationHandlers: [{
+            namespace: definition.namespace, method, contract, execution, offer, maximumOfferWindowMS: 10000n, options: observerOptions,
+            handler: async (_context, value: string) => { business.push(value); if (value === "first") { entered(); await held; } }
+          }]
+        };
+      }
+      finally { decoder?.close(); for (const ref of refs) ref.release(); }
     }, { profile: "execution" });
     let c: V4Session | undefined, s: V4Session | undefined, store: V4OperationReferenceStore | undefined, database: DatabaseSync | undefined, directory: string | undefined;
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
       const subscription = s.notifications.subscribe(method, (_context, value) => { observed.push(value); }, observerOptions);
       expect(() => s!.notifications.subscribe(method, () => undefined, { ...observerOptions, pendingPolicy: "latest_pending" })).toThrow("configuration_capacity");
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+      };
       const service = await c.bindService(definition, { target, maximumOfferWindowMS: 10000n });
       const options = { deadlineAtMS: 40000n, admissionNotAfterMS: 5000n };
       const first = await service.prepareOperation(method, "first", options), reference = first.reference();
@@ -2013,8 +3322,10 @@ describe("original v4 reliable Session assembly", () => {
       database = new DatabaseSync(join(directory, "references.sqlite"));
       database.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; CREATE TABLE saved (canonical BLOB NOT NULL)");
       const backing = database;
-      store = createOperationReferenceStore(client.environment, { targetDomain: "authority", durability: "durable_create_or_compare", storage: "application_owned",
-        maxRecords: 1, maxStoredBytes: 2048n, retentionMS: 60000n, maxConcurrentSaves: 1, applicationBytes: 65536n }, async (_context, record) => {
+      store = createOperationReferenceStore(client.environment, {
+        targetDomain: "authority", durability: "durable_create_or_compare", storage: "application_owned",
+        maxRecords: 1, maxStoredBytes: 2048n, retentionMS: 60000n, maxConcurrentSaves: 1, applicationBytes: 65536n
+      }, async (_context, record) => {
         backing.exec("BEGIN IMMEDIATE"); backing.prepare("INSERT INTO saved VALUES (?)").run(record.canonical); backing.exec("COMMIT");
         return "confirmed";
       });
@@ -2034,13 +3345,15 @@ describe("original v4 reliable Session assembly", () => {
       try { release(); store?.close(); await Promise.all([c?.close(), s?.close()]); contract?.release(); await Promise.all([client.close(), server.close()]); }
       finally { database?.close(); if (directory !== undefined) rmSync(directory, { recursive: true, force: true }); }
     }
-    expect(client.environment.resources.root.snapshot().reservations).toBe(0); expect(server.environment.resources.root.snapshot().reservations).toBe(0);
+    expect(client.environment.resources.root.snapshot().reservations).toBe(0);
+    expect(server.environment.resources.root.snapshot().reservations).toBe(0);
   });
   it.each([
-    { shape: "unary", lostReceipt: false, applicationFailure: false }, { shape: "unary", lostReceipt: true, applicationFailure: false },
-    { shape: "notify", lostReceipt: false, applicationFailure: false }, { shape: "server_streaming", lostReceipt: false, applicationFailure: false },
-    { shape: "server_streaming", lostReceipt: false, applicationFailure: true }, { shape: "server_streaming", lostReceipt: true, applicationFailure: true },
-  ] as const)("reopens durable execution $shape in a new Environment over an encrypted Session (lost receipt: $lostReceipt, application failure: $applicationFailure)", async ({ shape, lostReceipt, applicationFailure }) => {
+    { shape: "unary", lostReceipt: false, applicationFailure: false, closeAfterCommit: false }, { shape: "unary", lostReceipt: true, applicationFailure: false, closeAfterCommit: false },
+    { shape: "notify", lostReceipt: false, applicationFailure: false, closeAfterCommit: false }, { shape: "server_streaming", lostReceipt: false, applicationFailure: false, closeAfterCommit: false },
+    { shape: "server_streaming", lostReceipt: false, applicationFailure: true, closeAfterCommit: false }, { shape: "server_streaming", lostReceipt: true, applicationFailure: true, closeAfterCommit: false },
+    { shape: "unary", lostReceipt: false, applicationFailure: false, closeAfterCommit: true },
+  ] as const)("reopens durable execution $shape in a new Environment over an encrypted Session (lost receipt: $lostReceipt, application failure: $applicationFailure, close after commit: $closeAfterCommit)", async ({ shape, lostReceipt, applicationFailure, closeAfterCommit }) => {
     const directory = mkdtempSync(join(realpathSync(tmpdir()), "flowersec-ts-execution-reopen-"));
     const path = join(directory, "execution.sqlite");
     // One explicit timeline spans both Environments. Expensive crypto/SQLite
@@ -2063,47 +3376,69 @@ describe("original v4 reliable Session assembly", () => {
     const execution = { tenant: "tenant", audience: "service", namespace: definition.namespace, callerAuthorities: ["3".repeat(64)], maxRecords: 8, maxActive: 4, resultBytes: 1048576n };
     const common = { query: { typeID: 43, contractDigest: fill(32) }, resultRead: { typeID: 44, contractDigest: fill(33) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
     const backings: ReturnType<typeof createSQLitePoolBacking>[] = [], environments: V4EnvironmentRuntime[] = [];
-    const persisted = new Uint8Array(2048); let persistedBytes = 0, calls = 0, previousSettled = true;
+    const persisted = new Uint8Array(2048);
+    let persistedBytes = 0, calls = 0, previousSettled = true;
     try {
       for (const generation of [0, 1]) {
-        const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+        const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message");
+        a.peer = b;
+        b.peer = a;
         let contract: ServiceContractSnapshot | undefined, store: V4SQLiteExecutionStore | undefined;
         elapsedMS = BigInt(generation) * 1000n;
         const serviceOptions = { profile: "execution" as const, clockMS, operationEntropy: fill(48, 24), connectionSeed: 70 + generation };
-        const client = endpoint("client", a, profile, "live_authority", 1000n, (_environment, material) => ({ ...common, localExecutionAuthority: "3".repeat(64),
-          referenceTargets: [{ authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-            peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }] }] }), serviceOptions);
+        const client = endpoint("client", a, profile, "live_authority", 1000n, (_environment, material) => ({
+          ...common, localExecutionAuthority: "3".repeat(64),
+          referenceTargets: [{
+            authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+            peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }]
+          }]
+        }), serviceOptions);
         environments.push(client.environment);
-        const server = endpoint("server", b, profile, "live_authority", 1000n, (environment, material) => {
+        const server = endpoint("server", b, profile, "live_authority", 1000n, async (environment, material) => {
           environments.push(environment);
-          const backing = createSQLitePoolBacking(environment, path, { maxPages: 512, maxRecords: 8, maxRecordBytes: 16384,
-            runtimeBytes: 1024n, providerRuntimeBytes: 1024n, diskOverheadBytes: 4096n }); backings.push(backing);
-          store = openV4SQLiteExecutionStore(backing, { create: generation === 0, service: execution, maxContracts: 4,
+          const backing = createSQLitePoolBacking(environment, path, {
+            maxPages: 512, maxRecords: 8, maxRecordBytes: 16384,
+            runtimeBytes: 1024n, providerRuntimeBytes: 1024n, diskOverheadBytes: 4096n
+          });
+          backings.push(backing);
+          store = (await openV4SQLiteExecutionStore(backing, {
+            create: generation === 0, service: execution, maxContracts: 4,
             identity: { authority: "execution", storeID: fill(5), generation: 1n },
-            continuity: { check: (_identity, _service, epoch, provisioning) => {
-              // This fixture proves settlement independently by waiting for the
-              // previous Environment and all real handler work to terminate.
-              if (!previousSettled || provisioning && generation !== 0 || epoch > BigInt(generation + 1)) throw new Error("unproven continuity");
-            } } });
+            continuity: {
+              check: (_identity, _service, epoch, provisioning) => {
+                // This fixture proves settlement independently by waiting for the
+                // previous Environment and all real handler work to terminate.
+                if (!previousSettled || provisioning && generation !== 0 || epoch > BigInt(generation + 1))
+                  throw new Error("unproven continuity");
+              }
+            }
+          }));
           const resources = environment.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 128, arrayItems: 8, runtimeBytes: 1024n };
           const references = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n), cborDecoderCharge(offerConfig)].map((charge, index) => ({
-            accounts: resources.accounts, owner: { ...resources.owner, kind: `test_durable_contract_${index}` }, charge })));
+            accounts: resources.accounts, owner: { ...resources.owner, kind: `test_durable_contract_${index}` }, charge
+          })));
           let decoder: CBORDecoder | undefined;
           try {
-            contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42),
+            contract = new ServiceContractSnapshot(encode(map({
+              0: text(definition.namespace), 1: u(42),
               ...(shape === "notify" ? { 2: u(2), 5: u(1) } : shape === "unary" ? { 2: u(0), 3: u(1), 15: u(30000) } : {
-                2: u(1), 4: u(1), 24: u(3), 25: u(384), 26: u(10000), 28: map({ 0: u(0) }) }),
+                2: u(1), 4: u(1), 24: u(3), 25: u(384), 26: u(10000), 28: map({ 0: u(0) })
+              }),
               6: text("text-v1"), 7: text(shape === "notify" ? "none-v1" : "text-v1"), 8: u(shape === "notify" ? 0 : 1), 9: u(0), 10: u(shape === "notify" ? 0 : 128), 13: u(1), 14: u(30000),
-              16: u(10000), 17: u(60000), 18: u(10000), 19: u(1), 21: { kind: "bool", value: false }, 23: u(128), 27: applicationFailure ? array(map({ 0: u(7), 1: text("text-v1"), 2: u(128), 3: bytes(fill(31)) })) : array() })),
-            1024n, references[0]!, references[1]!);
-            if (generation === 0) expect(store.installContract(contract, [{ notBeforeMS: 900n, notAfterMS: 10000n }], 0n)).toBe(1n);
-            const contractDigest = new Uint8Array(32); contract.copyDigest(contractDigest);
-            const original = new Uint8Array(8192), registration = store.readRegistration(contractDigest, original);
+              16: u(10000), 17: u(60000), 18: u(10000), 19: u(1), 21: { kind: "bool", value: false }, 23: u(128), 27: applicationFailure ? array(map({ 0: u(7), 1: text("text-v1"), 2: u(128), 3: bytes(fill(31)) })) : array()
+            })),
+              1024n, references[0]!, references[1]!);
+            if (generation === 0)
+              expect((await store.installContract(contract, [{ notBeforeMS: 900n, notAfterMS: 10000n }], 0n))).toBe(1n);
+            const contractDigest = new Uint8Array(32);
+            contract.copyDigest(contractDigest);
+            const original = new Uint8Array(8192), registration = (await store.readRegistration(contractDigest, original));
             expect(registration).toMatchObject({ revision: 1n, enabled: true, typeID: 42, offers: [{ notBeforeMS: 900n, notAfterMS: 10000n }] });
             if (generation === 1) {
               contract.release();
               const restored = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
-                accounts: resources.accounts, owner: { ...resources.owner, kind: `test_restored_contract_${index}` }, charge })));
+                accounts: resources.accounts, owner: { ...resources.owner, kind: `test_restored_contract_${index}` }, charge
+              })));
               try { contract = new ServiceContractSnapshot(original.subarray(0, registration.encodedBytes), 1024n, restored[0]!, restored[1]!); }
               finally { for (const reference of restored) reference.release(); }
             }
@@ -2112,24 +3447,33 @@ describe("original v4 reliable Session assembly", () => {
             const document = decoder.decodeMap(encode(map({ 0: bytes(contractDigest), 1: u(900), 2: u(10000) })), "AdmissionOffer");
             let offer: AdmissionOffer;
             try { offer = new AdmissionOffer(document, contract, 10000n, new Uint8Array(32)); } finally { document.release(); }
-            const registrationConfig = { namespace: definition.namespace, method, contract, offer, maximumOfferWindowMS: 10000n, execution: store.service,
-              options: { workClass: "short" as const, maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" as const } };
+            const registrationConfig = {
+              namespace: definition.namespace, method, contract, offer, maximumOfferWindowMS: 10000n, execution: store.service,
+              options: { workClass: "short" as const, maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" as const }
+            };
             const handlers: Partial<RPCApplicationConfig> = shape === "notify" ? {
               notificationHandlers: [{ ...registrationConfig, handler: () => { calls++; } }],
             } : shape === "server_streaming" ? {
-              streamingHandlers: [{ ...registrationConfig, kind: "example.durable.stream", handler: async (_context, value: string, writer) => {
-                calls++; await writer.write(`${value}:one`); await writer.write(`${value}:two`);
-                if (applicationFailure) throw new V4ServiceError(7, "declined");
-              } }],
+              streamingHandlers: [{
+                ...registrationConfig, kind: "example.durable.stream", handler: async (_context, value: string, writer) => {
+                  calls++; await writer.write(`${value}:one`); await writer.write(`${value}:two`);
+                  if (applicationFailure) throw new V4ServiceError(7, "declined");
+                }
+              }],
             } : { unaryHandlers: [{ ...registrationConfig, handler: (_context, value: string) => { calls++; return value.toUpperCase(); } }] };
-            return { ...common, ...handlers, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
+            return {
+              ...common, ...handlers, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
               executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }],
-              queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }] };
-          } finally { decoder?.close(); for (const reference of references) reference.release(); }
+              queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }]
+            };
+          }
+          finally { decoder?.close(); for (const reference of references) reference.release(); }
         }, serviceOptions);
         let c: V4Session | undefined, s: V4Session | undefined;
         try {
-          const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
+          const established = await Promise.all([client.establish(), server.establish()]);
+          c = new V4Session(established[0]);
+          s = new V4Session(established[1]);
           const referenceCodec = createOperationReferenceCodec(client.environment);
           try {
             if (generation === 1) {
@@ -2143,9 +3487,13 @@ describe("original v4 reliable Session assembly", () => {
               } else expect(() => c!.readOperationResult(imported)).toThrow("operation_reference_shape");
               expect(calls).toBe(1);
             }
-            const service = await c.bindService(definition, { target: { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-              peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] }, maximumOfferWindowMS: 10000n,
-                ...(shape === "server_streaming" ? { methods: [{ method, streamKind: "example.durable.stream" }] } : {}) });
+            const service = await c.bindService(definition, {
+              target: {
+                authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+                peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+              }, maximumOfferWindowMS: 10000n,
+              ...(shape === "server_streaming" ? { methods: [{ method, streamKind: "example.durable.stream" }] } : {})
+            });
             try {
               const options = { deadlineAtMS: 40000n, admissionNotAfterMS: 5000n };
               const operation = method.shape === "server_streaming" ? await service.prepareStreamOperation(method, "original", options)
@@ -2160,11 +3508,18 @@ describe("original v4 reliable Session assembly", () => {
                   const reopened = new Uint8Array(2048), size = referenceCodec.export(operation.reference(), reopened);
                   expect(reopened.subarray(0, size)).toEqual(persisted.subarray(0, persistedBytes));
                 }
-                const originalExec = DatabaseSync.prototype.exec;
-                let receiptLost = false;
-                const fault = generation === 0 && lostReceipt ? vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
-                  originalExec.call(this, sql);
-                  if (sql === "COMMIT" && calls === 1 && !receiptLost) {
+                const originalExec = SQLiteWorkerDatabase.prototype.exec;
+                let receiptLost = false, closedAfterCommit = false;
+                const fault = generation === 0 && (lostReceipt || closeAfterCommit) ? vi.spyOn(SQLiteWorkerDatabase.prototype, "exec").mockImplementation(async function (this: SQLiteWorkerDatabase, sql: string) {
+                  await originalExec.call(this, sql);
+                  if (sql === "COMMIT" && calls === 1 && closeAfterCommit && !closedAfterCommit) {
+                    closedAfterCommit = true;
+                    // End the original owner after the actual durable result,
+                    // before its receipt is applied by the awaiting execution.
+                    void server.environment.close();
+                    await Promise.resolve();
+                  }
+                  if (sql === "COMMIT" && calls === 1 && lostReceipt && !receiptLost) {
                     receiptLost = true; throw new Error("lost receipt after real durable result COMMIT");
                   }
                 }) : undefined;
@@ -2174,6 +3529,19 @@ describe("original v4 reliable Session assembly", () => {
                     const result = await operation.takeResult();
                     if (generation === 0 && lostReceipt) {
                       expect(receiptLost).toBe(true); expect(result).toMatchObject({ kind: "sdk_error" });
+                    } else if (generation === 0 && closeAfterCommit) {
+                      // The durable COMMIT is real, but the response was
+                      // disconnected before authenticated SDK bytes arrived.
+                      // Preserve that local uncertainty and validate the saved
+                      // result through the reopened reference below.
+                      expect(closedAfterCommit).toBe(true);
+                      expect(result).toMatchObject({ kind: "metadata", progress: { state: "failed", failure: "channel_closed", submission: "submitted" } });
+                      const status = operation.status();
+                      expect(status).toMatchObject({ state: "failed" });
+                      if (status.state !== "failed") throw new Error("missing original failed operation status");
+                      expect(status.sdkError).toBeUndefined();
+                      const unchanged = new Uint8Array(2048), size = referenceCodec.export(operation.reference(), unchanged);
+                      expect(unchanged.subarray(0, size)).toEqual(persisted.subarray(0, persistedBytes));
                     } else expect(result).toMatchObject({ kind: "value", value: "ORIGINAL" });
                     if ("release" in result) result.release();
                   } else if (operation instanceof V4ExecutionStreamingOperation) {
@@ -2196,14 +3564,17 @@ describe("original v4 reliable Session assembly", () => {
                       if (!(barrier instanceof V4ExecutionNotifyOperation)) throw new Error("missing notify capability");
                       try {
                         barrier.start(); await barrier.waitSubmission();
-                        await expect.poll(async () => (await c!.queryOperation(barrier.reference())).observation?.state).toBe("completed");
+                        // Submission precedes FIFO dispatch and the worker's
+                        // durable COMMIT; observe both under instrumentation.
+                        await expect.poll(async () => (await c!.queryOperation(barrier.reference())).observation?.state, { timeout: 3000 }).toBe("completed");
                       } finally { barrier.close(); }
                     }
                   }
-                  if (!lostReceipt) await expect.poll(async () => (await c!.queryOperation(operation.reference())).observation?.state).toBe(applicationFailure ? "failed" : "completed");
+                  if (!lostReceipt && !(generation === 0 && closeAfterCommit)) await expect.poll(async () => (await c!.queryOperation(operation.reference())).observation?.state).toBe(applicationFailure ? "failed" : "completed");
                   expect(calls).toBe(shape === "notify" && generation === 1 ? 2 : 1);
                 } finally { fault?.mockRestore(); }
-              } finally { operation.close(); }
+              }
+              finally { operation.close(); }
               if (generation === 1) {
                 // Reopening preserved the original cutoff; it did not renew it.
                 elapsedMS = 5000n;
@@ -2211,27 +3582,33 @@ describe("original v4 reliable Session assembly", () => {
                   : service.prepareOperation(method, "original", options);
                 await expect(expired).rejects.toThrow("admission_window_closed");
               }
-            } finally { service.close(); }
-          } finally { referenceCodec.close(); }
-        } finally {
+            }
+            finally { service.close(); }
+          }
+          finally { referenceCodec.close(); }
+        }
+        finally {
           previousSettled = false;
           await Promise.all([c?.close(), s?.close()]);
-          contract?.release(); store?.close();
+          contract?.release();
+          store?.close();
           await Promise.all([client.environment.close(), server.environment.close()]);
           expect((await server.environment.waitCleanup()).status).toBe("complete");
-          expect(store?.cleanupComplete()).toBe(true); previousSettled = true;
+          await store?.waitCleanup(); expect(store?.cleanupComplete()).toBe(true);
+          previousSettled = true;
           expect(backings[generation]!.retainedDiskBytes()).toBeGreaterThan(0n);
           expect(() => backings[generation]!.releaseRemoved()).toThrow("history_unknown");
         }
       }
-    } finally {
+    }
+    finally {
       await Promise.all(environments.map(environment => environment.close()));
       rmSync(directory, { recursive: true, force: true }); for (const backing of backings) backing.releaseRemoved(); persisted.fill(0);
       for (const environment of environments) expect(environment.resources.root.snapshot().reservations).toBe(0);
     }
-  });
+  }, 15000);
   it.each([{ lostReceipt: false, signed: false, streaming: false, retained: false }, { lostReceipt: true, signed: false, streaming: false, retained: false },
-    { lostReceipt: false, signed: true, streaming: false, retained: false }, { lostReceipt: false, signed: true, streaming: true, retained: false }, { lostReceipt: false, signed: true, streaming: true, retained: true }])("issues a checkpoint over encrypted RPC and reopens its original token ($lostReceipt, signed: $signed, streaming: $streaming, retained: $retained)", async ({ lostReceipt, signed, streaming, retained }) => {
+  { lostReceipt: false, signed: true, streaming: false, retained: false }, { lostReceipt: false, signed: true, streaming: true, retained: false }, { lostReceipt: false, signed: true, streaming: true, retained: true }])("issues a checkpoint over encrypted RPC and reopens its original token ($lostReceipt, signed: $signed, streaming: $streaming, retained: $retained)", async ({ lostReceipt, signed, streaming, retained }) => {
     const directory = mkdtempSync(join(realpathSync(tmpdir()), "flowersec-ts-checkpoint-chain-")), path = join(directory, "execution.sqlite");
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     // Recovery advances one shared logical clock instead of racing credential
@@ -2239,112 +3616,179 @@ describe("original v4 reliable Session assembly", () => {
     let elapsedMS = 0n;
     const clockMS = () => elapsedMS;
     const codec = v4BytesMessageCodec({ schemaDigest: fill(31), revision: "bytes-v1", maxMessageBytes: 512 });
-    const contentDefinition = { schemaRevision: "content/1", readTypeID: 45, canonical: encode(map({
-      0: text("explicit-selected-bytes"), 1: text("bytes:1..256"), 2: u(45), 3: text("target96+position"),
-      4: text("flags2+commit8+expiry8+payload"), 5: text("missing-or-expired-without-payload") })) };
+    const contentDefinition = {
+      schemaRevision: "content/1", readTypeID: 45, canonical: encode(map({
+        0: text("explicit-selected-bytes"), 1: text("bytes:1..256"), 2: u(45), 3: text("target96+position"),
+        4: text("flags2+commit8+expiry8+payload"), 5: text("missing-or-expired-without-payload")
+      }))
+    };
     let originalContent: V4ContentObservation | undefined;
-    const method = streaming ? new V4MethodDefinition<Uint8Array, Uint8Array, "server_streaming", "execution">({ typeID: 42, shape: "server_streaming", serverStreamingSemantics: "execution", request: codec, response: codec,
+    const method = streaming ? new V4MethodDefinition<Uint8Array, Uint8Array, "server_streaming", "execution">({
+      typeID: 42, shape: "server_streaming", serverStreamingSemantics: "execution", request: codec, response: codec,
       requestMaxBytes: 96, minResponseLimitBytes: 0, maxResponseBytes: 512, restartFlush: false, checkpointFormat: "position-v1",
-      ...(retained ? { streamContent: contentDefinition } : {}), maxItemCount: 2, maxStreamPayloadBytes: 1024n, maxStreamDurationMS: 10000n }) : new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
-      requestMaxBytes: 96, minResponseLimitBytes: 0, maxResponseBytes: 512, restartFlush: false, checkpointFormat: "position-v1" });
-    const issuer = new V4MethodDefinition({ typeID: 45, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
-      requestMaxBytes: retained ? 128 : 96, minResponseLimitBytes: 0, maxResponseBytes: 512, restartFlush: false });
+      ...(retained ? { streamContent: contentDefinition } : {}), maxItemCount: 2, maxStreamPayloadBytes: 1024n, maxStreamDurationMS: 10000n
+    }) : new V4MethodDefinition({
+      typeID: 42, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
+      requestMaxBytes: 96, minResponseLimitBytes: 0, maxResponseBytes: 512, restartFlush: false, checkpointFormat: "position-v1"
+    });
+    const issuer = new V4MethodDefinition({
+      typeID: 45, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
+      requestMaxBytes: retained ? 128 : 96, minResponseLimitBytes: 0, maxResponseBytes: 512, restartFlush: false
+    });
     const recoveryCodec = v4BytesMessageCodec({ schemaDigest: fill(34), revision: "bytes-v1", maxMessageBytes: 9345 });
-    const recover = new V4MethodDefinition({ typeID: 46, shape: "unary", unarySemantics: "execution", request: recoveryCodec, response: recoveryCodec,
-      requestMaxBytes: 9345, minResponseLimitBytes: 4248, maxResponseBytes: 4248, restartFlush: false });
+    const recover = new V4MethodDefinition({
+      typeID: 46, shape: "unary", unarySemantics: "execution", request: recoveryCodec, response: recoveryCodec,
+      requestMaxBytes: 9345, minResponseLimitBytes: 4248, maxResponseBytes: 4248, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.checkpoint", methods: { work: method, checkpoint: issuer, recover } });
     const execution = { tenant: "tenant", audience: "service", namespace: definition.namespace, callerAuthorities: ["3".repeat(64)], maxRecords: 8, maxActive: 4, resultBytes: 1048576n };
     const common = { query: { typeID: 43, contractDigest: fill(32) }, resultRead: { typeID: 44, contractDigest: fill(33) }, definitions: [definition], maxMethods: 3, maxCaptureBytes: 9345 };
     const environments: V4EnvironmentRuntime[] = [], backings: ReturnType<typeof createSQLitePoolBacking>[] = [];
-    const saved = new Uint8Array(2048), issueRequest = new Uint8Array(96); let savedBytes = 0, token: Uint8Array | undefined;
+    const saved = new Uint8Array(2048), issueRequest = new Uint8Array(96);
+    let savedBytes = 0, token: Uint8Array | undefined;
     let calls = 0, issues = 0, previousSettled = true;
     const hex = (value: Uint8Array) => Buffer.from(value).toString("hex");
     try {
       for (const generation of [0, 1]) {
-        const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+        const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message");
+        a.peer = b;
+        b.peer = a;
         let enteredResolve!: () => void, permitResolve!: () => void;
         const enteredPromise = new Promise<void>(resolve => { enteredResolve = resolve; });
         const permitPromise = new Promise<void>(resolve => { permitResolve = resolve; });
         const resumeEntered = { promise: enteredPromise, resolve: enteredResolve }, resumePermit = { promise: permitPromise, resolve: permitResolve };
-        const contracts: ServiceContractSnapshot[] = []; let store: V4SQLiteExecutionStore | undefined;
+        const contracts: ServiceContractSnapshot[] = [];
+        let store: V4SQLiteExecutionStore | undefined;
         const controllerRouting = generation === 1 && !lostReceipt && !signed && !streaming && !retained;
         elapsedMS = BigInt(generation) * 1000n;
-        const options = { profile: "execution" as const, resume: true, clockMS, operationEntropy: fill(48, 24), connectionSeed: 80 + generation,
-          ...(controllerRouting ? { sessions: 3 } : {}) };
-        const client = endpoint("client", a, profile, "live_authority", 1000n, (_environment, material) => ({ ...common,
-          localExecutionAuthority: "3".repeat(64), referenceTargets: [{ authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-            peers: [{ subject: "server", identityDigest: hex(digest("certificate_digest", material.server)) }] }] }), options);
+        const options = {
+          profile: "execution" as const, resume: true, clockMS, operationEntropy: fill(48, 24), connectionSeed: 80 + generation,
+          ...(controllerRouting ? { sessions: 3 } : {})
+        };
+        const client = endpoint("client", a, profile, "live_authority", 1000n, (_environment, material) => ({
+          ...common,
+          localExecutionAuthority: "3".repeat(64), referenceTargets: [{
+            authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+            peers: [{ subject: "server", identityDigest: hex(digest("certificate_digest", material.server)) }]
+          }]
+        }), options);
         environments.push(client.environment);
-        const server = endpoint("server", b, profile, "live_authority", 1000n, (environment, material) => {
+        const server = endpoint("server", b, profile, "live_authority", 1000n, async (environment, material) => {
           environments.push(environment);
-          const backing = createSQLitePoolBacking(environment, path, { maxPages: 512, maxRecords: 8, maxRecordBytes: 16384,
-            runtimeBytes: 1024n, providerRuntimeBytes: 1024n, diskOverheadBytes: 4096n }); backings.push(backing);
-          store = openV4SQLiteExecutionStore(backing, { ...(retained ? { content: { methods: [method], maxItemsPerOperation: 2, maxBytesPerOperation: 64, maxItemBytes: 32 } } : {}), create: generation === 0, service: execution, maxContracts: 4,
+          const backing = createSQLitePoolBacking(environment, path, {
+            maxPages: 512, maxRecords: 8, maxRecordBytes: 16384,
+            runtimeBytes: 1024n, providerRuntimeBytes: 1024n, diskOverheadBytes: 4096n
+          });
+          backings.push(backing);
+          store = (await openV4SQLiteExecutionStore(backing, {
+            ...(retained ? { content: { methods: [method], maxItemsPerOperation: 2, maxBytesPerOperation: 64, maxItemBytes: 32 } } : {}), create: generation === 0, service: execution, maxContracts: 4,
             identity: { authority: "execution", storeID: fill(5), generation: 1n }, checkpoint: {
               signingKey: signed ? { protection: "ed25519", keyID: fill(generation === 0 ? 60 : 62, 16), seed: fill(generation === 0 ? 61 : 63) } :
                 { protection: "hmac_sha256", keyID: fill(generation === 0 ? 60 : 62, 16), macKey: fill(generation === 0 ? 61 : 63) },
               verificationKeys: generation === 0 ? [] : [signed ? { protection: "ed25519", keyID: fill(60, 16), publicKey: ed25519.getPublicKey(fill(61)) } :
                 { protection: "hmac_sha256", keyID: fill(60, 16), macKey: fill(61) }],
-              maxTokens: 8, maxTokensPerOperation: 1, maxTokenBytes: signed ? 4980 : 4948, maxIssuesPerWindow: 2, windowMS: 10000n },
-            continuity: { check: (_id, _service, epoch, provisioning) => {
-              if (!previousSettled || provisioning && generation !== 0 || epoch > BigInt(generation + 1)) throw new Error("unproven continuity");
-            } } });
+              maxTokens: 8, maxTokensPerOperation: 1, maxTokenBytes: signed ? 4980 : 4948, maxIssuesPerWindow: 2, windowMS: 10000n
+            },
+            continuity: {
+              check: (_id, _service, epoch, provisioning) => {
+                if (!previousSettled || provisioning && generation !== 0 || epoch > BigInt(generation + 1))
+                  throw new Error("unproven continuity");
+              }
+            }
+          }));
           const resources = environment.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 128, arrayItems: 8, runtimeBytes: 1024n };
-          const registrations = [method, issuer, recover].map((entry, index) => {
+          const registrations = await Promise.all([method, issuer, recover].map(async (entry, index) => {
             const refs = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n), cborDecoderCharge(offerConfig)].map((charge, at) => ({
-              accounts: resources.accounts, owner: { ...resources.owner, kind: `checkpoint_contract_${index}_${at}` }, charge })));
+              accounts: resources.accounts, owner: { ...resources.owner, kind: `checkpoint_contract_${index}_${at}` }, charge
+            })));
             let decoder: CBORDecoder | undefined;
             try {
-              const contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(entry.typeID),
+              const contract = new ServiceContractSnapshot(encode(map({
+                0: text(definition.namespace), 1: u(entry.typeID),
                 ...(entry.shape === "server_streaming" ? { 2: u(1), 4: u(1), 24: u(2), 25: u(1024), 26: u(10000), 28: retained ? map({ 0: u(1), 1: u(1), 2: u(60000), 3: u(2), 4: u(64), 5: text(contentDefinition.schemaRevision), 6: bytes(contentDefinition.canonical) }) : map({ 0: u(0) }) } : { 2: u(0), 3: u(1), 15: u(30000) }),
                 6: text("bytes-v1"), 7: text("bytes-v1"), 8: u(1), 9: u(index === 2 ? 4248 : 0), 10: u(index === 2 ? 4248 : 512), 13: u(1), 14: u(30000),
                 16: u(10000), 17: u(60000), 18: u(10000), 19: u(1), ...(index === 0 ? { 20: text("position-v1") } : {}),
-                21: { kind: "bool", value: false }, 23: u(index === 2 ? 9345 : index === 1 && retained ? 128 : 96), 27: array() })), 1024n, refs[0]!, refs[1]!); contracts.push(contract);
-              if (generation === 0) store!.installContract(contract, [{ notBeforeMS: 900n, notAfterMS: 10000n }], BigInt(index));
-              const contractDigest = new Uint8Array(32); contract.copyDigest(contractDigest);
+                21: { kind: "bool", value: false }, 23: u(index === 2 ? 9345 : index === 1 && retained ? 128 : 96), 27: array()
+              })), 1024n, refs[0]!, refs[1]!);
+              contracts.push(contract);
+              if (generation === 0)
+                (await store!.installContract(contract, [{ notBeforeMS: 900n, notAfterMS: 10000n }], BigInt(index)));
+              const contractDigest = new Uint8Array(32);
+              contract.copyDigest(contractDigest);
               decoder = new CBORDecoder(offerConfig, refs[2]!);
               const doc = decoder.decodeMap(encode(map({ 0: bytes(contractDigest), 1: u(900), 2: u(10000) })), "AdmissionOffer");
-              let offer: AdmissionOffer; try { offer = new AdmissionOffer(doc, contract, 10000n, new Uint8Array(32)); } finally { doc.release(); }
-              const registration = { namespace: definition.namespace, method: entry, contract, offer, maximumOfferWindowMS: 10000n, execution: store!.service,
+              let offer: AdmissionOffer;
+              try {
+                offer = new AdmissionOffer(doc, contract, 10000n, new Uint8Array(32));
+              }
+              finally {
+                doc.release();
+              }
+              const registration = {
+                namespace: definition.namespace, method: entry, contract, offer, maximumOfferWindowMS: 10000n, execution: store!.service,
                 options: { workClass: "short" as const, maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: index === 2 && lostReceipt ? async () => { resumeEntered.resolve(); await resumePermit.promise; return true; } : "authenticated" as const },
-                handler: (context: ServiceHandlersTypes.V4UnaryContext, request: Uint8Array) => {
-                  if (index === 0) { calls++; return new Uint8Array([7, 8]); }
-                  if (index === 2) throw new Error("Resume must not invoke the unary handler");
+                handler: async (context: ServiceHandlersTypes.V4UnaryContext, request: Uint8Array) => {
+                  if (index === 0) {
+                    calls++;
+                    return new Uint8Array([7, 8]);
+                  }
+                  if (index === 2)
+                    throw new Error("Resume must not invoke the unary handler");
                   if (retained && request.length === 97) {
-                    const payload = new Uint8Array(32), target = { tenant: context.authentication.tenant, audience: context.authentication.audience, namespace: definition.namespace,
-                      subject: context.authentication.peerSubject, authority: "3".repeat(64), operation: hex(request.subarray(0, 32)), requestDigest: hex(request.subarray(32, 64)), contractDigest: hex(request.subarray(64, 96)) };
-                    const content = readV4RetainedContent(context, target, request.subarray(96), payload);
+                    const payload = new Uint8Array(32), target = {
+                      tenant: context.authentication.tenant, audience: context.authentication.audience, namespace: definition.namespace,
+                      subject: context.authentication.peerSubject, authority: "3".repeat(64), operation: hex(request.subarray(0, 32)), requestDigest: hex(request.subarray(32, 64)), contractDigest: hex(request.subarray(64, 96))
+                    };
+                    const content = (await readV4RetainedContent(context, target, request.subarray(96), payload));
                     const response = new Uint8Array(18 + (content.available ? content.bytes : 0)), view = new DataView(response.buffer);
-                    response[0] = content.found ? 1 : 0; response[1] = content.available ? 1 : 0;
-                    view.setBigUint64(2, content.committedAtMS); view.setBigUint64(10, content.expiresAtMS);
-                    if (content.available) response.set(payload.subarray(0, content.bytes), 18);
+                    response[0] = content.found ? 1 : 0;
+                    response[1] = content.available ? 1 : 0;
+                    view.setBigUint64(2, content.committedAtMS);
+                    view.setBigUint64(10, content.expiresAtMS);
+                    if (content.available)
+                      response.set(payload.subarray(0, content.bytes), 18);
                     return response;
                   }
                   issues++;
-                  if (request.length !== 96) throw new Error("invalid checkpoint source");
-                  return issueV4Checkpoint(context, { tenant: context.authentication.tenant, audience: context.authentication.audience, namespace: definition.namespace,
+                  if (request.length !== 96)
+                    throw new Error("invalid checkpoint source");
+                  return issueV4Checkpoint(context, {
+                    tenant: context.authentication.tenant, audience: context.authentication.audience, namespace: definition.namespace,
                     subject: context.authentication.peerSubject, authority: "3".repeat(64), operation: hex(request.subarray(0, 32)),
-                    requestDigest: hex(request.subarray(32, 64)), contractDigest: hex(request.subarray(64, 96)) },
-                  { format: "position-v1", position: streaming ? new Uint8Array(readFileSync(join(directory, "progress"))) : new Uint8Array([3, 4]) }, { durationMS: 20000n, applicationDurationLimitMS: 10000n, historyNotAfterMS: 25000n });
-                } };
-              if (entry.shape === "server_streaming") return { streaming: { ...registration, kind: "example.checkpoint.stream",
-                handler: async (_context: StreamHandlersTypes.V4ApplicationContext, _request: Uint8Array, writer: ServiceHandlersTypes.V4StreamWriter<Uint8Array>) => {
-                  calls++;
-                  if (retained) {
-                    originalContent = saveV4StreamContent(_context, new Uint8Array([1]), new Uint8Array([3]));
-                    expect(saveV4StreamContent(_context, new Uint8Array([1]), new Uint8Array([3]))).toEqual(originalContent);
+                    requestDigest: hex(request.subarray(32, 64)), contractDigest: hex(request.subarray(64, 96))
+                  }, { format: "position-v1", position: streaming ? new Uint8Array(readFileSync(join(directory, "progress"))) : new Uint8Array([3, 4]) }, { durationMS: 20000n, applicationDurationLimitMS: 10000n, historyNotAfterMS: 25000n });
+                }
+              };
+              if (entry.shape === "server_streaming")
+                return {
+                  streaming: {
+                    ...registration, kind: "example.checkpoint.stream",
+                    handler: async (_context: StreamHandlersTypes.V4ApplicationContext, _request: Uint8Array, writer: ServiceHandlersTypes.V4StreamWriter<Uint8Array>) => {
+                      calls++;
+                      if (retained) {
+                        originalContent = (await saveV4StreamContent(_context, new Uint8Array([1]), new Uint8Array([3])));
+                        expect((await saveV4StreamContent(_context, new Uint8Array([1]), new Uint8Array([3])))).toEqual(originalContent);
+                      }
+                      await writer.write(new Uint8Array([3]));
+                      writeFileSync(join(directory, "progress"), new Uint8Array([3, 4]), { flush: true });
+                      await writer.write(new Uint8Array([4]));
+                    }
                   }
-                  await writer.write(new Uint8Array([3]));
-                  writeFileSync(join(directory, "progress"), new Uint8Array([3, 4]), { flush: true });
-                  await writer.write(new Uint8Array([4]));
-                } } };
+                };
               return { unary: registration };
-            } finally { decoder?.close(); for (const ref of refs) ref.release(); }
-          });
-          return { ...common, unaryHandlers: registrations.flatMap(entry => entry.unary === undefined ? [] : [entry.unary]),
+            }
+            finally {
+              decoder?.close();
+              for (const ref of refs)
+                ref.release();
+            }
+          }));
+          return {
+            ...common, unaryHandlers: registrations.flatMap(entry => entry.unary === undefined ? [] : [entry.unary]),
             streamingHandlers: registrations.flatMap(entry => entry.streaming === undefined ? [] : [entry.streaming]), executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: hex(digest("certificate_digest", material.client)) },
             executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }],
-            queryPermissions: [method, issuer, recover].map(entry => ({ namespace: definition.namespace, method: entry, permission: "allowed" as const })) };
+            queryPermissions: [method, issuer, recover].map(entry => ({ namespace: definition.namespace, method: entry, permission: "allowed" as const }))
+          };
         }, options);
         let c: V4Session | undefined, s: V4Session | undefined, replacementPeer: V4Session | undefined;
         let controller: ReturnType<typeof createV4ConnectionController> | undefined;
@@ -2363,26 +3807,38 @@ describe("original v4 reliable Session assembly", () => {
             const source = wrapCredentialSource(environment.registerSource({ ...client.material.config, authorities: ["authority"] }, "live_authority", async (_request, destination) => {
               selected = controllerAcquisitions++; const input = candidates[selected]!.client.material.input();
               for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const) destination[name].set(input[name]);
-              return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
-                activation: input.activation.length, candidateIndex: input.candidateIndex };
+              return {
+                artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length,
+                activation: input.activation.length, candidateIndex: input.candidateIndex
+              };
             }));
-            environment.installClientConnector({ applicationProfile: candidates[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(candidates[controllerAcquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, connectOptions) => {
-              const index = selected, pair = candidates[index]!;
-              const [runtime, remote] = await Promise.all([pair.client.establishMaterial(material, connectOptions?.signal), pair.server.establish()]);
-              if (index === 0) s = new V4Session(remote); else replacementPeer = new V4Session(remote);
-              return runtime;
-            } });
-            controller = createV4ConnectionController(wrapTransportEnvironment(environment), { source,
-              requirements: { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
-                local_consumer_tls13_verification: false, application_profile: "execution" }, attemptTimeoutMS: 10000n });
+            environment.installClientConnector({
+              applicationProfile: candidates[0]!.client.config.info.application_profile, reserveAdmission: () => environment.reserveClientAdmission(candidates[controllerAcquisitions]!.client.config), checkRequirements: () => undefined, connect: async (material, connectOptions) => {
+                const index = selected, pair = candidates[index]!;
+                const [runtime, remote] = await Promise.all([pair.client.establishMaterial(material, connectOptions?.signal), pair.server.establish()]);
+                if (index === 0) s = new V4Session(remote); else replacementPeer = new V4Session(remote);
+                return runtime;
+              }
+            });
+            controller = createV4ConnectionController(wrapTransportEnvironment(environment), {
+              source,
+              requirements: {
+                independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false,
+                local_consumer_tls13_verification: false, application_profile: "execution"
+              }, attemptTimeoutMS: 10000n
+            });
             await controller.replaceSession(); c = controller.captureSession();
           } else {
             const ready = await Promise.all([client.establish(), server.establish()]); c = new V4Session(ready[0]); s = new V4Session(ready[1]);
           }
           if (c === undefined || s === undefined) throw new Error("missing established Session");
           const refs = createOperationReferenceCodec(client.environment);
-          const service = await (controller ?? c).bindService(definition, { target: { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-            peers: [{ subject: "server", identityDigest: hex(digest("certificate_digest", server.material.server)) }] }, maximumOfferWindowMS: 10000n, methods: [{ method: recover, resumeKind: "example/recover" }, ...(streaming ? [{ method, streamKind: "example.checkpoint.stream" }] : [])] });
+          const service = await (controller ?? c).bindService(definition, {
+            target: {
+              authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+              peers: [{ subject: "server", identityDigest: hex(digest("certificate_digest", server.material.server)) }]
+            }, maximumOfferWindowMS: 10000n, methods: [{ method: recover, resumeKind: "example/recover" }, ...(streaming ? [{ method, streamKind: "example.checkpoint.stream" }] : [])]
+          });
           try {
             if (generation === 0) {
               const work = method.shape === "server_streaming" ? await service.prepareStreamOperation(method, new Uint8Array(), { deadlineAtMS: 40000n, admissionNotAfterMS: 5000n }) :
@@ -2422,9 +3878,11 @@ describe("original v4 reliable Session assembly", () => {
                 const reopened = new Uint8Array(2048), size = refs.export(issue.reference(), reopened);
                 expect(reopened.subarray(0, size)).toEqual(saved.subarray(0, savedBytes));
               }
-              const exec = DatabaseSync.prototype.exec; let receiptLost = false;
-              const fault = generation === 0 && lostReceipt ? vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
-                exec.call(this, sql); if (sql === "COMMIT" && issues === 1 && !receiptLost) { receiptLost = true; throw new Error("lost checkpoint commit receipt"); }
+              const exec = SQLiteWorkerDatabase.prototype.exec;
+              let receiptLost = false;
+              const fault = generation === 0 && lostReceipt ? vi.spyOn(SQLiteWorkerDatabase.prototype, "exec").mockImplementation(async function (this: SQLiteWorkerDatabase, sql: string) {
+                await exec.call(this, sql);
+                if (sql === "COMMIT" && issues === 1 && !receiptLost) { receiptLost = true; throw new Error("lost checkpoint commit receipt"); }
               }) : undefined;
               try {
                 expect(issue.start().status).toBe("admitted"); const result = await issue.takeEncodedResult();
@@ -2440,7 +3898,8 @@ describe("original v4 reliable Session assembly", () => {
                 try { const result = await read.takeEncodedResult(); expect(result).toMatchObject({ kind: "retained_result", bytes: token }); if ("release" in result) result.release(); }
                 finally { read.close(); }
               }
-              expect(calls).toBe(1); expect(issues).toBe(1);
+              expect(calls).toBe(1);
+              expect(issues).toBe(1);
               if (generation === 1) {
                 if (retained) {
                   for (const position of [1, 2]) {
@@ -2465,11 +3924,29 @@ describe("original v4 reliable Session assembly", () => {
                   }
                   expect(calls).toBe(1);
                 }
-                const fresh = await service.prepareOperation(issuer, issueRequest, { deadlineAtMS: 40000n, admissionNotAfterMS: 7000n });
+                // The refused checkpoint retains an empty result allocation
+                // until the original history maintenance transaction exits.
+                // Hold that real SQLite write: management must report bounded
+                // unavailability, then recover without changing the reference.
+                let gcEntered!: () => void, gcRelease!: () => void;
+                const gcStarted = new Promise<void>(resolve => { gcEntered = resolve; });
+                const gcTail = new Promise<void>(resolve => { gcRelease = resolve; });
+                const run = SQLiteWorkerDatabase.prototype.run;
+                const gc = vi.spyOn(SQLiteWorkerDatabase.prototype, "run").mockImplementation(async function (this: SQLiteWorkerDatabase, sql, ...args) {
+                  if (sql === "UPDATE executions SET payload=NULL WHERE key=?") { gcEntered(); await gcTail; }
+                  await run.call(this, sql, ...args);
+                });
                 try {
-                  expect(fresh.start().status).toBe("admitted");
-                  expect(await fresh.takeEncodedResult()).toMatchObject({ kind: "sdk_error", code: "resource_exhausted" });
-                } finally { fresh.close(); }
+                  const fresh = await service.prepareOperation(issuer, issueRequest, { deadlineAtMS: 40000n, admissionNotAfterMS: 7000n });
+                  try {
+                    expect(fresh.start().status).toBe("admitted");
+                    expect(await fresh.takeEncodedResult()).toMatchObject({ kind: "sdk_error", code: "resource_exhausted" });
+                  } finally { fresh.close(); }
+                  await transportEvent(gcStarted);
+                  expect(await c.queryOperation(issue.reference())).toEqual({ status: "unavailable" });
+                } finally { gcRelease(); gc.mockRestore(); }
+                await expect.poll(() => c!.queryOperation(issue.reference()), { timeout: 2000, interval: 5 })
+                  .toMatchObject({ status: "ok", observation: { state: "completed", workActive: false, resultAvailable: true } });
                 expect(issues).toBe(2);
                 const settings = { bytes: 4948, nodes: 64, textBytes: 640, arrayItems: 8, runtimeBytes: 1024n }, resources = client.environment.resources;
                 const reference = resources.root.reserve({ accounts: resources.accounts, owner: { ...resources.owner, kind: "checkpoint_wire_assertions" }, charge: cborDecoderCharge(settings) });
@@ -2510,8 +3987,10 @@ describe("original v4 reliable Session assembly", () => {
                 referenceDB.exec("CREATE TABLE saved (identity TEXT PRIMARY KEY, canonical BLOB NOT NULL)");
                 let saveEntered!: () => void, saveRelease!: () => void, deferSave = true;
                 const saving = new Promise<void>(resolve => { saveEntered = resolve; }), saveTail = new Promise<void>(resolve => { saveRelease = resolve; });
-                const referenceStore = createOperationReferenceStore(client.environment, { targetDomain: "authority", durability: "durable_create_or_compare", storage: "application_owned",
-                  maxRecords: 1, maxStoredBytes: 2048n, retentionMS: 60000n, maxConcurrentSaves: 1, applicationBytes: 65536n }, async (_context, record) => {
+                const referenceStore = createOperationReferenceStore(client.environment, {
+                  targetDomain: "authority", durability: "durable_create_or_compare", storage: "application_owned",
+                  maxRecords: 1, maxStoredBytes: 2048n, retentionMS: 60000n, maxConcurrentSaves: 1, applicationBytes: 65536n
+                }, async (_context, record) => {
                   if (deferSave) { saveEntered(); await saveTail; return "unknown"; }
                   referenceDB.prepare("INSERT INTO saved VALUES (?,?)").run(record.identity, record.canonical); return "confirmed";
                 });
@@ -2574,17 +4053,28 @@ describe("original v4 reliable Session assembly", () => {
                 } finally { saveRelease(); registration.close(); referenceStore.close(); referenceDB.close(); }
 
               }
-            } finally { issue.close(); }
+            }
+            finally { issue.close(); }
             if (generation === 1 && !controllerRouting) {
               elapsedMS = 6000n;
               await expect(service.prepareOperation(issuer, issueRequest, { deadlineAtMS: 40000n, admissionNotAfterMS: 6000n }))
                 .rejects.toThrow("admission_window_closed");
             }
-          } finally { service.close(); refs.close(); }
-        } finally {
-          resumePermit.resolve(); previousSettled = false; await controller?.close(); await replacementPeer?.close(); await Promise.all([c?.close(), s?.close()]); contracts.forEach(contract => contract.release()); store?.close();
+          }
+          finally { service.close(); refs.close(); }
+        }
+        finally {
+          resumePermit.resolve();
+          previousSettled = false;
+          await controller?.close();
+          await replacementPeer?.close();
+          await Promise.all([c?.close(), s?.close()]);
+          contracts.forEach(contract => contract.release());
+          store?.close();
           await Promise.all([client.environment.close(), server.environment.close()]);
-          expect((await server.environment.waitCleanup()).status).toBe("complete"); expect(store?.cleanupComplete()).toBe(true); previousSettled = true;
+          expect((await server.environment.waitCleanup()).status).toBe("complete");
+          await store?.waitCleanup(); expect(store?.cleanupComplete()).toBe(true);
+          previousSettled = true;
         }
         if (generation === 0 && !signed && !lostReceipt) {
           // The single-MAC producer records a key fingerprint in its manifest.
@@ -2600,7 +4090,8 @@ describe("original v4 reliable Session assembly", () => {
         }
       }
       expect(token).toBeDefined();
-    } finally {
+    }
+    finally {
       await Promise.all(environments.map(environment => environment.close()));
       rmSync(directory, { recursive: true, force: true }); for (const backing of backings) backing.releaseRemoved(); saved.fill(0); token?.fill(0);
       for (const environment of environments) expect(environment.resources.root.snapshot().reservations).toBe(0);
@@ -2616,8 +4107,10 @@ describe("original v4 reliable Session assembly", () => {
     const framing: RPCStreamMessages[] = []; let sequence = 0;
     const messages = (environment: V4EnvironmentRuntime, stream: PublicTypes.V4StreamOwner, session: object, kind = "example/recover") => {
       const resources = environment.resources, costs = rpcStreamMessagesCharges(1024n), id = ++sequence;
-      const refs = resources.root.reserveBatch(costs.map((charge, index) => ({ accounts: resources.accounts,
-        owner: { ...resources.owner, kind: `resume_framing_${id}_${index}` }, charge })));
+      const refs = resources.root.reserveBatch(costs.map((charge, index) => ({
+        accounts: resources.accounts,
+        owner: { ...resources.owner, kind: `resume_framing_${id}_${index}` }, charge
+      })));
       let owner: RPCStreamMessages | undefined;
       const group = applicationGroup(resources.root, resources.accounts, { ...resources.owner, kind: `resume_framing_group_${id}` }, 1024n, false, refs[5]!);
       const position = resources.root.protect(refs[4]!, costs[4]!);
@@ -2647,8 +4140,10 @@ describe("original v4 reliable Session assembly", () => {
       expect(() => messages(client.environment, out, ready[0])).toThrow("stream_owned");
       expect(() => left.owner.returnResumeBoundary()).toThrow("rpc_stream_incomplete");
       const payload = new Uint8Array([1, 2, 3]), reply = new Uint8Array([4, 5]);
-      const request = left.owner.codec().create({ kind: "resume_request", operationID: fill(10), typeID: 42, payloadBytes: payload.length,
-        requestDigest: fill(11), deadlineAtMS: 40000n, contractDigest: fill(12), admissionMode: 0, responseLimitBytes: 512 });
+      const request = left.owner.codec().create({
+        kind: "resume_request", operationID: fill(10), typeID: 42, payloadBytes: payload.length,
+        requestDigest: fill(11), deadlineAtMS: 40000n, contractDigest: fill(12), admissionMode: 0, responseLimitBytes: 512
+      });
       const receive = new Uint8Array(payload.length), result = new Uint8Array(reply.length);
       const read = right.owner.read(header => {
         expect(header.kind).toBe("resume_request"); return { write: (offset, bytes) => receive.set(bytes, offset), finish: () => undefined };
@@ -2680,11 +4175,110 @@ describe("original v4 reliable Session assembly", () => {
       for (const owner of framing) expect(owner.cleanupComplete()).toBe(true);
     }
   });
-  it.each(["fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1"] as const)("joins one volatile execution and retains its result independently of the response (%s)", async profile => {
+  it.each([
+    ["outgoing", "before"], ["outgoing", "after"], ["outgoing", "waiting"], ["incoming", "before"], ["incoming", "after"]
+  ] as const)("rechecks %s execution delegation %s native admission", async (direction, edge) => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    let tick = 0n;
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
     const method = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
       requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+    const definition = new V4ServiceDefinition({ namespace: "example.delegation", methods: { echo: method } });
+    const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
+    const options = { profile: "execution" as const, clockMS: () => tick, writeDeadlineMS: 10000n, maxDataBytes: 8,
+      authorizedClientSubjects: ["administrator"], clientSubject: "administrator" };
+    const delegation = { namespace: definition.namespace, principalAuthority: "4".repeat(64), principalSubject: "administrator",
+      targetAuthority: "3".repeat(64), targetSubject: "client", query: true, cancel: true };
+    const client = endpoint("client", a, profile, "live_authority", 10000n, (_environment, material) => ({
+      ...common, localExecutionAuthority: "4".repeat(64),
+      executionDelegations: [{ ...delegation, direction: "outgoing", notAfterMS: direction === "outgoing" ? 1500n : 30000n }],
+      referenceTargets: [{ authority: "authority", tenant: "tenant", audience: "service", localSubject: "administrator",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }] }]
+    }), options);
+    const server = endpoint("server", b, profile, "live_authority", 10000n, (_environment, material) => ({
+      ...common, executionIdentity: { authority: "4".repeat(64), subject: "administrator",
+        identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
+      executionServices: [{ tenant: "tenant", audience: "service", namespace: definition.namespace,
+        callerAuthorities: ["3".repeat(64), "4".repeat(64)], maxRecords: 16, maxActive: 4, resultBytes: 1048576n }],
+      executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }],
+      executionDelegations: [{ ...delegation, direction: "incoming", notAfterMS: direction === "incoming" ? 1500n : 30000n }]
+    }), options);
+    let c: V4AuthenticatedSessionRuntime | undefined, s: V4AuthenticatedSessionRuntime | undefined;
+    const reference = (own: boolean) => importOperationReference({ domain: "authority", shape: 0, mode: 0, cancel: 0, deadlineAtMS: 20000n,
+      target: { tenant: "tenant", audience: "service", namespace: definition.namespace, subject: own ? "administrator" : "client",
+        authority: (own ? "4" : "3").repeat(64), operation: "0000000000002710" + "1".repeat(48),
+        requestDigest: "2".repeat(64), contractDigest: "5".repeat(64) } });
+    try {
+      [c, s] = await Promise.all([client.establish(), server.establish()]);
+      await expect.poll(() => c!.rpcApplication().managementReady() && s!.rpcApplication().managementReady()).toBe(true);
+      const session = new V4Session(c);
+      let managementScope: bigint | undefined;
+      b.submissionTail = frame => {
+        const prefix = inspectEnvelopePrefix(frame, 65536);
+        if (prefix.frameType === wire.frame_types.STREAM_DATA) managementScope = inspectRecordPrefix(frame, prefix.payloadBytes, profile).scope;
+        return undefined;
+      };
+      expect(await session.queryOperation(reference(false))).toMatchObject({ status: "history_unknown" });
+      expect(managementScope).toBeDefined(); b.submissionTail = undefined;
+      const transport = direction === "outgoing" ? a : b;
+      const isData = (frame: Uint8Array) => {
+        const prefix = inspectEnvelopePrefix(frame, 65536);
+        return prefix.frameType === wire.frame_types.STREAM_DATA && inspectRecordPrefix(frame, prefix.payloadBytes, profile).scope === managementScope;
+      };
+      let accepted = 0, attempted = 0;
+      transport.beforeNativeSubmit = frame => {
+        if (isData(frame)) { attempted++; if (edge === "before") tick = 600n; }
+      };
+      transport.submissionTail = frame => {
+        if (isData(frame)) { accepted++; if (edge === "after") tick = 600n; }
+        return undefined;
+      };
+      let releaseOutput: (() => void) | undefined, probe: Promise<unknown> | undefined;
+      let prepared!: () => void;
+      const preparedRequest = new Promise<void>(resolve => { prepared = resolve; });
+      const originalAdmission = ReliableWriteRequest.prototype.observeFirstNativeAdmission;
+      const admissionSpy = edge === "waiting" ? vi.spyOn(ReliableWriteRequest.prototype, "observeFirstNativeAdmission").mockImplementation(function (this: ReliableWriteRequest, callback) {
+        originalAdmission.call(this, callback); prepared();
+      }) : undefined;
+      if (edge === "waiting") { releaseOutput = a.holdNext(); probe = c.probeLiveness(); }
+      const waiting = new AbortController();
+      const pending = session.queryOperation(reference(false), { signal: waiting.signal }).then(value => ({ value }), error => ({ error }));
+      if (edge === "waiting") {
+        try { await transportEvent(preparedRequest); tick = 600n; }
+        finally { admissionSpy?.mockRestore(); releaseOutput?.(); }
+        await probe;
+      }
+      if (direction === "incoming" && edge === "before") {
+        // This in-memory carrier does not forward its local EOF to its peer.
+        // A refusal after sealing ends the server carrier. Later-fragment
+        // refusal happens before sealing and resets only the original channel.
+        // The deliberately eight-byte records cross multiple reader yields.
+        // Allow instrumentation time without advancing the explicit clock.
+        await expect.poll(() => b.ended, { timeout: 3000 }).toBe(true);
+        waiting.abort();
+      }
+      const result = await pending;
+      expect(result).toHaveProperty("error");
+      if (direction === "outgoing") expect(String((result as { error: unknown }).error)).toContain("permission_denied");
+      if (edge === "waiting") expect(attempted).toBe(0); else expect(attempted).toBeGreaterThan(0);
+      expect(accepted).toBe(edge === "after" ? 1 : 0);
+      transport.beforeNativeSubmit = undefined; transport.submissionTail = undefined;
+      if (edge === "waiting") {
+        // Expiry before sealing leaves the original management channel usable.
+        // The peer accepts the next serial only if the refused query never
+        // advanced it before actual native admission.
+        expect(await session.queryOperation(reference(true))).toMatchObject({ status: "history_unknown" });
+      }
+    } finally { await Promise.all([c?.close(), s?.close()]); await Promise.all([client.close(), server.close()]); }
+  });
+  it.each(["fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1"] as const)("joins one volatile execution and retains its result independently of the response (%s)", async profile => {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
+    const method = new V4MethodDefinition({
+      typeID: 42, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
+      requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false
+    });
     const definition = new V4ServiceDefinition({ namespace: "example.execution", methods: { echo: method } });
     const execution = { tenant: "tenant", audience: "service", namespace: definition.namespace, callerAuthorities: ["3".repeat(64)], maxRecords: 16, maxActive: 4, resultBytes: 1048576n };
     const authorizedClientSubjects = ["client", "administrator"];
@@ -2692,32 +4286,43 @@ describe("original v4 reliable Session assembly", () => {
     let staticExecution: V4StaticServiceContracts | undefined, suppliedOffer: AdmissionOffer | undefined;
     let contract: ServiceContractSnapshot | undefined, calls = 0, releaseHandler!: () => void, enteredHandler!: () => void;
     const entered = new Promise<void>(resolve => { enteredHandler = resolve; }), release = new Promise<void>(resolve => { releaseHandler = resolve; });
-    const client = endpoint("client", a, profile, "live_authority", 1000n, (_environment, material) => ({ ...common, localExecutionAuthority: "3".repeat(64),
-      referenceTargets: [{ authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }] }] }),
-    { profile: "execution", operationEntropy: fill(48, 24), authorizedClientSubjects });
+    const client = endpoint("client", a, profile, "live_authority", 1000n, (_environment, material) => ({
+      ...common, localExecutionAuthority: "3".repeat(64),
+      referenceTargets: [{
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }]
+      }]
+    }),
+      { profile: "execution", operationEntropy: fill(48, 24), authorizedClientSubjects });
     const server = endpoint("server", b, profile, "live_authority", 1000n, (environment, material) => {
       const resources = environment.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 128, arrayItems: 8, runtimeBytes: 1024n };
       const references = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n), cborDecoderCharge(offerConfig)].map((charge, index) => ({
-        accounts: resources.accounts, owner: { ...resources.owner, kind: `test_execution_contract_${index}` }, charge })));
+        accounts: resources.accounts, owner: { ...resources.owner, kind: `test_execution_contract_${index}` }, charge
+      })));
       let decoder: CBORDecoder | undefined;
       try {
-        contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(1),
+        contract = new ServiceContractSnapshot(encode(map({
+          0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(1),
           6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 13: u(0), 14: u(30000), 15: u(30000),
-          16: u(10000), 17: u(60000), 18: u(10000), 19: u(1), 21: { kind: "bool", value: false }, 23: u(128), 27: array() })),
-        1024n, references[0]!, references[1]!);
+          16: u(10000), 17: u(60000), 18: u(10000), 19: u(1), 21: { kind: "bool", value: false }, 23: u(128), 27: array()
+        })),
+          1024n, references[0]!, references[1]!);
         const contractDigest = new Uint8Array(32); contract.copyDigest(contractDigest);
         decoder = new CBORDecoder(offerConfig, references[2]!);
         const document = decoder.decodeMap(encode(map({ 0: bytes(contractDigest), 1: u(900), 2: u(10000) })), "AdmissionOffer");
         let offer: AdmissionOffer;
         try { suppliedOffer = offer = new AdmissionOffer(document, contract, 10000n, new Uint8Array(32)); } finally { document.release(); }
-        return { ...common, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
+        return {
+          ...common, executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
           executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }],
           queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }],
-          unaryHandlers: [{ namespace: definition.namespace, method, contract, offer, maximumOfferWindowMS: 10000n,
+          unaryHandlers: [{
+            namespace: definition.namespace, method, contract, offer, maximumOfferWindowMS: 10000n,
             execution,
             handler: async (_context, value: string) => { calls++; enteredHandler(); await release; return value.toUpperCase(); },
-            options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } }] };
+            options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" }
+          }]
+        };
       } finally { decoder?.close(); for (const reference of references) reference.release(); }
     }, { profile: "execution", authorizedClientSubjects });
     let c: V4Session | undefined, s: V4Session | undefined, referenceStore: V4OperationReferenceStore | undefined;
@@ -2726,8 +4331,10 @@ describe("original v4 reliable Session assembly", () => {
     let saveMode: "normal" | "unknown" | "delayed" = "normal", storeCalls = 0, storeEntered: (() => void) | undefined;
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
-      const target = { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] };
+      const target = {
+        authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+      };
       const contractBytes = new Uint8Array(contract!.encodedBytes()), offerBytes = new Uint8Array(256); contract!.copyEncoded(contractBytes);
       const offerLength = suppliedOffer!.copyEncoded(contract!, 10000n, offerBytes);
       staticExecution = createStaticServiceContracts(client.environment, definition, [{ method, contract: contractBytes, offer: offerBytes.subarray(0, offerLength) }], { target, maximumOfferWindowMS: 10000n });
@@ -2739,8 +4346,10 @@ describe("original v4 reliable Session assembly", () => {
       const referencePath = join(referenceDirectory, "references.sqlite");
       referenceDB = new DatabaseSync(referencePath);
       referenceDB.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; CREATE TABLE saved (identity TEXT PRIMARY KEY, canonical BLOB NOT NULL, retain_until TEXT NOT NULL)");
-      referenceStore = createOperationReferenceStore(client.environment, { targetDomain: "authority", durability: "durable_create_or_compare", storage: "application_owned",
-        maxRecords: 2, maxStoredBytes: 4096n, retentionMS: 60000n, maxConcurrentSaves: 1, applicationBytes: 65536n }, async (_context, record, policy) => {
+      referenceStore = createOperationReferenceStore(client.environment, {
+        targetDomain: "authority", durability: "durable_create_or_compare", storage: "application_owned",
+        maxRecords: 2, maxStoredBytes: 4096n, retentionMS: 60000n, maxConcurrentSaves: 1, applicationBytes: 65536n
+      }, async (_context, record, policy) => {
         storeCalls++;
         if (saveMode === "delayed") { storeEntered?.(); await new Promise<void>(resolve => { releaseStore = resolve; }); }
         // This application adapter intentionally continues a submitted transaction
@@ -2798,8 +4407,46 @@ describe("original v4 reliable Session assembly", () => {
       const missingRead = c.readOperationResult(reference);
       expect(await missingRead.takeEncodedResult()).toMatchObject({ kind: "sdk_error", code: "service_unavailable" }); missingRead.close();
       expect(calls).toBe(0);
-      expect(await c.queryOperation(reference)).toMatchObject({ status: "history_unknown", observation: { found: false, reason: "history_unknown" } });
-      expect(await c.requestCancel(reference)).toMatchObject({ status: "ok", cancelResult: "history_unknown" });
+      const managementDiagnostics = observeApplicationDiagnostics();
+      try {
+        expect(await c.queryOperation(reference)).toMatchObject({ status: "history_unknown", observation: { found: false, reason: "history_unknown" } });
+        expect(await c.requestCancel(reference)).toMatchObject({ status: "ok", cancelResult: "history_unknown" });
+        // Each side owns one context per query/cancel. The original caller
+        // transfers its preparation context into the M-channel pending slot.
+        await expect.poll(() => [...managementDiagnostics.activities.values()].filter(events => events.some(event => event.state === "closed")).length).toBe(4);
+        expect(managementDiagnostics.activities.size).toBe(4);
+        for (const events of managementDiagnostics.activities.values()) {
+          expect(events.filter(event => event.state === "starting")).toHaveLength(1);
+          expect(events.filter(event => event.state === "ready")).toHaveLength(1);
+          expect(events.filter(event => event.state === "closed")).toHaveLength(1);
+          expect(events.some(event => event.state === "failed")).toBe(false);
+        }
+        managementDiagnostics.activities.clear();
+        const canceled = new AbortController(); canceled.abort();
+        await expect(c.queryOperation(reference, { signal: canceled.signal })).rejects.toThrow("canceled");
+        expect(managementDiagnostics.activities.size).toBe(1);
+        const cancellation = [...managementDiagnostics.activities.values()][0]!;
+        expect(cancellation.filter(event => event.state === "failed")).toHaveLength(1);
+        expect(cancellation.filter(event => event.state === "closed")).toHaveLength(1);
+        managementDiagnostics.activities.clear();
+        let response: Uint8Array | undefined, responseCaptured!: () => void;
+        const responseReady = new Promise<void>(resolve => { responseCaptured = resolve; });
+        b.deferDelivery = frame => {
+          if (inspectEnvelopePrefix(frame, 65536).frameType !== wire.frame_types.STREAM_DATA) return false;
+          response = frame; b.deferDelivery = undefined; responseCaptured(); return true;
+        };
+        try {
+          const waiting = new AbortController(), query = c.queryOperation(reference, { signal: waiting.signal });
+          const rejected = expect(query).rejects.toThrow("canceled");
+          await transportEvent(responseReady);
+          const originalQuery = [...managementDiagnostics.activities.values()][0]!;
+          waiting.abort(); await rejected;
+          expect(originalQuery.map(event => event.state)).toEqual(["starting"]);
+          b.push(response!);
+          await expect.poll(() => originalQuery.filter(event => event.state === "closed").length).toBe(1);
+          expect(originalQuery.map(event => event.state)).toEqual(["starting", "failed", "closed"]);
+        } finally { b.deferDelivery = undefined; }
+      } finally { managementDiagnostics.close(); }
       expect(prepared.start().status).toBe("admitted");
       const first = prepared.takeResult(), joined = service.call(method, "original", options);
       await entered;
@@ -2814,8 +4461,12 @@ describe("original v4 reliable Session assembly", () => {
       const retained = await operation.takeEncodedResult();
       expect(retained).toMatchObject({ kind: "value", encoding: "encoded", bytes: new TextEncoder().encode("ORIGINAL") });
       operation.close(); if ("release" in retained) retained.release();
-      const secondBinding = await c.bindService(definition, { target: { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
-        peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] }, maximumOfferWindowMS: 10000n });
+      const secondBinding = await c.bindService(definition, {
+        target: {
+          authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+          peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }]
+        }, maximumOfferWindowMS: 10000n
+      });
       const conflict = await secondBinding.call(method, "different", options);
       expect(conflict).toMatchObject({ kind: "sdk_error", code: "operation_conflict" });
       const changedDeadline = await secondBinding.call(method, "original", { ...options, deadlineAtMS: 45000n });
@@ -2863,22 +4514,32 @@ describe("original v4 reliable Session assembly", () => {
       await Promise.all([c.close(), s.close()]);
       expect((await c.waitCleanup()).status).toBe("complete"); expect((await s.waitCleanup()).status).toBe("complete");
       referenceStore.close(); await client.close();
-      const delegation = { namespace: definition.namespace, principalAuthority: "4".repeat(64), principalSubject: "administrator",
-        targetAuthority: "3".repeat(64), targetSubject: "client", query: true, cancel: true, notAfterMS: 30000n };
+      const delegation = {
+        namespace: definition.namespace, principalAuthority: "4".repeat(64), principalSubject: "administrator",
+        targetAuthority: "3".repeat(64), targetSubject: "client", query: true, cancel: true, notAfterMS: 30000n
+      };
       for (const cancelAllowed of [false, true]) {
         const nextA = new MemoryTransport("client", "message"), nextB = new MemoryTransport("server", "message"); nextA.peer = nextB; nextB.peer = nextA;
-        const nextOptions = { profile: "execution" as const, authorizedClientSubjects, clientSubject: "administrator", connectionSeed: cancelAllowed ? 70 : 60,
-          clockOriginMS: Math.min(a.createdAtMS, b.createdAtMS) };
-        adminClient = endpoint("client", nextA, profile, "live_authority", 1000n, (_environment, material) => ({ ...common,
+        const nextOptions = {
+          profile: "execution" as const, authorizedClientSubjects, clientSubject: "administrator", connectionSeed: cancelAllowed ? 70 : 60,
+          clockOriginMS: Math.min(a.createdAtMS, b.createdAtMS)
+        };
+        adminClient = endpoint("client", nextA, profile, "live_authority", 1000n, (_environment, material) => ({
+          ...common,
           localExecutionAuthority: "4".repeat(64), executionDelegations: [{ ...delegation, direction: "outgoing" }],
-          referenceTargets: [{ authority: "authority", tenant: "tenant", audience: "service", localSubject: "administrator",
-            peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }] }] }), nextOptions);
-        const nextServer = endpoint("server", nextB, profile, "live_authority", 1000n, (_environment, material) => ({ ...common,
+          referenceTargets: [{
+            authority: "authority", tenant: "tenant", audience: "service", localSubject: "administrator",
+            peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }]
+          }]
+        }), nextOptions);
+        const nextServer = endpoint("server", nextB, profile, "live_authority", 1000n, (_environment, material) => ({
+          ...common,
           executionIdentity: { authority: "4".repeat(64), subject: "administrator", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
           executionServices: [execution], executionPermissions: [{ namespace: definition.namespace, query: true, cancel: true }],
           // Independent server cancellation permission is checked before lookup,
           // even for this terminal record. No new handler is registered here.
-          executionDelegations: [{ ...delegation, direction: "incoming", cancel: cancelAllowed }] }), { ...nextOptions, environment: server.environment });
+          executionDelegations: [{ ...delegation, direction: "incoming", cancel: cancelAllowed }]
+        }), { ...nextOptions, environment: server.environment });
         const nextEstablished = await Promise.all([adminClient.establish(), nextServer.establish()]);
         adminSession = new V4Session(nextEstablished[0]); adminServerSession = new V4Session(nextEstablished[1]);
         const nextCodec = createOperationReferenceCodec(adminClient.environment);
@@ -2901,6 +4562,100 @@ describe("original v4 reliable Session assembly", () => {
         await Promise.all([client.close(), server.close(), adminClient?.close()]);
       } finally { referenceDB?.close(); if (referenceDirectory !== undefined) rmSync(referenceDirectory, { recursive: true, force: true }); }
     }
+  }, 15000);
+  it("bridges accepted Streams with bounded copies and independent reverse traffic after EOF", async () => {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+    const [c, s] = await Promise.all([client.establish(), server.establish()]);
+    let bridge: V4DuplexBridge | undefined;
+    try {
+      const [left, acceptedLeft] = await Promise.all([c.openStream("example/bridge-left"), s.acceptStream()]);
+      const [right, acceptedRight] = await Promise.all([c.openStream("example/bridge-right"), s.acceptStream()]);
+      bridge = new V4DuplexBridge(acceptedLeft.stream, acceptedRight.stream, { readChunkBytes: 1024 });
+      expect(bridge.progress().state).toBe("prepared");
+      expect(() => acceptedLeft.stream.acquireCursor(1n)).toThrow("stream_owned");
+      await expect(acceptedRight.stream.write(new Uint8Array([99]))).rejects.toThrow("stream_owned");
+      bridge.start(); bridge.start();
+      const readAll = async (stream: typeof left): Promise<number[]> => {
+        const values: number[] = [];
+        while (true) {
+          const read = await stream.read(317n); values.push(...read.data);
+          expect(read.error).toBeUndefined();
+          if (read.stream_status === "eof") return values;
+        }
+      };
+      const request = Uint8Array.from({ length: 8193 }, (_, index) => index % 251);
+      const readingRequest = readAll(right);
+      let submitted = 0;
+      while (submitted < request.length) {
+        const written = await left.write(request.subarray(submitted));
+        expect(written.terminal_reason).toBe("complete"); expect(written.accepted_bytes).toBeGreaterThan(0n);
+        submitted += Number(written.accepted_bytes);
+      }
+      await left.closeWrite();
+      expect(await readingRequest).toEqual([...request]);
+      expect(bridge.progress()).toMatchObject({ state: "running", a_to_b: { source_status: "eof" }, b_to_a: { source_status: "open" } });
+      const readingResponse = readAll(left), response = new Uint8Array([90, 91, 92, 93]);
+      await right.write(response); await right.closeWrite();
+      expect(await readingResponse).toEqual([...response]);
+      const result = await bridge.wait();
+      expect(result).toMatchObject({ outcome: "normal", a_to_b: { progress: { source_read_bytes: 8193n, destination_accepted_bytes: 8193n },
+        source_status: "eof", send_result: { endpoint_kind: "flowersec_stream", send_drained: true } },
+        b_to_a: { progress: { source_read_bytes: 4n, destination_accepted_bytes: 4n }, source_status: "eof", send_result: { send_drained: true } } });
+      expect(result.a_to_b.progress.unaccepted_tail).toHaveLength(0); expect(result.b_to_a.progress.unaccepted_tail).toHaveLength(0);
+      expect(Object.isFrozen(result)).toBe(true); expect(Object.isFrozen(bridge.progress().a_to_b)).toBe(true);
+      expect((await bridge.waitCleanup()).status).toBe("complete"); result.release(); result.release();
+      expect(acceptedLeft.stream.cleanupStatus().status).toBe("complete"); expect(acceptedRight.stream.cleanupStatus().status).toBe("complete");
+      expect(await bridge.wait()).toBe(result);
+      expect((await c.probeLiveness()).elapsedMS).toBeGreaterThanOrEqual(0n);
+    } finally { bridge?.abort(); await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
+  }, 15000);
+  it("bridges keep canceled waits passive and explicit Abort closes both original Streams", async () => {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+    const [c, s] = await Promise.all([client.establish(), server.establish()]);
+    let bridge: V4DuplexBridge | undefined;
+    try {
+      const [left, incomingLeft] = await Promise.all([c.openStream("example/bridge-left"), s.acceptStream()]);
+      const [right, incomingRight] = await Promise.all([c.openStream("example/bridge-right"), s.acceptStream()]);
+      bridge = new V4DuplexBridge(incomingLeft.stream, incomingRight.stream); bridge.start();
+      const waiting = new AbortController(), cleaning = new AbortController();
+      const wait = bridge.wait({ signal: waiting.signal }), cleanup = bridge.waitCleanup({ signal: cleaning.signal });
+      const canceledWait = expect(wait).rejects.toMatchObject({ code: "wait_canceled", progress: { state: "running" } });
+      const canceledCleanup = expect(cleanup).rejects.toMatchObject({ code: "wait_canceled" });
+      waiting.abort(); cleaning.abort(); await Promise.all([canceledWait, canceledCleanup]);
+      expect(bridge.progress()).toMatchObject({ state: "running", outcome: "normal" });
+      const reading = right.read(64n); await left.write(new Uint8Array([40, 41]));
+      expect((await reading).data).toEqual(new Uint8Array([40, 41]));
+      bridge.abort(); bridge.abort();
+      const result = await bridge.wait(); expect(result.outcome).toBe("aborted");
+      expect(result.a_to_b.progress.destination_accepted_bytes).toBe(2n);
+      expect((await bridge.waitCleanup()).status).toBe("complete"); result.release();
+      expect(incomingLeft.stream.cleanupStatus().status).toBe("complete"); expect(incomingRight.stream.cleanupStatus().status).toBe("complete");
+      expect((await c.probeLiveness()).elapsedMS).toBeGreaterThanOrEqual(0n);
+    } finally { bridge?.abort(); await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
+  });
+  it("bridges reject duplicate and owned endpoints before reading and roll back the other Stream", async () => {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+    const [c, s] = await Promise.all([client.establish(), server.establish()]);
+    try {
+      const [left, incomingLeft] = await Promise.all([c.openStream("example/bridge-left"), s.acceptStream()]);
+      const [right, incomingRight] = await Promise.all([c.openStream("example/bridge-right"), s.acceptStream()]);
+      expect(() => new V4DuplexBridge(incomingLeft.stream, incomingLeft.stream)).toThrow("invalid_endpoint");
+      const stopped = new AbortController(); stopped.abort();
+      await incomingRight.stream.read(1n, { signal: stopped.signal });
+      const charged = server.environment.resources.root.snapshot().charged.values();
+      expect(() => new V4DuplexBridge(incomingLeft.stream, incomingRight.stream)).toThrow("stream_owned");
+      expect(server.environment.resources.root.snapshot().charged.values()).toEqual(charged);
+      const readingLeft = incomingLeft.stream.read(32n); await left.write(new Uint8Array([1, 2, 3]));
+      expect((await readingLeft).data).toEqual(new Uint8Array([1, 2, 3]));
+      const readingRight = incomingRight.stream.read(32n); await right.write(new Uint8Array([4, 5]));
+      expect((await readingRight).data).toEqual(new Uint8Array([4, 5]));
+    } finally { await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
   });
   it("keeps Web readable cancellation independent from a healthy request send", async () => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
@@ -2937,14 +4692,17 @@ describe("original v4 reliable Session assembly", () => {
     } finally { await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
   });
   it("owns a native Node Duplex through partial writes, authenticated finish and reverse EOF", async () => {
-    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message");
+    a.peer = b;
+    b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
     const [c, s] = await Promise.all([client.establish(), server.establish()]);
     try {
       const [out, incoming] = await Promise.all([c.openStream("example/node"), s.acceptStream()]);
       const duplex = asNodeDuplex(out, { producer: { maxChunkBytes: 16384, maxBackingBytes: 16384, maxPendingWrites: 4, maxQueuedBackingBytes: 65536 } });
-      const failures: Error[] = []; duplex.on("error", error => failures.push(error));
+      const failures: Error[] = [];
+      duplex.on("error", error => failures.push(error));
       expect(() => out.acquireCursor(1n)).toThrow("stream_owned");
       await expect(out.write(new Uint8Array([99]))).rejects.toThrow("stream_owned");
       expect(() => asNodeDuplex(out, { producer: { maxChunkBytes: 1, maxBackingBytes: 1, maxPendingWrites: 1, maxQueuedBackingBytes: 1 } })).toThrow("stream_owned");
@@ -2957,17 +4715,22 @@ describe("original v4 reliable Session assembly", () => {
       })();
       const finished = new Promise<void>((resolve, reject) => duplex.end(request, (error?: Error | null) => error ? reject(error) : resolve()));
       await Promise.all([consume, finished]);
-      expect(received).toEqual([...request]); expect(duplex.writableFinished).toBe(true);
-      expect(duplex.destroyed).toBe(false); expect(duplex.closeResult()?.send_drained).toBe(true);
+      expect(received).toEqual([...request]);
+      expect(duplex.writableFinished).toBe(true);
+      expect(duplex.destroyed).toBe(false);
+      expect(duplex.closeResult()?.send_drained).toBe(true);
       const response: number[] = [];
       const reading = (async () => { for await (const chunk of duplex) response.push(...chunk as Uint8Array); })();
-      await incoming.stream.write(new Uint8Array([7, 8, 9])); await incoming.stream.finish();
+      await incoming.stream.write(new Uint8Array([7, 8, 9]));
+      await incoming.stream.finish();
       await reading;
       expect((await duplex.waitCleanup()).status).toBe("complete");
-      expect(response).toEqual([7, 8, 9]); expect(failures).toEqual([]);
+      expect(response).toEqual([7, 8, 9]);
+      expect(failures).toEqual([]);
       expect(duplex.closeResult()).toMatchObject({ send_drained: true, read_terminal: "eof", cleanup_status: { status: "complete" } });
       expect(out.cleanupStatus().status).toBe("complete");
-    } finally { await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
+    }
+    finally { await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
   });
   it("keeps a healthy Session and reverse direction alive after normal send drainage expires", async () => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
@@ -3019,6 +4782,42 @@ describe("original v4 reliable Session assembly", () => {
       expect(out.cleanupStatus().status).toBe("complete");
     } finally { await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
   });
+  it("preserves consumed FIN when Close overtakes its queued DRAINED publication", async () => {
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+    const [c, s] = await Promise.all([client.establish(), server.establish()]);
+    let release!: () => void, submitted!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const pendingOutput = new Promise<void>(resolve => { submitted = resolve; });
+    try {
+      const [out, incoming] = await Promise.all([c.openStream("example/close-after-eof"), s.acceptStream()]);
+      await out.finish();
+      expect((await incoming.stream.read(1n)).stream_status).toBe("eof");
+      a.submissionTail = frame => {
+        if (inspectEnvelopePrefix(frame, 65536).frameType !== wire.frame_types.PING) return undefined;
+        submitted(); return held;
+      };
+      const probing = c.probeLiveness(); void probing.catch(() => undefined);
+      await transportEvent(pendingOutput);
+      await incoming.stream.write(new Uint8Array([7]));
+      await incoming.stream.closeWrite();
+      const received = await out.read(1n);
+      expect(received.data).toEqual(new Uint8Array([7]));
+      if (received.stream_status !== "eof") expect((await out.read(1n)).stream_status).toBe("eof");
+      const finishing = incoming.stream.finish(); void finishing.catch(() => undefined);
+      const closing = out.close(); void closing.catch(() => undefined);
+      // The sole maintenance writer is still occupied, so Close happens
+      // before DRAINED can capture whether this input was consumed or abandoned.
+      release();
+      expect((await finishing).send_drained).toBe(true);
+      expect((await closing).read_terminal).toBe("eof");
+      await probing;
+    } finally {
+      release(); a.submissionTail = undefined;
+      await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]);
+    }
+  });
   it("canceling CloseWrite only cancels its waiter and preserves the original admitted output", async () => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
@@ -3067,6 +4866,49 @@ describe("original v4 reliable Session assembly", () => {
     } finally { await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
   });
   for (const profile of ["fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1"] as const) {
+    for (const role of ["client", "server"] as const) it(`retains next-epoch DATA behind the original ${role} marker completion: ${profile}`, async () => {
+      const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+      const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+      const [c, s] = await Promise.all([client.establish(), server.establish()]);
+      const local = role === "client" ? c : s, remote = role === "client" ? s : c;
+      const transport = role === "client" ? a : b;
+      let release!: () => void, submitted!: () => void, intercepted = false, terminated = false;
+      const tail = new Promise<void>(resolve => { release = resolve; });
+      const marker = new Promise<void>(resolve => { submitted = resolve; });
+      void local.waitTermination().then(() => { terminated = true; });
+      try {
+        const [outgoing, incoming] = await Promise.all([c.openStream("example/rekey-input-tail"), s.acceptStream()]);
+        const receiver = role === "client" ? outgoing : incoming.stream, sender = role === "client" ? incoming.stream : outgoing;
+        await sender.write(new Uint8Array([1, 2]));
+        expect((await receiver.read(2n)).data).toEqual(new Uint8Array([1, 2]));
+        transport.submissionTail = frame => {
+          const prefix = inspectEnvelopePrefix(frame, 65536);
+          if (prefix.frameType !== wire.frame_types.REKEY || inspectRecordPrefix(frame, prefix.payloadBytes, profile).epoch !== 1) return undefined;
+          expect(intercepted).toBe(false); intercepted = true; submitted(); return tail;
+        };
+        // The peer completes the authenticated exchange while our original
+        // COMMIT (client) or ACK (server) still has a real native output tail.
+        const changing = remote.rekey(); void changing.catch(() => undefined);
+        await transportEvent(marker); await changing;
+        let readSettled = false;
+        const reading = receiver.read(2n);
+        void reading.then(() => { readSettled = true; }, () => { readSettled = true; });
+        await sender.write(new Uint8Array([3, 4]));
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(transport.nativeSubmissionsPending).toBe(1);
+        expect(terminated).toBe(false); expect(readSettled).toBe(false);
+        release(); transport.submissionTail = undefined;
+        expect(await reading).toMatchObject({ data: new Uint8Array([3, 4]), stream_status: "open", wait_status: "ready" });
+        await receiver.write(new Uint8Array([5])); expect((await sender.read(1n)).data).toEqual(new Uint8Array([5]));
+        await Promise.all([outgoing.closeWrite(), incoming.stream.closeWrite()]);
+        expect((await outgoing.read(1n)).stream_status).toBe("eof"); expect((await incoming.stream.read(1n)).stream_status).toBe("eof");
+        await Promise.all([outgoing.finish(), incoming.stream.finish()]);
+        expect((await local.probeLiveness()).submitted).toBe(true);
+      } finally {
+        release(); transport.submissionTail = undefined;
+        await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]);
+      }
+    });
     it(`retains a logically stable proof for the already published rekey barrier: ${profile}`, async () => {
       const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
       const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
@@ -3270,20 +5112,27 @@ describe("original v4 reliable Session assembly", () => {
     }, 10000);
   }
   it("uses a real durable pool consume under original admission before Noise and READY", async () => {
-    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message");
+    a.peer = b;
+    b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const client = endpoint("client", a, profile, "preauthorized_pool"), server = endpoint("server", b, profile, "preauthorized_pool");
     const directory = mkdtempSync(join(realpathSync(tmpdir()), "flowersec-ts-session-pool-"));
     const backing = createSQLitePoolBacking(client.environment, join(directory, "once.sqlite"), { maxPages: 64, maxRecords: 4, maxRecordBytes: 16384, runtimeBytes: 1024n, providerRuntimeBytes: 1024n, diskOverheadBytes: 4096n });
-    const store = openV4SQLitePoolStore(backing, { create: true, identity: { authority: "spend", storeID: fill(5), generation: 1n }, continuity: { check: () => undefined }, bindings: [{ tenant: "tenant", issuer: fill(5, 16) }] });
+    const store = await openV4SQLitePoolStore(backing, { create: true, identity: { authority: "spend", storeID: fill(5), generation: 1n }, continuity: { check: () => undefined }, bindings: [{ tenant: "tenant", issuer: fill(5, 16) }] });
     try {
       const [c, s] = await Promise.all([client.establish(store), server.establish()]);
       try {
         const opening = c.openStream("example/pool"), incoming = await s.acceptStream(), stream = await opening;
         await stream.write(fill(77, 12)); expect((await incoming.stream.read(12n)).data).toEqual(fill(77, 12));
       } finally { await Promise.all([c.close(), s.close()]); }
-    } finally {
-      store.close(); rmSync(directory, { recursive: true }); backing.releaseRemoved(); await Promise.all([client.close(), server.close()]);
+    }
+    finally {
+      store.close();
+      await store.waitCleanup();
+      rmSync(directory, { recursive: true });
+      backing.releaseRemoved();
+      await Promise.all([client.close(), server.close()]);
     }
   });
   it("keeps a real native output tail charged after Environment Close times out", async () => {
@@ -3341,12 +5190,395 @@ describe("original v4 reliable Session assembly", () => {
       authorized = metadata.descriptorValues(); return true;
     }, async (stream, _context, metadata) => {
       handled = metadata.descriptorValues(); await stream.close();
-    }, { applicationBytes: 4096n, metadataContract: { contractID: "http-v1", namespace: "code/http_v1", version: 1, codec: "application/json",
-      fields: [{ name: "method", type: "string", required: true }] } });
+    }, {
+      applicationBytes: 4096n, metadataContract: {
+        contractID: "http-v1", namespace: "code/http_v1", version: 1, codec: "application/json",
+        fields: [{ name: "method", type: "string", required: true }]
+      }
+    });
     try {
       const metadata = createStreamMetadataEnvelope("code/http_v1", 1, { method: new TextEncoder().encode(JSON.stringify("GET")) });
       const stream = await c.openStream("example/contract", { metadata }); await stream.close();
       await expect.poll(() => handled).toEqual({ method: "GET" }); expect(authorized).toEqual({ method: "GET" });
     } finally { registration.close(); await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
   });
+});
+
+
+it("holds public proxy admission through the original native reset submission tail", async () => {
+  const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+  const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+  let upstreamStartedResolve!: () => void, upstreamAbortedResolve!: () => void;
+  const upstreamStarted = new Promise<void>(resolve => { upstreamStartedResolve = resolve; });
+  const upstreamAborted = new Promise<void>(resolve => { upstreamAbortedResolve = resolve; });
+  const upstream = createServer(async (request: IncomingMessage, response: ServerResponse) => {
+    if (request.url === "/held") {
+      response.writeHead(206, { "content-type": "text/plain", "content-range": "bytes 0-5/6" });
+      response.write("prefix"); upstreamStartedResolve();
+      await new Promise<void>(resolve => request.once("aborted", resolve));
+      upstreamAbortedResolve(); if (!response.writableEnded) response.end(); return;
+    }
+    response.writeHead(200, { "content-type": "text/plain" }); response.end("next");
+  });
+  await new Promise<void>((resolve, reject) => { upstream.once("error", reject); upstream.listen(0, "127.0.0.1", resolve); });
+  const address = upstream.address();
+  if (address === null || typeof address === "string") throw new Error("upstream did not bind TCP");
+  const upstreamOrigin = `http://127.0.0.1:${address.port}`;
+  const proxy = new ProxyServer({ upstream: upstreamOrigin, upstreamOrigin, allowedOrigins: ["https://app.example"],
+    maxConcurrentStreams: 2, maxConcurrentHTTPStreams: 2, maxConcurrentEventStreams: 1 });
+  // Keep HTTP/crypto setup independent of the original short operation window.
+  // Cancellation stays within that window while retaining the native tail.
+  let elapsedMS = 0n;
+  const options = { clockMS: () => elapsedMS };
+  const client = endpoint("client", a, profile, "live_authority", 25n, undefined, options);
+  const server = endpoint("server", b, profile, "live_authority", 25n, undefined, options);
+  let c: V4Session | undefined, s: V4Session | undefined, runtime: ReturnType<typeof createProxyRuntime> | undefined;
+  const registrations: Array<{ close(): void }> = [];
+  let releaseNativeTail: (() => void) | undefined;
+  let holdNextNativeSubmission = false;
+  let nativeTailCapturedResolve!: () => void, nativeTailCompletedResolve!: () => void;
+  const nativeTailCaptured = new Promise<void>(resolve => { nativeTailCapturedResolve = resolve; });
+  const nativeTailCompleted = new Promise<void>(resolve => { nativeTailCompletedResolve = resolve; });
+  a.submissionTail = bytes => {
+    if (!holdNextNativeSubmission) return undefined;
+    const frameType = inspectEnvelopePrefix(bytes, 65536).frameType;
+    if (frameType !== wire.frame_types.STREAM_DATA && frameType !== wire.frame_types.STREAM_ACK) return undefined;
+    holdNextNativeSubmission = false;
+    nativeTailCapturedResolve();
+    a.submissionCompleted = () => { a.submissionCompleted = undefined; nativeTailCompletedResolve(); };
+    return new Promise<void>(resolve => { releaseNativeTail = resolve; });
+  };
+  try {
+    const [clientOwner, serverOwner] = await Promise.all([client.establish(), server.establish()]);
+    c = new V4Session(clientOwner); s = new V4Session(serverOwner);
+    for (const declaration of proxy.streamHandlers(() => true, { applicationBytes: 1024n })) {
+      registrations.push(s.registerStream(declaration.kind, declaration.authorize, declaration.handler, declaration.options));
+    }
+    const baselineReservations = client.environment.resources.root.snapshot().reservations;
+    runtime = createProxyRuntime({ session: c, externalOrigin: "https://app.example", maxConcurrentHttpStreams: 1 });
+    const cancellation = new AbortController();
+    const response = await runtime.fetch("/held", { signal: cancellation.signal });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-type")).toBe("text/plain");
+    expect(response.headers.get("content-range")).toBe("bytes 0-5/6");
+    const reader = response.body!.getReader();
+    await expect(reader.read()).resolves.toEqual({ done: false, value: new TextEncoder().encode("prefix") });
+    const pending = reader.read();
+    let pendingFailure: unknown;
+    const pendingSettled = pending.then(
+      () => { throw new Error("canceled proxy body read unexpectedly completed"); },
+      error => { pendingFailure = error; },
+    );
+    await upstreamStarted;
+    holdNextNativeSubmission = true; cancellation.abort();
+    await transportEvent(nativeTailCaptured);
+    await upstreamAborted;
+    elapsedMS = 1n;
+    await pendingSettled;
+    expect(pendingFailure).toBeDefined();
+    // The submission callback is the native completion barrier. The canceled
+    // request is settled while that original carrier tail still owns its
+    // resources, so the next request must remain admission-blocked.
+    expect(a.nativeSubmissionsPending).toBeGreaterThan(0);
+    expect(client.environment.resources.root.snapshot().reservations).toBeGreaterThan(baselineReservations);
+    await expect(runtime.fetch("/blocked")).rejects.toMatchObject({ code: "resource_exhausted" });
+    releaseNativeTail?.(); releaseNativeTail = undefined;
+    await transportEvent(nativeTailCompleted);
+    let nextResponse: Response | undefined;
+    for (let attempt = 0; attempt < 100 && nextResponse === undefined; attempt++) {
+      try { nextResponse = await runtime.fetch("/next"); }
+      catch (error) {
+        if ((error as { code?: unknown }).code !== "resource_exhausted") throw error;
+        await new Promise<void>(resolve => setTimeout(resolve, 5));
+      }
+    }
+    expect(nextResponse).toBeDefined();
+    expect(await nextResponse!.text()).toBe("next");
+    await expect.poll(() => client.environment.resources.root.snapshot().reservations).toBe(baselineReservations);
+    expect(a.nativeSubmissionsPending).toBe(0);
+
+
+  } finally {
+    releaseNativeTail?.(); runtime?.dispose();
+    for (const registration of registrations) registration.close();
+    await Promise.all([c?.close(), s?.close()]);
+    await Promise.all([client.close(), server.close(), proxy.close()]);
+    await new Promise<void>(resolve => upstream.close(() => resolve()));
+  }
+}, 15000);
+
+
+it("holds public fetch admission when cancellation rejects before response metadata", async () => {
+  const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+  const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+  let failureStartedResolve!: () => void, failureAbortedResolve!: () => void;
+  const failureStarted = new Promise<void>(resolve => { failureStartedResolve = resolve; });
+  const failureAborted = new Promise<void>(resolve => { failureAbortedResolve = resolve; });
+  const upstream = createServer(async (request: IncomingMessage, response: ServerResponse) => {
+    if (request.url === "/failure") {
+      failureStartedResolve();
+      await new Promise<void>(resolve => response.once("close", resolve));
+      failureAbortedResolve();
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/plain" }); response.end("next");
+  });
+  await new Promise<void>((resolve, reject) => { upstream.once("error", reject); upstream.listen(0, "127.0.0.1", resolve); });
+  const address = upstream.address();
+  if (address === null || typeof address === "string") throw new Error("upstream did not bind TCP");
+  const upstreamOrigin = `http://127.0.0.1:${address.port}`;
+  const proxy = new ProxyServer({ upstream: upstreamOrigin, upstreamOrigin, allowedOrigins: ["https://app.example"],
+    maxConcurrentStreams: 2, maxConcurrentHTTPStreams: 2, maxConcurrentEventStreams: 1 });
+  const client = endpoint("client", a, profile, "live_authority", 250n, undefined, { writeDeadlineMS: 5000n }), server = endpoint("server", b, profile, "live_authority", 250n, undefined, { writeDeadlineMS: 5000n });
+  let c: V4Session | undefined, s: V4Session | undefined, runtime: ReturnType<typeof createProxyRuntime> | undefined;
+  const registrations: Array<{ close(): void }> = [];
+  let releaseNativeTail: (() => void) | undefined;
+  let nativeTailCapturedResolve!: () => void;
+  const nativeTailCaptured = new Promise<void>(resolve => { nativeTailCapturedResolve = resolve; });
+  let holdNextNativeSubmission = false, resetAcknowledgements = 0;
+  a.submissionTail = bytes => {
+    if (!holdNextNativeSubmission) return undefined;
+    const frameType = inspectEnvelopePrefix(bytes, 65536).frameType;
+    if (frameType !== wire.frame_types.STREAM_ACK || ++resetAcknowledgements !== 2) return undefined;
+    holdNextNativeSubmission = false; nativeTailCapturedResolve();
+    return new Promise<void>(resolve => { releaseNativeTail = resolve; });
+  };
+  try {
+    const [clientOwner, serverOwner] = await Promise.all([client.establish(), server.establish()]);
+    c = new V4Session(clientOwner); s = new V4Session(serverOwner);
+    for (const declaration of proxy.streamHandlers(() => true, { applicationBytes: 1024n })) {
+      registrations.push(s.registerStream(declaration.kind, declaration.authorize, declaration.handler, declaration.options));
+    }
+    runtime = createProxyRuntime({ session: c, externalOrigin: "https://app.example", maxConcurrentHttpStreams: 1 });
+    const cancellation = new AbortController();
+    const request = runtime.fetch("/failure", { signal: cancellation.signal });
+    const rejected = request.then(() => undefined, (error: unknown) => error);
+    await transportEvent(failureStarted);
+    const cancellationStartedAt = performance.now(); holdNextNativeSubmission = true; cancellation.abort();
+    await transportEvent(failureAborted);
+    await transportEvent(nativeTailCaptured);
+    await transportEvent(rejected.then(() => undefined));
+    expect(await rejected).toMatchObject({ code: "canceled" });
+    expect(performance.now() - cancellationStartedAt).toBeGreaterThanOrEqual(20);
+    expect(a.nativeSubmissionsPending).toBeGreaterThan(0);
+    await expect(runtime.fetch("/blocked-pre-response")).rejects.toMatchObject({ code: "resource_exhausted" });
+    releaseNativeTail?.(); releaseNativeTail = undefined;
+    await expect.poll(() => a.nativeSubmissionsPending).toBe(0);
+    let recovered: Response | undefined;
+    for (let attempt = 0; attempt < 100 && recovered === undefined; attempt++) {
+      try { recovered = await runtime.fetch("/next"); }
+      catch (error) {
+        if ((error as { code?: unknown }).code !== "resource_exhausted") throw error;
+        await new Promise<void>(resolve => setTimeout(resolve, 5));
+      }
+    }
+    expect(recovered).toBeDefined(); expect(await recovered!.text()).toBe("next");
+    await expect.poll(() => a.nativeSubmissionsPending).toBe(0);
+  } finally {
+    releaseNativeTail?.(); runtime?.dispose();
+    for (const registration of registrations) registration.close();
+    await Promise.all([c?.close(), s?.close()]);
+    await Promise.all([client.close(), server.close(), proxy.close()]);
+    await new Promise<void>(resolve => upstream.close(() => resolve()));
+  }
+}, 15000);
+
+
+it("retains the incoming query diagnostic until a failed response's actual native tail exits", async () => {
+  const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+  const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+  const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
+  const method = new V4MethodDefinition({ typeID: 42, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
+    requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+  const definition = new V4ServiceDefinition({ namespace: "example.query-diagnostic", methods: { echo: method } });
+  const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
+  let contract: ServiceContractSnapshot | undefined;
+  const client = endpoint("client", a, profile, "live_authority", 10000n, () => common);
+  const server = endpoint("server", b, profile, "live_authority", 10000n, environment => {
+    const resources = environment.resources;
+    const refs = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
+      accounts: resources.accounts, owner: { ...resources.owner, kind: `query_diagnostic_contract_${index}` }, charge,
+    })));
+    try {
+      contract = new ServiceContractSnapshot(encode(map({
+        0: text(definition.namespace), 1: u(42), 2: u(0), 3: u(0), 6: text("text-v1"), 7: text("text-v1"),
+        8: u(1), 9: u(0), 10: u(128), 11: u(30000), 12: u(10000), 21: { kind: "bool", value: false }, 23: u(128), 27: array(),
+      })), 1024n, refs[0]!, refs[1]!);
+    } finally { for (const reference of refs) reference.release(); }
+    return { ...common, queryPermissions: [{ namespace: definition.namespace, method, permission: "allowed" }], unaryHandlers: [{
+      namespace: definition.namespace, method, contract, handler: (_context, value: string) => value,
+      options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" },
+    }] };
+  });
+  let c: V4Session | undefined, s: V4Session | undefined, diagnostics: ReturnType<typeof observeApplicationDiagnostics> | undefined;
+  let release!: () => void, entered!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; }), began = new Promise<void>(resolve => { entered = resolve; });
+  try {
+    const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
+    diagnostics = observeApplicationDiagnostics();
+    b.submissionTail = frame => {
+      if (inspectEnvelopePrefix(frame, 65536).frameType !== wire.frame_types.STREAM_DATA) return;
+      b.submissionTail = undefined; entered(); return held;
+    };
+    const binding = c.bindService(definition, { initialMethods: [method], maximumOfferWindowMS: 10000n, target: {
+      authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+      peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }],
+    } });
+    const outcome = binding.then(service => { service.close(); return "ready"; }, () => "failed");
+    await transportEvent(began);
+    expect(diagnostics.activities.size).toBe(2);
+    const incoming = [...diagnostics.activities.values()][1]!;
+    expect(incoming.map(event => event.state)).toEqual(["starting"]);
+    await Promise.all([c.close(), s.close()]);
+    expect(incoming.some(event => event.state === "closed")).toBe(false);
+    release();
+    expect(await outcome).toBe("failed");
+    await expect.poll(() => incoming.filter(event => event.state === "closed").length).toBe(1);
+    expect(incoming.filter(event => event.state === "failed")).toHaveLength(1);
+    expect(incoming.some(event => event.state === "ready")).toBe(false);
+  } finally {
+    release(); diagnostics?.close(); await Promise.all([c?.close(), s?.close()]); contract?.release(); await Promise.all([client.close(), server.close()]);
+  }
+});
+
+it("keeps prepared write diagnostics on the original operation through canceled waits and actual native cleanup", async () => {
+  const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+  const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+  const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+  const [c, s] = await Promise.all([client.establish(), server.establish()]);
+  let release: (() => void) | undefined, diagnostics: ReturnType<typeof observeApplicationDiagnostics> | undefined;
+  try {
+    const opening = c.openStream("example/raw"), incoming = await s.acceptStream(), outgoing = await opening;
+    diagnostics = observeApplicationDiagnostics();
+    release = a.holdNext();
+    const first = outgoing.prepareWrite(new Uint8Array([1, 2, 3])); first.start();
+    const stop = new AbortController(), waiting = first.wait({ signal: stop.signal }); stop.abort();
+    expect((await waiting).phase).toBe("running");
+    expect(diagnostics.activities.size).toBe(1);
+    const firstEvents = [...diagnostics.activities.values()][0]!;
+    expect(firstEvents.map(event => event.state)).toEqual(["starting"]);
+    release(); release = undefined;
+    expect((await first.wait()).terminal_reason).toBe("complete");
+    expect(firstEvents.map(event => event.state)).toEqual(["starting", "ready", "closed"]);
+    expect((await incoming.stream.read(3n)).data).toEqual(new Uint8Array([1, 2, 3]));
+    release = a.holdNext();
+    const second = outgoing.prepareWrite(new Uint8Array(256)); second.start(); second.cancel();
+    expect(second.cleanupStatus().status).toBe("pending");
+    expect(diagnostics.activities.size).toBe(2);
+    const secondEvents = [...diagnostics.activities.values()][1]!;
+    expect(secondEvents.map(event => event.state)).toEqual(["starting", "failed"]);
+    release(); release = undefined;
+    await expect.poll(() => second.cleanupStatus().status).toBe("complete");
+    expect(secondEvents.map(event => event.state)).toEqual(["starting", "failed", "closed"]);
+    expect(firstEvents.map(event => event.state)).toEqual(["starting", "ready", "closed"]);
+    await Promise.all([outgoing.close(), incoming.stream.close()]);
+  } finally {
+    release?.(); diagnostics?.close(); await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]);
+  }
+});
+
+it("keeps typed send and receive diagnostics on separate original calls after receive cancellation", async () => {
+  const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+  const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+  const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+  let c: V4Session | undefined, s: V4Session | undefined;
+  const diagnostics = observeApplicationDiagnostics();
+  try {
+    const owners = await Promise.all([client.establish(), server.establish()]); c = new V4Session(owners[0]); s = new V4Session(owners[1]);
+    const codec = v4UTF8MessageCodec({ schemaDigest: fill(83), revision: "one", maxMessageBytes: 128 });
+    const definition = new V4MessageStreamDefinition({ kind: "example.diagnostic.messages", revision: "one", openerToAcceptor: codec, acceptorToOpener: codec });
+    const [sender, receiver] = await Promise.all([c.openMessageStream(definition), s.acceptMessageStream(definition)]);
+    const canceled = new AbortController(), first = receiver.receive({ signal: canceled.signal });
+    const rejected = expect(first).rejects.toMatchObject({ code: "canceled" }); canceled.abort(); await rejected;
+    expect(diagnostics.activities.size).toBe(1);
+    const canceledEvents = [...diagnostics.activities.values()][0]!;
+    expect(canceledEvents.filter(event => event.state === "failed")).toHaveLength(1);
+    expect(canceledEvents.filter(event => event.state === "closed")).toHaveLength(1);
+    const next = receiver.receive();
+    await sender.send("continued");
+    expect(await next).toMatchObject({ done: false, value: "continued" });
+    expect(diagnostics.activities.size).toBe(3);
+    for (const events of [...diagnostics.activities.values()].slice(1)) {
+      expect(events.filter(event => event.state === "starting")).toHaveLength(1);
+      expect(events.filter(event => event.state === "ready")).toHaveLength(1);
+      expect(events.filter(event => event.state === "closed")).toHaveLength(1);
+      expect(events.some(event => event.state === "failed")).toBe(false);
+    }
+    expect(canceledEvents.filter(event => event.state === "ready")).toHaveLength(0);
+    await Promise.all([sender.close(), receiver.close()]);
+  } finally {
+    diagnostics.close(); await Promise.all([c?.close(), s?.close()]); await Promise.all([client.close(), server.close()]);
+  }
+});
+
+it.each(["codec", "native"] as const)("retains a canceled typed send diagnostic through its original %s tail", async tail => {
+  const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+  const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+  const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+  let c: V4Session | undefined, s: V4Session | undefined;
+  let release!: () => void, entered!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; }), began = new Promise<void>(resolve => { entered = resolve; });
+  const diagnostics = observeApplicationDiagnostics();
+  try {
+    const owners = await Promise.all([client.establish(), server.establish()]); c = new V4Session(owners[0]); s = new V4Session(owners[1]);
+    const direction = { schemaDigest: fill(83), revision: "one", maxMessageBytes: 128 };
+    const codec = tail === "codec" ? v4ApplicationMessageCodec<string>(direction, {
+      execution: "async", applicationBytes: 1024n,
+      encode: async (_context, value) => { entered(); await held; return new TextEncoder().encode(value); },
+      decode: async (_context, value) => new TextDecoder().decode(value),
+    }) : v4UTF8MessageCodec(direction);
+    const definition = new V4MessageStreamDefinition({ kind: "example.diagnostic.send-tail", revision: "one", openerToAcceptor: codec, acceptorToOpener: codec });
+    const [sender, receiver] = await Promise.all([c.openMessageStream(definition), s.acceptMessageStream(definition)]);
+    if (tail === "native") a.submissionTail = frame => {
+      if (inspectEnvelopePrefix(frame, 65536).frameType !== wire.frame_types.STREAM_DATA) return;
+      a.submissionTail = undefined; entered(); return held;
+    };
+    const stop = new AbortController(), sending = sender.send("original", { signal: stop.signal });
+    const rejected = expect(sending).rejects.toMatchObject({ code: "canceled" });
+    await transportEvent(began);
+    const original = [...diagnostics.activities.values()][0]!;
+    stop.abort(); await rejected;
+    expect(original.map(event => event.state)).toEqual(["starting"]);
+    release();
+    if (tail === "native") expect(await receiver.receive()).toMatchObject({ done: false, value: "original" });
+    await expect.poll(() => original.filter(event => event.state === "closed").length).toBe(1);
+    expect(original.map(event => event.state)).toEqual(["starting", "failed", "closed"]);
+    await Promise.all([sender.close(), receiver.close()]);
+  } finally {
+    release(); a.submissionTail = undefined; diagnostics.close();
+    await Promise.all([c?.close(), s?.close()]); await Promise.all([client.close(), server.close()]);
+  }
+});
+
+it("retains the canceled receive diagnostic until its already-started decoder exits", async () => {
+  const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+  const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+  const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+  let c: V4Session | undefined, s: V4Session | undefined;
+  let release!: () => void, entered!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; }), began = new Promise<void>(resolve => { entered = resolve; });
+  const diagnostics = observeApplicationDiagnostics();
+  try {
+    const owners = await Promise.all([client.establish(), server.establish()]); c = new V4Session(owners[0]); s = new V4Session(owners[1]);
+    const codec = v4ApplicationMessageCodec<string>({ schemaDigest: fill(83), revision: "one", maxMessageBytes: 128 }, {
+      execution: "async", applicationBytes: 1024n,
+      encode: async (_context, value) => new TextEncoder().encode(value),
+      decode: async (_context, value) => { entered(); await held; return new TextDecoder().decode(value); },
+    });
+    const definition = new V4MessageStreamDefinition({ kind: "example.diagnostic.receive-tail", revision: "one", openerToAcceptor: codec, acceptorToOpener: codec });
+    const [sender, receiver] = await Promise.all([c.openMessageStream(definition), s.acceptMessageStream(definition)]);
+    const stop = new AbortController(), receiving = receiver.receive({ signal: stop.signal });
+    const rejected = expect(receiving).rejects.toMatchObject({ code: "canceled", application_input_delivered: true });
+    const original = [...diagnostics.activities.values()][0]!;
+    await sender.send("retained"); await transportEvent(began);
+    stop.abort(); await rejected;
+    expect(original.map(event => event.state)).toEqual(["starting"]);
+    release();
+    await expect.poll(() => original.filter(event => event.state === "closed").length).toBe(1);
+    expect(original.map(event => event.state)).toEqual(["starting", "failed", "closed"]);
+    expect(await receiver.receive()).toMatchObject({ done: false, value: "retained" });
+    await Promise.all([sender.close(), receiver.close()]);
+  } finally {
+    release(); diagnostics.close(); await Promise.all([c?.close(), s?.close()]); await Promise.all([client.close(), server.close()]);
+  }
 });

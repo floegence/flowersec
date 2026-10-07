@@ -33,11 +33,11 @@ func TestProxyEventStreamOutlivesFiniteResponseLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer proxy.Close()
-	handlers, _ := NewSessionHandlers(SessionHandlerOptions{})
-	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+	handlers := &StreamHandlerPlanConfig{}
+	if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
 		t.Fatal(err)
 	}
-	client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
+	client := serveProxyTestStream(t, proxy, handlers, proxyHTTPStreamKind)
 	if err := writeProxyMetadata(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "events", Method: "GET", Path: "/", Headers: []proxyHeader{{Name: "accept", Value: "text/event-stream"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -84,18 +84,32 @@ func TestProxyEventCapacityPreservesFiniteRequestsAndReleasesCanceledObservers(t
 		t.Fatal(err)
 	}
 	defer proxy.Close()
-	handlers, _ := NewSessionHandlers(SessionHandlerOptions{})
-	if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+	handlers := &StreamHandlerPlanConfig{}
+	if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
 		t.Fatal(err)
 	}
 	open := func(path string) (net.Conn, proxyHTTPResponse) {
 		t.Helper()
 		client, peer := net.Pipe()
-		t.Cleanup(func() { client.Close(); peer.Close() })
-		go proxy.limit(func(ctx context.Context, incoming IncomingStream) error {
-			proxy.serveHTTP(ctx, incoming)
-			return nil
-		})(context.Background(), IncomingStream{Stream: &resetEventTestStream{proxyServerTestStream{Conn: peer, kind: proxyHTTPStreamKind}}})
+		stream := &resetEventTestStream{proxyServerTestStream{Conn: peer, kind: proxyHTTPStreamKind}}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			done <- proxy.runLimited(ctx, stream, func(ctx context.Context) error {
+				proxy.serveHTTPStream(ctx, stream)
+				return nil
+			})
+		}()
+		t.Cleanup(func() {
+			cancel()
+			_ = client.Close()
+			_ = peer.Close()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Error("event application handler survived cleanup")
+			}
+		})
 		var headers []proxyHeader
 		if path == "/events" {
 			headers = []proxyHeader{{Name: "accept", Value: "text/event-stream"}}

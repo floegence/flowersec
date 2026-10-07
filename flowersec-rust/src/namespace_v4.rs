@@ -1,6 +1,6 @@
 //! Bounded namespace continuity and subscriber gates under the Environment lock.
-//! This module accepts only the private full-verifier result type. It does not
-//! turn a digest, caller assertion, or newer sequence into verified State.
+//! This module accepts only private verifier proofs. Independent Heads advance
+//! denial evidence; only a completely verified pair installs active State.
 
 use crate::environment_v4::{EnvironmentCharge, EnvironmentError, TrustedTimeSample};
 use std::sync::{
@@ -8,6 +8,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::Notify;
+use tokio::time::Instant;
 
 #[path = "namespace_verifier_v4.rs"]
 pub(crate) mod verifier;
@@ -49,7 +50,7 @@ enum Denial {
     Credential(CredentialKind, [u8; 32]),
     Lease([u8; 16], [u8; 16]),
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Head {
     generation: u64,
     sequence: u64,
@@ -60,6 +61,40 @@ struct Head {
     next_update_ms: u64,
     signer: [u8; 16],
     signer_lifetime_ms: u64,
+}
+
+/// The only proof that may relax the observed high-water check is minted by
+/// the verifier after it matched the retained candidate's original Head and
+/// State bytes. The registry rechecks the authenticated Head identity and
+/// refuses a deadline that would extend the original candidate.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingNamespaceCandidate {
+    head: Head,
+    deadline: Instant,
+    owner: Arc<AtomicBool>,
+}
+impl PendingNamespaceCandidate {
+    pub(super) fn from_update(update: &VerifiedNamespaceUpdate, deadline: Instant) -> Self {
+        Self {
+            head: update.head,
+            deadline,
+            owner: update
+                .owner
+                .as_ref()
+                .expect("verified update owner")
+                .clone(),
+        }
+    }
+}
+
+/// An independent Head proof carries authenticated floor evidence whose lower
+/// bound must be proved at the original registry gate before observation.
+/// Only the original private verifier can construct it; it cannot install State.
+#[derive(Debug)]
+pub(crate) struct VerifiedNamespaceHead {
+    anchor: NamespaceAnchor,
+    head: Head,
+    owner: Arc<AtomicBool>,
 }
 
 /// This result has no public or crate-visible constructor. A production full
@@ -91,6 +126,8 @@ struct NamespaceSlot {
     terminal: bool,
     observed: Option<Head>,
     active: Option<Head>,
+    observed_deadline: Option<Instant>,
+    active_deadline: Option<Instant>,
     // Two complete preallocated workspaces: the active pair remains intact
     // until the candidate is fully copied and committed under the same gate.
     states: [Vec<u8>; 2],
@@ -174,6 +211,8 @@ impl NamespaceRegistry {
                 terminal: false,
                 observed: None,
                 active: None,
+                observed_deadline: None,
+                active_deadline: None,
                 states,
                 active_buffer: 0,
                 head_bytes,
@@ -216,6 +255,9 @@ impl NamespaceRegistry {
         update: &VerifiedNamespaceUpdate,
         owner: &Arc<AtomicBool>,
         now: TrustedTimeSample,
+        time_pending: bool,
+        security_deadline: Instant,
+        pending_candidate: Option<PendingNamespaceCandidate>,
     ) -> Result<(), EnvironmentError> {
         if update
             .owner
@@ -238,10 +280,127 @@ impl NamespaceRegistry {
         {
             return Err(EnvironmentError::Closed);
         }
-        if slot.anchor.is_none() {
-            slot.anchor = Some(update.anchor);
+        if pending_candidate
+            .as_ref()
+            .is_some_and(|candidate| security_deadline > candidate.deadline)
+        {
+            return Err(EnvironmentError::AuthorizationDenied);
         }
-        self.install(update, now)
+        if pending_candidate
+            .as_ref()
+            .is_some_and(|candidate| !Arc::ptr_eq(&candidate.owner, owner))
+        {
+            return Err(EnvironmentError::AuthorizationDenied);
+        }
+        self.install_checked(
+            update,
+            now,
+            time_pending,
+            Some(security_deadline),
+            pending_candidate,
+        )
+    }
+    pub(crate) fn observe_verified(
+        &mut self,
+        proof: &VerifiedNamespaceHead,
+        owner: &Arc<AtomicBool>,
+        now: TrustedTimeSample,
+        time_pending: bool,
+        security_deadline: Instant,
+    ) -> Result<Instant, EnvironmentError> {
+        if self.closed {
+            return Err(EnvironmentError::Closed);
+        }
+        if !Arc::ptr_eq(&proof.owner, owner) {
+            return Err(EnvironmentError::AuthorizationDenied);
+        }
+        let slot = self
+            .slots
+            .iter_mut()
+            .find(|s| s.pending_key == Some(proof.anchor.key))
+            .ok_or(EnvironmentError::AuthorizationDenied)?;
+        if slot.terminal
+            || slot
+                .verifier
+                .as_ref()
+                .is_none_or(|original| !Arc::ptr_eq(original, owner))
+            || owner.load(Ordering::Acquire)
+        {
+            return Err(EnvironmentError::Closed);
+        }
+        // Bootstrap must install a complete pair before any independent Head
+        // can enter this gate. The proof never creates an anchor or active pair.
+        if slot.anchor.is_none() || slot.active.is_none() {
+            return Err(EnvironmentError::AuthorizationDenied);
+        }
+        slot.check_head(proof.anchor, proof.head, now, None)?;
+        let deadline = if slot
+            .observed
+            .is_some_and(|head| head.sequence == proof.head.sequence)
+        {
+            slot.observed_deadline
+                .map_or(security_deadline, |original| {
+                    original.min(security_deadline)
+                })
+        } else {
+            security_deadline
+        };
+        if Instant::now() >= deadline {
+            return Err(EnvironmentError::MaterialExpired);
+        }
+        if time_pending || now.lower_ms < proof.head.this_update_ms {
+            return Err(EnvironmentError::TimePending);
+        }
+        slot.observed = Some(proof.head);
+        slot.observed_deadline = Some(deadline);
+        slot.notify(now);
+        Ok(deadline)
+    }
+    pub(crate) fn observe_verified_denials(
+        &mut self,
+        update: &VerifiedNamespaceUpdate,
+        owner: &Arc<AtomicBool>,
+        now: TrustedTimeSample,
+    ) -> Result<(), EnvironmentError> {
+        if update
+            .owner
+            .as_ref()
+            .is_none_or(|original| !Arc::ptr_eq(original, owner))
+        {
+            return Err(EnvironmentError::AuthorizationDenied);
+        }
+        let slot = self
+            .slots
+            .iter_mut()
+            .find(|s| s.pending_key == Some(update.anchor.key))
+            .ok_or(EnvironmentError::AuthorizationDenied)?;
+        if slot.terminal
+            || slot
+                .verifier
+                .as_ref()
+                .is_none_or(|original| !Arc::ptr_eq(original, owner))
+            || owner.load(Ordering::Acquire)
+        {
+            return Err(EnvironmentError::Closed);
+        }
+        let additional = update
+            .denials
+            .iter()
+            .filter(|denial| !slot.denials.contains(denial))
+            .count();
+        if additional > MAX_DENIALS - slot.denials.len() {
+            slot.seal();
+            return Err(EnvironmentError::Capacity);
+        }
+        for denial in update.denials.iter() {
+            if !slot.denials.contains(denial) {
+                slot.denials.push(*denial);
+            }
+        }
+        if slot.active.is_some() {
+            slot.notify(now);
+        }
+        Ok(())
     }
     pub(crate) fn reject_signers(
         &mut self,
@@ -342,32 +501,30 @@ impl NamespaceRegistry {
         update: &VerifiedNamespaceUpdate,
         now: TrustedTimeSample,
     ) -> Result<(), EnvironmentError> {
+        self.install_checked(update, now, false, None, None)
+    }
+    fn install_checked(
+        &mut self,
+        update: &VerifiedNamespaceUpdate,
+        now: TrustedTimeSample,
+        time_pending: bool,
+        security_deadline: Option<Instant>,
+        pending_candidate: Option<PendingNamespaceCandidate>,
+    ) -> Result<(), EnvironmentError> {
         if self.closed {
             return Err(EnvironmentError::Closed);
         }
         let slot = self
             .slots
             .iter_mut()
-            .find(|s| s.anchor.is_some_and(|a| a.key == update.anchor.key))
+            .find(|s| {
+                s.anchor.is_some_and(|a| a.key == update.anchor.key)
+                    || s.pending_key == Some(update.anchor.key)
+            })
             .ok_or(EnvironmentError::AuthorizationDenied)?;
-        let anchor = slot.anchor.expect("registered namespace");
         let head = update.head;
-        if slot.terminal
-            || anchor.generation != head.generation
-            || anchor.generation != update.anchor.generation
-            || anchor.capacity_digest != update.anchor.capacity_digest
-        {
-            return Err(EnvironmentError::AuthorizationDenied);
-        }
-        if head.sequence == 0
-            || head.this_update_ms >= head.next_update_ms
-            || now.upper_ms >= head.next_update_ms
-        {
-            return Err(EnvironmentError::AuthorizationDenied);
-        }
-        if now.lower_ms < head.this_update_ms {
-            return Err(EnvironmentError::TimePending);
-        }
+        slot.check_head(update.anchor, head, now, pending_candidate.as_ref())?;
+        let time_pending = time_pending || now.lower_ms < head.this_update_ms;
         if update.state_bytes.is_empty()
             || update.state_bytes.len() > self.state_bytes
             || update.head_bytes.is_empty()
@@ -376,24 +533,15 @@ impl NamespaceRegistry {
         {
             return Err(EnvironmentError::Capacity);
         }
-        if let Some(observed) = slot.observed {
-            if head.sequence < observed.sequence {
-                return Err(EnvironmentError::AuthorizationDenied);
-            }
-            if head.sequence == observed.sequence {
-                if head.digest != observed.digest || head.state_digest != observed.state_digest {
-                    slot.seal();
-                    return Err(EnvironmentError::AuthorizationDenied);
-                }
-                return Ok(());
-            }
-            if head.this_update_ms < observed.this_update_ms
-                || head.floors[0] < observed.floors[0]
-                || head.floors[1] < observed.floors[1]
-            {
-                slot.seal();
-                return Err(EnvironmentError::AuthorizationDenied);
-            }
+        if slot
+            .active
+            .is_some_and(|active| active.sequence == head.sequence)
+        {
+            return if time_pending {
+                Err(EnvironmentError::TimePending)
+            } else {
+                Ok(())
+            };
         }
         // Retain all independent denial evidence. Removing it requires the
         // separate proven history-retirement workflow; capacity never evicts it.
@@ -405,6 +553,25 @@ impl NamespaceRegistry {
         if additional > MAX_DENIALS - slot.denials.len() {
             slot.seal();
             return Err(EnvironmentError::Capacity);
+        }
+        // Pending is reported only after all independent binding, rollback,
+        // equivocation and capacity checks; it cannot hide an invalid update.
+        if time_pending {
+            return Err(EnvironmentError::TimePending);
+        }
+        // A retained candidate may finish after a newer complete pair has
+        // already become active. It remains valid evidence for its original
+        // slot, but it must not move the active pair backwards.
+        if pending_candidate.is_some()
+            && slot.active.is_some_and(|active| {
+                active.generation > head.generation
+                    || active.generation == head.generation && active.sequence >= head.sequence
+            })
+        {
+            return Err(EnvironmentError::AuthorizationDenied);
+        }
+        if slot.anchor.is_none() {
+            slot.anchor = Some(update.anchor);
         }
         for denial in update.denials.iter() {
             if !slot.denials.contains(denial) {
@@ -421,12 +588,40 @@ impl NamespaceRegistry {
         slot.states[buffer].extend_from_slice(&update.state_bytes);
         slot.head_bytes.clear();
         slot.head_bytes.extend_from_slice(&update.head_bytes);
-        slot.observed = Some(head);
+        // A pending candidate may complete after a newer independently
+        // authenticated Head has advanced denial evidence. Preserve that
+        // observed high-water mark while installing the candidate's State.
+        if pending_candidate.is_none()
+            || slot
+                .observed
+                .is_none_or(|observed| head.sequence >= observed.sequence)
+        {
+            slot.observed = Some(head);
+            slot.observed_deadline = security_deadline;
+        }
         slot.active = Some(head);
+        slot.active_deadline = security_deadline;
         slot.active_buffer = buffer;
         slot.states[1 - buffer].clear();
         slot.notify(now);
         Ok(())
+    }
+    pub(crate) fn check_binding(
+        &self,
+        binding: NamespaceBinding,
+        now: TrustedTimeSample,
+    ) -> Result<(), EnvironmentError> {
+        if self.closed {
+            return Err(EnvironmentError::Closed);
+        }
+        self.slots
+            .iter()
+            .find(|slot| {
+                slot.anchor
+                    .is_some_and(|anchor| anchor.key == binding.namespace)
+            })
+            .ok_or(EnvironmentError::AuthorizationDenied)?
+            .check(binding, now)
     }
     pub(crate) fn subscribe(
         &mut self,
@@ -517,6 +712,50 @@ impl NamespaceRegistry {
     }
 }
 impl NamespaceSlot {
+    fn check_head(
+        &mut self,
+        supplied: NamespaceAnchor,
+        head: Head,
+        now: TrustedTimeSample,
+        pending_candidate: Option<&PendingNamespaceCandidate>,
+    ) -> Result<(), EnvironmentError> {
+        let anchor = self.anchor.unwrap_or(supplied);
+        if self.terminal
+            || anchor.generation != head.generation
+            || anchor.generation != supplied.generation
+            || anchor.capacity_digest != supplied.capacity_digest
+            || head.sequence == 0
+            || head.this_update_ms >= head.next_update_ms
+            || now.upper_ms >= head.next_update_ms
+        {
+            return Err(EnvironmentError::AuthorizationDenied);
+        }
+        if let Some(candidate) = pending_candidate {
+            if head != candidate.head {
+                return Err(EnvironmentError::AuthorizationDenied);
+            }
+        } else {
+            if let Some(observed) = self.observed {
+                if head.sequence < observed.sequence {
+                    return Err(EnvironmentError::AuthorizationDenied);
+                }
+                if head.sequence == observed.sequence {
+                    if head.digest != observed.digest || head.state_digest != observed.state_digest
+                    {
+                        self.seal();
+                        return Err(EnvironmentError::AuthorizationDenied);
+                    }
+                } else if head.this_update_ms < observed.this_update_ms
+                    || head.floors[0] < observed.floors[0]
+                    || head.floors[1] < observed.floors[1]
+                {
+                    self.seal();
+                    return Err(EnvironmentError::AuthorizationDenied);
+                }
+            }
+        }
+        Ok(())
+    }
     fn seal(&mut self) {
         self.terminal = true;
         if let Some(owner) = &self.verifier {
@@ -539,6 +778,9 @@ impl NamespaceSlot {
         let anchor = self.anchor.ok_or(EnvironmentError::AuthorizationDenied)?;
         let active = self.active.ok_or(EnvironmentError::TimeUnavailable)?;
         if self.terminal
+            || self
+                .active_deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
             || anchor.generation != binding.generation
             || binding.max_staleness_ms == 0
             || binding.max_head_signer_lifetime_ms == 0

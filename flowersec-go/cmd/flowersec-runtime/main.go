@@ -42,19 +42,22 @@ func run(args []string) error {
 	if *configPath == "" {
 		return &ConfigError{Field: "config", Err: errors.New("-config is required")}
 	}
-	config, err := loadConfig(*configPath)
-	if err != nil {
-		return err
-	}
-	authorizer, err := newHTTPAuthorizationProvider(config.Authorization)
-	if err != nil {
-		return err
-	}
-	runtime, err := newRuntimeServer(config, authorizer, log.Default())
+	config, err := loadDeploymentConfig(*configPath)
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if config.Role == "direct-server" || config.Role == "direct-client" {
+		runtime, err := newDirectRuntime(ctx, config)
+		if err != nil {
+			return err
+		}
+		return runtime.Serve(ctx)
+	}
+	runtime, err := newDeploymentRuntime(ctx, config)
+	if err != nil {
+		return err
+	}
 	return runtime.Serve(ctx)
 }

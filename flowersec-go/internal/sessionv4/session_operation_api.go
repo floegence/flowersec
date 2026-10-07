@@ -293,7 +293,21 @@ func (s *EnvironmentSession) ReferenceManagement(ctx context.Context, ref protoc
 	return r.referenceManagement(ctx, ref, cancel, timeoutMS)
 }
 
-func (r *RPCServices) referenceManagement(ctx context.Context, ref protocolv4.OperationReference, cancel bool, timeoutMS uint64) (rpcv4.ManagementResponse, error) {
+func (r *RPCServices) referenceManagement(ctx context.Context, ref protocolv4.OperationReference, cancel bool, timeoutMS uint64) (response rpcv4.ManagementResponse, err error) {
+	diagnosticOperation := diagnosticOperationFromContext(ctx)
+	ownedDiagnostic := diagnosticOperationOwnedFromContext(ctx)
+	if !ownedDiagnostic {
+		diagnosticOperation = nil
+	}
+	if diagnosticOperation == nil && r != nil && r.plan != nil {
+		diagnosticOperation = r.plan.beginApplicationDiagnostic()
+		ownedDiagnostic = true
+	}
+	defer func() {
+		if ownedDiagnostic {
+			finishApplicationDiagnosticError(diagnosticOperation, err)
+		}
+	}()
 	if ctx == nil || timeoutMS == 0 || timeoutMS > 30000 {
 		return rpcv4.ManagementResponse{}, cryptov4.ErrConfiguration
 	}
@@ -327,19 +341,27 @@ func (r *RPCServices) referenceManagement(ctx context.Context, ref protocolv4.Op
 	if err != nil {
 		return rpcv4.ManagementResponse{}, err
 	}
-	return r.ManagementRequest(ctx, cancel, target, deadline, access)
+	ownedDiagnostic = false
+	return r.managementRequestWithDiagnostic(ctx, cancel, target, deadline, access, diagnosticOperation)
 }
 
 func (o *UnaryOperation) RequestCancel(ctx context.Context, timeoutMS uint64) (rpcv4.ManagementResponse, error) {
+	if ctx == nil {
+		return rpcv4.ManagementResponse{}, cryptov4.ErrConfiguration
+	}
 	ref, err := o.Reference()
 	if err != nil {
 		return rpcv4.ManagementResponse{}, err
 	}
 	o.mu.Lock()
-	r := o.services
+	r, operation := o.services, o.diagnosticOperation
+	retained := r != nil && retainApplicationDiagnostic(operation)
 	o.mu.Unlock()
 	if r == nil {
 		return rpcv4.ManagementResponse{}, cryptov4.ErrClosed
 	}
-	return r.referenceManagement(ctx, ref, true, timeoutMS)
+	if !retained {
+		operation = nil
+	}
+	return r.referenceManagement(withOwnedDiagnosticOperation(ctx, operation), ref, true, timeoutMS)
 }

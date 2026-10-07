@@ -37,10 +37,10 @@ func publicResumeVector(t *testing.T, id string) []byte {
 	return nil
 }
 
-func TestV4ResumeCodecCapturesCanonicalValues(t *testing.T) {
+func TestResumeCodecCapturesCanonicalValues(t *testing.T) {
 	f := newPublicReferenceFixture(t)
-	charge, err := V4ResumeCodecCharge()
-	codec, err := NewV4ResumeCodec(f.reserve(t, charge, err))
+	charge, err := ResumeCodecCharge()
+	codec, err := NewResumeCodec(f.reserve(t, charge, err))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestV4ResumeCodecCapturesCanonicalValues(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		protection uint8
-	}{{"resume_signed_token_fields", V4ResumeSignedToken}, {"resume_mac_token_fields", V4ResumeMACToken}} {
+	}{{"resume_signed_token_fields", ResumeSignedToken}, {"resume_mac_token_fields", ResumeMACToken}} {
 		wire := publicResumeVector(t, tc.name)
 		original := append([]byte(nil), wire...)
 		token, err := codec.ImportToken(wire, tc.protection)
@@ -70,9 +70,9 @@ func TestV4ResumeCodecCapturesCanonicalValues(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		status uint8
-	}{{"resume_result_accepted", V4ResumeAccepted}, {"resume_result_rejected", V4ResumeRejected}, {"resume_result_unknown", V4ResumeUnknown}} {
+	}{{"resume_result_accepted", ResumeAccepted}, {"resume_result_rejected", ResumeRejected}, {"resume_result_unknown", ResumeUnknown}} {
 		result, err := codec.DecodeResult(publicResumeVector(t, tc.name))
-		if err != nil || result.Status != tc.status || result.HasProgress != (tc.status == V4ResumeAccepted) {
+		if err != nil || result.Status != tc.status || result.HasProgress != (tc.status == ResumeAccepted) {
 			t.Fatal(result, err)
 		}
 	}
@@ -85,18 +85,18 @@ func TestV4ResumeCodecCapturesCanonicalValues(t *testing.T) {
 	}
 }
 
-func TestV4PrepareResumeProjectsOriginalOperation(t *testing.T) {
+func TestPrepareResumeProjectsOriginalOperation(t *testing.T) {
 	ctx := context.Background()
 	owner, operation := &sessionv4.StreamOwnership{}, &sessionv4.UnaryOperation{}
-	method := V4ResumeMethod{Kind: "example/resume", Contract: [32]byte{1}, DefaultResponseLimitBytes: 1024}
+	method := ResumeMethod{Kind: "example/resume", Contract: [32]byte{1}, DefaultResponseLimitBytes: 1024}
 	codec, _ := protocolv4.NewResumeCodec()
 	token, err := codec.DecodeToken(publicResumeVector(t, "resume_signed_token_fields"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	options := V4OperationOptions{DeadlineAtMS: 1<<53 + 33, AdmissionMode: 1, ExplicitAdmissionMode: true}
+	options := OperationOptions{DeadlineAtMS: 1<<53 + 33, AdmissionMode: 1, ExplicitAdmissionMode: true}
 	calls := 0
-	session := &V4Session{prepareResume: func(gotCtx context.Context, gotMethod sessionv4.ResumeMethodDefinition, gotTarget *sessionv4.StreamOwnership, gotToken protocolv4.ResumeToken, gotOptions rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error) {
+	session := &Session{prepareResume: func(gotCtx context.Context, gotMethod sessionv4.ResumeMethodDefinition, gotTarget *sessionv4.StreamOwnership, gotToken protocolv4.ResumeToken, gotOptions rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error) {
 		calls++
 		if gotCtx != ctx || gotMethod != method || gotTarget != owner || gotToken != token || gotOptions.DeadlineAtMS != options.DeadlineAtMS || gotOptions.AdmissionMode != 1 {
 			t.Error("resume substituted original arguments")

@@ -1,6 +1,7 @@
 package ledgerv4
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
@@ -358,15 +360,31 @@ func TestSQLiteCloseRetainsActualCallAndProviderTail(t *testing.T) {
 // committed WAL before changing the durable authority incarnation.
 func TestSQLiteCrashCommittedWAL(t *testing.T) {
 	const variable = "FLOWERSEC_SQLITE_CRASH_PATH"
+	record := admissionRecord{
+		fields:    protocolv4.AdmissionFields{Tenant: "tenant", Source: "live_authority", Issuer: [16]byte{1}, Lease: [16]byte{2}, ActivationEnd: 110000, SessionEnd: 120000},
+		owner:     AdmissionOwner{Acceptor: [16]byte{1}, Invocation: [16]byte{2}, Carrier: [16]byte{3}, Generation: math.MaxUint64},
+		authority: "admission.test", storeID: [32]byte{3}, storeGeneration: 1, fence: 1, deadline: 110000, reservedAt: 100000,
+	}
+	var key [admissionKeyBytes]byte
+	keyBytes, err := record.key(key[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var projection [4096]byte
+	projectionBytes, err := record.encode(projection[:], admissionAdmitted, 100001, [32]byte{4})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if path := os.Getenv(variable); path != "" {
 		f := newSQLiteFixture(t, path)
 		s := f.create()
+		if err := s.exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+			t.Fatal(err)
+		}
 		if err := s.exec("BEGIN IMMEDIATE"); err != nil {
 			t.Fatal(err)
 		}
-		key := make([]byte, 34)
-		key[0] = 1
-		if err := s.exec("INSERT INTO admission VALUES (?1,?2,?3,1,1,?4)", named(1, key), named(2, sqliteUint(math.MaxUint64)), named(3, sqliteUint(1)), named(4, []byte("original committed projection"))); err != nil {
+		if err := s.exec("INSERT INTO admission VALUES (?1,?2,?3,1,1,?4)", named(1, key[:keyBytes]), named(2, sqliteUint(2)), named(3, sqliteUint(1)), named(4, projection[:projectionBytes])); err != nil {
 			t.Fatal(err)
 		}
 		if err := s.exec("UPDATE manifest SET admission_rows=1"); err != nil {
@@ -387,21 +405,25 @@ func TestSQLiteCrashCommittedWAL(t *testing.T) {
 	if err != nil || info.Size() <= 32 {
 		t.Fatal("helper did not leave committed WAL", err)
 	}
+	if count := sqliteMainOnlyScalar(t, f.backing.path, "SELECT count(*) FROM admission"); count != int64(0) {
+		t.Fatal("crash fixture record was already checkpointed into main", count)
+	}
 	s, err := f.open(false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.querier.QueryContext(context.Background(), "SELECT version,projection FROM admission", nil)
+	rows, err := s.querier.QueryContext(context.Background(), "SELECT version,projection,lease,fence,state,admission_count FROM admission", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	var values [2]driver.Value
+	var values [6]driver.Value
 	if err := rows.Next(values[:]); err != nil {
 		t.Fatal(err)
 	}
 	version, err := readSQLiteUint(values[0])
-	if err != nil || version != math.MaxUint64 || string(values[1].([]byte)) != "original committed projection" || s.epoch != 2 {
+	fence, fenceErr := readSQLiteUint(values[3])
+	if err != nil || fenceErr != nil || version != 2 || fence != 1 || !bytes.Equal(values[1].([]byte), projection[:projectionBytes]) || !bytes.Equal(values[2].([]byte), key[:keyBytes]) || values[4] != int64(admissionAdmitted) || values[5] != int64(1) || s.epoch != 2 {
 		t.Fatal("lost committed crash history", values, err)
 	}
 }

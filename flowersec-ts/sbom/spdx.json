@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-ts",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/ae824e5f729367026e2c0ce01e0b0c91b5ee3e35a9a28c8cb307d5943bda14ef",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/1232618a035be3df441e87ab7a37162a01a4f844e6ce13aef4086d6b1e3dc6ed",
   "creationInfo": {
     "created": "2026-09-17T15:04:20Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: ae824e5f729367026e2c0ce01e0b0c91b5ee3e35a9a28c8cb307d5943bda14ef",
+      "comment": "Flowersec source inventory SHA-256: 1232618a035be3df441e87ab7a37162a01a4f844e6ce13aef4086d6b1e3dc6ed",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -506,6 +506,57 @@
       ]
     },
     {
+      "name": "tldts",
+      "SPDXID": "SPDXRef-Package-875e15702d46b5d2fe2b",
+      "versionInfo": "7.4.16",
+      "downloadLocation": "https://registry.npmjs.org/tldts/-/tldts-7.4.16.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/tldts@7.4.16"
+        }
+      ]
+    },
+    {
+      "name": "tldts-core",
+      "SPDXID": "SPDXRef-Package-aad33fdec6578e1a5526",
+      "versionInfo": "7.4.16",
+      "downloadLocation": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.4.16.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/tldts-core@7.4.16"
+        }
+      ]
+    },
+    {
+      "name": "tough-cookie",
+      "SPDXID": "SPDXRef-Package-0dd4ca4a9b0b8d162ed4",
+      "versionInfo": "6.0.2",
+      "downloadLocation": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.2.tgz",
+      "filesAnalyzed": false,
+      "licenseConcluded": "BSD-3-Clause",
+      "licenseDeclared": "BSD-3-Clause",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:npm/tough-cookie@6.0.2"
+        }
+      ]
+    },
+    {
       "name": "tr46",
       "SPDXID": "SPDXRef-Package-5b9d78698ec0a5c8f86f",
       "versionInfo": "6.0.0",
@@ -716,6 +767,11 @@
     {
       "spdxElementId": "SPDXRef-Package-d50a2c628641537b85f9",
       "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-0dd4ca4a9b0b8d162ed4"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-d50a2c628641537b85f9",
+      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-5b9d78698ec0a5c8f86f"
     },
     {
@@ -772,6 +828,16 @@
       "spdxElementId": "SPDXRef-Package-4c0c0c856766a10b2911",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-cc9b926cbc834a4fc970"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-875e15702d46b5d2fe2b",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-aad33fdec6578e1a5526"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-0dd4ca4a9b0b8d162ed4",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-875e15702d46b5d2fe2b"
     },
     {
       "spdxElementId": "SPDXRef-Package-5b9d78698ec0a5c8f86f",

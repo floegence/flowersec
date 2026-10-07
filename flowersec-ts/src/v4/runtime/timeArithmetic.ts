@@ -2,7 +2,7 @@
 // not authenticate a clock source or establish the admitted oscillator bound.
 export type TimeFailure = "time_rate" | "time_overflow" | "time_interval" | "time_width" | "time_round_trip" |
   "time_anchor_age" | "time_expired" | "time_deadline_unrepresentable" | "time_unavailable" |
-  "time_continuity" | "time_contradiction" | "time_pending" | "future_timestamp" | "time_cancelled" | "time_capacity" | "time_owner";
+  "time_continuity" | "time_contradiction" | "time_pending" | "time_not_proven" | "future_timestamp" | "time_cancelled" | "time_capacity" | "time_owner";
 export class TimeError extends Error {
   readonly code: TimeFailure;
   constructor(code: TimeFailure) { super(code); this.name = "TimeError"; this.code = code; }

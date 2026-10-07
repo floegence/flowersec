@@ -11,8 +11,7 @@ struct PublicAPISurfaceTests {
       "attempt": .integer(1),
     ])
     let stream = PublicContractByteStream(kind: "health")
-    let rpc = PublicContractRPCPeer()
-    let session = PublicContractSession(rpc: rpc, stream: stream)
+    let session = PublicContractSession(stream: stream)
 
     let opened = try await session.openStream(kind: "health", metadata: metadata)
     #expect(opened.kind == "health")
@@ -26,7 +25,6 @@ struct PublicAPISurfaceTests {
     try await stream.close()
     try await session.close()
     #expect(SessionError.operationFailed.rawValue == "operation_failed")
-    #expect(RPCError(code: 404, message: "not found").code == 404)
   }
 }
 
@@ -47,46 +45,7 @@ private actor PublicContractByteStream: ByteStream {
   func terminalError() async -> SessionError? { nil }
 }
 
-private actor PublicContractRPCPeer: RPCPeer {
-  func call<Request: Encodable & Sendable, Response: Decodable & Sendable>(
-    _ typeID: UInt32,
-    _ request: Request,
-    as responseType: Response.Type,
-    timeout: Duration
-  ) async throws -> Response {
-    _ = typeID
-    _ = request
-    _ = responseType
-    _ = timeout
-    throw SessionError.operationFailed
-  }
-
-  func notify<Payload: Encodable & Sendable>(
-    _ typeID: UInt32,
-    _ payload: Payload
-  ) async throws {
-    _ = typeID
-    _ = payload
-  }
-
-  func subscribeNotification<Payload: Decodable & Sendable>(
-    _ typeID: UInt32,
-    as payloadType: Payload.Type,
-    handler: @escaping @Sendable (Result<Payload, RPCNotificationError>) async throws -> Void
-  ) async throws -> any RPCNotificationSubscription {
-    _ = typeID
-    _ = payloadType
-    _ = handler
-    return PublicContractNotificationSubscription()
-  }
-}
-
-private struct PublicContractNotificationSubscription: RPCNotificationSubscription {
-  func cancel() async {}
-}
-
 private struct PublicContractSession: Session {
-  let rpc: any RPCPeer
   let stream: any ByteStream
 
   func openStream(

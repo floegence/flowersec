@@ -1,87 +1,41 @@
-# Flowersec Private Loopback Profile v1
+# Local browser bridge
 
-`flowersec-private-loopback/1` is a product-private transport profile for an
-application-authenticated browser bridge on the same machine. It is not a TLS
-mode, capability, deployment profile, or wire-version extension of
-`flowersec/3`.
+The current transport supports explicitly signed `local_loopback` access for
+an application-authenticated browser bridge on the same machine. It uses the
+same Flowersec session authentication, single-use admission, encryption,
+streams and service protocol as other access classes.
 
-## Isolation contract
+## Admission boundary
 
-The public `flowersec/3` artifact, TLS policies (`ca` and `pin`), capability
-registry, canonical bytes, hashes, and admission protocol remain unchanged.
-Ordinary Go, TypeScript, Rust, Swift, Node, Provider, tunnel, and public browser
-entrypoints reject a private-loopback envelope.
+The signed route selects a WebSocket endpoint at `/flowersec/v4/local` with
+subprotocol `flowersec.local.v4`. The endpoint uses a canonical numeric
+loopback address and explicit port. The Origin must be the exact corresponding
+HTTP origin. Host, remote address, route and Origin checks precede upgrade,
+and the application must authorize the request before admission.
 
-Only the dedicated Go server/control-plane API and TypeScript browser API
-accept this profile. Rust explicitly verifies that the outer profile is
-rejected; Swift and Node expose no private-loopback API.
+The application owns bridge tokens and user authentication. Flowersec neither
+issues that application token nor treats a same-origin request as authenticated
+by itself. Public network listeners must reject local-loopback authority.
+Host-instance binding is available only when the configured host can provide
+its actual guarantee; an ordinary application-origin deployment does not
+implicitly claim it.
 
-## Envelope
+## Connection ownership
 
-The envelope is canonical JCS JSON with exactly these fields:
+Independent namespace trust, original identity, activation, durable spend and
+admission remain required. A loopback route cannot supply its own trust root
+or bypass the signed candidate and lifetime limits. The connection reports
+consumer TLS verification as not applicable; a requirement for consumer TLS
+verification rejects this route before acquisition. It never claims that
+plaintext WebSocket completed TLS.
 
-```json
-{
-  "artifact_b64u": "<base64url flowersec/3 artifact>",
-  "endpoint": "ws://127.0.0.1:<port>/flowersec/v3/direct",
-  "profile": "flowersec-private-loopback/1",
-  "v": 1
-}
-```
+Closing, Drain, session replacement, cancellation and cleanup retain the same
+bounded ownership semantics. Applications register their current stream and
+service handlers once through the Session or Serve plan. The bridge does not
+introduce an alternate application protocol or a second retry scheduler.
 
-The nested artifact is an ordinary `flowersec/3` direct artifact with exactly
-one CA-mode WebSocket candidate. Its candidate ID is `private-loopback`, its
-path is `/flowersec/v3/direct`, and its `wss://` authority must match the outer
-`ws://` endpoint exactly. The private connector maps only that scheme; it does
-not bypass artifact parsing, candidate hashing, capability checks, admission,
-credential spending, session encryption, or authorization.
-
-## Loopback admission
-
-The server accepts a request only when all of these conditions hold:
-
-- the method is `GET`;
-- the endpoint is canonical `ws://` with an explicit unprivileged port in the inclusive range `1024..65535`;
-- Host and remote address are canonical numeric loopback addresses;
-- the path is exactly `/flowersec/v3/direct` with no query or fragment;
-- Origin is the exact same `http://` origin as Host;
-- the application authorization callback accepts the request before WebSocket
-  upgrade.
-
-The application callback is the bridge-token boundary. Flowersec does not
-issue, store, log, or infer that token. The profile does not support remote
-addresses, hostnames, tunnels, QUIC, WebTransport, or WebTransport fallback.
-
-## Public API
-
-Go issues the envelope with
-`controlplane.Issuer.IssuePrivateLoopbackDirect(...)` and serves it with
-`flowersec.Acceptor.PrivateLoopbackHandler(...)`. The handler is separate from
-the TLS-only `flowersec.Acceptor.Handler()` boundary.
-
-The TypeScript browser entrypoint exposes
-`parsePrivateLoopbackArtifactV1(...)`,
-`createPrivateLoopbackArtifactLeaseV1(...)`,
-`connectPrivateLoopbackV1(...)`, and
-`createPrivateLoopbackConnectionControllerV1(...)`. Each connection call
-requires the exact numeric-loopback HTTP origin. The ordinary `connect(...)`
-and `createConnectionController(...)` entrypoints continue to accept only
-standard `flowersec/3` artifacts.
-
-The dedicated controller keeps the existing attempt budget, cancellation,
-timeout, backoff, lease-spend, replacement-session, and error projection
-semantics. It changes only the one exact WebSocket URL used by the dedicated
-private profile.
-
-## Contract evidence
-
-Shared Go and TypeScript vectors live in
-`testdata/private_loopback_v1/profile_vectors.json`. They bind canonical
-envelope bytes, the nested standard v3 artifact, and rejected endpoint forms.
-Go produces the positive vector, TypeScript consumes it, and Rust proves that
-the outer profile is rejected while the decoded nested artifact remains a
-valid standard v3 artifact.
-
-The public deployment capability registry intentionally has no
-private-loopback entry. This prevents an application-private, two-language
-adapter from being mistaken for a cross-language public transport capability.
+This access class does not authorize remote addresses, DNS hosts, tunnels,
+QUIC or WebTransport. Runtime availability is determined by the current SDK's
+configured provider and tested deployment profile. See
+[TRANSPORT_V4_BINDING.md](TRANSPORT_V4_BINDING.md) and the language-specific
+current transport guides.

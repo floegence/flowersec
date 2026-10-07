@@ -25,6 +25,7 @@ const (
 	ErrContinuity      Error = "time_continuity"
 	ErrContradiction   Error = "time_contradiction"
 	ErrPending         Error = "time_pending"
+	ErrNotProven       Error = "time_not_proven"
 	ErrFutureTimestamp Error = "future_timestamp"
 	ErrCancelled       Error = "time_cancelled"
 	ErrCapacity        Error = "time_capacity"

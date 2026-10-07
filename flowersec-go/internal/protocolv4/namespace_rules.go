@@ -268,15 +268,24 @@ func (r *NamespaceRules) BindHead(head *SignedMap, delegation []byte, generation
 	return result, nil
 }
 
-func (h *NamespaceHead) CheckTime(now timev4.Interval) error {
+func (h *NamespaceHead) CheckTimePending(now timev4.Interval) (uint64, error) {
 	if h != nil && h.authorityStateOnly {
-		return CBORFailure("revocation_publication_snapshot")
+		return 0, CBORFailure("revocation_publication_snapshot")
 	}
 	if h == nil || !now.ValidBefore(min(h.next, h.signerEnd, h.trustEnd)) {
-		return timev4.ErrExpired
+		return 0, timev4.ErrExpired
 	}
-	if err := now.LowerBound(max(h.issued, h.delegationIssued, h.trustIssued), true); err != nil {
+	var pending uint64
+	check := func(bound uint64) error {
+		err := now.LowerBound(bound, true)
+		if err == timev4.ErrPending {
+			pending = max(pending, bound)
+			return nil
+		}
 		return err
+	}
+	if err := check(max(h.issued, h.delegationIssued, h.trustIssued)); err != nil {
+		return 0, err
 	}
 	for class, floor := range h.floors {
 		if floor == 0 {
@@ -284,11 +293,22 @@ func (h *NamespaceHead) CheckTime(now timev4.Interval) error {
 		}
 		mature, err := h.rules.mature(class, floor-1)
 		if err != nil {
-			return err
+			return 0, err
 		}
-		if err := now.LowerBound(mature, true); err != nil {
-			return err
+		if err = check(mature); err != nil {
+			return 0, err
 		}
+	}
+	return pending, nil
+}
+
+func (h *NamespaceHead) CheckTime(now timev4.Interval) error {
+	pending, err := h.CheckTimePending(now)
+	if err != nil {
+		return err
+	}
+	if pending != 0 {
+		return timev4.ErrPending
 	}
 	return nil
 }

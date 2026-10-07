@@ -31,10 +31,12 @@ import (
 // accepts only the exact signed leaf-DER policy. No source or credential is
 // available to the factory, and preparation sends no Flowersec bytes.
 type WebTransportFactoryConfig struct {
+	DialScope NativeDialScope
 	// Role is the logical endpoint. Relay selects local physical role 2.
 	// Tunnel routes require an independent deployment binding.
 	Role          protocolv4.Direction
 	Relay         bool
+	RelayAccounts []resourcev4.Account
 	Deployment    protocolv4.RelayDeploymentBinding
 	Root          *resourcev4.Root
 	Owner         resourcev4.OwnerKey
@@ -75,6 +77,9 @@ const webTransportFactoryRouteBytes = 16384
 const webTransportFactoryRouteNodes = 1024
 
 func WebTransportCarrierFactoryCharge(c WebTransportFactoryConfig) (resourcev4.Vector, error) {
+	if len(c.RelayAccounts) > resourcev4.MaxAccountsPerCharge || !c.Relay && len(c.RelayAccounts) != 0 {
+		return resourcev4.Vector{}, resourcev4.ErrConfiguration
+	}
 	if c.Root == nil || c.Clock == nil || len(c.Route) == 0 || len(c.Route) > webTransportFactoryRouteBytes ||
 		!c.RemoteAddress.IsValid() || c.RemoteAddress.Port() == 0 || c.RemoteAddress.Addr().Zone() != "" ||
 		c.Connections == 0 || c.Connections > 1024 || c.RuntimeBytes == 0 || len(c.Origin) > 1024 {
@@ -88,7 +93,7 @@ func WebTransportCarrierFactoryCharge(c WebTransportFactoryConfig) (resourcev4.V
 		return resourcev4.Vector{}, err
 	}
 	perSlot := uint64(unsafe.Sizeof(webTransportFactorySlot{})) + uint64(unsafe.Sizeof(factoryWebTransport{})) + uint64(unsafe.Sizeof(factoryPreparation{})) + native.EnvironmentBorrowBytes() + tlspolicy.BackingBytes() + 4096
-	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(WebTransportCarrierFactory{})) + decoder + 4096 + uint64(c.Connections)*perSlot,
+	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(WebTransportCarrierFactory{})) + uint64(len(c.RelayAccounts))*uint64(unsafe.Sizeof(resourcev4.Account{})) + decoder + 4096 + uint64(c.Connections)*perSlot,
 		resourcev4.Items: 3*uint64(c.Connections) + 1, resourcev4.WorkSlots: uint64(c.Connections),
 		resourcev4.Tasks: uint64(c.Connections), resourcev4.Timers: uint64(c.Connections)}).
 		Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
@@ -112,6 +117,7 @@ func NewWebTransportCarrierFactory(c WebTransportFactoryConfig, reservation, env
 	if err != nil {
 		return nil, err
 	}
+	c.RelayAccounts = append([]resourcev4.Account(nil), c.RelayAccounts...)
 	factory := &WebTransportCarrierFactory{c: c, reservation: owned, environment: environment, done: make(chan struct{})}
 	defer func() {
 		if err != nil {
@@ -208,8 +214,11 @@ func (factory *WebTransportCarrierFactory) prepareCarrier(ctx context.Context, r
 	if err = request.Config.Reservation.CheckSameEnvironment(factory.reservation); err != nil {
 		return nil, err
 	}
-	accounts := [2]resourcev4.Account{request.Scope.Tenant, request.Scope.Session}
-	if err = request.Config.Reservation.CheckAllocationScope(factory.c.Root, factory.c.Owner, accounts[:]); err != nil {
+	accounts := []resourcev4.Account{request.Scope.Tenant, request.Scope.Session}
+	if factory.c.Relay && len(factory.c.RelayAccounts) > 0 {
+		accounts = factory.c.RelayAccounts
+	}
+	if err = request.Config.Reservation.CheckAllocationScope(factory.c.Root, factory.c.Owner, accounts); err != nil {
 		return nil, err
 	}
 	if err = request.Config.Environment.CheckSameEnvironment(factory.environment); err != nil {
@@ -250,7 +259,7 @@ func (factory *WebTransportCarrierFactory) prepareCarrier(ctx context.Context, r
 			factory.release(slot, serial)
 		}
 	}()
-	prepareCtx, cancelCause := context.WithCancelCause(ctx)
+	prepareCtx, cancelCause := newCarrierPreparationContext(ctx)
 	cancel := func() { cancelCause(context.Canceled) }
 	defer cancel()
 	factory.mu.Lock()
@@ -264,7 +273,7 @@ func (factory *WebTransportCarrierFactory) prepareCarrier(ctx context.Context, r
 	// actual dial/open return. The task is joined before this slot can retire.
 	stop, stopped := make(chan struct{}), make(chan struct{})
 	deadline := request.Config.Deadline
-	go watchQUICPreparation(prepareCtx, cancelCause, deadline, stop, stopped)
+	go watchCarrierPreparation(ctx, prepareCtx, cancelCause, deadline, stop, stopped)
 	watching := true
 	finishWatch := func() {
 		if watching {
@@ -286,7 +295,7 @@ func (factory *WebTransportCarrierFactory) prepareCarrier(ctx context.Context, r
 	if floor != nil {
 		reservation, err = floor.Checkout()
 	} else {
-		reservation, err = factory.c.Root.Reserve(owner, factory.providerCharge, accounts[:]...)
+		reservation, err = factory.c.Root.Reserve(owner, factory.providerCharge, accounts...)
 	}
 	if err != nil {
 		return nil, err
@@ -319,19 +328,22 @@ func (factory *WebTransportCarrierFactory) prepareCarrier(ctx context.Context, r
 		provider.verification, err = policy.Verify(state, factory.host, factory.c.Roots, sample.Interval)
 		return err
 	}
-	provider.connection, err = webtransport.DialOwned(prepareCtx, factory.c.RemoteAddress, factory.endpoint, factory.c.Origin, tlsConfig, factory.c.Options,
-		request.Budget.PreauthBytes, request.Budget.WorkUnits, reservation, request.Config.Environment, providerEnvironment)
-	if err != nil {
-		return nil, err
-	}
 	defer func() {
-		if !transferred {
+		if !transferred && provider.connection != nil {
 			_ = provider.Close()
 			_ = provider.WaitCleanup(context.Background())
 			// Slot ownership still belongs to this Prepare call on failure.
 			_ = provider.retireNative()
 		}
 	}()
+	err = RunNativeDial(prepareCtx, factory.c.DialScope, func() error {
+		provider.connection, err = webtransport.DialOwned(prepareCtx, factory.c.RemoteAddress, factory.endpoint, factory.c.Origin, tlsConfig, factory.c.Options,
+			request.Budget.PreauthBytes, request.Budget.WorkUnits, reservation, request.Config.Environment, providerEnvironment)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
 	if err = provider.CheckEnvironment(request.Config.Environment); err != nil {
 		return nil, err
 	}

@@ -9766,7 +9766,8 @@
       "required": [
         0,
         1
-      ]
+      ],
+      "max_encoded_bytes": 70
     },
     "HOP_AUTH_RELAY_PROOF": {
       "fields": {
@@ -9784,7 +9785,8 @@
       "required": [
         0,
         1
-      ]
+      ],
+      "max_encoded_bytes": 70
     },
     "terminal_tuple": {
       "fields": {
@@ -10393,6 +10395,27 @@
           "type": "uint32",
           "max": 300000,
           "optional": true
+        },
+        "7": {
+          "name": "credential_context",
+          "type": "bytes",
+          "min_bytes": 43,
+          "max_bytes": 43,
+          "optional": true
+        },
+        "8": {
+          "name": "credentials",
+          "type": "bytes",
+          "min_bytes": 4,
+          "max_bytes": 11,
+          "optional": true
+        },
+        "9": {
+          "name": "request_origin",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 4096,
+          "optional": true
         }
       },
       "required": [
@@ -10487,6 +10510,27 @@
             "type": "map",
             "schema_ref": "ProxyField"
           }
+        },
+        "4": {
+          "name": "credential_context",
+          "type": "bytes",
+          "min_bytes": 43,
+          "max_bytes": 43,
+          "optional": true
+        },
+        "5": {
+          "name": "credentials",
+          "type": "bytes",
+          "min_bytes": 4,
+          "max_bytes": 11,
+          "optional": true
+        },
+        "6": {
+          "name": "request_origin",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 4096,
+          "optional": true
         }
       },
       "required": [
@@ -10539,6 +10583,110 @@
       "max_encoded_bytes": 1048576,
       "deferred_constraints": [
         "Application Stream metadata only. Ordered field values retain HTTP octets; ASCII token, original header facts, target/policy, body/trailer integrity and resource ownership are checked by the proxy application. No authentication or authority is established by decoding."
+      ]
+    },
+    "ProxyCredentialControlRequest": {
+      "fields": {
+        "0": {
+          "name": "version",
+          "type": "uint32",
+          "const": 2
+        },
+        "1": {
+          "name": "operation_id",
+          "type": "bytes",
+          "min_bytes": 32,
+          "max_bytes": 32
+        },
+        "2": {
+          "name": "action",
+          "type": "uint8",
+          "min": 1,
+          "max": 3
+        },
+        "3": {
+          "name": "surface_owner",
+          "type": "bytes",
+          "min_bytes": 32,
+          "max_bytes": 32
+        },
+        "4": {
+          "name": "credential_context",
+          "type": "bytes",
+          "min_bytes": 43,
+          "max_bytes": 43,
+          "optional": true
+        },
+        "5": {
+          "name": "content_origin",
+          "type": "bytes",
+          "min_bytes": 1,
+          "max_bytes": 4096,
+          "optional": true
+        }
+      },
+      "required": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "max_encoded_bytes": 8192,
+      "deferred_constraints": [
+        "Private proxy application control, not a transport frame. Action 1 binds, 2 clears, 3 disposes. operation_id and surface_owner are lowercase hexadecimal encodings of 16 bytes. Bind requires content_origin and forbids credential_context; Clear/Dispose require credential_context and forbid content_origin. Scope is resolved from trusted host policy and the original authenticated Stream, never granted from caller claims. reuse_after_clear is a local immutable intent and is never sent."
+      ]
+    },
+    "ProxyCredentialControlResponse": {
+      "fields": {
+        "0": {
+          "name": "version",
+          "type": "uint32",
+          "const": 2
+        },
+        "1": {
+          "name": "operation_id",
+          "type": "bytes",
+          "min_bytes": 32,
+          "max_bytes": 32
+        },
+        "2": {
+          "name": "action",
+          "type": "uint8",
+          "min": 1,
+          "max": 3
+        },
+        "3": {
+          "name": "ok",
+          "type": "bool"
+        },
+        "4": {
+          "name": "credential_context",
+          "type": "bytes",
+          "min_bytes": 43,
+          "max_bytes": 43,
+          "optional": true
+        },
+        "5": {
+          "name": "server_invalidated",
+          "type": "bool",
+          "optional": true
+        },
+        "6": {
+          "name": "error",
+          "type": "map",
+          "schema_ref": "ProxyError",
+          "optional": true
+        }
+      },
+      "required": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "max_encoded_bytes": 8192,
+      "deferred_constraints": [
+        "Matches the original operation_id and action. Successful Bind returns credential_context only; successful Clear returns a new credential_context and server_invalidated=true; successful Dispose returns server_invalidated=true without a new context. An unsuccessful response carries error and no credential_context. For Clear/Dispose it may independently carry server_invalidated=true when the original old-context invalidation was already confirmed; a reuse error never erases that fact. Absent invalidation confirmation does not establish clearing. Context is exactly 32 random bytes encoded as unpadded base64url and is not bearer authority."
       ]
     },
     "ProxyBodyEnd": {
@@ -19781,7 +19929,8 @@
         "enum_values": {
           "role": [
             0,
-            1
+            1,
+            2
           ]
         }
       },
@@ -40102,6 +40251,67 @@
                 "$bytes": "6f6b"
               }
             }
+          ]
+        }
+      },
+      {
+        "id": "credential_issuer_authorization_relay_role",
+        "schema": "CredentialIssuerAuthorization",
+        "values": {
+          "authorization_id": {
+            "$bytes": "01010101010101010101010101010101"
+          },
+          "tenant_id": "tenant-1",
+          "revocation_authority_id": "revocation-1",
+          "namespace_capacity_digest": {
+            "$domain_output": {
+              "name": "namespace_capacity_digest",
+              "inputs": {
+                "capacity": {
+                  "$encoded_map": {
+                    "schema": "NamespaceCapacity",
+                    "values": {
+                      "tenant_id": "tenant-1",
+                      "revocation_authority_id": "revocation-1",
+                      "capacity_schema_revision": "4",
+                      "max_state_encoded_bytes": 1048576,
+                      "max_revoked_issuers": 64,
+                      "max_revoked_certificates": 1024,
+                      "max_revoked_leases": 1024,
+                      "max_cohort_policy_segments": 16,
+                      "max_head_encoded_bytes": 795,
+                      "max_trust_proof_bytes": 262144,
+                      "max_trust_proof_entries": 256,
+                      "cohort_time_origin_ms": 1000,
+                      "cohort_duration_ms": 100,
+                      "max_certificate_impact_ms": 1000,
+                      "max_connection_impact_ms": 10000
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "authority_generation": 1,
+          "credential_kind": 0,
+          "issuer_key_id": {
+            "$bytes": "12121212121212121212121212121212"
+          },
+          "issuer_public_key": {
+            "$bytes": "2121212121212121212121212121212121212121212121212121212121212121"
+          },
+          "audience": "service-1",
+          "signing_not_before_ms": 1000,
+          "signing_not_after_ms": 2000,
+          "first_cohort": 0,
+          "last_cohort": 100,
+          "max_credential_not_after_ms": 5000,
+          "subject_id": "endpoint-1",
+          "crypto_profile_id": "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+          "role": 2,
+          "max_affected_cohorts": [
+            100,
+            null
           ]
         }
       }

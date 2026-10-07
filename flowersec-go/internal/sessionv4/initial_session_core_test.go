@@ -15,12 +15,13 @@ import (
 )
 
 type initialCoreFixture struct {
-	root        *resourcev4.Root
-	plan        *SessionCorePlan
-	environment resourcev4.Reference
-	next        byte
-	scope       SessionResourceScope
-	limit       resourcev4.Vector
+	root            *resourcev4.Root
+	plan            *SessionCorePlan
+	environment     resourcev4.Reference
+	next            byte
+	scope           SessionResourceScope
+	limit           resourcev4.Vector
+	deliveryCleanup func()
 }
 
 func (f *initialCoreFixture) reserve(t *testing.T, charge resourcev4.Vector) resourcev4.Reference {
@@ -312,5 +313,36 @@ func TestSessionSharedCarrierKeepsWholeFramesAcrossShortWrites(t *testing.T) {
 	}
 	if n, err := carrier.Write([]byte("late")); n != 0 || err != io.ErrClosedPipe {
 		t.Fatal(n, err)
+	}
+}
+
+// installCoreDeliveryAuthority supplies independently signed revocation owners
+// for result tests layered on the isolated native/crypto transport fixture.
+func installCoreDeliveryAuthority(t *testing.T, fixture *initialCoreFixture, handshake *cryptov4.HandshakeConfig, initial *InitialConfig) {
+	t.Helper()
+	trust := newSessionAdmissionTrustProfile(t, fixture.root, fixture.environment, resourcev4.OwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Instance: [16]byte{83}, Backing: [16]byte{1}, Kind: 83}, "live_authority", handshake.Session.Contract.Limits().ApplicationProfile)
+	authorization, err := protocolv4.NewEndpointAuthorization(trust.subscriptions[handshake.Role], trust.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { authorization.Close(nil) })
+	handshake.Authorization = authorization
+	initial.Authorization = authorization
+	fixture.deliveryCleanup = func() {
+		authorization.Close(nil)
+		for _, subscriptions := range trust.subscriptions {
+			subscriptions.Close()
+		}
+		trust.namespace.Close(nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := trust.namespace.WaitCleanup(ctx); err != nil {
+			t.Error(err)
+			return
+		}
+		fixture.root.Close()
+		if err := trust.namespace.DestroyEnvironment(); err != nil {
+			t.Error(err)
+		}
 	}
 }

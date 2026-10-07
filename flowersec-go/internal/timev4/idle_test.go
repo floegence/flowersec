@@ -93,3 +93,27 @@ func TestIdleConservativeRateAndQuantization(t *testing.T) {
 		t.Fatal("raw monotonic difference used without conservative bound", err)
 	}
 }
+
+func TestIdleCheckAtRechecksPublishedFrontierWithoutHostCallback(t *testing.T) {
+	clock, source := testClock(t, &Interval{10000, 10000})
+	idle, err := NewIdle(clock, 100, 0)
+	if err != nil || idle.Start() != nil {
+		t.Fatal(err)
+	}
+	before, err := clock.Sample()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.set(100, 1, nil)
+	if _, err := clock.Sample(); err != nil {
+		t.Fatal(err)
+	}
+	// Sampling the adapter is forbidden during the final ownership gate.
+	clock.sample = func() (Tick, error) { t.Fatal("final gate called host clock"); return Tick{}, ErrUnavailable }
+	if err := idle.CheckAt(before); !errors.Is(err, ErrExpired) {
+		t.Fatal("stale preflight accepted after idle expiry", err)
+	}
+	if err := idle.CheckAt(before); !errors.Is(err, ErrExpired) {
+		t.Fatal("expired idle owner revived", err)
+	}
+}

@@ -51,7 +51,7 @@ type fixture struct {
 
 func loadFixture(t *testing.T) fixture {
 	t.Helper()
-	data, err := os.ReadFile("../../../testdata/transport_v3/idna_vectors.json")
+	data, err := os.ReadFile("../../../testdata/idna/idna_vectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}

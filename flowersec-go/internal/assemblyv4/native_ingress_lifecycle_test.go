@@ -218,7 +218,7 @@ func TestNativePreparationWatcherCancelsOnAbnormalClockExit(t *testing.T) {
 			p := newNativeIngressPause(t, exit)
 			source.pause.Store(p)
 			stop, stopped := make(chan struct{}), make(chan struct{})
-			go watchQUICPreparation(ctx, cancel, deadline, stop, stopped)
+			go watchCarrierPreparation(context.Background(), ctx, cancel, deadline, stop, stopped)
 			awaitNativeIngress(t, p.entered)
 			requireNativeIngressPending(t, stopped)
 			p.release()

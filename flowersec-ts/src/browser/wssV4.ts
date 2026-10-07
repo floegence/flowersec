@@ -1,3 +1,10 @@
+import { authenticateEndpointHop } from "../v4/runtime/endpointHop.js";
+import type { HopAuthenticationPreparation } from "../v4/runtime/hopAuthentication.js";
+import type { VerifiedRelayCredentials } from "../v4/runtime/relayCredentials.js";
+import type { ReadyIdentitySigner } from "../v4/runtime/noiseHandshake.js";
+import type { RandomFill } from "../v4/runtime/random.js";
+import type { CredentialResources } from "../v4/runtime/credentialSupport.js";
+import type { ResourceReference } from "../v4/runtime/resources.js";
 import type { ClientSessionAdmission } from "../v4/runtime/sessionAdmission.js";
 import type { OperationOptions } from "../public/contract.js";
 import type { V4AuthenticatedTransport } from "../v4/runtime/session.js";
@@ -47,11 +54,17 @@ export function captureBrowserWSS(options: V4BrowserWSSOptions): V4BrowserWSSOpt
   try { endpoint = new URL(d.endpoint); origin = new URL(d.applicationOrigin); }
   catch { requireCredential(false, "configuration_capacity"); }
   requireCredential(endpoint.href === d.endpoint && endpoint.protocol === "wss:" && endpoint.username === "" && endpoint.password === "" && endpoint.search === "" && endpoint.hash === "" &&
-    endpoint.pathname === "/flowersec/v4/direct" && origin.origin === d.applicationOrigin && origin.origin === globalThis.location.origin);
+    (endpoint.pathname === "/flowersec/v4/direct" || endpoint.pathname === "/flowersec/v4/tunnel") && origin.origin === d.applicationOrigin && origin.origin === globalThis.location.origin);
   return Object.freeze({ deployment: Object.freeze({ deploymentID: d.deploymentID, revision: d.revision, endpoint: d.endpoint, applicationOrigin: d.applicationOrigin,
     routeDigest: new Uint8Array(d.routeDigest), notBeforeMS: d.notBeforeMS, notAfterMS: d.notAfterMS, terminatorProfile: d.terminatorProfile, evidenceReference: d.evidenceReference }),
     queueMessages: options.queueMessages, sendBufferBytes: options.sendBufferBytes, runtimeBytes: options.runtimeBytes, providerRuntimeBytes: options.providerRuntimeBytes });
 }
+
+/** Internal queue/deadline contract shared by network and dedicated local
+ * adapters. Each adapter separately validates its signed access class. */
+export type BrowserWebSocketOptions = Pick<V4BrowserWSSOptions, "queueMessages" | "sendBufferBytes" | "runtimeBytes" | "providerRuntimeBytes"> & {
+  readonly deployment: Pick<V4BrowserWSSDeployment, "endpoint" | "applicationOrigin" | "notBeforeMS" | "notAfterMS">;
+};
 
 /** One original browser WebSocket. Each message is one envelope. Browser
  * internal allocation before message delivery is an observed host boundary. */
@@ -64,21 +77,25 @@ export class BrowserWSSCarrier implements V4AuthenticatedTransport {
   #read: { max: number; resolve: (value: Uint8Array | null) => void; reject: (error: unknown) => void; signal: AbortSignal | undefined; abort: () => void } | undefined;
   #output: { resolve: () => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> | undefined; deadline: TrustedDeadline } | undefined;
   readonly #deadline: TrustedDeadline;
-  constructor(private readonly environment: V4EnvironmentRuntime, private readonly dependency: EnvironmentDependency, private readonly options: V4BrowserWSSOptions,
-    private readonly maximum: number, private readonly preparation: TrustedDeadline) {
+  constructor(private readonly environment: V4EnvironmentRuntime, private readonly dependency: EnvironmentDependency, private readonly options: BrowserWebSocketOptions,
+    private readonly maximum: number, private readonly preparation: TrustedDeadline, private readonly subprotocol = "flowersec.direct.v4") {
     this.#done = new Promise(resolve => { this.#resolve = resolve; }); this.#deadline = new TrustedDeadline(environment.clock, options.deployment.notAfterMS);
     dependency.onClose(() => { void this.close(); });
+  }
+  authenticateHop(credentials: VerifiedRelayCredentials, signer: ReadyIdentitySigner, random: RandomFill, resources: CredentialResources, reference: ResourceReference,
+    options?: OperationOptions, acceptedHello?: Uint8Array, prepared?: HopAuthenticationPreparation): Promise<void> {
+    return authenticateEndpointHop(this, credentials, signer, random, resources, reference, this.preparation, options, acceptedHello, prepared);
   }
   checkPreparation(): void {
     this.dependency.check(); this.#deadline.check(); const now = this.environment.clock.sample().requireInterval();
     requireCredential(!this.#closed && now.lowerMS >= this.options.deployment.notBeforeMS && globalThis.location.origin === this.options.deployment.applicationOrigin &&
-      this.#socket?.readyState === NativeWebSocket.OPEN && this.#socket.protocol === "flowersec.direct.v4" && this.#socket.extensions === "", "credential_closed");
+      this.#socket?.readyState === NativeWebSocket.OPEN && this.#socket.protocol === this.subprotocol && this.#socket.extensions === "", "credential_closed");
   }
   async prepare(signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw new Error("canceled"); this.preparation.check(); this.dependency.check();
     let timer: ReturnType<typeof setTimeout> | undefined, failure: unknown;
     try {
-      const socket = this.#socket = new NativeWebSocket(this.options.deployment.endpoint, "flowersec.direct.v4"); socket.binaryType = "arraybuffer";
+      const socket = this.#socket = new NativeWebSocket(this.options.deployment.endpoint, this.subprotocol); socket.binaryType = "arraybuffer";
       socket.addEventListener("close", () => { this.#nativeEnded = true; void this.close(); this.#finish(); });
       socket.addEventListener("error", () => { failure ??= new Error("carrier_failed"); void this.close(); });
       socket.addEventListener("message", event => {
@@ -115,7 +132,7 @@ export class BrowserWSSCarrier implements V4AuthenticatedTransport {
       this.#read = { max: maxBytes, resolve, reject, signal: options?.signal, abort }; options?.signal?.addEventListener("abort", abort, { once: true }); this.#deliver();
     });
   }
-  submit(data: Uint8Array, admitted: () => void): { completion: Promise<void> } | undefined {
+  submit(data: Uint8Array, admitted: () => void, beforeSubmit?: () => void): { completion: Promise<void> } | undefined {
     try { this.checkPreparation(); } catch { return undefined; }
     const socket = this.#socket!;
     if (this.#output !== undefined || socket.bufferedAmount !== 0 || data.length > this.maximum || data.length > this.options.sendBufferBytes) return undefined;
@@ -123,6 +140,7 @@ export class BrowserWSSCarrier implements V4AuthenticatedTransport {
     let resolve!: () => void, reject!: (error: unknown) => void; const completion = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
     // WebSocket.send copies the message before returning. Its actual native
     // queued output stays charged until bufferedAmount is zero or close fires.
+    beforeSubmit?.();
     try { socket.send(data as Uint8Array<ArrayBuffer>); this.#started = true; } catch { return undefined; }
     this.#output = { resolve, reject, timer: undefined, deadline };
     try { admitted(); } catch { void this.close(); }
@@ -150,7 +168,7 @@ export class BrowserWSSCarrier implements V4AuthenticatedTransport {
   waitTermination(): Promise<void> { return this.#done; }
 }
 
-export function browserWSSAdmissionCosts(maxFrame: number, options: V4BrowserWSSOptions, runtimeBytes: bigint): readonly (readonly [string, ResourceVector])[] {
+export function browserWSSAdmissionCosts(maxFrame: number, options: BrowserWebSocketOptions, runtimeBytes: bigint): readonly (readonly [string, ResourceVector])[] {
   const maximum = Math.max(maxFrame, 65536) + 8;
   requireCredential(maximum <= options.sendBufferBytes, "configuration_capacity");
   return [["browser_wss", new ResourceVector([BigInt(maximum * (options.queueMessages + 2)) + options.runtimeBytes, options.providerRuntimeBytes, 0n,
@@ -172,14 +190,14 @@ export async function prepareBrowserWSS(environment: V4EnvironmentRuntime, field
     try { work = new CredentialWork(r, 16384, ref); } finally { ref.release(); }
     const route = work.parse(fields.route, "Route", 16384);
     try {
-      const leg = route.field("direct_leg"), tls = route.field("tls_policy", leg, "Leg"), origin = route.field("origin_policy", leg, "Leg"), url = new URL(d.endpoint);
-      requireCredential(route.uint("path_kind") === 0n && route.uint("access_class", leg, "Leg") === 0n && route.uint("carrier", leg, "Leg") === 1n &&
-        route.uint("dialer_role", leg, "Leg") === 0n && route.uint("listener_role", leg, "Leg") === 1n && route.text("host", leg, "Leg") === url.hostname.replace(/^\[|\]$/gu, "") &&
+      const leg = route.field(fields.pathKind === 0 ? "direct_leg" : "client_leg"), tls = route.field("tls_policy", leg, "Leg"), origin = route.field("origin_policy", leg, "Leg"), url = new URL(d.endpoint);
+      requireCredential(route.uint("path_kind") === BigInt(fields.pathKind) && route.uint("access_class", leg, "Leg") === 0n && route.uint("carrier", leg, "Leg") === 1n &&
+        route.uint("dialer_role", leg, "Leg") === 0n && route.uint("listener_role", leg, "Leg") === (fields.pathKind === 0 ? 1n : 2n) && route.text("host", leg, "Leg") === url.hostname.replace(/^\[|\]$/gu, "") &&
         route.uint("port", leg, "Leg") === BigInt(url.port === "" ? 443 : Number(url.port)) && route.text("path", leg, "Leg") === url.pathname && route.text("alpn", leg, "Leg") === "http/1.1" &&
-        route.text("subprotocol", leg, "Leg") === "flowersec.direct.v4" && [...route.items("origins", origin, "OriginPolicy")].some(node => route.doc.text(node) === d.applicationOrigin));
+        route.text("subprotocol", leg, "Leg") === (fields.pathKind === 0 ? "flowersec.direct.v4" : "flowersec.tunnel.v4") && [...route.items("origins", origin, "OriginPolicy")].some(node => route.doc.text(node) === d.applicationOrigin));
       // A standard browser cannot inspect peer DER or the actual TLS version.
       requireCredential(route.uint("mode", tls, "TLSPolicy") === 0n && !route.doc.boolean(route.field("require_consumer_tls13_verification", tls, "TLSPolicy")), "credential_untrusted");
     } finally { route.close(); work.close(); work = undefined; }
-    carrier = new BrowserWSSCarrier(environment, dependency, options, maximum, fields.preparationDeadline); await carrier.prepare(signal); return carrier;
+    carrier = new BrowserWSSCarrier(environment, dependency, options, maximum, fields.preparationDeadline, fields.pathKind === 0 ? "flowersec.direct.v4" : "flowersec.tunnel.v4"); await carrier.prepare(signal); return carrier;
   } catch (error) { work?.close(); if (carrier !== undefined) await carrier.close(); else dependency.release(); throw error; }
 }

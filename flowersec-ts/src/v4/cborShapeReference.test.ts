@@ -46,7 +46,7 @@ describe("v4.ts_shape", () => {
       else { positive += 1; expect(encode(decode()), vector.id).toEqual(input); }
       expect(ctx, vector.id).toEqual(before);
     }
-    expect(positive).toBe(348); expect(negative).toBe(326);
+    expect(positive).toBe(349); expect(negative).toBe(326);
   });
 
   // v4.ts_shape.required_unknown

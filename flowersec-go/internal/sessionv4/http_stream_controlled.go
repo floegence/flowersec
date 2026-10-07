@@ -37,7 +37,10 @@ func (c *controlledHTTPExecution) serve(h *HTTPStream, handler http.Handler, w h
 		return err
 	}
 	defer ref.Release()
-	permit, err := c.executor.TryAcquire(c.class, ref, h.reservation)
+	h.conn.owner.mu.Lock()
+	group := h.conn.owner.allocationGroup
+	h.conn.owner.mu.Unlock()
+	permit, err := c.executor.tryAcquireInGroup(group, c.class, ref, h.reservation)
 	if err != nil {
 		return err
 	}

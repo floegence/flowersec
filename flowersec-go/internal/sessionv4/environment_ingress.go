@@ -192,6 +192,17 @@ func (p *acceptedIngress) prepare(s *EnvironmentSession) (input environmentEstab
 }
 
 func (p *acceptedIngress) cleanup() error {
+	// SDK factories may retain a taken tunnel recipient when entrance creation
+	// fails. Join that original provider tail in this existing cleanup position.
+	if factory, ok := p.config.Factory.(interface {
+		Close()
+		WaitCleanup(context.Context) error
+	}); ok {
+		factory.Close()
+		if err := factory.WaitCleanup(context.Background()); err != nil {
+			return err
+		}
+	}
 	if !p.adopted {
 		if e := p.entrance; e != nil {
 			e.Close()

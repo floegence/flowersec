@@ -1,6 +1,8 @@
 package protocolv4
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 )
@@ -10,11 +12,12 @@ import (
 type ProxyHeader struct{ Name, Value string }
 type ProxyError struct{ Code, Message string }
 type ProxyHTTPRequest struct {
-	Version                 int
-	RequestID, Method, Path string
-	Headers                 []ProxyHeader
-	ExternalOrigin          string
-	TimeoutMS               int64
+	Version                                       int
+	RequestID, Method, Path                       string
+	Headers                                       []ProxyHeader
+	ExternalOrigin                                string
+	TimeoutMS                                     int64
+	CredentialContext, Credentials, RequestOrigin string
 }
 type ProxyHTTPResponse struct {
 	Version   int
@@ -25,9 +28,10 @@ type ProxyHTTPResponse struct {
 	Error     *ProxyError
 }
 type ProxyWebSocketOpen struct {
-	Version      int
-	ConnID, Path string
-	Headers      []ProxyHeader
+	Version                                       int
+	ConnID, Path                                  string
+	Headers                                       []ProxyHeader
+	CredentialContext, Credentials, RequestOrigin string
 }
 type ProxyWebSocketResponse struct {
 	Version  int
@@ -39,6 +43,81 @@ type ProxyWebSocketResponse struct {
 type ProxyBodyEnd struct {
 	Version  int
 	Trailers []ProxyHeader
+}
+
+type ProxyCredentialControlRequest struct {
+	Version                          int
+	OperationID                      string
+	Action                           uint8
+	SurfaceOwner                     string
+	CredentialContext, ContentOrigin string
+}
+type ProxyCredentialControlResponse struct {
+	Version           int
+	OperationID       string
+	Action            uint8
+	OK                bool
+	CredentialContext string
+	ServerInvalidated bool
+	Error             *ProxyError
+}
+
+func proxyHexIdentity(s string) bool {
+	if len(s) != 32 || s != strings.ToLower(s) {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+func proxyCredentialContext(s string) bool {
+	if len(s) != 43 {
+		return false
+	}
+	value, err := base64.RawURLEncoding.DecodeString(s)
+	return err == nil && len(value) == 32 && base64.RawURLEncoding.EncodeToString(value) == s
+}
+func checkProxyCredentialMetadata(private, selection, origin string) error {
+	if private != "" && !proxyCredentialContext(private) {
+		return CBORFailure("proxy_credential_context")
+	}
+	if selection != "" && selection != "omit" && selection != "same-origin" && selection != "include" {
+		return CBORFailure("proxy_credentials")
+	}
+	if !proxyASCII(origin) {
+		return CBORFailure("proxy_request_origin")
+	}
+	return nil
+}
+func CheckProxyCredentialControlRequest(v ProxyCredentialControlRequest) error {
+	if v.Version != proxyApplication.Version || !proxyHexIdentity(v.OperationID) || !proxyHexIdentity(v.SurfaceOwner) || v.Action < 1 || v.Action > 3 {
+		return CBORFailure("proxy_credential_control")
+	}
+	if v.Action == 1 {
+		if v.CredentialContext != "" || v.ContentOrigin == "" || !proxyASCII(v.ContentOrigin) {
+			return CBORFailure("proxy_credential_control")
+		}
+	} else if v.ContentOrigin != "" || !proxyCredentialContext(v.CredentialContext) {
+		return CBORFailure("proxy_credential_control")
+	}
+	return nil
+}
+func CheckProxyCredentialControlResponse(v ProxyCredentialControlResponse) error {
+	if v.Version != proxyApplication.Version || !proxyHexIdentity(v.OperationID) || v.Action < 1 || v.Action > 3 {
+		return CBORFailure("proxy_credential_control")
+	}
+	if !v.OK {
+		if v.Error == nil || v.CredentialContext != "" || v.Action == 1 && v.ServerInvalidated {
+			return CBORFailure("proxy_credential_control")
+		}
+		return nil
+	}
+	if v.Error != nil {
+		return CBORFailure("proxy_credential_control")
+	}
+	if v.Action == 1 && (!proxyCredentialContext(v.CredentialContext) || v.ServerInvalidated) || v.Action == 2 && (!proxyCredentialContext(v.CredentialContext) || !v.ServerInvalidated) || v.Action == 3 && (v.CredentialContext != "" || !v.ServerInvalidated) {
+		return CBORFailure("proxy_credential_control")
+	}
+	return nil
 }
 
 type proxyApplicationRegistry struct {
@@ -97,6 +176,10 @@ func proxySchema(value any) string {
 		return "ProxyWebSocketOpen"
 	case ProxyWebSocketResponse, *ProxyWebSocketResponse:
 		return "ProxyWebSocketResponse"
+	case ProxyCredentialControlRequest, *ProxyCredentialControlRequest:
+		return "ProxyCredentialControlRequest"
+	case ProxyCredentialControlResponse, *ProxyCredentialControlResponse:
+		return "ProxyCredentialControlResponse"
 	case ProxyBodyEnd, *ProxyBodyEnd:
 		return "ProxyBodyEnd"
 	}
@@ -154,7 +237,7 @@ func DecodeProxyMetadata(wire []byte, output any) error {
 		}
 		return &ProxyError{string(code), string(message)}, nil
 	}
-	for _, name := range []string{"request_id", "method", "path", "external_origin", "conn_id", "protocol"} {
+	for _, name := range []string{"request_id", "method", "path", "external_origin", "conn_id", "protocol", "credential_context", "credentials", "request_origin", "operation_id", "surface_owner", "content_origin"} {
 		if !proxyASCII(getBytes(name)) {
 			return CBORFailure("proxy_ascii")
 		}
@@ -173,13 +256,34 @@ func DecodeProxyMetadata(wire []byte, output any) error {
 		return err
 	}
 	switch v := output.(type) {
+	case *ProxyCredentialControlRequest:
+		*v = ProxyCredentialControlRequest{Version: version, OperationID: getBytes("operation_id"), Action: uint8(getUint("action")), SurfaceOwner: getBytes("surface_owner"), CredentialContext: getBytes("credential_context"), ContentOrigin: getBytes("content_origin")}
+		return CheckProxyCredentialControlRequest(*v)
+	case *ProxyCredentialControlResponse:
+		ok, _ := root.Named(schema, "ok").Bool()
+		invalidated, _ := root.Named(schema, "server_invalidated").Bool()
+		problem, err := getError()
+		if err != nil {
+			return err
+		}
+		*v = ProxyCredentialControlResponse{Version: version, OperationID: getBytes("operation_id"), Action: uint8(getUint("action")), OK: ok, CredentialContext: getBytes("credential_context"), ServerInvalidated: invalidated, Error: problem}
+		if root.Named(schema, "server_invalidated").valid() && !invalidated {
+			return CBORFailure("proxy_credential_control")
+		}
+		return CheckProxyCredentialControlResponse(*v)
 	case *ProxyHTTPRequest:
+		if err := checkProxyCredentialMetadata(getBytes("credential_context"), getBytes("credentials"), getBytes("request_origin")); err != nil {
+			return err
+		}
 		if !ProxyASCIIToken(getBytes("method")) {
 			return CBORFailure("proxy_method")
 		}
-		*v = ProxyHTTPRequest{version, getBytes("request_id"), getBytes("method"), getBytes("path"), h, getBytes("external_origin"), int64(getUint("timeout_ms"))}
+		*v = ProxyHTTPRequest{version, getBytes("request_id"), getBytes("method"), getBytes("path"), h, getBytes("external_origin"), int64(getUint("timeout_ms")), getBytes("credential_context"), getBytes("credentials"), getBytes("request_origin")}
 	case *ProxyWebSocketOpen:
-		*v = ProxyWebSocketOpen{version, getBytes("conn_id"), getBytes("path"), h}
+		if err := checkProxyCredentialMetadata(getBytes("credential_context"), getBytes("credentials"), getBytes("request_origin")); err != nil {
+			return err
+		}
+		*v = ProxyWebSocketOpen{version, getBytes("conn_id"), getBytes("path"), h, getBytes("credential_context"), getBytes("credentials"), getBytes("request_origin")}
 	case *ProxyHTTPResponse:
 		ok, _ := root.Named(schema, "ok").Bool()
 		e, err := getError()
@@ -220,7 +324,41 @@ func EncodeProxyMetadata(value any) ([]byte, error) {
 	var problem *ProxyError
 	fieldName := "headers"
 	switch v := value.(type) {
+	case ProxyCredentialControlRequest:
+		if err := CheckProxyCredentialControlRequest(v); err != nil {
+			return nil, err
+		}
+		add("operation_id", v.OperationID)
+		add("surface_owner", v.SurfaceOwner)
+		fields = append(fields, Field{Name: "action", Number: uint64(v.Action)})
+		if v.CredentialContext != "" {
+			add("credential_context", v.CredentialContext)
+		}
+		if v.ContentOrigin != "" {
+			add("content_origin", v.ContentOrigin)
+		}
+		fieldName = ""
+	case ProxyCredentialControlResponse:
+		if err := CheckProxyCredentialControlResponse(v); err != nil {
+			return nil, err
+		}
+		add("operation_id", v.OperationID)
+		fields = append(fields, Field{Name: "action", Number: uint64(v.Action)}, Field{Name: "ok", Kind: Boolean})
+		if v.OK {
+			fields[len(fields)-1].Number = 1
+		}
+		if v.CredentialContext != "" {
+			add("credential_context", v.CredentialContext)
+		}
+		if v.ServerInvalidated {
+			fields = append(fields, Field{Name: "server_invalidated", Kind: Boolean, Number: 1})
+		}
+		problem = v.Error
+		fieldName = ""
 	case ProxyHTTPRequest:
+		if err := checkProxyCredentialMetadata(v.CredentialContext, v.Credentials, v.RequestOrigin); err != nil {
+			return nil, err
+		}
 		if v.Version != proxyApplication.Version || v.TimeoutMS < 0 || v.TimeoutMS > 300000 || !ProxyASCIIToken(v.Method) {
 			return nil, CBORFailure("proxy_version")
 		}
@@ -228,6 +366,15 @@ func EncodeProxyMetadata(value any) ([]byte, error) {
 		add("method", v.Method)
 		add("path", v.Path)
 		headers = v.Headers
+		if v.CredentialContext != "" {
+			add("credential_context", v.CredentialContext)
+		}
+		if v.Credentials != "" {
+			add("credentials", v.Credentials)
+		}
+		if v.RequestOrigin != "" {
+			add("request_origin", v.RequestOrigin)
+		}
 		if v.ExternalOrigin != "" {
 			add("external_origin", v.ExternalOrigin)
 		}
@@ -252,12 +399,24 @@ func EncodeProxyMetadata(value any) ([]byte, error) {
 		}
 		problem = v.Error
 	case ProxyWebSocketOpen:
+		if err := checkProxyCredentialMetadata(v.CredentialContext, v.Credentials, v.RequestOrigin); err != nil {
+			return nil, err
+		}
 		if v.Version != proxyApplication.Version {
 			return nil, CBORFailure("proxy_version")
 		}
 		add("conn_id", v.ConnID)
 		add("path", v.Path)
 		headers = v.Headers
+		if v.CredentialContext != "" {
+			add("credential_context", v.CredentialContext)
+		}
+		if v.Credentials != "" {
+			add("credentials", v.Credentials)
+		}
+		if v.RequestOrigin != "" {
+			add("request_origin", v.RequestOrigin)
+		}
 	case ProxyWebSocketResponse:
 		if v.OK && v.Error != nil || !v.OK && (v.Error == nil || v.Protocol != "") {
 			return nil, CBORFailure("proxy_response_variant")

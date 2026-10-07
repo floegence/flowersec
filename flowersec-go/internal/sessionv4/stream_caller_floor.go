@@ -46,7 +46,7 @@ func streamCallerFloorCharges(c SessionCoreConfig, snapshotBytes int) (charges [
 		return
 	}
 	copy(charges[:], stream[:])
-	if c.Native {
+	if c.Native || c.MixedCarrier {
 		charges[streamFactoryNativeReceive], err = NativeDataAssemblyCharge(math.MaxInt64, 0, c.Session.Profile, c.Session.Contract.Limits().MaxFrame)
 		if err != nil {
 			return
@@ -106,10 +106,11 @@ type streamCallerGeometry struct {
 	frame   uint32
 	maxData uint64
 	native  bool
+	mixed   bool
 }
 
 func callerStreamGeometry(c SessionCoreConfig) streamCallerGeometry {
-	return streamCallerGeometry{c.Streams, c.Session.Profile, c.Session.Contract.Limits().MaxFrame, c.MaxDataPayloadBytes, c.Native}
+	return streamCallerGeometry{streams: c.Streams, profile: c.Session.Profile, frame: c.Session.Contract.Limits().MaxFrame, maxData: c.MaxDataPayloadBytes, native: c.Native && !c.MixedCarrier, mixed: c.MixedCarrier}
 }
 
 // Original admission can construct this backing before it has an authenticated

@@ -79,6 +79,9 @@ export class InitializerWorkload {
               const ref = references[part]!, aliases: ResourceReference[] = [];
               try {
                 aliases.push(ref.borrow()); aliases.push(ref.borrow());
+                // The selected ordinary channel retains the original request
+                // backing in its send scopes through the real publisher tail.
+                if (method.shape !== "notify" && part === 1) aliases.push(ref.borrow());
                 parts.push(resources.root.protectScoped(ref, charges[part]!, aliases));
               }
               finally { for (const alias of aliases) alias.release(); }

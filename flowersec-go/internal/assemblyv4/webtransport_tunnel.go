@@ -21,7 +21,7 @@ func (s *WebTransportServer) PrepareTunnel(ctx context.Context, c sessionv4.Prep
 	if _, err := protocolv4.Profile(c.Session.Profile); err != nil {
 		return nil, err
 	}
-	charge, err := sessionv4.PreparedCarrierCharge(c.RuntimeBytes)
+	_, err := sessionv4.PreparedCarrierCharge(c.RuntimeBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -44,12 +44,11 @@ func (s *WebTransportServer) PrepareTunnel(ctx context.Context, c sessionv4.Prep
 	}
 	// Move the complete prepared metadata before physical acceptance. A caller
 	// releasing its old alias cannot recycle this original reservation.
-	owned, err := c.Reservation.Take(charge)
+	c, err = c.TakeReservation()
 	if err != nil {
 		return nil, err
 	}
-	defer owned.Release()
-	c.Reservation = owned
+	defer c.Reservation.Release()
 	f, err := s.accept(ctx, sessionv4.AcceptedEntranceConfig{Initial: sessionv4.InitialConfig{Deadline: c.Deadline}})
 	if err != nil {
 		return nil, err
@@ -78,7 +77,7 @@ func (f *WebTransportIngress) prepareTunnel(ctx context.Context, c sessionv4.Pre
 			_ = provider.Retire()
 		}
 	}()
-	prepareCtx, cancel := context.WithCancelCause(ctx)
+	prepareCtx, cancel := newCarrierPreparationContext(ctx)
 	defer cancel(context.Canceled)
 	f.mu.Lock()
 	f.cancel = func() { cancel(context.Canceled) }
@@ -88,7 +87,7 @@ func (f *WebTransportIngress) prepareTunnel(ctx context.Context, c sessionv4.Pre
 		return nil, resourcev4.ErrClosed
 	}
 	stop, stopped := make(chan struct{}), make(chan struct{})
-	go watchQUICPreparation(prepareCtx, cancel, c.Deadline, stop, stopped)
+	go watchCarrierPreparation(ctx, prepareCtx, cancel, c.Deadline, stop, stopped)
 	watching := true
 	finishWatch := func() {
 		if watching {

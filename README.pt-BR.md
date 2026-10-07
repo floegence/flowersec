@@ -87,31 +87,23 @@ Os quatro SDKs compartilham o mesmo modelo de sessão. O suporte varia quando um
 | Handlers de fluxo do aplicativo | Sim | Sim | Sim | Sim |
 | Recuperação de conexões persistentes | Sim | Sim | Sim | Sim |
 | Mensagens não confiáveis negociadas | Sim | Sim | Não | Sim |
-| Handlers RPC do cliente | Sim | Sim | Não | Sim |
-| Aceitação de sessões no servidor | Sim | Sim | Não | Sim |
-| Handlers de sessões do servidor | Sim | Sim | Não | Sim |
+| Handlers RPC do cliente | Sim | Sim | Sim | Sim |
+| Aceitação de sessões no servidor | Sim | Sim | Sim | Sim |
+| Handlers de sessões do servidor | Sim | Sim | Sim | Sim |
 | Emissão e autorização do plano de controle | Sim | Não | Não | Não |
-| Admissão direta e por túnel | Sim | Sim | Não | Sim |
+| Admissão direta e por túnel | Sim | Sim | Sim | Sim |
 | ProxyServer HTTP e WebSocket | Sim | Sim | Não | Sim |
 | Contrato de fluxo independente do transporte | Sim | Sim | Sim | Sim |
-| Segurança wire do Transport v3 | Sim | Sim | Sim | Sim |
+| Segurança wire do Transport v4 | Sim | Sim | Sim | Sim |
 <!-- capability-table:end -->
-Os perfis de implantacao separam a disponibilidade da plataforma do protocolo de aplicacao Flowersec compartilhado:
 
-| Perfil | Runtimes | Superficie obrigatoria de carrier e funcao | Superficie opcional |
-| --- | --- | --- | --- |
-| `native-server-core` | Go, Rust, Node.js | Cliente endpoint, servidor direto e runtime de tunel opaco para WebSocket e raw QUIC | Adaptador WebTransport |
-| `browser-client` | Navegador TypeScript | Cliente endpoint WebSocket | Adaptador WebTransport do navegador |
-| `apple-client` | Swift em plataformas Apple | Cliente endpoint WSS | Nenhuma |
-| `webtransport-server` | Go | Servidor WebTransport direto e runtime de tunel opaco | Nenhuma |
+Os perfis de implantação descrevem as combinações necessárias de transportes nativos ou do navegador e funções. Cada guia SDK separa as APIs atuais da qualificação do provedor. Uma declaração no código não comprova suporte verificado em execução.
 
-O perfil native-server-core legível por máquina contém 18 tuplas agregadas de runtime, função e carrier, seis por runtime nativo, e 24 unidades de servidor específicas de caminho compatíveis. O Go H4 adiciona duas tuplas de servidor WebTransport e duas unidades específicas de caminho. A matriz de interoperabilidade declara separadamente 18 células diretas e 18 células de túnel. O gate de release verifica todas as 10 células diretas e 14 células de túnel em pares que incluem Go; as 8 células diretas e 4 células de túnel restantes continuam explicitamente não verificadas. Quatro perfis cliente WSS adicionais verificam Swift e TypeScript de navegador com Go por caminhos diretos e de túnel. Um perfil nunca altera a semântica wire de Artifact, handshake, RPC, stream, close, rekey ou authorization.
+O protocolo atual usa materiais de conexão autenticados, confiança independente de namespace, sessões limitadas, serviços tipados e limpeza explícita. A interoperabilidade direta e por túneis é qualificada pela matriz executável e pelos provedores originais. A publicação distribui pacotes e relê registros, sem executar testes de aceitação.
 
-Consulte os guias dos SDKs para ver as combinações exatas de plataforma e conexão disponíveis.
+WebTransport requer um provedor nativo ou do navegador configurado. O suporte do navegador depende da API WebTransport real e das políticas de certificados. Consulte cada guia SDK para os transportes, listeners e relés atuais.
 
-WebTransport é um adaptador opcional e não faz parte do contrato obrigatório de carrier native-server. O Go declara o perfil H4 webtransport-server separado e completo; o perfil Browser usa H3 quando a API WebTransport do navegador está disponível. Node.js e Rust atualmente não fornecem um adaptador WebTransport de produção. A superfície carrier native-server é WebSocket e raw QUIC para Go, Rust e Node.js; a interoperabilidade em pares só é declarada por entradas compatíveis da matriz.
-
-`flowersec-private-loopback/1` é um perfil privado do produto, fora do deployment capability registry público. Suas APIs dedicadas de servidor Go e navegador TypeScript se limitam a um bridge HTTP de loopback numérico autenticado pelo aplicativo.
+A classe de acesso assinada `local_loopback` oferece uma ponte HTTP autenticada pelo aplicativo na mesma máquina. Ela usa o protocolo de sessão atual e exige um provedor local configurado.
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -119,14 +111,14 @@ WebTransport é um adaptador opcional e não faz parte do contrato obrigatório 
 ## Segurança
 
 - Os dados do aplicativo são criptografados de ponta a ponta em sessões diretas e via relay.
-- A política de confiança TLS é vinculada a cada candidato de transporte v3. Raízes de CA públicas ou fornecidas pela implantação e pins explícitos do certificado folha são mutuamente exclusivos, sem rebaixamento após falha.
-- `flowersec-private-loopback/1` é um envelope de transporte isolado, não um modo TLS nem uma capability de `flowersec/3`. Suas APIs dedicadas só mapeiam um candidato v3 inalterado em modo CA para `ws://` quando a autoridade corresponde à mesma origem de loopback numérico e o aplicativo servidor autoriza a solicitação antes do upgrade. Os caminhos comuns de Go, TypeScript, Rust, Swift, Provider e tunnel rejeitam o envelope.
+- A política de confiança TLS é vinculada a cada candidato de transporte v4. Raízes de CA públicas ou fornecidas pela implantação e pins explícitos do certificado folha são mutuamente exclusivos, sem rebaixamento após falha.
+- `local_loopback` permite `ws://` apenas para um endpoint numérico de loopback assinado, com Origin exato e autorização do aplicativo antes do upgrade. Ela não garante verificação TLS externa nem permite fallback em texto simples.
 - Os convites de conexão são opacos, de curta duração e de uso único.
 - As credenciais são consumidas antes do uso, impedindo a repetição de um convite já usado.
 - Relays apenas encaminham tráfego criptografado; eles não encerram sessões do aplicativo.
 - Tentativas inválidas ou não compatíveis falham com segurança e retornam erros públicos limitados.
 
-Para detalhes do protocolo e do modelo de ameaças, leia o [contrato da API](docs/API_CONTRACT.md), a [arquitetura de transporte](docs/TRANSPORT_V3_ARCHITECTURE.md) e o [modelo de ameaças](docs/THREAT_MODEL.md).
+Para detalhes do protocolo e do modelo de ameaças, leia o [contrato da API](docs/API_CONTRACT.md), a [arquitetura de transporte](docs/TRANSPORT_V4_BINDING.md) e o [modelo de ameaças](docs/THREAT_MODEL.md).
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -135,7 +127,7 @@ Para detalhes do protocolo e do modelo de ameaças, leia o [contrato da API](doc
 
 - [Contrato da API](docs/API_CONTRACT.md): comportamento estável compartilhado pelos SDKs.
 - [Modelo de erros](docs/ERROR_MODEL.md): erros públicos de conexão, sessão e RPC.
-- [Arquitetura de transporte](docs/TRANSPORT_V3_ARCHITECTURE.md): projeto das conexões diretas e via relay.
+- [Arquitetura de transporte](docs/TRANSPORT_V4_BINDING.md): projeto das conexões diretas e via relay.
 - [Exemplos](examples/README.md): uso executável dos SDKs.
 
 Flowersec está disponível sob a [licença MIT](LICENSE). Os pacotes publicados e as notas de versão estão em [GitHub Releases](https://github.com/floegence/flowersec/releases).

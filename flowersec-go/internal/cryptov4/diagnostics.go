@@ -41,7 +41,11 @@ func (e *Engine) observeDatagramDropLocked(metric diagnosticv4.Metric) {
 	} else if !e.ready {
 		state = diagnosticv4.StateStarting
 	}
-	e.config.Diagnostics.Observe(metric, diagnosticv4.Fields{
-		State: state, Phase: diagnosticv4.PhaseApplication, Code: code,
-	})
+	fields := diagnosticv4.Fields{State: state, Phase: diagnosticv4.PhaseApplication, Code: code}
+	if e.config.Diagnostics != nil {
+		e.config.Diagnostics.Observe(metric, fields)
+	}
+	if e.config.DiagnosticEvents != nil {
+		e.config.DiagnosticEvents.EmitDiagnostic(fields)
+	}
 }

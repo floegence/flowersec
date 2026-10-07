@@ -14,8 +14,8 @@ import (
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/linuxnetlab"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/tunnelworkload"
@@ -347,19 +347,22 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 	if err != nil {
 		return err
 	}
-	controller, err := flowersec.NewConnectionController(source, flowersec.ConnectionControllerOptions{
-		Connector: endpoint.ProductControllerConnectorOptions(),
-	})
+	defer func() { resultErr = errors.Join(resultErr, source.Close()) }()
+	controller, err := source.NewController(ctx)
 	if err != nil {
 		return err
 	}
-	controller.Start(ctx)
+	if err = controller.Start(ctx); err != nil {
+		return err
+	}
 	defer func() {
 		closeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		resultErr = errors.Join(resultErr, controller.Close(closeCtx))
+		controller.Close()
+		resultErr = errors.Join(resultErr, controller.WaitCleanup(closeCtx))
 		cancel()
 	}()
-	if err := waitForControllerState(ctx, controller, flowersec.ConnectionConnected); err != nil {
+	client, err := waitForControllerCurrent(ctx, controller, source, scenarioName == "pin-rotation-refresh-backoff-lease")
+	if err != nil {
 		return err
 	}
 	serverIndex := source.AcquisitionCount() - 1
@@ -368,7 +371,6 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, server.Close()) }()
-	client := controller.CurrentSession()
 	if client == nil {
 		return errors.New("controller connected without a client session")
 	}
@@ -386,7 +388,11 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 			return fmt.Errorf("controller rotation lease finalization = retire(%d,%d) spend(%d)", source.RetireCount(0), source.RetireCount(1), source.SpendCount(2))
 		}
 	}
-	pair := transporttest.NewProductControllerPair(client, server)
+	pair, err := source.NewPair(ctx, client, server)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, pair.Close()) }()
 	if scenarioName == "periodic-loss" {
 		// Accumulate enough independent RPC packets to cross the periodic-loss
 		// schedule without turning the application stream into a large-frame test.
@@ -401,7 +407,7 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 		if err := verifyOutageBehavior(ctx, pair); err != nil {
 			return err
 		}
-		if err := server.Close(); err != nil {
+		if err := endpoint.InterruptConnections(); err != nil {
 			return err
 		}
 		if err := waitForControllerReplacement(ctx, controller, client); err != nil {
@@ -412,38 +418,54 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 		if err != nil {
 			return err
 		}
-		if err := transporttest.NewProductControllerPair(controller.CurrentSession(), server).RoundTrip(ctx, []byte("reconnected"), []byte("reconnected-response")); err != nil {
+		current, err := controller.CaptureSession()
+		if err != nil {
+			return err
+		}
+		replacement, err := source.NewPair(ctx, current, server)
+		if err != nil {
+			return err
+		}
+		defer func() { resultErr = errors.Join(resultErr, replacement.Close()) }()
+		if err := replacement.RoundTrip(ctx, []byte("reconnected"), []byte("reconnected-response")); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func waitForControllerState(ctx context.Context, controller *flowersec.ConnectionController, want flowersec.ConnectionState) error {
-	for {
-		snapshot := controller.Snapshot()
-		if snapshot.State == want {
-			return nil
-		}
-		if snapshot.State == flowersec.ConnectionFailed || snapshot.State == flowersec.ConnectionClosed {
-			return fmt.Errorf("controller reached %s while waiting for %s: %v", snapshot.State, want, snapshot.Failure)
-		}
-		select {
-		case <-ctx.Done():
-			return context.Cause(ctx)
-		case <-time.After(10 * time.Millisecond):
-		}
+func waitForControllerCurrent(ctx context.Context, controller *flowersec.ConnectionController, source *transporttest.ProductControllerArtifactSource, refreshPin bool) (*flowersec.Session, error) {
+	session, err := controller.WaitForSession(ctx)
+	if err == nil || !refreshPin {
+		return session, err
 	}
+	snapshot := controller.Snapshot()
+	// Authentication refusal is terminal for that signed policy. Refresh uses
+	// a separately issued current pin through the original replacement owner;
+	// it never retries the failed credential or falls back to CA on its endpoint.
+	if ctx.Err() != nil || snapshot.Pending || source.AcquisitionCount() != 2 {
+		return nil, err
+	}
+	replacement, replaceErr := controller.ReplaceSession(ctx, flowersec.ControllerReplaceOptions{})
+	if replaceErr != nil {
+		return nil, replaceErr
+	}
+	if !replacement.CurrentSwitched || replacement.Current == nil {
+		return nil, errors.New("current signed pin refresh was not published")
+	}
+	return replacement.Current, nil
 }
-
-func waitForControllerReplacement(ctx context.Context, controller *flowersec.ConnectionController, previous flowersec.Session) error {
+func waitForControllerReplacement(ctx context.Context, controller *flowersec.ConnectionController, previous *flowersec.Session) error {
 	for {
 		snapshot := controller.Snapshot()
-		if snapshot.State == flowersec.ConnectionConnected && snapshot.CurrentSession != nil && snapshot.CurrentSession != previous {
-			return nil
+		if snapshot.Current {
+			current, err := controller.CaptureSession()
+			if err == nil && current != previous {
+				return nil
+			}
 		}
-		if snapshot.State == flowersec.ConnectionFailed || snapshot.State == flowersec.ConnectionClosed {
-			return fmt.Errorf("controller reached %s while waiting for replacement: %v", snapshot.State, snapshot.Failure)
+		if snapshot.Closed || snapshot.LastError != nil && !snapshot.Pending && !snapshot.WaitingRetry && !snapshot.Current {
+			return fmt.Errorf("controller failed before actual native reconnect: %v", snapshot.LastError)
 		}
 		select {
 		case <-ctx.Done():
@@ -474,7 +496,7 @@ func verifyDirectResetAndCancellation(ctx context.Context, pair *transporttest.P
 	if _, err := pair.Client.AcceptStream(canceled); err == nil {
 		return errors.New("Flowersec weak-network canceled accept unexpectedly succeeded")
 	}
-	if _, err := pair.Client.ProbeLiveness(ctx); err != nil {
+	if _, err := pair.Client.ProbeLiveness(ctx, 5000); err != nil {
 		return fmt.Errorf("Flowersec session did not survive stream reset and canceled accept: %w", err)
 	}
 	return nil
@@ -497,13 +519,14 @@ func observePeerReset(ctx context.Context, stream peerResetReader) error {
 	}()
 	select {
 	case err := <-readResult:
-		if !errors.Is(err, protocolv3.ErrStreamReset) && !errors.Is(err, carrier.ErrStreamReset) {
+		if !errors.Is(err, sessionv4.ErrAbandoned) && !errors.Is(err, native.ErrDirectionReset) && !errors.Is(err, carrier.ErrStreamReset) {
 			return fmt.Errorf("Flowersec peer did not observe stream reset: %w", err)
 		}
 		return nil
 	case <-ctx.Done():
-		_ = stream.Close()
-		return fmt.Errorf("Flowersec peer reset observation: %w", context.Cause(ctx))
+		closeErr := stream.Close()
+		<-readResult
+		return errors.Join(fmt.Errorf("Flowersec peer reset observation: %w", context.Cause(ctx)), closeErr)
 	}
 }
 
@@ -512,7 +535,7 @@ func verifyOutageBehavior(ctx context.Context, pair *transporttest.ProductDirect
 	outageDeadline := time.Now().Add(3500 * time.Millisecond)
 	for time.Now().Before(outageDeadline) {
 		probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-		_, probeErr := pair.Client.ProbeLiveness(probeCtx)
+		_, probeErr := pair.Client.ProbeLiveness(probeCtx, 250)
 		cancel()
 		if probeErr != nil {
 			failedDuringOutage = true
@@ -522,13 +545,13 @@ func verifyOutageBehavior(ctx context.Context, pair *transporttest.ProductDirect
 	if !failedDuringOutage {
 		return errors.New("Flowersec outage did not interrupt any liveness operation")
 	}
-	if _, err := pair.Client.ProbeLiveness(ctx); err != nil {
+	if _, err := pair.Client.ProbeLiveness(ctx, 5000); err != nil {
 		return fmt.Errorf("Flowersec session did not recover after outage: %w", err)
 	}
 	return nil
 }
 
-func roundTripUnreliable(ctx context.Context, client flowersec.Session, server flowersession.Session) error {
+func roundTripUnreliable(ctx context.Context, client *flowersec.Session, server *flowersec.Session) error {
 	clientChannel, err := client.UnreliableMessages()
 	if err != nil {
 		return err
@@ -590,7 +613,12 @@ func runTunnel(ctx context.Context, kind carrier.Kind, config linuxnetlab.Config
 	}); err != nil {
 		return err
 	}
-	endpoint.SetEndpointDialNamespace(config.ClientNamespace)
+	if err := endpoint.SetRelayNamespace(config.ServerNamespace); err != nil {
+		return errors.Join(err, cleanupTunnelFailure(endpoint.Close))
+	}
+	if err := endpoint.SetEndpointDialNamespace(config.ClientNamespace); err != nil {
+		return errors.Join(err, cleanupTunnelFailure(endpoint.Close))
+	}
 	pair, err := endpoint.Connect(ctx)
 	if err != nil {
 		return errors.Join(err, cleanupTunnelFailure(endpoint.Close))
@@ -638,7 +666,7 @@ func cleanupTunnelFailure(owners ...func(context.Context) error) error {
 }
 
 func verifyTunnelResetCancellationAndDatagram(ctx context.Context, pair *tunnelworkload.Pair, kind carrier.Kind) error {
-	stream, err := pair.Client.OpenStream(ctx, "weaknet-tunnel-reset", flowersession.Metadata{})
+	stream, err := pair.Client.OpenStream(ctx, "weaknet-tunnel-reset", flowersec.EmptyStreamMetadata())
 	if err != nil {
 		return err
 	}
@@ -658,7 +686,7 @@ func verifyTunnelResetCancellationAndDatagram(ctx context.Context, pair *tunnelw
 	if _, err := pair.Client.AcceptStream(canceled); err == nil {
 		return errors.New("Flowersec tunnel canceled accept unexpectedly succeeded")
 	}
-	if _, err := pair.Client.ProbeLiveness(ctx); err != nil {
+	if _, err := pair.Client.ProbeLiveness(ctx, 5000); err != nil {
 		return fmt.Errorf("Flowersec tunnel did not survive stream reset and cancellation: %w", err)
 	}
 	if kind != carrier.KindRawQUIC {
@@ -685,11 +713,11 @@ func verifyTunnelResetCancellationAndDatagram(ctx context.Context, pair *tunnelw
 	}()
 	acceptedSend := false
 	for attempt := 0; attempt < 8; attempt++ {
-		status, sendErr := clientChannel.Send(ctx, payload, flowersession.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)})
+		status, sendErr := clientChannel.Send(ctx, payload, flowersec.UnreliableSendOptions{ExpiresAt: time.Now().Add(5 * time.Second)})
 		if sendErr != nil {
 			return sendErr
 		}
-		acceptedSend = accumulateUnreliableAcceptance(acceptedSend, status == flowersession.UnreliableAccepted)
+		acceptedSend = accumulateUnreliableAcceptance(acceptedSend, status == flowersec.UnreliableAccepted)
 		select {
 		case value := <-received:
 			if !acceptedSend || !bytes.Equal(value, payload) {

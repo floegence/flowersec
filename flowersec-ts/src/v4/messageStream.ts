@@ -11,6 +11,7 @@ import type { V4MessageStreamDefinition} from "./messageDefinition.js";
 import { messageDefinition, sameMessageDigest, emptyMessageMetadata } from "./messageDefinition.js";
 import { applicationHasPermit, type V4ApplicationContext, type V4ApplicationWaitOptions } from "./streamHandlers.js";
 import { applicationHasCompletionAncestor, applicationDependsOn, type ApplicationPermit, type CompletionClaim, type CompletionReservation } from "./runtime/applicationExecutor.js";
+import { DiagnosticActivity } from "./runtime/diagnosticObservation.js";
 
 export interface V4MessageStreamOptions {
   readonly assemblyTimeoutMS?: bigint;
@@ -29,12 +30,25 @@ export interface V4MessageSendResult {
   readonly publication_pending: boolean;
   readonly cleanup_status: V4CleanupStatus;
 }
-export type V4MessageReceiveResult<T = unknown> = Readonly<{ done: true }> | Readonly<{ done: false; value: T; application_input_delivered: boolean }>;
+/** Detached codec facts carry no definition callbacks or live Stream owner. */
+export interface V4MessageCodecIdentity {
+  readonly codec_schema_digest: Uint8Array;
+  readonly codec_revision: string;
+}
+export type V4MessageReceiveResult<T = unknown> = Readonly<{ done: true }> |
+  Readonly<{ done: false; value: T; application_input_delivered: boolean } & V4MessageCodecIdentity>;
 export type V4MessageFailure = "closed" | "canceled" | "deadline_exceeded" | "resource_exhausted" | "would_block" |
   "read_in_progress" | "encode_failed" | "decode_failed" | "framing_error" | "write_failed" | "definition_mismatch" |
   "dependency_unavailable" | "completion_dependency_unavailable" | "result_mode_conflict";
 export class V4MessageStreamError extends Error {
-  constructor(readonly code: V4MessageFailure, readonly progress?: V4MessageSendResult, readonly application_input_delivered = false) { super(code); this.name = "V4MessageStreamError"; }
+  readonly cause: "decoder_started" | undefined;
+  constructor(
+    readonly code: V4MessageFailure, readonly progress?: V4MessageSendResult,
+    readonly application_input_delivered = false, readonly codec?: V4MessageCodecIdentity,
+  ) {
+    super(code); this.name = "V4MessageStreamError";
+    this.cause = code === "result_mode_conflict" ? "decoder_started" : undefined;
+  }
 }
 const complete: V4CleanupStatus = Object.freeze({ status: "complete", core_cleanup: "complete", pending_callbacks: 0n });
 const pending: V4CleanupStatus = Object.freeze({ status: "pending", core_cleanup: "pending", pending_callbacks: 0n });
@@ -58,6 +72,8 @@ export function messageAdapterCharge(runtimeBytes: bigint): ResourceVector {
 }
 type WriteRequest = ReturnType<MessageStreamAdapterOwner["prepareWrite"]>;
 interface Send {
+  readonly diagnostic: DiagnosticActivity;
+  diagnosticFailure: V4MessageFailure | undefined; diagnosticFinished: boolean;
   value: unknown; readonly reference: ResourceReference; readonly deadline: TrustedDeadline; readonly signal: AbortSignal | undefined;
   readonly canceled: () => void; readonly resolve: (value: V4MessageSendResult) => void; readonly reject: (error: V4MessageStreamError) => void;
   timer: ReturnType<typeof setTimeout> | undefined; segments: MessageSegments | undefined; request: WriteRequest | undefined;
@@ -67,6 +83,8 @@ interface Send {
   preparing: boolean; applicationContext: V4ApplicationContext | undefined;
 }
 interface ReceiveWait {
+  readonly diagnostic: DiagnosticActivity;
+  diagnosticOutcome: V4MessageStreamError | "ready" | undefined; diagnosticFinished: boolean;
   readonly encoded: boolean; readonly signal: AbortSignal | undefined; readonly canceled: () => void;
   readonly resolve: (result: V4MessageReceiveResult<unknown>) => void; readonly reject: (error: V4MessageStreamError) => void;
   readonly context: V4ApplicationContext | undefined; claim: CompletionClaim | undefined;
@@ -106,6 +124,7 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
   #finResult: V4CloseResult | undefined;
   #finish: Promise<V4CloseResult> | undefined;
   #readWait: ReceiveWait | undefined;
+  #readOwner: ReceiveWait | undefined;
   #readRunning = false;
   #handoff = false;
   #readAdmissionBlocked = false;
@@ -225,9 +244,22 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
   #settleSend(entry: Send, failure?: V4MessageFailure): void {
     if (entry.delivered) return; entry.delivered = true;
     entry.signal?.removeEventListener("abort", entry.canceled);
-    if (failure === undefined) entry.resolve(this.#snapshot(entry)); else entry.reject(new V4MessageStreamError(failure, this.#snapshot(entry)));
+    if (failure === undefined) {
+      entry.resolve(this.#snapshot(entry));
+    } else {
+      entry.diagnosticFailure = failure;
+      const error = new V4MessageStreamError(failure, this.#snapshot(entry)); entry.reject(error);
+    }
+    this.#finishSendDiagnostic(entry);
+  }
+  #finishSendDiagnostic(entry: Send): void {
+    if (!entry.done || !entry.delivered || entry.diagnosticFinished) return;
+    entry.diagnosticFinished = true;
+    if (entry.diagnosticFailure !== undefined) entry.diagnostic.failure(new V4MessageStreamError(entry.diagnosticFailure));
+    else { entry.diagnostic.event({ state: "ready", code: "ok" }); entry.diagnostic.close(); }
   }
   send(value: Outbound, options: V4MessageSendOptions = {}): Promise<V4MessageSendResult> {
+    const diagnostic = new DiagnosticActivity(this.#owner?.diagnostics, "application");
     let resolve!: (value: V4MessageSendResult) => void, reject!: (error: V4MessageStreamError) => void;
     const promise = new NativePromise<V4MessageSendResult>((yes, no) => { resolve = yes; reject = no; });
     let reference: ResourceReference | undefined, admitted: Send | undefined;
@@ -243,7 +275,7 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
       if (outputBytes + 4 > sendCap - this.#sendBytes) throw new V4MessageStreamError("resource_exhausted");
       const timeout = duration(options.timeoutMS, this.#options.sendTimeoutMS, this.#options.sendTimeoutMS), deadline = owner.deadline(timeout);
       reference = owner.reserveSend("v4_message_send", new ResourceVector([BigInt(bytes + outputBytes) + (codec?.applicationBytes ?? 0n) + owner.runtimeBytes + 512n, 0n, 0n, 1n, 1n, 1n, 1n, 0n, 0n, 0n, 0n]));
-      const entry: Send = { value, reference, deadline, signal: options.signal, canceled: () => this.#cancelSend(entry), resolve, reject, timer: undefined,
+      const entry: Send = { diagnostic, diagnosticFailure: undefined, diagnosticFinished: false, value, reference, deadline, signal: options.signal, canceled: () => this.#cancelSend(entry), resolve, reject, timer: undefined,
         segments: undefined, request: undefined, capacity: outputBytes + 4, accepted: 0n, prefix: new Uint8Array(4), running: false, done: false, delivered: false, revoked: false, reason: undefined,
         abort: new AbortController(), context: options.context, permit: undefined, payload: undefined, preparing: false, applicationContext: undefined };
       this.#sendBytes += entry.capacity; this.#actualSends.add(entry); this.#sends.push(entry); reference = undefined;
@@ -270,6 +302,7 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
       reference?.release(); const code = error instanceof V4MessageStreamError ? error.code : error instanceof ResourceError ? "resource_exhausted" :
         error instanceof Error && (error.message === "dependency_unavailable" || error.message === "would_block") ? error.message : "encode_failed";
       if (admitted !== undefined) { this.#cancelSend(admitted, code); return promise; }
+      diagnostic.failure(new V4MessageStreamError(code));
       reject(new V4MessageStreamError(code, result({ submission: "not_submitted", stream_bytes_accepted_at_return: 0n, publication_pending: false, cleanup_status: complete })));
     }
     return promise;
@@ -380,9 +413,14 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
       failure = entry.reason ?? (error instanceof V4MessageStreamError ? error.code : error instanceof ResourceError ? "resource_exhausted" : "encode_failed");
       if (!this.#ioEnded && entry.accepted + (entry.request?.progress().accepted_bytes ?? 0n) > 0n) this.#fail(failure);
     } finally {
+      if (entry.request !== undefined) {
+        entry.request.cancel();
+        await entry.request.waitCleanup();
+        entry.accepted += entry.request.progress().accepted_bytes; entry.request = undefined;
+      }
       const i = this.#sends.indexOf(entry); if (i >= 0) this.#sends.splice(i, 1);
-      entry.running = false; this.#releaseSend(entry); this.#settleSend(entry, failure);
       applicationTail?.finish();
+      entry.running = false; this.#releaseSend(entry); this.#settleSend(entry, failure);
     }
   }
   #releaseSend(entry: Send): void {
@@ -393,11 +431,13 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
     if (entry.segments === undefined) for (const bytes of entry.payload ?? []) bytes.fill(0);
     entry.segments?.close(); entry.segments = undefined; entry.payload = undefined; entry.prefix.fill(0); entry.prefix = empty;
     this.#sendBytes -= entry.capacity; entry.capacity = 0; entry.reference.release(); this.#actualSends.delete(entry);
+    this.#finishSendDiagnostic(entry);
   }
 
   receive(options?: V4MessageReceiveOptions): Promise<V4MessageReceiveResult<Inbound>> { return this.#receive(false, options) as Promise<V4MessageReceiveResult<Inbound>>; }
   receiveEncoded(options?: V4MessageReceiveOptions): Promise<V4MessageReceiveResult<Uint8Array>> { return this.#receive(true, options) as Promise<V4MessageReceiveResult<Uint8Array>>; }
   #receive(encoded: boolean, options?: V4MessageReceiveOptions): Promise<V4MessageReceiveResult<unknown>> {
+    const diagnostic = new DiagnosticActivity(this.#owner?.diagnostics, "application");
     let resolve!: ReceiveWait["resolve"], reject!: ReceiveWait["reject"];
     const promise = new NativePromise<V4MessageReceiveResult<unknown>>((yes, no) => { resolve = yes; reject = no; });
     try {
@@ -407,8 +447,8 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
       if (this.#ioEnded && this.#length === undefined) throw new V4MessageStreamError("closed");
       if (options?.signal?.aborted) throw new V4MessageStreamError("canceled");
       applicationHasPermit(options?.context);
-      if (encoded && this.#applicationInputDelivered) throw new V4MessageStreamError("result_mode_conflict", undefined, true);
-      const wait: ReceiveWait = { encoded, signal: options?.signal, context: options?.context, claim: undefined, resolve, reject, canceled: () => {
+      if (encoded && this.#applicationInputDelivered) throw new V4MessageStreamError("result_mode_conflict", undefined, true, this.#codecIdentity());
+      const wait: ReceiveWait = { diagnostic, diagnosticOutcome: undefined, diagnosticFinished: false, encoded, signal: options?.signal, context: options?.context, claim: undefined, resolve, reject, canceled: () => {
         if (this.#readWait !== wait || this.#handoff) return; this.#readWait = undefined; wait.signal?.removeEventListener("abort", wait.canceled);
         if (!this.#decoded && !this.#applicationInputDelivered && this.#typedPrepaid && this.#bodyReference !== undefined && this.#length !== undefined) {
           try {
@@ -419,12 +459,26 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
         if (!this.#decoded && !this.#applicationInputDelivered) { this.#typedReference?.release(); this.#typedReference = undefined; this.#completion?.close(); this.#completion = undefined; }
         wait.claim?.release(); wait.claim = undefined;
         if (this.#dependencyTimer !== undefined) clearTimeout(this.#dependencyTimer); this.#dependencyTimer = undefined;
-        this.#readAbort?.abort(); wait.reject(new V4MessageStreamError("canceled", undefined, this.#applicationInputDelivered));
+        const error = new V4MessageStreamError("canceled", undefined, this.#applicationInputDelivered);
+        this.#readAbort?.abort(); wait.diagnosticOutcome = error; this.#finishReadDiagnostic(wait); wait.reject(error);
       } };
       this.#readWait = wait; wait.signal?.addEventListener("abort", wait.canceled, { once: true }); this.#scheduleRead();
-    } catch (error) { reject(error instanceof V4MessageStreamError ? error : new V4MessageStreamError(
-      error instanceof Error && error.message === "dependency_unavailable" ? "dependency_unavailable" : "closed")); }
+    } catch (error) {
+      const failure = error instanceof V4MessageStreamError ? error : new V4MessageStreamError(
+        error instanceof Error && error.message === "dependency_unavailable" ? "dependency_unavailable" : "closed");
+      diagnostic.failure(failure); reject(failure);
+    }
     return promise;
+  }
+  #finishReadDiagnostic(wait: ReceiveWait): void {
+    if (wait === this.#readOwner || wait.diagnosticOutcome === undefined || wait.diagnosticFinished) return;
+    wait.diagnosticFinished = true;
+    if (wait.diagnosticOutcome === "ready") { wait.diagnostic.event({ state: "ready", code: "ok" }); wait.diagnostic.close(); }
+    else wait.diagnostic.failure(wait.diagnosticOutcome);
+  }
+  #releaseReadOwner(): void {
+    const original = this.#readOwner; this.#readOwner = undefined;
+    if (original !== undefined) this.#finishReadDiagnostic(original);
   }
   #scheduleRead(): void {
     if (this.#readScheduled || this.#readRunning || this.#closed || this.#readWait === undefined) return;
@@ -495,6 +549,7 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
     const observe = this.#resourceObserver; this.#resourceObserver = undefined; observe?.();
     try {
       while (this.#readWait !== undefined && !this.#closed) {
+        this.#releaseReadOwner(); this.#readOwner = this.#readWait;
         const owner = this.#checkRead();
         if (this.#readWait === undefined || this.#closed) break;
         if (this.#eof) { this.#deliverRead(); break; }
@@ -591,23 +646,42 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
       if (this.#closed) { this.#owner?.releaseReader(); this.#clearBody(); }
       else if (this.#ioEnded) this.#owner?.releaseReader();
       this.#cleanup();
+      this.#releaseReadOwner();
       // A replacement waiter may have arrived while the old native read exited.
       if (!this.#closed && this.#readWait !== undefined && !this.#readAdmissionBlocked) this.#scheduleRead();
     }
   }
+  #codecIdentity(): V4MessageCodecIdentity | undefined {
+    const inbound = this.#inbound;
+    return inbound === undefined ? undefined : result({
+      codec_schema_digest: new Uint8Array(inbound.schema), codec_revision: inbound.revision,
+    });
+  }
   #deliverRead(): void {
     const wait = this.#readWait; if (wait === undefined || wait.signal?.aborted) return;
     this.#checkRead(); if (this.#readWait !== wait || wait.signal?.aborted || this.#closed) return;
-    const value = this.#eof ? result({ done: true as const }) : result({ done: false as const, value: wait.encoded ? this.#body : this.#value, application_input_delivered: this.#applicationInputDelivered });
+    const identity = this.#codecIdentity();
+    if (!this.#eof && identity === undefined) { this.#fail("definition_mismatch"); return; }
+    const value = this.#eof ? result({ done: true as const }) : result({
+      done: false as const, value: wait.encoded ? this.#body : this.#value,
+      application_input_delivered: this.#applicationInputDelivered,
+      codec_schema_digest: identity!.codec_schema_digest, codec_revision: identity!.codec_revision,
+    });
     wait.signal?.removeEventListener("abort", wait.canceled); wait.claim?.release(); wait.claim = undefined;
     const failed = this.#decodeFailed && !wait.encoded;
     this.#checkRead(); if (this.#readWait !== wait || wait.signal?.aborted || this.#closed) return;
     this.#handoff = true;
-    try { if (failed) wait.reject(new V4MessageStreamError("decode_failed", undefined, this.#applicationInputDelivered)); else wait.resolve(value); }
+    try {
+      if (failed) {
+        const error = new V4MessageStreamError("decode_failed", undefined, this.#applicationInputDelivered, identity);
+        wait.diagnosticOutcome = error; wait.reject(error);
+      } else { wait.diagnosticOutcome = "ready"; wait.resolve(value); }
+    }
     finally {
       // Reentrant host hooks cannot reclaim, zero, or deliver this same body.
       if (!this.#eof) this.#clearBody(!failed && (wait.encoded || this.#inbound!.implementation === "bytes"));
       this.#readWait = undefined; this.#handoff = false;
+      this.#finishReadDiagnostic(wait);
     }
   }
   #rejectRead(wait: ReceiveWait, reason: V4MessageFailure): void {
@@ -615,7 +689,8 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
     this.#readWait = undefined; wait.signal?.removeEventListener("abort", wait.canceled);
     wait.claim?.release(); wait.claim = undefined; this.#readAbort?.abort(); this.#owner?.releaseReader();
     if (this.#dependencyTimer !== undefined) clearTimeout(this.#dependencyTimer); this.#dependencyTimer = undefined;
-    wait.reject(new V4MessageStreamError(reason, undefined, this.#applicationInputDelivered));
+    const error = new V4MessageStreamError(reason, undefined, this.#applicationInputDelivered, this.#codecIdentity());
+    wait.diagnosticOutcome = error; this.#finishReadDiagnostic(wait); wait.reject(error);
   }
   #clearBody(delivered = false): void {
     this.#stopAssembly();
@@ -669,7 +744,11 @@ export class V4TypedMessageStream<Inbound = unknown, Outbound = unknown> {
     const wait = this.#readWait;
     if (!this.#handoff) {
       this.#readWait = undefined;
-      if (wait !== undefined) { wait.signal?.removeEventListener("abort", wait.canceled); wait.claim?.release(); wait.claim = undefined; wait.reject(new V4MessageStreamError(reason, undefined, this.#applicationInputDelivered)); }
+      if (wait !== undefined) {
+        wait.signal?.removeEventListener("abort", wait.canceled); wait.claim?.release(); wait.claim = undefined;
+        const error = new V4MessageStreamError(reason, undefined, this.#applicationInputDelivered, this.#codecIdentity());
+        wait.diagnosticOutcome = error; this.#finishReadDiagnostic(wait); wait.reject(error);
+      }
     }
     for (const entry of this.#actualSends) {
       entry.revoked = true; entry.reason = reason; entry.abort.abort(); entry.request?.cancel(); this.#settleSend(entry, reason);

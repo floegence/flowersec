@@ -4,82 +4,44 @@ import Testing
 @testable import Flowersec
 
 struct SDKDefaultsContractTests {
-  @Test func publicConnectorUsesSharedConnectTimeoutDefault() {
-    #expect(ConnectorOptions(origin: "https://app.example").connectTimeout == FlowersecSDKDefaults.Transport.connectTimeout)
+  @Test func publicProxyLimitsUseSharedDefaults() throws {
+    let limits = try ProxyClientLimits()
+    #expect(limits.maximumMetadataBytes == FlowersecSDKDefaults.Proxy.maximumMetadataBytes)
+    #expect(limits.maximumChunkBytes == FlowersecSDKDefaults.Proxy.maximumChunkBytes)
+    #expect(limits.maximumBodyBytes == FlowersecSDKDefaults.Proxy.maximumBodyBytes)
+    #expect(limits.maximumWebSocketFrameBytes == FlowersecSDKDefaults.Proxy.maximumWebSocketFrameBytes)
   }
 
-  @Test func defaultsMatchSharedStabilityManifest() throws {
+  @Test func currentRuntimeDefaultsMatchSharedManifest() throws {
     let root = URL(fileURLWithPath: #filePath)
       .deletingLastPathComponent().deletingLastPathComponent()
       .deletingLastPathComponent().deletingLastPathComponent()
     let data = try Data(contentsOf: root.appending(path: "stability/sdk_defaults.json"))
     let document = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-
     let actual: [String: Double] = [
-      "transport.connect_timeout_ms": Double(
-        milliseconds(FlowersecSDKDefaults.Transport.connectTimeout)),
-      "transport.handshake_timeout_ms": Double(
-        milliseconds(FlowersecSDKDefaults.Transport.handshakeTimeout)),
-      "transport.handshake_clock_skew_ms": Double(
-        milliseconds(FlowersecSDKDefaults.Transport.handshakeClockSkew)),
-      "e2ee.max_handshake_payload_bytes": Double(
-        FlowersecSDKDefaults.E2EE.maxHandshakePayloadBytes),
-      "e2ee.max_record_bytes": Double(FlowersecSDKDefaults.E2EE.maxRecordBytes),
-      "e2ee.outbound_record_chunk_bytes": Double(
-        FlowersecSDKDefaults.E2EE.outboundRecordChunkBytes),
-      "e2ee.max_inbound_buffered_bytes": Double(FlowersecSDKDefaults.E2EE.maxInboundBufferedBytes),
-      "e2ee.max_outbound_buffered_bytes": Double(
-        FlowersecSDKDefaults.E2EE.maxOutboundBufferedBytes),
-      "yamux.max_active_streams": Double(FlowersecSDKDefaults.Yamux.maxActiveStreams),
-      "yamux.max_inbound_streams": Double(FlowersecSDKDefaults.Yamux.maxInboundStreams),
-      "yamux.max_frame_bytes": Double(FlowersecSDKDefaults.Yamux.maxFrameBytes),
-      "yamux.preferred_outbound_frame_bytes": Double(
-        FlowersecSDKDefaults.Yamux.preferredOutboundFrameBytes),
-      "yamux.max_stream_write_queue_bytes": Double(
-        FlowersecSDKDefaults.Yamux.maxStreamWriteQueueBytes),
-      "yamux.max_stream_receive_bytes": Double(FlowersecSDKDefaults.Yamux.maxStreamReceiveBytes),
-      "yamux.max_session_receive_bytes": Double(FlowersecSDKDefaults.Yamux.maxSessionReceiveBytes),
-      "rpc.max_json_frame_bytes": Double(FlowersecSDKDefaults.RPC.maxJSONFrameBytes),
-      "rpc.max_concurrent_requests": Double(FlowersecSDKDefaults.RPC.maxConcurrentRequests),
-      "rpc.max_queued_requests": Double(FlowersecSDKDefaults.RPC.maxQueuedRequests),
-      "rpc.max_queued_notifications": Double(FlowersecSDKDefaults.RPC.maxQueuedNotifications),
-      "controlplane.max_request_body_bytes": Double(
-        FlowersecSDKDefaults.Controlplane.maxRequestBodyBytes),
-      "controlplane.max_response_body_bytes": Double(
-        FlowersecSDKDefaults.Controlplane.maxResponseBodyBytes),
-      "proxy.max_json_frame_bytes": Double(FlowersecSDKDefaults.Proxy.maxJSONFrameBytes),
-      "proxy.max_concurrent_streams": Double(FlowersecSDKDefaults.Proxy.maxConcurrentStreams),
-      "proxy.max_chunk_bytes": Double(FlowersecSDKDefaults.Proxy.maxChunkBytes),
-      "proxy.max_body_bytes": Double(FlowersecSDKDefaults.Proxy.maxBodyBytes),
-      "proxy.max_ws_frame_bytes": Double(FlowersecSDKDefaults.Proxy.maxWSFrameBytes),
+      "transport.connect_timeout_ms": Double(FlowersecSDKDefaults.Transport.connectTimeoutMilliseconds),
+      "transport.handshake_timeout_ms": Double(FlowersecSDKDefaults.Transport.handshakeTimeoutMilliseconds),
+      "proxy.max_metadata_bytes": Double(FlowersecSDKDefaults.Proxy.maximumMetadataBytes),
+      "proxy.max_concurrent_streams": Double(FlowersecSDKDefaults.Proxy.maximumConcurrentStreams),
+      "proxy.max_chunk_bytes": Double(FlowersecSDKDefaults.Proxy.maximumChunkBytes),
+      "proxy.max_body_bytes": Double(FlowersecSDKDefaults.Proxy.maximumBodyBytes),
+      "proxy.max_ws_frame_bytes": Double(FlowersecSDKDefaults.Proxy.maximumWebSocketFrameBytes),
       "proxy.default_timeout_ms": Double(FlowersecSDKDefaults.Proxy.defaultTimeoutMilliseconds),
-      "proxy.max_timeout_ms": Double(FlowersecSDKDefaults.Proxy.maxTimeoutMilliseconds),
-      "connection_controller.initial_delay_ms": Double(
-        milliseconds(FlowersecSDKDefaults.ConnectionController.initialDelay)),
-      "connection_controller.max_delay_ms": Double(
-        milliseconds(FlowersecSDKDefaults.ConnectionController.maximumDelay)),
-      "connection_controller.factor": Double(
-        FlowersecSDKDefaults.ConnectionController.multiplier),
+      "proxy.max_timeout_ms": Double(FlowersecSDKDefaults.Proxy.maximumTimeoutMilliseconds),
+      "connection_controller.initial_delay_ms": Double(milliseconds(FlowersecSDKDefaults.ConnectionController.initialDelay)),
+      "connection_controller.max_delay_ms": Double(milliseconds(FlowersecSDKDefaults.ConnectionController.maximumDelay)),
+      "connection_controller.factor": Double(FlowersecSDKDefaults.ConnectionController.multiplier),
       "connection_controller.jitter_ratio": 0,
     ]
-    let expected = try runtimeLeaves(document)
-    #expect(Set(actual.keys) == Set(expected.keys))
-    #expect(actual == expected)
-  }
-
-  private func runtimeLeaves(_ document: [String: Any]) throws -> [String: Double] {
-    var leaves: [String: Double] = [:]
-    for (section, rawValues) in document where section != "version" && section != "consumers" {
-      let values = try #require(rawValues as? [String: Any])
-      for (key, rawValue) in values {
-        if rawValue is NSNull { continue }
-        let value = try #require(rawValue as? NSNumber)
-        leaves["\(section).\(key)"] = value.doubleValue
-      }
+    // Each SDK checks the defaults consumed by its current runtime. Signed
+    // credits, stream counts and RPC admission limits have no fallback here.
+    for (name, value) in actual {
+      let components = name.split(separator: ".")
+      let section = try #require(document[String(components[0])] as? [String: Any])
+      let expected = try #require(section[String(components[1])] as? NSNumber)
+      #expect(value == expected.doubleValue, "Shared default drift: \(name)")
     }
-    return leaves
   }
-
   private func milliseconds(_ duration: Duration) -> Int {
     let components = duration.components
     return Int(components.seconds * 1_000 + components.attoseconds / 1_000_000_000_000_000)

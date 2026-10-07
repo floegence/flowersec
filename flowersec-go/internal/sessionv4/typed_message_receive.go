@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"unsafe"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
@@ -15,12 +16,12 @@ import (
 // ReceiveEncoded transfers the current original bytes exactly once. It uses
 // neither an application decoder nor a Completion permit. Its interrupted
 // waits retain the prefix, admitted body and first assembly deadline.
-func (m *TypedMessageStream) ReceiveEncoded(ctx context.Context) ([]byte, error) {
+func (m *TypedMessageStream) ReceiveEncoded(ctx context.Context) (EncodedMessageReceiveResult, error) {
 	value, err := m.receiveMessage(ctx, false)
 	if value == nil {
-		return nil, err
+		return EncodedMessageReceiveResult{}, err
 	}
-	return value.([]byte), err
+	return value.(EncodedMessageReceiveResult), err
 }
 
 func (m *TypedMessageStream) receiveMessage(ctx context.Context, typed bool) (any, error) {
@@ -98,7 +99,7 @@ func (m *TypedMessageStream) receiveMessage(ctx context.Context, typed bool) (an
 				m.mu.Unlock()
 				return m.deliverTypedMessage(ctx, &dependencies)
 			}
-			var result []byte
+			var result EncodedMessageReceiveResult
 			err := m.authorization.WithCurrentAuthorization(func() error {
 				if err := ctx.Err(); err != nil {
 					return err
@@ -106,7 +107,9 @@ func (m *TypedMessageStream) receiveMessage(ctx context.Context, typed bool) (an
 				if err := m.bodyRef.Check(); err != nil {
 					return err
 				}
-				result = m.body[:len(m.body):len(m.body)]
+				result = EncodedMessageReceiveResult{
+					Payload: m.body[:len(m.body):len(m.body)], Codec: m.inboundIdentity,
+				}
 				m.body = nil
 				return m.framing.Consume()
 			})
@@ -290,7 +293,7 @@ func (m *TypedMessageStream) admitMessageResources(ctx context.Context, length u
 		var charges [4]resourcev4.Vector
 		var err error
 		if needBody {
-			charges[0], err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(length) + 64, resourcev4.Items: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: m.config.RuntimeBytes})
+			charges[0], err = (resourcev4.Vector{resourcev4.SDKBytes: uint64(length) + 64 + uint64(unsafe.Sizeof(EncodedMessageReceiveResult{})), resourcev4.Items: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: m.config.RuntimeBytes})
 			if err == nil {
 				charges[1], err = protocolv4.CredentialSubscriptionsCharge().Add(resourcev4.Vector{resourcev4.SDKBytes: m.config.RuntimeBytes})
 			}

@@ -1,10 +1,12 @@
+import type { V4CleanupStatus } from "../generated/transportV4APIResults.js";
+import type { V4ConnectionController } from "../v4/controller.js";
 import type { V4Session } from "../v4/public.js";
 import type { ProxyStream } from "./stream.js";
 
 export type ProxyHeader = Readonly<{ name: string; value: string }>;
 
 export type ProxyRuntimeLimits = Readonly<{
-  maxJsonFrameBytes: number;
+  maxMetadataBytes: number;
   maxChunkBytes: number;
   maxBodyBytes: number;
   maxWsFrameBytes: number;
@@ -24,7 +26,12 @@ export type ProxyRuntimePathPolicy = Readonly<{
 
 export type ProxyRuntimeOptions = Readonly<{
   session: V4Session;
-  maxJsonFrameBytes?: number;
+  sessionBinding?: ProxySessionBinding;
+  /** Captured privately before request admission; never supplied by content. */
+  credentialContext?: () => string | undefined;
+  /** Surface installs its guarded bridge after all owners are registered. */
+  registerServiceWorkerBridge?: boolean;
+  maxMetadataBytes?: number;
   maxChunkBytes?: number;
   maxBodyBytes?: number;
   maxWsFrameBytes?: number;
@@ -49,6 +56,8 @@ export type ProxyFetchRequest = Readonly<{
   path: string;
   headers: readonly ProxyHeader[];
   externalOrigin?: string;
+  requestOrigin?: string;
+  credentials?: RequestCredentials;
   body?: ArrayBuffer;
 }>;
 
@@ -61,11 +70,12 @@ export type ProxyRuntime = Readonly<{
     options?: Readonly<{ protocols?: readonly string[]; signal?: AbortSignal }>,
   ): Promise<Readonly<{ stream: ProxyStream; protocol: string }>>;
   dispose(): void;
+  cleanupStatus?(): V4CleanupStatus;
 }>;
 
 export type ProxyRuntimeScopeLimits = Readonly<{
   timeoutMs?: number;
-  maxJsonFrameBytes?: number;
+  maxMetadataBytes?: number;
   maxChunkBytes?: number;
   maxBodyBytes?: number;
   maxWsFrameBytes?: number;
@@ -93,3 +103,31 @@ export type ProxyRuntimeControllerBridgeScope = ProxyRuntimeScopeBase & Readonly
 }>;
 
 export type ProxyRuntimeScope = ProxyRuntimeServiceWorkerScope | ProxyRuntimeControllerBridgeScope;
+
+/** A request captures one original Session and never migrates after OPEN. */
+export type ProxySessionBinding = Readonly<{ mode: "fixed"; session: V4Session }> |
+  Readonly<{ mode: "capture_current"; controller: V4ConnectionController }>;
+export type ProxySurfaceMode = "trusted" | "isolated";
+export interface ProxySurfaceRequestPolicy {
+  readonly methods: readonly string[];
+  readonly paths: ProxyRuntimePathPolicy;
+  readonly allowWebSocket: boolean;
+}
+export interface ProxyClearResult {
+  readonly serverInvalidation: "not_attempted" | "confirmed" | "unknown";
+  readonly ownedDeliveryFence: "confirmed" | "unconfirmed";
+  readonly associationInstallation: "installed" | "not_installed";
+  readonly clearedForThisSurface: boolean;
+  readonly readyForReuse: boolean;
+  readonly callError?: "operation_conflict" | "source_unavailable" | "canceled" | "deadline_exceeded" | "credential_clear_failed" | "association_install_failed";
+  readonly cleanupStatus: V4CleanupStatus;
+  readonly deliveryScope: "current_surface_composition";
+}
+/** The SDK registers an actual trusted publication boundary during initialization. */
+export interface ProxyPublicationOwner {
+  readonly ownerID: string;
+  fence(context: string, signal: AbortSignal): Promise<void>;
+  install(context: string, signal: AbortSignal): Promise<void>;
+  cleanupStatus(): V4CleanupStatus;
+  close(): void;
+}

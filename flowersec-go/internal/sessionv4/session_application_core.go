@@ -25,7 +25,7 @@ func admissionCoreConfig(c SessionAdmissionConfig) (SessionCoreConfig, error) {
 		return core, cryptov4.ErrConfiguration
 	}
 	rpc := c.RPC
-	if rpc.Session != core.Session.Contract || rpc.Clock != core.Clock || rpc.CryptoProfile != core.Session.Profile || rpc.MaxDataPayloadBytes != core.MaxDataPayloadBytes || rpc.Native != core.Native || core.Streams.ReceivePoolBytes == 0 || rpc.Bootstrap.ReceivePoolBytes != core.Streams.ReceivePoolBytes {
+	if rpc.Session != core.Session.Contract || rpc.Clock != core.Clock || rpc.CryptoProfile != core.Session.Profile || rpc.MaxDataPayloadBytes != core.MaxDataPayloadBytes || rpc.Native != core.Native || rpc.MixedCarrier != core.MixedCarrier || core.Streams.ReceivePoolBytes == 0 || rpc.Bootstrap.ReceivePoolBytes != core.Streams.ReceivePoolBytes {
 		return core, cryptov4.ErrConfiguration
 	}
 	geometry, minimum, err := internalChannelGeometry(profile)

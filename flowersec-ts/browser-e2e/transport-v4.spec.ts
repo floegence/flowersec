@@ -24,16 +24,16 @@ type Peer = Awaited<ReturnType<typeof startV4WSSPeer>>;
 type PublicPeer = Awaited<ReturnType<typeof startGoPublicWSSPeer>>;
 type PeerMaterial = Pick<Peer, "endpoint" | "timeOrigin" | "route" | "profile" | "input" | "bootstrap"> |
   Pick<PublicPeer, "endpoint" | "timeOrigin" | "route" | "profile" | "input" | "bootstrap" | "public">;
-type BrowserClient = Awaited<ReturnType<typeof BrowserSDK.configureV4BrowserWSS>>;
+type BrowserClient = Awaited<ReturnType<typeof BrowserSDK.configureBrowserWSS>>;
 declare global {
   interface Window {
     bootstrapV4: (...args: Parameters<Peer["bootstrap"]>) => Promise<Awaited<ReturnType<Peer["bootstrap"]>>>;
     v4: {
       sdk: typeof BrowserSDK;
-      environment: ReturnType<typeof BrowserSDK.createV4TransportEnvironment>;
-      backing: ReturnType<typeof BrowserSDK.createV4IndexedDBPoolBacking> | undefined;
-      store: Awaited<ReturnType<typeof BrowserSDK.openV4IndexedDBPoolStore>> | undefined;
-      root: InstanceType<typeof BrowserSDK.V4ResourceRoot>;
+      environment: ReturnType<typeof BrowserSDK.createTransportEnvironment>;
+      backing: ReturnType<typeof BrowserSDK.createIndexedDBPoolBacking> | undefined;
+      store: Awaited<ReturnType<typeof BrowserSDK.openIndexedDBPoolStore>> | undefined;
+      root: InstanceType<typeof BrowserSDK.ResourceRoot>;
       client: BrowserClient;
       materialInput: Parameters<BrowserClient["verifyPoolMaterial"]>[1];
       policy: Parameters<BrowserClient["verifyPoolMaterial"]>[0];
@@ -49,26 +49,26 @@ async function install(page: Page, peer: PeerMaterial, create: boolean, accounts
   return page.evaluate(async input => {
     const sdk = await import("/dist/browser/index.js"), runtime = await import("/dist/v4/runtime/environment.js"), noble = await import("/node_modules/@noble/curves/ed25519.js");
     const bytes = (n: number, count = 32) => new Uint8Array(count).fill(n), value = (data: number[]) => new Uint8Array(data);
-    const limit = new sdk.V4ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
+    const limit = new sdk.ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
     // Tenant/Environment accounts and the original protected Stream send
     // accounts coexist before consume; the scalar byte budget cannot replace them.
-    const root = new sdk.V4ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: input.accounts, reservations: 256, references: 512, rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
+    const root = new sdk.ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: input.accounts, reservations: 256, references: 512, rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
     // Go's signed authority fixture uses a short logical-time window. A scaled
     // test clock keeps it valid through real I/O; this is not a latency or
     // real-world freshness qualification. The TLS listener uses current time.
-    const start = performance.now(), now = input.public === undefined ? BigInt(Date.now()) : 1200n, environment = sdk.createV4TransportEnvironment({ root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: "2".repeat(32), runtimeBytes: 1024n,
+    const start = performance.now(), now = input.public === undefined ? BigInt(Date.now()) : 1200n, environment = sdk.createTransportEnvironment({ root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: "2".repeat(32), runtimeBytes: 1024n,
       namespaces: 1, sources: 1, acquisitions: 1, materials: 1, sessions: 1, dependencies: 8, acquireMS: 10000n, cleanupMS: 100,
-      clock: { profile: { rate: new sdk.V4ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 1000000n, maxRoundTripMS: 100n },
+      clock: { profile: { rate: new sdk.ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 1000000n, maxRoundTripMS: 100n },
         tick: () => ({ milliseconds: BigInt(Math.floor((performance.now() - start) / (input.public === undefined ? 1 : 100))), incarnation: "3".repeat(32) }), initial: () => ({ lowerMS: now, upperMS: input.public === undefined ? now : 1250n }) }, random: (destination: Uint8Array) => {
         if (!(destination.buffer instanceof ArrayBuffer)) throw new Error("random destination must own an ArrayBuffer");
         crypto.getRandomValues(new Uint8Array(destination.buffer, destination.byteOffset, destination.byteLength));
       } });
     const liveControl = input.public?.liveControl;
-    const backing = liveControl === undefined ? sdk.createV4IndexedDBPoolBacking(environment, "flowersec-browser-v4-once", { maxRecords: 4, maxRecordBytes: 16384, transactionMS: 10000n, runtimeBytes: 1024n, providerRuntimeBytes: 1048576n, storageBytes: 1048576n }) : undefined;
+    const backing = liveControl === undefined ? sdk.createIndexedDBPoolBacking(environment, "flowersec-browser-v4-once", { maxRecords: 4, maxRecordBytes: 16384, transactionMS: 10000n, runtimeBytes: 1024n, providerRuntimeBytes: 1048576n, storageBytes: 1048576n }) : undefined;
     // Test host trust boundary only. Real deployments provide an independent
     // continuity authority; this fixture does not qualify rollback resistance.
     let continuity = true;
-    const store = backing === undefined ? undefined : await sdk.openV4IndexedDBPoolStore(backing, { create: input.create, identity: { authority: input.public?.onceAuthority ?? "spend", storeID: bytes(9), generation: 1n },
+    const store = backing === undefined ? undefined : await sdk.openIndexedDBPoolStore(backing, { create: input.create, identity: { authority: input.public?.onceAuthority ?? "spend", storeID: bytes(9), generation: 1n },
       continuity: { check: () => { if (!continuity) throw new Error("history_unknown"); } }, bindings: [{ tenant: input.public?.tenant ?? "tenant", issuer: input.public === undefined ? bytes(5, 16) : value(input.public.issuerKeyID) }] });
     const prefix = (hex: string) => Uint8Array.from(hex.match(/../g)!, v => Number.parseInt(v, 16)), combine = (a: Uint8Array, b: Uint8Array) => { const c = new Uint8Array(a.length + b.length); c.set(a); c.set(b, a.length); return c; };
     const identitySeed = input.public === undefined ? bytes(14) : value(input.public.identitySeed);
@@ -77,14 +77,14 @@ async function install(page: Page, peer: PeerMaterial, create: boolean, accounts
     const b64 = (data: number[]) => btoa(String.fromCharCode(...data)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     const noiseKey = input.profile.includes("x25519") ? await crypto.subtle.importKey("pkcs8", combine(prefix("302e020100300506032b656e04220420"), dhSeed), "X25519", true, ["deriveBits"]) :
       await crypto.subtle.importKey("jwk", { kty: "EC", crv: "P-256", d: b64(Array.from(dhSeed)), x: b64(input.p256.slice(1, 33)), y: b64(input.p256.slice(33)) }, { name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
-    const liveAuthority = liveControl === undefined ? undefined : sdk.createV4BrowserLiveHTTPS(environment, {
+    const liveAuthority = liveControl === undefined ? undefined : sdk.createBrowserLiveHTTPS(environment, {
       deployment: { deploymentID: "browser-test-control", revision: "one", baseURL: liveControl.baseURL, applicationOrigin: location.origin,
         notBeforeMS: 1000n, notAfterMS: 4000n, terminatorProfile: "tls13-no-early-data-authenticated-control", evidenceReference: "test:go-tls13-bearer-origin-and-framing" },
       authority: input.public!.onceAuthority, tenant: input.public!.tenant, audience: input.public!.audience,
       bearerToken: liveControl.bearerToken, credentialNotAfterMS: 4000n, maxConcurrentRequests: 1,
       timeoutMS: 1000n, headerBytes: 8192, runtimeBytes: 1024n, providerBytes: 1048576n,
     });
-    const client = await sdk.configureV4BrowserWSS(environment, { identityKey, noiseKey,
+    const client = await sdk.configureBrowserWSS(environment, { identityKey, noiseKey,
       ...(liveAuthority === undefined ? { poolStore: store! } : { liveAuthority }),
       carrier: { deployment: { deploymentID: "browser-test-terminator", revision: "one", endpoint: input.endpoint, applicationOrigin: location.origin, routeDigest: value(input.route),
         notBeforeMS: BigInt(input.timeOrigin), notAfterMS: BigInt(input.timeOrigin) + 50000n, terminatorProfile: "tls13-no-early-data-http11-exact-origin-no-extensions", evidenceReference: "test:https-server-tls13-and-upgrade-policy" },
@@ -93,7 +93,12 @@ async function install(page: Page, peer: PeerMaterial, create: boolean, accounts
         rekeyPrepareMS: 1000n, rekeyProtocolMS: 1000n, rekeyConfirmationMS: 1000n, cryptoKeys: 100 } });
     const namespace = client.namespace({ tenant: input.public?.tenant ?? "tenant", authority: input.public?.authority ?? "authority", rootKeyID: input.public === undefined ? bytes(1, 16) : value(input.public.rootKeyID),
       rootPublicKey: input.public === undefined ? noble.ed25519.getPublicKey(bytes(7)) : value(input.public.rootPublicKey), maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 8192, stateNodes: 16384 });
-    const bootstrap = await window.bootstrapV4(Array.from(namespace.bootstrapNonce())); namespace.bootstrap(value(bootstrap.response), value(bootstrap.state));
+    await namespace.fetchBootstrap(async (request, response, state) => {
+      const bootstrap = await window.bootstrapV4(Array.from(request.nonce));
+      const signed = value(bootstrap.response), content = value(bootstrap.state);
+      try { response.set(signed); state.set(content); return { responseBytes: signed.length, stateBytes: content.length }; }
+      finally { signed.fill(0); content.fill(0); }
+    });
     const materialInput = { artifact: value(input.input.artifact), clientCertificate: value(input.input.clientCertificate), serverCertificate: value(input.input.serverCertificate), activation: value(input.input.activation), candidateIndex: 0 };
     const policy = { tenant: input.public?.tenant ?? "tenant", audience: input.public?.audience ?? "service", clientSubject: input.public?.clientSubject ?? "client", serverSubject: input.public?.serverSubject ?? "server",
       cryptoProfiles: [input.profile], authorities: [input.public?.authority ?? "authority"] };
@@ -110,6 +115,39 @@ async function close(page: Page, remove: boolean) {
     if (remove && backing !== undefined) { await new Promise<void>((resolve, reject) => { const r = indexedDB.deleteDatabase("flowersec-browser-v4-once"); r.onsuccess = () => resolve(); r.onerror = () => reject(r.error); }); await backing.releaseRemoved(); }
     return { cleanup: (await environment.waitCleanup()).status, reservations: root.snapshot().reservations };
   }, remove);
+}
+
+async function connectionRefusal(page: Page, loseContinuity = false) {
+  return page.evaluate(async loseContinuity => {
+    const v = window.v4;
+    if (loseContinuity) v.refuseContinuity();
+    try { await v.environment.connectMaterial(v.client.verifyPoolMaterial(v.policy, v.materialInput)); }
+    catch (error) {
+      if (!(error instanceof v.sdk.ConnectionError)) throw error;
+      return { code: error.code, connection: error.connection, cleanup: error.cleanup };
+    }
+    throw new Error("refused material unexpectedly connected");
+  }, loseContinuity);
+}
+function expectUnspentRefusal(refusal: Awaited<ReturnType<typeof connectionRefusal>>, code = "controller_failed") {
+  // Connect exposes a closed public projection; store and credential errors
+  // remain internal. Assert original spend/admission facts and physical cleanup.
+  expect(refusal.code).toBe(code);
+  expect(refusal.connection).toMatchObject({ spendState: "unspent", admissionState: "not_started",
+    networkReady: "not_started", applicationPublish: "not_started", queryAvailability: "unavailable" });
+  expect(refusal.cleanup).toEqual({ status: "complete", core_cleanup: "complete", pending_callbacks: 0n });
+}
+async function spendCount(page: Page): Promise<number> {
+  return page.evaluate(() => new Promise<number>((resolve, reject) => {
+    const open = indexedDB.open("flowersec-browser-v4-once");
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const database = open.result, transaction = database.transaction("spend", "readonly");
+      const count = transaction.objectStore("spend").count();
+      transaction.oncomplete = () => { database.close(); resolve(count.result); };
+      transaction.onabort = () => { database.close(); reject(transaction.error); };
+    };
+  }));
 }
 
 for (const profile of profiles) test(`Chromium runs v4 WSS and strict IndexedDB consume with ${profile}`, async ({ browser }) => {
@@ -129,10 +167,8 @@ for (const profile of profiles) test(`Chromium runs v4 WSS and strict IndexedDB 
     expect(result.liveness.submitted).toBe(true); expect(result.liveness.elapsedMS).toBeGreaterThanOrEqual(0n);
     expect((await close(first, false)).cleanup).toBe("complete"); await first.close();
     const second = await context.newPage(); await second.goto(site.origin); await install(second, peer, false);
-    const refusal = await second.evaluate(async () => {
-      const v = window.v4; try { await v.environment.connectMaterial(v.client.verifyPoolMaterial(v.policy, v.materialInput)); return "unexpected_success"; } catch (error) { return (error as Error).message; }
-    });
-    expect(refusal).toBe("spend_conflict"); expect(peer.counts().hellos).toBe(1); expect(peer.failure()).toBeUndefined();
+    const refusal = await connectionRefusal(second);
+    expectUnspentRefusal(refusal); expect(await spendCount(second)).toBe(1); expect(peer.counts().hellos).toBe(1); expect(peer.failure()).toBeUndefined();
     expect(await close(second, true)).toEqual({ cleanup: "complete", reservations: 0 });
   } finally { await context.close(); await peer.close(); await site.close(); }
 });
@@ -213,7 +249,7 @@ test.describe("Go public Serve and browser WSS interoperability", () => {
       const result = await page.evaluate(async sourceKind => {
         const v = window.v4;
         let acquisitions = 0;
-        const provider: BrowserSDK.V4CredentialProvider = async (_request, buffers) => {
+        const provider: BrowserSDK.CredentialProvider = async (_request, buffers) => {
           acquisitions++;
           const input = v.materialInput;
           if (input.activation === undefined) throw new Error("pool activation is required");
@@ -315,10 +351,8 @@ test("Chromium runs v4 browser TLS requirement rejection before consume", async 
   const site = await startBrowserModuleSite(), peer = await startV4WSSPeer(certificate, key, site.origin, profiles[0], true), context = await browser.newContext({ ignoreHTTPSErrors: true }), page = await context.newPage();
   try {
     await page.goto(site.origin); await install(page, peer, true);
-    const refusal = await page.evaluate(async () => {
-      const v = window.v4; try { await v.environment.connectMaterial(v.client.verifyPoolMaterial(v.policy, v.materialInput)); return "unexpected_success"; } catch (error) { return (error as Error).message; }
-    });
-    expect(refusal).toBe("credential_untrusted"); expect(peer.counts()).toEqual({ connections: 0, hellos: 0 });
+    const refusal = await connectionRefusal(page);
+    expectUnspentRefusal(refusal); expect(await spendCount(page)).toBe(0); expect(peer.counts()).toEqual({ connections: 0, hellos: 0 });
     expect(await close(page, true)).toEqual({ cleanup: "complete", reservations: 0 });
   } finally { await context.close(); await peer.close(); await site.close(); }
 });
@@ -327,11 +361,8 @@ test("Chromium runs v4 browser continuity loss refusal before HELLO", async ({ b
   const site = await startBrowserModuleSite(), peer = await startV4WSSPeer(certificate, key, site.origin, profiles[0]), context = await browser.newContext({ ignoreHTTPSErrors: true }), page = await context.newPage();
   try {
     await page.goto(site.origin); await install(page, peer, true);
-    const refusal = await page.evaluate(async () => {
-      const v = window.v4; v.refuseContinuity();
-      try { await v.environment.connectMaterial(v.client.verifyPoolMaterial(v.policy, v.materialInput)); return "unexpected_success"; } catch (error) { return (error as Error).message; }
-    });
-    expect(refusal).toBe("history_unknown"); expect(peer.counts().hellos).toBe(0);
+    const refusal = await connectionRefusal(page, true);
+    expectUnspentRefusal(refusal); expect(await spendCount(page)).toBe(0); expect(peer.counts().hellos).toBe(0);
     expect(await close(page, true)).toEqual({ cleanup: "complete", reservations: 0 });
   } finally { await context.close(); await peer.close(); await site.close(); }
 });
@@ -343,17 +374,14 @@ test("Chromium runs v4 browser cross-tab fencing before one unique lease consume
     await first.goto(site.origin); await install(first, peer, true);
     await second.goto(site.origin); await install(second, peer, false);
     const [stale, current] = await Promise.all([
-      first.evaluate(async () => {
-        const v = window.v4;
-        try { await v.environment.connectMaterial(v.client.verifyPoolMaterial(v.policy, v.materialInput)); return "unexpected_success"; } catch (error) { return (error as Error).message; }
-      }),
+      connectionRefusal(first),
       second.evaluate(async () => {
         const v = window.v4, session = await v.environment.connectMaterial(v.client.verifyPoolMaterial(v.policy, v.materialInput));
         const stream = await session.openStream("example/browser-v4"); await stream.write(new Uint8Array([9]));
         const read = await stream.read(1n); await session.close(); v.cleanupMaterial(); return Array.from(read.data);
       }),
     ]);
-    expect(stale).toBe("fenced"); expect(current).toEqual([9]); expect(peer.counts().hellos).toBe(1); expect(peer.failure()).toBeUndefined();
+    expectUnspentRefusal(stale, "closed"); expect(await spendCount(second)).toBe(1); expect(current).toEqual([9]); expect(peer.counts().hellos).toBe(1); expect(peer.failure()).toBeUndefined();
     expect((await close(first, false)).cleanup).toBe("complete"); expect(await close(second, true)).toEqual({ cleanup: "complete", reservations: 0 });
     expect(await first.evaluate(async () => { await window.v4.backing!.releaseRemoved(); return window.v4.root.snapshot().reservations; })).toBe(0);
   } finally { await context.close(); await peer.close(); await site.close(); }

@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportV4CompositionTests: XCTestCase {
+final class TransportCompositionTests: XCTestCase {
   private static let reference = try! V4TextReference()
   private static let corpus: [V4JSON] = {
     let raw = try! Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/corpus.json"))

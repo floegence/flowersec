@@ -8,6 +8,13 @@ struct V4HandshakeInput: Sendable, CustomStringConvertible, CustomReflectable {
   let transportContext: Data
   let fsb: Data
   let fsa: Data
+  let tunnelHop: V4TunnelHop?
+  init(artifact: Data, clientHello: Data, serverHello: Data, transportContext: Data,
+    fsb: Data, fsa: Data, tunnelHop: V4TunnelHop? = nil) {
+    self.artifact = artifact; self.clientHello = clientHello; self.serverHello = serverHello
+    self.transportContext = transportContext; self.fsb = fsb; self.fsa = fsa
+    self.tunnelHop = tunnelHop
+  }
   var description: String { "Flowersec.HandshakeInput(<redacted>)" }
   var customMirror: Mirror { Mirror(self, unlabeledChildren: [Any]()) }
 }
@@ -18,6 +25,10 @@ enum V4HandshakeFlight: Sendable { case noise, ready }
 // closes this attempt; generating bytes alone can never mark READY submitted.
 protocol V4HandshakeWriter {
   func submit(_ flight: V4HandshakeFlight, buffer: V4CryptoBuffer) throws
+  func checkHop(_ hop: V4TunnelHop) throws
+}
+extension V4HandshakeWriter {
+  func checkHop(_ hop: V4TunnelHop) throws { throw V4CryptoFailure.authentication }
 }
 
 struct V4ReadyBinding {
@@ -84,6 +95,7 @@ final class V4EstablishedAdmission {
   let context: Data
   let serviceMS: UInt64
   let applicationProfile: UInt64
+  let features: UInt64
   let streamStorage: V4CryptoReservation?
   private var root: SymmetricKey?
   fileprivate init(
@@ -91,7 +103,7 @@ final class V4EstablishedAdmission {
     profile: V4CryptoProfile, role: V4CryptoRole, hash: Data, born: V4ClockSample,
     root: SymmetricKey, maxFrame: Int, maxStreams: Int, maxCredit: UInt64,
     rekeyEnvelope: Data, context: Data, serviceMS: UInt64, applicationProfile: UInt64,
-    streamStorage: V4CryptoReservation?
+    streamStorage: V4CryptoReservation?, features: UInt64 = 0
   ) {
     self.owner = owner
     self.credential = credential
@@ -107,6 +119,7 @@ final class V4EstablishedAdmission {
     self.context = context
     self.serviceMS = serviceMS
     self.applicationProfile = applicationProfile
+    self.features = features
     self.streamStorage = streamStorage
   }
   func takeRoot() throws -> SymmetricKey {
@@ -125,6 +138,7 @@ final class V4Handshake: @unchecked Sendable, CustomStringConvertible, CustomRef
   }
   private let owner: V4CryptoReservation
   private let credential: V4CredentialAdmission
+  private let tunnelHop: V4TunnelHop?
   private let role: V4CryptoRole
   private var identity: V4LocalIdentity?
   private var noise: V4NoiseState?
@@ -155,6 +169,7 @@ final class V4Handshake: @unchecked Sendable, CustomStringConvertible, CustomRef
   ) throws {
     self.owner = owner
     credential = admission
+    tunnelHop = input.tunnelHop
     self.role = role
     self.identity = identity
     self.streamStorage = streamStorage
@@ -234,11 +249,21 @@ final class V4Handshake: @unchecked Sendable, CustomStringConvertible, CustomRef
     let context = try decode(input.transportContext, "TransportContext", 4096)
     for name in ["crypto_profile_id", "session_nonce"] { try same(context, name, artifact) }
     for name in ["artifact_digest", "route_digest", "attempt_id"] { try same(context, name, fsb) }
-    guard try context.u("path_kind") == 0, try context.u("access_class") == 0,
+    guard try context.u("path_kind") == admission.pathKind,
       let selected = try artifact.field("candidates").children.first(where: {
         try $0.b("candidate_id") == admission.candidateID
-      }), try selected.field("direct_leg").u("access_class") == 0
+      }), try selected.u("path_kind") == admission.pathKind
     else { throw V4CryptoFailure.configuration }
+    let legName = admission.pathKind == 0 ? "direct_leg" : (role == .client ? "client_leg" : "server_leg")
+    guard try context.u("access_class") == selected.field(legName).u("access_class") else {
+      throw V4CryptoFailure.configuration
+    }
+    if admission.pathKind == 1 {
+      guard let tunnelHop else { throw V4CryptoFailure.authentication }
+      try tunnelHop.claimHandshake(admission: admission, role: role, in: environment)
+    } else {
+      guard tunnelHop == nil else { throw V4CryptoFailure.authentication }
+    }
     let mode = try serverHello.u("binding_mode")
     let features = try serverHello.u("selected_features")
     guard try clientHello.u("supported_binding_modes") & (1 << mode) != 0,
@@ -247,9 +272,9 @@ final class V4Handshake: @unchecked Sendable, CustomStringConvertible, CustomRef
           & artifact.u("allowed_features") & 3),
       try artifact.u("required_features") & ~features == 0
     else { throw V4CryptoFailure.authentication }
-    // This owner implements reliable records only; unsupported required
-    // datagram or application-resume promises fail before any Noise message.
-    guard features == 0 else { throw V4CryptoFailure.configuration }
+    // Reliable native records support the application recovery feature.
+    // Datagram negotiation remains outside this carrier implementation.
+    guard features & ~UInt64(2) == 0, try features & 2 == 0 || artifact.field("session_contract").u("application_profile") == 2 else { throw V4CryptoFailure.configuration }
     let contextDigest = try context.digest("transport_context_digest")
     let admissionBinding = try fsb.digest("admission_binding")
     for value in [fsb, fsa, context] {
@@ -304,26 +329,37 @@ final class V4Handshake: @unchecked Sendable, CustomStringConvertible, CustomRef
     try check()
   }
   private func check() throws {
-    guard !closed else { throw V4CryptoFailure.closed }
-    try owner.check()
-    try credential.checkPreparation(in: owner.environment)
-    try window.check()
-    try identity?.check(in: owner.environment)
+    try owner.environment.gate.withLock {
+      guard !closed else { throw V4CryptoFailure.closed }
+      try owner.check()
+      try credential.checkPreparation(in: owner.environment)
+      try tunnelHop?.check(admission: credential, role: role, in: owner.environment)
+      try window.check()
+      try identity?.check(in: owner.environment)
+    }
   }
   private func run<T>(_ operation: () throws -> T) throws -> T {
-    try owner.environment.gate.withLock {
+    let tail = try owner.environment.gate.withLock { () throws -> V4ResourceReference in
       guard !busy else { throw V4CryptoFailure.phase }
+      try check()
+      let tail = try owner.executionTail()
       busy = true
-      defer { busy = false }
-      do {
-        try check()
-        let result = try operation()
-        try check()
-        return result
-      } catch {
-        close()
-        throw error
+      return tail
+    }
+    defer {
+      owner.environment.gate.withLock {
+        busy = false
+        if closed { clearSecrets() }
       }
+      tail.release()
+    }
+    do {
+      let result = try operation()
+      try check()
+      return result
+    } catch {
+      close()
+      throw error
     }
   }
   func submitNoise(to writer: any V4HandshakeWriter) throws {
@@ -334,6 +370,7 @@ final class V4Handshake: @unchecked Sendable, CustomStringConvertible, CustomRef
       try check()
       try buffer.store(noise.write(ephemeral: ephemeral))
       try check()
+      if let tunnelHop { try writer.checkHop(tunnelHop) }
       try writer.submit(.noise, buffer: buffer)
       try check()
       localNoiseSubmitted = true
@@ -372,6 +409,7 @@ final class V4Handshake: @unchecked Sendable, CustomStringConvertible, CustomRef
         binding.message(hash: hash, role: role, proof: proof))
       try buffer.store(Data([0xa2, 0, 0x58, 0x40]) + proof + Data([1, 0x58, 0x20]) + tag)
       try check()
+      if let tunnelHop { try writer.checkHop(tunnelHop) }
       try writer.submit(.ready, buffer: buffer)
       try check()
       localReadySubmitted = true
@@ -398,7 +436,7 @@ final class V4Handshake: @unchecked Sendable, CustomStringConvertible, CustomRef
           owner: owner, credential: credential, profile: binding.profile, role: role,
           hash: hash, born: born, root: root, maxFrame: maxFrame, maxStreams: maxStreams,
           maxCredit: maxCredit, rekeyEnvelope: rekeyEnvelope, context: binding.context,
-          serviceMS: serviceMS, applicationProfile: applicationProfile, streamStorage: streamStorage
+          serviceMS: serviceMS, applicationProfile: applicationProfile, streamStorage: streamStorage, features: binding.features
         )
         let channel = try V4ReliableChannel(established)
         self.root = nil
@@ -416,13 +454,13 @@ final class V4Handshake: @unchecked Sendable, CustomStringConvertible, CustomRef
     owner.environment.gate.withLock {
       guard !closed else { return }
       closed = true
-      noise?.close()
-      noise = nil
-      identity = nil
-      root = nil
       window.cancel()
       owner.seal()
+      if !busy { clearSecrets() }
     }
+  }
+  private func clearSecrets() {
+    noise?.close(); noise = nil; identity = nil; root = nil
   }
   deinit { close() }
 }

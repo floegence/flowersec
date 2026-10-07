@@ -38,6 +38,7 @@ export class DirectionKeyPositions {
     }
     throw new ResourceError("resource_exhausted");
   }
+  cleanupComplete(): boolean { return this.#closed && this.#slots.every(slot => slot.cleanupComplete()); }
   /** The authenticated management OPEN transfers its original protected key
    * positions permanently; an ordinary refused contender only borrowed them. */
   adoptProtection(): void { if (this.#closed) throw new Error("configuration_capacity"); this.#borrowed = false; }

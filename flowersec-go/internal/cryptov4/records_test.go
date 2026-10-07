@@ -147,8 +147,8 @@ func TestRecordEngineDatagramFinalGateAndForgedJump(t *testing.T) {
 		}
 	}
 	key := server.current.keys.get(scope).keys[0]
-	if accepted != 1 || replayed != 1 || key.good.calls != 1 || key.usage.calls != 3 || server.invalidTotal != 1 {
-		t.Fatalf("wrong final gate facts: accepted=%d replayed=%d good=%d attempts=%d invalid=%d", accepted, replayed, key.good.calls, key.usage.calls, server.invalidTotal)
+	if accepted != 1 || replayed != 1 || key.datagramGood.calls != 1 || key.usage.calls != 3 || server.invalidTotal != 1 {
+		t.Fatalf("wrong final gate facts: accepted=%d replayed=%d good=%d attempts=%d invalid=%d", accepted, replayed, key.datagramGood.calls, key.usage.calls, server.invalidTotal)
 	}
 }
 func TestRecordEngineDatagramProtectionSurvivesRekey(t *testing.T) {
@@ -282,5 +282,75 @@ func TestReplayWindowExtremes(t *testing.T) {
 	}
 	if window.admits(math.MaxUint64-256) || !window.admits(math.MaxUint64-255) {
 		t.Fatal("window boundary")
+	}
+}
+
+func TestRekeySafetyUsesKeyBudgetBeforeEpochAndSession(t *testing.T) {
+	client, _, _ := enginePair(t, protocolv4.DHProfileX25519)
+	client.limits.Key.Seal = 10
+	for n := 0; n < 8; n++ {
+		before, err := client.RekeySafety()
+		if err != nil || before.Triggered {
+			t.Fatalf("premature safety at %d: %+v, %v", n, before, err)
+		}
+		sealed(t, client, protocolv4.FrameStreamData, 1, []byte("usage"))
+	}
+	snapshot, err := client.RekeySafety()
+	if err != nil || !snapshot.Triggered {
+		t.Fatalf("key budget did not trigger safety: %+v, %v", snapshot, err)
+	}
+}
+
+func TestRekeySafetyExcludesFailedInboundDatagrams(t *testing.T) {
+	client, server, _ := enginePair(t, protocolv4.DHProfileX25519)
+	server.limits.Key.Open = 6
+	for n := 0; n < 5; n++ {
+		wire := sealed(t, client, protocolv4.FrameDatagram, protocolv4.DatagramScope(), []byte("message"))
+		wire[len(wire)-1] ^= 1
+		if _, _, _, err := server.Open(wire, acceptRecord); !errors.Is(err, ErrAuthentication) {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := server.RekeySafety()
+	if err != nil || snapshot.Triggered {
+		t.Fatalf("failed datagrams triggered global safety: %+v, %v", snapshot, err)
+	}
+	key := server.current.keys.get(protocolv4.DatagramScope()).keys[protocolv4.ClientToServer]
+	if key.usage.calls != 5 || key.datagramGood.calls != 0 {
+		t.Fatal("failed attempts escaped irreversible accounting")
+	}
+}
+
+func TestRekeySafetyTracksSuccessorRootAge(t *testing.T) {
+	client, _, now := enginePair(t, protocolv4.DHProfileX25519, func(c *Config) {
+		c.AuthorizationDeadlineMS = c.RootBorn.LowerMS + 24*60*60*1000
+	})
+	initial, err := client.RekeySafety()
+	if err != nil || initial.Triggered {
+		t.Fatal(initial, err)
+	}
+	*now = now.Add(time.Duration(client.limits.RootAge*4/5+1) * time.Millisecond)
+	mark, err := client.Clock().Monotonic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms := uint64(now.UnixMilli())
+	if err := client.Clock().InstallTrusted(mark, timev4.Interval{LowerMS: ms, UpperMS: ms}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := client.RekeySafety()
+	if err != nil || !before.Triggered {
+		t.Fatal("old root soft age", before, err)
+	}
+	born := cryptoSample(t, client)
+	if err := client.StageEpoch([32]byte{9}, born); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CommitEpoch(); err != nil {
+		t.Fatal(err)
+	}
+	after, err := client.RekeySafety()
+	if err != nil || after.Triggered || after.Epoch != initial.Epoch+1 || after.RootID == initial.RootID || after.RootBorn != born {
+		t.Fatal("successor inherited old-root age", after, err)
 	}
 }

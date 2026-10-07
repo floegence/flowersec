@@ -3,11 +3,11 @@ import { byteLength, byteSlice, CBORDecoder, cborDecoderCharge, type CBORDocumen
 import type { TrustedClock } from "./clock.js";
 import { ResourceVector, type ResourceAccount, type ResourceOwner, type ResourceReference, type ResourceRoot, type ProtectedResourceReservation } from "./resources.js";
 import type { DecodeContext } from "./schema.js";
-import { namedField, wireDomains } from "./schemaRegistry.js";
+import { namedField, wireDomains, wireMaps } from "./schemaRegistry.js";
 import { SignedMapCodec, signedMapCodecCharge } from "./signedMap.js";
 
 export class CredentialError extends Error {
-  constructor(readonly code: "credential_invalid" | "credential_untrusted" | "credential_expired" | "credential_revoked" | "credential_binding" | "credential_closed" | "configuration_capacity") {
+  constructor(readonly code: "credential_invalid" | "credential_untrusted" | "credential_expired" | "credential_revoked" | "credential_binding" | "credential_closed" | "configuration_capacity" | "connection_requirement_unavailable" | "control_response_invalid" | "credential_busy" | "original_relay_preparation_required" | "required_guarantee_unavailable") {
     super(code); this.name = "CredentialError";
   }
 }
@@ -40,6 +40,9 @@ export class CredentialWork {
     catch (error) { this.#reservation.release(); this.#reservation = undefined; throw error; }
   }
   check(): void { requireCredential(this.#reservation !== undefined, "credential_closed"); this.#reservation.check(); }
+  /** Retains an independent guard capability after this work object takes its
+   * original reservation. The caller owns and releases the returned alias. */
+  borrowReference(): ResourceReference { this.check(); return this.#reservation!.borrow(); }
   sameEnvironment(reference: ResourceReference): boolean { this.check(); return this.#reservation!.sameEnvironment(reference); }
   reserve(kind: string, charge: ResourceVector): ResourceReference {
     this.check(); const r = this.#resources;
@@ -84,6 +87,22 @@ export class CredentialWork {
       return new OwnedCredentialMap(decoder, decoder.decodeMap(raw, schema, context), schema, () => { if (slot !== undefined) slot.busy = false; released?.(); });
     } catch (error) { decoder?.close(); if (slot !== undefined) slot.busy = false; throw error; } finally { ref?.release(); }
   }
+  /** Decode an internal durable/control record with the same original parser
+   * positions as signed maps. The result conveys no credential authority. */
+  parseRecord(raw: Uint8Array, cap: number, nodes = 16384): OwnedCredentialMap {
+    this.check(); requireCredential(byteLength(raw) <= cap, "configuration_capacity");
+    const boundedNodes = Math.min(nodes, byteLength(raw));
+    const config = { bytes: cap, nodes: boundedNodes, textBytes: Math.min(cap, 4096), arrayItems: boundedNodes, runtimeBytes: this.#resources.runtimeBytes };
+    const slot = this.#parserConfig === undefined ? undefined : this.#parserSlots.find(entry => !entry.busy);
+    if (this.#parserConfig !== undefined) requireCredential(slot !== undefined && cap <= this.#parserConfig.bytes && boundedNodes <= this.#parserConfig.nodes, "configuration_capacity");
+    if (slot !== undefined) slot.busy = true;
+    let reference: ResourceReference | undefined, decoder: CBORDecoder | undefined;
+    try {
+      reference = slot?.slot.checkout() ?? this.reserve("record_decoder", cborDecoderCharge(config)); decoder = new CBORDecoder(config, reference);
+      return new OwnedCredentialMap(decoder, decoder.decode(raw), "$record", () => { if (slot !== undefined) slot.busy = false; });
+    } catch (error) { decoder?.close(); if (slot !== undefined) slot.busy = false; throw error; }
+    finally { reference?.release(); }
+  }
   verify(map: OwnedCredentialMap, publicKey: Uint8Array, context: DecodeContext = {}): void {
     this.check(); const size = map.doc.encodedSize(); requireCredential(size <= this.#scratch.length, "configuration_capacity");
     map.doc.copyEncoded(0, this.#scratch);
@@ -95,9 +114,17 @@ export class CredentialWork {
     } finally { codec?.close(); a.release(); b?.release(); this.#scratch.fill(0); }
   }
   digest(map: OwnedCredentialMap, name: string, node = 0): Uint8Array {
-    this.check(); const n = map.doc.encodedSize(node); requireCredential(n <= this.#scratch.length, "configuration_capacity");
-    map.doc.copyEncoded(node, this.#scratch);
-    try { return credentialDigest(name, byteSlice(this.#scratch, 0, n)); } finally { this.#scratch.fill(0); }
+    this.check(); const domain = wireDomains.find(value => value.name === name), part = domain?.input_schema.parts[0];
+    requireCredential(domain?.operation === "sha256" && domain.input_schema.parts.length === 1 && part?.encoding === "lp-map" &&
+      (part.projection === "full" || part.projection === "without_signature"), "credential_invalid");
+    const size = map.doc.encodedSize(node); requireCredential(size <= this.#scratch.length, "configuration_capacity");
+    let count: number;
+    if (part.projection === "without_signature") {
+      const signature = wireMaps[map.schema]?.signature_field;
+      requireCredential(node === 0 && part.schema_ref === map.schema && signature !== undefined, "credential_invalid");
+      count = map.doc.copyWithoutField(signature, this.#scratch);
+    } else count = map.doc.copyEncoded(node, this.#scratch);
+    try { return hashCredentialMap(domain.label_bytes, byteSlice(this.#scratch, 0, count)); } finally { this.#scratch.fill(0); }
   }
   close(): void { for (const entry of this.#parserSlots) entry.slot.closeAfterUse(); this.#parserSlots = []; for (const slot of this.#signatureSlots ?? []) slot.closeAfterUse(); this.#signatureSlots = undefined; this.#scratch.fill(0); this.#scratch = new Uint8Array(); this.#reservation?.release(); this.#reservation = undefined; }
 }
@@ -130,7 +157,10 @@ export class OwnedCredentialMap {
 export function credentialDigest(name: string, encoded: Uint8Array): Uint8Array {
   const d = wireDomains.find(v => v.name === name);
   requireCredential(d?.operation === "sha256" && d.input_schema.parts.length === 1 && d.input_schema.parts[0]!.encoding === "lp-map" && d.input_schema.parts[0]!.projection === "full", "credential_invalid");
-  const label = Uint8Array.from(d.label_bytes.match(/../gu)!.map(v => Number.parseInt(v, 16))), length = new Uint8Array(4), n = byteLength(encoded);
+  return hashCredentialMap(d.label_bytes, encoded);
+}
+function hashCredentialMap(labelHex: string, encoded: Uint8Array): Uint8Array {
+  const label = Uint8Array.from(labelHex.match(/../gu)!.map(v => Number.parseInt(v, 16))), length = new Uint8Array(4), n = byteLength(encoded);
   length[0] = n >>> 24; length[1] = n >>> 16; length[2] = n >>> 8; length[3] = n;
   const hash = sha256.create(); try { return hash.update(label).update(length).update(encoded).digest(); }
   finally { hash.destroy(); length.fill(0); }

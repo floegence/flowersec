@@ -32,6 +32,14 @@ type ManagementSink interface {
 	TryAcceptManagement(context.Context, []byte, ManagementPublicationGate) (uint64, error)
 }
 
+// AuthorizedManagementSink is implemented by the original writer when the
+// caller already holds the complete endpoint/lease authorization gate. It
+// performs only the final bounded ownership/capacity/ring transfer and must
+// not reacquire the same non-reentrant Engine authorization lock.
+type AuthorizedManagementSink interface {
+	TryAcceptAuthorizedManagement(context.Context, []byte, ManagementPublicationGate) (uint64, error)
+}
+
 // ManagementPublicationGate runs after the sink's original Stream/crypto and
 // capacity checks, around the bounded ring copy. It must not reenter the sink.
 // A nil gate is used only for responses containing no authorized history fact.
@@ -65,23 +73,32 @@ type ExecutionManagementBindingResolver interface {
 // Fixed SDK method bindings are distinct from the business target contract
 // carried inside the request body. No binding comes from peer input.
 type ExecutionManagementWireConfig struct {
-	Clock        *timev4.Clock
-	Sink         ManagementSink
-	RuntimeBytes uint64
+	Clock *timev4.Clock
+	Sink  ManagementSink
+	// Original Session gates are bounded SDK reads and execute no application code.
+	DrainDeadline func() *timev4.Deadline
+	AdmissionOpen func() bool
+	RuntimeBytes  uint64
 }
 type managementWirePending struct {
-	serial    uint64
-	request   protocolv4.ApplicationHeader
-	target    ExecutionTarget
-	access    ExecutionAccess
-	authority resourcev4.Reference
-	deadline  *timev4.Deadline
-	abandoned bool
+	ownerToken    uint64
+	serial        uint64
+	request       protocolv4.ApplicationHeader
+	target        ExecutionTarget
+	access        ExecutionAccess
+	authority     resourcev4.Reference
+	deadline      *timev4.Deadline
+	publishing    bool
+	processing    bool
+	abandoned     bool
+	earlyReady    bool
+	earlyResponse ManagementResponse
 }
 type managementWireReply struct {
 	serial              uint64
 	length              int
 	running             bool
+	publishing          bool
 	timedOut, published bool
 	ready               bool
 	cancel              bool
@@ -109,6 +126,10 @@ type ExecutionManagementWire struct {
 	outgoing           [managementEnvelopeBytes]byte
 	highwater, inbound uint64
 	closed, cleaned    bool
+	sampleActive       uint32
+	sampleDone         chan struct{}
+	responseActive     uint32
+	responseDone       chan struct{}
 }
 
 func ExecutionManagementWireCharge(runtimeBytes uint64) (resourcev4.Vector, error) {
@@ -153,7 +174,7 @@ func NewExecutionManagementWire(c ExecutionManagementWireConfig, ref resourcev4.
 		owned.Release()
 		return nil, err
 	}
-	return &ExecutionManagementWire{spec: spec, config: c, reservation: owned, headers: h, bodies: b}, nil
+	return &ExecutionManagementWire{spec: spec, config: c, reservation: owned, headers: h, bodies: b, sampleDone: make(chan struct{}), responseDone: make(chan struct{})}, nil
 }
 func managementTarget(t ExecutionTarget) protocolv4.ManagementTarget {
 	return protocolv4.ManagementTarget{Tenant: t.Service.Tenant, Audience: t.Service.Audience, Namespace: t.Service.Namespace, Subject: t.Caller.Subject, Authority: t.Caller.Authority, Operation: t.Operation, RequestDigest: t.RequestDigest, ContractDigest: t.ContractDigest}
@@ -161,6 +182,28 @@ func managementTarget(t ExecutionTarget) protocolv4.ManagementTarget {
 func executionTarget(t protocolv4.ManagementTarget) ExecutionTarget {
 	return ExecutionTarget{Service: ExecutionService{Tenant: t.Tenant, Audience: t.Audience, Namespace: t.Namespace}, Caller: ExecutionPrincipal{Authority: t.Authority, Subject: t.Subject}, Operation: t.Operation, RequestDigest: t.RequestDigest, ContractDigest: t.ContractDigest}
 }
+func (w *ExecutionManagementWire) acceptManagement(ctx context.Context, wire []byte, gate ManagementPublicationGate) (uint64, error) {
+	if sink, ok := w.config.Sink.(AuthorizedManagementSink); ok {
+		return sink.TryAcceptAuthorizedManagement(ctx, wire, gate)
+	}
+	return w.config.Sink.TryAcceptManagement(ctx, wire, gate)
+}
+
+func (w *ExecutionManagementWire) checkDeadlineAt(deadline *timev4.Deadline, sample timev4.Sample) error {
+	if w.config.AdmissionOpen != nil && !w.config.AdmissionOpen() {
+		return ErrManagementClosed
+	}
+	if deadline == nil {
+		return ErrManagementFraming
+	}
+	if w.config.DrainDeadline != nil {
+		if original := w.config.DrainDeadline(); original != nil {
+			return deadline.TightenFromAt(original, sample)
+		}
+	}
+	return deadline.CheckAt(sample)
+}
+
 func (w *ExecutionManagementWire) binding(cancel bool) QueryBinding {
 	if cancel {
 		return QueryBinding{Type: w.spec.Cancel.Type, Contract: w.spec.Cancel.Contract}
@@ -225,7 +268,7 @@ func (w *ExecutionManagementWire) decodeEnvelope(wire []byte) (protocolv4.Applic
 // Access and its original backing remain pinned through a full response or
 // generation cleanup, even if the caller abandons its local wait.
 func (w *ExecutionManagementWire) TryRequest(ctx context.Context, cancel bool, target ExecutionTarget, deadlineMS uint64, access ExecutionAccess) (uint64, error) {
-	return w.tryRequest(ctx, cancel, target, deadlineMS, nil, access)
+	return w.tryRequest(ctx, cancel, target, deadlineMS, nil, access, 0)
 }
 
 // TryRequestDeadline forks the caller's original clock projection rather than
@@ -234,99 +277,168 @@ func (w *ExecutionManagementWire) TryRequestDeadline(ctx context.Context, cancel
 	if deadline == nil {
 		return 0, ErrConfiguration
 	}
-	return w.tryRequest(ctx, cancel, target, deadline.Cap(), deadline, access)
+	return w.tryRequest(ctx, cancel, target, deadline.Cap(), deadline, access, 0)
 }
-func (w *ExecutionManagementWire) tryRequest(ctx context.Context, cancel bool, target ExecutionTarget, deadlineMS uint64, original *timev4.Deadline, access ExecutionAccess) (uint64, error) {
+
+// TryRequestDeadlineOwned binds the wire reservation to the channel-owned call token.
+// The token is carried with the pending serial before publication starts, so a
+// response arriving during the finite send gate can be returned to its owner.
+func (w *ExecutionManagementWire) TryRequestDeadlineOwned(ctx context.Context, cancel bool, target ExecutionTarget, deadline *timev4.Deadline, access ExecutionAccess, ownerToken uint64) (uint64, error) {
+	if ownerToken == 0 {
+		return 0, ErrOwner
+	}
+	return w.tryRequest(ctx, cancel, target, deadline.Cap(), deadline, access, ownerToken)
+}
+func (w *ExecutionManagementWire) tryRequest(ctx context.Context, cancel bool, target ExecutionTarget, deadlineMS uint64, original *timev4.Deadline, access ExecutionAccess, ownerToken uint64) (uint64, error) {
 	if w == nil || ctx == nil || access == nil {
 		return 0, ErrConfiguration
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.closed {
-		return 0, ErrManagementClosed
+	sample, sampleErr, releaseSample := w.sampleClock()
+	defer releaseSample()
+	clock := w.sampleClockOwner()
+	if sampleErr != nil {
+		return 0, sampleErr
 	}
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+
+	var wire [managementEnvelopeBytes]byte
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return 0, ErrManagementClosed
+	}
 	if w.highwater == math.MaxUint64 {
+		w.mu.Unlock()
 		return 0, ErrSerialExhausted
 	}
 	index := -1
 	for i := range w.pending {
-		if w.pending[i].serial == 0 {
+		if w.pending[i].publishing {
+			// The peer requires contiguous control serials. Keep the single
+			// serial reservation gate held until this publication commits.
+			w.mu.Unlock()
+			return 0, ErrCapacity
+		}
+		if index < 0 && w.pending[i].serial == 0 {
 			index = i
-			break
+		}
+		if ownerToken != 0 && w.pending[i].ownerToken == ownerToken && w.pending[i].serial != 0 {
+			w.mu.Unlock()
+			return 0, ErrOwner
 		}
 	}
 	if index < 0 {
+		w.mu.Unlock()
 		return 0, ErrCapacity
 	}
+	serial := w.highwater + 1
 	var deadline *timev4.Deadline
 	var err error
 	if original == nil {
-		deadline, err = w.newDeadline(deadlineMS)
+		deadline, err = w.newDeadlineAt(clock, deadlineMS, sample, sampleErr)
 	} else {
-		if !original.BelongsTo(w.config.Clock) {
+		if !original.BelongsTo(clock) {
+			w.mu.Unlock()
 			return 0, ErrConfiguration
 		}
-		deadline, err = original.Fork(deadlineMS)
-		if err == nil {
-			now, sampleErr := deadline.Sample()
-			err = sampleErr
-			if err == nil && (deadlineMS <= now.LowerMS || deadlineMS-now.LowerMS > w.spec.MaxLifetimeMS) {
-				err = ErrManagementFraming
-			}
+		deadline, err = original.ForkAt(deadlineMS, sample)
+		if err == nil && (deadlineMS <= sample.LowerMS || deadlineMS-sample.LowerMS > w.spec.MaxLifetimeMS) {
+			err = ErrManagementFraming
 		}
 	}
+	if err == nil {
+		err = w.checkDeadlineAt(deadline, sample)
+	}
 	if err != nil {
+		w.mu.Unlock()
 		return 0, err
 	}
-	if err = deadline.Check(); err != nil {
-		return 0, err
-	}
-	// The payload is built at the end so prefix/header compaction is overlap-safe.
-	body := w.outgoing[514:]
+	deadlineMS = deadline.Cap()
+	body := wire[514:]
 	n, err := w.bodies.EncodeTarget(body, managementTarget(target))
-	if err != nil {
-		return 0, err
-	}
-	defer clear(w.outgoing[:])
-	serial := w.highwater + 1
-	length, h, err := w.encodeEnvelope(w.outgoing[:], cancel, false, serial, deadlineMS, body[:n])
-	if err != nil {
-		return 0, err
-	}
-	// Copy string backing before the irreversible gate; user substrings cannot
-	// retain arbitrarily large buffers in a bounded pending association.
-	target.Service.Tenant = strings.Clone(target.Service.Tenant)
-	target.Service.Audience = strings.Clone(target.Service.Audience)
-	target.Service.Namespace = strings.Clone(target.Service.Namespace)
-	target.Caller.Subject = strings.Clone(target.Caller.Subject)
-	_, err = w.config.Sink.TryAcceptManagement(ctx, w.outgoing[:length], func(transfer func() error) error {
-		return access.WithExecutionAccess(target, func(authority resourcev4.Reference) error {
-			if err := w.reservation.CheckSameEnvironment(authority); err != nil {
+	if err == nil {
+		var h protocolv4.ApplicationHeader
+		var length int
+		length, h, err = w.encodeEnvelope(wire[:], cancel, false, serial, deadlineMS, body[:n])
+		if err == nil {
+			target.Service.Tenant = strings.Clone(target.Service.Tenant)
+			target.Service.Audience = strings.Clone(target.Service.Audience)
+			target.Service.Namespace = strings.Clone(target.Service.Namespace)
+			target.Caller.Subject = strings.Clone(target.Caller.Subject)
+			w.pending[index] = managementWirePending{ownerToken: ownerToken, serial: serial, request: h, target: target, access: access, deadline: deadline, publishing: true}
+			w.mu.Unlock()
+
+			var pinned resourcev4.Reference
+			err = access.WithExecutionAccess(target, func(authority resourcev4.Reference) error {
+				if err := w.reservation.CheckSameEnvironment(authority); err != nil {
+					return err
+				}
+				var borrowErr error
+				pinned, borrowErr = authority.Borrow()
+				if borrowErr != nil {
+					return borrowErr
+				}
+				if err := w.checkDeadlineAt(deadline, sample); err != nil {
+					pinned.Release()
+					pinned = resourcev4.Reference{}
+					return err
+				}
+				w.mu.Lock()
+				p := &w.pending[index]
+				if p.serial != serial || !p.publishing {
+					w.mu.Unlock()
+					pinned.Release()
+					pinned = resourcev4.Reference{}
+					return ErrOwner
+				}
+				p.authority, pinned = pinned, resourcev4.Reference{}
+				w.mu.Unlock()
+				gate := func(transfer func() error) error {
+					fresh, err := clock.Sample()
+					if err != nil {
+						return err
+					}
+					if err := w.checkDeadlineAt(deadline, fresh); err != nil {
+						return err
+					}
+					return transfer()
+				}
+				_, err = w.acceptManagement(ctx, wire[:length], gate)
 				return err
+			})
+			w.mu.Lock()
+			p := &w.pending[index]
+			if err == nil && !w.closed && p.serial == serial && p.publishing {
+				p.publishing = false
+				w.highwater = serial
+				if p.earlyReady {
+					p.authority.Release()
+					*p = managementWirePending{}
+				}
+				w.mu.Unlock()
+				return serial, nil
 			}
-			pinned, err := authority.Borrow()
-			if err != nil {
-				return err
-			}
-			if err = deadline.Check(); err == nil {
-				err = transfer()
-			}
-			if err != nil {
+			if pinned != (resourcev4.Reference{}) {
 				pinned.Release()
-				return err
 			}
-			w.highwater = serial
-			w.pending[index] = managementWirePending{serial: serial, request: h, target: target, access: access, authority: pinned, deadline: deadline}
-			return nil
-		})
-	})
-	if err != nil {
-		return 0, err
+			if p.serial == serial {
+				if p.authority != (resourcev4.Reference{}) {
+					p.authority.Release()
+				}
+				*p = managementWirePending{}
+			}
+			closed := w.closed
+			w.mu.Unlock()
+			if closed && err == nil {
+				return 0, ErrManagementClosed
+			}
+			return 0, err
+		}
 	}
-	return serial, nil
+	w.mu.Unlock()
+	return 0, err
 }
 
 // Abandon never refunds an unfinished response or deletes its late association.
@@ -360,28 +472,47 @@ const (
 // association. Out-of-order completion is legal; canceled and fully completed
 // duplicates are consumed once without producing another result value.
 func (w *ExecutionManagementWire) AcceptResponse(wire []byte) (ManagementResponse, uint64, ManagementResponseDisposition, error) {
+	response, serial, _, disposition, err := w.acceptResponseWithOwner(wire)
+	return response, serial, disposition, err
+}
+
+// AcceptResponseWithOwner is the channel-facing response gate. The returned
+// owner token is the token recorded with the wire reservation, including when
+// a response races the finite publication gate. Callers must use it to route
+// an early response; choosing the first publishing caller is unsafe.
+func (w *ExecutionManagementWire) AcceptResponseWithOwner(wire []byte) (ManagementResponse, uint64, uint64, ManagementResponseDisposition, error) {
+	return w.acceptResponseWithOwner(wire)
+}
+
+func (w *ExecutionManagementWire) acceptResponseWithOwner(wire []byte) (ManagementResponse, uint64, uint64, ManagementResponseDisposition, error) {
 	if w == nil {
-		return ManagementResponse{}, 0, 0, ErrOwner
+		return ManagementResponse{}, 0, 0, 0, ErrOwner
 	}
+	sample, sampleErr, releaseSample := w.sampleClock()
+	defer releaseSample()
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.closed {
-		return ManagementResponse{}, 0, 0, ErrManagementClosed
+		w.mu.Unlock()
+		return ManagementResponse{}, 0, 0, 0, ErrManagementClosed
 	}
+	w.mu.Unlock()
 	h, body, cancel, err := w.decodeEnvelope(wire)
 	if err != nil {
-		return ManagementResponse{}, 0, 0, err
+		return ManagementResponse{}, 0, 0, 0, err
 	}
 	serial := h.Fields().ControlSerial
 	if !h.IsResponse() {
-		return ManagementResponse{}, serial, 0, ErrManagementFraming
-	}
-	if serial == 0 || serial > w.highwater {
-		return ManagementResponse{}, serial, 0, ErrManagementSerial
+		return ManagementResponse{}, serial, 0, 0, ErrManagementFraming
 	}
 	decoded, err := w.bodies.DecodeResult(body, cancel)
 	if err != nil {
-		return ManagementResponse{}, serial, 0, err
+		return ManagementResponse{}, serial, 0, 0, err
+	}
+
+	w.mu.Lock()
+	if w.closed {
+		w.mu.Unlock()
+		return ManagementResponse{}, serial, 0, 0, ErrManagementClosed
 	}
 	index := -1
 	for i := range w.pending {
@@ -391,28 +522,75 @@ func (w *ExecutionManagementWire) AcceptResponse(wire []byte) (ManagementRespons
 		}
 	}
 	if index < 0 {
-		return ManagementResponse{}, serial, ManagementResponseDiscarded, nil
+		if serial == 0 || serial > w.highwater {
+			w.mu.Unlock()
+			return ManagementResponse{}, serial, 0, 0, ErrManagementSerial
+		}
+		w.mu.Unlock()
+		return ManagementResponse{}, serial, 0, ManagementResponseDiscarded, nil
 	}
 	p := &w.pending[index]
+	ownerToken := p.ownerToken
 	if err = p.request.MatchResponse(h); err != nil {
-		return ManagementResponse{}, serial, 0, ErrManagementBinding
+		w.mu.Unlock()
+		return ManagementResponse{}, serial, ownerToken, 0, ErrManagementBinding
 	}
-	defer func() { p.authority.Release(); *p = managementWirePending{} }()
+	if p.publishing {
+		o := decoded.Observation
+		obs := ExecutionObservation{Found: o.Found, State: ExecutionState(o.State), CancelRequested: o.CancelRequested, Dispatched: o.Dispatched, WorkActive: o.WorkActive, HistoryNotBeforeGCMS: o.HistoryNotBeforeGCMS, ResultNotAfterMS: o.ResultNotAfterMS, ResultAvailable: o.ResultAvailable, ResultDeleted: o.ResultDeleted, ResultBytes: o.ResultBytes, ApplicationErrorCode: o.ApplicationErrorCode, ResultDigest: o.ResultDigest, Reason: o.Reason}
+		response := ManagementResponse{Serial: serial, Observation: obs, Cancel: ExecutionCancelResult{Kind: decoded.CancelKind, Observation: obs}, IsCancel: cancel, Status: decoded.Status}
+		p.earlyReady, p.earlyResponse = true, response
+		w.mu.Unlock()
+		return response, serial, ownerToken, ManagementResponseDiscarded, nil
+	}
+	if p.processing {
+		w.mu.Unlock()
+		return ManagementResponse{}, serial, ownerToken, ManagementResponseDiscarded, nil
+	}
 	if p.abandoned {
-		return ManagementResponse{}, serial, ManagementResponseDiscarded, nil
+		p.authority.Release()
+		*p = managementWirePending{}
+		w.mu.Unlock()
+		return ManagementResponse{}, serial, ownerToken, ManagementResponseDiscarded, nil
 	}
-	err = p.access.WithExecutionAccess(p.target, func(authority resourcev4.Reference) error {
-		if err := p.authority.CheckSameEnvironment(authority); err != nil {
-			return err
-		}
-		return p.deadline.Check()
+	p.processing = true
+	target, access, authority, deadline := p.target, p.access, p.authority, p.deadline
+	w.responseActive++
+	w.mu.Unlock()
+
+	err = access.WithExecutionAccess(target, func(current resourcev4.Reference) error {
+		return authority.CheckSameEnvironment(current)
 	})
+	if err == nil {
+		if sampleErr != nil {
+			err = sampleErr
+		} else {
+			err = w.checkDeadlineAt(deadline, sample)
+		}
+	}
+
+	w.mu.Lock()
+	p = &w.pending[index]
+	if p.serial == serial && p.processing {
+		p.authority.Release()
+		*p = managementWirePending{}
+	}
+	w.responseActive--
+	if w.closed && w.responseActive == 0 && w.responseDone != nil {
+		select {
+		case <-w.responseDone:
+		default:
+			close(w.responseDone)
+		}
+	}
+	w.cleanupLocked()
+	w.mu.Unlock()
 	if err != nil {
-		return ManagementResponse{}, serial, ManagementResponseRejected, err
+		return ManagementResponse{}, serial, ownerToken, ManagementResponseRejected, err
 	}
 	o := decoded.Observation
 	obs := ExecutionObservation{Found: o.Found, State: ExecutionState(o.State), CancelRequested: o.CancelRequested, Dispatched: o.Dispatched, WorkActive: o.WorkActive, HistoryNotBeforeGCMS: o.HistoryNotBeforeGCMS, ResultNotAfterMS: o.ResultNotAfterMS, ResultAvailable: o.ResultAvailable, ResultDeleted: o.ResultDeleted, ResultBytes: o.ResultBytes, ApplicationErrorCode: o.ApplicationErrorCode, ResultDigest: o.ResultDigest, Reason: o.Reason}
-	return ManagementResponse{Serial: serial, Observation: obs, Cancel: ExecutionCancelResult{Kind: decoded.CancelKind, Observation: obs}, IsCancel: cancel, Status: decoded.Status}, serial, ManagementResponseDelivered, nil
+	return ManagementResponse{Serial: serial, Observation: obs, Cancel: ExecutionCancelResult{Kind: decoded.CancelKind, Observation: obs}, IsCancel: cancel, Status: decoded.Status}, serial, ownerToken, ManagementResponseDelivered, nil
 }
 
 // ManagementReply retains one protected service/result position until its
@@ -429,52 +607,118 @@ func (r ManagementReply) Publish(ctx context.Context) error {
 	if w == nil || ctx == nil {
 		return ErrOwner
 	}
+	_, sampleErr, releaseSample := w.sampleClock()
+	defer releaseSample()
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if err := r.checkLocked(); err != nil {
+		w.mu.Unlock()
 		return err
 	}
 	p := &w.replies[r.index]
+	if p.deadline == nil {
+		w.mu.Unlock()
+		return ErrManagementFraming
+	}
+	if p.publishing {
+		w.mu.Unlock()
+		return ErrOwner
+	}
+	p.publishing = true
+	length := p.length
+	var wire [managementEnvelopeBytes]byte
+	copy(wire[:length], p.wire[:length])
+	target, access, deadline := p.target, p.access, p.deadline
+	w.mu.Unlock()
+
+	// Any exceptional exit before the final state transition must release the
+	// original publishing owner so this bounded reply can be retried or cleaned.
+	settled := false
+	defer func() {
+		if settled {
+			return
+		}
+		w.mu.Lock()
+		if r.index >= 0 && r.index < len(w.replies) && w.replies[r.index].serial == r.serial {
+			w.replies[r.index].publishing = false
+		}
+		w.cleanupLocked()
+		w.mu.Unlock()
+	}()
+
 	var gate ManagementPublicationGate
-	var denied error
-	if p.access != nil {
+	if deadline != nil {
 		gate = func(transfer func() error) error {
-			denied = p.access.WithExecutionAccess(p.target, func(authority resourcev4.Reference) error {
-				if err := w.reservation.CheckSameEnvironment(authority); err != nil {
-					return err
-				}
-				if err := p.deadline.Check(); err != nil {
-					return err
-				}
-				return transfer()
-			})
-			return denied
+			fresh, err := w.config.Clock.Sample()
+			if err != nil {
+				return err
+			}
+			if err := w.checkDeadlineAt(deadline, fresh); err != nil {
+				return err
+			}
+			return transfer()
 		}
 	}
-	_, err := w.config.Sink.TryAcceptManagement(ctx, p.wire[:p.length], gate)
-	if denied != nil {
-		// An authorization/expiry refusal cannot publish the prepared history
-		// facts. The same protected slot sends a bounded failure instead.
-		if err := w.encodeReplyLocked(p, protocolv4.ManagementResult{Status: managementError(denied)}); err != nil {
+	var denied, publishErr, err error
+	entered := false
+	if access != nil {
+		denied = access.WithExecutionAccess(target, func(authority resourcev4.Reference) error {
+			if err := w.reservation.CheckSameEnvironment(authority); err != nil {
+				return err
+			}
+			if deadline != nil && sampleErr != nil {
+				return sampleErr
+			}
+			entered = true
+			_, publishErr = w.acceptManagement(ctx, wire[:length], gate)
+			return publishErr
+		})
+		if entered {
+			err = publishErr
+		} else {
+			err = denied
+		}
+	} else {
+		_, err = w.config.Sink.TryAcceptManagement(ctx, wire[:length], gate)
+	}
+	if denied != nil && !entered {
+		w.mu.Lock()
+		if err := r.checkLocked(); err != nil {
+			w.mu.Unlock()
 			return err
 		}
+		p = &w.replies[r.index]
+		if err := w.encodeReplyLocked(p, protocolv4.ManagementResult{Status: managementError(denied)}); err != nil {
+			w.mu.Unlock()
+			return err
+		}
+		length = p.length
+		copy(wire[:length], p.wire[:length])
 		p.access = nil
-		_, err = w.config.Sink.TryAcceptManagement(ctx, p.wire[:p.length], nil)
+		w.mu.Unlock()
+		_, err = w.config.Sink.TryAcceptManagement(ctx, wire[:length], gate)
 	}
 	if err != nil {
 		return err
 	}
+	w.mu.Lock()
+	if r.index < 0 || r.index >= len(w.replies) || w.replies[r.index].serial != r.serial {
+		w.mu.Unlock()
+		return ErrOwner
+	}
+	p = &w.replies[r.index]
 	if p.running {
-		// A deadline reply does not release the in-flight store's original slot.
+		p.publishing = false
 		p.published = true
 		p.length = 0
 		clear(p.wire[:])
 	} else {
 		*p = managementWireReply{}
 	}
+	w.cleanupLocked()
+	settled = true
+	w.mu.Unlock()
 	return nil
 }
-
 func (r ManagementReply) checkLocked() error {
 	if r.wire.closed {
 		return ErrManagementClosed
@@ -527,25 +771,71 @@ func (w *ExecutionManagementWire) BeginRequestHeader(h protocolv4.ApplicationHea
 	if w == nil {
 		return ManagementJob{}, ErrOwner
 	}
+	sample, sampleErr, releaseSample := w.sampleClock()
+	defer releaseSample()
+	clock := w.sampleClockOwner()
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return w.beginRequestLocked(h)
+	return w.beginRequestLocked(h, clock, sample, sampleErr)
 }
-func (w *ExecutionManagementWire) newDeadline(cap uint64) (*timev4.Deadline, error) {
-	d, err := timev4.NewDeadline(w.config.Clock, cap)
-	if err != nil {
-		return nil, err
+func (w *ExecutionManagementWire) sampleClock() (sample timev4.Sample, err error, release func()) {
+	noop := func() {}
+	if w == nil {
+		return timev4.Sample{}, timev4.ErrUnavailable, noop
 	}
-	now, err := d.Sample()
-	if err != nil {
-		return nil, err
+	w.mu.Lock()
+	clock := w.config.Clock
+	if clock == nil {
+		w.mu.Unlock()
+		return timev4.Sample{}, timev4.ErrUnavailable, noop
 	}
-	if cap <= now.LowerMS || cap-now.LowerMS > w.spec.MaxLifetimeMS {
+	w.sampleActive++
+	w.mu.Unlock()
+	released := false
+	release = func() {
+		if released {
+			return
+		}
+		released = true
+		w.mu.Lock()
+		w.sampleActive--
+		if w.closed && w.sampleActive == 0 && w.sampleDone != nil {
+			select {
+			case <-w.sampleDone:
+			default:
+				close(w.sampleDone)
+			}
+		}
+		w.cleanupLocked()
+		w.mu.Unlock()
+	}
+	completed := false
+	defer func() {
+		// A blocked or panicking clock must never strand the installed sample
+		// lease. Normal return transfers release ownership to the caller.
+		if !completed {
+			release()
+		}
+	}()
+	sample, err = clock.Sample()
+	completed = true
+	return sample, err, release
+}
+func (w *ExecutionManagementWire) sampleClockOwner() *timev4.Clock {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.config.Clock
+}
+func (w *ExecutionManagementWire) newDeadlineAt(clock *timev4.Clock, cap uint64, sample timev4.Sample, sampleErr error) (*timev4.Deadline, error) {
+	if sampleErr != nil {
+		return nil, sampleErr
+	}
+	if cap <= sample.LowerMS || cap-sample.LowerMS > w.spec.MaxLifetimeMS {
 		return nil, ErrManagementFraming
 	}
-	return d, nil
+	return timev4.NewDeadlineAt(clock, sample, cap)
 }
-func (w *ExecutionManagementWire) beginRequestLocked(h protocolv4.ApplicationHeader) (ManagementJob, error) {
+func (w *ExecutionManagementWire) beginRequestLocked(h protocolv4.ApplicationHeader, clock *timev4.Clock, sample timev4.Sample, sampleErr error) (ManagementJob, error) {
 	if w.closed {
 		return ManagementJob{}, ErrManagementClosed
 	}
@@ -570,7 +860,10 @@ func (w *ExecutionManagementWire) beginRequestLocked(h protocolv4.ApplicationHea
 	if index < 0 {
 		return ManagementJob{}, ErrCapacity
 	}
-	deadline, err := w.newDeadline(f.DeadlineAtMS)
+	deadline, err := w.newDeadlineAt(clock, f.DeadlineAtMS, sample, sampleErr)
+	if err == nil {
+		err = w.checkDeadlineAt(deadline, sample)
+	}
 	w.inbound = f.ControlSerial
 	w.replies[index] = managementWireReply{serial: f.ControlSerial, cancel: cancel, deadline: deadline, requestError: err, request: f}
 	return ManagementJob{wire: w, index: index, serial: f.ControlSerial}, nil
@@ -601,13 +894,20 @@ func (j ManagementJob) Unavailable() (ManagementReply, error) {
 	if p.serial != j.serial || p.published {
 		return ManagementReply{}, ErrOwner
 	}
-	if !p.timedOut {
-		p.timedOut, p.ready, p.access = true, false, nil
-		if err := w.encodeReplyLocked(p, protocolv4.ManagementResult{Status: "unavailable"}); err != nil {
-			return ManagementReply{}, err
-		}
+	if err := w.unavailableReplyLocked(p); err != nil {
+		return ManagementReply{}, err
 	}
 	return ManagementReply{wire: w, index: j.index, serial: j.serial}, nil
+}
+
+// unavailableReplyLocked preserves the original slot, serial and provider
+// tail. Repetition reads the same finite output without issuing another result.
+func (w *ExecutionManagementWire) unavailableReplyLocked(p *managementWireReply) error {
+	if p.timedOut {
+		return nil
+	}
+	p.timedOut, p.ready, p.access = true, false, nil
+	return w.encodeReplyLocked(p, protocolv4.ManagementResult{Status: "unavailable"})
 }
 
 // RemainingMS exposes only the original receive/work cap, never a fresh
@@ -617,6 +917,8 @@ func (j ManagementJob) RemainingMS() (uint64, error) {
 	if w == nil {
 		return 0, ErrOwner
 	}
+	sample, sampleErr, releaseSample := w.sampleClock()
+	defer releaseSample()
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
@@ -626,10 +928,22 @@ func (j ManagementJob) RemainingMS() (uint64, error) {
 	if p.serial != j.serial {
 		return 0, ErrOwner
 	}
+	if p.timedOut {
+		return 0, timev4.ErrExpired
+	}
 	if p.requestError != nil {
 		return 0, p.requestError
 	}
-	return p.deadline.RemainingMS()
+	if p.deadline == nil {
+		return 0, ErrManagementFraming
+	}
+	if sampleErr != nil {
+		return 0, sampleErr
+	}
+	if err := w.checkDeadlineAt(p.deadline, sample); err != nil {
+		return 0, err
+	}
+	return p.deadline.RemainingMSAt(sample)
 }
 func (j ManagementJob) Admit(wire []byte) error {
 	w := j.wire
@@ -663,6 +977,9 @@ func (w *ExecutionManagementWire) BeginRequest(wire []byte) (ManagementJob, erro
 	if w == nil {
 		return ManagementJob{}, ErrOwner
 	}
+	sample, sampleErr, releaseSample := w.sampleClock()
+	defer releaseSample()
+	clock := w.sampleClockOwner()
 	w.mu.Lock()
 	if w.closed {
 		w.mu.Unlock()
@@ -671,7 +988,7 @@ func (w *ExecutionManagementWire) BeginRequest(wire []byte) (ManagementJob, erro
 	h, _, _, err := w.decodeEnvelope(wire)
 	var job ManagementJob
 	if err == nil {
-		job, err = w.beginRequestLocked(h)
+		job, err = w.beginRequestLocked(h, clock, sample, sampleErr)
 	}
 	w.mu.Unlock()
 	if err == nil {
@@ -722,7 +1039,17 @@ func (j ManagementJob) Run(ctx context.Context, resolver ExecutionManagementReso
 	result := protocolv4.ManagementResult{Status: "unavailable"}
 	var access ExecutionAccess
 	if callErr == nil {
-		callErr = deadline.Check()
+		if deadline == nil {
+			callErr = ErrManagementFraming
+		} else {
+			sample, sampleErr, releaseSample := w.sampleClock()
+			if sampleErr != nil {
+				callErr = sampleErr
+			} else {
+				callErr = w.checkDeadlineAt(deadline, sample)
+			}
+			releaseSample()
+		}
 	}
 	if callErr == nil {
 		callErr = ctx.Err()
@@ -737,7 +1064,17 @@ func (j ManagementJob) Run(ctx context.Context, resolver ExecutionManagementReso
 		}
 		callErr = resolveErr
 		if callErr == nil {
-			callErr = deadline.Check()
+			if deadline == nil {
+				callErr = ErrManagementFraming
+			} else {
+				sample, sampleErr, releaseSample := w.sampleClock()
+				if sampleErr != nil {
+					callErr = sampleErr
+				} else {
+					callErr = w.checkDeadlineAt(deadline, sample)
+				}
+				releaseSample()
+			}
 		}
 		if callErr == nil {
 			callErr = ctx.Err()
@@ -751,7 +1088,22 @@ func (j ManagementJob) Run(ctx context.Context, resolver ExecutionManagementReso
 			}
 		}
 	}
-	if callErr != nil {
+	// A provider may finish after the original request cap. Convert that
+	// completed-but-expired outcome into the same finite Unavailable response
+	// used by the scheduler. The original deadline still gates publication.
+	finiteFailure := errors.Is(callErr, timev4.ErrExpired) || errors.Is(callErr, context.DeadlineExceeded)
+	if !finiteFailure && deadline != nil {
+		sample, sampleErr, releaseSample := w.sampleClock()
+		if sampleErr != nil {
+			callErr, finiteFailure = sampleErr, true
+		} else if err := w.checkDeadlineAt(deadline, sample); err != nil {
+			callErr, finiteFailure = err, true
+		}
+		releaseSample()
+	}
+	if finiteFailure {
+		result = protocolv4.ManagementResult{Status: "unavailable"}
+	} else if callErr != nil {
 		result = protocolv4.ManagementResult{Status: managementError(callErr)}
 	}
 	w.mu.Lock()
@@ -772,10 +1124,14 @@ func (j ManagementJob) Run(ctx context.Context, resolver ExecutionManagementReso
 		}
 		return ManagementReply{wire: w, index: index, serial: serial}, nil
 	}
-	// Conflicts also reveal a fact about this key. Keep the resolved permission
-	// for every response derived from the authority, including bounded errors.
-	p.access = access
-	err = w.encodeReplyLocked(p, result)
+	if finiteFailure {
+		err = w.unavailableReplyLocked(p)
+	} else {
+		// Conflicts also reveal a fact about this key. Keep the resolved
+		// permission for every response derived from the authority.
+		p.access = access
+		err = w.encodeReplyLocked(p, result)
+	}
 	if err != nil {
 		*p = managementWireReply{}
 		w.closeLocked()
@@ -790,28 +1146,39 @@ func (w *ExecutionManagementWire) Close() {
 		return
 	}
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	if w.closed {
+		w.mu.Unlock()
+		return
+	}
 	w.closeLocked()
+	// Close is a finite state transition. Active sample leases and response
+	// callbacks retire themselves through cleanupLocked; callers that require
+	// reclamation observe CleanupComplete instead of blocking this close path.
+	w.cleanupLocked()
+	w.mu.Unlock()
 }
 func (w *ExecutionManagementWire) closeLocked() {
 	w.closed = true
 	for i := range w.pending {
+		if w.pending[i].processing {
+			continue
+		}
 		w.pending[i].authority.Release()
 		w.pending[i] = managementWirePending{}
 	}
 	for i := range w.replies {
-		if !w.replies[i].running {
+		if !w.replies[i].running && !w.replies[i].publishing {
 			w.replies[i] = managementWireReply{}
 		}
 	}
 	w.cleanupLocked()
 }
 func (w *ExecutionManagementWire) cleanupLocked() {
-	if !w.closed || w.cleaned {
+	if !w.closed || w.cleaned || w.sampleActive != 0 {
 		return
 	}
 	for i := range w.replies {
-		if w.replies[i].running {
+		if w.replies[i].running || w.replies[i].publishing {
 			return
 		}
 	}

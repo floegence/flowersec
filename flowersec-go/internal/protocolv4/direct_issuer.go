@@ -62,8 +62,8 @@ type DirectIssuePermit interface {
 // schema. Candidates are direct network or the exclusive local-loopback leg;
 // their complete namespace closure must match the three actual credentials.
 // Trust order is Artifact, client certificate, server certificate. All belong
-// to the same original Clock and resource Environment. No v3 material, spend
-// proof, activation, provider qualification or production claim is produced.
+// to the same original Clock and resource Environment. Spend proof, activation,
+// provider qualification and production claims remain separate obligations.
 type DirectIssuerConfig struct {
 	Clock                                               *timev4.Clock
 	Trust                                               [3]*NamespaceTrustStore
@@ -321,7 +321,7 @@ func (s *DirectIssuer) checkCredential(c *Credential, trust *NamespaceTrustStore
 	return err
 }
 
-func (s *DirectIssuer) check(ctx context.Context, window *timev4.Window, parent *Credential) error {
+func (s *DirectIssuer) check(ctx context.Context, window *timev4.Window, parent *Credential) (err error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

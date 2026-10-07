@@ -20,14 +20,22 @@ let package = Package(
   ],
   targets: [
     .target(
+      name: "FlowersecSQLite",
+      path: "flowersec-swift/Sources/FlowersecSQLite",
+      publicHeadersPath: "include",
+      linkerSettings: [.linkedLibrary("sqlite3", .when(platforms: [.macOS, .iOS]))]
+    ),
+    .target(
       name: "Flowersec",
       dependencies: [
+        .target(name: "FlowersecSQLite", condition: .when(platforms: [.macOS, .iOS])),
         .product(name: "Clibsodium", package: "swift-sodium"),
         .product(name: "Crypto", package: "swift-crypto"),
         .product(name: "NIOCore", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
         .product(name: "NIOPosix", package: "swift-nio"),
         .product(name: "NIOWebSocket", package: "swift-nio"),
+        .product(name: "NIOTLS", package: "swift-nio"),
         .product(name: "NIOSSL", package: "swift-nio-ssl"),
       ],
       path: "flowersec-swift/Sources/Flowersec",

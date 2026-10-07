@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
@@ -119,7 +120,13 @@ type openSlot struct {
 // proof slots. There is no allocation per rejected ID and no pending waiter
 // queue. The same owner gate orders resource transfer and outcome selection.
 type OpenAdmission struct {
+	handlerGroup                                              *applicationGroup
+	managementGate                                            sync.Mutex
+	managementSealed                                          atomic.Bool
+	managementDeadline                                        atomic.Pointer[timev4.Deadline]
 	diagnostics                                               *diagnosticv4.Counters
+	diagnosticOperation                                       *DiagnosticOperation
+	diagnosticSink                                            *DiagnosticSink
 	mu                                                        sync.Mutex
 	engine                                                    *cryptov4.Engine
 	direction                                                 protocolv4.Direction
@@ -558,12 +565,25 @@ func (a *OpenAdmission) Drain() {
 func (a *OpenAdmission) drainLocked() {
 	a.draining = true
 	a.openGate.close()
+	a.cancelUnacceptedManagementLocked()
 	a.notifyDecisionOpportunityLocked()
 	if a.bootstrap != nil && a.direction == a.bootstrap.spec.Opener {
 		if s, err := a.slot(a.bootstrap.handle); err == nil && !s.submitted {
 			s.cancelled = true
 			s.flow.send.Stop()
 			s.flow.receive.Abandon()
+		}
+	}
+}
+
+// Drain preserves only management channels accepted before this same owner
+// gate closed. Late outcomes still settle their original OPEN and proof, but
+// cannot turn an opening M into a new management capability.
+func (a *OpenAdmission) cancelUnacceptedManagementLocked() {
+	for i := range a.slots {
+		s := &a.slots[i]
+		if s.phase != openFree && s.class == ManagementStream && !s.accepted {
+			a.cancelStreamLocked(s)
 		}
 	}
 }

@@ -6,6 +6,7 @@
   },
   "include": [
     "src/node/nativeRawQuic.integration.test.ts",
+    "src/node/nativeServeDrain.integration.test.ts",
     "src/tr46.d.ts"
   ]
 }

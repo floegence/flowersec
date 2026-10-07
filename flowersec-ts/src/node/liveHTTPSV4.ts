@@ -102,7 +102,7 @@ export function createV4NodeLiveHTTPS(environment: V4TransportEnvironment, optio
     dependency.check(); call.check();
     requireControl(!closed && context !== undefined && !call.signal.aborted, "closed");
     requireControl(request.authority === authority && request.tenant === tenant && request.audience === audience, "control_request_binding");
-    requireControl(destination instanceof Uint8Array && destination.byteLength >= 1 && destination.byteLength <= 4096, "control_response_capacity");
+    requireControl(destination instanceof Uint8Array && destination.byteLength >= 1 && destination.byteLength <= 73728, "control_response_capacity");
     requireControl(active.size < maxConcurrentRequests, "resource_exhausted");
     const resources = owner.resources, reservation = resources.root.reserve({ owner: { ...resources.owner, kind: "node_live_https_request" }, accounts: resources.accounts, charge });
     const controller = new AbortController(); active.add(controller);

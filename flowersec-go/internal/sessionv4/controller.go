@@ -122,6 +122,8 @@ type controllerAttempt struct {
 // EnvironmentSession. Three fixed links cover current, candidate and retirement;
 // the Environment and root still charge every actual Session exactly once.
 type ConnectionController struct {
+	notifications                           [128]*controllerNotificationRoot
+	notificationSerial                      uint64
 	dependencyMu                            sync.Mutex
 	dependencyRevision                      uint64
 	initializeServices                      *invocationServices
@@ -150,6 +152,8 @@ type ConnectionController struct {
 	dispatches                              uint32
 	started, closed, blocked, cleaned       bool
 	lastError                               error
+	lastDiagnostic                          ConnectionDiagnostic
+	hasLastDiagnostic                       bool
 	closingAt                               time.Time
 	wake, changed, done                     chan struct{}
 }
@@ -182,6 +186,7 @@ func ControllerCharge(c ControllerConfig) (resourcev4.Vector, error) {
 		uint64(unsafe.Sizeof(ControllerPreparation{})) + 2*uint64(unsafe.Sizeof(timev4.Deadline{})) +
 		uint64(unsafe.Sizeof(time.Timer{})) + uint64(unsafe.Sizeof(timev4.Window{})) + applicationContextBytes() + uint64(len(c.RequiredContracts))*32
 	n += uint64(unsafe.Sizeof(controllerInitializerContext{}))
+	n += uint64(unsafe.Sizeof(ConnectionAttemptFacts{})) + uint64(unsafe.Sizeof(ConnectionDiagnosticFailure{})) + uint64(unsafe.Sizeof(bool(false)))
 	if c.RuntimeBytes > math.MaxUint64/2 {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
@@ -325,6 +330,7 @@ func (c *ConnectionController) closeLocked() {
 		return
 	}
 	c.closed = true
+	c.closeNotificationsLocked()
 	c.retryWindow = nil
 	c.closingAt = time.Now()
 	if a := c.attempt; a != nil {

@@ -169,7 +169,7 @@ func newPublicSpendService(t *testing.T, f *controlResources, c controlplane.Spe
 	return service
 }
 
-func TestV4SpendReceiptAuthenticatesMissingHistoryAndBoundsOutput(t *testing.T) {
+func TestSpendReceiptAuthenticatesMissingHistoryAndBoundsOutput(t *testing.T) {
 	f := newControlResources(t)
 	store, identity, recordBytes := f.store()
 	c := controlplane.SpendReceiptServiceConfig{Store: store, Clock: f.clock, MaxRecordBytes: recordBytes, RequestsPerMinute: 60, Burst: 20, WorkMS: 1000, RuntimeBytes: 65536}
@@ -206,11 +206,11 @@ func TestV4SpendReceiptAuthenticatesMissingHistoryAndBoundsOutput(t *testing.T) 
 		t.Fatal("closed service reached authentication", err)
 	}
 
-	a, b, err := controlplane.V4LiveRelayRegistrationServiceCharges(c)
+	a, b, err := controlplane.LiveRelayRegistrationServiceCharges(c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	relay, err := controlplane.NewV4LiveRelayRegistrationService(c, f.reserve(a), f.reserve(b), f.environment)
+	relay, err := controlplane.NewLiveRelayRegistrationService(c, f.reserve(a), f.reserve(b), f.environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestV4SpendReceiptAuthenticatesMissingHistoryAndBoundsOutput(t *testing.T) 
 	}
 }
 
-func TestV4SpendCloseRetainsOriginalAuthenticationTail(t *testing.T) {
+func TestSpendCloseRetainsOriginalAuthenticationTail(t *testing.T) {
 	f := newControlResources(t)
 	store, identity, recordBytes := f.store()
 	c := controlplane.SpendReceiptServiceConfig{Store: store, Clock: f.clock, MaxRecordBytes: recordBytes, RequestsPerMinute: 60, Burst: 20, WorkMS: 1000, RuntimeBytes: 65536}
@@ -280,7 +280,7 @@ func TestV4SpendCloseRetainsOriginalAuthenticationTail(t *testing.T) {
 	}
 }
 
-func TestV4PublicReadServicesChargeCompleteOwner(t *testing.T) {
+func TestPublicReadServicesChargeCompleteOwner(t *testing.T) {
 	for _, tunnel := range []bool{false, true} {
 		t.Run(map[bool]string{false: "spend", true: "relay"}[tunnel], func(t *testing.T) {
 			f := newControlResources(t)
@@ -292,7 +292,7 @@ func TestV4PublicReadServicesChargeCompleteOwner(t *testing.T) {
 			}
 			wrapper := uint64(unsafe.Sizeof(controlplane.SpendReceiptService{}))
 			if tunnel {
-				wrapper = uint64(unsafe.Sizeof(controlplane.V4LiveRelayRegistrationService{}))
+				wrapper = uint64(unsafe.Sizeof(controlplane.LiveRelayRegistrationService{}))
 			}
 			required, err := inner.Add(resourcev4.Vector{resourcev4.SDKBytes: wrapper})
 			if err != nil {
@@ -310,7 +310,7 @@ func TestV4PublicReadServicesChargeCompleteOwner(t *testing.T) {
 					WaitCleanup(context.Context) error
 				}
 				if tunnel {
-					s, e := controlplane.NewV4LiveRelayRegistrationService(c, owner, reader, f.environment)
+					s, e := controlplane.NewLiveRelayRegistrationService(c, owner, reader, f.environment)
 					err = e
 					if s != nil {
 						service = s
@@ -351,7 +351,7 @@ func TestV4PublicReadServicesChargeCompleteOwner(t *testing.T) {
 			}
 			var advertised, advertisedRead resourcev4.Vector
 			if tunnel {
-				advertised, advertisedRead, err = controlplane.V4LiveRelayRegistrationServiceCharges(c)
+				advertised, advertisedRead, err = controlplane.LiveRelayRegistrationServiceCharges(c)
 			} else {
 				advertised, advertisedRead, err = controlplane.SpendReceiptServiceCharges(c)
 			}

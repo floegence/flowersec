@@ -1,6 +1,9 @@
+import { nativeConnectionEnded, observeNativeConnectionFailure } from "./nativeFailure.js";
+import type { ConnectionFacts } from "./connectionFacts.js";
+import { applicationResumeFeature } from "./checkpointToken.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { OperationOptions } from "../../public/contract.js";
-import { CredentialWork, credentialWorkCharge, credentialDigest, equalCredential, requireCredential, type CredentialResources, type OwnedCredentialMap } from "./credentialSupport.js";
+import { CredentialError, CredentialWork, credentialWorkCharge, credentialDigest, equalCredential, requireCredential, type CredentialResources, type OwnedCredentialMap } from "./credentialSupport.js";
 import type { ClientPreparationFields, VerifiedCredentialClosure } from "./credentialVerifier.js";
 import { EnvelopeDecoder, envelopeDecoderCharge, type EnvelopeFrame } from "./envelope.js";
 import { FixedCBORWriter } from "./openAdmission.js";
@@ -26,6 +29,7 @@ export function clientAdmissionCharge(runtimeBytes: bigint): ResourceVector {
 export function clearClientPreparation(fields: ClientPreparationFields): void {
   for (const value of Object.values(fields)) if (value instanceof Uint8Array) value.fill(0);
   for (const values of [fields.identities, fields.noiseKeys, fields.identityKeys]) for (const value of values) value.fill(0);
+  for (const candidate of fields.candidates) { candidate.candidateID.fill(0); candidate.routeDigest.fill(0); candidate.route.fill(0); }
 }
 function input(name: string, parts: readonly Uint8Array[]): Uint8Array {
   const domain = wireDomains.find(d => d.name === name);
@@ -56,7 +60,7 @@ export class ClientAdmissionExchange {
   #activation: Uint8Array;
   constructor(readonly resources: CredentialResources, readonly closure: VerifiedCredentialClosure, readonly fields: ClientPreparationFields,
     private readonly signer: ReadyIdentitySigner, private readonly random: RandomFill, reservation: ResourceReference,
-    private readonly transport: V4AuthenticatedTransport, bindingMode: "direct_exporter" | "authenticated_context" = "authenticated_context") {
+    private readonly transport: V4AuthenticatedTransport, bindingMode: "direct_exporter" | "authenticated_context" = "authenticated_context", private readonly localRequiredFeatures = 0n, private readonly applicationFeatures = 0n, private readonly connectionFacts?: ConnectionFacts) {
     requireCredential(equalCredential(signer.publicKey, fields.identityKeys[0]!));
     requireCredential(bindingMode === "direct_exporter" || bindingMode === "authenticated_context", "configuration_capacity");
     this.#bindingMode = bindingMode === "direct_exporter" ? 0n : 1n;
@@ -88,8 +92,7 @@ export class ClientAdmissionExchange {
   #keep(value: Uint8Array): Uint8Array { this.#retained.push(value); return value; }
   installLiveAuthorization(bytes: Uint8Array): void {
     requireCredential(!this.#closed && !this.#started && this.fields.source === "live_authority" && this.#activation.length === 0, "credential_binding");
-    this.closure.installLiveAuthorization(bytes, this.#reference);
-    this.#activation = new Uint8Array(bytes);
+    this.#activation = this.closure.installLiveAuthorization(bytes, this.#reference);
   }
   #encode(build: (writer: FixedCBORWriter) => void): Uint8Array {
     this.#buffer.fill(0); const writer = new FixedCBORWriter(this.#buffer); build(writer); return this.#keep(new Uint8Array(writer.result()));
@@ -114,14 +117,23 @@ export class ClientAdmissionExchange {
       guard(); const output = this.#output.subarray(0, payload.length + 8); output.fill(0); new DataView(output.buffer).setUint32(0, payload.length);
       output[4] = wire.frame_types[name]!; output.set(payload, 8);
       let accepted = false;
-      const submission = transport.submit(output, () => { guard(); requireCredential(!accepted); accepted = true; });
-      requireCredential(submission !== undefined && accepted, "credential_closed"); await submission.completion; output.fill(0); guard();
+      let submission;
+      try { submission = transport.submit(output, () => { guard(); requireCredential(!accepted); accepted = true; if (name === "ADMISSION") this.connectionFacts?.admissionDispatched(); }); }
+      catch (error) { if (!this.#closed && !options?.signal?.aborted) observeNativeConnectionFailure(error); throw error; }
+      requireCredential(submission !== undefined && accepted, "credential_closed"); await submission.completion.catch(error => { if (!this.#closed && !options?.signal?.aborted) observeNativeConnectionFailure(error); throw error; }); output.fill(0); guard();
+    };
+    const originalRead = async (limit: number): Promise<Uint8Array> => {
+      let bytes: Uint8Array | null;
+      try { bytes = await transport.read(limit, options); }
+      catch (error) { if (!this.#closed && !options?.signal?.aborted) observeNativeConnectionFailure(error); throw error; }
+      guard(); if (bytes === null) throw nativeConnectionEnded(new CredentialError("credential_closed"));
+      return bytes;
     };
     const read = async (name: string, schema: string, cap: number): Promise<OwnedCredentialMap> => {
       guard();
       let frame: EnvelopeFrame;
       if (transport.mode === "message") {
-        const bytes = await transport.read(65544, options); guard(); requireCredential(bytes !== null, "credential_closed");
+        const bytes = await originalRead(65544);
         frame = this.#decoder.message(bytes);
       } else {
         // Read exactly this envelope. No admission-owned read-ahead may steal
@@ -130,8 +142,8 @@ export class ClientAdmissionExchange {
         let read = 0, expected = 8, candidate: EnvelopeFrame | undefined;
         try {
           while (candidate === undefined) {
-            const bytes = await transport.read(expected - read, options); guard();
-            requireCredential(bytes !== null && bytes.byteLength > 0 && bytes.byteLength <= expected - read, "credential_closed");
+            const bytes = await originalRead(expected - read);
+            requireCredential(bytes.byteLength > 0 && bytes.byteLength <= expected - read, "credential_closed");
             if (read < 8) prefix.set(bytes, read);
             const progress = this.#decoder.push(bytes);
             requireCredential(progress.consumed === bytes.byteLength);
@@ -149,7 +161,12 @@ export class ClientAdmissionExchange {
     try {
       guard();
       transport.checkPreparation?.(); transport.activate?.(); guard();
-      const offered = 0n; requireCredential(f.required === 0n, "credential_untrusted");
+      if (f.pathKind === 1) {
+        requireCredential(this.#bindingMode === 1n && typeof transport.authenticateHop === "function", "credential_untrusted");
+        await transport.authenticateHop(this.closure.tunnelCredentials(this.#reference), this.signer, this.random, this.resources, this.#reference, options, undefined, this.closure.takeTunnelHopPreparation(this.#reference)); guard();
+      }
+      const offered = ((transport.nativeDatagrams?.maxDatagramBytes() ?? 0) < 76 ? 0n : 1n) | (f.resume ? this.applicationFeatures & applicationResumeFeature() : 0n); requireCredential((f.required & ~offered) === 0n, "credential_untrusted");
+      if ((this.localRequiredFeatures & ~(f.allowed & offered)) !== 0n) throw new Error("connection_requirement_unavailable");
       const hello = this.#encode(w => {
         w.map(11).uint(0); text(w, table<string>("protocol_id")!); w.uint(1); text(w, table<string>("profile_revision")!); w.uint(2); text(w, f.profile);
         w.uint(3).data(f.artifactDigest).uint(4).data(f.candidateID).uint(5).data(f.routeDigest).uint(6).data(f.attempt).uint(7).data(f.nonce)
@@ -160,11 +177,12 @@ export class ClientAdmissionExchange {
       for (const [name, expected] of [["artifact_digest", f.artifactDigest], ["candidate_id", f.candidateID], ["route_digest", f.routeDigest], ["attempt_id", f.attempt], ["client_nonce", f.nonce]] as const)
         requireCredential(equalCredential(server.bytes(name), expected));
       requireCredential(server.text("crypto_profile_id") === f.profile && server.bytes("server_nonce").some(n => n !== 0) && server.uint("binding_mode") === this.#bindingMode);
-      const selected = f.allowed & offered & server.uint("server_offered_features"); requireCredential(server.uint("selected_features") === selected && (selected & f.required) === f.required);
+      const selected = f.allowed & offered & server.uint("server_offered_features") & (f.resume ? 0xffffffffffffffffn : ~applicationResumeFeature()); requireCredential(server.uint("selected_features") === selected && (selected & f.required) === f.required);
+      if ((selected & this.localRequiredFeatures) !== this.localRequiredFeatures) throw new Error("connection_requirement_unavailable");
       const transcriptInput = input("hello_transcript_digest", [hello, server.encoded()]), transcript = this.#keep(sha256(transcriptInput)); transcriptInput.fill(0);
       const context = this.#encode(w => {
         w.map(13).uint(0); text(w, table<string>("profile_revision")!); w.uint(1); text(w, f.profile);
-        w.uint(2).uint(0).uint(3).uint(0).uint(4).data(f.artifactDigest).uint(5).data(f.routeDigest).uint(6).data(f.attempt).uint(7).data(f.nonce)
+        w.uint(2).uint(f.accessClass).uint(3).uint(f.pathKind).uint(4).data(f.artifactDigest).uint(5).data(f.routeDigest).uint(6).data(f.attempt).uint(7).data(f.nonce)
           .uint(8).data(transcript).uint(9).uint(selected).uint(10).uint(this.#bindingMode).uint(11).uint(this.#bindingMode === 0n ? 1 : 0).uint(12).data(this.#exporter.subarray(0, this.#bindingMode === 0n ? 32 : 0));
       });
       const contextMap = work.parse(context, "TransportContext", 2048); contextMap.close(); const contextDigest = this.#keep(credentialDigest("transport_context_digest", context));
@@ -188,6 +206,7 @@ export class ClientAdmissionExchange {
       if (admission.uint("status") !== 0n) throw new V4AdmissionRejected(admission.uint("code"));
       requireCredential(admission.uint("code") === 0n && equalCredential(admission.bytes("transport_context_digest"), contextDigest) && equalCredential(admission.bytes("admission_binding"), binding) &&
         equalCredential(admission.bytes("client_identity_digest"), f.identities[0]!) && equalCredential(admission.bytes("server_identity_digest"), f.identities[1]!));
+      this.connectionFacts?.admitted();
       const fsa = this.#keep(admission.encoded()); guard();
       return Object.freeze({ context, contextDigest, fsb, fsa, selected, ready: Object.freeze({ localCertificateDigest: f.identities[0]!, peerCertificateDigest: f.identities[1]!,
         fsbDigest: this.#keep(credentialDigest("fsb_digest", fsb)), fsaDigest: this.#keep(credentialDigest("fsa_digest", fsa)), admissionBinding: binding, transportContextDigest: contextDigest, selectedFeatures: selected }) });

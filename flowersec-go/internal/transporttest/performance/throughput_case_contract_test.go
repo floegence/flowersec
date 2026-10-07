@@ -21,6 +21,7 @@ type throughputContractStream struct {
 	reads       []throughputContractRead
 	writes      []byte
 	closeWrites atomic.Int32
+	closes      atomic.Int32
 	resets      atomic.Int32
 }
 
@@ -47,7 +48,12 @@ func (stream *throughputContractStream) CloseWrite() error {
 	return nil
 }
 
-func (stream *throughputContractStream) Close() error { return stream.Reset() }
+func (*throughputContractStream) Finish(context.Context) error { return nil }
+
+func (stream *throughputContractStream) Close() error {
+	stream.closes.Add(1)
+	return nil
+}
 func (stream *throughputContractStream) Reset() error {
 	stream.resets.Add(1)
 	return nil
@@ -81,6 +87,10 @@ type exchangeFailureThroughputContractStream struct {
 	stopOnce     sync.Once
 	resets       atomic.Int32
 }
+
+func (*blockingResetThroughputContractStream) Finish(context.Context) error       { return nil }
+func (*cancellationBlockedThroughputContractStream) Finish(context.Context) error { return nil }
+func (*exchangeFailureThroughputContractStream) Finish(context.Context) error     { return nil }
 
 func (stream *exchangeFailureThroughputContractStream) Read([]byte) (int, error) {
 	stream.readOnce.Do(func() { close(stream.readStarted) })
@@ -211,8 +221,8 @@ func TestPayloadThroughputReceiverCompletesReciprocalFINWithoutReset(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(stream.writes) != string([]byte{0xa5}) || stream.closeWrites.Load() != 1 || stream.resets.Load() != 0 {
-		t.Fatalf("receiver lifecycle = writes %x, CloseWrite %d, Reset %d", stream.writes, stream.closeWrites.Load(), stream.resets.Load())
+	if string(stream.writes) != string([]byte{0xa5}) || stream.closeWrites.Load() != 1 || stream.closes.Load() != 1 || stream.resets.Load() != 0 {
+		t.Fatalf("receiver lifecycle = writes %x, CloseWrite %d, Close %d, Reset %d", stream.writes, stream.closeWrites.Load(), stream.closes.Load(), stream.resets.Load())
 	}
 	if lifecycle.cleanFINs.Load() != 1 || lifecycle.resets.Load() != 0 {
 		t.Fatalf("receiver counters = clean FIN %d, Reset %d", lifecycle.cleanFINs.Load(), lifecycle.resets.Load())

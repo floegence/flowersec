@@ -33,6 +33,12 @@ export interface ExecutionRecordFacts {
   readonly resultUntil: bigint | undefined;
   readonly error: RPCSDKError | undefined;
 }
+type StorageResult<T> = T | Promise<T>;
+export type ExecutionResultReceipt = Readonly<{ facts: ExecutionRecordFacts; payload: Uint8Array }>;
+/** Invoked synchronously by the SDK adapter after the real COMMIT receipt and
+ * before releasing the original transaction position and payload custody.
+ * It records durable facts; it never grants fresh publication authority. */
+export type ExecutionCommitReceipt<T = void> = (result: T) => void;
 export interface ExecutionStorage {
   bind(reference: ResourceReference): void;
   release(): void;
@@ -40,17 +46,17 @@ export interface ExecutionStorage {
   floors(): ReadonlyMap<string, bigint>;
   records(): Iterable<Readonly<{ facts: ExecutionRecordFacts; payload?: Uint8Array }>>;
   checkContract(contract: ServiceContractSnapshot, offer: AdmissionOffer, maximumWindowMS: bigint): void;
-  register(facts: ExecutionRecordFacts, contract: ServiceContractSnapshot, deadline: bigint, guard: () => void): void;
-  update(facts: ExecutionRecordFacts, payload?: Uint8Array): void;
+  register(facts: ExecutionRecordFacts, contract: ServiceContractSnapshot, deadline: bigint, guard: () => void, receipt?: ExecutionCommitReceipt): StorageResult<void>;
+  update(facts: ExecutionRecordFacts, payload?: Uint8Array, guard?: () => void, receipt?: ExecutionCommitReceipt): StorageResult<void>;
   issueCheckpoint(facts: ExecutionRecordFacts, original: ExecutionTarget, checkpoint: V4Checkpoint,
-    options: V4CheckpointIssuanceOptions, policy: CheckpointSessionPolicy, executionCap: bigint, guard: () => void): Readonly<{ facts: ExecutionRecordFacts; payload: Uint8Array }>;
+    options: V4CheckpointIssuanceOptions, policy: CheckpointSessionPolicy, executionCap: bigint, guard: () => void, receipt?: ExecutionCommitReceipt<ExecutionResultReceipt>): StorageResult<ExecutionResultReceipt>;
   finishResume(facts: ExecutionRecordFacts, request: Uint8Array, target: ResumeTargetFacts, policy: CheckpointSessionPolicy,
-    executionCap: bigint, guard: () => void): Readonly<{ facts: ExecutionRecordFacts; payload: Uint8Array; outcome: ResumeOutcome }>;
-  saveContent(facts: ExecutionRecordFacts, position: Uint8Array, payload: Uint8Array, executionCap: bigint, guard: () => void): V4ContentObservation;
-  readContent(facts: ExecutionRecordFacts, target: ExecutionTarget, position: Uint8Array, destination: Uint8Array, readerType: number, guard: () => void): V4ContentObservation;
-  absence(key: string, authority: string, cutoff: bigint, guard: () => void): "not_registered" | "history_unknown";
-  expireResult(key: string): void;
-  remove(key: string, authority: string, floor: bigint): void;
+    executionCap: bigint, guard: () => void, receipt?: ExecutionCommitReceipt<ExecutionResultReceipt & Readonly<{ outcome: ResumeOutcome }>>): StorageResult<ExecutionResultReceipt & Readonly<{ outcome: ResumeOutcome }>>;
+  saveContent(facts: ExecutionRecordFacts, position: Uint8Array, payload: Uint8Array, executionCap: bigint, guard: () => void): StorageResult<V4ContentObservation>;
+  readContent(facts: ExecutionRecordFacts, target: ExecutionTarget, position: Uint8Array, destination: Uint8Array, readerType: number, guard: () => void): StorageResult<V4ContentObservation>;
+  absence(key: string, authority: string, cutoff: bigint, guard: () => void): StorageResult<"not_registered" | "history_unknown">;
+  expireResult(key: string): StorageResult<void>;
+  remove(key: string, authority: string, floor: bigint): StorageResult<void>;
 }
 
 // Only SDK-owned persistent adapters install these associations. Copying a

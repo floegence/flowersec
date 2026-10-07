@@ -31,7 +31,7 @@ func (a *EndpointAuthorization) ForkDeliveryWithFloor(reservation resourcev4.Ref
 	if _, err := a.checkLockedAt(false, samples, err); err != nil {
 		return nil, err
 	}
-	s, err := a.closure.subscribeWithPreparationAt(a.bindings[:a.closure.count], a.hardEnd, reservation, a.hard, floor, nil, samples)
+	s, err := a.closure.subscribeWithPreparationAt(a.bindings[:a.closure.count], a.hardEnd, reservation, a.hard, floor, nil, samples, a.deliveryOrigin)
 	if err != nil {
 		return nil, err
 	}

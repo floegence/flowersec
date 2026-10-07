@@ -13,12 +13,12 @@
   "schema": {
     "status": "not_frozen",
     "revision": "flowersec-v4.0.0-draft.74",
-    "sha256": "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af",
+    "sha256": "9d2322a4755f74a1744e9ff5688b2ef95c3e22bf511d12c4083c96f2fe16813f",
     "path": "stability/transport_v4_schema.json"
   },
   "vectors": {
     "status": "draft_cbor_fields_only",
-    "manifest_sha256": "57f0e62b95fe10a4a2282d816ec78fc1bac5a3bdccb255e861f83300a29ac049",
+    "manifest_sha256": "e96e2f916d3b18fc300394413b73441855219c67f45e241fd8c70cf1cad144b5",
     "path": "testdata/transport_v4"
   },
   "traceability": {

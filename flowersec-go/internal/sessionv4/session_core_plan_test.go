@@ -431,21 +431,6 @@ func TestSessionCorePlanRetainsManualRekeyOwnerUntilRelease(t *testing.T) {
 	}
 }
 
-func corePlanTestScope(t *testing.T, root *resourcev4.Root, limit resourcev4.Vector, sessionID byte) SessionResourceScope {
-	t.Helper()
-	tenant, err := root.Account(resourcev4.AccountKey{Kind: resourcev4.TenantAccount, ID: [16]byte{1}}, limit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sessionLimit := limit
-	sessionLimit[resourcev4.Sessions] = 1
-	session, err := root.Account(resourcev4.AccountKey{Kind: resourcev4.SessionAccount, ID: [16]byte{sessionID}}, sessionLimit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return SessionResourceScope{Tenant: tenant, Session: session}
-}
-
 func TestSessionCorePlanAllowsDisabledAutomaticLiveness(t *testing.T) {
 	config := corePlanUnitConfig(t, false)
 	enabled, _, err := SessionCoreRequirements(config)

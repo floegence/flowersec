@@ -7,11 +7,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -28,14 +30,29 @@ func newNFCReference(t testing.TB, relative, hash string) *nfcReference {
 	if relative != "testdata/unicode15_1/normalization_generated.json" {
 		t.Fatal("unexpected normalization data path")
 	}
-	raw, err := os.ReadFile(filepath.Join("../../..", relative))
+	data, err := loadNFCReference()
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := sha256.Sum256(raw)
-	if hex.EncodeToString(digest[:]) != hash {
+	if data.digest != hash {
 		t.Fatal("normalization data hash drift")
 	}
+	return data.reference
+}
+
+// All reference consumers read these independently pinned tables. Parse once
+// per test process; each caller still verifies its registry's expected digest.
+type nfcReferenceData struct {
+	reference *nfcReference
+	digest    string
+}
+
+var loadNFCReference = sync.OnceValues(func() (*nfcReferenceData, error) {
+	raw, err := os.ReadFile(filepath.Join("../../..", "testdata/unicode15_1/normalization_generated.json"))
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(raw)
 	var data struct {
 		Version        string `json:"unicode_version"`
 		CCC            [][2]int
@@ -45,10 +62,10 @@ func newNFCReference(t testing.TB, relative, hash string) *nfcReference {
 		Sources        map[string]struct{ SHA256 string }
 	}
 	if err := json.Unmarshal(raw, &data); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if data.Version != "15.1.0" {
-		t.Fatal("Unicode version drift")
+		return nil, errors.New("Unicode version drift")
 	}
 	r := &nfcReference{classes: map[rune]int{}, decomposition: map[rune][]rune{}, composition: map[[2]rune]rune{}, ranges: data.Assigned, sources: data.Sources}
 	for _, pair := range data.CCC {
@@ -59,21 +76,21 @@ func newNFCReference(t testing.TB, relative, hash string) *nfcReference {
 		var cp rune
 		var parts []rune
 		if err := json.Unmarshal(rawPair, &pair); err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		if err := json.Unmarshal(pair[0], &cp); err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		if err := json.Unmarshal(pair[1], &parts); err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		r.decomposition[cp] = parts
 	}
 	for _, triple := range data.Compositions {
 		r.composition[[2]rune{triple[0], triple[1]}] = triple[2]
 	}
-	return r
-}
+	return &nfcReferenceData{reference: r, digest: hex.EncodeToString(digest[:])}, nil
+})
 
 func (r *nfcReference) assigned(cp rune) bool {
 	if cp < 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff) {

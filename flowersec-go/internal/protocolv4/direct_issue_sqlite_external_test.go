@@ -16,11 +16,15 @@ import (
 type directSQLiteHost struct {
 	identity ledgerv4.SQLiteIdentity
 	denied   bool
+	epoch    uint64
 }
 
-func (h *directSQLiteHost) Check(i ledgerv4.SQLiteIdentity, _ uint64, _ bool) error {
+func (h *directSQLiteHost) Check(i ledgerv4.SQLiteIdentity, epoch uint64, _ bool) error {
 	if i != h.identity {
 		return ledgerv4.ErrFenced
+	}
+	if epoch > h.epoch {
+		h.epoch = epoch
 	}
 	return nil
 }

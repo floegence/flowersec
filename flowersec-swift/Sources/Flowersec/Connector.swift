@@ -1,104 +1,116 @@
 import Foundation
 
-public struct ConnectorOptions: Sendable {
-  public var origin: String
-  public var connectTimeout: Duration
-  public var trustRootsPEM: [Data]
-
-  public init(
-    origin: String,
-    connectTimeout: Duration = .seconds(10),
-    trustRootsPEM: [Data] = []
-  ) {
-    self.origin = origin
-    self.connectTimeout = connectTimeout
-    self.trustRootsPEM = trustRootsPEM
-  }
-}
-
-/// The complete public Transport v3 connection error code set.
+/// Stable current connection failure codes.
 public enum ConnectErrorCode: String, CaseIterable, Equatable, Sendable {
-  case artifactInvalid = "artifact_invalid"
-  case expiredArtifact = "expired_artifact"
-  case transportSecurityUnsupported = "transport_security_unsupported"
-  case transportSecurityFailed = "transport_security_failed"
+  case invalidMaterial = "invalid_material"
+  case expired = "expired"
+  case unsupported = "unsupported"
+  case securityFailed = "security_failed"
   case connectionFailed = "connection_failed"
 }
 
-/// A stable, redacted Transport v3 connection failure.
+/// A stable, redacted connection failure and its local retry disposition.
 public struct ConnectError: Error, Equatable, Sendable {
   public let code: ConnectErrorCode
   public let retryDisposition: RetryDisposition
+  public let connection: ConnectionAttemptFacts
+  public let cleanup: CleanupStatus
+  public var localReport: LocalReport { LocalReport(code: code.rawValue, connection: connection, cleanup: cleanup) }
 
-  public static let artifactInvalid = ConnectError(.artifactInvalid, .terminal)
-  public static let expiredArtifact = ConnectError(.expiredArtifact, .retryable)
-  public static let transportSecurityUnsupported = ConnectError(
-    .transportSecurityUnsupported, .terminal)
-  public static let transportSecurityFailed = ConnectError(.transportSecurityFailed, .terminal)
+  public static let invalidMaterial = ConnectError(.invalidMaterial, .terminal)
+  public static let expired = ConnectError(.expired, .retryable)
+  public static let unsupported = ConnectError(
+    .unsupported, .terminal)
+  public static let securityFailed = ConnectError(.securityFailed, .terminal)
   public static let connectionFailed = ConnectError(.connectionFailed, .retryable)
 
-  func terminalized() -> ConnectError { ConnectError(code, .terminal) }
+  func terminalized() -> ConnectError { ConnectError(code, .terminal, connection: connection, cleanup: cleanup) }
 
-  internal static let invalidOptions = artifactInvalid
-  internal static let runtimeUnsupported = transportSecurityUnsupported
   internal static let canceled = ConnectError(.connectionFailed, .terminal)
-  internal static let timeout = connectionFailed
-  internal static let terminalConnectionFailed = ConnectError(.connectionFailed, .terminal)
 
-  private init(_ code: ConnectErrorCode, _ retryDisposition: RetryDisposition) {
-    self.code = code
-    self.retryDisposition = retryDisposition
+  init(_ code: ConnectErrorCode, _ retryDisposition: RetryDisposition,
+    connection: ConnectionAttemptFacts = ConnectionAttemptFacts(spendState: .unspent, admissionState: .notStarted,
+      networkReady: .notStarted, applicationPublish: .notStarted, sourceProfile: nil, queryAvailability: .unavailable),
+    cleanup: CleanupStatus = CleanupStatus(complete: true)) {
+    self.code = code; self.connection = connection; self.cleanup = cleanup
+    self.retryDisposition = connection.permitsAutomaticRetry ? retryDisposition : .terminal
+  }
+  func withFacts(_ facts: ConnectionAttemptFacts, cleanup: CleanupStatus) -> ConnectError {
+    ConnectError(code, retryDisposition, connection: facts, cleanup: cleanup)
+  }
+  static func capture(_ error: any Error, connection: ConnectionAttemptFacts, cleanup: CleanupStatus) -> ConnectError {
+    if let value = error as? ConnectError {
+      // Nested failure boundaries observe overlapping original cleanup owners.
+      // A later complete observation cannot erase an unfinished earlier tail.
+      return value.withFacts(connection, cleanup: value.cleanup.preserving(cleanup))
+    }
+    if error is CancellationError { return canceled.withFacts(connection, cleanup: cleanup) }
+    if let value = error as? SessionError {
+      switch value {
+      case .canceled, .closed: return canceled.withFacts(connection, cleanup: cleanup)
+      default: break
+      }
+    }
+    #if os(macOS) || os(iOS)
+    if let value = error as? TransportControlError {
+      switch value {
+      case .canceled, .closed: return canceled.withFacts(connection, cleanup: cleanup)
+      default: break
+      }
+    }
+    if let value = error as? TransportConnectError {
+      let failure: ConnectError
+      switch value {
+      case .invalidMaterial: failure = .invalidMaterial
+      case .unsupported: failure = .unsupported
+      case .securityFailed, .futureTimestamp: failure = .securityFailed
+      case .expired: failure = .expired
+      case .canceled, .closed: failure = .canceled
+      case .connectionFailed, .admissionRejected, .timePending, .timeNotProven,
+        .bootstrapDeadline, .timeUnavailable: failure = .connectionFailed
+      }
+      return failure.withFacts(connection, cleanup: cleanup)
+    }
+    if error is V4TimeFailure { return expired.withFacts(connection, cleanup: cleanup) }
+    if error is V4NamespaceFailure || error is V4CryptoFailure { return securityFailed.withFacts(connection, cleanup: cleanup) }
+    #endif
+    return connectionFailed.withFacts(connection, cleanup: cleanup)
   }
 }
 
-/// Establishes a carrier-neutral Transport v4 session from a strict lease.
-///
-/// Candidate capability filtering and TLS verification happen before the
-/// single-use lease is spent. No downgrade path is available.
-public func connect(
-  lease: ArtifactLease,
-  options: ConnectorOptions
-) async throws -> any Session {
-  try await connectOneShotV3(lease: lease, options: options)
+/// Establishes a current Session through the configured TransportEnvironment and its
+/// original independently spendable connection material source.
+public func connect(environment: TransportEnvironment, source: ConnectionMaterialSource,
+  requirements: ConnectionRequirements = ConnectionRequirements()) async throws -> any Session {
+  try await environment.connect(source: source, requirements: requirements)
+}
+public func connect(environment: TransportEnvironment, material: ConnectionMaterial,
+  requirements: ConnectionRequirements = ConnectionRequirements()) async throws -> any Session {
+  try await environment.connectMaterial(material, requirements: requirements)
 }
 
-private func connectOneShotV3(
-  lease: ArtifactLease,
-  options: ConnectorOptions
-) async throws -> any Session {
-  #if os(macOS) || os(iOS)
-    return try await SessionConnectorV3(
-      lease: lease,
-      options: options,
-      runtime: AppleWebSocketRuntimeAdapterV3()
-    ).connect()
-  #else
-    _ = options
-    let claimed: ClaimedArtifactLeaseV3
-    do {
-      claimed = try await lease.claim()
-    } catch is ArtifactLeaseError {
-      throw ConnectError.artifactInvalid
-    }
-    try? await claimed.retire()
-    throw ConnectError.transportSecurityUnsupported
-  #endif
+#if os(macOS) || os(iOS)
+// This projection lives only inside the original charged connect operation.
+// Delivery refreshes its actual owners after that operation's tail exits and
+// returns a detached ConnectError, without retaining the Environment aggregate.
+struct V4ConnectFailureProjection: Error, Sendable {
+  let failure: ConnectError
+  let observeCleanup: @Sendable () async -> CleanupStatus
+
+  func delivered() async -> ConnectError {
+    failure.withFacts(failure.connection, cleanup: await observeCleanup())
+  }
 }
 
-func connectV3ForController(
-  lease: ArtifactLease,
-  options: ConnectorOptions
-) async throws -> any Session {
-  #if os(macOS) || os(iOS)
-    return try await SessionConnectorV3(
-      lease: lease,
-      options: options,
-      runtime: AppleWebSocketRuntimeAdapterV3()
-    ).connectForController()
-  #else
-    _ = options
-    throw ControllerConnectFailureV3.connection(
-      .transportSecurityUnsupported, .terminal, policyTriggerIDs: [],
-      opaquePolicyTriggerIDs: [], failedIDs: [])
-  #endif
+func v4FailureProjection(
+  _ error: any Error,
+  connection: ConnectionAttemptFacts,
+  cleanup: @escaping @Sendable () -> CleanupStatus
+) -> V4ConnectFailureProjection {
+  let initial = cleanup()
+  let failure = ConnectError.capture(error, connection: connection, cleanup: initial)
+  return V4ConnectFailureProjection(failure: failure, observeCleanup: {
+    initial.preserving(cleanup())
+  })
 }
+#endif

@@ -215,7 +215,7 @@ function bridgeLimits(maxWsFrameBytes?: number, maxWsBufferedAmountBytes?: numbe
     throw new TypeError("invalid proxy window bridge limits");
   }
   return Object.freeze({
-    maxJsonFrameBytes: SDK_DEFAULTS.proxy.maxJsonFrameBytes,
+    maxMetadataBytes: SDK_DEFAULTS.proxy.maxMetadataBytes,
     maxChunkBytes: SDK_DEFAULTS.proxy.maxChunkBytes,
     maxBodyBytes: SDK_DEFAULTS.proxy.maxBodyBytes,
     maxWsFrameBytes: wsFrame,
@@ -362,6 +362,12 @@ export type RegisterProxyControllerWindowOptions = Readonly<{
   targetWindow?: Window;
   expectedSource?: Window | null;
   capabilityNonce?: string;
+  /** A finite host-owned bound for this attachment, even if lifecycle observation is unavailable. */
+  attachmentLifetimeMS?: number;
+  /** Host-observed navigation or document lifecycle revokes this attachment. */
+  lifecycleSignal?: AbortSignal;
+  /** Notifies the original Surface owner when this attachment expires or is revoked. */
+  onRevoke?: () => void;
 }>;
 
 export type ProxyControllerWindowHandle = Readonly<{ dispose(): void }>;
@@ -427,8 +433,22 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
     throw new TypeError("allowedOrigins must contain exact origins");
   }
   const nonce = capability(options.capabilityNonce);
+  const attachmentLifetimeMS = options.attachmentLifetimeMS ?? SDK_DEFAULTS.proxy.defaultTimeoutMs;
+  if (!Number.isSafeInteger(attachmentLifetimeMS) || attachmentLifetimeMS < 1 || attachmentLifetimeMS > SDK_DEFAULTS.proxy.maxTimeoutMs) {
+    throw new TypeError("invalid proxy attachment lifetime");
+  }
   let disposed = false;
+  let lifetimeTimer: ReturnType<typeof setTimeout> | undefined;
+  let lifecycleRevoke: (() => void) | undefined;
   const active = new Set<AbortController>();
+  const dispose = (): void => {
+    if (disposed) return;
+    disposed = true;
+    if (lifetimeTimer !== undefined) clearTimeout(lifetimeTimer);
+    if (lifecycleRevoke !== undefined) options.lifecycleSignal?.removeEventListener("abort", lifecycleRevoke);
+    for (const controller of active) controller.abort(new SessionError("closed"));
+    active.clear();
+  };
   const onMessage = (event: MessageEvent) => {
     if (disposed || !allowed.has(event.origin) || (options.expectedSource !== undefined && event.source !== options.expectedSource)) return;
     if (nonce !== undefined && event.data?.capabilityNonce !== nonce) return;
@@ -473,14 +493,17 @@ export function registerProxyControllerWindow(options: RegisterProxyControllerWi
       })();
     }
   };
+  const revoke = (notifyOwner: boolean): void => {
+    target.removeEventListener("message", onMessage);
+    dispose();
+    if (notifyOwner) options.onRevoke?.();
+  };
   target.addEventListener("message", onMessage);
-  return Object.freeze({
-    dispose: () => {
-      disposed = true;
-      target.removeEventListener("message", onMessage);
-      for (const controller of active) controller.abort(new SessionError("closed"));
-    },
-  });
+  lifetimeTimer = setTimeout(() => revoke(true), attachmentLifetimeMS);
+  lifecycleRevoke = () => revoke(true);
+  options.lifecycleSignal?.addEventListener("abort", lifecycleRevoke, { once: true });
+  if (options.lifecycleSignal?.aborted === true) revoke(true);
+  return Object.freeze({ dispose: () => revoke(false) });
 }
 
 export type ProxyAppServiceWorkerControlOptions = Readonly<{

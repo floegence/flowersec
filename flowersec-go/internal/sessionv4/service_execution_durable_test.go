@@ -3,9 +3,11 @@ package sessionv4
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -194,5 +196,79 @@ func TestServiceDurableUnaryRestartChain(t *testing.T) {
 	command.Env = append(os.Environ(), "FLOWERSEC_TEST_DURABLE_EXECUTION_PATH="+f.durable.path)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("restart process: %v\n%s", err, output)
+	}
+}
+
+func TestServiceDurableDiagnosticsUseFinalCommittedOutcome(t *testing.T) {
+	handlerFailure := errors.New("durable handler failed")
+	for _, tc := range []struct {
+		name      string
+		committed bool
+		exit      string
+		want      error
+	}{
+		{name: "handler_error", exit: "error", want: handlerFailure},
+		{name: "handler_panic", exit: "panic", want: ErrCompletionCallbackExit},
+		{name: "handler_goexit", exit: "goexit", want: ErrCompletionCallbackExit},
+		{name: "finish_written_error", exit: "write_failed", want: rpcv4.ErrOwner},
+		{name: "committed_handler_error", committed: true, exit: "error"},
+		{name: "committed_handler_panic", committed: true, exit: "panic"},
+		{name: "committed_handler_goexit", committed: true, exit: "goexit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Keep one observer so the original invocation's physical cleanup
+			// exposes the selected failure without relying on sampled delivery.
+			diagnostic := &DiagnosticOperation{applicationReferences: 1}
+			if !retainApplicationDiagnostic(diagnostic) {
+				t.Fatal("could not retain diagnostic observation")
+			}
+			defer finishApplicationDiagnostic(diagnostic)
+			f := newServiceDispatchFixtureContract(t, func(ctx context.Context, _ UnaryRequest, response *UnaryResponse) (uint32, error) {
+				i := response.invocation
+				i.mu.Lock()
+				i.diagnosticOperation = diagnostic
+				work := i.execution.durableWork
+				i.mu.Unlock()
+				if tc.committed {
+					if err := work.Finish(ctx, 0, []byte("committed result")); err != nil {
+						t.Error("original durable result did not commit", err)
+						return 0, err
+					}
+				}
+				switch tc.exit {
+				case "error":
+					return 0, handlerFailure
+				case "panic":
+					panic("durable handler panic")
+				case "goexit":
+					runtime.Goexit()
+				case "write_failed":
+					if _, err := response.Write(make([]byte, 1025)); !errors.Is(err, rpcv4.ErrResponseLimit) {
+						t.Error("response limit did not fail original writer", err)
+					}
+				}
+				return 0, nil
+			}, false, ApplicationShort, true, "service_unary_durable_chain")
+			f.executionRequest(t, 1, nil, 0)
+			if err := f.dispatch.Admit(f.receiver, f.publisher); err != nil {
+				t.Fatal(err)
+			}
+			for _, reply := range f.executionReplies(t, 1) {
+				if tc.committed {
+					if reply.header.IsSDKError() || string(reply.body) != "committed result" {
+						t.Fatal("handler cleanup replaced committed result", reply.header.Kind(), reply.body)
+					}
+				} else if !reply.header.IsSDKError() {
+					t.Fatal("failed durable invocation published success", reply.header.Kind())
+				}
+			}
+			diagnostic.applicationMu.Lock()
+			references, failure, failed := diagnostic.applicationReferences, diagnostic.applicationFailure, diagnostic.applicationFailed
+			diagnostic.applicationMu.Unlock()
+			want, _ := diagnosticFailure(tc.want)
+			if references != 1 || failed != (tc.want != nil) || failed && failure != want {
+				t.Fatal("durable cleanup did not retain final outcome", references, failure, tc.want)
+			}
+		})
 	}
 }

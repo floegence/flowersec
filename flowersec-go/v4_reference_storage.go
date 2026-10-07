@@ -11,42 +11,42 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-type V4SQLiteReferenceConfig = ledgerv4.SQLiteReferenceConfig
+type SQLiteReferenceConfig = ledgerv4.SQLiteReferenceConfig
 
 var ErrOperationReferenceExpired = ledgerv4.ErrReferenceExpired
 
-// V4SQLiteReferences persists bounded query locators in its own local file.
+// SQLiteReferences persists bounded query locators in its own local file.
 // Create and Open preserve distinct continuity requirements. Closing this
 // owner never deletes references or changes remote execution history.
-type V4SQLiteReferences struct {
+type SQLiteReferences struct {
 	mu    sync.Mutex
 	inner *ledgerv4.SQLiteReferences
 	page  [16]protocolv4.OperationReference
 }
 
-func V4SQLiteReferencesCharge(limits V4SQLiteLimits, config V4SQLiteReferenceConfig) (V4ResourceVector, error) {
+func SQLiteReferencesCharge(limits SQLiteLimits, config SQLiteReferenceConfig) (ResourceVector, error) {
 	charge, err := ledgerv4.SQLiteReferencesCharge(limits, config)
 	if err != nil {
-		return V4ResourceVector{}, err
+		return ResourceVector{}, err
 	}
-	return charge.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(V4SQLiteReferences{}))})
+	return charge.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(SQLiteReferences{}))})
 }
 
-func CreateV4SQLiteReferences(ctx context.Context, backing *V4SQLiteBacking, identity V4SQLiteIdentity, continuity V4SQLiteContinuity, config V4SQLiteReferenceConfig, reservation, environment V4ResourceReference) (*V4SQLiteReferences, error) {
-	return openV4SQLiteReferences(ctx, backing, identity, continuity, config, reservation, environment, true)
+func CreateSQLiteReferences(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, config SQLiteReferenceConfig, reservation, environment ResourceReference) (*SQLiteReferences, error) {
+	return openSQLiteReferences(ctx, backing, identity, continuity, config, reservation, environment, true)
 }
 
-func OpenV4SQLiteReferences(ctx context.Context, backing *V4SQLiteBacking, identity V4SQLiteIdentity, continuity V4SQLiteContinuity, config V4SQLiteReferenceConfig, reservation, environment V4ResourceReference) (*V4SQLiteReferences, error) {
-	return openV4SQLiteReferences(ctx, backing, identity, continuity, config, reservation, environment, false)
+func OpenSQLiteReferences(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, config SQLiteReferenceConfig, reservation, environment ResourceReference) (*SQLiteReferences, error) {
+	return openSQLiteReferences(ctx, backing, identity, continuity, config, reservation, environment, false)
 }
 
-func openV4SQLiteReferences(ctx context.Context, backing *V4SQLiteBacking, identity V4SQLiteIdentity, continuity V4SQLiteContinuity, config V4SQLiteReferenceConfig, reservation, environment V4ResourceReference, create bool) (*V4SQLiteReferences, error) {
+func openSQLiteReferences(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, config SQLiteReferenceConfig, reservation, environment ResourceReference, create bool) (*SQLiteReferences, error) {
 	if backing == nil {
 		return nil, ledgerv4.ErrConfiguration
 	}
 	// The inner store takes this entire charge, including the public view and
 	// its one bounded enumeration workspace, through actual provider cleanup.
-	charge, err := V4SQLiteReferencesCharge(backing.Limits(), config)
+	charge, err := SQLiteReferencesCharge(backing.Limits(), config)
 	if err != nil {
 		return nil, err
 	}
@@ -64,17 +64,17 @@ func openV4SQLiteReferences(ctx context.Context, backing *V4SQLiteBacking, ident
 		owned.Release()
 		return nil, err
 	}
-	return &V4SQLiteReferences{inner: inner}, err
+	return &SQLiteReferences{inner: inner}, err
 }
 
-func (s *V4SQLiteReferences) Save(ctx context.Context, reference OperationReference) error {
+func (s *SQLiteReferences) Save(ctx context.Context, reference OperationReference) error {
 	if s == nil || s.inner == nil {
 		return ledgerv4.ErrOwner
 	}
 	return s.inner.Save(ctx, reference.inner)
 }
 
-func (s *V4SQLiteReferences) Load(ctx context.Context, selector OperationReference) (OperationReference, bool, error) {
+func (s *SQLiteReferences) Load(ctx context.Context, selector OperationReference) (OperationReference, bool, error) {
 	if s == nil || s.inner == nil {
 		return OperationReference{}, false, ledgerv4.ErrOwner
 	}
@@ -84,7 +84,7 @@ func (s *V4SQLiteReferences) Load(ctx context.Context, selector OperationReferen
 
 // List scans at most len(output) rows, with at most sixteen per call. An
 // advanced cursor with zero returned references can represent expired rows.
-func (s *V4SQLiteReferences) List(ctx context.Context, after [32]byte, output []OperationReference) (int, [32]byte, error) {
+func (s *SQLiteReferences) List(ctx context.Context, after [32]byte, output []OperationReference) (int, [32]byte, error) {
 	if s == nil || s.inner == nil {
 		return 0, after, ledgerv4.ErrOwner
 	}
@@ -106,24 +106,24 @@ func (s *V4SQLiteReferences) List(ctx context.Context, after [32]byte, output []
 	return n, next, nil
 }
 
-func (s *V4SQLiteReferences) Collect(ctx context.Context) error {
+func (s *SQLiteReferences) Collect(ctx context.Context) error {
 	if s == nil || s.inner == nil {
 		return ledgerv4.ErrOwner
 	}
 	return s.inner.Collect(ctx)
 }
-func (s *V4SQLiteReferences) Close() {
+func (s *SQLiteReferences) Close() {
 	if s != nil && s.inner != nil {
 		s.inner.Close()
 	}
 }
-func (s *V4SQLiteReferences) WaitCleanup(ctx context.Context) error {
+func (s *SQLiteReferences) WaitCleanup(ctx context.Context) error {
 	if s == nil || s.inner == nil {
 		return ledgerv4.ErrOwner
 	}
 	return s.inner.WaitCleanup(ctx)
 }
-func (s *V4SQLiteReferences) Retire() error {
+func (s *SQLiteReferences) Retire() error {
 	if s == nil || s.inner == nil {
 		return ledgerv4.ErrOwner
 	}
@@ -133,27 +133,27 @@ func (s *V4SQLiteReferences) Retire() error {
 	defer s.mu.Unlock()
 	return s.inner.Retire()
 }
-func (*V4SQLiteReferences) String() string               { return "Flowersec.SQLiteReferences" }
-func (*V4SQLiteReferences) GoString() string             { return "Flowersec.SQLiteReferences" }
-func (*V4SQLiteReferences) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
+func (*SQLiteReferences) String() string               { return "Flowersec.SQLiteReferences" }
+func (*SQLiteReferences) GoString() string             { return "Flowersec.SQLiteReferences" }
+func (*SQLiteReferences) MarshalJSON() ([]byte, error) { return []byte("{}"), nil }
 
-// V4SQLiteReferenceStore is an explicitly charged provider adapter. It borrows
+// SQLiteReferenceStore is an explicitly charged provider adapter. It borrows
 // the caller's original store, runs on the existing ordinary executor and
 // creates no background dispatch, retry queue or additional file owner.
-type V4SQLiteReferenceStore struct {
+type SQLiteReferenceStore struct {
 	inner *sessionv4.SQLiteReferenceStore
 }
 
-func V4SQLiteReferenceStoreCharge() V4ResourceVector {
+func SQLiteReferenceStoreCharge() ResourceVector {
 	charge := sessionv4.SQLiteReferenceStoreCharge()
-	charge[resourcev4.SDKBytes] += uint64(unsafe.Sizeof(V4SQLiteReferenceStore{}))
+	charge[resourcev4.SDKBytes] += uint64(unsafe.Sizeof(SQLiteReferenceStore{}))
 	return charge
 }
-func NewV4SQLiteReferenceStore(store *V4SQLiteReferences, domain string, reservation V4ResourceReference) (*V4SQLiteReferenceStore, error) {
+func NewSQLiteReferenceStore(store *SQLiteReferences, domain string, reservation ResourceReference) (*SQLiteReferenceStore, error) {
 	if store == nil || store.inner == nil {
 		return nil, ledgerv4.ErrOwner
 	}
-	owned, err := reservation.Take(V4SQLiteReferenceStoreCharge())
+	owned, err := reservation.Take(SQLiteReferenceStoreCharge())
 	if err != nil {
 		return nil, err
 	}
@@ -162,25 +162,25 @@ func NewV4SQLiteReferenceStore(store *V4SQLiteReferences, domain string, reserva
 		owned.Release()
 		return nil, err
 	}
-	return &V4SQLiteReferenceStore{inner: inner}, nil
+	return &SQLiteReferenceStore{inner: inner}, nil
 }
-func (s *V4SQLiteReferenceStore) Binding() (V4ReferenceStoreBinding, error) {
+func (s *SQLiteReferenceStore) Binding() (ReferenceStoreBinding, error) {
 	if s == nil || s.inner == nil {
-		return V4ReferenceStoreBinding{}, ledgerv4.ErrOwner
+		return ReferenceStoreBinding{}, ledgerv4.ErrOwner
 	}
 	binding, err := s.inner.Binding()
 	if err != nil {
-		return V4ReferenceStoreBinding{}, err
+		return ReferenceStoreBinding{}, err
 	}
-	return V4ReferenceStoreBinding{Domain: binding.Domain, Store: s, Backing: binding.Backing}, nil
+	return ReferenceStoreBinding{Domain: binding.Domain, Store: s, Backing: binding.Backing}, nil
 }
-func (s *V4SQLiteReferenceStore) SaveOperationReference(ctx context.Context, reference OperationReference) (V4ReferenceSaveOutcome, error) {
+func (s *SQLiteReferenceStore) SaveOperationReference(ctx context.Context, reference OperationReference) (ReferenceSaveOutcome, error) {
 	if s == nil || s.inner == nil {
-		return V4ReferenceSaveUnknown, ledgerv4.ErrOwner
+		return ReferenceSaveUnknown, ledgerv4.ErrOwner
 	}
 	return s.inner.SaveOperationReference(ctx, reference.inner)
 }
-func (s *V4SQLiteReferenceStore) Close() {
+func (s *SQLiteReferenceStore) Close() {
 	if s != nil && s.inner != nil {
 		s.inner.Close()
 	}

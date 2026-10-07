@@ -96,12 +96,26 @@ func (m *StreamMessages) EncodeItem(ctx context.Context, executor *ApplicationEx
 	}
 	defer owned.Release()
 	var permit *ApplicationPermit
+	m.mu.Lock()
+	owner := m.owner
+	m.mu.Unlock()
+	if owner == nil {
+		return cryptov4.ErrClosed
+	}
+	owner.mu.Lock()
+	group := owner.allocationGroup
+	owner.mu.Unlock()
 	if origin == nil {
-		permit, err = executor.TryAcquire(class, task, owned)
+		permit, err = executor.tryAcquireInGroup(group, class, task, owned)
 		if err != nil {
 			return err
 		}
 		defer permit.Close()
+	} else {
+		if err := executor.retainSynchronousWork(group); err != nil {
+			return err
+		}
+		defer executor.releaseSynchronousWork(group)
 	}
 	m.mu.Lock()
 	if err = m.checkLocked(ctx); err == nil && (!m.server || !m.inputEOF) {

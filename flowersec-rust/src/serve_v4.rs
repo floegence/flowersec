@@ -5,15 +5,18 @@ use crate::{api_v4::CleanupStatus, pool_v4::admission::SQLiteAdmissionAuthority}
 use async_trait::async_trait;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use tokio::{
-    net::TcpListener,
-    sync::{Notify, mpsc},
-};
+use tokio::sync::{Notify, mpsc};
 #[path = "serve_v4_drain.rs"]
 mod drain;
 use drain::DrainState;
 #[path = "serve_v4_application.rs"]
 mod application;
+#[path = "serve_v4_live_source.rs"]
+pub(crate) mod live_source;
+#[path = "serve_v4_services.rs"]
+mod services;
+#[path = "serve_v4_tunnel.rs"]
+mod tunnel;
 pub use crate::application_lifetime_v4::ApplicationLimits;
 use crate::application_lifetime_v4::{ApplicationLifetime, CallbackKind};
 use application::Invocation;
@@ -25,6 +28,24 @@ pub use application::{
     StreamDispatch,
 };
 pub use drain::{ServeDrainOperation, ServeDrainResult};
+pub use live_source::{
+    LiveServerDeliveryHandle, LiveServerDeliveryOptions, OriginalLiveAcceptedSource,
+    OriginalLiveServerDelivery, OriginalLiveServerPublication, OriginalLiveTunnelServerMaterial,
+    OriginalLiveTunnelServerPublication, RegisteredLiveServerControlConfiguration,
+    RegisteredLiveServerPreparation, RegisteredLiveTunnelServerPublication,
+    RemoteLiveServerPublication, RemoteLiveTunnelServerPublication,
+};
+pub use services::{AcceptedServices, ServicePlan};
+pub use tunnel::{
+    LiveReverseTunnelListener, LiveReverseTunnelServeOptions, PoolServerAllowBinding,
+    PoolServerAllowOptions, ReverseTunnelServeOptions, TunnelServeHandle, TunnelServeOptions,
+};
+pub(crate) use tunnel::{
+    prepare_live_reverse_listener, serve_live_tunnel, serve_live_tunnel_on_original_listener,
+    serve_pool as serve_tunnel_pool, serve_registered_pool, serve_reverse_live_tunnel,
+    serve_reverse_pool as serve_reverse_tunnel_pool, serve_reverse_pool_on_listener,
+    serve_reverse_pool_on_udp_socket, serve_reverse_registered_pool,
+};
 const MAX_OBSERVERS: usize = 16;
 fn serve_charge(max_connections: usize) -> ResourceLimits {
     ResourceLimits {
@@ -41,8 +62,28 @@ fn serve_charge(max_connections: usize) -> ResourceLimits {
 
 /// Bounded trusted material lookup. The HELLO is unauthenticated lookup input;
 /// the SDK independently verifies every returned credential and actual binding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AcceptedAuthorizationProfile {
+    PreauthorizedPool,
+    LiveAuthority,
+}
+impl AcceptedAuthorizationProfile {
+    fn wire(self) -> codec::ActivationSource {
+        match self {
+            Self::PreauthorizedPool => codec::ActivationSource::PreauthorizedPool,
+            Self::LiveAuthority => codec::ActivationSource::LiveAuthority,
+        }
+    }
+}
+
 #[async_trait]
 pub trait AcceptedMaterialSource: fmt::Debug + Send + Sync + 'static {
+    /// Fixed by trusted listener configuration before accepting any socket.
+    /// Live material must come from the original confirmed authority invocation;
+    /// a status query, receipt or reopened durable row is not delivery authority.
+    fn authorization_profile(&self) -> AcceptedAuthorizationProfile {
+        AcceptedAuthorizationProfile::PreauthorizedPool
+    }
     async fn resolve(
         &self,
         client_hello: &[u8],
@@ -56,7 +97,7 @@ pub struct WssServerIdentity {
 }
 impl fmt::Debug for WssServerIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("V4WssServerIdentity { <redacted> }")
+        f.write_str("WssServerIdentity { <redacted> }")
     }
 }
 impl Drop for WssServerIdentity {
@@ -83,6 +124,9 @@ pub struct WssServeOptions {
 }
 #[derive(Clone)]
 pub(super) struct SocketPolicy {
+    pub(super) relay_unassigned: bool,
+    pub(super) relay_budget: Option<Arc<wss::RelayBudget>>,
+    pub(super) path_kind: u8,
     pub(super) binding_mode: BindingMode,
     pub(super) tls: Arc<rustls::ServerConfig>,
     pub(super) host: String,
@@ -99,22 +143,32 @@ struct Slot {
     generation: u64,
     cancel: CancellationToken,
     session: Option<Session>,
-    provider: Option<Arc<wss::Provider>>,
+    provider: Option<super::direct_carrier::Provider>,
+    prepared: bool,
     pending: bool,
     drain: Option<DrainOperation>,
     drain_done: bool,
     drain_starting: bool,
     tail_done: bool,
     invocation: Option<Arc<Invocation>>,
+    diagnostic: Option<Arc<crate::diagnostics_v4::DiagnosticActivity>>,
+}
+struct PreparationProgress {
+    target: usize,
+    completed: usize,
+    failure: Option<ConnectError>,
 }
 struct Gate {
     closed: bool,
+    preparation: Option<PreparationProgress>,
     drain: Option<DrainState>,
     slots: Vec<Option<Slot>>,
     generation: u64,
 }
 struct ServeOwner {
     root: Arc<EnvironmentRoot>,
+    diagnostic: Arc<crate::diagnostics_v4::DiagnosticActivity>,
+    diagnostic_closed: AtomicBool,
     gate: Mutex<Gate>,
     changed: Notify,
     stop: CancellationToken,
@@ -165,7 +219,19 @@ impl ServeHandle {
             if status.complete || status.cleanup_incomplete {
                 return Ok(status);
             }
-            notified.await;
+            let deadline = *self
+                .owner
+                .cleanup_deadline
+                .lock()
+                .expect("Serve cleanup deadline");
+            if let Some(deadline) = deadline {
+                tokio::select! {
+                    _ = &mut notified => {},
+                    _ = tokio::time::sleep_until(deadline) => return Ok(self.cleanup_status()),
+                }
+            } else {
+                notified.await;
+            }
         }
     }
 }
@@ -179,6 +245,15 @@ impl ServeOwner {
         self.close_with_cause(crate::transport::SessionError::Closed);
     }
     fn close_with_cause(&self, cause: crate::transport::SessionError) {
+        self.diagnostic.fail(
+            match cause {
+                crate::transport::SessionError::Canceled => crate::DiagnosticCode::Canceled,
+                crate::transport::SessionError::Closed => crate::DiagnosticCode::Closed,
+                crate::transport::SessionError::Timeout => crate::DiagnosticCode::Timeout,
+                _ => crate::DiagnosticCode::Other,
+            },
+            crate::DiagnosticRetryDisposition::DoNotRetry,
+        );
         let sessions = {
             let mut gate = self.gate.lock().expect("Serve publication gate");
             gate.closed = true;
@@ -278,6 +353,9 @@ impl ServeOwner {
         let complete = gate.closed && pending == 0 && self.pump_done.load(Ordering::Acquire);
         drop(gate);
         if complete {
+            if !self.diagnostic_closed.swap(true, Ordering::AcqRel) {
+                self.diagnostic.closed();
+            }
             let mut charge = self.charge.lock().expect("Serve charge");
             if self.observers.load(Ordering::Acquire) == 0 {
                 charge.take();
@@ -318,14 +396,48 @@ impl Drop for PumpTail {
         self.0.changed.notify_waiters();
     }
 }
+struct RuntimeOptions {
+    callbacks: Arc<dyn ServeCallbacks>,
+    application_limits: ApplicationLimits,
+    cancellation: CancellationToken,
+    binding_mode: BindingMode,
+    max_frame_bytes: usize,
+    handshake_timeout: Duration,
+    queue_messages: usize,
+    prepare_bytes: usize,
+    native_runtime_bytes: u64,
+    origin: Option<String>,
+}
+impl From<WssServeOptions> for RuntimeOptions {
+    fn from(options: WssServeOptions) -> Self {
+        Self {
+            callbacks: options.callbacks,
+            application_limits: options.application_limits,
+            cancellation: options.cancellation,
+            binding_mode: options.binding_mode,
+            max_frame_bytes: options.max_frame_bytes,
+            handshake_timeout: options.handshake_timeout,
+            queue_messages: options.queue_messages,
+            prepare_bytes: options.prepare_bytes,
+            native_runtime_bytes: options.native_runtime_bytes,
+            origin: options.origin,
+        }
+    }
+}
 struct Configuration {
+    carrier: u8,
     keys: IdentityKeys,
     namespaces: Vec<Arc<Namespace>>,
-    source: Arc<dyn AcceptedMaterialSource>,
+    source: Option<Arc<dyn AcceptedMaterialSource>>,
+    profile: AcceptedAuthorizationProfile,
     admission: Arc<SQLiteAdmissionAuthority>,
-    options: WssServeOptions,
-    socket: SocketPolicy,
+    options: RuntimeOptions,
+    socket: Option<SocketPolicy>,
     certificate: Vec<u8>,
+}
+enum PreboundListener {
+    Tcp(std::net::TcpListener),
+    Udp(std::net::UdpSocket),
 }
 pub(crate) async fn serve(
     root: Arc<EnvironmentRoot>,
@@ -335,6 +447,184 @@ pub(crate) async fn serve(
     admission: Arc<SQLiteAdmissionAuthority>,
     identity: WssServerIdentity,
     options: WssServeOptions,
+) -> ConnectResult<ServeHandle> {
+    serve_carrier(
+        root, namespaces, keys, source, admission, identity, options, 1, None,
+    )
+    .await
+}
+/// Serve WSS on a TCP listener already bound by the deployment owner.
+/// Keeping the original socket alive lets signed route issuance and the
+/// eventual accept loop share one actual listener without releasing its port.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Serve assembly carries the original material, identity, handler and physical cleanup owners together."
+)]
+pub(crate) async fn serve_wss_on_listener(
+    root: Arc<EnvironmentRoot>,
+    namespaces: Vec<Arc<Namespace>>,
+    keys: IdentityKeys,
+    source: Arc<dyn AcceptedMaterialSource>,
+    admission: Arc<SQLiteAdmissionAuthority>,
+    identity: WssServerIdentity,
+    options: WssServeOptions,
+    listener: std::net::TcpListener,
+) -> ConnectResult<ServeHandle> {
+    serve_carrier(
+        root,
+        namespaces,
+        keys,
+        source,
+        admission,
+        identity,
+        options,
+        1,
+        Some(PreboundListener::Tcp(listener)),
+    )
+    .await
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Serve assembly carries the original material, identity, handler and physical cleanup owners together."
+)]
+pub(crate) async fn serve_raw_quic_on_socket(
+    root: Arc<EnvironmentRoot>,
+    namespaces: Vec<Arc<Namespace>>,
+    keys: IdentityKeys,
+    source: Arc<dyn AcceptedMaterialSource>,
+    admission: Arc<SQLiteAdmissionAuthority>,
+    identity: WssServerIdentity,
+    options: WssServeOptions,
+    socket: std::net::UdpSocket,
+) -> ConnectResult<ServeHandle> {
+    serve_carrier(
+        root,
+        namespaces,
+        keys,
+        source,
+        admission,
+        identity,
+        options,
+        0,
+        Some(PreboundListener::Udp(socket)),
+    )
+    .await
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Serve assembly carries the original material, identity, handler and physical cleanup owners together."
+)]
+pub(crate) async fn serve_webtransport_on_socket(
+    root: Arc<EnvironmentRoot>,
+    namespaces: Vec<Arc<Namespace>>,
+    keys: IdentityKeys,
+    source: Arc<dyn AcceptedMaterialSource>,
+    admission: Arc<SQLiteAdmissionAuthority>,
+    identity: WssServerIdentity,
+    options: WssServeOptions,
+    socket: std::net::UdpSocket,
+) -> ConnectResult<ServeHandle> {
+    serve_carrier(
+        root,
+        namespaces,
+        keys,
+        source,
+        admission,
+        identity,
+        options,
+        2,
+        Some(PreboundListener::Udp(socket)),
+    )
+    .await
+}
+pub(crate) async fn serve_raw_quic(
+    root: Arc<EnvironmentRoot>,
+    namespaces: Vec<Arc<Namespace>>,
+    keys: IdentityKeys,
+    source: Arc<dyn AcceptedMaterialSource>,
+    admission: Arc<SQLiteAdmissionAuthority>,
+    identity: WssServerIdentity,
+    options: WssServeOptions,
+) -> ConnectResult<ServeHandle> {
+    serve_carrier(
+        root, namespaces, keys, source, admission, identity, options, 0, None,
+    )
+    .await
+}
+pub(crate) async fn serve_webtransport(
+    root: Arc<EnvironmentRoot>,
+    namespaces: Vec<Arc<Namespace>>,
+    keys: IdentityKeys,
+    source: Arc<dyn AcceptedMaterialSource>,
+    admission: Arc<SQLiteAdmissionAuthority>,
+    identity: WssServerIdentity,
+    options: WssServeOptions,
+) -> ConnectResult<ServeHandle> {
+    serve_carrier(
+        root, namespaces, keys, source, admission, identity, options, 2, None,
+    )
+    .await
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Serve assembly carries the original material, identity, handler and physical cleanup owners together."
+)]
+async fn serve_carrier(
+    root: Arc<EnvironmentRoot>,
+    namespaces: Vec<Arc<Namespace>>,
+    keys: IdentityKeys,
+    source: Arc<dyn AcceptedMaterialSource>,
+    admission: Arc<SQLiteAdmissionAuthority>,
+    identity: WssServerIdentity,
+    options: WssServeOptions,
+    carrier: u8,
+    prebound: Option<PreboundListener>,
+) -> ConnectResult<ServeHandle> {
+    let diagnostic = root.diagnostic_activity(crate::DiagnosticPhase::Serve, 1);
+    let result = serve_carrier_inner(
+        root.clone(),
+        namespaces,
+        keys,
+        source,
+        admission,
+        identity,
+        options,
+        carrier,
+        prebound,
+        diagnostic.clone(),
+    )
+    .await;
+    match &result {
+        Ok(_) => diagnostic.succeed(),
+        Err(error) => {
+            if matches!(error, ConnectError::Tls) {
+                root.diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::TlsFailures);
+            }
+            diagnostic.fail(
+                connect_diagnostic_code(error),
+                crate::DiagnosticRetryDisposition::DoNotRetry,
+            );
+            diagnostic.serve_outcome::<()>(&Err(ServeError::from(*error)));
+            diagnostic.closed();
+        }
+    }
+    result
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Serve assembly carries the original material, identity, handler and physical cleanup owners together."
+)]
+async fn serve_carrier_inner(
+    root: Arc<EnvironmentRoot>,
+    namespaces: Vec<Arc<Namespace>>,
+    keys: IdentityKeys,
+    source: Arc<dyn AcceptedMaterialSource>,
+    admission: Arc<SQLiteAdmissionAuthority>,
+    identity: WssServerIdentity,
+    options: WssServeOptions,
+    carrier: u8,
+    prebound: Option<PreboundListener>,
+    diagnostic: Arc<crate::diagnostics_v4::DiagnosticActivity>,
 ) -> ConnectResult<ServeHandle> {
     options.application_limits.charge()?;
     if options.cancellation.is_cancelled() {
@@ -404,16 +694,37 @@ pub(crate) async fn serve(
     tls.max_early_data_size = 0;
     tls.send_tls13_tickets = 0;
     tls.session_storage = Arc::new(rustls::server::NoServerSessionStorage {});
-    let listener = TcpListener::bind(options.listen_address)
-        .await
-        .map_err(|_| ConnectError::Carrier)?;
-    let address = listener.local_addr().map_err(|_| ConnectError::Carrier)?;
+    let listener = match prebound {
+        Some(PreboundListener::Tcp(listener)) if carrier == 1 => {
+            super::direct_listener::Listener::from_websocket(listener, options.listen_address)?
+        }
+        Some(PreboundListener::Udp(socket)) if carrier != 1 => {
+            super::direct_listener::Listener::bind_path_on_udp_socket(
+                root.clone(),
+                carrier,
+                0,
+                &identity,
+                &super::direct_listener::Options::from(&options),
+                socket,
+            )
+            .await?
+        }
+        Some(_) => return Err(ConnectError::Configuration),
+        None => {
+            super::direct_listener::Listener::bind(root.clone(), carrier, &identity, &options)
+                .await?
+        }
+    };
+    let address = listener.local_address()?;
     let authority = if options.host.parse::<std::net::Ipv6Addr>().is_ok() {
         format!("[{}]:{}", options.host, address.port())
     } else {
         format!("{}:{}", options.host, address.port())
     };
     let socket = SocketPolicy {
+        relay_unassigned: false,
+        relay_budget: None,
+        path_kind: 0,
         binding_mode: options.binding_mode,
         tls: Arc::new(tls),
         host: options.host.clone(),
@@ -426,10 +737,14 @@ pub(crate) async fn serve(
         queue_messages: options.queue_messages,
         prepare_bytes: options.prepare_bytes,
     };
+    diagnostic.succeed();
     let owner = Arc::new(ServeOwner {
         root,
+        diagnostic,
+        diagnostic_closed: AtomicBool::new(false),
         gate: Mutex::new(Gate {
             closed: false,
+            preparation: None,
             drain: None,
             slots: (0..options.max_connections).map(|_| None).collect(),
             generation: 0,
@@ -442,13 +757,16 @@ pub(crate) async fn serve(
         observers: AtomicUsize::new(0),
     });
     let (published, incoming) = mpsc::channel(options.max_connections);
+    let profile = source.authorization_profile();
     let config = Arc::new(Configuration {
+        carrier,
+        profile,
         keys,
         namespaces,
-        source,
+        source: Some(source),
         admission,
-        options,
-        socket,
+        options: options.into(),
+        socket: Some(socket),
         certificate,
     });
     tokio::spawn(pump(owner.clone(), config, listener, published));
@@ -461,7 +779,7 @@ pub(crate) async fn serve(
 async fn pump(
     owner: Arc<ServeOwner>,
     config: Arc<Configuration>,
-    listener: TcpListener,
+    listener: super::direct_listener::Listener,
     published: mpsc::Sender<Session>,
 ) {
     let _tail = PumpTail(owner.clone());
@@ -486,7 +804,11 @@ async fn pump(
             tokio::select! { _=owner.stop.cancelled()=>{},_=owner.changed.notified()=>{},_=tokio::time::sleep(Duration::from_millis(10))=>{} };
             continue;
         };
-        let maximum = config.socket.maximum;
+        let maximum = config
+            .socket
+            .as_ref()
+            .expect("direct listener policy")
+            .maximum;
         let reserve =
             || -> ConnectResult<(EnvironmentCharge, EnvironmentCharge, EnvironmentCharge)> {
                 let charge = owner.root.reserve_environment(ResourceLimits {
@@ -495,11 +817,11 @@ async fn pump(
                         + config.options.prepare_bytes as u64
                         + 524288,
                     items: (config.options.queue_messages + 16) as u64,
-                    work_slots: 8,
-                    tasks: 6,
-                    timers: 3,
+                    work_slots: if config.carrier == 1 { 8 } else { 24 },
+                    tasks: if config.carrier == 1 { 6 } else { 24 },
+                    timers: if config.carrier == 1 { 3 } else { 8 },
                     connections: 1,
-                    native_handles: 8,
+                    native_handles: if config.carrier == 1 { 8 } else { 32 },
                     ..ResourceLimits::default()
                 })?;
                 let tls = owner.root.reserve_environment(ResourceLimits {
@@ -522,6 +844,9 @@ async fn pump(
         };
         let cancel = CancellationToken::new();
         let invocation = Invocation::new(cancel.clone(), application_charge);
+        let diagnostic = owner
+            .root
+            .diagnostic_activity(crate::DiagnosticPhase::Accept, 1);
         let generation = {
             let mut gate = owner.gate.lock().expect("Serve publication gate");
             if gate.closed {
@@ -538,12 +863,14 @@ async fn pump(
                 cancel: cancel.clone(),
                 session: None,
                 provider: None,
+                prepared: false,
                 pending: true,
                 drain: None,
                 drain_done: false,
                 drain_starting: false,
                 tail_done: false,
                 invocation: None,
+                diagnostic: Some(diagnostic.clone()),
             });
             generation
         };
@@ -552,21 +879,49 @@ async fn pump(
             index,
             generation,
         };
+        let native_cancellation = flowersec_native_transport::Cancellation::new();
+        let original_accept = listener.accept(&native_cancellation);
+        tokio::pin!(original_accept);
         let accepted = loop {
-            tokio::select! { _=config.options.cancellation.cancelled()=>{owner.close();break None},_=cancel.cancelled()=>break None,_=owner.stop.cancelled()=>break None,result=listener.accept()=>break result.ok(), _=tokio::time::sleep(Duration::from_millis(10))=>{owner.collect_finished();if owner.root.is_closed(){owner.close();break None;}} }
+            tokio::select! {
+                _=config.options.cancellation.cancelled()=>{owner.close();break None},
+                _=cancel.cancelled()=>break None,
+                _=owner.stop.cancelled()=>break None,
+                result=original_accept.as_mut()=>break Some(result),
+                _=tokio::time::sleep(Duration::from_millis(10))=>{
+                    owner.collect_finished();
+                    if owner.root.is_closed(){owner.close();break None;}
+                }
+            }
         };
-        let Some((tcp, _)) = accepted else {
-            drop(tail);
-            break;
+        let tcp = match accepted {
+            Some(Ok(incoming)) => incoming,
+            Some(Err(error)) => {
+                diagnostic.serve_outcome::<()>(&Err(ServeError::from(error)));
+                drop(tail);
+                break;
+            }
+            None => {
+                diagnostic.fail(
+                    crate::DiagnosticCode::Canceled,
+                    crate::DiagnosticRetryDisposition::DoNotRetry,
+                );
+                // Cancellation withdraws observation of the same original
+                // handshake. Its prepayment remains held until actual exit.
+                native_cancellation.cancel();
+                if let Ok(incoming) = original_accept.as_mut().await {
+                    incoming.abort_and_wait().await;
+                }
+                drop(tail);
+                break;
+            }
         };
-        if owner.check(index, generation).is_err() {
+        if let Err(error) = owner.check(index, generation) {
+            diagnostic.serve_outcome::<()>(&Err(ServeError::from(error)));
+            tcp.abort_and_wait().await;
             drop(tail);
             break;
         }
-        let Ok(tcp) = tcp.into_std() else {
-            drop(tail);
-            continue;
-        };
         owner.gate.lock().expect("Serve publication gate").slots[index]
             .as_mut()
             .expect("original ingress")
@@ -577,39 +932,61 @@ async fn pump(
         tokio::spawn(async move {
             let _tail = tail;
             let deadline = Instant::now() + config.options.handshake_timeout;
-            let accepted = wss::Provider::accept(
+            let accepted = super::direct_carrier::Provider::accept(
                 owner.root.clone(),
                 tcp,
-                config.socket.clone(),
+                config
+                    .socket
+                    .as_ref()
+                    .expect("direct listener policy")
+                    .clone(),
                 deadline,
                 cancel.clone(),
                 (charge, tls_charge),
-                wss::AcceptHooks {
-                    retain: |provider| {
-                        let mut gate = owner.gate.lock().expect("Serve publication gate");
-                        let slot = gate.slots[index].as_mut().expect("original ingress");
-                        assert_eq!(slot.generation, generation);
-                        slot.provider = Some(provider);
-                    },
-                    authorize: |request| {
-                        let callbacks = config.options.callbacks.clone();
-                        let owner = owner.clone();
-                        Box::pin(async move {
-                            owner.check(index, generation).map_err(ServeError::from)?;
-                            application::callback(callbacks.authorize_request(request)).await
-                        }) as wss::RequestAuthorizationFuture
-                    },
+                |provider| {
+                    let mut gate = owner.gate.lock().expect("Serve publication gate");
+                    let slot = gate.slots[index].as_mut().expect("original ingress");
+                    assert_eq!(slot.generation, generation);
+                    slot.provider = Some(provider);
+                },
+                |request| {
+                    let callbacks = config.options.callbacks.clone();
+                    let owner = owner.clone();
+                    Box::pin(async move {
+                        owner.check(index, generation).map_err(ServeError::from)?;
+                        application::callback(callbacks.authorize_request(request)).await
+                    }) as wss::RequestAuthorizationFuture
                 },
             )
             .await;
-            let Ok((provider, mut incoming)) = accepted else {
-                invocation
-                    .finish(&config.options.callbacks, application::complete())
-                    .await;
-                invocation.retire();
-                return;
+            let (provider, mut incoming) = match accepted {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    diagnostic.fail(
+                        connect_diagnostic_code(&error),
+                        crate::DiagnosticRetryDisposition::DoNotRetry,
+                    );
+                    diagnostic.serve_outcome::<()>(&Err(ServeError::from(error)));
+                    invocation
+                        .finish(&config.options.callbacks, application::complete())
+                        .await;
+                    invocation.retire();
+                    return;
+                }
             };
-            let mut guard = ConnectGuard(Some(provider.clone()));
+            {
+                let mut gate = owner
+                    .gate
+                    .lock()
+                    .expect("original completed ingress Prepare");
+                if let Some(slot) = gate.slots[index]
+                    .as_mut()
+                    .filter(|slot| slot.generation == generation)
+                {
+                    slot.prepared = true;
+                }
+            }
+            let guard = super::direct_carrier::Guard(Some(provider.clone()));
             let result = {
                 let establishment = establish(
                     &owner,
@@ -619,6 +996,7 @@ async fn pump(
                     &mut incoming,
                     deadline,
                     &invocation,
+                    None,
                 );
                 tokio::pin!(establishment);
                 tokio::select! {
@@ -627,56 +1005,143 @@ async fn pump(
                     _ = tokio::time::sleep_until(deadline) => { invocation.revoke(); provider.close(); establishment.await },
                 }
             };
-            // A READY owner that failed attachment/publication is still an
-            // original private child with a real maintenance worker.
-            let mut child = owner.gate.lock().expect("Serve publication gate").slots[index]
+            finish_original_child(
+                &owner, &config, index, generation, cancel, provider, incoming, guard, result,
+                invocation, published,
+            )
+            .await;
+        });
+    }
+    // Stop the listener before waiting for the existing children. The same
+    // prepaid pump drives their bounded aggregate; Drain creates no wait task
+    // per Session and never closes a healthy sibling on another child's error.
+    let native_listener = match listener {
+        super::direct_listener::Listener::WebSocket(listener) => {
+            drop(listener);
+            None
+        }
+        listener => {
+            listener.seal();
+            Some(listener)
+        }
+    };
+    drop(published);
+    owner.ingress_stopped();
+    loop {
+        owner.poll_drain();
+        if owner
+            .gate
+            .lock()
+            .expect("Serve publication gate")
+            .slots
+            .iter()
+            .all(Option::is_none)
+        {
+            break;
+        }
+        tokio::select! { _ = owner.changed.notified() => {}, _ = tokio::time::sleep(Duration::from_millis(10)) => {} }
+    }
+    if let Some(listener) = native_listener {
+        listener.finish().await;
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Serve assembly carries the original material, identity, handler and physical cleanup owners together."
+)]
+async fn finish_original_child(
+    owner: &Arc<ServeOwner>,
+    config: &Configuration,
+    index: usize,
+    generation: u64,
+    cancel: CancellationToken,
+    provider: super::direct_carrier::Provider,
+    mut incoming: mpsc::Receiver<Vec<u8>>,
+    mut guard: super::direct_carrier::Guard,
+    result: ConnectResult<ReadySession>,
+    invocation: Arc<Invocation>,
+    published: mpsc::Sender<Session>,
+) {
+    let diagnostic = owner.gate.lock().expect("Serve publication gate").slots[index]
+        .as_ref()
+        .and_then(|slot| slot.diagnostic.clone());
+    if let (Some(diagnostic), Err(error)) = (&diagnostic, &result) {
+        diagnostic.fail(
+            connect_diagnostic_code(error),
+            crate::DiagnosticRetryDisposition::DoNotRetry,
+        );
+    }
+    // A READY owner that failed attachment/publication is still an
+    // original private child with a real maintenance worker.
+    let mut child = owner.gate.lock().expect("Serve publication gate").slots[index]
+        .as_ref()
+        .and_then(|slot| slot.session.clone());
+    if let Ok(ReadySession {
+        session,
+        received,
+        application,
+        handlers,
+        authentication,
+        publication,
+    }) = result
+    {
+        let queue = published.clone().try_reserve_owned().ok();
+        // This short gate orders the sole host publication against
+        // first Drain/Close. It never traverses a Session lock.
+        let accepted = {
+            let mut gate = owner.gate.lock().expect("Serve publication gate");
+            let closed = gate.closed;
+            if gate.slots[index]
                 .as_ref()
-                .and_then(|slot| slot.session.clone());
-            if let Ok(ReadySession {
-                session,
-                received,
-                application,
-                handlers,
-                authentication,
-                publication,
-            }) = result
+                .is_some_and(|s| s.generation == generation && s.pending)
             {
-                let queue = published.clone().try_reserve_owned().ok();
-                // This short gate orders the sole host publication against
-                // first Drain/Close. It never traverses a Session lock.
-                let accepted = {
-                    let mut gate = owner.gate.lock().expect("Serve publication gate");
-                    let closed = gate.closed;
-                    if gate.slots[index]
-                        .as_ref()
-                        .is_some_and(|s| s.generation == generation && s.pending)
-                    {
-                        let slot = gate.slots[index].as_mut().expect("original ingress");
-                        slot.session = Some(session.clone());
-                        let accepted = !closed
-                            && !cancel.is_cancelled()
-                            && !owner.root.is_closed()
-                            && queue.is_some();
-                        slot.pending = !accepted;
-                        accepted
-                    } else {
-                        false
+                let slot = gate.slots[index].as_mut().expect("original ingress");
+                slot.session = Some(session.clone());
+                let accepted =
+                    !closed && !cancel.is_cancelled() && !owner.root.is_closed() && queue.is_some();
+                slot.pending = !accepted;
+                accepted
+            } else {
+                false
+            }
+        };
+        if accepted {
+            // Receiver ownership can be revoked after the publication gate.
+            // Failure still belongs to this original child and must reach the
+            // same lease, callback and physical-tail retirement below.
+            match provider.receiver() {
+                Ok(tail) => {
+                    if let Some(diagnostic) = &diagnostic {
+                        diagnostic.succeed();
                     }
-                };
-                if accepted {
                     invocation.published();
                     let receiver = session.receiver();
-                    let tail = provider.receiver();
+                    let input_provider = provider.clone();
                     tokio::spawn(async move {
                         let _charge = received;
                         let _tail = tail;
-                        while let Some(wire) = incoming.recv().await {
-                            if receiver.receive(&wire).is_err() {
-                                receiver.close();
-                                return;
+                        let mut termination = Box::pin(receiver.wait_termination());
+                        loop {
+                            tokio::select! {
+                                result = incoming.recv() => match result {
+                                    Some(wire) => {
+                                        if input_provider
+                                            .receive_maintenance(&receiver, &wire)
+                                            .is_err()
+                                        {
+                                            receiver.close_input(crate::SessionError::OperationFailed);
+                                            break;
+                                        }
+                                    }
+                                    None => {
+                                        receiver.close_input(crate::SessionError::OperationFailed);
+                                        break;
+                                    }
+                                },
+                                _ = &mut termination => break,
                             }
                         }
-                        receiver.close();
                     });
                     guard.0 = None;
                     handlers.dispatch(session.clone(), authentication.binding(), application);
@@ -696,74 +1161,72 @@ async fn pump(
                         Ok(SessionAcceptance::Retained) => {}
                         _ => session.close(),
                     }
-                } else {
+                }
+                Err(_) => {
+                    if let Some(diagnostic) = &diagnostic {
+                        diagnostic.fail(
+                            crate::DiagnosticCode::Closed,
+                            crate::DiagnosticRetryDisposition::DoNotRetry,
+                        );
+                    }
                     session.close();
-                }
-                drop(publication);
-                child = Some(session);
-            }
-            drop(guard);
-            if let Some(session) = &child {
-                session.wait_termination().await;
-            }
-            invocation.revoke();
-            provider.close();
-            let cleanup_deadline = Instant::now() + Duration::from_secs(5);
-            let core = loop {
-                let status = child
-                    .as_ref()
-                    .map_or_else(|| provider.cleanup(), |s| s.core_cleanup_status());
-                if status.complete || status.cleanup_incomplete {
-                    break status;
-                }
-                if Instant::now() >= cleanup_deadline {
-                    break CleanupStatus {
-                        complete: false,
-                        cleanup_incomplete: true,
-                        pending_callbacks: status.pending_callbacks,
-                    };
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            };
-            invocation.finish(&config.options.callbacks, core).await;
-            if let Some(session) = child {
-                loop {
-                    if owner.root.is_closed() {
-                        session.close();
-                    }
-                    if session.cleanup_status().complete {
-                        break;
-                    }
-                    tokio::select! { _=owner.changed.notified()=>{},_=tokio::time::sleep(Duration::from_millis(10))=>{} }
+                    drop(incoming);
+                    drop(received);
                 }
             }
-            while !provider.cleanup().complete {
-                tokio::time::sleep(Duration::from_millis(10)).await;
+        } else {
+            if let Some(diagnostic) = &diagnostic {
+                diagnostic.fail(
+                    crate::DiagnosticCode::Closed,
+                    crate::DiagnosticRetryDisposition::DoNotRetry,
+                );
             }
-            invocation.retire();
-        });
-    }
-    // Stop the listener before waiting for the existing children. The same
-    // prepaid pump drives their bounded aggregate; Drain creates no wait task
-    // per Session and never closes a healthy sibling on another child's error.
-    drop(listener);
-    drop(published);
-    owner.ingress_stopped();
-    loop {
-        owner.poll_drain();
-        if owner
-            .gate
-            .lock()
-            .expect("Serve publication gate")
-            .slots
-            .iter()
-            .all(Option::is_none)
-        {
-            break;
+            session.close();
         }
-        tokio::select! { _ = owner.changed.notified() => {}, _ = tokio::time::sleep(Duration::from_millis(10)) => {} }
+        drop(publication);
+        child = Some(session);
     }
+    drop(guard);
+    if let Some(session) = &child {
+        session.wait_termination().await;
+    }
+    invocation.revoke();
+    provider.close();
+    let cleanup_deadline = Instant::now() + Duration::from_secs(5);
+    let core = loop {
+        let status = child
+            .as_ref()
+            .map_or_else(|| provider.cleanup(), |s| s.core_cleanup_status());
+        if status.complete || status.cleanup_incomplete {
+            break status;
+        }
+        if Instant::now() >= cleanup_deadline {
+            break CleanupStatus {
+                complete: false,
+                cleanup_incomplete: true,
+                pending_callbacks: status.pending_callbacks,
+            };
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    };
+    invocation.finish(&config.options.callbacks, core).await;
+    if let Some(session) = child {
+        loop {
+            if owner.root.is_closed() {
+                session.close();
+            }
+            if session.cleanup_status().complete {
+                break;
+            }
+            tokio::select! { _=owner.changed.notified()=>{},_=tokio::time::sleep(Duration::from_millis(10))=>{} }
+        }
+    }
+    while !provider.cleanup().complete {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    invocation.retire();
 }
+
 fn check_hello(
     admission: &CredentialAdmission,
     artifact: Value<'_>,
@@ -800,24 +1263,30 @@ fn check_hello(
     Ok(())
 }
 fn check_route(config: &Configuration, artifact: Value<'_>) -> ConnectResult<()> {
+    let socket = config.socket.as_ref().ok_or(ConnectError::Configuration)?;
     let leg = artifact
         .field("Artifact", "candidates")?
         .at(0)?
         .field("Candidate", "direct_leg")?;
+    let tuple = match config.carrier {
+        0 => ("flowersec-direct/4", "", ""),
+        1 => ("http/1.1", "/flowersec/v4/direct", "flowersec.direct.v4"),
+        2 => ("h3", "/flowersec/webtransport/v4/direct", ""),
+        _ => return Err(ConnectError::Configuration),
+    };
     if leg.u("Leg", "access_class")? != 0
-        || leg.u("Leg", "carrier")? != 1
-        || leg.field("Leg", "host")?.text()? != config.socket.host
+        || leg.u("Leg", "carrier")? != u64::from(config.carrier)
+        || leg.field("Leg", "host")?.text()? != socket.host
         || leg.u("Leg", "port")?
-            != config
-                .socket
+            != socket
                 .authority
                 .rsplit(':')
                 .next()
                 .and_then(|p| p.parse::<u64>().ok())
                 .ok_or(ConnectError::Configuration)?
-        || leg.field("Leg", "path")?.text()? != "/flowersec/v4/direct"
-        || leg.field("Leg", "alpn")?.text()? != "http/1.1"
-        || leg.field("Leg", "subprotocol")?.text()? != "flowersec.direct.v4"
+        || leg.field("Leg", "path")?.text()? != tuple.1
+        || leg.field("Leg", "alpn")?.text()? != tuple.0
+        || leg.field("Leg", "subprotocol")?.text()? != tuple.2
         || artifact
             .field("Artifact", "session_contract")?
             .u("SessionContract", "max_frame")?
@@ -852,9 +1321,9 @@ fn check_route(config: &Configuration, artifact: Value<'_>) -> ConnectResult<()>
             p.is_ok_and(|p| {
                 p.b::<32>("TLSPin", "leaf_der_sha256") == Ok(digest)
                     && p.u("TLSPin", "not_before_ms")
-                        .is_ok_and(|v| v >= config.socket.validity.0 && now.lower_ms >= v)
+                        .is_ok_and(|v| v >= socket.validity.0 && now.lower_ms >= v)
                     && p.u("TLSPin", "not_after_ms")
-                        .is_ok_and(|v| v <= config.socket.validity.1 && now.upper_ms < v)
+                        .is_ok_and(|v| v <= socket.validity.1 && now.upper_ms < v)
             })
         }) {
             return Err(ConnectError::Tls);
@@ -870,38 +1339,71 @@ struct ReadySession {
     authentication: AuthenticatedRequestContext,
     publication: crate::application_lifetime_v4::Callback,
 }
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Serve assembly carries the original material, identity, handler and physical cleanup owners together."
+)]
 async fn establish(
     owner: &Arc<ServeOwner>,
     config: &Configuration,
     ingress: (usize, u64),
-    provider: &Arc<wss::Provider>,
+    provider: &super::direct_carrier::Provider,
     incoming: &mut mpsc::Receiver<Vec<u8>>,
     deadline: Instant,
     invocation: &Arc<Invocation>,
+    original_material: Option<PoolConnectionMaterial>,
 ) -> ConnectResult<ReadySession> {
     let cancel = invocation.cancel.clone();
     let (index, generation) = ingress;
-    let hello_wire = incoming.recv().await.ok_or(ConnectError::Carrier)?;
+    if original_material.is_none() {
+        provider.complete_preparation()?;
+    }
+    let hello_wire = provider.receive_prepared(incoming).await?;
     let hello = payload(&hello_wire, 1, 16384)?;
     let ch = decode(hello, "ClientHello", 16384, Context::default())?;
     owner.check(index, generation)?;
-    let credential_bytes = application::callback(async {
-        config
-            .source
-            .resolve(hello, cancel.clone())
-            .await
-            .map_err(ServeError::from)
-    })
-    .await
-    .map_err(|_| ConnectError::Authorization)?;
-    owner.check(index, generation)?;
-    let material = PoolConnectionMaterial::for_role(
-        owner.root.clone(),
-        config.namespaces.clone(),
-        config.keys.clone(),
-        credential_bytes,
-        Role::Server,
-    )?;
+    let original_tunnel = original_material.is_some();
+    let material = if let Some(material) = original_material {
+        if config.socket.is_some()
+            || material
+                .admission
+                .tunnel
+                .as_ref()
+                .is_none_or(|hop| hop.endpoint_role != 1 || !hop.authenticated())
+        {
+            return Err(ConnectError::Configuration);
+        }
+        material
+    } else {
+        let source = config.source.as_ref().ok_or(ConnectError::Configuration)?;
+        let credential_bytes = application::callback(async {
+            source
+                .resolve(hello, cancel.clone())
+                .await
+                .map_err(ServeError::from)
+        })
+        .await
+        .map_err(|error| {
+            if matches!(
+                error.code,
+                ServeFailure::Rejected | ServeFailure::AuthorizationUnknown
+            ) {
+                owner
+                    .root
+                    .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::IdentityFailures);
+            }
+            ConnectError::Authorization
+        })?;
+        owner.check(index, generation)?;
+        PoolConnectionMaterial::for_role_source(
+            owner.root.clone(),
+            config.namespaces.clone(),
+            config.keys.clone(),
+            credential_bytes,
+            Role::Server,
+            config.profile.wire(),
+        )?
+    };
     let artifact = decode(
         &material.bytes.artifact,
         "Artifact",
@@ -910,19 +1412,24 @@ async fn establish(
     )?;
     let binding_mode = config.options.binding_mode;
     check_hello(&material.admission, artifact, ch, binding_mode)?;
-    check_route(config, artifact)?;
+    if !original_tunnel {
+        check_route(config, artifact)?;
+    }
     let exporter = provider.binding(binding_mode, material.admission.artifact_digest)?;
-    provider.bind_frame_limit(
-        artifact
-            .field("Artifact", "session_contract")?
-            .u("SessionContract", "max_frame")? as usize
-            + 8,
-    )?;
-    provider.attach(material.admission.account.clone())?;
+    if !original_tunnel {
+        provider.bind_contract(artifact)?;
+        provider.attach(material.admission.account.clone())?;
+    }
     let account = material.admission.account.clone();
     let mut server_nonce = [0; 32];
     ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut server_nonce)
         .map_err(|_| ConnectError::Protocol)?;
+    let offered_features = crate::checkpoint_v4::application_features(artifact)?
+        & provider.feature_mask_for(artifact)?;
+    let selected_features = offered_features & ch.u("ClientHello", "offered_features")?;
+    if artifact.u("Artifact", "required_features")? & !selected_features != 0 {
+        return Err(ConnectError::Configuration);
+    }
     let server_hello = encode(13, |out| {
         for (id, name) in [
             "protocol_id",
@@ -947,9 +1454,9 @@ async fn establish(
         u(out, 8);
         b(out, &server_nonce);
         u(out, 9);
-        u(out, 0);
+        u(out, offered_features);
         u(out, 10);
-        u(out, 0);
+        u(out, selected_features);
         u(out, 11);
         u(out, binding_mode.wire());
         u(out, 12);
@@ -969,7 +1476,9 @@ async fn establish(
             match key {
                 0 => t(out, "4"),
                 1 => t(out, config.keys.profile()),
-                2 | 3 | 9 => u(out, 0),
+                2 => u(out, 0),
+                3 => u(out, u64::from(original_tunnel)),
+                9 => u(out, selected_features),
                 4 => b(out, &a.artifact_digest),
                 5 => b(out, &a.route_digest),
                 6 => b(out, &a.attempt_id),
@@ -986,13 +1495,13 @@ async fn establish(
         "transport_context_digest",
         decode(&context, "TransportContext", 4096, Context::default())?,
     )?;
-    let fsb_wire = incoming.recv().await.ok_or(ConnectError::Carrier)?;
+    let fsb_wire = provider.receive_prepared(incoming).await?;
     let fsb = payload(&fsb_wire, 2, 65536)?;
     let f = decode(
         fsb,
         "FSB4",
         65536,
-        Context::with_activation_source(codec::ActivationSource::PreauthorizedPool),
+        Context::with_activation_source(config.profile.wire()),
     )?;
     for name in ["tenant_id", "issuer_key_id", "lease_id", "session_nonce"] {
         same(f, "FSB4", name, artifact, "Artifact", name)?;
@@ -1008,7 +1517,7 @@ async fn establish(
         expect_bytes(f, "FSB4", name, value)?;
     }
     if f.u("FSB4", "binding_mode")? != binding_mode.wire()
-        || f.u("FSB4", "selected_features")? != 0
+        || f.u("FSB4", "selected_features")? != selected_features
         || bytes(f, "FSB4", "activation_authorization")? != material.bytes.activation
         || bytes(f, "FSB4", "client_certificate")? != material.bytes.client_certificate
     {
@@ -1091,11 +1600,40 @@ async fn establish(
     account.check()?;
     provider.check()?;
     let binding = codec::digest("admission_binding", f)?;
-    let reservation = HandshakePreflight::new(
-        account.clone(),
-        RecordShape::from_artifact(artifact)?,
-        Role::Server,
+    let shape = RecordShape::from_artifact(artifact)?;
+    provider.fund_application(
+        &account,
+        shape.max_frame + 8,
+        shape.application_profile,
+        None,
     )?;
+    let prepared_services = handlers
+        .reserve_services(
+            &account,
+            shape.application_profile,
+            authentication.binding().client_identity,
+        )
+        .map_err(|error| match error.code {
+            ServeFailure::Capacity => ConnectError::Capacity,
+            ServeFailure::Closed => ConnectError::Canceled,
+            _ => ConnectError::Authorization,
+        })?;
+    let prepared_default_management =
+        if shape.application_profile == 2 && !handlers.has_management_plan() {
+            Some(
+                crate::ExecutionManagement::prepare_installation(
+                    &account,
+                    1,
+                    shape.application_profile,
+                    authentication.binding().client_identity,
+                    &[],
+                )
+                .map_err(|_| ConnectError::Capacity)?,
+            )
+        } else {
+            None
+        };
+    let reservation = HandshakePreflight::new(account.clone(), shape, Role::Server)?;
     let session_charge = account.reserve(ResourceLimits {
         sdk_bytes: 4096,
         items: 1,
@@ -1113,20 +1651,42 @@ async fn establish(
     })?;
     owner.check(index, generation)?;
     provider.check()?;
-    let durable = config.admission.admit(
-        a,
-        &material.bytes.artifact,
-        binding,
-        PoolSpendOwner::new(provider.identity(), generation, deadline, cancel)?
-            .bind_carrier(provider.cancellation()),
-    )?;
+    if let Some(control) = &material.registered_pool {
+        let guard = || {
+            owner.check(index, generation)?;
+            provider.check()?;
+            account.check()?;
+            Ok(())
+        };
+        control
+            .continue_winner(&material, &cancel, deadline, &guard)
+            .await?;
+        guard()?;
+    }
+    let admission_owner = PoolSpendOwner::new(provider.identity(), generation, deadline, cancel)?
+        .bind_carrier(provider.cancellation());
+    let durable = match config.profile {
+        AcceptedAuthorizationProfile::PreauthorizedPool => {
+            config
+                .admission
+                .admit(a, &material.bytes.artifact, binding, admission_owner)?
+        }
+        AcceptedAuthorizationProfile::LiveAuthority => config.admission.admit_live(
+            a,
+            &material.bytes.artifact,
+            &material.bytes.activation,
+            binding,
+            admission_owner,
+        )?,
+    };
     durable.check()?;
     owner.check(index, generation)?;
     let fields = |out: &mut Vec<u8>| {
         for key in 0..13 {
             u(out, key);
             match key {
-                0 | 1 | 7 => u(out, 0),
+                0 | 1 => u(out, 0),
+                7 => u(out, selected_features),
                 2 => u(out, durable.epoch),
                 3 => b(out, &durable.reservation),
                 4 => b(out, &binding),
@@ -1165,45 +1725,34 @@ async fn establish(
             fsa: &fsa,
         },
         Some(reservation),
-    )?;
+    )
+    .map_err(|error| identity_boundary_error(&owner.root, error))?;
     durable.check()?;
     owner.check(index, generation)?;
     provider.send(envelope(3, &fsa)).await?;
-    let noise = incoming.recv().await.ok_or(ConnectError::Carrier)?;
+    let noise = provider.receive_prepared(incoming).await?;
     durable.check()?;
     owner.check(index, generation)?;
-    handshake.read_noise(payload(&noise, 4, 81)?)?;
+    handshake
+        .read_noise(payload(&noise, 4, 81)?)
+        .map_err(|error| identity_boundary_error(&owner.root, error))?;
     let mut noise = [0; 81];
     durable.check()?;
     owner.check(index, generation)?;
     let count = handshake.write_noise(&mut noise)?;
     provider.send(envelope(4, &noise[..count])).await?;
     noise.zeroize();
-    let peer = incoming.recv().await.ok_or(ConnectError::Carrier)?;
-    durable.check()?;
-    owner.check(index, generation)?;
-    handshake.verify_ready(payload(&peer, 5, 103)?)?;
     let mut ready = ReadySubmission(None);
     durable.check()?;
     owner.check(index, generation)?;
     handshake.submit_ready(&mut ready)?;
-    provider
-        .send(envelope(5, &ready.0.take().ok_or(ConnectError::Protocol)?))
-        .await?;
-    durable.check()?;
-    owner.check(index, generation)?;
-    provider.check()?;
-    let records = handshake.into_records()?;
-    provider.activate();
+    let local_ready = ready.0.take().ok_or(ConnectError::Protocol)?;
+    let records = handshake.prepare_session_records()?;
     let publication = application.enter(CallbackKind::Control)?;
-    let session = Session::adopt(
+    let session = Session::adopt_paused(
         &owner.root,
         records,
-        Box::new(wss::Transport::new(
-            provider.clone(),
-            material.keys,
-            material.namespaces,
-        )),
+        provider.transport(material.keys, material.namespaces),
         Some(session_charge),
     )
     .map_err(|_| ConnectError::Protocol)?;
@@ -1217,12 +1766,50 @@ async fn establish(
     };
     if closed {
         session.close();
+        return Err(ConnectError::Canceled);
     }
     if session.attach_application(application.clone()).is_err() {
         session.close();
         return Err(ConnectError::Authorization);
     }
     handlers.bind(&session);
+    if let Some(prepared) = prepared_services {
+        let services = prepared
+            .install(&session)
+            .map_err(|error| match error.code {
+                ServeFailure::Capacity => ConnectError::Capacity,
+                ServeFailure::Closed => ConnectError::Canceled,
+                _ => ConnectError::Authorization,
+            })?;
+        invocation
+            .install_services(services)
+            .map_err(|_| ConnectError::Canceled)?;
+    }
+    if let Some(prepared) = prepared_default_management {
+        crate::ExecutionManagement::prepare_default(&session, prepared)
+            .map_err(|_| ConnectError::Authorization)?;
+    }
+    durable.check()?;
+    owner.check(index, generation)?;
+    provider.check()?;
+    // Only the fully installed original Session can publish local READY.
+    // Its polling worker remains paused through actual carrier completion.
+    provider.send(envelope(5, &local_ready)).await?;
+    durable.check()?;
+    owner.check(index, generation)?;
+    let peer = provider.receive_prepared(incoming).await?;
+    durable.check()?;
+    owner.check(index, generation)?;
+    handshake
+        .verify_ready(payload(&peer, 5, 103)?)
+        .map_err(|error| identity_boundary_error(&owner.root, error))?;
+    handshake.confirm_prepared_ready()?;
+    durable.check()?;
+    owner.check(index, generation)?;
+    provider.check()?;
+    provider.bind_receiver(session.receiver())?;
+    provider.activate();
+    session.activate_protocol();
     Ok(ReadySession {
         session,
         received,

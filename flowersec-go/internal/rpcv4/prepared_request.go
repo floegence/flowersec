@@ -450,6 +450,43 @@ func (p *PreparedRequest) CheckPreparedLifetime() error {
 	return p.checkPreparedLifetimeLocked()
 }
 
+// PreparationRemainingMS is a wake projection of the original pre-header
+// bounds. It lends no deadline authority and never renews a preparation.
+func (p *PreparedRequest) PreparationRemainingMS(clock *timev4.Clock) (uint64, error) {
+	if p == nil {
+		return 0, ErrOwner
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.checkPreparedLifetimeLocked(); err != nil {
+		return 0, err
+	}
+	if !p.deadline.BelongsTo(clock) {
+		return 0, ErrOwner
+	}
+	remaining, err := p.preparation.RemainingMS()
+	if err != nil {
+		return 0, err
+	}
+	if p.header.HasExecutionIdentity() {
+		now, err := p.deadline.Sample()
+		if err != nil {
+			return 0, err
+		}
+		id := p.header.Fields().OperationID
+		cap := binary.BigEndian.Uint64(id[:8])
+		if now.UpperMS >= cap {
+			return 0, ErrAdmissionWindowClosed
+		}
+		delta, err := clock.Profile().Rate.DeadlineDelta(now.UpperMS, cap)
+		if err != nil {
+			return 0, err
+		}
+		remaining = min(remaining, delta)
+	}
+	return remaining, nil
+}
+
 func (p *PreparedRequest) checkPreparedLifetimeLocked() error {
 	if p.closed {
 		return ErrClosed

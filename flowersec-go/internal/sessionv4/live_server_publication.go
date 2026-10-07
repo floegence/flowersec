@@ -37,7 +37,7 @@ func (c LiveServerAllowConfig) Request(plan *protocolv4.LiveActivationPlan, fiel
 	return r, r.Check()
 }
 
-func (p *SessionEstablishment) publishLiveServerAllow(ctx context.Context, plan *protocolv4.LiveActivationPlan, c LiveServerAllowConfig, request TunnelServerAllowRequest, wire []byte, originalGuard func() error) error {
+func (p *SessionEstablishment) publishLiveServerAllow(ctx context.Context, plan *protocolv4.LiveActivationPlan, c LiveServerAllowConfig, request TunnelServerAllowRequest, material [2][]byte, originalGuard func() error) error {
 	window, err := timev4.NewWindow(p.admission.config.Core.Clock, 2000)
 	if err != nil {
 		return err
@@ -70,7 +70,7 @@ func (p *SessionEstablishment) publishLiveServerAllow(ctx context.Context, plan 
 	if err = guard(); err != nil {
 		return err
 	}
-	if err = c.Provider.PublishServerAllow(call, request, wire, guard); err != nil {
+	if err = PublishOriginalLiveServerAllow(call, c.Provider, request, material, guard); err != nil {
 		return err
 	}
 	return guard()

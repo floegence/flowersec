@@ -36,12 +36,6 @@ type ownedNativeSession struct {
 	done        chan struct{}
 	connectSeen atomic.Bool
 	installed   atomic.Bool
-	// Chromium's WebTransport API owns the CONNECT stream association and
-	// exposes application bidirectional streams without the private
-	// 0x41+CONNECT-ID prefix used by Flowersec's native Go tuple. The request
-	// tuple is authenticated before this bit is set; it is never selected by
-	// application payload or a peer supplied stream ID.
-	browserRaw atomic.Bool
 }
 
 type nativeConnectStream interface {
@@ -89,31 +83,6 @@ func (s *ownedNativeSession) acceptBidirectional(request func(*quic.Stream)) {
 			defer s.wg.Done()
 			defer func() { <-s.readers }()
 			_ = str.SetReadDeadline(time.Now().Add(s.options.Limits.HandshakeIdleTimeout))
-			if s.browserRaw.Load() {
-				// The browser tuple is already bound to this CONNECT session by
-				// the HTTP/3 WebTransport request. Its JS API does not expose the
-				// CONNECT stream ID, so raw bidirectional streams are the only
-				// interoperable representation. Wait for the original READY
-				// installation before publishing the stream to Session.
-				timer := time.NewTimer(s.options.Limits.HandshakeIdleTimeout)
-				defer timer.Stop()
-				select {
-				case <-s.ready:
-				case <-timer.C:
-					rejectNativeStream(str)
-					return
-				case <-s.conn.Context().Done():
-					rejectNativeStream(str)
-					return
-				}
-				_ = str.SetReadDeadline(time.Time{})
-				select {
-				case s.incoming <- str:
-				case <-s.conn.Context().Done():
-					rejectNativeStream(str)
-				}
-				return
-			}
 			typ, err := quicvarint.Peek(str)
 			if err != nil {
 				rejectNativeStream(str)
@@ -221,12 +190,11 @@ func rejectNativeStream(s *quic.Stream) {
 	s.CancelWrite(wt.WTBufferedStreamRejectedErrorCode)
 }
 
-func (s *ownedNativeSession) install(request nativeConnectStream, browserRaw bool) error {
+func (s *ownedNativeSession) install(request nativeConnectStream) error {
 	if request == nil || uint64(request.StreamID())%4 != 0 || !s.installed.CompareAndSwap(false, true) {
 		return resourcev4.ErrOwner
 	}
 	s.request, s.id = request, uint64(request.StreamID())
-	s.browserRaw.Store(browserRaw)
 	if err := request.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
@@ -274,10 +242,7 @@ func (s *ownedNativeSession) OpenStream(ctx context.Context) (carrier.Stream, er
 	if err != nil {
 		return nil, err
 	}
-	var prefix []byte
-	if !s.browserRaw.Load() {
-		prefix = quicvarint.Append(quicvarint.Append(make([]byte, 0, 16), 0x41), s.id)
-	}
+	prefix := quicvarint.Append(quicvarint.Append(make([]byte, 0, 16), 0x41), s.id)
 	return &Stream{inner: &ownedWTStream{native: str, prefix: prefix}, lifecycle: carrierlife.NewStream(s.conn.Context())}, nil
 }
 
@@ -408,5 +373,5 @@ func (p *OwnedConnection) connectNative(ctx context.Context, endpoint *url.URL, 
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	return s.install(request, false)
+	return s.install(request)
 }

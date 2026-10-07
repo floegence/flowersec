@@ -2,6 +2,7 @@ import type * as ContractQueryAcquisitionTypes from "./contractQueryAcquisition.
 import type { V4ApplicationContext } from "../streamHandlers.js";
 import type { ApplicationGroup } from "./applicationExecutor.js";
 import type { ContractQueryAccess } from "./contractQueryAccess.js";
+import type { DiagnosticObserver } from "./diagnosticObservation.js";
 import type { ContractQueryAcquisitions} from "./contractQueryAcquisition.js";
 import { type ContractQueryAcquisition } from "./contractQueryAcquisition.js";
 import { ContractQueryClient, contractQueryClientCharges } from "./contractQueryClient.js";
@@ -53,7 +54,8 @@ export class ContractQuerySession {
   #collecting = false;
   constructor(network: RPCNetwork, inputs: ServiceInputs, routes: ContractRoutes, access: ContractQueryAccess,
     group: ApplicationGroup, root: ResourceRoot, delivery: ReceiveDeliveryGate, deadline: TrustedDeadline,
-    runtimeBytes: bigint, references: readonly ResourceReference[], prepaidProtection?: FixedQueryProtection, prepaidClient?: ContractQueryClient) {
+    runtimeBytes: bigint, references: readonly ResourceReference[], prepaidProtection?: FixedQueryProtection, prepaidClient?: ContractQueryClient,
+    prepaidResponses?: readonly (readonly [ResourceReference, ResourceReference])[], diagnostics?: DiagnosticObserver) {
     const costs = contractQuerySessionCharges(runtimeBytes);
     if (references.length !== costs.length || !references.every(reference => network.sameEnvironment(reference)) ||
         !group.sameEnvironment(references[0]!)) throw new RPCProtocolError("rpc_query_owner");
@@ -64,7 +66,12 @@ export class ContractQuerySession {
       if (prepaidProtection !== undefined && (prepaidProtection.group !== group || prepaidProtection.direction !== 0 || prepaidProtection.closed)) throw new RPCProtocolError("rpc_query_owner");
       this.#protection = prepaidProtection ?? group.protectQueries(this.#reference);
       this.#codecs = new ContractQueryCodecs(network, runtimeBytes, references.slice(1, 6));
-      this.#incoming = new ContractQueryService(network, this.#codecs, routes, access, root, deadline, runtimeBytes, references.slice(6, 15));
+      const incoming = references.slice(6, 15);
+      if (prepaidResponses !== undefined) {
+        if (prepaidResponses.length !== 2) throw new RPCProtocolError("rpc_query_owner");
+        for (const [index, response] of prepaidResponses.entries()) { incoming[5 + index * 3]!.release(); incoming[5 + index * 3] = response[0]; }
+      }
+      this.#incoming = new ContractQueryService(network, this.#codecs, routes, access, root, deadline, runtimeBytes, incoming, prepaidResponses?.map(response => response[1]), diagnostics);
       if (prepaidClient !== undefined && !prepaidClient.sameEnvironment(this.#reference)) throw new RPCProtocolError("rpc_query_owner");
       this.#outgoing = prepaidClient ?? new ContractQueryClient(root, runtimeBytes, references.slice(15, 28));
       // The actual outgoing owner already holds every primary. Assembly's

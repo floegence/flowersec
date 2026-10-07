@@ -89,15 +89,17 @@ type publicBrowserSetup struct{ Origin, Profile, Source, ControlFailure string }
 type webSocketRoundTripOptions struct {
 	directExporter, rejectApplication bool
 	browser                           *publicBrowserSetup
+	streamRegistration                *fs.RawStreamHandlerConfig
+	streamWorkflow                    func(context.Context, [2]*fs.Session)
 }
 
 type publicBrowserMaterialSource struct {
 	material *fs.ConnectionMaterial
-	hello    func() fs.V4InitialHello
+	hello    func() fs.InitialHello
 	lookups  *atomic.Int32
 }
 
-func (s publicBrowserMaterialSource) ResolveAcceptedMaterial(context.Context, []byte) (*fs.ConnectionMaterial, fs.V4InitialHello, error) {
+func (s publicBrowserMaterialSource) ResolveAcceptedMaterial(context.Context, []byte) (*fs.ConnectionMaterial, fs.InitialHello, error) {
 	s.lookups.Add(1)
 	return s.material, s.hello(), nil
 }
@@ -107,12 +109,12 @@ func (s publicBrowserMaterialSource) ResolveAcceptedMaterial(context.Context, []
 // It is not public-CA or deployment qualification evidence.
 func publicBrowserLiveControl(t *testing.T, h *sessionv4.PublicQUICTestHarness, certificate tls.Certificate, origin string, invalidProof bool) (string, func() int32) {
 	t.Helper()
-	codecBytes, err := controlplane.V4LiveAuthorizationCodecBackingBytes()
+	codecBytes, err := controlplane.LiveAuthorizationCodecBackingBytes()
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.Reserve(fs.V4ResourceVector{fs.V4SDKBytes: codecBytes + 5120})
-	codec, err := controlplane.NewV4LiveAuthorizationCodec()
+	h.Reserve(fs.ResourceVector{fs.SDKBytes: codecBytes + 5120})
+	codec, err := controlplane.NewLiveAuthorizationCodec()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +280,7 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 	if options.directExporter {
 		h.Hello.Policy.BindingMode, h.Hello.BindingModes = 0, 1
 	}
-	reserve := func(cost fs.V4ResourceVector, err error) fs.V4ResourceReference {
+	reserve := func(cost fs.ResourceVector, err error) fs.ResourceReference {
 		t.Helper()
 		if err != nil {
 			t.Fatal(err)
@@ -288,8 +290,8 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 	cleanupContext := func() (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.Background(), 5*time.Second)
 	}
-	executorConfig := fs.V4ApplicationExecutorConfig{Running: 8, ResidentRunning: 4, CompletionRunning: 1, CompletionReserved: 4, RuntimeBytes: 8192, RuntimeBytesPerTask: 65536}
-	executor, err := fs.NewV4ApplicationExecutor(executorConfig, reserve(fs.V4ApplicationExecutorCharge(executorConfig)))
+	executorConfig := fs.ApplicationExecutorConfig{Running: 8, ResidentRunning: 4, CompletionRunning: 1, CompletionReserved: 4, RuntimeBytes: 8192, RuntimeBytesPerTask: 65536}
+	executor, err := fs.NewApplicationExecutor(executorConfig, reserve(fs.ApplicationExecutorCharge(executorConfig)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,8 +305,8 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 			t.Error("public WebSocket executor retained callbacks")
 		}
 	})
-	config := fs.V4EnvironmentConfig{Positions: 2, Materials: 2, MaterialCreateMS: 1000, Clock: h.Clock, Verification: h.Verification, RuntimeBytes: 65536}
-	environment, err := fs.NewTransportEnvironment(fs.TransportEnvironmentOptions{Config: config, Reservation: reserve(fs.V4EnvironmentCharge(config)), Dependencies: h.Environment})
+	config := fs.EnvironmentConfig{Positions: 2, Materials: 2, MaterialCreateMS: 1000, Clock: h.Clock, Verification: h.Verification, RuntimeBytes: 65536}
+	environment, err := fs.NewTransportEnvironment(fs.EnvironmentOptions{Config: config, Reservation: reserve(fs.EnvironmentCharge(config)), Dependencies: h.Environment})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +323,7 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 		if options.browser != nil && role == 0 {
 			continue
 		}
-		lease, err := fs.NewV4ArtifactLeaseFromBytes(h.Lease, reserve(fs.V4ArtifactLeaseCharge(h.Lease.MapBytes, h.Lease.MapNodes, h.Lease.RuntimeBytes)), h.Preauth)
+		lease, err := fs.NewArtifactLeaseFromBytes(h.Lease, reserve(fs.ArtifactLeaseCharge(h.Lease.MapBytes, h.Lease.MapNodes, h.Lease.RuntimeBytes)), h.Preauth)
 		if err != nil {
 			t.Fatal("lease", role, err)
 		}
@@ -334,7 +336,7 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 			}
 		})
 		identityConfig := h.Identity[role]
-		identity, err := fs.NewV4ApplicationIdentityFromBytes(identityConfig, reserve(fs.V4ApplicationIdentityCharge(identityConfig.MapNodes, identityConfig.RuntimeBytes)), h.Preauth)
+		identity, err := fs.NewApplicationIdentityFromBytes(identityConfig, reserve(fs.ApplicationIdentityCharge(identityConfig.MapNodes, identityConfig.RuntimeBytes)), h.Preauth)
 		if err != nil {
 			t.Fatal("identity", role, err)
 		}
@@ -346,7 +348,7 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 				t.Error("identity cleanup", role, err)
 			}
 		})
-		material, err := fs.NewConnectionMaterial(lease, identity, h.Generation, 8192, reserve(fs.V4ConnectionMaterialCharge(8192)))
+		material, err := fs.NewConnectionMaterial(lease, identity, h.Generation, 8192, reserve(fs.ConnectionMaterialCharge(8192)))
 		if err != nil {
 			t.Fatal("material", role, err)
 		}
@@ -372,15 +374,15 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 			continue
 		}
 		role := role
-		handlersConfig := fs.V4StreamHandlerPlanConfig{RuntimeBytes: 8192, Handlers: []fs.V4RawStreamHandlerConfig{{
-			Kind: "example/websocket", Slots: 2, WorkClass: fs.V4WorkResident,
+		handlersConfig := fs.StreamHandlerPlanConfig{RuntimeBytes: 8192, Handlers: []fs.RawStreamHandlerConfig{{
+			Kind: "example/websocket", Slots: 2, WorkClass: fs.WorkResident,
 			AuthorizeOpen: func(_ context.Context, binding any, _ []byte) error {
 				if binding != role {
 					return fmt.Errorf("unexpected application binding %v", binding)
 				}
 				return nil
 			},
-			Handler: func(ctx context.Context, _ any, _ []byte, stream *fs.V4StreamOwnership) error {
+			Handler: func(ctx context.Context, _ any, _ []byte, stream *fs.StreamOwnership) error {
 				if options.browser != nil {
 					err := publicBrowserEcho(ctx, stream)
 					reports <- err
@@ -396,11 +398,14 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 				return ctx.Err()
 			},
 		}}}
+		if options.streamRegistration != nil {
+			handlersConfig.Handlers = []fs.RawStreamHandlerConfig{*options.streamRegistration}
+		}
 		delegates, err := h.Environment.Borrow()
 		if err != nil {
 			t.Fatal(err)
 		}
-		handlers, err := fs.NewV4StreamHandlerPlan(handlersConfig, executor, reserve(fs.V4StreamHandlerPlanCharge(handlersConfig)), delegates)
+		handlers, err := fs.NewStreamHandlerPlan(handlersConfig, executor, reserve(fs.StreamHandlerPlanCharge(handlersConfig)), delegates)
 		if err != nil {
 			delegates.Release()
 			t.Fatal("handler plan", err)
@@ -415,15 +420,15 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 				t.Error("handler plan retirement", err)
 			}
 		})
-		plan, err := (fs.V4SessionPlanFactory{Root: h.Root, Executor: executor, Dependencies: h.Environment}).Create(fs.V4SessionPlanConfig{
+		plan, err := (fs.SessionPlanFactory{Root: h.Root, Executor: executor, Dependencies: h.Environment}).Create(fs.SessionPlanConfig{
 			RuntimeBytes: 8192, Handlers: handlers,
-			AuthorizeApplication: func(_ context.Context, request fs.V4AuthenticatedRequestContext) (fs.V4AuthorizeApplicationResult, error) {
+			AuthorizeApplication: func(_ context.Context, request fs.AuthenticatedRequestContext) (fs.AuthorizeApplicationResult, error) {
 				authorized[role].Add(1)
 				lease, err := request.ReserveLease(request.Binding(), role, func(context.Context) error { released[role].Add(1); return nil })
 				if err == nil && role == 1 && options.rejectApplication {
-					return fs.V4AuthorizeApplicationResult{Handlers: handlers, Lease: lease}, errors.New("application refused")
+					return fs.AuthorizeApplicationResult{Handlers: handlers, Lease: lease}, errors.New("application refused")
 				}
-				return fs.V4AuthorizeApplicationResult{Handlers: handlers, Lease: lease}, err
+				return fs.AuthorizeApplicationResult{Handlers: handlers, Lease: lease}, err
 			},
 		}, h.Owner(), h.Scope[role].Tenant, h.Scope[role].Session)
 		if err != nil {
@@ -436,14 +441,17 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 			}
 		})
 		h.Admission[role].Application = plan
-		h.Admission[role].Core.Handlers = fs.V4SessionStreamHandlerConfig{Plan: handlers, Concurrency: 2, TimeoutMS: 3000, RuntimeBytes: 8192, RuntimeBytesPerInvocation: 32768}
+		h.Admission[role].Core.Handlers = fs.SessionStreamHandlerConfig{Plan: handlers, Concurrency: 2, TimeoutMS: 3000, RuntimeBytes: 8192, RuntimeBytesPerInvocation: 32768}
+		if options.streamRegistration != nil {
+			h.Admission[role].Core.Handlers.ServiceTarget = 1
+		}
 	}
-	provider := fs.V4WebSocketProviderOptions{MaxMessageBytes: 65544, ReadBufferBytes: 256, WriteBufferBytes: 256,
+	provider := fs.WebSocketProviderOptions{MaxMessageBytes: 65544, ReadBufferBytes: 256, WriteBufferBytes: 256,
 		HandshakeBytes: 8192, MaxControlsPerSecond: 16, HandshakeTimeout: 5 * time.Second, MessageTimeout: 5 * time.Second,
 		RuntimeBytes: 16384, ProviderRuntimeBytes: 65536, ProviderTasks: 4}
-	accounts := []fs.V4ResourceAccount{h.Scope[1].Tenant}
-	serveConfig := fs.V4ServeConfig{Positions: 2, RuntimeBytes: 8192, DrainTimeoutMS: 1000, Clock: h.Clock}
-	serve, err := environment.Serve(ctx, fs.V4ServeOptions{Config: serveConfig, Reservation: reserve(fs.V4ServeCharge(serveConfig))})
+	accounts := []fs.ResourceAccount{h.Scope[1].Tenant}
+	serveConfig := fs.ServeConfig{Positions: 2, RuntimeBytes: 8192, DrainTimeoutMS: 1000, Clock: h.Clock}
+	serve, err := fs.NewAcceptor(ctx, fs.AcceptorOptions{Environment: environment, ServeOptions: fs.ServeOptions{Config: serveConfig, Reservation: reserve(fs.ServeCharge(serveConfig))}})
 	if err != nil {
 		t.Fatal("serve", err)
 	}
@@ -455,8 +463,8 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 			t.Error("serve cleanup", err)
 		}
 	})
-	entrance := fs.V4AcceptedEntranceConfig{Initial: h.Admission[1].Initial, RuntimeBytes: 8192, InitialRuntimeBytes: 8192, CarrierRuntimeBytes: 8192}
-	acceptOptions := fs.V4WebSocketAcceptOptions{Input: fs.V4AcceptedSessionInput{Config: h.Admission[1], Root: h.Root, ResourceOwner: h.Owner(),
+	entrance := fs.AcceptedEntranceConfig{Initial: h.Admission[1].Initial, RuntimeBytes: 8192, InitialRuntimeBytes: 8192, CarrierRuntimeBytes: 8192}
+	acceptOptions := fs.WebSocketAcceptOptions{Input: fs.AcceptedSessionInput{Config: h.Admission[1], Root: h.Root, ResourceOwner: h.Owner(),
 		Environment: h.Environment, Preauth: h.Preauth, Scope: h.Scope[1], Store: h.Store, Authority: h.Authority},
 		Source: publicQUICMaterialSource{materials[1], h.Hello}, Limits: h.Limits, Entrance: entrance, Dependencies: h.Environment,
 		Accounts: accounts, LocalCapabilities: h.Hello.Offered, RuntimeBytes: 8192, IngressRuntimeBytes: 8192, IntakeRuntimeBytes: 8192,
@@ -468,7 +476,7 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 	liveRequests := func() int32 { return 0 }
 	var browserLookups atomic.Int32
 	if options.browser != nil {
-		hello := func() fs.V4InitialHello { return h.Hello }
+		hello := func() fs.InitialHello { return h.Hello }
 		if source == "live_authority" {
 			hello = h.BrowserHello
 			liveControlBaseURL, liveRequests = publicBrowserLiveControl(t, h, certificate, options.browser.Origin, options.browser.ControlFailure == "signature")
@@ -476,18 +484,18 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 		acceptOptions.Source = publicBrowserMaterialSource{materials[1], hello, &browserLookups}
 	}
 	type result struct {
-		session  *fs.V4Session
+		session  *fs.Session
 		hijacked bool
 		err      error
 	}
 	accepted := make(chan result, 1)
-	var server *fs.V4WebSocketServer
+	var server *fs.WebSocketServer
 	var httpIngress atomic.Int32
 	serverClock := h.Clock
 	if options.browser != nil {
 		serverClock = publicBrowserTLSClock(t)
 	}
-	serverConfig := fs.V4WebSocketServerConfig{Root: h.Root, Clock: serverClock, Route: h.Route, Certificate: certificate, Roots: roots,
+	serverConfig := fs.WebSocketServerConfig{Root: h.Root, Clock: serverClock, Route: h.Route, Certificate: certificate, Roots: roots,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			httpIngress.Add(1)
 			acceptOptions.Server = server
@@ -499,7 +507,7 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 		}),
 		Connections: 2, HeaderBytes: 8192, HeaderTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second,
 		RuntimeBytes: 65536, ProviderBytesPerConnection: 1 << 20}
-	server, err = fs.NewV4WebSocketServer(serverConfig, reserve(fs.V4WebSocketServerCharge(serverConfig)), h.Environment)
+	server, err = fs.NewWebSocketServer(serverConfig, reserve(fs.WebSocketServerCharge(serverConfig)), h.Environment)
 	if err != nil {
 		t.Fatal("server", err)
 	}
@@ -521,11 +529,11 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 			t.Error("native WebSocket Serve did not exit")
 		}
 	})
-	var factory *fs.V4WebSocketCarrierFactory
+	var factory *fs.WebSocketCarrierFactory
 	if options.browser == nil {
-		factoryConfig := fs.V4WebSocketFactoryConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Route: h.Route,
+		factoryConfig := fs.WebSocketFactoryConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Route: h.Route,
 			RemoteAddress: address, Roots: roots, Options: provider, Connections: 1, RuntimeBytes: 65536}
-		factory, err = fs.NewV4WebSocketCarrierFactory(factoryConfig, reserve(fs.V4WebSocketCarrierFactoryCharge(factoryConfig)), h.Environment)
+		factory, err = fs.NewWebSocketCarrierFactory(factoryConfig, reserve(fs.WebSocketCarrierFactoryCharge(factoryConfig)), h.Environment)
 		if err != nil {
 			t.Fatal("factory", err)
 		}
@@ -538,11 +546,11 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 			}
 		})
 	}
-	preparation := fs.V4SourceConnectConfig{Generation: h.Generation, LocalCapabilities: h.Hello.Offered,
-		Requirements: fs.V4MaterialRequirements{ApplicationProfile: "transport", Connection: fs.V4RequiredGuarantees{LocalConsumerTls13Verification: true}},
+	preparation := fs.SourceConnectConfig{Generation: h.Generation, LocalCapabilities: h.Hello.Offered,
+		Requirements: fs.MaterialRequirements{ApplicationProfile: "transport", Connection: fs.RequiredGuarantees{LocalConsumerTls13Verification: true}},
 		Carrier:      factory, Hello: h.Hello, Limits: h.Limits, Admission: h.Admission[0], Root: h.Root, Owner: h.Owner(),
 		Environment: h.Environment, Preauth: h.Preauth, Dependencies: h.Environment, Scope: h.Scope[0], RuntimeBytes: 8192, CarrierRuntimeBytes: 8192,
-		AddressAttempts: 1, AttemptBudget: fs.V4CarrierAttemptBudget{PreauthBytes: 131072, WorkUnits: 128}, LiveIssuance: h.LiveIssuance}
+		AddressAttempts: 1, AttemptBudget: fs.CarrierAttemptBudget{PreauthBytes: 131072, WorkUnits: 128}, LiveIssuance: h.LiveIssuance}
 	if options.browser != nil {
 		emit("fixture", map[string]any{
 			"port": address.Port(), "routeDigest": h.BrowserRouteDigest[:], "profile": profile,
@@ -622,29 +630,29 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 	}
 	for _, check := range []struct {
 		name        string
-		requirement fs.V4RequiredGuarantees
+		requirement fs.RequiredGuarantees
 	}{
-		{"independent_read", fs.V4RequiredGuarantees{LocalConsumerTls13Verification: true, IndependentReliableReadProgress: true}},
-		{"input_isolation", fs.V4RequiredGuarantees{LocalConsumerTls13Verification: true, BoundStreamInputIsolation: true}},
-		{"datagram", fs.V4RequiredGuarantees{LocalConsumerTls13Verification: true, Datagram: true}},
+		{"independent_read", fs.RequiredGuarantees{LocalConsumerTls13Verification: true, IndependentReliableReadProgress: true}},
+		{"input_isolation", fs.RequiredGuarantees{LocalConsumerTls13Verification: true, BoundStreamInputIsolation: true}},
+		{"datagram", fs.RequiredGuarantees{LocalConsumerTls13Verification: true, Datagram: true}},
 	} {
 		unavailable := preparation
 		unavailable.Requirements.Connection = check.requirement
-		if session, err := environment.ConnectMaterial(ctx, materials[0], fs.V4ConnectOptions{Pool: h.Pool, Live: h.Live, Preparation: unavailable}); session != nil || !errors.Is(err, protocolv4.ErrRequiredGuaranteeUnavailable) {
+		if session, err := fs.ConnectMaterial(ctx, materials[0], fs.ConnectorOptions{Environment: environment, ConnectOptions: fs.ConnectOptions{Pool: h.Pool, Live: h.Live, Preparation: unavailable}}); session != nil || !errors.Is(err, protocolv4.ErrRequiredGuaranteeUnavailable) {
 			t.Fatalf("WSS %s requirement: session=%v error=%v", check.name, session, err)
 		}
 		if httpIngress.Load() != 0 || authorized[0].Load() != 0 || authorized[1].Load() != 0 {
 			t.Fatal("WSS requirement reached network or application admission", check.name)
 		}
 	}
-	client, clientErr := environment.ConnectMaterial(ctx, materials[0], fs.V4ConnectOptions{Pool: h.Pool, Live: h.Live, Preparation: preparation})
+	client, clientErr := fs.ConnectMaterial(ctx, materials[0], fs.ConnectorOptions{Environment: environment, ConnectOptions: fs.ConnectOptions{Pool: h.Pool, Live: h.Live, Preparation: preparation}})
 	var peer result
 	select {
 	case peer = <-accepted:
 	case <-ctx.Done():
 		peer.err = ctx.Err()
 	}
-	sessions := [2]*fs.V4Session{client, peer.session}
+	sessions := [2]*fs.Session{client, peer.session}
 	t.Cleanup(func() {
 		for _, session := range sessions {
 			if session != nil {
@@ -682,6 +690,9 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 		if !ok || info.ApplicationProfile != "transport" || info.Guarantees != guarantees || authorized[role].Load() != 1 {
 			t.Fatal("READY did not publish the authenticated WebSocket guarantees", role, info, authorized[role].Load())
 		}
+		if options.streamWorkflow != nil {
+			continue
+		}
 		stream, err := session.OpenStream(ctx, "example/websocket", fs.EmptyStreamMetadata())
 		if err != nil {
 			t.Fatal("open", role, err)
@@ -699,13 +710,16 @@ func publicWebSocketEnvironmentRoundTrip(t *testing.T, source, profile string, p
 			t.Fatal("handler", role, err)
 		}
 	}
+	if options.streamWorkflow != nil {
+		options.streamWorkflow(ctx, sessions)
+	}
 	if source == "live_authority" && h.PolicyCalls != 1 {
 		t.Fatal("live policy was not called exactly once", h.PolicyCalls)
 	}
 	requireRelease = true
 }
 
-func publicBrowserEcho(ctx context.Context, stream *fs.V4StreamOwnership) error {
+func publicBrowserEcho(ctx context.Context, stream *fs.StreamOwnership) error {
 	var payload [64]byte
 	for {
 		read, err := stream.ReadInto(ctx, payload[:])

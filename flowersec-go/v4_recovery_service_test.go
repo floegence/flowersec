@@ -17,18 +17,18 @@ import (
 )
 
 type publicExecutionContinuity struct {
-	identity V4SQLiteIdentity
-	service  V4SQLiteExecutionService
+	identity SQLiteIdentity
+	service  SQLiteExecutionService
 }
 
-func (p publicExecutionContinuity) CheckExecutionHistory(identity V4SQLiteIdentity, service V4SQLiteExecutionService, _ uint64, _ bool) error {
+func (p publicExecutionContinuity) CheckExecutionHistory(identity SQLiteIdentity, service SQLiteExecutionService, _ uint64, _ bool) error {
 	if identity != p.identity || service != p.service {
 		return ledgerv4.ErrFenced
 	}
 	return nil
 }
 
-func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T) {
+func TestRecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T) {
 	f := newPublicReferenceFixture(t)
 	ctx := context.Background()
 	canonical := publicResumeVector(t, "service_unary_restart")
@@ -49,13 +49,13 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := V4ExecutionService{Tenant: "tenant", Audience: "audience", Namespace: policy.Namespace}
-	dbService := V4SQLiteExecutionService(service)
-	limits := V4SQLiteLimits{MaxPages: 1024, MaxRecords: 2, MaxRecordBytes: 1 << 20, RuntimeBytes: 65536, ProviderRuntimeBytes: 1 << 20, DiskOverheadBytes: 65536}
+	service := ExecutionService{Tenant: "tenant", Audience: "audience", Namespace: policy.Namespace}
+	dbService := SQLiteExecutionService(service)
+	limits := SQLiteLimits{MaxPages: 1024, MaxRecords: 2, MaxRecordBytes: 1 << 20, RuntimeBytes: 65536, ProviderRuntimeBytes: 1 << 20, DiskOverheadBytes: 65536}
 	path := filepath.Join(t.TempDir(), "execution.db")
-	environment := f.reserve(t, V4ResourceVector{V4Items: 1}, nil)
-	charge, err := V4SQLiteBackingCharge(limits)
-	backing, err := NewV4SQLiteBacking(path, limits, f.reserve(t, charge, err), environment)
+	environment := f.reserve(t, ResourceVector{Items: 1}, nil)
+	charge, err := SQLiteBackingCharge(limits)
+	backing, err := NewSQLiteBacking(path, limits, f.reserve(t, charge, err), environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,10 +70,10 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 			t.Error(err)
 		}
 	})
-	identity := V4SQLiteIdentity{Authority: "recovery.test", StoreID: [32]byte{9}, Generation: 1}
+	identity := SQLiteIdentity{Authority: "recovery.test", StoreID: [32]byte{9}, Generation: 1}
 	continuity := publicExecutionContinuity{identity, dbService}
-	dbConfig := V4SQLiteExecutionConfig{Root: f.root, Clock: f.clock, Service: dbService, CallerAuthorities: [][32]byte{{8}}, Methods: []V4SQLiteExecutionMethod{{Type: policy.Type, Shape: shape}}, Active: 2, ContractNodes: 256, WorkRuntimeBytes: 4096, RecoveryTokensPerOperation: 2, RecoveryMaxIssuedDurationMS: 1000}
-	charge, err = V4SQLiteExecutionsCharge(limits, dbConfig)
+	dbConfig := SQLiteExecutionConfig{Root: f.root, Clock: f.clock, Service: dbService, CallerAuthorities: [][32]byte{{8}}, Methods: []SQLiteExecutionMethod{{Type: policy.Type, Shape: shape}}, Active: 2, ContractNodes: 256, WorkRuntimeBytes: 4096, RecoveryTokensPerOperation: 2, RecoveryMaxIssuedDurationMS: 1000}
+	charge, err = SQLiteExecutionsCharge(limits, dbConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 		t.Fatal(err)
 	}
 	defer reservation.Release()
-	store, err := CreateV4SQLiteExecutions(ctx, backing, identity, continuity, dbConfig, reservation, environment)
+	store, err := CreateSQLiteExecutions(ctx, backing, identity, continuity, dbConfig, reservation, environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,11 +103,11 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 		store = nil
 	}
 	defer closeStore()
-	if _, err := store.InstallContract(ctx, 0, canonical, []V4TimeInterval{{LowerMS: 1000, UpperMS: 2000}}, true, func() error { return nil }); err != nil {
+	if _, err := store.InstallContract(ctx, 0, canonical, []TimeInterval{{LowerMS: 1000, UpperMS: 2000}}, true, func() error { return nil }); err != nil {
 		t.Fatal(err)
 	}
-	historyConfig := V4DurableExecutionConfig{Root: f.root, Owner: f.owner(), Clock: f.clock, Service: service, Store: store, Active: 2, TaskCharge: V4ResourceVector{V4Tasks: 1, V4WorkSlots: 1, V4Items: 1}, RuntimeBytes: 4096, WorkRuntimeBytes: 4096}
-	charge, err = V4DurableExecutionsCharge(historyConfig)
+	historyConfig := DurableExecutionConfig{Root: f.root, Owner: f.owner(), Clock: f.clock, Service: service, Store: store, Active: 2, TaskCharge: ResourceVector{Tasks: 1, WorkSlots: 1, Items: 1}, RuntimeBytes: 4096, WorkRuntimeBytes: 4096}
+	charge, err = DurableExecutionsCharge(historyConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,27 +115,27 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	history, err := NewV4DurableExecutions(historyConfig, reservation)
+	history, err := NewDurableExecutions(historyConfig, reservation)
 	reservation.Release()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer history.Close()
-	key, err := ImportV4RecoveryMACKey([32]byte{7}, f.reserve(t, V4RecoveryMACKeyCharge(), nil))
+	key, err := ImportRecoveryMACKey([32]byte{7}, f.reserve(t, RecoveryMACKeyCharge(), nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer key.Close()
-	config := V4RecoveryVerifierConfig{Service: service, Clock: f.clock, Keys: []V4RecoveryKey{{ID: [16]byte{4}, Protection: V4ResumeMACToken, MAC: key}}, RuntimeBytes: 4096}
-	charge, err = V4RecoveryVerifierCharge(config)
-	recovery, err := NewV4RecoveryVerifier(config, f.reserve(t, charge, err))
+	config := RecoveryVerifierConfig{Service: service, Clock: f.clock, Keys: []RecoveryKey{{ID: [16]byte{4}, Protection: ResumeMACToken, MAC: key}}, RuntimeBytes: 4096}
+	charge, err = RecoveryVerifierCharge(config)
+	recovery, err := NewRecoveryVerifier(config, f.reserve(t, charge, err))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer recovery.Close()
 	clear(config.Keys)
-	registryConfig := V4ServiceRegistryConfig{Root: f.root, Owner: f.owner(), Entries: 1, RuntimeBytes: 4096}
-	charge, err = V4ServiceRegistryCharge(registryConfig)
+	registryConfig := ServiceRegistryConfig{Root: f.root, Owner: f.owner(), Entries: 1, RuntimeBytes: 4096}
+	charge, err = ServiceRegistryCharge(registryConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,14 +143,14 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry, err := NewV4ServiceRegistry(registryConfig, reservation)
+	registry, err := NewServiceRegistry(registryConfig, reservation)
 	reservation.Release()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer registry.Close()
-	authority := V4ServiceAuthority(service)
-	binding := V4DurableServiceBinding(authority, history, recovery)
+	authority := ServiceAuthority(service)
+	binding := DurableServiceBinding(authority, history, recovery)
 	if binding.DurableHistory != history || binding.Recovery != recovery.inner || binding.History != nil {
 		t.Fatal("assembly substituted execution owners")
 	}
@@ -170,7 +170,7 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 			t.Fatal("recovery diagnostics exposed authority", err)
 		}
 	}
-	registration := NewV4ResumeRegistration(0, policy.Namespace, policy.Type)
+	registration := NewResumeRegistration(0, policy.Namespace, policy.Type)
 	if !registration.Resume || registration.Handler != nil || registration.Namespace != policy.Namespace || registration.Type != policy.Type {
 		t.Fatal("recovery registration changed method routing")
 	}
@@ -182,7 +182,7 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 	}
 	closeStore()
 	// Reopening the exact original file preserves its durable registration.
-	charge, err = V4SQLiteExecutionsCharge(limits, dbConfig)
+	charge, err = SQLiteExecutionsCharge(limits, dbConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err = OpenV4SQLiteExecutions(ctx, backing, identity, continuity, dbConfig, reservation, environment)
+	store, err = OpenSQLiteExecutions(ctx, backing, identity, continuity, dbConfig, reservation, environment)
 	reservation.Release()
 	if err != nil {
 		t.Fatal(err)
@@ -201,17 +201,17 @@ func TestV4RecoveryServiceAssemblyKeepsOriginalAuthorityAndHistory(t *testing.T)
 	}
 }
 
-func TestV4RecoveryVerifierRejectsUnboundedAndMismatchedKeys(t *testing.T) {
+func TestRecoveryVerifierRejectsUnboundedAndMismatchedKeys(t *testing.T) {
 	f := newPublicReferenceFixture(t)
-	config := V4RecoveryVerifierConfig{Service: V4ExecutionService{Tenant: "tenant", Audience: "audience", Namespace: "files"}, Clock: f.clock, RuntimeBytes: 4096}
-	for _, keys := range [][]V4RecoveryKey{nil, make([]V4RecoveryKey, 17), {{Protection: V4ResumeMACToken}}, {{Protection: V4ResumeSignedToken, MAC: &V4RecoveryMACKey{}, Public: [32]byte{1}}}, {{Public: [32]byte{1}}, {Public: [32]byte{2}}}} {
+	config := RecoveryVerifierConfig{Service: ExecutionService{Tenant: "tenant", Audience: "audience", Namespace: "files"}, Clock: f.clock, RuntimeBytes: 4096}
+	for _, keys := range [][]RecoveryKey{nil, make([]RecoveryKey, 17), {{Protection: ResumeMACToken}}, {{Protection: ResumeSignedToken, MAC: &RecoveryMACKey{}, Public: [32]byte{1}}}, {{Public: [32]byte{1}}, {Public: [32]byte{2}}}} {
 		config.Keys = keys
-		if _, err := V4RecoveryVerifierCharge(config); err == nil {
+		if _, err := RecoveryVerifierCharge(config); err == nil {
 			t.Fatal("invalid recovery registration admitted")
 		}
 	}
-	charge, err := V4ResumeCodecCharge()
-	codec, err := NewV4ResumeCodec(f.reserve(t, charge, err))
+	charge, err := ResumeCodecCharge()
+	codec, err := NewResumeCodec(f.reserve(t, charge, err))
 	if err != nil {
 		t.Fatal(err)
 	}

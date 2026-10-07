@@ -15,6 +15,7 @@ export type BrowserModuleSiteOptions = Readonly<{
   port?: number;
   serviceWorkerScript?: string;
   tls?: Readonly<{ cert: Buffer; key: Buffer }>;
+  host?: Readonly<{ handle(request: http.IncomingMessage, response: http.ServerResponse): Promise<boolean> }>;
 }>;
 
 export async function startBrowserModuleSite(input?: number | BrowserModuleSiteOptions): Promise<BrowserModuleSite> {
@@ -23,6 +24,7 @@ export async function startBrowserModuleSite(input?: number | BrowserModuleSiteO
   const nobleModulesRoot = path.join(packageRoot, "node_modules", "@noble");
   const handler: http.RequestListener = async (request, response) => {
     try {
+      if (options.host !== undefined && await options.host.handle(request, response)) return;
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (url.pathname === "/") {
         response.writeHead(200, {

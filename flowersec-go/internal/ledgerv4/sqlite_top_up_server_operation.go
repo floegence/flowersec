@@ -169,7 +169,7 @@ func (j *SQLiteTopUpServer) Prepare(ctx context.Context, access TopUpAccess, wir
 // it grants no delivery right until this commit, and a competing owner may only
 // commit the retained original intent/generation with a current valid proof.
 func (j *SQLiteTopUpServer) Commit(ctx context.Context, access TopUpAccess, requestWire, responseWire []byte) (TopUpServerSnapshot, error) {
-	return j.commit(ctx, access, requestWire, responseWire, nil)
+	return j.commit(ctx, access, requestWire, responseWire, nil, nil)
 }
 
 // CommitWithRelay retains the original complete batch before publishing its
@@ -183,7 +183,11 @@ func (j *SQLiteTopUpServer) CommitWithRelay(ctx context.Context, access TopUpAcc
 		return TopUpServerSnapshot{}, err
 	}
 	defer publication.finish()
-	s, err := j.commit(ctx, access, requestWire, responseWire, publication.checkCommit)
+	s, err := j.commit(ctx, access, requestWire, responseWire, publication.checkCommit, func() {
+		publication.mu.Lock()
+		publication.original = true
+		publication.mu.Unlock()
+	})
 	if err != nil || s.State != TopUpServerCommitted {
 		return s, err
 	}
@@ -193,7 +197,7 @@ func (j *SQLiteTopUpServer) CommitWithRelay(ctx context.Context, access TopUpAcc
 	return s, publication.publish()
 }
 
-func (j *SQLiteTopUpServer) commit(ctx context.Context, access TopUpAccess, requestWire, responseWire []byte, publicationGuard func() error) (TopUpServerSnapshot, error) {
+func (j *SQLiteTopUpServer) commit(ctx context.Context, access TopUpAccess, requestWire, responseWire []byte, publicationGuard func() error, originalCommitted func()) (TopUpServerSnapshot, error) {
 	if err := j.authorize(access); err != nil {
 		return TopUpServerSnapshot{}, err
 	}
@@ -340,6 +344,12 @@ func (j *SQLiteTopUpServer) commit(ctx context.Context, access TopUpAccess, requ
 	})
 	if err != nil {
 		return TopUpServerSnapshot{}, err
+	}
+	// Only the invocation that durably appended the original response may
+	// retain its once-only endpoint continuation. Existing rows, expired
+	// requests and uncertain commits cannot recreate that right.
+	if appending && originalCommitted != nil {
+		originalCommitted()
 	}
 	return s, nil
 }

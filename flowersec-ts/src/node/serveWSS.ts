@@ -13,11 +13,14 @@ import { captureReliableClientLimits, type ReliableClientLimits } from "../v4/ru
 import { reliableServerSpec } from "../v4/runtime/serverSessionSpec.js";
 import { ServerAdmissionExchange, serverAdmissionCharge } from "../v4/runtime/serverAdmission.js";
 import { ResourceVector } from "../v4/runtime/resources.js";
+import { TrustedDeadline } from "../v4/runtime/deadline.js";
+import { wire } from "../v4/runtime/wireRegistry.js";
 import { requireCredential } from "../v4/runtime/credentialSupport.js";
 import { NodeWSSCarrier, nodeWSSAdmissionCosts } from "./wssV4.js";
 import { SQLiteAdmissionStore } from "./sqliteAdmission.js";
 
 export interface NodeWSSListenerOptions {
+  readonly path?: "direct" | "tunnel";
   readonly host: string;
   readonly port: number;
   readonly serverName: string;
@@ -31,6 +34,9 @@ export interface NodeWSSListenerOptions {
     /** Trusted bounded material lookup. HELLO is only an unverified selector.
      * Resolution ends every buffer borrow, including on cancellation. */
     resolve(request: Readonly<{ signal: AbortSignal; hello: Uint8Array }>, buffers: V4CredentialBuffers): Promise<V4CredentialLengths>;
+    /** Transfers the exact server-local original prepared material once. */
+    takePreparedHop?(request: Readonly<{ signal: AbortSignal; hello: Uint8Array }>): Promise<V4EnvironmentMaterial>;
+    resolveHop?(request: Readonly<{ signal: AbortSignal; hello: Uint8Array }>, buffers: V4CredentialBuffers): Promise<V4CredentialLengths>;
   }>;
   readonly limits: ReliableClientLimits;
   readonly ingress: ServeGroupLimits;
@@ -46,7 +52,7 @@ interface Connection {
   readonly raw: Socket;
   readonly dependency: EnvironmentDependency;
   readonly ingress: ServeIngress<HandlerPlan>;
-  readonly nativeDone: Promise<void>;
+  readonly nativeDone: Promise<void>; readonly preparation?: TrustedDeadline;
   running: boolean;
   nativeEnded: boolean;
   transport?: NodeWSSCarrier;
@@ -59,11 +65,12 @@ export function createNodeWSSListener(environment: V4TransportEnvironment, input
   const certificate = input.tls.certificate, privateKeyPEM = input.tls.privateKey;
   const identityKey = input.identityKey, noiseKey = input.noiseKey, store = input.admissionStore;
   const limits = captureReliableClientLimits(input.limits), ingress = Object.freeze({ ...input.ingress });
-  const provider = input.credentials.resolve, source = input.credentials.source, p = input.credentials.policy;
-  const policy = Object.freeze({ tenant: p.tenant, audience: p.audience, clientSubject: p.clientSubject, serverSubject: p.serverSubject,
+  const provider = input.credentials.resolve, hopProvider = input.credentials.resolveHop, preparedProvider = input.credentials.takePreparedHop, source = input.credentials.source, p = input.credentials.policy, path = input.path ?? (p.tunnel === undefined ? "direct" : "tunnel");
+  const policy = Object.freeze({ tenant: p.tenant, audience: p.audience, clientSubject: p.clientSubject, serverSubject: p.serverSubject, ...(p.tunnel === undefined ? {} : { tunnel: Object.freeze({ ...p.tunnel }) }),
     authorities: Object.freeze([...p.authorities]), cryptoProfiles: Object.freeze([...p.cryptoProfiles]) });
   const carrier = Object.freeze({ ...input.carrier, remoteAddress: host, runtimeBytes });
-  const bindingMode = input.bindingMode ?? "authenticated_context";
+  const bindingMode = input.bindingMode ?? "authenticated_context", handshakeMS = ingress.handshakeMS;
+  requireCredential(path === "direct" || path === "tunnel" && policy.tunnel?.role === 1 && (typeof hopProvider === "function" || typeof preparedProvider === "function") && bindingMode === "authenticated_context", "configuration_capacity");
   requireCredential(isIP(host) !== 0 && Number.isSafeInteger(port) && port >= 0 && port <= 65535 && typeof serverName === "string" && serverName.length > 0 && serverName.length <= 253 &&
     typeof certificate === "string" && certificate.length > 0 && certificate.length <= 65536 && typeof privateKeyPEM === "string" && privateKeyPEM.length > 0 && privateKeyPEM.length <= 65536 &&
     identityKey instanceof KeyObject && identityKey.type === "private" && identityKey.asymmetricKeyType === "ed25519" && noiseKey instanceof KeyObject && noiseKey.type === "private" &&
@@ -94,7 +101,7 @@ export function createNodeWSSListener(environment: V4TransportEnvironment, input
         maxHeaderSize: 16384, highWaterMark: 16384, handshakeTimeout: Number(ingress.handshakeMS), requestTimeout: Number(ingress.handshakeMS), headersTimeout: Number(ingress.handshakeMS) });
       https.maxHeadersCount = 32; https.maxRequestsPerSocket = 1; network.maxConnections = ingress.positions;
       const wss = new WebSocketServer({ noServer: true, clientTracking: false, perMessageDeflate: false, maxPayload: Math.max(limits.maxFrame, 65536) + 8,
-        handleProtocols: protocols => protocols.size === 1 && protocols.has("flowersec.direct.v4") ? "flowersec.direct.v4" : false });
+        handleProtocols: protocols => { const protocol = path === "direct" ? "flowersec.direct.v4" : "flowersec.tunnel.v4"; return protocols.size === 1 && protocols.has(protocol) ? protocol : false; } });
       let sealing = false, networkEnded = false, websocketEnded = false, nativeReleased = false;
       const collect = (): void => {
         if (nativeReleased || !sealing || !networkEnded || !websocketEnded || [...connections.values()].some(entry => !entry.nativeEnded)) return;
@@ -125,7 +132,7 @@ export function createNodeWSSListener(environment: V4TransportEnvironment, input
           group.checkIngress(); dependency = runtime.admitDependency("accepted_wss", nativeCharge);
           const ingress = group.begin(() => raw.destroy()), connectionKey = key(raw);
           let ended!: () => void; const nativeDone = new Promise<void>(resolve => { ended = resolve; });
-          const entry: Connection = { key: connectionKey, raw, dependency, ingress, nativeDone, running: false, nativeEnded: false }; connections.set(connectionKey, entry);
+          const entry: Connection = { key: connectionKey, raw, dependency, ingress, nativeDone, running: false, nativeEnded: false, ...(path === "direct" ? {} : { preparation: TrustedDeadline.ageAt(runtime.clock, runtime.clock.sample(), handshakeMS, 0xffffffffffffffffn) }) }; connections.set(connectionKey, entry);
           raw.on("error", () => ingress.abort()); raw.once("close", () => {
             ended(); ingress.abort();
             void (entry.transport?.waitTermination() ?? nativeDone).then(() => { entry.nativeEnded = true; ingress.nativeEnded(); collect(); });
@@ -141,28 +148,50 @@ export function createNodeWSSListener(environment: V4TransportEnvironment, input
         if (entry === undefined || entry.running) { socket.destroy(); return; } entry.running = true;
         const run = async (): Promise<void> => {
           let exchange: ServerAdmissionExchange | undefined, material: V4EnvironmentMaterial | undefined;
-          let planCapture: ReturnType<typeof captureHandlerPlan> | undefined;
-          const work = runtime.reserveConnectionWork("server_material_input", new ResourceVector([196608n + runtimeBytes, 0n, 0n, 8n, 1n, 0n, 0n, 0n, 0n, 0n, 0n]));
-          const buffers = { artifact: new Uint8Array(65536), clientCertificate: new Uint8Array(16384), serverCertificate: new Uint8Array(16384), activation: new Uint8Array(65536) };
+          let planCapture: ReturnType<typeof captureHandlerPlan> | undefined, prepared: ReturnType<typeof runtime.prepareTunnelCredentials> | undefined;
+          const work = runtime.reserveConnectionWork("server_material_input", new ResourceVector([(path === "direct" ? 278528n : 344080n) + runtimeBytes, 0n, 0n, 8n, 1n, 0n, 0n, 0n, 0n, 0n, 0n]));
+          const buffers = { artifact: new Uint8Array(65536), clientCertificate: new Uint8Array(16384), serverCertificate: new Uint8Array(16384), activation: new Uint8Array(65536), tunnelGrant: new Uint8Array(65536), relayCertificate: new Uint8Array(16384) };
           try {
             entry.ingress.check();
-            checkUpgrade(request, head, serverName, address!.port);
+            checkUpgrade(request, head, serverName, address!.port, path);
             await entry.ingress.authorizeRequest(request.headers.origin ?? ""); entry.ingress.check();
             // handleUpgrade synchronously transfers the original native socket.
             wss.handleUpgrade(request, socket, head, websocket => {
-              const transport = entry.transport = new NodeWSSCarrier(runtime, entry.dependency, Math.max(limits.maxFrame, 65536) + 8, carrier.queueMessages, "server");
+              const transport = entry.transport = new NodeWSSCarrier(runtime, entry.dependency, Math.max(limits.maxFrame, 65536) + 8, carrier.queueMessages, "server", path, entry.preparation);
               transport.accept(websocket, request, { host: serverName, port: address!.port });
             });
             const transport = entry.transport; requireCredential(transport !== undefined, "credential_closed");
+            if (path === "tunnel" && preparedProvider === undefined) prepared = runtime.prepareTunnelCredentials(policy);
+            const verifyMaterial = (lengths: V4CredentialLengths): V4EnvironmentMaterial => {
+              for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation", "tunnelGrant", "relayCertificate"] as const) {
+                const length = lengths[name] ?? 0; requireCredential(Number.isSafeInteger(length) && length >= 0 && length <= buffers[name].length, "credential_binding");
+              }
+              return runtime.verify(policy, { source, artifact: buffers.artifact.subarray(0, lengths.artifact), clientCertificate: buffers.clientCertificate.subarray(0, lengths.clientCertificate),
+                serverCertificate: buffers.serverCertificate.subarray(0, lengths.serverCertificate), activation: buffers.activation.subarray(0, lengths.activation), candidateIndex: lengths.candidateIndex,
+                ...(path === "direct" ? {} : { tunnel: { grant: buffers.tunnelGrant.subarray(0, lengths.tunnelGrant ?? 0), relayCertificate: buffers.relayCertificate.subarray(0, lengths.relayCertificate ?? 0) } }) }, prepared);
+            };
+            if (path === "tunnel") {
+              const routing = await transport.read(65544, { signal: entry.ingress.signal });
+              try {
+                entry.ingress.check(); requireCredential(routing !== null && routing.length >= 8 && routing[4] === wire.frame_types.HOP_AUTH && routing[5] === 0 && routing[6] === 0 && routing[7] === 0 && new DataView(routing.buffer, routing.byteOffset, 8).getUint32(0) === routing.length - 8);
+                const hello = routing.subarray(8), request = Object.freeze({ signal: entry.ingress.signal, hello });
+                if (preparedProvider === undefined) { const lengths = await entry.ingress.resolveMaterial(() => hopProvider!(request, buffers)); material = verifyMaterial(lengths); }
+                else {
+                  // Capture custody before the ingress checks cancellation again.
+                  material = await entry.ingress.resolveMaterial(async () => {
+                    const original = await preparedProvider(request); material = original; return original;
+                  });
+                  runtime.checkOriginalServerPublication(material, work);
+                }
+                await runtime.authenticateAcceptedHop(material, transport, signer, hello, { signal: entry.ingress.signal });
+              } finally { routing?.fill(0); }
+            }
             const ref = runtime.reserveConnectionWork("server_admission", serverAdmissionCharge(runtimeBytes));
             try { exchange = new ServerAdmissionExchange(runtime.resources, transport, signer, bytes => runtime.fillRandom(bytes), ref, () => entry.ingress.check(), bindingMode); }
             finally { ref.release(); }
             const hello = await exchange.readHello({ signal: entry.ingress.signal });
-            const lengths = await entry.ingress.resolveMaterial(() => provider(Object.freeze({ signal: entry.ingress.signal, hello }), buffers));
-            for (const name of ["artifact", "clientCertificate", "serverCertificate", "activation"] as const)
-              requireCredential(Number.isSafeInteger(lengths[name]) && lengths[name] >= 0 && lengths[name] <= buffers[name].length, "credential_binding");
-            material = runtime.verify(policy, { source, artifact: buffers.artifact.subarray(0, lengths.artifact), clientCertificate: buffers.clientCertificate.subarray(0, lengths.clientCertificate),
-              serverCertificate: buffers.serverCertificate.subarray(0, lengths.serverCertificate), activation: buffers.activation.subarray(0, lengths.activation), candidateIndex: lengths.candidateIndex });
+            if (path === "direct") { const lengths = await entry.ingress.resolveMaterial(() => provider(Object.freeze({ signal: entry.ingress.signal, hello }), buffers)); material = verifyMaterial(lengths); }
+            requireCredential(material !== undefined);
             const invocation = new Uint8Array(16), carrierID = new Uint8Array(16); runtime.fillRandom(invocation); runtime.fillRandom(carrierID);
             try {
               const session = await runtime.establishServer(material, async fields => {
@@ -175,7 +204,7 @@ export function createNodeWSSListener(environment: V4TransportEnvironment, input
               }, exchange, store, { acceptor, invocation, carrier: carrierID, generation: 1n, signal: entry.ingress.signal }, { signal: entry.ingress.signal }).finally(() => entry.ingress.publishClaimed());
               await session.waitTermination();
             } finally { invocation.fill(0); carrierID.fill(0); }
-          } finally { planCapture?.release(); exchange?.close(); await material?.closeMaterial(); for (const bytes of Object.values(buffers)) bytes.fill(0); work.release(); }
+          } finally { prepared?.close(); planCapture?.release(); exchange?.close(); await material?.closeMaterial(); for (const bytes of Object.values(buffers)) bytes.fill(0); work.release(); }
         };
         void run().catch(() => entry.ingress.abort()).finally(() => retire(entry));
       });
@@ -199,10 +228,10 @@ export function createNodeWSSListener(environment: V4TransportEnvironment, input
   } });
   return Object.freeze({ listener, address: () => { if (address === undefined) throw new Error("not_listening"); return address; } });
 }
-function checkUpgrade(request: IncomingMessage, head: Buffer, host: string, port: number): void {
+function checkUpgrade(request: IncomingMessage, head: Buffer, host: string, port: number, path: "direct" | "tunnel"): void {
   const socket = request.socket as TLSSocket;
-  requireCredential(head.length === 0 && request.method === "GET" && request.httpVersion === "1.1" && request.url === "/flowersec/v4/direct" &&
-    request.headers.host === `${isIP(host) === 6 ? `[${host}]` : host}${port === 443 ? "" : `:${port}`}` && request.headers["sec-websocket-protocol"] === "flowersec.direct.v4" &&
+  requireCredential(head.length === 0 && request.method === "GET" && request.httpVersion === "1.1" && request.url === (path === "direct" ? "/flowersec/v4/direct" : "/flowersec/v4/tunnel") &&
+    request.headers.host === `${isIP(host) === 6 ? `[${host}]` : host}${port === 443 ? "" : `:${port}`}` && request.headers["sec-websocket-protocol"] === (path === "direct" ? "flowersec.direct.v4" : "flowersec.tunnel.v4") &&
     request.headers["content-length"] === undefined && request.headers["transfer-encoding"] === undefined &&
     socket.getProtocol() === "TLSv1.3" && socket.alpnProtocol === "http/1.1" && !socket.isSessionReused() && request.rawHeaders.length <= 64 &&
     (request.headers.origin === undefined || typeof request.headers.origin === "string" && request.headers.origin.length <= 2048));

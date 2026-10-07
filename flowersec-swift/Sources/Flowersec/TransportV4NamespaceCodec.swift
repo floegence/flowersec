@@ -8,6 +8,7 @@ import Foundation
 enum V4NamespaceFailure: Error, Equatable, Sendable {
   case configuration, encoding, schema, signature, untrusted, capacity
   case notBootstrapped, pendingState, rollback, equivocation, closed
+  case timeNotProven, futureTimestamp, bootstrapDeadline
 }
 
 final class V4NamespaceRegistry: @unchecked Sendable {
@@ -27,6 +28,9 @@ final class V4NamespaceRegistry: @unchecked Sendable {
     "RevokedLeaseEntry", "CohortPolicySegment",
     "IdentityCertificate", "NoiseStaticPublicKey", "Artifact", "SessionContract", "ResumePolicy",
     "Candidate", "Route", "Leg", "TLSPolicy", "TLSPin", "OriginPolicy", "ActivationAuthorization",
+    "Grant", "GrantParentRef", "GrantNamespace", "GrantLimits", "GrantLegRef",
+    "HopChallengeContext", "HOP_AUTH_HELLO", "HOP_AUTH_ENDPOINT_PROOF", "HOP_AUTH_RELAY_PROOF",
+    "TopUpRequest", "OwnerFenceProof", "TopUpEntry", "TopUpResponse", "TopUpAck",
     "PoolSelectionRef", "PoolSelectionSet", "RekeyEnvelope", "SpendPolicy", "PoolAttemptBudget",
     "PoolRouteRef", "RevocationNamespaceRef", "CandidateAttemptBudget",
     "ClientHello", "ServerHello", "TransportContext", "FSB4", "FSA4",
@@ -36,14 +40,28 @@ final class V4NamespaceRegistry: @unchecked Sendable {
     "STREAM_ACK_RETIRE_ACK", "terminal_tuple", "StreamMetadata",
     "REKEY_REQUEST", "REKEY_INIT", "REKEY_REPLY", "REKEY_COMMIT", "REKEY_ACK", "RekeyBarrierEntry",
     "PING", "PONG", "CLOSE", "GOAWAY", "ERROR",
-    "ServiceContract", "ErrorDefinition", "StreamContentPolicy",
+    "ContractTarget", "ContractTargets", "ContractSnapshot", "ContractSnapshots",
+    "ServiceContract", "ErrorDefinition", "StreamContentPolicy", "AdmissionOffer",
+    "MessageStreamDefinition", "MessageStreamDirection", "TypedMessageMetadata",
+    "ResumeProgress", "ResumeCheckpoint", "ResumeTokenClaims", "ResumeSignedToken", "ResumeMACToken", "ResumeRequest", "ResumeResult",
+    "OperationReference", "ExecutionManagementTarget", "ExecutionManagementObservation", "QueryOperationResponse", "RequestCancelResponse", "ApplicationSDKError",
+    "ProxyHTTPRequest", "ProxyHTTPResponse", "ProxyField", "ProxyError", "ProxyBodyEnd",
+    "ProxyWebSocketOpen", "ProxyWebSocketResponse",
   ]
 
   init() throws {
     let registry =
       try JSONSerialization.jsonObject(
         with: Data(TransportV4Registry.cborRegistryJSON.utf8)) as! [String: Any]
-    maps = registry["frame_maps"] as! [String: [String: Any]]
+    let frameMaps = registry["frame_maps"] as! [String: [String: Any]]
+    // Materialize the immutable field dictionaries in the prepaid registry
+    // once. Keeping their Swift type inside Any avoids rebuilding Foundation
+    // bridges during every live authorization check under the environment gate.
+    maps = frameMaps.mapValues { descriptor in
+      var native = descriptor
+      native["fields"] = descriptor["fields"] as! [String: [String: Any]]
+      return native
+    }
     let variants = registry["variant_rules"] as! [String: [[String: Any]]]
     let relations = registry["relation_rules"] as! [String: [[String: Any]]]
     let text = registry["text_rules"] as! [String: [[String: Any]]]
@@ -148,6 +166,24 @@ final class V4NamespaceRegistry: @unchecked Sendable {
     return algorithm
   }
 
+  func compoundDomain(_ name: String, operation: String) throws -> (Data, [[String: Any]]) {
+    guard let domain = domains.first(where: { $0["name"] as? String == name }),
+      domain["operation"] as? String == operation,
+      let input = domain["input_schema"] as? [String: Any],
+      let parts = input["parts"] as? [[String: Any]],
+      let hex = domain["label_bytes"] as? String, hex.count.isMultiple(of: 2) else {
+      throw V4NamespaceFailure.schema
+    }
+    var label = Data()
+    var offset = hex.startIndex
+    while offset < hex.endIndex {
+      let end = hex.index(offset, offsetBy: 2)
+      guard let byte = UInt8(hex[offset..<end], radix: 16) else { throw V4NamespaceFailure.schema }
+      label.append(byte); offset = end
+    }
+    return (label, parts)
+  }
+
   func domain(_ name: String, schema: String, operation: String) throws -> (Data, String) {
     guard let domain = domains.first(where: { $0["name"] as? String == name }),
       domain["operation"] as? String == operation,
@@ -224,8 +260,11 @@ final class V4NamespaceRegistry: @unchecked Sendable {
     }
   }
 
-  func validateRules(_ value: V4NamespaceValue) throws {
-    for rule in rules[value.schema] ?? [] {
+  func ruleCount(_ schema: String) -> Int { (rules[schema] ?? []).count }
+
+  func validateRules(_ value: V4NamespaceValue, range: Range<Int>? = nil) throws {
+    let selected = rules[value.schema] ?? []
+    for rule in selected[range ?? (selected.startIndex..<selected.endIndex)] {
       if let condition = rule["when"] as? [String: Any] {
         if let name = condition["field"] as? String {
           guard let member = try value.optionalPath(name), try member.equals(condition["value"])
@@ -239,6 +278,16 @@ final class V4NamespaceRegistry: @unchecked Sendable {
       }
       guard let operation = rule["op"] as? String else { throw V4NamespaceFailure.schema }
       switch operation {
+      case "map_digest":
+        let source = try value.path(rule["source"] as! String)
+        let map = source.embeddedValue ?? source
+        guard try value.path(rule["field"] as! String).bytes() == map.digest(rule["domain"] as! String)
+        else { throw V4NamespaceFailure.schema }
+      case "equal_if_present":
+        if let left = try value.optionalPath(rule["left"] as! String),
+          let right = try value.optionalPath(rule["right"] as! String) {
+          guard left.raw.elementsEqual(right.raw) else { throw V4NamespaceFailure.schema }
+        }
       case "less_than", "less_or_equal", "equal", "not_equal", "bit_subset", "max_difference":
         let left = try value.path(rule["left"] as! String)
         let right = try value.path(rule["right"] as! String)
@@ -301,10 +350,19 @@ final class V4NamespaceRegistry: @unchecked Sendable {
             throw V4NamespaceFailure.schema
           }
         }
-      case "allowed_tuples":
-        let fields = rule["fields"] as! [String]
+      case "ordinal_indices":
+        let array = try value.field(rule["field"] as! String)
+        let field = Int(Self.number(rule["item_field_id"])!)
+        for (index, item) in array.children.enumerated() {
+          guard try item.fieldID(field).uint() == UInt64(index) else {
+            throw V4NamespaceFailure.schema
+          }
+        }
+      case "allowed_pairs", "allowed_tuples":
+        let fields = operation == "allowed_pairs"
+          ? [rule["left"] as! String, rule["right"] as! String] : rule["fields"] as! [String]
         guard
-          try (rule["rows"] as! [[Any]]).contains(where: { row in
+          try (rule[operation == "allowed_pairs" ? "pairs" : "rows"] as! [[Any]]).contains(where: { row in
             try fields.enumerated().allSatisfy { try value.path($0.element).equals(row[$0.offset]) }
           })
         else { throw V4NamespaceFailure.schema }
@@ -439,11 +497,13 @@ final class V4NamespaceDocument {
   private let nodeLimit: Int
   let registry: V4NamespaceRegistry
   private let limits: [String: UInt64]
+  private var incremental: IncrementalState?
 
   init(
     _ input: Data, schema: String, bytes maximum: Int, nodes: Int,
     registry: V4NamespaceRegistry,
-    limits: [String: UInt64] = [:], context: [String: String] = [:]
+    limits: [String: UInt64] = [:], context: [String: String] = [:],
+    cooperative: Bool = false
   ) throws {
     guard maximum > 0, input.count <= maximum, nodes > 0 else {
       throw V4NamespaceFailure.capacity
@@ -460,11 +520,184 @@ final class V4NamespaceDocument {
         throw V4NamespaceFailure.capacity
       }
     }
-    self.bytes = Array(input)
+    self.bytes = []
+    self.bytes.reserveCapacity(input.count)
     self.nodes.reserveCapacity(nodes)
+    if cooperative {
+      guard ["ContractSnapshots", "ContractTargets", "ServiceContract", "AdmissionOffer"].contains(schema) else {
+        throw V4NamespaceFailure.configuration
+      }
+      incremental = IncrementalState(input: input, schema: schema, context: context)
+      return
+    }
+    self.bytes.append(contentsOf: input)
     var offset = 0
     _ = try scan(&offset, depth: 0, field: ["type": "map", "schema_ref": schema], context: context)
     guard offset == input.count else { throw V4NamespaceFailure.encoding }
+  }
+
+  // The query lane retains this original document. It never performs a second
+  // eager parse after cooperative scanning completes.
+  private final class IncrementalMap {
+    let index: Int
+    let descriptor: [String: Any]
+    let fields: [String: [String: Any]]
+    let depth: Int
+    var context: [String: String]
+    var remaining: UInt64
+    var previous: UInt64?
+    var found: Set<Int> = []
+    var child: (Int, [String: Any])?
+    init(index: Int, descriptor: [String: Any], depth: Int, context: [String: String], count: UInt64) {
+      self.index = index; self.descriptor = descriptor; self.depth = depth; self.context = context
+      fields = descriptor["fields"] as! [String: [String: Any]]; remaining = count
+    }
+  }
+  private enum IncrementalAction {
+    case value([String: Any], Int, [String: String])
+    case map(IncrementalMap)
+    case array(Int, UInt64, [String: Any], Int, [String: String])
+    case bytes(Int, Int, Bool, Bool)
+    case rules(Int, Int)
+  }
+  private final class IncrementalState {
+    var input: Data?
+    var copied = 0
+    var offset = 0
+    var actions: [IncrementalAction]
+    init(input: Data, schema: String, context: [String: String]) {
+      self.input = input
+      actions = [.value(["type": "map", "schema_ref": schema], 0, context)]
+      actions.reserveCapacity(32)
+    }
+  }
+  var parsingComplete: Bool { incremental == nil }
+  var queryParsingOffset: Int { incremental?.offset ?? bytes.count }
+
+  // At most 4096 input bytes are copied or scanned in one turn. Container and
+  // relation work also has a fixed transition bound; a relation gets its own
+  // turn so SDK control work remains independent of an application callback.
+  @discardableResult func advanceQueryParsing() throws -> Bool {
+    guard let state = incremental else { return true }
+    if let input = state.input {
+      let end = min(input.count, state.copied + 4096)
+      bytes.append(contentsOf: input[state.copied..<end]); state.copied = end
+      if end == input.count { state.input = nil }
+      return false
+    }
+    var budget = 4096
+    var transitions = 0
+    while let action = state.actions.popLast() {
+      transitions += 1
+      if transitions > 64 || budget < 18 {
+        state.actions.append(action); return false
+      }
+      switch action {
+      case .value(let field, let depth, let context):
+        guard depth <= 8, nodes.count < nodeLimit else { throw V4NamespaceFailure.capacity }
+        let start = state.offset
+        var end = start
+        let (major, number) = try header(&end)
+        let type = field["type"] as? String ?? ""
+        if type == "map" {
+          guard major == 5, number <= 128, let schema = field["schema_ref"] as? String else { throw V4NamespaceFailure.schema }
+          let descriptor = try registry.map(schema)
+          let index = nodes.count
+          nodes.append(Node(offset: start, payload: end, end: end, next: index + 1, major: major, number: number, schema: schema))
+          state.offset = end; budget -= end - start
+          state.actions.append(.map(IncrementalMap(index: index, descriptor: descriptor, depth: depth, context: context, count: number)))
+        } else if type == "array" || type == "array<uint64>" {
+          guard major == 4, number >= (V4NamespaceRegistry.number(field["min_items"]) ?? 0),
+            number <= (V4NamespaceRegistry.number(field["max_items"]) ?? 1035),
+            number <= UInt64(nodeLimit - nodes.count), number <= UInt64(bytes.count - end),
+            let item = type == "array<uint64>" ? ["type": "uint64"] : field["items"] as? [String: Any]
+          else { throw V4NamespaceFailure.capacity }
+          let index = nodes.count
+          nodes.append(Node(offset: start, payload: end, end: end, next: index + 1, major: major, number: number, schema: ""))
+          state.offset = end; budget -= end - start
+          state.actions.append(.array(index, number, item, depth, context))
+        } else if type == "bytes" {
+          guard major == 2, number <= UInt64(bytes.count - end) else { throw V4NamespaceFailure.encoding }
+          if let size = V4NamespaceRegistry.number(field["length"]), number != size { throw V4NamespaceFailure.schema }
+          if let maximum = V4NamespaceRegistry.number(field["max_bytes"]), number > maximum { throw V4NamespaceFailure.capacity }
+          if let minimum = V4NamespaceRegistry.number(field["min_bytes"]), number < minimum { throw V4NamespaceFailure.schema }
+          if let reference = field["max_ref"] as? String {
+            guard let cap = limits[reference], number <= cap else { throw V4NamespaceFailure.capacity }
+          }
+          let index = nodes.count
+          nodes.append(Node(offset: start, payload: end, end: end, next: index + 1, major: major, number: number, schema: "", context: context))
+          state.offset = end; budget -= end - start
+          state.actions.append(.bytes(index, Int(number), field["nonzero"] as? Bool == true, false))
+        } else {
+          // The fixed query schemas contain only bounded text and scalar leaves.
+          // Other registry forms remain on their original non-query decoder.
+          guard type == "text" || type == "bool" || type.hasPrefix("uint") else { throw V4NamespaceFailure.schema }
+          let cost = end - start + (type == "text" ? Int(clamping: number) : 0)
+          guard cost <= 4096 else { throw V4NamespaceFailure.capacity }
+          if cost > budget { state.actions.append(action); return false }
+          _ = try scan(&state.offset, depth: depth, field: field, context: context)
+          budget -= state.offset - start
+        }
+      case .map(let frame):
+        if let (childIndex, child) = frame.child {
+          if let mappings = frame.descriptor["context_fields"] as? [String: String], let name = child["name"] as? String {
+            for (key, source) in mappings where source == name {
+              guard let enums = child["enum"] as? [String: Any],
+                let selected = enums.first(where: { V4NamespaceRegistry.number($0.value) == nodes[childIndex].number })
+              else { throw V4NamespaceFailure.schema }
+              frame.context[key] = selected.key
+            }
+          }
+          frame.child = nil
+        }
+        if frame.remaining == 0 {
+          let required = frame.descriptor["required"] as! [Int]
+          guard required.allSatisfy(frame.found.contains) else { throw V4NamespaceFailure.schema }
+          let size = state.offset - nodes[frame.index].offset
+          if let cap = V4NamespaceRegistry.number(frame.descriptor["max_encoded_bytes"]), size > cap { throw V4NamespaceFailure.capacity }
+          if let reference = frame.descriptor["max_encoded_bytes_ref"] as? String {
+            guard let cap = limits[reference], size <= cap else { throw V4NamespaceFailure.capacity }
+          }
+          nodes[frame.index].end = state.offset; nodes[frame.index].next = nodes.count; nodes[frame.index].context = frame.context
+          state.actions.append(.rules(frame.index, 0))
+        } else {
+          let start = state.offset
+          let (major, key) = try header(&state.offset)
+          guard major == 0, key <= 65535, frame.previous == nil || frame.previous! < key,
+            let child = frame.fields[String(key)], nodes.count < nodeLimit else { throw V4NamespaceFailure.schema }
+          frame.previous = key; frame.found.insert(Int(key)); frame.remaining -= 1
+          nodes.append(Node(offset: state.offset, payload: state.offset, end: state.offset, next: nodes.count + 1, major: 0, number: key, schema: ""))
+          frame.child = (nodes.count, child); budget -= state.offset - start
+          state.actions.append(.map(frame)); state.actions.append(.value(child, frame.depth + 1, frame.context))
+        }
+      case .array(let index, let remaining, let item, let depth, let context):
+        if remaining == 0 {
+          nodes[index].end = state.offset; nodes[index].next = nodes.count; nodes[index].context = context
+        } else {
+          state.actions.append(.array(index, remaining - 1, item, depth, context))
+          state.actions.append(.value(item, depth + 1, context))
+        }
+      case .bytes(let index, let remaining, let requireNonzero, let nonzero):
+        let size = min(remaining, budget)
+        let next = state.offset + size
+        let foundNonzero = nonzero || (requireNonzero && bytes[state.offset..<next].contains(where: { $0 != 0 }))
+        state.offset = next; budget -= size
+        if size < remaining {
+          state.actions.append(.bytes(index, remaining - size, requireNonzero, foundNonzero)); return false
+        }
+        guard !requireNonzero || foundNonzero else { throw V4NamespaceFailure.schema }
+        nodes[index].end = next; nodes[index].next = nodes.count
+      case .rules(let index, let rule):
+        let value = V4NamespaceValue(document: self, index: index)
+        if rule < registry.ruleCount(value.schema) {
+          try registry.validateRules(value, range: rule..<rule + 1)
+          state.actions.append(.rules(index, rule + 1)); return false
+        }
+      }
+    }
+    guard state.offset == bytes.count else { throw V4NamespaceFailure.encoding }
+    incremental = nil
+    return true
   }
 
   deinit { bytes.withUnsafeMutableBytes { sodium_memzero($0.baseAddress, $0.count) } }
@@ -574,7 +807,8 @@ final class V4NamespaceDocument {
         throw V4NamespaceFailure.schema
       }
       if let embedded = field["encoded_schema_ref"] as? String,
-        ["IdentityCertificate", "ActivationAuthorization"].contains(embedded)
+        ["IdentityCertificate", "ActivationAuthorization", "Grant", "StreamMetadata", "ResumeSignedToken", "ResumeMACToken"].contains(embedded),
+        !(number == 0 && field["allow_empty"] as? Bool == true)
       {
         var inner = nodes[index].payload
         nodes[index].embedded = try scan(
@@ -605,10 +839,13 @@ final class V4NamespaceDocument {
     case "text_map":
       guard major == 5, number >= (V4NamespaceRegistry.number(field["min_items"]) ?? 0),
         number <= (V4NamespaceRegistry.number(field["max_items"]) ?? 0),
-        let keyField = field["keys"] as? [String: Any],
-        let valueField = field["values"] as? [String: Any]
+        let keyField = field["keys"] as? [String: Any]
       else { throw V4NamespaceFailure.schema }
+      let entryFields = field["entries"] as? [String: [String: Any]]
+      let commonValue = field["values"] as? [String: Any]
+      guard entryFields != nil || commonValue != nil else { throw V4NamespaceFailure.schema }
       var previous: Int?
+      var foundEntries: Set<String> = []
       for _ in 0..<number {
         let key = try scan(&offset, depth: depth + 1, field: keyField, context: context)
         if let previous {
@@ -619,8 +856,19 @@ final class V4NamespaceDocument {
           }
         }
         previous = key
+        let valueField: [String: Any]
+        if let entryFields {
+          let name = try V4NamespaceValue(document: self, index: key).text()
+          guard let entry = entryFields[name], foundEntries.insert(name).inserted else {
+            throw V4NamespaceFailure.schema
+          }
+          valueField = entry
+        } else {
+          valueField = commonValue!
+        }
         try scan(&offset, depth: depth + 1, field: valueField, context: context)
       }
+      if let entryFields, foundEntries.count != entryFields.count { throw V4NamespaceFailure.schema }
     case "map":
       guard major == 5, number <= 128, let schema = field["schema_ref"] as? String else {
         throw V4NamespaceFailure.schema
@@ -690,6 +938,7 @@ struct V4NamespaceValue {
   let index: Int
   private var node: V4NamespaceDocument.Node { document.nodes[index] }
   var schema: String { node.schema }
+  var embeddedValue: Self? { node.embedded.map { Self(document: document, index: $0) } }
   var context: [String: String] { node.context }
   var major: UInt8 { node.major }
   var count: Int { Int(node.number) }

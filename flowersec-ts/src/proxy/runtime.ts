@@ -1,3 +1,5 @@
+import { bindProxyRequestAssociation, proxyRequestAssociation } from "./requestAssociation.js";
+import { PROXY_CREDENTIAL_CONTROL_PATH, registerProxyCredentialControl } from "./credentialControl.js";
 import { prepareProxyFetch } from "./fetch.js";
 import { StreamAdmission, type StreamPermit } from "./admission.js";
 import { SDK_DEFAULTS } from "../defaults.js";
@@ -205,17 +207,19 @@ function publicFailure(error: unknown): Readonly<{ status: number; code: string;
 }
 
 export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
-  const session = options.session;
+  const binding = options.sessionBinding;
+  const session = binding?.mode === "fixed" ? binding.session : options.session;
   if (session === null || typeof session !== "object" || typeof session.openStream !== "function") throw new TypeError("proxy runtime requires a Session");
   const inputBackingBytes = Math.max(8192,
     positiveLimit("maxBodyBytes", options.maxBodyBytes, SDK_DEFAULTS.proxy.maxBodyBytes),
-    positiveLimit("maxJsonFrameBytes", options.maxJsonFrameBytes, SDK_DEFAULTS.proxy.maxJsonFrameBytes) + 4,
+    positiveLimit("maxMetadataBytes", options.maxMetadataBytes, SDK_DEFAULTS.proxy.maxMetadataBytes) + 4,
     positiveLimit("maxWsFrameBytes", options.maxWsFrameBytes, SDK_DEFAULTS.proxy.maxWsFrameBytes) + 5);
   if (!Number.isSafeInteger(inputBackingBytes) || inputBackingBytes > 0x7fffffff) throw new TypeError("proxy backing exceeds the current Stream capacity");
   const finishTimeoutMS = normalizeTimeout(options.timeoutMs) || SDK_DEFAULTS.proxy.defaultTimeoutMs;
   return createProxyRuntimeWithStreams({ ...options, session: {
     async openStream(kind, wait) {
-      const stream = await session.openStream(kind, wait);
+      const current = binding?.mode === "capture_current" ? binding.controller.captureSession() : session;
+      const stream = await current.openStream(kind, wait);
       try {
         return currentProxyStream(stream, { readBytes: 65536, inputBackingBytes,
           finishTimeoutMS, cleanupTimeoutMS: 5000 });
@@ -234,7 +238,7 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
   if (options.session === null || typeof options.session !== "object" || typeof options.session.openStream !== "function") {
     throw new TypeError("proxy runtime requires a Session");
   }
-  const maxJsonFrameBytes = positiveLimit("maxJsonFrameBytes", options.maxJsonFrameBytes, SDK_DEFAULTS.proxy.maxJsonFrameBytes);
+  const maxMetadataBytes = positiveLimit("maxMetadataBytes", options.maxMetadataBytes, SDK_DEFAULTS.proxy.maxMetadataBytes);
   const maxChunkBytes = positiveLimit("maxChunkBytes", options.maxChunkBytes, SDK_DEFAULTS.proxy.maxChunkBytes);
   const maxBodyBytes = positiveLimit("maxBodyBytes", options.maxBodyBytes, SDK_DEFAULTS.proxy.maxBodyBytes);
   const maxWsFrameBytes = positiveLimit("maxWsFrameBytes", options.maxWsFrameBytes, SDK_DEFAULTS.proxy.maxWsFrameBytes);
@@ -264,27 +268,51 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
   }).catch(() => undefined);
 
   const serviceWorker = globalThis.navigator?.serviceWorker;
-  serviceWorker?.addEventListener("controllerchange", register);
-  register();
+  if (options.registerServiceWorkerBridge !== false) {
+    serviceWorker?.addEventListener("controllerchange", register); register();
+  }
   let serviceWorkerBridge: Readonly<{ dispose(): void }> | undefined;
 
   // One transaction owns admission, framing, cancellation and response backpressure
   // for direct fetch and both browser bridges. It never reconnects a request.
-  async function execute(request: ProxyFetchRequest, signal?: AbortSignal, preparedPermit?: StreamPermit): Promise<Response> {
-    if (disposed) throw new SessionError("closed");
-    const path = normalizePath(request.path);
-    enforcePathPolicy("http", path, pathPolicy);
-    const requestFacts = inspectProxyHeaders(request.headers);
-    if (requestFacts.transferEncoding) throw new Error("structured request has transfer coding");
-    const headers = filterHeaders(requestFacts, BASE_REQUEST_HEADERS, requestExtra);
-    const eventRequested = headers.some(({ name, value }) => name === "accept" && acceptsEventStream(value));
-    if (eventRequested && activeEvents >= maxConcurrentEventStreams) throw new SessionError("resource_exhausted");
+  async function execute(request: ProxyFetchRequest, signal?: AbortSignal, preparedPermit?: StreamPermit, control = false): Promise<Response> {
+    let release: StreamPermit | undefined = preparedPermit;
+    let adopted = false;
+    const prepared = (() => {
+      try {
+        if (disposed) throw new SessionError("closed");
+        const path = normalizePath(request.path);
+        if (!control) enforcePathPolicy("http", path, pathPolicy);
+        else if (path !== PROXY_CREDENTIAL_CONTROL_PATH || request.method !== "POST") throw new Error("credential_control_invalid");
+        const requestFacts = inspectProxyHeaders(request.headers);
+        if (requestFacts.transferEncoding) throw new Error("structured request has transfer coding");
+        const headers = filterHeaders(requestFacts, BASE_REQUEST_HEADERS, requestExtra);
+        const capturedAssociation = proxyRequestAssociation(request);
+        if (capturedAssociation?.signal !== undefined) signal = signal === undefined ? capturedAssociation.signal : AbortSignal.any([signal, capturedAssociation.signal]);
+        const credentialContext = control ? undefined : capturedAssociation === undefined ? options.credentialContext?.() : capturedAssociation.context;
+        const checkAssociation = (): void => {
+          if (!control && credentialContext !== options.credentialContext?.()) throw new Error("surface_publication_fenced");
+        };
+        checkAssociation();
+        if (credentialContext !== undefined) {
+          if (requestFacts.fields.some(field => ["cookie", "authorization", "x-flowersec-credential-context"].includes(field.name))) throw new Error("credential_conflict");
+
+        }
+        const eventRequested = headers.some(({ name, value }) => name === "accept" && acceptsEventStream(value));
+        if (eventRequested && activeEvents >= maxConcurrentEventStreams) throw new SessionError("resource_exhausted");
+        return { path, requestFacts, headers, credentialContext, checkAssociation, eventRequested };
+      } catch (error) {
+        if (!adopted) release?.();
+        throw error;
+      }
+    })();
+    const { path, requestFacts, headers, credentialContext, checkAssociation, eventRequested } = prepared;
     let eventPermit = eventRequested;
     if (eventPermit) activeEvents++;
+    adopted = true;
     const controller = new AbortController();
     active.add(controller);
     let stream: ProxyStream | undefined;
-    let release: StreamPermit | undefined = preparedPermit;
     let senderSettled = false, cleanupSettled = false, listenersRemoved = false;
     let reader: ProxyByteReader | undefined, disposedStream: ProxyStream | undefined;
     const releaseWhenSettled = () => { if (finished && senderSettled && cleanupSettled) release?.(); };
@@ -358,6 +386,7 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
       release ??= await admission.acquire(body.length, controller.signal, eventRequested);
       release.resizeBody(body.length);
       controller.signal.throwIfAborted();
+      checkAssociation();
       arm(timeoutMs || SDK_DEFAULTS.proxy.defaultTimeoutMs);
       stream = await options.session.openStream(PROXY_HTTP_STREAM_KIND, {
         signal: controller.signal,
@@ -369,14 +398,18 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
       reader = new ProxyByteReader(stream, { signal: controller.signal });
       const requestID = request.id.trim() === "" ? randomID() : request.id;
       const requestOrigin = externalOrigin ?? normalizeOrigin(request.externalOrigin);
+      checkAssociation();
       await writeProxyFrame({ write: async (data) => await writeAll(stream!, data, { signal: controller.signal }) }, "ProxyHTTPRequest", {
         v: PROXY_WIRE_VERSION, request_id: requestID, method: request.method, path, headers,
         ...(requestOrigin === undefined ? {} : { external_origin: requestOrigin }),
         ...(timeoutMs === 0 ? {} : { timeout_ms: timeoutMs }),
+        ...(credentialContext === undefined ? {} : { credential_context: credentialContext,
+          credentials: request.credentials ?? "same-origin", request_origin: request.requestOrigin ?? requestOrigin }),
       });
+      checkAssociation();
       await writeChunks(stream, body, maxChunkBytes, maxBodyBytes, controller.signal);
       await stream.closeWrite();
-      const response = await readProxyFrame(reader, "ProxyHTTPResponse", maxJsonFrameBytes) as ResponseMeta;
+      const response = await readProxyFrame(reader, "ProxyHTTPResponse", maxMetadataBytes) as ResponseMeta;
       if (response.v !== PROXY_WIRE_VERSION || response.request_id !== requestID) throw new Error("invalid proxy response");
       if (response.ok !== true) {
         throw new SessionError(response.error?.code === "resource_exhausted" ? "resource_exhausted" : "operation_failed");
@@ -389,7 +422,7 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
       if (persistent) arm(eventStreamIdleTimeoutMs);
       else releaseEvent();
       const noBody = request.method === "HEAD" || [204, 205, 304].includes(response.status!);
-      const chunks = readChunks(reader, maxChunkBytes, persistent ? Infinity : maxBodyBytes, responseFacts, noBody, maxJsonFrameBytes)[Symbol.asyncIterator]();
+      const chunks = readChunks(reader, maxChunkBytes, persistent ? Infinity : maxBodyBytes, responseFacts, noBody, maxMetadataBytes)[Symbol.asyncIterator]();
       controller.signal.throwIfAborted();
       const bodyStream = new ReadableStream<Uint8Array>({
         start(value) { output = value; },
@@ -417,10 +450,13 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
         status: response.status!, headers: headersOut.map(({ name, value }) => [name, value]),
       });
     } catch (error) {
-      await finish(error);
+      // Cancellation owns the local result even when resetting the original
+      // stream makes a pending read report a separate transport failure.
+      const failure = controller.signal.aborted ? controller.signal.reason : error;
+      await finish(failure);
       // An abort may complete admission or openStream in the same microtask.
       if (controller.signal.aborted) { await stream?.reset().catch(() => undefined); disposeStream(); }
-      throw error instanceof SessionError ? error : new SessionError("operation_failed");
+      throw failure instanceof SessionError ? failure : new SessionError("operation_failed");
     } finally {
       senderSettled = true;
       releaseWhenSettled();
@@ -428,6 +464,7 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
   }
 
   async function fetchSession(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+    const admissionContext = options.credentialContext?.();
     if (disposed) throw new SessionError("closed");
     const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const requestSignal = AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]);
@@ -437,18 +474,20 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
     let transferred = false;
     try {
       const prepared = await prepareProxyFetch(input, { ...init, signal: requestSignal }, externalOrigin, maxBodyBytes, permit);
+      bindProxyRequestAssociation(prepared.request, { context: admissionContext });
       // execute validates policy before taking ownership of the original permit.
       enforcePathPolicy("http", prepared.request.path, pathPolicy);
       if (disposed || prepared.signal.aborted) throw new SessionError("canceled");
       const response = execute(prepared.request, prepared.signal, permit);
       transferred = true;
-      try { return await response; } catch (error) { permit(); throw error; }
+      return await response;
     } finally {
       if (!transferred) permit();
     }
   }
 
   function dispatchFetch(request: ProxyFetchRequest, port: MessagePort): void {
+    if (proxyRequestAssociation(request) === undefined) bindProxyRequestAssociation(request, { context: options.credentialContext?.() });
     const controller = new AbortController();
     active.add(controller);
     const flowControlled = usesServiceWorkerResponseFlowControl(request) || request.headers.some(
@@ -489,7 +528,7 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
         await closed;
         port.postMessage({ type: "flowersec-proxy:response_end" });
       } catch (error) {
-        port.postMessage({ type: "flowersec-proxy:response_error", ...publicFailure(error) });
+        try { port.postMessage({ type: "flowersec-proxy:response_error", ...publicFailure(error) }); } catch { /* Original publication owner already sealed this port. */ }
       } finally {
         active.delete(controller);
         await reader?.cancel().catch(() => undefined);
@@ -506,6 +545,8 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
     if (disposed) throw new SessionError("closed");
     const path = normalizePath(input);
     enforcePathPolicy("websocket", path, pathPolicy);
+    const credentialContext = options.credentialContext?.();
+    const checkAssociation = (): void => { if (credentialContext !== options.credentialContext?.()) throw new Error("surface_publication_fenced"); };
     const controller = new AbortController();
     active.add(controller);
     const cancel = () => controller.abort(openOptions.signal?.reason ?? new SessionError("canceled"));
@@ -542,6 +583,7 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
     let stream: ProxyStream;
     try {
       controller.signal.throwIfAborted();
+      checkAssociation();
       source = await options.session.openStream(PROXY_WEBSOCKET_STREAM_KIND, {
         signal: controller.signal, metadata: createStreamMetadata({ protocol: "flowersec.proxy.websocket", version: 2 }),
       });
@@ -575,28 +617,37 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
         webSocketExtra,
       );
       const connectionID = randomID();
+      checkAssociation();
       await writeProxyFrame({ write: async (data) => await writeAll(stream, data, wait) }, "ProxyWebSocketOpen", {
         v: PROXY_WIRE_VERSION,
         conn_id: connectionID,
         path,
         headers,
+        ...(credentialContext === undefined ? {} : { credential_context: credentialContext,
+          credentials: "include", request_origin: externalOrigin }),
       });
       const reader = new ProxyByteReader(stream, wait);
-      const response = await readProxyFrame(reader, "ProxyWebSocketResponse", maxJsonFrameBytes) as WebSocketOpenResponse;
+      const response = await readProxyFrame(reader, "ProxyWebSocketResponse", maxMetadataBytes) as WebSocketOpenResponse;
       if (response.v !== PROXY_WIRE_VERSION || response.conn_id !== connectionID || response.ok !== true || (response.protocol !== undefined && typeof response.protocol !== "string")) {
         throw new Error("proxy WebSocket open failed");
       }
       buffered = reader.takeBuffered();
       return Object.freeze({ stream, protocol: response.protocol ?? "" });
     } catch (error) {
+      const failure = controller.signal.aborted ? controller.signal.reason : error;
+      // A failed open may never assign source, so reset() has no carrier to
+      // dispose. Settle the active transaction explicitly after the open
+      // attempt has resolved; a late successful open still reaches reset()
+      // first and releases only after its real cleanup completes.
       await reset().catch(() => undefined);
-      throw error instanceof SessionError ? error : new SessionError("operation_failed");
+      if (source === undefined) disposeStream();
+      throw failure instanceof SessionError ? failure : new SessionError("operation_failed");
     } finally { clearTimeout(timer); }
   }
 
   const runtime: ProxyRuntime = Object.freeze({
     limits: Object.freeze({
-      maxJsonFrameBytes,
+      maxMetadataBytes,
       maxChunkBytes,
       maxBodyBytes,
       maxWsFrameBytes,
@@ -609,6 +660,8 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
     fetch: fetchSession,
     dispatchFetch,
     openWebSocketStream,
+    cleanupStatus: () => Object.freeze({ status: active.size === 0 ? "complete" : "pending",
+      core_cleanup: active.size === 0 ? "complete" : "pending", pending_callbacks: BigInt(active.size) }),
     dispose: () => {
       if (disposed) return;
       disposed = true;
@@ -619,7 +672,10 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
       serviceWorkerBridge?.dispose();
     },
   });
-  if (serviceWorker !== undefined) {
+  registerProxyCredentialControl(runtime, async (body, signal) => execute({ id: randomID(), method: "POST",
+    path: PROXY_CREDENTIAL_CONTROL_PATH, headers: [{ name: "content-type", value: "application/cbor" }],
+    body: Uint8Array.from(body).buffer }, signal, undefined, true));
+  if (serviceWorker !== undefined && options.registerServiceWorkerBridge !== false) {
     serviceWorkerBridge = registerProxyRuntimeServiceWorkerBridge(runtime, serviceWorker);
   }
   return runtime;
@@ -628,29 +684,39 @@ export function createProxyRuntimeWithStreams(options: Omit<ProxyRuntimeOptions,
 export type EnsureServiceWorkerRuntimeRegisteredOptions = Readonly<{
   timeoutMs?: number;
   runtimeRegistrationToken?: string;
+  publicationOwnerID?: string;
+  publicationOwnerEpoch?: number;
 }>;
 
 export async function ensureServiceWorkerRuntimeRegistered(
   options: EnsureServiceWorkerRuntimeRegisteredOptions = {},
-): Promise<void> {
+): Promise<string | undefined> {
   const controller = globalThis.navigator?.serviceWorker?.controller;
-  if (controller === null || controller === undefined || typeof controller.postMessage !== "function") return;
+  if (controller === null || controller === undefined || typeof controller.postMessage !== "function") return undefined;
   const timeoutMs = options.timeoutMs ?? 2_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 60_000) throw new TypeError("invalid runtime registration timeout");
   const token = normalizeToken(options.runtimeRegistrationToken);
+  const publicationOwnerID = options.publicationOwnerID;
+  const publicationOwnerEpoch = options.publicationOwnerEpoch;
+  if ((publicationOwnerID === undefined) !== (publicationOwnerEpoch === undefined) ||
+    publicationOwnerID !== undefined && (publicationOwnerID === "" || publicationOwnerEpoch === undefined || !Number.isSafeInteger(publicationOwnerEpoch) || publicationOwnerEpoch < 1)) {
+    throw new TypeError("invalid publication owner registration");
+  }
   const channel = new MessageChannel();
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<string | undefined>((resolve, reject) => {
     let settled = false;
-    const finish = (error?: Error) => {
+    const finish = (error?: Error, claim?: string): void => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       channel.port1.close();
-      error === undefined ? resolve() : reject(error);
+      error === undefined ? resolve(claim) : reject(error);
     };
     channel.port1.onmessage = (event) => {
       if (event.data?.type !== "flowersec-proxy:register-runtime-ack") return;
-      finish(event.data.ok === true ? undefined : new Error("service worker runtime registration rejected"));
+      if (event.data.ok !== true || typeof event.data.owner_claim !== "string" || event.data.owner_claim === "") {
+        finish(new Error("service worker runtime registration rejected"));
+      } else finish(undefined, event.data.owner_claim);
     };
     channel.port1.onmessageerror = () => finish(new Error("service worker runtime registration failed"));
     const timer = timeoutMs === 0 ? undefined : setTimeout(() => finish(new Error("service worker runtime registration timed out")), timeoutMs);
@@ -659,6 +725,7 @@ export async function ensureServiceWorkerRuntimeRegistered(
         type: "flowersec-proxy:register-runtime",
         version: 2,
         ...(token === undefined ? {} : { token }),
+        ...(publicationOwnerID === undefined ? {} : { owner_id: publicationOwnerID, owner_epoch: publicationOwnerEpoch }),
       }, [channel.port2]);
     } catch {
       finish(new Error("service worker runtime registration failed"));

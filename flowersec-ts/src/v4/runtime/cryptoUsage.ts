@@ -55,9 +55,9 @@ function capture(c: Omit<CryptoUsageConfig, "clock">): Captured {
 }
 export function cryptoUsageCharge(c: Omit<CryptoUsageConfig, "clock">): ResourceVector {
   const v = capture(c);
-  // Two live epoch counters, one Session counter and the fixed reusable key
-  // counters. RuntimeBytes covers handles, slot metadata and JS integer work.
-  return new ResourceVector([BigInt((v.keys * 4 + 18) * 8 + 2 * bitmapBytes) + v.runtimeBytes, 0n, 0n, BigInt(v.keys + 3), 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
+  // Hard and soft counters for two live epochs and fixed reusable keys,
+  // plus irreversible Session counters. RuntimeBytes covers handles, slot metadata and JS integer work.
+  return new ResourceVector([BigInt((v.keys * 7 + 30) * 8 + 2 * bitmapBytes) + v.runtimeBytes, 0n, 0n, BigInt(v.keys + 3), 0n, 0n, 0n, 0n, 0n, 0n, 0n]);
 }
 export function recordCryptoCost(aadBytes: number, plaintextBytes: number, tagBytes = 16): Triple {
   if (![aadBytes, plaintextBytes, tagBytes].every(n => Number.isSafeInteger(n) && n >= 0) || tagBytes !== 16) cryptoFailure("configuration_capacity");
@@ -66,7 +66,7 @@ export function recordCryptoCost(aadBytes: number, plaintextBytes: number, tagBy
   if (blocks > maximum || bytes > maximum) cryptoFailure("configuration_capacity");
   return Object.freeze([1n, blocks, bytes]);
 }
-interface EpochState { ledger: CryptoUsageLedger | undefined; readonly number: number; used: BigUint64Array; derived: Uint8Array; keys: number; closed: boolean }
+interface EpochState { ledger: CryptoUsageLedger | undefined; readonly number: number; used: BigUint64Array; soft: BigUint64Array; derived: Uint8Array; keys: number; closed: boolean }
 interface KeyState { ledger: CryptoUsageLedger | undefined; epoch: CryptoEpochUsage | undefined; readonly slot: number; readonly direction: 0 | 1; readonly scope: bigint }
 const epochs = new WeakMap<CryptoEpochUsage, EpochState>();
 const keys = new WeakMap<CryptoKeyUsage, KeyState>();
@@ -139,6 +139,7 @@ export class CryptoUsageLedger {
   #keySlots: (CryptoKeyUsage | undefined)[];
   #keyPositions: (KeyPositionState | undefined)[];
   #keyUsage: BigUint64Array;
+  #keySoftUsage: BigUint64Array;
   #epochCount = 0;
   #derivations = 0n;
   #closed = false;
@@ -151,7 +152,7 @@ export class CryptoUsageLedger {
     if (!(clock instanceof TrustedClock)) cryptoFailure("configuration_capacity");
     this.#clock = clock;
     this.#reservation = reservation.take(cryptoUsageCharge(c));
-    try { this.#session = new BigUint64Array(6); this.#epochSlots = Array<CryptoEpochUsage | undefined>(2).fill(undefined); this.#keySlots = Array<CryptoKeyUsage | undefined>(c.keys).fill(undefined); this.#keyPositions = Array<KeyPositionState | undefined>(c.keys).fill(undefined); this.#keyUsage = new BigUint64Array(c.keys * 3); }
+    try { this.#session = new BigUint64Array(6); this.#keySoftUsage = new BigUint64Array(c.keys * 3); this.#epochSlots = Array<CryptoEpochUsage | undefined>(2).fill(undefined); this.#keySlots = Array<CryptoKeyUsage | undefined>(c.keys).fill(undefined); this.#keyPositions = Array<KeyPositionState | undefined>(c.keys).fill(undefined); this.#keyUsage = new BigUint64Array(c.keys * 3); }
     catch (error) { this.#reservation.release(); this.#reservation = undefined; throw error; }
     Object.freeze(this);
   }
@@ -165,7 +166,7 @@ export class CryptoUsageLedger {
     this.#check();
     if (!Number.isSafeInteger(number) || number !== this.#epochCount || BigInt(number) >= BigInt(this.#config.limits.max_epochs)) cryptoFailure("record_epoch");
     const slot = this.#epochSlots.indexOf(undefined); if (slot < 0) cryptoFailure("crypto_busy");
-    const value = new CryptoEpochUsage(capability, { ledger: this, number, used: new BigUint64Array(6), derived: new Uint8Array(bitmapBytes), keys: 0, closed: false });
+    const value = new CryptoEpochUsage(capability, { ledger: this, number, used: new BigUint64Array(6), soft: new BigUint64Array(6), derived: new Uint8Array(bitmapBytes), keys: 0, closed: false });
     this.#epochSlots[slot] = value; this.#epochCount++;
     return value;
   }
@@ -213,7 +214,7 @@ export class CryptoUsageLedger {
   }
   bindKeyPositions(handle: CryptoKeyPositions, scope: bigint, direction: 0 | 1, original: ResourceReference): CryptoKeyPositions {
     this.#check(); const state = keyPositions.get(handle);
-    if (typeof scope !== "bigint" || scope < 1n || scope > maxStreamScope || !this.belongsTo(original) ||
+    if (typeof scope !== "bigint" || scope < 1n || (scope > maxStreamScope && scope !== datagramScope) || !this.belongsTo(original) ||
         state?.ledger !== this || state.closing || state.scope !== undefined || state.direction !== direction) cryptoFailure("crypto_owner");
     state.scope = scope; return handle;
   }
@@ -320,6 +321,50 @@ export class CryptoUsageLedger {
     }
     this.#cleanup();
   }
+  /** Called only at the final authenticated unique datagram acceptance gate.
+   * Failed opens remain spent in the hard ledger but cannot demand rekey. */
+  acceptDatagram(key: CryptoKeyUsage, cost: Triple): void {
+    this.checkKey(key);
+    const k = keys.get(key)!, e = epochs.get(k.epoch!)!;
+    if (k.direction === this.#config.sendDirection || k.scope !== datagramScope ||
+        cost.length !== 3 || cost.some(value => typeof value !== "bigint" || value < 0n || value > maximum)) cryptoFailure("crypto_owner");
+    const offset = k.direction * 3, keyOffset = k.slot * 3;
+    // Every accepted datagram has an earlier irreversible precharge.
+    if (cost.some((value, i) => value > this.#keyUsage[keyOffset + i]! - this.#keySoftUsage[keyOffset + i]!)) cryptoFailure("crypto_owner");
+    for (let i = 0; i < 3; i++) {
+      this.#keySoftUsage[keyOffset + i] = this.#keySoftUsage[keyOffset + i]! + cost[i]!;
+      e.soft[offset + i] = e.soft[offset + i]! + cost[i]!;
+    }
+  }
+  rekeySafetySnapshot(epoch: CryptoEpochUsage): Readonly<{ epoch: number; triggered: boolean }> {
+    this.#check(); const e = epochs.get(epoch);
+    if (e?.ledger !== this || e.closed) cryptoFailure("crypto_owner");
+    const reached = (value: bigint, limit: bigint, spare: bigint): boolean => {
+      const usable = limit - spare;
+      return usable <= 0n || value >= usable - usable / 5n;
+    };
+    const trigger = (values: BigUint64Array, offset: number, direction: 0 | 1, limits: Limits, reserve: Triple): boolean => {
+      const open = direction !== this.#config.sendDirection;
+      return reached(values[offset]!, BigInt(open ? limits.open_attempts : limits.seal_calls), reserve[0]) ||
+        reached(values[offset + 1]!, BigInt(limits.authentication_blocks), reserve[1]) ||
+        reached(values[offset + 2]!, BigInt(limits.ciphertext_bytes), reserve[2]);
+    };
+    let triggered = false;
+    for (const direction of [0, 1] as const) {
+      const offset = direction * 3, limits = this.#config.limits.session, reserve = this.#config.reserve;
+      const hard: Triple = [BigInt(direction === this.#config.sendDirection ? limits.seal_calls : limits.open_attempts),
+        BigInt(limits.authentication_blocks), BigInt(limits.ciphertext_bytes)];
+      if (hard.some((limit, i) => this.#session[offset + i]! > limit - reserve[i]!)) cryptoFailure("crypto_usage_exhausted");
+      triggered ||= trigger(e.soft, offset, direction, this.#config.limits.epoch, reserve);
+    }
+    for (const key of this.#keySlots) {
+      if (key === undefined) continue;
+      const k = keys.get(key)!;
+      if (k.epoch !== epoch) continue;
+      triggered ||= trigger(this.#keySoftUsage, k.slot * 3, k.direction, this.#config.limits.key, k.scope === 0n ? this.#config.reserve : zero);
+    }
+    return Object.freeze({ epoch: e.number, triggered });
+  }
   usageSnapshot(key: CryptoKeyUsage): Readonly<{ key: Triple; epoch: Triple; session: Triple; derivations: bigint; epochs: number }> {
     this.checkKey(key);
     const k = keys.get(key)!, e = epochs.get(k.epoch!)!;
@@ -345,13 +390,19 @@ export class CryptoUsageLedger {
       this.#keyUsage[keyOffset + i] = this.#keyUsage[keyOffset + i]! + cost[i]!;
       e.used[offset + i] = e.used[offset + i]! + cost[i]!;
       this.#session[offset + i] = this.#session[offset + i]! + cost[i]!;
+      // Reliable and outgoing datagram use stays spent even when a later
+      // provider/cancellation boundary drops the record.
+      if (!open || k.scope !== datagramScope) {
+        this.#keySoftUsage[keyOffset + i] = this.#keySoftUsage[keyOffset + i]! + cost[i]!;
+        e.soft[offset + i] = e.soft[offset + i]! + cost[i]!;
+      }
     }
     return cost;
   }
   closeKey(key: CryptoKeyUsage): void {
     const k = keys.get(key); if (k?.ledger !== this) return;
     const epoch = k.epoch!, e = epochs.get(epoch)!;
-    this.#keySlots[k.slot] = undefined; this.#keyUsage.fill(0n, k.slot * 3, k.slot * 3 + 3);
+    this.#keySlots[k.slot] = undefined; this.#keyUsage.fill(0n, k.slot * 3, k.slot * 3 + 3); this.#keySoftUsage.fill(0n, k.slot * 3, k.slot * 3 + 3);
     const position = this.#keyPositions[k.slot];
     if (position?.closing) this.#closeKeyPositions(position);
     k.ledger = undefined; k.epoch = undefined; e.keys--; this.#retireEpoch(epoch);
@@ -363,8 +414,8 @@ export class CryptoUsageLedger {
   #retireEpoch(epoch: CryptoEpochUsage): void {
     const e = epochs.get(epoch)!;
     if (!e.closed || e.keys !== 0) return;
-    this.#epochSlots[this.#epochSlots.indexOf(epoch)] = undefined; e.used.fill(0n); e.derived.fill(0);
-    e.used = new BigUint64Array(0); e.derived = new Uint8Array(0); e.ledger = undefined;
+    this.#epochSlots[this.#epochSlots.indexOf(epoch)] = undefined; e.used.fill(0n); e.soft.fill(0n); e.derived.fill(0);
+    e.used = new BigUint64Array(0); e.soft = new BigUint64Array(0); e.derived = new Uint8Array(0); e.ledger = undefined;
     this.#cleanup();
   }
   close(): void {
@@ -378,8 +429,8 @@ export class CryptoUsageLedger {
   }
   #cleanup(): void {
     if (!this.#closed || this.#possibleFailures !== 0 || this.#keySlots.some(k => k !== undefined) || this.#keyPositions.some(p => p !== undefined) || this.#epochSlots.some(e => e !== undefined)) return;
-    this.#keyUsage.fill(0n); this.#session.fill(0n); this.#reservation?.release(); this.#reservation = undefined;
-    this.#keyUsage = new BigUint64Array(0); this.#session = new BigUint64Array(0); this.#keySlots = []; this.#keyPositions = []; this.#epochSlots = [];
+    this.#keyUsage.fill(0n); this.#session.fill(0n); this.#keySoftUsage.fill(0n); this.#reservation?.release(); this.#reservation = undefined;
+    this.#keyUsage = new BigUint64Array(0); this.#session = new BigUint64Array(0); this.#keySoftUsage = new BigUint64Array(0); this.#keySlots = []; this.#keyPositions = []; this.#epochSlots = [];
     this.#clock = undefined; this.#pause = undefined;
   }
   cleanupComplete(): boolean { return this.#reservation === undefined; }

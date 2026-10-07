@@ -15,6 +15,8 @@ import (
 // by a caller-supplied safety flag, callback shape or peer capability.
 type MessageCodec struct {
 	direction         protocolv4.MessageStreamDirection
+	applicationBytes  uint64
+	execution         MessageCodecExecution
 	implementation    uint8
 	encodeApplication func(context.Context, any) ([]byte, error)
 	decodeApplication func(context.Context, []byte) (any, error)
@@ -22,20 +24,41 @@ type MessageCodec struct {
 	delegatesOwned    bool
 }
 
+// MessageCodecExecution describes the trusted local invocation shape. Both
+// modes use a real ordinary permit; only a synchronous function may reuse its
+// live direct ordinary stage. Independent calls never borrow that stage.
+type MessageCodecExecution uint8
+
+const (
+	MessageCodecSynchronous MessageCodecExecution = iota
+	MessageCodecIndependent
+)
+
+type ApplicationMessageCodecOptions struct {
+	Execution        MessageCodecExecution
+	Delegates        resourcev4.Reference
+	ApplicationBytes uint64
+}
+
 // ApplicationMessageCodec never receives the private incremental writer.
-// The declared output maximum comes from the definition, while the opaque
-// callback graph remains an application borrow with its own admitted backing.
-// The returned byte view must describe at most MaximumBytes of backing; the
+// The returned byte view must describe at most MaximumBytes of backing. The
 // SDK copies it before publication and never clears application-owned output.
+// ApplicationMessageCodec is the internal conservative default. Public callers
+// select their allocation responsibility explicitly through WithOptions.
 func ApplicationMessageCodec(direction protocolv4.MessageStreamDirection, encode func(context.Context, any) ([]byte, error), decode func(context.Context, []byte) (any, error), delegates resourcev4.Reference) (MessageCodec, error) {
+	return ApplicationMessageCodecWithOptions(direction, encode, decode, ApplicationMessageCodecOptions{Delegates: delegates, ApplicationBytes: uint64(direction.MaximumBytes)})
+}
+
+func ApplicationMessageCodecWithOptions(direction protocolv4.MessageStreamDirection, encode func(context.Context, any) ([]byte, error), decode func(context.Context, []byte) (any, error), options ApplicationMessageCodecOptions) (MessageCodec, error) {
 	c, err := primitiveMessageCodec(direction, 3)
-	if err != nil || encode == nil || decode == nil {
+	if err != nil || encode == nil || decode == nil || options.ApplicationBytes == 0 || options.ApplicationBytes > uint64(^uint64(0)>>1) || options.Execution > MessageCodecIndependent {
 		return MessageCodec{}, cryptov4.ErrConfiguration
 	}
-	if err := delegates.Check(); err != nil {
+	if err := options.Delegates.Check(); err != nil {
 		return MessageCodec{}, err
 	}
-	c.encodeApplication, c.decodeApplication, c.delegates = encode, decode, delegates
+	c.encodeApplication, c.decodeApplication, c.delegates = encode, decode, options.Delegates
+	c.applicationBytes, c.execution = options.ApplicationBytes, options.Execution
 	return c, nil
 }
 
@@ -73,7 +96,7 @@ func primitiveMessageCodec(direction protocolv4.MessageStreamDirection, implemen
 	return MessageCodec{direction: direction, implementation: implementation}, nil
 }
 func (c MessageCodec) matches(direction protocolv4.MessageStreamDirection) bool {
-	return c.implementation >= 1 && c.implementation <= 3 && c.direction == direction && (c.implementation != 3 || c.encodeApplication != nil && c.decodeApplication != nil)
+	return c.implementation >= 1 && c.implementation <= 3 && c.direction == direction && (c.implementation != 3 || c.encodeApplication != nil && c.decodeApplication != nil && c.applicationBytes != 0)
 }
 func (c MessageCodec) inputBytes(value any) (uint64, error) {
 	switch c.implementation {

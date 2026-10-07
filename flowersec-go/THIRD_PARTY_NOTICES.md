@@ -10,8 +10,6 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - github.com/flynn/noise v1.1.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/flynn/noise)
 - github.com/google/uuid v1.6.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/google/uuid)
 - github.com/gorilla/websocket v1.5.3 (Declared: BSD-2-Clause; selected: BSD-2-Clause; source: https://github.com/gorilla/websocket)
-- github.com/libp2p/go-buffer-pool v0.0.2 (Declared: MIT; selected: MIT; source: https://github.com/libp2p/go-buffer-pool)
-- github.com/libp2p/go-yamux/v5 v5.1.0 (Declared: MPL-2.0; selected: MPL-2.0; source: https://github.com/libp2p/go-yamux/v5)
 - github.com/mattn/go-isatty v0.0.24 (Declared: MIT; selected: MIT; source: https://github.com/mattn/go-isatty)
 - github.com/ncruces/go-strftime v1.0.0 (Declared: MIT; selected: MIT; source: https://github.com/ncruces/go-strftime)
 - github.com/quic-go/qpack v0.6.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/qpack)

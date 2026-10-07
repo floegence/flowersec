@@ -1,3 +1,7 @@
+import { originalNativeConnectionFailure } from "./runtime/nativeFailure.js";
+import { ConnectionFacts, unknownConnectionFacts } from "./runtime/connectionFacts.js";
+import { connectionLocalReport, type LocalReport } from "./localReport.js";
+import { ConnectionError, controllerFailureCode, sameConnectionDiagnostic, type ConnectionDiagnostic, type ConnectionFailurePhase, type ConnectionAttemptFacts } from "./connectionDiagnostic.js";
 import type { ClientSessionAdmission } from "./runtime/sessionAdmission.js";
 import type { ContractQueryPreparation } from "./runtime/queryRenewalPosition.js";
 import { controllerServiceSource } from "./runtime/controllerServiceSource.js";
@@ -20,6 +24,10 @@ import { TrustedDeadline, TrustedWindow, timerChunk } from "./runtime/deadline.j
 import { cleanupResult } from "./runtime/lifecycle.js";
 import type { RawStreamPreparation, CapturedRawStreamDeclaration } from "./runtime/rawStreamPreparation.js";
 import { captureRegistration, checkRawStreamKind } from "./runtime/streamRegistration.js";
+import { V4ControllerNotificationSubscription, type V4ControllerNotifications, type V4ControllerNotificationSubscriptionOptions, type V4ControllerNotificationHandler } from "./controllerNotifications.js";
+import type { V4MethodDefinition } from "./serviceDefinition.js";
+import { NotificationSubscribers, notificationSubscribersCharge } from "./runtime/notifyDispatch.js";
+import { dispatchControllerUnary, type V4UnaryOperation, type V4UnaryOptions, type V4UnaryStartResult } from "./unaryOperation.js";
 
 export interface V4ControllerInitializationContext<Dependencies extends V4ServiceDependencies> extends V4ApplicationContext {
   readonly services: V4InvocationServices<Dependencies>;
@@ -50,6 +58,7 @@ export interface V4ControllerConfig<Dependencies extends V4ServiceDependencies =
 export type V4ControllerReplaceOptions = OperationOptions & (
   | Readonly<{ retirement?: "drain"; retainUntilMS?: never }>
   | Readonly<{ retirement: "retain"; retainUntilMS: bigint }>);
+export type V4ControllerDispatchOptions = Pick<V4UnaryOptions, "context" | "signal">;
 export interface V4ControllerReplaceResult {
   readonly current: V4Session;
   readonly previous: V4Session | undefined;
@@ -68,7 +77,7 @@ export interface V4ControllerStatus {
   /** Opaque local source generation of the published current Session. */
   readonly generation: bigint;
   readonly headroom: "disabled" | "reserved" | "in_use" | "unavailable";
-  readonly lastError: unknown;
+  readonly diagnostic: ConnectionDiagnostic;
   readonly cleanup: V4CleanupStatus;
 }
 interface Link { readonly runtime: V4AuthenticatedSessionRuntime; readonly session: V4Session; readonly cleaned: Promise<void>; readonly dependencies: CandidateServiceDependencies; readonly generation: bigint }
@@ -91,6 +100,7 @@ interface Attempt {
   readonly retirement: "drain" | "retain";
   readonly retention: TrustedDeadline | undefined;
   readonly autoRetry: boolean;
+  readonly ordinal: bigint;
   readonly generation: bigint;
   readonly reject: (error: unknown) => void;
   streams?: RawStreamPreparation;
@@ -103,6 +113,7 @@ interface Attempt {
   timer: ReturnType<typeof setTimeout> | undefined;
   retryAfterMS?: bigint;
   retryAfterInvalid?: boolean;
+  transportFailure?: boolean;
 }
 export interface PreparedControllerService<Methods extends V4ServiceMethods> {
   readonly deadline: TrustedDeadline;
@@ -125,9 +136,7 @@ interface PreparedControllerConnection { start(): Promise<V4ControllerReplaceRes
 const token = Symbol("original v4 controller");
 const maxRetryAfterMS = 253402300799999n;
 function compactError(error: unknown): Error {
-  let reason = "controller_failed";
-  try { if (error instanceof Error && typeof error.message === "string") reason = error.message.slice(0, 256); } catch { /* Keep bounded fallback facts. */ }
-  return new Error(reason);
+  return new Error(controllerFailureCode(error));
 }
 const complete = cleanupResult({ status: "complete", core_cleanup: "complete", pending_callbacks: 0n });
 function duration(value: bigint): bigint {
@@ -165,6 +174,8 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
   #generation = 0n;
   #nextGeneration = 0n;
   #lastError: unknown;
+  #lastFailurePhase: ConnectionFailurePhase = "controller";
+  #lastConnectionFacts: ConnectionAttemptFacts | undefined;
   #initializing = false;
   #closing = false;
   #collecting = false;
@@ -181,6 +192,10 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
   #retryWake: (() => void) | undefined;
   #retryFailures = 0;
   #retryAfterMS: bigint | undefined;
+  #notificationOwners: NotificationSubscribers | undefined;
+  readonly #notificationSubscriptions = new Set<V4ControllerNotificationSubscription<any>>();
+  readonly notifications: V4ControllerNotifications;
+  readonly Notifications: V4ControllerNotifications;
 
   constructor(capability: symbol, environment: V4EnvironmentRuntime, config: V4ControllerConfig<Dependencies>) {
     if (capability !== token) throw new Error("owner_unavailable");
@@ -240,17 +255,58 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
       this.#check();
     } catch (error) { this.#resourceObserver?.(); this.#group?.close(); this.#dependency.release(); throw error; }
     servicePreparations.set(this, (definition, options, captured, root) => this.#prepareService(definition, options, captured, root));
+    const subscribeNotifications = <Input, Value = Input>(method: V4MethodDefinition<Input, any, "notify">,
+      handler: V4ControllerNotificationHandler<Value>, options: V4ControllerNotificationSubscriptionOptions<Input, Value>) => {
+      this.#check();
+      if (this.#notificationOwners === undefined) {
+        const { root, accounts, owner, runtimeBytes } = environment.resources;
+        const reference = environment.reserveConnectionWork("controller_notification_subscribers", notificationSubscribersCharge(runtimeBytes));
+        try { this.#notificationOwners = new NotificationSubscribers(root, accounts, owner, environment.clock, runtimeBytes, reference, charge => environment.reserveConnectionWork("controller_notification_registration", charge)); }
+        finally { reference.release(); }
+      }
+      const subscription = new V4ControllerNotificationSubscription(method, handler, options, environment, this.#notificationOwners);
+      this.#notificationSubscriptions.add(subscription as V4ControllerNotificationSubscription<any>);
+      subscription.onClosed(() => { this.#notificationSubscriptions.delete(subscription as V4ControllerNotificationSubscription<any>); this.#collect(); this.#wake(); });
+      const links = [...this.#links];
+      for (const link of links) subscription.attachSource(link.runtime);
+      const current = this.#current;
+      if (current !== undefined) {
+        const retired = this.#retired;
+        if (retired !== undefined) subscription.publishSource(retired.runtime, this.#retention === undefined ? "drain" : "retain");
+        subscription.publishSource(current.runtime, this.#retention === undefined ? "drain" : "retain");
+      }
+      return subscription;
+    };
+    this.notifications = Object.freeze({ subscribe: subscribeNotifications, Subscribe: subscribeNotifications });
+    this.Notifications = this.notifications;
     Object.defineProperty(this, "then", { value: undefined });
   }
 
   start(): void {
     this.#check(); if (this.#started) return; this.#started = true;
     try { void this.#replace({}, true).catch(() => undefined); }
-    catch (error) { this.#lastError = compactError(error); this.#wake(); throw error; }
+    catch (error) { this.#lastFailurePhase = "controller"; this.#lastError = new ConnectionError(controllerFailureCode(error), new ConnectionFacts().snapshot(), this.cleanupStatus()); this.#wake(); throw this.#lastError; }
   }
   replaceSession(options: V4ControllerReplaceOptions = {}): Promise<V4ControllerReplaceResult> {
     try { this.#check(); this.#started = true; this.#cancelRetry(); return this.#replace(options); }
-    catch (error) { this.#lastError = compactError(error); this.#wake(); return Promise.reject(error); }
+    catch (error) { this.#lastFailurePhase = "controller"; this.#lastError = new ConnectionError(controllerFailureCode(error), new ConnectionFacts().snapshot(), this.cleanupStatus()); this.#wake(); return Promise.reject(this.#lastError); }
+  }
+  subscribeNotification<Input, Value = Input>(method: V4MethodDefinition<Input, any, "notify">,
+    handler: V4ControllerNotificationHandler<Value>, options: V4ControllerNotificationSubscriptionOptions<Input, Value>) {
+    return this.notifications.subscribe(method, handler, options);
+  }
+  subscribeNotifications<Input, Value = Input>(method: V4MethodDefinition<Input, any, "notify">,
+    handler: V4ControllerNotificationHandler<Value>, options: V4ControllerNotificationSubscriptionOptions<Input, Value>) {
+    return this.notifications.subscribe(method, handler, options);
+  }
+  /** Start one operation that was prepared through this Controller's service
+   * binding. The operation retains its original route and can outlive a
+   * replacement; repeated calls join the same local admission outcome. */
+  dispatch<Value>(operation: V4UnaryOperation<Value>, options: V4ControllerDispatchOptions = {}): V4UnaryStartResult {
+    return dispatchControllerUnary(operation, this.#serviceGroup, options);
+  }
+  Dispatch<Value>(operation: V4UnaryOperation<Value>, options: V4ControllerDispatchOptions = {}): V4UnaryStartResult {
+    return this.dispatch(operation, options);
   }
   /** Wake an existing bounded reconnect wait. This never starts a parallel
    * attempt and never bypasses an authenticated absolute deadline. */
@@ -278,7 +334,7 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
       if (this.#blocked) throw new Error("initialization_blocked");
       if (this.#initializing) return undefined;
       if (this.#current !== undefined) return this.captureSession();
-      if (this.#attempt === undefined && this.#lastError !== undefined) throw this.#lastError;
+      if (this.#attempt === undefined && !this.#retryWaiting && this.#lastError !== undefined) throw this.#lastError;
       return undefined;
     }, options?.signal);
   }
@@ -307,6 +363,7 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
       const source = controllerServiceSource({ clock: environment.clock, group: this.#serviceGroup,
         check: () => this.#check(),
         capture: () => { this.captureSession(); return this.#current!.runtime; },
+        current: runtime => !this.#closed && !this.#blocked && !this.#initializing && this.#current?.runtime === runtime,
         target: session => {
           this.#check(); if (this.#blocked || this.#initializing) throw new Error("initialization_blocked");
           const selected = this.#current?.runtime === session ? this.#current : this.#retired?.runtime === session ? this.#retired : undefined;
@@ -389,7 +446,38 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
     return Object.freeze({ started: this.#started, closed: this.#closed, current: this.#current !== undefined,
       pending: this.#attempt !== undefined || this.#retryWaiting, retired: this.#retired !== undefined, initializationBlocked: this.#blocked || this.#initializing,
       attempts: this.#attempts, generation: this.#current?.generation ?? 0n,
-      headroom: !this.#headroomEnabled ? "disabled" : this.#headroom !== undefined ? "reserved" : this.#attempt !== undefined || this.#retired !== undefined ? "in_use" : "unavailable", lastError: this.#lastError, cleanup: this.cleanupStatus() });
+      headroom: !this.#headroomEnabled ? "disabled" : this.#headroom !== undefined ? "reserved" : this.#attempt !== undefined || this.#retired !== undefined ? "in_use" : "unavailable", diagnostic: this.diagnostic(), cleanup: this.cleanupStatus() });
+  }
+  /** A frozen monitoring snapshot, detached from the current Session. */
+  diagnostic(): ConnectionDiagnostic {
+    const state = this.#closed ? "closed" : this.#current !== undefined ? "connected" :
+      this.#attempt !== undefined ? "connecting" : this.#retryWaiting ? "waiting" :
+      this.#lastError !== undefined || this.#blocked ? "failed" : "idle";
+    const failure = this.#lastError === undefined ? undefined : Object.freeze({
+      phase: this.#lastFailurePhase, code: controllerFailureCode(this.#lastError),
+    });
+    return Object.freeze({ state, attempt: this.#attempts,
+      ...(this.#attempt?.connection === undefined && this.#lastConnectionFacts === undefined ? {} : { connection: this.#lastConnectionFacts ?? this.#attempt!.connection!.facts() }),
+      cleanup: this.cleanupStatus(),
+      ...(failure === undefined ? {} : { failure, retryDisposition: "preserve_facts" as const }) });
+  }
+  /** Explain only facts already observed by this Controller. */
+  localReport(): LocalReport {
+    const diagnostic = this.diagnostic();
+    return connectionLocalReport(diagnostic.failure?.code ?? "unknown", diagnostic.connection ?? unknownConnectionFacts(), diagnostic.cleanup ?? this.cleanupStatus());
+  }
+  LocalReport(): LocalReport { return this.localReport(); }
+  /** Uses the original bounded wait slots. Cancellation ends only this wait. */
+  waitForDiagnostic(previous: ConnectionDiagnostic, options?: OperationOptions): Promise<ConnectionDiagnostic> {
+    const captured: ConnectionDiagnostic = Object.freeze({ state: previous.state, attempt: previous.attempt,
+      ...(previous.connection === undefined ? {} : { connection: Object.freeze({ ...previous.connection }) }),
+      ...(previous.cleanup === undefined ? {} : { cleanup: Object.freeze({ ...previous.cleanup }) }),
+      ...(previous.failure === undefined ? {} : { failure: Object.freeze({ phase: previous.failure.phase, code: previous.failure.code }) }),
+      ...(previous.retryDisposition === undefined ? {} : { retryDisposition: previous.retryDisposition }) });
+    return this.#wait(() => {
+      const latest = this.diagnostic();
+      return this.#closed || !sameConnectionDiagnostic(captured, latest) ? latest : undefined;
+    }, options?.signal);
   }
   cleanupStatus(): V4CleanupStatus {
     if (this.#dependency === undefined) return complete;
@@ -403,6 +491,7 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
     if (this.#closePromise !== undefined) return this.#closePromise;
     this.#closePromise = new Promise(resolve => { this.#closeResolve = resolve; });
     this.#closed = true; this.#closing = true;
+    for (const subscription of this.#notificationSubscriptions) subscription.close();
     this.#cancelRetry();
     for (const closed of [...this.#serviceClosures]) closed();
     if (this.#headroomRetryTimer !== undefined) clearTimeout(this.#headroomRetryTimer); this.#headroomRetryTimer = undefined;
@@ -431,7 +520,7 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
     catch { return false; }
   }
   #armRetry(deadline: bigint | undefined, increment: boolean): void {
-    if (this.#closed || this.#current !== undefined || this.#attempt !== undefined || this.#retryWaiting) return;
+    if (this.#closed || this.#blocked || this.#current !== undefined || this.#attempt !== undefined || this.#retryWaiting) return;
     if (increment) this.#retryFailures = Math.min(8, this.#retryFailures + 1);
     const delay = Math.min(30000, 250 * (2 ** (this.#retryFailures - 1)));
     this.#retryAfterMS = deadline;
@@ -453,9 +542,15 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
         this.#retryTimer = undefined; this.#retryWaiting = false; this.#retryWake = undefined;
         this.#armRetry(deadline, false); return;
       }
-      this.#retryTimer = undefined; this.#retryWaiting = false; this.#retryWake = undefined;
+      this.#retryTimer = undefined; this.#retryWake = undefined;
       this.#retryAfterMS = undefined;
-      void this.#replace({}).catch(() => undefined);
+      // Admission reservation can synchronously wake observers. Keep the retry
+      // visible until the next attempt owns its slot and clears the prior error.
+      try { void this.#replace({}, true).catch(() => undefined); }
+      catch (error) {
+        this.#lastFailurePhase = "controller";
+        this.#lastError = new ConnectionError(controllerFailureCode(error), this.#lastConnectionFacts ?? new ConnectionFacts().snapshot(), this.cleanupStatus());
+      } finally { this.#retryWaiting = false; this.#wake(); }
     });
     this.#wake();
   }
@@ -516,16 +611,25 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
     let resolve!: (result: V4ControllerReplaceResult) => void, reject!: Attempt["reject"];
     const promise = new Promise<V4ControllerReplaceResult>((yes, no) => { resolve = yes; reject = no; });
     const generation = ++this.#nextGeneration;
-    const attempt: Attempt = { abort, window, deadline, dependencies, workload, callback, previous, retirement, retention, autoRetry, reject, generation,
+    const attempt: Attempt = { abort, window, deadline, dependencies, workload, callback, previous, retirement, retention, autoRetry, reject, generation, ordinal: this.#attempts + 1n,
       connection, ...(streams === undefined ? {} : { streams }),
       candidate: undefined, entered: false, committed: false, settled: false, result: undefined, timer: undefined };
-    this.#attempt = attempt; this.#attempts++; this.#lastError = undefined;
+    this.#attempt = attempt; this.#attempts++; this.#lastError = undefined; this.#lastConnectionFacts = undefined; this.#lastFailurePhase = "connect";
     let started = false, finished = false;
     const cancel = (): void => { attempt.abort.abort(new Error("canceled")); };
     const aborted = (): void => {
       if (attempt.committed) return;
+      attempt.connection?.failed(attempt.abort.signal.reason);
       if (attempt.entered) this.#blocked = true;
-      if (!attempt.settled) { attempt.settled = true; this.#lastError = compactError(attempt.abort.signal.reason); reject(this.#lastError); }
+      if (!attempt.settled) {
+        attempt.settled = true;
+        const facts = attempt.connection!.facts();
+        this.#lastConnectionFacts = Object.freeze({ ...facts,
+          ...(facts.admissionState === "in_flight" ? { admissionState: "unknown" as const } : {}),
+          ...(attempt.candidate === undefined ? {} : { applicationPublish: "failed" as const }) });
+        this.#lastError = new ConnectionError(controllerFailureCode(attempt.abort.signal.reason), this.#lastConnectionFacts, this.cleanupStatus());
+        reject(this.#lastError);
+      }
       if (attempt.candidate !== undefined) void attempt.candidate.session.close().catch(() => undefined);
       if (!started) finish();
       this.#wake();
@@ -538,9 +642,13 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
       options.signal?.removeEventListener("abort", cancel); attempt.abort.signal.removeEventListener("abort", aborted);
       attempt.connection?.close(); attempt.streams?.close(); attempt.workload?.close(); attempt.callback?.close();
       if (attempt.candidate === undefined) attempt.dependencies.close();
-      this.#attempt = undefined; this.#initializing = false; this.#collect(); this.#wake();
+      this.#attempt = undefined; this.#initializing = false; this.#collect();
       if (!attempt.settled && attempt.result !== undefined) { attempt.settled = true; resolve(attempt.result); }
-      if (started && !attempt.committed && attempt.autoRetry && !attempt.entered && !attempt.retryAfterInvalid && !this.#closed && this.#current === undefined) this.#scheduleRetry(attempt.retryAfterMS);
+      const facts = this.#lastConnectionFacts ?? attempt.connection!.facts();
+      if (started && !attempt.committed && attempt.autoRetry && !attempt.entered && !attempt.retryAfterInvalid &&
+          (attempt.transportFailure || facts.phase === "not_started" && facts.spendState === "unspent") &&
+          !attempt.abort.signal.aborted && !this.#closed && !this.#blocked && this.#current === undefined) this.#scheduleRetry(attempt.retryAfterMS);
+      this.#wake();
     };
     // Cancellation can settle a prepared attempt before its factory starts it.
     void promise.catch(() => undefined);
@@ -568,6 +676,8 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
       connection = this.#environment!.prepareConnect(this.#config!.source, this.#config!.requirements, { signal: abort.signal }, admission => {
         this.#check(); dependencies.reserve(this.#environment!, admission, streamTargets); workload?.reserveCalls(admission); prepareService?.(admission);
         if (this.#streamDeclarations.length !== 0) streams = this.#environment!.reserveRawStreams(admission, this.#streamDeclarations);
+      }, () => this.#wake(), runtime => {
+        for (const subscription of this.#notificationSubscriptions) subscription.attachSource(runtime, false);
       });
       this.#check(); return { abort, dependencies, workload, callback, streams, connection };
     } catch (error) {
@@ -613,12 +723,13 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
     let published = false;
     try {
       this.#checkAttempt(attempt);
-      const runtime = await attempt.connection!.start();
+      const runtime = await attempt.connection!.start(attempt.ordinal, true);
       if (!(runtime instanceof V4AuthenticatedSessionRuntime)) { await runtime.close(); throw new Error("owner_unavailable"); }
       let cleaned!: () => void;
       const completion = new Promise<void>(resolve => { cleaned = resolve; });
       const link: Link = { runtime, session: new V4Session(runtime), cleaned: completion, dependencies: attempt.dependencies, generation: attempt.generation };
       attempt.candidate = link; this.#links.add(link); this.#observe(link, cleaned);
+      for (const subscription of this.#notificationSubscriptions) subscription.attachSource(link.runtime);
       this.#checkAttempt(attempt);
       await link.dependencies.prepare(runtime, attempt.deadline, attempt.abort.signal, () => this.#checkAttempt(attempt));
       this.#checkAttempt(attempt);
@@ -644,6 +755,9 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
       if (this.#current !== attempt.previous) throw new Error("not_ready");
       // No application/host call between the final gate and pointer publication.
       this.#current = link; this.#generation = link.generation; this.#retired = attempt.previous; this.#blocked = false; this.#initializing = false; published = true; attempt.committed = true;
+      for (const subscription of this.#notificationSubscriptions) subscription.stageSourcePublication(link.runtime, attempt.retirement);
+      for (const subscription of this.#notificationSubscriptions) subscription.flushSourcePublication();
+      this.#lastConnectionFacts = Object.freeze({ ...attempt.connection!.facts(), applicationPublish: "published" });
       // Backoff is scoped to one uninterrupted outage. Once a candidate has
       // crossed the publication gate, a later independent disconnect starts
       // at the minimum retry delay instead of inheriting stale failures from
@@ -661,7 +775,12 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
       attempt.result = Object.freeze({ current: link.session, previous: attempt.previous?.session, retirement: attempt.retirement, previousRetained, retirementError });
       this.#wake();
     } catch (error) {
-      this.#lastError = compactError(error); if (attempt.entered && !published) this.#blocked = true;
+      if (!published) attempt.connection?.failed(error);
+      attempt.transportFailure = !attempt.abort.signal.aborted && originalNativeConnectionFailure(error);
+      this.#lastFailurePhase = attempt.candidate === undefined ? "connect" : "session";
+      this.#lastConnectionFacts = Object.freeze({ ...attempt.connection!.facts(), ...(attempt.candidate === undefined ? {} : { applicationPublish: "failed" as const }) });
+      const failureCode = controllerFailureCode(error);
+      this.#lastError = new ConnectionError(attempt.entered && failureCode === "controller_failed" ? "initialization_failed" : failureCode, this.#lastConnectionFacts, this.cleanupStatus()); if (attempt.entered && !published) this.#blocked = true;
       const candidate = error as { readonly retryAfterMS?: unknown; readonly retryAfterUnixMS?: unknown };
       const rawRetryAfter = candidate !== null && typeof candidate === "object" ? candidate.retryAfterMS ?? candidate.retryAfterUnixMS : undefined;
       const retryAfter = typeof rawRetryAfter === "bigint" ? rawRetryAfter :
@@ -681,13 +800,18 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
   }
   #observe(link: Link, cleaned: () => void): void {
     link.runtime.cleanupOwner.onControllerCleanup(() => {
+      const wasCurrent = this.#current === link;
       link.dependencies.close(); this.#links.delete(link);
-      if (this.#current === link) this.#current = undefined;
+      if (wasCurrent) this.#current = undefined;
       if (this.#retired === link) {
         this.#retired = undefined; this.#retention = undefined;
         if (this.#retentionTimer !== undefined) clearTimeout(this.#retentionTimer); this.#retentionTimer = undefined;
       }
-      if (this.#started && this.#current === undefined && !this.#closed) this.#scheduleRetry();
+      for (const subscription of this.#notificationSubscriptions) subscription.retireSource(link.runtime);
+      // Candidate failures are decided by their original attempt after cleanup.
+      // Only the published current can start a separate reconnect cycle here.
+      if (wasCurrent && link.runtime.controllerReconnectAllowed() && this.#started &&
+          this.#current === undefined && this.#attempt === undefined && !this.#closed && !this.#blocked) this.#scheduleRetry();
       cleaned(); this.#collect(); this.#wake();
     });
   }
@@ -712,12 +836,14 @@ export class V4ConnectionController<Dependencies extends V4ServiceDependencies =
   #collectOwned(): void {
     if (this.#workload?.cleanupComplete()) this.#workload = undefined;
     this.#replenishHeadroom();
-    if (!this.#closed || this.#closing || this.#attempt !== undefined || this.#workload !== undefined || this.#links.size !== 0 || this.#group?.cleanupComplete() === false) {
+    if (this.#closed) for (const subscription of this.#notificationSubscriptions) subscription.close();
+    if (!this.#closed || this.#closing || this.#attempt !== undefined || this.#workload !== undefined || this.#links.size !== 0 || this.#group?.cleanupComplete() === false || this.#notificationSubscriptions.size !== 0) {
       if (this.#closed && this.#incomplete && !this.#closing) { this.#closeResolve?.(this.cleanupStatus()); this.#closeResolve = undefined; }
       return;
     }
     if (this.#closeTimer !== undefined) clearTimeout(this.#closeTimer); this.#closeTimer = undefined;
     this.#closeWindow = undefined; this.#environment = undefined; this.#config = undefined; this.#group = undefined; this.#declarations = []; this.#streamDeclarations = []; this.#headroomStreams = [];
+    this.#notificationOwners?.close(); this.#notificationOwners = undefined;
     this.#resourceObserver?.(); this.#resourceObserver = undefined;
     this.#dependency?.release(); this.#dependency = undefined; this.#current = undefined; this.#retired = undefined;
     this.#closeResolve?.(complete); this.#closeResolve = undefined;

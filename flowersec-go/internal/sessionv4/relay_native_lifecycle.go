@@ -235,14 +235,22 @@ func (n *relayNativePair) cleanupSlot(ctx context.Context, s *relayNativeSlot) e
 	if !s.active {
 		return nil
 	}
+	// Publish ended-direction facts under the same lock as slot reuse, after
+	// all original workers and native handles have joined. Buffered provider
+	// DATA can still name this scope; its tombstone never permits another OPEN.
+	if s.scope != 0 {
+		index, known := n.usedIndex(s.scope)
+		if !known || index < 0 {
+			return ErrOpenAssociation
+		}
+		n.retired[index] = 0b11
+	}
 	if s.pending {
 		n.pending--
 	}
 	if s.live {
 		n.resident--
 	}
-	// The exact used scope remains in n.used. Buffers/channels are reusable only
-	// after all aliases and native cleanup methods from this generation exit.
 	for d := 0; d < 2; d++ {
 		n.discardQueueLocked(s, d)
 		select {

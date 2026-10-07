@@ -73,9 +73,10 @@ func NewDirectIssuePolicy(c DirectIssuePolicyConfig, environment resourcev4.Refe
 	var selected *trustedIssuer
 	for i := range current.issuers {
 		entry := &current.issuers[i]
-		if entry.permission.Issuer == c.Issuer && (entry.permission.Schema != "Artifact" || entry.scope.Audience != c.Audience || entry.scope.Profile != c.CryptoProfile) {
-			return nil, resourcev4.Reference{}, CBORFailure("revocation_issuer_permission")
-		}
+		// One signing key may be authorized for multiple credential schemas
+		// (for example the Artifact and its endpoint certificates). Select the
+		// exact Artifact authorization for this issuance policy; unrelated
+		// schema entries sharing the key do not make the policy ambiguous.
 		if entry.permission.Schema == "Artifact" && entry.permission.Issuer == c.Issuer && entry.scope.Audience == c.Audience && entry.scope.Profile == c.CryptoProfile {
 			if selected != nil {
 				return nil, resourcev4.Reference{}, CBORFailure("revocation_issuer_permission")

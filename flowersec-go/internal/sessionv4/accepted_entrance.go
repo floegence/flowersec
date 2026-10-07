@@ -676,3 +676,33 @@ func (e *AcceptedEntrance) retireAdmission(admission *SessionAdmissionReservatio
 	e.owner = resourcev4.Reference{}
 	return nil
 }
+
+func (g *acceptedAuthorization) WithApplicationPublication(action func() error) error {
+	return g.sample(nil, func(a *protocolv4.EndpointAuthorization, _ *timev4.Deadline) error {
+		if a == nil {
+			return ErrApplicationAuthorization
+		}
+		return a.WithCurrentAuthorization(func() error {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if g.terminal != nil {
+				return g.terminal
+			}
+			if err := g.reservation.Check(); err != nil {
+				return err
+			}
+			if err := g.environment.Check(); err != nil {
+				return err
+			}
+			l := g.application
+			if l != nil {
+				l.mu.Lock()
+				defer l.mu.Unlock()
+				if !l.reserved || !l.authorized || l.revoked || l.authorization != a {
+					return ErrApplicationAuthorization
+				}
+			}
+			return action()
+		})
+	})
+}

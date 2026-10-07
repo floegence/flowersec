@@ -16,6 +16,9 @@ import (
 type proxyHTTPTransport struct {
 	mu        sync.Mutex
 	closed    bool
+	closing   bool
+	done      chan struct{}
+	cleaned   bool
 	scheme    string
 	authority string
 	native    *http.Transport
@@ -32,11 +35,11 @@ func newProxyHTTPTransport(config proxyServerConfig) *proxyHTTPTransport {
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
 	transport := &proxyHTTPTransport{
-		scheme: config.upstream.Scheme, authority: config.upstream.Host,
+		scheme: config.upstream.Scheme, authority: config.upstream.Host, done: make(chan struct{}),
 		slots: make([]proxyHTTPSlot, config.maxHTTP),
 		native: &http.Transport{
 			Proxy: nil, DisableCompression: true, DialContext: config.network.dialContext,
-			Protocols: protocols, MaxResponseHeaderBytes: int64(config.maxJSONFrame),
+			Protocols: protocols, MaxResponseHeaderBytes: int64(config.maxMetadata),
 		},
 	}
 	wrap := func(ctx context.Context, connection net.Conn) (net.Conn, error) {
@@ -45,7 +48,7 @@ func newProxyHTTPTransport(config proxyServerConfig) *proxyHTTPTransport {
 			_ = connection.Close()
 			return nil, ErrInvalidProxyServer
 		}
-		response := &proxyResponseConn{Conn: connection, maximum: config.maxJSONFrame}
+		response := &proxyResponseConn{Conn: connection, maximum: config.maxMetadata}
 		transport.mu.Lock()
 		slot.response = response
 		transport.mu.Unlock()
@@ -97,6 +100,12 @@ func (transport *proxyHTTPTransport) RoundTrip(request *http.Request) (*http.Res
 			_ = request.Body.Close()
 		}
 		return nil, ErrInvalidProxyServer
+	}
+	if err := checkProxyRequestCredentials(request.Context()); err != nil {
+		if request.Body != nil {
+			_ = request.Body.Close()
+		}
+		return nil, err
 	}
 	transport.mu.Lock()
 	var slot *proxyHTTPSlot
@@ -164,6 +173,15 @@ func (transport *proxyHTTPTransport) RoundTrip(request *http.Request) (*http.Res
 		exchange.finish(false)
 		return nil, err
 	}
+	if err := checkProxyRequestCredentials(outgoing.Context()); err != nil {
+		connection.Release()
+		_ = connection.Close()
+		if outgoing.Body != nil {
+			_ = outgoing.Body.Close()
+		}
+		exchange.finish(false)
+		return nil, err
+	}
 	response, err := connection.RoundTrip(outgoing)
 	if err == nil {
 		var headers http.Header
@@ -222,7 +240,12 @@ func (transport *proxyHTTPTransport) prepare(ctx context.Context, slot *proxyHTT
 
 func (transport *proxyHTTPTransport) Close() {
 	transport.mu.Lock()
+	if transport.closed {
+		transport.mu.Unlock()
+		return
+	}
 	transport.closed = true
+	transport.closing = true
 	transport.mu.Unlock()
 	for index := range transport.slots {
 		transport.mu.Lock()
@@ -232,6 +255,25 @@ func (transport *proxyHTTPTransport) Close() {
 			_ = connection.Close()
 		}
 	}
+	transport.mu.Lock()
+	transport.closing = false
+	transport.cleanupLocked()
+	transport.mu.Unlock()
+}
+
+// The transport owns native body/preparation methods until their real exits.
+// Logical connection closure never refunds these slots or their jar backing.
+func (transport *proxyHTTPTransport) cleanupLocked() {
+	if !transport.closed || transport.closing || transport.cleaned {
+		return
+	}
+	for _, slot := range transport.slots {
+		if slot.busy {
+			return
+		}
+	}
+	transport.cleaned = true
+	close(transport.done)
 }
 
 type proxyHTTPExchange struct {
@@ -254,6 +296,7 @@ func (exchange *proxyHTTPExchange) finish(response bool) {
 func (exchange *proxyHTTPExchange) releaseLocked() {
 	if exchange.returned && exchange.requestClosed && exchange.responseClosed && exchange.methods == 0 {
 		exchange.slot.busy = false
+		exchange.transport.cleanupLocked()
 	}
 }
 

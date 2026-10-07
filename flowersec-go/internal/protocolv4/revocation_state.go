@@ -394,8 +394,19 @@ func (s *NamespaceState) checkSuccessor(next *NamespaceState, retired [][16]byte
 		return CBORFailure("decoder_busy")
 	}
 	defer nw.mu.Unlock()
-	if err := w.reservation.CheckSameEnvironment(nw.reservation); err != nil {
-		return err
+	var bindingErr error
+	if replacement {
+		// Closed original history remains a charged immutable comparison input.
+		// This check confers no right to install/use the old State again.
+		bindingErr = w.reservation.CheckRetainedSameEnvironment(nw.reservation)
+		if bindingErr == nil {
+			bindingErr = nw.reservation.Check()
+		}
+	} else {
+		bindingErr = w.reservation.CheckSameEnvironment(nw.reservation)
+	}
+	if bindingErr != nil {
+		return bindingErr
 	}
 	sameMapping := w.rules == nw.rules
 	if replacement {

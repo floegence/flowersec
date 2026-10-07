@@ -16,11 +16,21 @@ import (
 )
 
 type managementCall struct {
-	serial                    uint64
-	done                      chan struct{}
-	response                  rpcv4.ManagementResponse
-	err                       error
-	used, complete, abandoned bool
+	token                                 uint64
+	serial                                uint64
+	done                                  chan struct{}
+	response                              rpcv4.ManagementResponse
+	err                                   error
+	diagnosticOperation                   *DiagnosticOperation
+	used, complete, abandoned, publishing bool
+}
+
+type earlyManagementResponse struct {
+	used       bool
+	ownerToken uint64
+	serial     uint64
+	response   rpcv4.ManagementResponse
+	err        error
 }
 
 // ManagementChannel owns the actual M Stream: one reader, two finite SDK
@@ -43,6 +53,8 @@ type ManagementChannel struct {
 	tasks                              sync.WaitGroup
 	workers                            sync.WaitGroup
 	calls                              [2]managementCall
+	earlyResponses                     [2]earlyManagementResponse
+	callToken                          uint64
 	waiters                            int
 	waitersDone                        chan struct{}
 	done, closeDone                    chan struct{}
@@ -113,7 +125,10 @@ func NewManagementChannel(owner *StreamOwnership, clock *timev4.Clock, executor 
 	if err != nil {
 		return nil, err
 	}
-	c.engine, err = rpcv4.NewExecutionManagementWire(rpcv4.ExecutionManagementWireConfig{Clock: clock, Sink: c.writer, RuntimeBytes: runtimeBytes}, refs[2])
+	c.engine, err = rpcv4.NewExecutionManagementWire(rpcv4.ExecutionManagementWireConfig{Clock: clock, Sink: c.writer, RuntimeBytes: runtimeBytes,
+		DrainDeadline: owner.admission.managementDeadline.Load,
+		AdmissionOpen: func() bool { return !owner.admission.managementSealed.Load() },
+	}, refs[2])
 	if err != nil {
 		return nil, err
 	}
@@ -135,15 +150,37 @@ func NewManagementChannel(owner *StreamOwnership, clock *timev4.Clock, executor 
 	return c, nil
 }
 
+func (c *ManagementChannel) remainingManagementMS(deadline *timev4.Deadline) (uint64, error) {
+	if c.owner.admission.managementSealed.Load() {
+		return 0, rpcv4.ErrManagementClosed
+	}
+	if original := c.owner.admission.managementDeadline.Load(); original != nil {
+		if err := deadline.TightenFrom(original); err != nil {
+			return 0, err
+		}
+	}
+	return deadline.RemainingMS()
+}
+
 // Request keeps the original deadline, target and authorization until the
 // complete response or generation cleanup. Local cancellation only abandons
 // the wait; an unresolved late response still occupies its original cell.
 func (c *ManagementChannel) Request(ctx context.Context, cancel bool, target rpcv4.ExecutionTarget, deadline *timev4.Deadline, access rpcv4.ExecutionAccess) (rpcv4.ManagementResponse, error) {
+	return c.requestWithDiagnostic(ctx, cancel, target, deadline, access, nil)
+}
+
+func (c *ManagementChannel) requestWithDiagnostic(ctx context.Context, cancel bool, target rpcv4.ExecutionTarget, deadline *timev4.Deadline, access rpcv4.ExecutionAccess, diagnosticOperation *DiagnosticOperation) (response rpcv4.ManagementResponse, returnErr error) {
+	transferred := false
+	defer func() {
+		if !transferred {
+			finishApplicationDiagnosticError(diagnosticOperation, returnErr)
+		}
+	}()
 	if c == nil || ctx == nil || deadline == nil || access == nil {
 		return rpcv4.ManagementResponse{}, cryptov4.ErrConfiguration
 	}
 	c.mu.Lock()
-	if c.closed {
+	if c.closed || c.owner != nil && c.owner.admission.managementSealed.Load() {
 		c.mu.Unlock()
 		return rpcv4.ManagementResponse{}, rpcv4.ErrManagementClosed
 	}
@@ -158,43 +195,110 @@ func (c *ManagementChannel) Request(ctx context.Context, cancel bool, target rpc
 		c.mu.Unlock()
 		return rpcv4.ManagementResponse{}, rpcv4.ErrCapacity
 	}
+	c.mu.Unlock()
 	if err := deadline.Check(); err != nil {
-		c.mu.Unlock()
 		return rpcv4.ManagementResponse{}, err
 	}
-	// Claim one original wait/result position before waiting for the original
-	// sending ring. No request serial is consumed while publication is pending.
+	c.mu.Lock()
+	if c.closed || c.owner != nil && c.owner.admission.managementSealed.Load() {
+		c.mu.Unlock()
+		return rpcv4.ManagementResponse{}, rpcv4.ErrManagementClosed
+	}
+	if c.calls[index].used {
+		index = -1
+		for i := range c.calls {
+			if !c.calls[i].used {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			c.mu.Unlock()
+			return rpcv4.ManagementResponse{}, rpcv4.ErrCapacity
+		}
+	}
+	// Claim the original result position after the caller deadline check. No
+	// request serial is consumed while publication is pending. The token gives
+	// an early response a stable owner even while its serial is still zero.
+	c.callToken++
+	if c.callToken == 0 {
+		c.mu.Unlock()
+		return rpcv4.ManagementResponse{}, cryptov4.ErrCapacity
+	}
 	cell := &c.calls[index]
-	*cell = managementCall{used: true, done: make(chan struct{})}
+	*cell = managementCall{token: c.callToken, used: true, done: make(chan struct{}), diagnosticOperation: diagnosticOperation}
+	transferred = true
 	c.waiters++
 	done := cell.done
 	c.mu.Unlock()
+	// The original waiter owns its engine tail until Abandon and diagnostic
+	// transfer have returned; physical cleanup must not overtake that tail.
+	defer func() {
+		c.mu.Lock()
+		c.leaveWaiterLocked()
+		c.mu.Unlock()
+	}()
 	timer := time.NewTimer(time.Hour)
 	timer.Stop()
 	defer timer.Stop()
 	for {
-		remaining, err := deadline.RemainingMS()
+		remaining, err := c.remainingManagementMS(deadline)
 		if err == nil {
 			err = ctx.Err()
 		}
 		wake := c.writer.ManagementWake()
 		c.mu.Lock()
-		if c.closed {
+		closed := c.closed
+		engine := c.engine
+		if !closed && err == nil {
+			cell.publishing = true
+		}
+		c.mu.Unlock()
+		if closed {
 			err = rpcv4.ErrManagementClosed
 		}
 		var serial uint64
 		if err == nil {
-			serial, err = c.engine.TryRequestDeadline(ctx, cancel, target, deadline, access)
+			serial, err = engine.TryRequestDeadlineOwned(ctx, cancel, target, deadline, access, cell.token)
+		}
+		abandonSerial := uint64(0)
+		c.mu.Lock()
+		cell.publishing = false
+		if err == nil {
+			closed = c.closed
+			if !closed {
+				cell.serial = serial
+				for i := range c.earlyResponses {
+					early := &c.earlyResponses[i]
+					if !early.used || early.ownerToken != cell.token || early.serial != serial {
+						continue
+					}
+					if !cell.complete {
+						cell.response, cell.err, cell.complete = early.response, early.err, true
+						close(cell.done)
+					}
+					*early = earlyManagementResponse{}
+				}
+				c.mu.Unlock()
+				break
+			}
+			// Close may race the finite engine publication. Retire the serial
+			// after releasing c.mu if the engine still owns it.
+			abandonSerial = serial
+			err = rpcv4.ErrManagementClosed
 		}
 		if err == nil {
-			cell.serial = serial
 			c.mu.Unlock()
 			break
 		}
 		if !errors.Is(err, cryptov4.ErrCapacity) {
-			*cell = managementCall{}
-			c.leaveWaiterLocked()
+			c.clearEarlyResponseLocked(cell.token)
+			operation := c.retireCallLocked(cell, err)
 			c.mu.Unlock()
+			if abandonSerial != 0 {
+				_ = engine.Abandon(abandonSerial)
+			}
+			finishApplicationDiagnosticError(operation, err)
 			return rpcv4.ManagementResponse{}, err
 		}
 		c.mu.Unlock()
@@ -209,7 +313,7 @@ func (c *ManagementChannel) Request(ctx context.Context, cancel bool, target rpc
 	}
 	var waitErr error
 	for waitErr == nil {
-		remaining, err := deadline.RemainingMS()
+		remaining, err := c.remainingManagementMS(deadline)
 		if err != nil {
 			waitErr = err
 			break
@@ -219,23 +323,25 @@ func (c *ManagementChannel) Request(ctx context.Context, cancel bool, target rpc
 		case <-done:
 			c.mu.Lock()
 			response, err := cell.response, cell.err
+			c.mu.Unlock()
 			if err == nil {
 				err = ctx.Err()
 			}
-			if err == nil {
+			if err == nil && response.Status != "unavailable" {
 				err = access.WithExecutionAccess(target, func(authority resourcev4.Reference) error {
-					if err := c.reservation.CheckSameEnvironment(authority); err != nil {
-						return err
-					}
-					return deadline.Check()
+					return c.reservation.CheckSameEnvironment(authority)
 				})
+			}
+			if err == nil {
+				err = deadline.Check()
 			}
 			if err != nil {
 				response = rpcv4.ManagementResponse{}
 			}
-			*cell = managementCall{}
-			c.leaveWaiterLocked()
+			c.mu.Lock()
+			operation := c.retireCallLocked(cell, err)
 			c.mu.Unlock()
+			finishApplicationDiagnosticError(operation, err)
 			return response, err
 		case <-ctx.Done():
 			waitErr = ctx.Err()
@@ -246,16 +352,53 @@ func (c *ManagementChannel) Request(ctx context.Context, cancel bool, target rpc
 	c.mu.Lock()
 	// Even an already completed result must pass this caller's original wait
 	// deadline. A simultaneous response is retired once, without redelivery.
+	engine := c.engine
+	abandonSerial := uint64(0)
+	var operation *DiagnosticOperation
 	if cell.complete || c.closed {
-		*cell = managementCall{}
+		c.clearEarlyResponseLocked(cell.token)
+		operation = c.retireCallLocked(cell, waitErr)
 	} else {
 		cell.abandoned = true
-		_ = c.engine.Abandon(cell.serial)
+		recordApplicationDiagnosticFailure(cell.diagnosticOperation, waitErr)
+		abandonSerial = cell.serial
 	}
-	c.leaveWaiterLocked()
 	c.mu.Unlock()
+	if abandonSerial != 0 {
+		_ = engine.Abandon(abandonSerial)
+	}
+	finishApplicationDiagnosticError(operation, waitErr)
 	return rpcv4.ManagementResponse{}, waitErr
 }
+
+// retireCallLocked withdraws only this observer. Once Close begins, the
+// original diagnostic reference stays in its cell until engine, writer and
+// native stream cleanup have all completed in WaitCleanup.
+func (c *ManagementChannel) retireCallLocked(cell *managementCall, cause error) *DiagnosticOperation {
+	if c.closed {
+		cell.abandoned = true
+		recordApplicationDiagnosticFailure(cell.diagnosticOperation, cause)
+		// The caller has taken its result. Only the original diagnostic
+		// responsibility remains; retain no returned error graph in this cell.
+		cell.err, cell.response = nil, rpcv4.ManagementResponse{}
+		return nil
+	}
+	operation := cell.diagnosticOperation
+	*cell = managementCall{}
+	return operation
+}
+
+func (c *ManagementChannel) clearEarlyResponseLocked(ownerToken uint64) {
+	if ownerToken == 0 {
+		return
+	}
+	for i := range c.earlyResponses {
+		if c.earlyResponses[i].used && c.earlyResponses[i].ownerToken == ownerToken {
+			c.earlyResponses[i] = earlyManagementResponse{}
+		}
+	}
+}
+
 func (c *ManagementChannel) leaveWaiterLocked() {
 	c.waiters--
 	if c.closed && c.waiters == 0 {
@@ -264,28 +407,76 @@ func (c *ManagementChannel) leaveWaiterLocked() {
 }
 func (c *ManagementChannel) acceptResponse(wire []byte) error {
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return rpcv4.ErrManagementClosed
+	}
+	engine := c.engine
+	c.mu.Unlock()
+	// Engine decoding and association validation own their own finite gate and
+	// must not be nested under the channel mutex.
+	response, serial, ownerToken, disposition, err := engine.AcceptResponseWithOwner(wire)
+	if err != nil && disposition != rpcv4.ManagementResponseRejected {
+		return err
+	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return rpcv4.ErrManagementClosed
 	}
-	response, serial, disposition, err := c.engine.AcceptResponse(wire)
-	if err != nil && disposition != rpcv4.ManagementResponseRejected {
-		return err
-	}
 	for i := range c.calls {
 		cell := &c.calls[i]
-		if cell.serial != serial || cell.complete {
+		if !cell.used || cell.serial != serial || cell.complete {
 			continue
 		}
 		if cell.abandoned {
+			operation := cell.diagnosticOperation
 			*cell = managementCall{}
+			finishApplicationDiagnostic(operation)
 			return nil
 		}
 		if disposition == rpcv4.ManagementResponseDiscarded {
+			// A response may leave the wire while the channel still holds the
+			// publication gate. Route it by the real owner token below; using
+			// the not-yet-installed serial would discard a valid result.
+			if ownerToken == 0 {
+				return nil
+			}
+		}
+		if disposition != rpcv4.ManagementResponseDiscarded {
+			cell.response, cell.err, cell.complete = response, err, true
+			close(cell.done)
 			return nil
 		}
-		cell.response, cell.err, cell.complete = response, err, true
-		close(cell.done)
+		// A discarded disposition can still carry the authenticated early
+		// response from the wire publication window. Preserve that fact in the
+		// real owner cell; processing/duplicate dispositions carry a zero
+		// response and must leave the waiter pending rather than waking it with
+		// an empty value. The done channel is closed exactly once.
+		if ownerToken == cell.token && response.Serial == serial {
+			cell.response, cell.err, cell.complete = response, err, true
+			close(cell.done)
+		}
+		return nil
+	}
+	if disposition == rpcv4.ManagementResponseDiscarded && ownerToken == 0 {
+		return nil
+	}
+	if ownerToken == 0 {
+		return nil
+	}
+	for i := range c.calls {
+		if !c.calls[i].used || c.calls[i].token != ownerToken || !c.calls[i].publishing {
+			continue
+		}
+		for j := range c.earlyResponses {
+			early := &c.earlyResponses[j]
+			if early.used {
+				continue
+			}
+			*early = earlyManagementResponse{used: true, ownerToken: ownerToken, serial: serial, response: response, err: err}
+			return nil
+		}
 		return nil
 	}
 	return nil
@@ -389,9 +580,11 @@ func (c *ManagementChannel) Run(ctx context.Context) (err error) {
 	}
 }
 func (c *ManagementChannel) queueManagement(ctx context.Context, job rpcv4.ManagementJob) error {
+	c.owner.admission.managementGate.Lock()
+	defer c.owner.admission.managementGate.Unlock()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed || c.owner.admission.managementSealed.Load() {
 		return rpcv4.ErrManagementClosed
 	}
 	for i, current := range c.managementTasks {
@@ -441,13 +634,15 @@ func (c *ManagementChannel) serve(ctx context.Context) {
 			}
 			if !task.published {
 				var err error
-				if task.response == (rpcv4.ManagementReply{}) {
-					if done && task.err == nil {
-						task.response = task.reply
-					} else if _, deadlineErr := task.job.RemainingMS(); done || deadlineErr != nil {
-						task.cancel()
-						task.response, err = task.job.Unavailable()
-					}
+				_, deadlineErr := task.job.RemainingMS()
+				if deadlineErr != nil || done && task.err != nil {
+					// Check every unpublished reply, including one selected before
+					// ring backpressure. Conversion retains the original slot/serial
+					// and any still-running provider tail until actual return.
+					task.cancel()
+					task.response, err = task.job.Unavailable()
+				} else if task.response == (rpcv4.ManagementReply{}) && done {
+					task.response = task.reply
 				}
 				if err != nil {
 					return
@@ -502,9 +697,9 @@ func (c *ManagementChannel) Close() {
 		if !p.used {
 			continue
 		}
-		if p.abandoned {
-			*p = managementCall{}
-		} else if !p.complete {
+		// All cells retain their diagnostic reference through physical cleanup,
+		// including abandoned observers and publication turns still in flight.
+		if !p.abandoned && !p.complete {
 			p.complete, p.err = true, rpcv4.ErrManagementClosed
 			close(p.done)
 		}
@@ -512,6 +707,7 @@ func (c *ManagementChannel) Close() {
 	if c.waiters == 0 {
 		close(c.waitersDone)
 	}
+	clear(c.earlyResponses[:])
 	c.mu.Unlock()
 	defer close(c.closeDone)
 	if cancel != nil {
@@ -571,7 +767,13 @@ func (c *ManagementChannel) WaitCleanup(ctx context.Context) error {
 		return err
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	var operations [2]*DiagnosticOperation
+	for i := range c.calls {
+		if c.calls[i].used {
+			operations[i] = c.calls[i].diagnosticOperation
+		}
+		c.calls[i] = managementCall{}
+	}
 	clear(c.buffer[:])
 	// All reader, service, waiter and provider aliases have physically exited.
 	c.parser, c.engine, c.writer, c.owner, c.resolver = nil, nil, nil, nil, nil
@@ -585,5 +787,11 @@ func (c *ManagementChannel) WaitCleanup(ctx context.Context) error {
 	c.reservation.Release()
 	c.reservation = resourcev4.Reference{}
 	c.cleaned = true
+	c.mu.Unlock()
+	// waitersDone guarantees the original finite outcome was recorded. A
+	// successful response racing Close has no failure to add at cleanup.
+	for _, operation := range operations {
+		finishApplicationDiagnostic(operation)
+	}
 	return nil
 }

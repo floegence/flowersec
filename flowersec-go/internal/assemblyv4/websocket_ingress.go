@@ -45,6 +45,7 @@ type WebSocketIngress struct {
 	reservation, shared             resourcev4.Reference
 	serverShared                    resourcev4.Reference
 	providerCharge                  resourcev4.Vector
+	pendingTunnel                   *ingressWebSocket
 	accounts                        [resourcev4.MaxAccountsPerCharge]resourcev4.Account
 	started, finished, httpFinished bool
 	provider, upgraded, cleaned     bool
@@ -77,7 +78,7 @@ func WebSocketIngressCharge(c WebSocketIngressConfig) (resourcev4.Vector, error)
 	} else if _, err := sessionv4.AcceptedEntranceRequirements(c.Entrance); err != nil {
 		return resourcev4.Vector{}, err
 	}
-	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(WebSocketIngress{})) + uint64(unsafe.Sizeof(ingressWebSocket{})) + uint64(unsafe.Sizeof(ingressHTTPWriter{})), resourcev4.Items: 2, resourcev4.WorkSlots: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
+	return (resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(WebSocketIngress{})) + uint64(unsafe.Sizeof(ingressWebSocket{})) + uint64(unsafe.Sizeof(ingressHTTPWriter{})), resourcev4.Items: 2, resourcev4.WorkSlots: 1, resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 }
 
 func NewWebSocketIngress(w http.ResponseWriter, r *http.Request, c WebSocketIngressConfig, reservation resourcev4.Reference) (*WebSocketIngress, error) {
@@ -199,11 +200,18 @@ func (f *WebSocketIngress) FinishHTTP() {
 	f.mu.Lock()
 	f.httpFinished = true
 	started := f.started
+	pending := f.pendingTunnel
+	f.pendingTunnel = nil
 	if !started {
 		f.writer, f.request = nil, nil
 	}
 	f.cleanupLocked()
 	f.mu.Unlock()
+	if pending != nil {
+		_ = pending.Close()
+		_ = pending.WaitCleanup(context.Background())
+		_ = pending.Retire()
+	}
 	if started {
 		<-f.done
 	}

@@ -454,25 +454,45 @@ func (d *Deadline) TightenFrom(original *Deadline) error {
 		return d.Check()
 	}
 	sample, err := original.clock.Sample()
+	if err != nil {
+		return err
+	}
+	return d.TightenFromAt(original, sample)
+}
+
+// TightenFromAt intersects original projections using an already obtained
+// sample, without calling the host clock while an admission gate is held.
+func (d *Deadline) TightenFromAt(original *Deadline, sample Sample) error {
+	if d == nil || original == nil || d.clock != original.clock {
+		return ErrOwner
+	}
+	if d == original {
+		return d.CheckAt(sample)
+	}
 	original.mu.Lock()
-	err = original.check(sample, err)
+	err := original.check(sample, nil)
 	cap, projection, until := original.cap, original.projection, original.monotonicDeadline
 	original.mu.Unlock()
 	if err != nil {
 		return err
 	}
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.cap = min(d.cap, cap)
 	if projection.SameEra(d.projection) {
 		d.monotonicDeadline = min(d.monotonicDeadline, until)
 	} else if projection.era > d.projection.era {
-		// A concurrent check may already have installed this owner's earlier
-		// projection in a newer era. An older parent sample cannot erase it.
 		d.projection, d.monotonicDeadline = projection, until
 	}
-	d.mu.Unlock()
-	sample, err = d.clock.Sample()
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.check(sample, err)
+	return d.check(sample, nil)
+}
+
+// CheckUsingSample advances an existing observation to the current local
+// frontier, without calling the host clock under a finite ownership gate.
+func (d *Deadline) CheckUsingSample(sample Sample) error {
+	current, err := d.clock.RefreshSample(sample)
+	if err != nil {
+		return err
+	}
+	return d.CheckAt(current)
 }

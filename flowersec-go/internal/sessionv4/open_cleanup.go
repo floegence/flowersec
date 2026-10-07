@@ -295,6 +295,7 @@ func (a *OpenAdmission) Retire() error {
 	a.stable = [2][]uint64{}
 	a.decoder = nil
 	a.diagnostics = nil
+	a.diagnosticOperation = nil
 	a.outcomeWake = nil
 	a.retired, a.cleaning = true, false
 	retired = true

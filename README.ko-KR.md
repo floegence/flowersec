@@ -87,31 +87,23 @@ Flowersec은 애플리케이션 세션과 이를 전달하는 네트워크 경�
 | 애플리케이션 스트림 핸들러 | 지원 | 지원 | 지원 | 지원 |
 | 장기 연결 자동 복구 | 지원 | 지원 | 지원 | 지원 |
 | 협상된 비신뢰 메시지 | 지원 | 지원 | 미지원 | 지원 |
-| 클라이언트 RPC 핸들러 | 지원 | 지원 | 미지원 | 지원 |
-| 서버 측 세션 수락 | 지원 | 지원 | 미지원 | 지원 |
-| 서버 세션 핸들러 | 지원 | 지원 | 미지원 | 지원 |
+| 클라이언트 RPC 핸들러 | 지원 | 지원 | 지원 | 지원 |
+| 서버 측 세션 수락 | 지원 | 지원 | 지원 | 지원 |
+| 서버 세션 핸들러 | 지원 | 지원 | 지원 | 지원 |
 | 제어 영역 발급 및 권한 부여 | 지원 | 미지원 | 미지원 | 미지원 |
-| 직접 및 터널 승인 | 지원 | 지원 | 미지원 | 지원 |
+| 직접 및 터널 승인 | 지원 | 지원 | 지원 | 지원 |
 | HTTP 및 WebSocket ProxyServer | 지원 | 지원 | 미지원 | 지원 |
 | 캐리어 중립 스트림 계약 | 지원 | 지원 | 지원 | 지원 |
-| Transport v3 와이어 보안 | 지원 | 지원 | 지원 | 지원 |
+| Transport v4 와이어 보안 | 지원 | 지원 | 지원 | 지원 |
 <!-- capability-table:end -->
-배포 profile은 플랫폼 가용성과 공유 Flowersec 애플리케이션 프로토콜을 분리합니다.
 
-| Profile | 런타임 | 필수 carrier 및 role 범위 | 선택 범위 |
-| --- | --- | --- | --- |
-| `native-server-core` | Go, Rust, Node.js | WebSocket 및 raw QUIC endpoint client, direct server, opaque tunnel runtime | WebTransport adapter |
-| `browser-client` | TypeScript browser | WebSocket endpoint client | Browser WebTransport adapter |
-| `apple-client` | Apple 플랫폼의 Swift | WSS endpoint client | 없음 |
-| `webtransport-server` | Go | WebTransport direct server 및 opaque tunnel runtime | 없음 |
+배포 profile은 필요한 네이티브 또는 브라우저 carrier와 역할 조합을 설명합니다. 각 SDK 가이드는 현재 API와 provider 자격을 구분합니다. 소스 선언만으로 실행 검증을 입증하지 않습니다.
 
-기계 판독 native-server-core profile에는 native runtime별 6개씩 집계된 runtime-role-carrier tuple 18개와 지원되는 path별 server unit 24개가 있습니다. Go H4는 WebTransport server tuple 2개와 path별 unit 2개를 추가합니다. interoperability matrix는 direct cell 18개와 tunnel cell 18개를 별도로 선언합니다. release gate는 Go를 포함하는 direct cell 10개와 pairwise tunnel cell 14개를 모두 검증하며, 나머지 direct cell 8개와 tunnel cell 4개는 명시적으로 미검증 상태입니다. 추가 WSS client profile 4개는 Swift 및 browser TypeScript에서 Go로 연결하는 direct와 tunnel path를 검증합니다. profile은 Artifact, handshake, RPC, stream, close, rekey 또는 authorization wire semantics를 변경하지 않습니다.
+현재 프로토콜은 인증된 연결 자료, 독립적인 namespace 신뢰, 제한된 세션, 타입 서비스와 명시적 cleanup을 사용합니다. 직접 연결과 터널 상호 운용성은 실행 가능한 매트릭스와 원래 provider로 검증합니다. 릴리스는 패키지 게시와 registry readback만 수행하고 승인 테스트는 실행하지 않습니다.
 
-각 패키지가 지원하는 정확한 플랫폼과 연결 조합은 SDK 가이드를 확인하세요.
+WebTransport에는 설정된 네이티브 또는 브라우저 provider가 필요합니다. 브라우저 지원은 실제 WebTransport API와 인증서 정책 기능에 따라 달라집니다. 현재 carrier, listener, relay 범위는 각 SDK 가이드를 참조하세요.
 
-WebTransport는 필수 native-server carrier contract에 포함되지 않는 선택적 adapter입니다. Go는 별도의 완전한 H4 webtransport-server profile을 선언하고 Browser profile은 브라우저 WebTransport API를 사용할 수 있을 때 H3를 사용합니다. Node.js와 Rust는 현재 production WebTransport adapter를 제공하지 않습니다. Go, Rust, Node.js의 native-server carrier surface는 WebSocket과 raw QUIC이며, pairwise interoperability는 matrix의 supported entry로만 선언합니다.
-
-`flowersec-private-loopback/1`은 공개 deployment capability registry 외부의 제품 전용 profile입니다. 전용 Go server 및 TypeScript browser API는 application 인증 numeric-loopback HTTP bridge로만 제한됩니다.
+서명된 `local_loopback` 접근 클래스는 같은 시스템에서 애플리케이션이 인증하는 HTTP 브리지를 지원합니다. 현재 세션 프로토콜을 사용하며 로컬 provider 설정이 필요합니다.
 
 <!-- readme-section:security -->
 <a id="security"></a>
@@ -119,14 +111,14 @@ WebTransport는 필수 native-server carrier contract에 포함되지 않는 선
 ## 보안
 
 - 직접 및 릴레이 세션 모두 애플리케이션 데이터를 종단 간 암호화합니다.
-- TLS 신뢰 정책은 각 v3 전송 후보에 바인딩됩니다. 공개 또는 배포 제공 CA 루트와 명시적 리프 인증서 pin은 상호 배타적이며 실패 후 강등되지 않습니다.
-- `flowersec-private-loopback/1`은 격리된 transport envelope이며 `flowersec/3`의 TLS mode나 capability가 아닙니다. 전용 API는 authority가 동일한 numeric-loopback origin과 일치하고 server application이 upgrade 전에 request를 승인한 경우에만 변경되지 않은 CA-mode v3 candidate 하나를 `ws://`로 매핑합니다. 일반 Go, TypeScript, Rust, Swift, Provider 및 tunnel path는 이 envelope을 거부합니다.
+- TLS 신뢰 정책은 각 v4 전송 후보에 바인딩됩니다. 공개 또는 배포 제공 CA 루트와 명시적 리프 인증서 pin은 상호 배타적이며 실패 후 강등되지 않습니다.
+- `local_loopback`은 서명된 숫자 루프백 endpoint에만 `ws://`를 허용하며 정확한 Origin과 upgrade 전 애플리케이션 인증을 요구합니다. 외부 TLS 검증을 보장하거나 평문 fallback을 허용하지 않습니다.
 - 연결 초대는 불투명하고 수명이 짧으며 한 번만 사용할 수 있습니다.
 - 자격 증명은 사용 전에 소비 처리되어 이미 사용한 초대를 재사용할 수 없습니다.
 - 릴레이는 암호화된 트래픽만 전달하며 애플리케이션 세션을 종료하지 않습니다.
 - 유효하지 않거나 지원하지 않는 연결은 안전하게 실패하고 제한된 공개 오류만 반환합니다.
 
-프로토콜과 위협 모델의 자세한 내용은 [API 계약](docs/API_CONTRACT.md), [전송 아키텍처](docs/TRANSPORT_V3_ARCHITECTURE.md), [위협 모델](docs/THREAT_MODEL.md)을 참고하세요.
+프로토콜과 위협 모델의 자세한 내용은 [API 계약](docs/API_CONTRACT.md), [전송 아키텍처](docs/TRANSPORT_V4_BINDING.md), [위협 모델](docs/THREAT_MODEL.md)을 참고하세요.
 
 <!-- readme-section:deploy-and-develop -->
 <a id="deploy-and-develop"></a>
@@ -135,7 +127,7 @@ WebTransport는 필수 native-server carrier contract에 포함되지 않는 선
 
 - [API 계약](docs/API_CONTRACT.md): SDK가 공유하는 안정적인 애플리케이션 동작입니다.
 - [오류 모델](docs/ERROR_MODEL.md): 공개 연결, 세션, RPC 오류입니다.
-- [전송 아키텍처](docs/TRANSPORT_V3_ARCHITECTURE.md): 직접 및 릴레이 연결 설계입니다.
+- [전송 아키텍처](docs/TRANSPORT_V4_BINDING.md): 직접 및 릴레이 연결 설계입니다.
 - [예제](examples/README.md): 실행 가능한 SDK 사용법입니다.
 
 Flowersec은 [MIT License](LICENSE)로 제공됩니다. 배포된 패키지와 릴리스 노트는 [GitHub Releases](https://github.com/floegence/flowersec/releases)에서 확인할 수 있습니다.

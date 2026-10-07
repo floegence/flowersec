@@ -17,6 +17,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/rawquic"
+
 	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -37,7 +39,7 @@ func main() {
 	case "websocket":
 		err = serveTCP(tlsConfig, leafDER)
 	case "raw_quic":
-		tlsConfig.NextProtos = []string{"flowersec-direct/3"}
+		tlsConfig.NextProtos = []string{rawquic.ALPNDirect}
 		err = serveQUIC(tlsConfig, leafDER)
 	case "webtransport":
 		tlsConfig.NextProtos = []string{http3.NextProtoH3}

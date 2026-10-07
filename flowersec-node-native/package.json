@@ -1,7 +1,7 @@
 {
   "name": "@floegence/flowersec-node-native",
   "version": "6.0.0",
-  "description": "Prebuilt Flowersec native transport driver for Node.js",
+  "description": "Prebuilt Flowersec native transports and SQLite admission support for Node.js",
   "license": "MIT",
   "repository": {
     "type": "git",

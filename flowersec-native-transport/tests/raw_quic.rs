@@ -1,12 +1,13 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use cert_test_builder::{
+use flowersec_native_transport::{
+    Cancellation, DatagramSendOutcome, PathProfile, PreparationBudget, PreparationLimits,
+    RawQuicClientConfig, RawQuicError, RawQuicLimits, RawQuicListener, RawQuicServerConfig,
+    RawQuicSession,
+};
+use rcgen::{
     BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer,
     KeyPair, KeyUsagePurpose, PKCS_ECDSA_P256_SHA256, PKCS_ECDSA_P384_SHA384,
-};
-use flowersec_native_transport::{
-    Cancellation, DatagramSendOutcome, PathProfile, RawQuicClientConfig, RawQuicError,
-    RawQuicLimits, RawQuicListener, RawQuicServerConfig, RawQuicSession,
 };
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use sha2::{Digest, Sha256};
@@ -18,11 +19,11 @@ const PRIVATE_KEY: &str = "MC4CAQAwBQYDK2VwBCIEICxYUWHqGoh0CBBohsaNg/NThm1n3UeWC
 #[test]
 fn raw_quic_requires_explicit_roots_and_tls_identity() {
     assert!(matches!(
-        RawQuicClientConfig::new_ca(PathProfile::Direct, vec![], limits()),
+        RawQuicClientConfig::new_ca(PathProfile::DirectV4, vec![], limits()),
         Err(RawQuicError::InvalidTrust)
     ));
     assert!(matches!(
-        RawQuicServerConfig::new(PathProfile::Direct, vec![], vec![], limits()),
+        RawQuicServerConfig::new(PathProfile::DirectV4, vec![], vec![], limits()),
         Err(RawQuicError::InvalidServerIdentity)
     ));
 }
@@ -30,7 +31,7 @@ fn raw_quic_requires_explicit_roots_and_tls_identity() {
 #[tokio::test]
 async fn raw_quic_runs_stream_datagram_and_bounded_shutdown() {
     let listener = Arc::new(
-        RawQuicListener::bind(loopback(), server_config(PathProfile::Direct))
+        RawQuicListener::bind(loopback(), server_config(PathProfile::DirectV4))
             .expect("bind raw QUIC listener"),
     );
     let address = listener.local_address().expect("listener address");
@@ -46,15 +47,15 @@ async fn raw_quic_runs_stream_datagram_and_bounded_shutdown() {
     let client = RawQuicSession::dial(
         vec![address],
         "localhost".into(),
-        client_config(PathProfile::Direct),
+        client_config(PathProfile::DirectV4),
         &Cancellation::new(),
     )
     .await
     .expect("connect raw QUIC");
     let server = accepting.await.expect("server task");
 
-    assert_eq!(client.profile(), PathProfile::Direct);
-    assert_eq!(server.profile(), PathProfile::Direct);
+    assert_eq!(client.profile(), PathProfile::DirectV4);
+    assert_eq!(server.profile(), PathProfile::DirectV4);
     assert_eq!(client.inbound_bidirectional_stream_capacity(), 10);
 
     let client_stream = client
@@ -120,9 +121,374 @@ async fn raw_quic_runs_stream_datagram_and_bounded_shutdown() {
 }
 
 #[tokio::test]
+async fn dial_from_retirement_releases_dedicated_port_while_listener_survives() {
+    let listener = Arc::new(
+        RawQuicListener::bind(loopback(), server_config(PathProfile::DirectV4))
+            .expect("bind raw QUIC listener"),
+    );
+    let address = listener.local_address().expect("listener address");
+    let probe = std::net::UdpSocket::bind(loopback()).expect("reserve client port");
+    let client_address = probe.local_addr().expect("client port");
+    drop(probe);
+
+    let accepting = {
+        let listener = listener.clone();
+        tokio::spawn(async move { listener.accept(&Cancellation::new()).await })
+    };
+    let client = RawQuicSession::dial_from(
+        client_address,
+        address,
+        "localhost".into(),
+        client_config(PathProfile::DirectV4),
+        &Cancellation::new(),
+    )
+    .await
+    .expect("dial from fixed client port");
+    let server = accepting
+        .await
+        .expect("server accept task")
+        .expect("server session");
+
+    // Retained RawQuicSession handles keep metadata and the connection
+    // capability alive, but wait_termination must retire the dedicated dial
+    // endpoint and release its UDP socket.
+    let retained = client.clone();
+    client.abort();
+    tokio::time::timeout(Duration::from_secs(2), retained.wait_termination())
+        .await
+        .expect("dedicated endpoint retirement");
+    let rebound = std::net::UdpSocket::bind(client_address)
+        .expect("dial endpoint released while session handle is retained");
+    drop(rebound);
+
+    // The accepted listener owns a shared endpoint. A new dial can reuse the
+    // exact client port while the listener and accepted sibling remain alive.
+    let accepting = {
+        let listener = listener.clone();
+        tokio::spawn(async move { listener.accept(&Cancellation::new()).await })
+    };
+    let sibling = RawQuicSession::dial_from(
+        client_address,
+        address,
+        "localhost".into(),
+        client_config(PathProfile::DirectV4),
+        &Cancellation::new(),
+    )
+    .await
+    .expect("reuse retired dial port");
+    let sibling_server = accepting
+        .await
+        .expect("sibling accept task")
+        .expect("sibling session");
+    let stream = sibling
+        .open_stream(&Cancellation::new())
+        .await
+        .expect("open sibling stream");
+    stream
+        .write(vec![0x5a], &Cancellation::new())
+        .await
+        .expect("write sibling stream");
+    let peer = sibling_server
+        .accept_stream(&Cancellation::new())
+        .await
+        .expect("accept sibling stream");
+    assert_eq!(
+        peer.read(1, &Cancellation::new())
+            .await
+            .expect("read sibling"),
+        Some(vec![0x5a])
+    );
+
+    sibling.abort();
+    tokio::time::timeout(Duration::from_secs(2), sibling.wait_termination())
+        .await
+        .expect("sibling dial endpoint retirement");
+    server.abort();
+    listener.close().await;
+}
+
+#[tokio::test]
+async fn canceled_dial_from_releases_dedicated_endpoint_before_return() {
+    let probe = std::net::UdpSocket::bind(loopback()).expect("reserve canceled client port");
+    let client_address = probe.local_addr().expect("canceled client port");
+    drop(probe);
+    let cancellation = Cancellation::new();
+    let task = tokio::spawn({
+        let cancellation = cancellation.clone();
+        async move {
+            RawQuicSession::dial_from(
+                client_address,
+                SocketAddr::new("127.0.0.1".parse().unwrap(), 9),
+                "localhost".into(),
+                client_config(PathProfile::DirectV4),
+                &cancellation,
+            )
+            .await
+        }
+    });
+    cancellation.cancel();
+    assert!(matches!(
+        task.await.expect("canceled dial task"),
+        Err(RawQuicError::Canceled | RawQuicError::Connect)
+    ));
+    std::net::UdpSocket::bind(client_address)
+        .expect("canceled dial endpoint released before return");
+}
+
+#[tokio::test]
+async fn listener_close_releases_udp_port_while_listener_is_retained() {
+    let listener =
+        RawQuicListener::bind(loopback(), server_config(PathProfile::DirectV4)).expect("listener");
+    let address = listener.local_address().expect("listener address");
+    tokio::time::timeout(Duration::from_secs(2), listener.close())
+        .await
+        .expect("close deadline");
+    let rebound = std::net::UdpSocket::bind(address)
+        .expect("closed listener must release its UDP port without dropping the public handle");
+    listener.close().await;
+    assert_eq!(
+        listener.local_address().expect("closed listener address"),
+        address
+    );
+    assert_eq!(rebound.local_addr().unwrap(), address);
+}
+
+#[tokio::test]
+async fn listener_close_releases_udp_port_while_sessions_and_streams_are_retained() {
+    let listener = Arc::new(
+        RawQuicListener::bind(loopback(), server_config(PathProfile::TunnelV4)).expect("listener"),
+    );
+    let address = listener.local_address().expect("listener address");
+    let accepting = {
+        let listener = listener.clone();
+        tokio::spawn(async move {
+            listener
+                .accept(&Cancellation::new())
+                .await
+                .expect("accepted session")
+        })
+    };
+    let client = RawQuicSession::dial(
+        vec![address],
+        "localhost".into(),
+        client_config(PathProfile::TunnelV4),
+        &Cancellation::new(),
+    )
+    .await
+    .expect("client");
+    let server = accepting.await.expect("accept task");
+    let outgoing = client
+        .open_stream(&Cancellation::new())
+        .await
+        .expect("outgoing stream");
+    outgoing
+        .write(vec![1], &Cancellation::new())
+        .await
+        .expect("stream write");
+    let incoming = server
+        .accept_stream(&Cancellation::new())
+        .await
+        .expect("incoming stream");
+    assert_eq!(
+        incoming.read(1, &Cancellation::new()).await.unwrap(),
+        Some(vec![1])
+    );
+    let pending_read = {
+        let incoming = incoming.clone();
+        tokio::spawn(async move { incoming.read(1, &Cancellation::new()).await })
+    };
+    tokio::time::timeout(Duration::from_secs(2), listener.close())
+        .await
+        .expect("close joins physical drivers");
+    let rebound = std::net::UdpSocket::bind(address)
+        .expect("closed sessions and streams must not retain the listener UDP port");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        server.wait_termination().await;
+        client.wait_termination().await;
+        incoming.wait_termination_current().await;
+        outgoing.wait_termination_current().await;
+        assert!(pending_read.await.expect("pending reader").is_err());
+    })
+    .await
+    .expect("all original session and stream owners terminate");
+    listener.close().await;
+    assert_eq!(
+        server.local_address().expect("closed session address"),
+        address
+    );
+    assert_eq!(
+        listener.local_address().expect("retained listener address"),
+        address
+    );
+    assert_eq!(rebound.local_addr().unwrap(), address);
+}
+
+#[tokio::test]
+async fn candidate_listener_accepts_one_connection_and_drains_after_sealing() {
+    let capacity = PreparationLimits {
+        preauth_input_bytes: 65_536,
+        address_attempts: 1,
+        work_units: 1024,
+    };
+    let budget = PreparationBudget::with_capacity(capacity).unwrap();
+    let candidate = budget.begin_candidate(capacity).unwrap();
+    let listener = RawQuicListener::bind(
+        loopback(),
+        server_config(PathProfile::TunnelV4)
+            .with_preparation_budget(candidate.clone())
+            .unwrap(),
+    )
+    .unwrap();
+    let address = listener.local_address().unwrap();
+    let cancel = Cancellation::new();
+    let (first, second, client) = tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(
+            listener.accept(&cancel),
+            listener.accept(&cancel),
+            RawQuicSession::dial(
+                vec![address],
+                "localhost".into(),
+                client_config(PathProfile::TunnelV4),
+                &cancel,
+            )
+        )
+    })
+    .await
+    .expect("both original accepts settle within the handshake deadline");
+    let client = client.expect("first candidate connection completes TLS");
+    let server = match (first, second) {
+        (Ok(server), Err(RawQuicError::ListenerClosed))
+        | (Err(RawQuicError::ListenerClosed), Ok(server)) => server,
+        _ => panic!("a candidate listener must admit exactly one connection"),
+    };
+    assert_eq!(candidate.usage().address_attempts, 1);
+    assert!(candidate.usage().preauth_input_bytes > 0);
+    server.complete_preparation().unwrap();
+    let prepared = budget.usage();
+    assert!(matches!(
+        listener.accept(&cancel).await,
+        Err(RawQuicError::ListenerClosed)
+    ));
+
+    let outgoing = client.open_stream(&cancel).await.unwrap();
+    outgoing.write(b"drain".to_vec(), &cancel).await.unwrap();
+    outgoing.close_write(&cancel).await.unwrap();
+    let incoming = server.accept_stream(&cancel).await.unwrap();
+    assert_eq!(
+        incoming.read(5, &cancel).await.unwrap(),
+        Some(b"drain".to_vec())
+    );
+    assert_eq!(incoming.read(1, &cancel).await.unwrap(), None);
+    assert_eq!(budget.usage(), prepared);
+    client.abort();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        server.wait_termination().await;
+        client.wait_termination().await;
+        incoming.wait_termination_current().await;
+        outgoing.wait_termination_current().await;
+        listener.wait_termination().await;
+    })
+    .await
+    .expect("the original listener and stream drivers join after drain");
+    let rebound = std::net::UdpSocket::bind(address)
+        .expect("retained candidate handles do not retain the original UDP port");
+    assert_eq!(rebound.local_addr().unwrap(), address);
+}
+
+#[tokio::test]
+async fn stopping_admission_keeps_accepted_sessions_alive_until_they_drain() {
+    let listener = Arc::new(
+        RawQuicListener::bind(loopback(), server_config(PathProfile::DirectV4)).expect("listener"),
+    );
+    let address = listener.local_address().expect("listener address");
+    let accepting = {
+        let listener = listener.clone();
+        tokio::spawn(async move {
+            listener
+                .accept(&Cancellation::new())
+                .await
+                .expect("accepted session")
+        })
+    };
+    let client = RawQuicSession::dial(
+        vec![address],
+        "localhost".into(),
+        client_config(PathProfile::DirectV4),
+        &Cancellation::new(),
+    )
+    .await
+    .expect("client");
+    let server = accepting.await.expect("accept task");
+    listener.stop_accepting_current();
+    let retired = {
+        let listener = listener.clone();
+        tokio::spawn(async move { listener.wait_termination().await })
+    };
+    assert!(matches!(
+        listener.accept(&Cancellation::new()).await,
+        Err(RawQuicError::ListenerClosed)
+    ));
+    let outgoing = client
+        .open_stream(&Cancellation::new())
+        .await
+        .expect("open after admission stopped");
+    outgoing
+        .write(vec![8], &Cancellation::new())
+        .await
+        .expect("write after admission stopped");
+    let incoming = server
+        .accept_stream(&Cancellation::new())
+        .await
+        .expect("accepted session remains usable");
+    assert_eq!(
+        incoming.read(1, &Cancellation::new()).await.unwrap(),
+        Some(vec![8])
+    );
+    assert!(
+        !retired.is_finished(),
+        "active session must keep its original listener alive"
+    );
+    server.abort();
+    tokio::time::timeout(Duration::from_secs(2), retired)
+        .await
+        .expect("listener retirement deadline")
+        .expect("retirement task");
+    let rebound = std::net::UdpSocket::bind(address)
+        .expect("drained listener port is released with all handles retained");
+    assert_eq!(
+        server.local_address().unwrap(),
+        rebound.local_addr().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn listener_close_joins_pending_accept_without_waiting_for_handle_drop() {
+    let listener = Arc::new(
+        RawQuicListener::bind(loopback(), server_config(PathProfile::DirectV4)).expect("listener"),
+    );
+    let address = listener.local_address().expect("listener address");
+    let pending = {
+        let listener = listener.clone();
+        tokio::spawn(async move { listener.accept(&Cancellation::new()).await })
+    };
+    listener.close().await;
+    assert!(matches!(
+        pending.await.expect("pending accept"),
+        Err(RawQuicError::ListenerClosed)
+    ));
+    let rebound = std::net::UdpSocket::bind(address)
+        .expect("pending accept does not retain closed listener port");
+    listener.close().await;
+    assert_eq!(
+        listener.local_address().unwrap(),
+        rebound.local_addr().unwrap()
+    );
+}
+
+#[tokio::test]
 async fn cancellation_settles_pending_accept_without_closing_listener() {
     let listener = Arc::new(
-        RawQuicListener::bind(loopback(), server_config(PathProfile::Tunnel))
+        RawQuicListener::bind(loopback(), server_config(PathProfile::TunnelV4))
             .expect("bind raw QUIC listener"),
     );
     let cancellation = Cancellation::new();
@@ -145,7 +511,7 @@ async fn cancellation_settles_pending_accept_without_closing_listener() {
 #[tokio::test]
 async fn canceled_close_write_can_retry_and_deliver_fin() {
     let listener = Arc::new(
-        RawQuicListener::bind(loopback(), server_config(PathProfile::Direct))
+        RawQuicListener::bind(loopback(), server_config(PathProfile::DirectV4))
             .expect("bind raw QUIC listener"),
     );
     let address = listener.local_address().expect("listener address");
@@ -161,7 +527,7 @@ async fn canceled_close_write_can_retry_and_deliver_fin() {
     let client = RawQuicSession::dial(
         vec![address],
         "localhost".into(),
-        client_config(PathProfile::Direct),
+        client_config(PathProfile::DirectV4),
         &Cancellation::new(),
     )
     .await
@@ -215,7 +581,7 @@ async fn canceled_close_write_can_retry_and_deliver_fin() {
 #[tokio::test]
 async fn migration_is_client_owned_and_preserves_the_connection() {
     let listener = Arc::new(
-        RawQuicListener::bind(loopback(), server_config(PathProfile::Direct))
+        RawQuicListener::bind(loopback(), server_config(PathProfile::DirectV4))
             .expect("bind raw QUIC listener"),
     );
     let address = listener.local_address().expect("listener address");
@@ -231,7 +597,7 @@ async fn migration_is_client_owned_and_preserves_the_connection() {
     let client = RawQuicSession::dial(
         vec![address],
         "localhost".into(),
-        client_config(PathProfile::Direct),
+        client_config(PathProfile::DirectV4),
         &Cancellation::new(),
     )
     .await
@@ -276,60 +642,60 @@ async fn migration_is_client_owned_and_preserves_the_connection() {
 
 #[tokio::test]
 async fn raw_quic_enforces_ca_and_pin_tls_profiles() {
-    let (root, ca_identity) = private_ca_identity();
-    let ca_client =
-        RawQuicClientConfig::new_ca(PathProfile::Direct, vec![root.as_ref().to_vec()], limits())
-            .expect("v3 CA client config");
-    let ca_server = RawQuicServerConfig::new(
-        PathProfile::Direct,
-        ca_identity.chain_der(),
-        ca_identity.key_der(),
-        limits(),
-    )
-    .expect("v3 CA server config");
-    let (client, server) = connect_pair(ca_client, ca_server)
-        .await
-        .expect("v3 CA connection");
-    client.abort();
-    server.abort();
+    for profile in [PathProfile::DirectV4, PathProfile::TunnelV4] {
+        let (root, ca_identity) = private_ca_identity();
+        let ca_client =
+            RawQuicClientConfig::new_ca(profile, vec![root.as_ref().to_vec()], limits())
+                .expect("wire 4 CA client config");
+        let ca_server = RawQuicServerConfig::new(
+            profile,
+            ca_identity.chain_der(),
+            ca_identity.key_der(),
+            limits(),
+        )
+        .expect("wire 4 CA server config");
+        let (client, server) = connect_pair(ca_client, ca_server)
+            .await
+            .expect("wire 4 CA connection");
+        client.abort();
+        server.abort();
 
-    let pinned_identity = self_signed_identity();
-    let pin: [u8; 32] = Sha256::digest(pinned_identity.leaf.as_ref()).into();
-    let pin_client =
-        RawQuicClientConfig::new_pin(PathProfile::Direct, vec![[0xA5; 32], pin], limits())
-            .expect("v3 pin client config");
-    let pin_server = RawQuicServerConfig::new(
-        PathProfile::Direct,
-        pinned_identity.chain_der(),
-        pinned_identity.key_der(),
-        limits(),
-    )
-    .expect("v3 pin server config");
-    let (client, server) = connect_pair(pin_client, pin_server)
-        .await
-        .expect("v3 pin connection");
-    client.abort();
-    server.abort();
+        let pinned_identity = self_signed_identity();
+        let pin: [u8; 32] = Sha256::digest(pinned_identity.leaf.as_ref()).into();
+        let pin_client = RawQuicClientConfig::new_pin(profile, vec![[0xA5; 32], pin], limits())
+            .expect("wire 4 pin client config");
+        let pin_server = RawQuicServerConfig::new(
+            profile,
+            pinned_identity.chain_der(),
+            pinned_identity.key_der(),
+            limits(),
+        )
+        .expect("wire 4 pin server config");
+        let (client, server) = connect_pair(pin_client, pin_server)
+            .await
+            .expect("wire 4 pin connection");
+        client.abort();
+        server.abort();
 
-    let mismatched_identity = self_signed_identity();
-    let mismatch_client =
-        RawQuicClientConfig::new_pin(PathProfile::Direct, vec![[0xA5; 32]], limits())
-            .expect("v3 mismatch client config");
-    let mismatch_server = RawQuicServerConfig::new(
-        PathProfile::Direct,
-        mismatched_identity.chain_der(),
-        mismatched_identity.key_der(),
-        limits(),
-    )
-    .expect("v3 mismatch server config");
-    assert!(matches!(
-        connect_pair(mismatch_client, mismatch_server).await,
-        Err(RawQuicError::PinMismatch)
-    ));
+        let mismatched_identity = self_signed_identity();
+        let mismatch_client = RawQuicClientConfig::new_pin(profile, vec![[0xA5; 32]], limits())
+            .expect("wire 4 mismatch client config");
+        let mismatch_server = RawQuicServerConfig::new(
+            profile,
+            mismatched_identity.chain_der(),
+            mismatched_identity.key_der(),
+            limits(),
+        )
+        .expect("wire 4 mismatch server config");
+        assert!(matches!(
+            connect_pair(mismatch_client, mismatch_server).await,
+            Err(RawQuicError::PinMismatch)
+        ));
+    }
 }
 
 #[tokio::test]
-async fn v3_raw_quic_rejects_every_pinned_certificate_profile_variant() {
+async fn raw_quic_rejects_every_pinned_certificate_profile_variant() {
     let now = OffsetDateTime::now_utc();
     for (name, algorithm, not_before, not_after) in [
         (
@@ -367,38 +733,73 @@ async fn v3_raw_quic_rejects_every_pinned_certificate_profile_variant() {
             .push(ExtendedKeyUsagePurpose::ServerAuth);
         let certificate = params.self_signed(&key).expect("certificate");
         let leaf = certificate.der().clone();
-        let identity = TestIdentityV3 {
+        let identity = TestIdentity {
             chain: vec![leaf.clone()],
             leaf: leaf.clone(),
             key: PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
         };
-        let pin: [u8; 32] = Sha256::digest(leaf.as_ref()).into();
-        let client = RawQuicClientConfig::new_pin(PathProfile::Direct, vec![pin], limits())
-            .expect("pin client");
-        let server = RawQuicServerConfig::new(
-            PathProfile::Direct,
-            identity.chain_der(),
-            identity.key_der(),
-            limits(),
-        )
-        .expect("server");
+        assert_pin_profile_rejected(name, &identity).await;
+    }
+}
+
+#[tokio::test]
+async fn raw_quic_rejects_invalid_pinned_certificate_extensions() {
+    for name in [
+        "key-usage-without-digital-signature",
+        "extended-key-usage-without-server-auth",
+    ] {
+        let key = KeyPair::generate().expect("P-256 key");
+        let mut params = CertificateParams::new(vec!["localhost".into()]).expect("params");
+        (params.not_before, params.not_after) = validity();
+        params.key_usages.push(KeyUsagePurpose::DigitalSignature);
+        params
+            .extended_key_usages
+            .push(ExtendedKeyUsagePurpose::ServerAuth);
+        match name {
+            "key-usage-without-digital-signature" => {
+                params.key_usages = vec![KeyUsagePurpose::KeyEncipherment];
+            }
+            "extended-key-usage-without-server-auth" => {
+                params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+            }
+            _ => unreachable!(),
+        }
+        let certificate = params.self_signed(&key).expect("certificate");
+        let leaf = certificate.der().clone();
+        let identity = TestIdentity {
+            chain: vec![leaf.clone()],
+            leaf,
+            key: PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
+        };
+        assert_pin_profile_rejected(name, &identity).await;
+    }
+}
+
+async fn assert_pin_profile_rejected(name: &str, identity: &TestIdentity) {
+    let pin: [u8; 32] = Sha256::digest(identity.leaf.as_ref()).into();
+    for profile in [PathProfile::DirectV4, PathProfile::TunnelV4] {
+        let client =
+            RawQuicClientConfig::new_pin(profile, vec![pin], limits()).expect("pin client");
+        let server =
+            RawQuicServerConfig::new(profile, identity.chain_der(), identity.key_der(), limits())
+                .unwrap_or_else(|error| panic!("server identity {name}: {error:?}"));
         assert!(
             matches!(
                 connect_pair(client, server).await,
                 Err(RawQuicError::PinCertificateInvalid)
             ),
-            "profile {name} was not rejected before a session became ready"
+            "certificate {name} was not rejected before a {profile:?} session became ready"
         );
     }
 }
 
-struct TestIdentityV3 {
+struct TestIdentity {
     chain: Vec<CertificateDer<'static>>,
     leaf: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
 }
 
-impl TestIdentityV3 {
+impl TestIdentity {
     fn chain_der(&self) -> Vec<Vec<u8>> {
         self.chain
             .iter()
@@ -442,7 +843,7 @@ fn validity() -> (OffsetDateTime, OffsetDateTime) {
     (now - TimeDuration::minutes(1), now + TimeDuration::hours(1))
 }
 
-fn self_signed_identity() -> TestIdentityV3 {
+fn self_signed_identity() -> TestIdentity {
     let (not_before, not_after) = validity();
     let key = KeyPair::generate().expect("P-256 key");
     let mut params = CertificateParams::new(vec!["localhost".into()]).expect("certificate params");
@@ -454,14 +855,14 @@ fn self_signed_identity() -> TestIdentityV3 {
         .push(ExtendedKeyUsagePurpose::ServerAuth);
     let certificate = params.self_signed(&key).expect("self-signed certificate");
     let leaf = certificate.der().clone();
-    TestIdentityV3 {
+    TestIdentity {
         chain: vec![leaf.clone()],
         leaf,
         key: PrivatePkcs8KeyDer::from(key.serialize_der()).into(),
     }
 }
 
-fn private_ca_identity() -> (CertificateDer<'static>, TestIdentityV3) {
+fn private_ca_identity() -> (CertificateDer<'static>, TestIdentity) {
     let (not_before, not_after) = validity();
     let ca_key = KeyPair::generate().expect("CA key");
     let mut ca_params = CertificateParams::new(Vec::<String>::new()).expect("CA params");
@@ -491,7 +892,7 @@ fn private_ca_identity() -> (CertificateDer<'static>, TestIdentityV3) {
     let leaf = leaf_certificate.der().clone();
     (
         root.clone(),
-        TestIdentityV3 {
+        TestIdentity {
             chain: vec![leaf.clone(), root],
             leaf,
             key: PrivatePkcs8KeyDer::from(leaf_key.serialize_der()).into(),

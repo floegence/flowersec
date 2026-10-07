@@ -9,123 +9,130 @@ import (
 
 // Durable history remains caller-owned. Explicit create and open have distinct
 // continuity requirements; neither operation silently creates or repairs the
-// other path. Environment and Session cleanup never delete this history.
-type V4SQLiteLimits = ledgerv4.SQLiteLimits
-type V4SQLiteIdentity = ledgerv4.SQLiteIdentity
-type V4SQLiteContinuity = ledgerv4.SQLiteContinuity
-type V4SQLiteBacking = ledgerv4.SQLiteBacking
-type V4SQLiteStore = ledgerv4.SQLiteStore
-type V4SQLitePoolAuthority = ledgerv4.SQLitePoolAuthority
-type V4SQLiteLiveAuthority = ledgerv4.SQLiteLiveAuthority
-type V4PoolSpendFacts = protocolv4.PoolSpendFacts
-type V4LiveActivationFields = protocolv4.LiveActivationFields
-type V4LiveSpendOwner = ledgerv4.LiveSpendOwner
-type V4LiveSpendReadTarget = ledgerv4.LiveSpendReadTarget
-type V4LiveSpendReadAccess = ledgerv4.LiveSpendReadAccess
+// other path. TransportEnvironment and Session cleanup never delete this history.
+type SQLiteLimits = ledgerv4.SQLiteLimits
+type SQLiteIdentity = ledgerv4.SQLiteIdentity
+type SQLiteContinuity = ledgerv4.SQLiteContinuity
+type SQLiteBacking = ledgerv4.SQLiteBacking
+type SQLiteStore = ledgerv4.SQLiteStore
+type SQLitePoolAuthority = ledgerv4.SQLitePoolAuthority
+type SQLiteLiveAuthority = ledgerv4.SQLiteLiveAuthority
+type PoolSpendFacts = protocolv4.PoolSpendFacts
+type PoolSpendFields = protocolv4.PoolSpendFields
 
-// V4SQLiteLiveSpendRead exposes only receipt and recovery facts. Original
+// PoolSpendObservation exposes status written only by the original SQLite
+// consumer. It cannot authorize consumption, recreate material or replace the
+// durable store. Configure it on PoolSessionInput before connecting.
+type PoolSpendObservation = ledgerv4.PoolSpendObservation
+type PoolSpendStatus = ledgerv4.PoolSpendStatus
+type LiveActivationFields = protocolv4.LiveActivationFields
+type LiveSpendOwner = ledgerv4.LiveSpendOwner
+type LiveSpendReadTarget = ledgerv4.LiveSpendReadTarget
+type LiveSpendReadAccess = ledgerv4.LiveSpendReadAccess
+
+// SQLiteLiveSpendRead exposes only receipt and recovery facts. Original
 // client proof delivery belongs to the internal authenticated control call.
-type V4SQLiteLiveSpendRead struct{ inner *ledgerv4.SQLiteLiveSpendRead }
-type V4SpendState = ledgerv4.SpendState
-type V4AuthorizationOutcome = ledgerv4.AuthorizationOutcome
-type V4SpendReceipt = ledgerv4.SpendReceipt
-type V4LiveAuthorizationFact = ledgerv4.LiveAuthorizationFact
-type V4LiveAuthorizationQuery = ledgerv4.LiveAuthorizationQuery
-type V4LiveSpendRetirement = ledgerv4.LiveSpendRetirement
-type V4LiveSpendRetirementPolicy = ledgerv4.LiveSpendRetirementPolicy
-type V4LiveMaintenanceConfig = ledgerv4.LiveMaintenanceConfig
-type V4LiveMaintenanceStatus = ledgerv4.LiveMaintenanceStatus
-type V4SQLiteLiveMaintenance = ledgerv4.SQLiteLiveMaintenance
-type V4StorageFormatReason = ledgerv4.StorageFormatReason
-type V4StorageRevision = ledgerv4.StorageRevision
-type V4StorageFormatProjection = ledgerv4.StorageFormatProjection
-type V4StorageFormatError = ledgerv4.StorageFormatError
+type SQLiteLiveSpendRead struct{ inner *ledgerv4.SQLiteLiveSpendRead }
+type SpendState = ledgerv4.SpendState
+type AuthorizationOutcome = ledgerv4.AuthorizationOutcome
+type SpendReceipt = ledgerv4.SpendReceipt
+type LiveAuthorizationFact = ledgerv4.LiveAuthorizationFact
+type LiveAuthorizationQuery = ledgerv4.LiveAuthorizationQuery
+type LiveSpendRetirement = ledgerv4.LiveSpendRetirement
+type LiveSpendRetirementPolicy = ledgerv4.LiveSpendRetirementPolicy
+type LiveMaintenanceConfig = ledgerv4.LiveMaintenanceConfig
+type LiveMaintenanceStatus = ledgerv4.LiveMaintenanceStatus
+type SQLiteLiveMaintenance = ledgerv4.SQLiteLiveMaintenance
+type StorageFormatReason = ledgerv4.StorageFormatReason
+type StorageRevision = ledgerv4.StorageRevision
+type StorageFormatProjection = ledgerv4.StorageFormatProjection
+type StorageFormatError = ledgerv4.StorageFormatError
 
 const (
-	V4SpendSpending                 = ledgerv4.SpendSpending
-	V4SpendConsumed                 = ledgerv4.SpendConsumed
-	V4AuthorizationUnknown          = ledgerv4.AuthorizationUnknown
-	V4AuthorizationDenied           = ledgerv4.AuthorizationDenied
-	V4AuthorizationAuthorized       = ledgerv4.AuthorizationAuthorized
-	V4AuthorizationNotStarted       = ledgerv4.AuthorizationNotStarted
-	V4StorageFormatBackend          = ledgerv4.StorageFormatBackend
-	V4StorageFormatManifest         = ledgerv4.StorageFormatManifest
-	V4StorageFormatIdentity         = ledgerv4.StorageFormatIdentity
-	V4StorageFormatRevisionConflict = ledgerv4.StorageFormatRevisionConflict
-	V4StorageFormatOlder            = ledgerv4.StorageFormatOlder
-	V4StorageFormatNewer            = ledgerv4.StorageFormatNewer
-	V4StorageFormatState            = ledgerv4.StorageFormatState
+	SpendSpending                 = ledgerv4.SpendSpending
+	SpendConsumed                 = ledgerv4.SpendConsumed
+	AuthorizationUnknown          = ledgerv4.AuthorizationUnknown
+	AuthorizationDenied           = ledgerv4.AuthorizationDenied
+	AuthorizationAuthorized       = ledgerv4.AuthorizationAuthorized
+	AuthorizationNotStarted       = ledgerv4.AuthorizationNotStarted
+	StorageFormatBackend          = ledgerv4.StorageFormatBackend
+	StorageFormatManifest         = ledgerv4.StorageFormatManifest
+	StorageFormatIdentity         = ledgerv4.StorageFormatIdentity
+	StorageFormatRevisionConflict = ledgerv4.StorageFormatRevisionConflict
+	StorageFormatOlder            = ledgerv4.StorageFormatOlder
+	StorageFormatNewer            = ledgerv4.StorageFormatNewer
+	StorageFormatState            = ledgerv4.StorageFormatState
 )
 
-var ErrV4StorageFormat = ledgerv4.ErrStorageFormat
-var ErrV4StorageUnavailable = ledgerv4.ErrStorageUnavailable
-var ErrV4MaterialNotReady = ledgerv4.ErrMaterialNotReady
-var ErrV4SpendNotObserved = ledgerv4.ErrSpendNotObserved
+var ErrStorageFormat = ledgerv4.ErrStorageFormat
+var ErrStorageUnavailable = ledgerv4.ErrStorageUnavailable
+var ErrMaterialNotReady = ledgerv4.ErrMaterialNotReady
+var ErrSpendNotObserved = ledgerv4.ErrSpendNotObserved
 
-func V4SQLiteBackingCharge(c V4SQLiteLimits) (V4ResourceVector, error) {
+func SQLiteBackingCharge(c SQLiteLimits) (ResourceVector, error) {
 	return ledgerv4.SQLiteBackingCharge(c)
 }
-func V4SQLiteStoreCharge(c V4SQLiteLimits) (V4ResourceVector, error) {
+func SQLiteStoreCharge(c SQLiteLimits) (ResourceVector, error) {
 	return ledgerv4.SQLiteStoreCharge(c)
 }
-func NewV4SQLiteBacking(path string, c V4SQLiteLimits, reservation, environment V4ResourceReference) (*V4SQLiteBacking, error) {
+func NewSQLiteBacking(path string, c SQLiteLimits, reservation, environment ResourceReference) (*SQLiteBacking, error) {
 	return ledgerv4.NewSQLiteBacking(path, c, reservation, environment)
 }
-func CreateV4SQLite(ctx context.Context, backing *V4SQLiteBacking, identity V4SQLiteIdentity, continuity V4SQLiteContinuity, reservation, environment V4ResourceReference) (*V4SQLiteStore, error) {
+func CreateSQLite(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, reservation, environment ResourceReference) (*SQLiteStore, error) {
 	return ledgerv4.CreateSQLite(ctx, backing, identity, continuity, reservation, environment)
 }
-func OpenV4SQLite(ctx context.Context, backing *V4SQLiteBacking, identity V4SQLiteIdentity, continuity V4SQLiteContinuity, reservation, environment V4ResourceReference) (*V4SQLiteStore, error) {
+func OpenSQLite(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, reservation, environment ResourceReference) (*SQLiteStore, error) {
 	return ledgerv4.OpenSQLite(ctx, backing, identity, continuity, reservation, environment)
 }
-func V4SQLitePoolSpendCharge(maxRecordBytes uint32) (V4ResourceVector, error) {
+func SQLitePoolSpendCharge(maxRecordBytes uint32) (ResourceVector, error) {
 	return ledgerv4.SQLitePoolSpendCharge(maxRecordBytes)
 }
-func V4SQLiteLiveSpendCharges(maxRecordBytes uint32, tunnel ...bool) (V4ResourceVector, V4ResourceVector, error) {
+func SQLiteLiveSpendCharges(maxRecordBytes uint32, tunnel ...bool) (ResourceVector, ResourceVector, error) {
 	return ledgerv4.SQLiteLiveSpendCharges(maxRecordBytes, tunnel...)
 }
-func V4SQLiteLiveSpendReadCharge(maxRecordBytes uint32, runtimeBytes uint64, tunnel ...bool) (V4ResourceVector, error) {
+func SQLiteLiveSpendReadCharge(maxRecordBytes uint32, runtimeBytes uint64, tunnel ...bool) (ResourceVector, error) {
 	return ledgerv4.SQLiteLiveSpendReadCharge(maxRecordBytes, runtimeBytes, tunnel...)
 }
-func NewV4SQLiteLiveSpendRead(ctx context.Context, store *V4SQLiteStore, access V4LiveSpendReadAccess, clock *V4Clock, deadline *V4Deadline, runtimeBytes uint64, reservation, dependencies V4ResourceReference) (*V4SQLiteLiveSpendRead, error) {
+func NewSQLiteLiveSpendRead(ctx context.Context, store *SQLiteStore, access LiveSpendReadAccess, clock *Clock, deadline *Deadline, runtimeBytes uint64, reservation, dependencies ResourceReference) (*SQLiteLiveSpendRead, error) {
 	reader, err := ledgerv4.NewSQLiteLiveSpendRead(ctx, store, access, clock, deadline, runtimeBytes, reservation, dependencies)
 	if err != nil {
 		return nil, err
 	}
-	return &V4SQLiteLiveSpendRead{inner: reader}, nil
+	return &SQLiteLiveSpendRead{inner: reader}, nil
 }
 
-func (r *V4SQLiteLiveSpendRead) Receipt() (V4SpendReceipt, error) {
+func (r *SQLiteLiveSpendRead) Receipt() (SpendReceipt, error) {
 	if r == nil || r.inner == nil {
-		return V4SpendReceipt{}, ledgerv4.ErrOwner
+		return SpendReceipt{}, ledgerv4.ErrOwner
 	}
 	return r.inner.Receipt()
 }
-func (r *V4SQLiteLiveSpendRead) RecoverExpired() (V4SpendReceipt, error) {
+func (r *SQLiteLiveSpendRead) RecoverExpired() (SpendReceipt, error) {
 	if r == nil || r.inner == nil {
-		return V4SpendReceipt{}, ledgerv4.ErrOwner
+		return SpendReceipt{}, ledgerv4.ErrOwner
 	}
 	return r.inner.RecoverExpired()
 }
-func (r *V4SQLiteLiveSpendRead) ReconcileAuthorization(query V4LiveAuthorizationQuery) (V4SpendReceipt, error) {
+func (r *SQLiteLiveSpendRead) ReconcileAuthorization(query LiveAuthorizationQuery) (SpendReceipt, error) {
 	if r == nil || r.inner == nil {
-		return V4SpendReceipt{}, ledgerv4.ErrOwner
+		return SpendReceipt{}, ledgerv4.ErrOwner
 	}
 	return r.inner.ReconcileAuthorization(query)
 }
-func (r *V4SQLiteLiveSpendRead) Close() {
+func (r *SQLiteLiveSpendRead) Close() {
 	if r != nil && r.inner != nil {
 		r.inner.Close()
 	}
 }
-func (r *V4SQLiteLiveSpendRead) Cleanup() error {
+func (r *SQLiteLiveSpendRead) Cleanup() error {
 	if r == nil || r.inner == nil {
 		return ledgerv4.ErrOwner
 	}
 	return r.inner.Cleanup()
 }
-func V4SQLiteLiveMaintenanceCharge(maxRecordBytes uint32, c V4LiveMaintenanceConfig) (V4ResourceVector, error) {
+func SQLiteLiveMaintenanceCharge(maxRecordBytes uint32, c LiveMaintenanceConfig) (ResourceVector, error) {
 	return ledgerv4.SQLiteLiveMaintenanceCharge(maxRecordBytes, c)
 }
-func NewV4SQLiteLiveMaintenance(ctx context.Context, store *V4SQLiteStore, clock *V4Clock, c V4LiveMaintenanceConfig, reservation, dependencies V4ResourceReference) (*V4SQLiteLiveMaintenance, error) {
+func NewSQLiteLiveMaintenance(ctx context.Context, store *SQLiteStore, clock *Clock, c LiveMaintenanceConfig, reservation, dependencies ResourceReference) (*SQLiteLiveMaintenance, error) {
 	return ledgerv4.NewSQLiteLiveMaintenance(ctx, store, clock, c, reservation, dependencies)
 }

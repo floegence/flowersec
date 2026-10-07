@@ -3,7 +3,6 @@ package sessionv4
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
 	"time"
 	"unsafe"
@@ -30,6 +29,8 @@ type NotifyChannel struct {
 	done                                        chan struct{}
 	closeDone                                   chan struct{}
 	writerDone                                  chan error
+	readerEnded                                 chan struct{}
+	inputEnded                                  bool
 	started, running, closed, cleaned, cleaning bool
 }
 
@@ -60,7 +61,7 @@ func NewNotifyChannel(owner *StreamOwnership, routes *rpcv4.ContractRoutes, chan
 	if err != nil {
 		return nil, err
 	}
-	c := &NotifyChannel{owner: owner, identity: channel, reservation: owned, done: make(chan struct{}), closeDone: make(chan struct{}), writerDone: make(chan error, 1)}
+	c := &NotifyChannel{owner: owner, identity: channel, reservation: owned, done: make(chan struct{}), closeDone: make(chan struct{}), writerDone: make(chan error, 1), readerEnded: make(chan struct{})}
 	defer func() {
 		if err != nil {
 			if c.receiver != nil {
@@ -115,7 +116,7 @@ func (c *NotifyChannel) availablePublisher() *rpcv4.NotifyPublisher {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed || c.inputEnded {
 		return nil
 	}
 	return c.publisher
@@ -179,11 +180,23 @@ func (c *NotifyChannel) Run(ctx context.Context) (err error) {
 			if err := receiver.End(); err != nil {
 				return err
 			}
-			return io.EOF
+			c.mu.Lock()
+			c.inputEnded = true
+			c.mu.Unlock()
+			if err := receiver.WaitDrained(runCtx); err != nil {
+				return err
+			}
+			// Input EOF preserves both received notification custody and the
+			// original publisher's accepted output until its physical tail ends.
+			close(c.readerEnded)
+			<-runCtx.Done()
+			return nil
 		}
 	}
 }
 func (c *NotifyChannel) publish(ctx context.Context, p *rpcv4.NotifyPublisher, w *RPCBatchWriter) error {
+	readerEnded := c.readerEnded
+	inputEnded := false
 	timer := time.NewTimer(time.Hour)
 	timer.Stop()
 	defer timer.Stop()
@@ -195,6 +208,9 @@ func (c *NotifyChannel) publish(ctx context.Context, p *rpcv4.NotifyPublisher, w
 		if progressed {
 			continue
 		}
+		if inputEnded && p.DrainIfIdle(w.drainIdle) {
+			return c.owner.Finish(ctx)
+		}
 		var deadline <-chan time.Time
 		milliseconds, cancellation, active := p.NextWake()
 		if active {
@@ -204,6 +220,8 @@ func (c *NotifyChannel) publish(ctx context.Context, p *rpcv4.NotifyPublisher, w
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-readerEnded:
+			inputEnded, readerEnded = true, nil
 		case <-deadline:
 		case <-cancellation:
 		case <-p.Wake():
@@ -235,6 +253,14 @@ func (c *NotifyChannel) Close() {
 	receiver.Close()
 	writer.Close()
 	_ = owner.Cancel()
+}
+
+func (c *NotifyChannel) drainIdle() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.closed && c.publisher != nil {
+		c.publisher.DrainIfIdle(c.writer.drainIdle)
+	}
 }
 
 // WaitCleanup joins actual publisher/reader exit and the last queue/provider

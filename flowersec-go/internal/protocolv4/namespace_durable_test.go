@@ -471,3 +471,254 @@ func TestDurableNamespaceAbnormalCommitKeepsCleanupReachable(t *testing.T) {
 		}
 	}
 }
+
+func TestDurableBootstrapInitialCommitRunCancelRetainsCandidateUntilExit(t *testing.T) {
+	f, s := durableFixture(t)
+	entered, canceled := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	s.hook(func(ctx context.Context, _ NamespaceContinuityRecord) error {
+		once.Do(func() { close(entered) })
+		<-ctx.Done()
+		close(canceled)
+		return ctx.Err()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan struct {
+		n   *LiveNamespace
+		err error
+	}, 1)
+	go func() {
+		n, err := f.operation.Run(ctx, f.provider)
+		result <- struct {
+			n   *LiveNamespace
+			err error
+		}{n, err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("initial durable commit did not start")
+	}
+	candidate := f.owner.namespace
+	if candidate == nil {
+		t.Fatal("initial commit did not retain candidate")
+	}
+	blocked := f.namespace.resources.Snapshot()
+	cancel()
+	select {
+	case <-canceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run cancellation did not reach CommitNamespace")
+	}
+	if got := f.namespace.resources.Snapshot(); got != blocked {
+		t.Fatalf("initial commit released charge before provider exit: before=%+v after=%+v", blocked, got)
+	}
+	select {
+	case outcome := <-result:
+		if outcome.n != nil || !errors.Is(outcome.err, context.Canceled) {
+			t.Fatalf("Run cancellation outcome = namespace=%v err=%v", outcome.n, outcome.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run did not join canceled initial commit")
+	}
+	if err := candidate.WaitCleanup(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	candidate.mu.Lock()
+	initializing, continuity := candidate.initializing, f.owner.continuityReady
+	candidate.mu.Unlock()
+	if !initializing || continuity {
+		t.Fatalf("canceled initial candidate state = initializing=%v continuity=%v", initializing, continuity)
+	}
+}
+
+func TestDurableBootstrapInitialCommitCloseRetainsActualTail(t *testing.T) {
+	f, s := durableFixture(t)
+	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	var releaseOnce sync.Once
+	releaseStore := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseStore()
+	s.hook(func(ctx context.Context, _ NamespaceContinuityRecord) error {
+		once.Do(func() { close(entered) })
+		<-ctx.Done()
+		close(canceled)
+		<-release
+		return ctx.Err()
+	})
+	result := make(chan error, 1)
+	go func() {
+		_, err := f.operation.Run(context.Background(), f.provider)
+		result <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("initial durable commit did not start")
+	}
+	blocked := f.namespace.resources.Snapshot()
+	f.operation.Close()
+	select {
+	case <-canceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not reach CommitNamespace")
+	}
+	wait, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	if err := f.operation.WaitCleanup(wait); !errors.Is(err, context.DeadlineExceeded) {
+		cancel()
+		t.Fatalf("Close released operation before provider exit: %v", err)
+	}
+	cancel()
+	if got := f.namespace.resources.Snapshot(); got != blocked {
+		t.Fatalf("Close released charge before provider exit: before=%+v after=%+v", blocked, got)
+	}
+	releaseStore()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Close result = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close did not join initial commit")
+	}
+}
+
+func TestDurableBootstrapInitialCommitWindowAndMaterialExpiryCancel(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		duration uint64
+		notAfter uint64
+		tick     uint64
+		want     error
+	}{
+		{name: "window", duration: 3000, notAfter: 10000, tick: 4000, want: timev4.ErrExpired},
+		{name: "material", duration: 4000, notAfter: 3000, tick: 3200, want: timev4.ErrExpired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, s := durableFixture(t)
+			f.operation.limits.DurationMS = tc.duration
+			tick := installPendingBootstrapClock(t, f)
+			if tc.notAfter != 10000 {
+				f.alter = func(v *cborRefValue) {
+					field := oracleField(t, f.namespace.r.cborReference, "TrustBootstrapResponse", v, "not_after_ms")
+					*field = *namespaceNumber(tc.notAfter)
+				}
+			}
+			entered, canceled := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			s.hook(func(ctx context.Context, _ NamespaceContinuityRecord) error {
+				once.Do(func() { close(entered) })
+				<-ctx.Done()
+				close(canceled)
+				return nil
+			})
+			result := make(chan error, 1)
+			go func() {
+				_, err := f.operation.Run(context.Background(), f.provider)
+				result <- err
+			}()
+			// Prove the pending issuance first, then block the initial commit.
+			tick.Store(1200)
+			wakeBootstrap(f.operation)
+			select {
+			case <-entered:
+			case <-time.After(3 * time.Second):
+				t.Fatal("initial durable commit did not start")
+			}
+			tick.Store(tc.tick)
+			wakeBootstrap(f.operation)
+			select {
+			case <-canceled:
+			case <-time.After(3 * time.Second):
+				t.Fatalf("%s expiry did not cancel initial commit", tc.name)
+			}
+			select {
+			case err := <-result:
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("%s expiry result = %v, want %v", tc.name, err, tc.want)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatalf("%s expiry did not join initial commit", tc.name)
+			}
+		})
+	}
+}
+
+func TestDurableBootstrapInitialCommitLateSuccessDoesNotDeliver(t *testing.T) {
+	f, s := durableFixture(t)
+	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	var releaseOnce sync.Once
+	releaseStore := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseStore()
+	s.hook(func(ctx context.Context, _ NamespaceContinuityRecord) error {
+		once.Do(func() { close(entered) })
+		<-ctx.Done()
+		close(canceled)
+		<-release
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan struct {
+		n   *LiveNamespace
+		err error
+	}, 1)
+	go func() {
+		n, err := f.operation.Run(ctx, f.provider)
+		result <- struct {
+			n   *LiveNamespace
+			err error
+		}{n, err}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("initial durable commit did not start")
+	}
+	candidate := f.owner.namespace
+	blocked := f.namespace.resources.Snapshot()
+	cancel()
+	select {
+	case <-canceled:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Run cancellation did not reach late commit")
+	}
+	select {
+	case outcome := <-result:
+		t.Fatalf("late commit returned before provider exit: namespace=%v err=%v", outcome.n, outcome.err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if got := f.namespace.resources.Snapshot(); got != blocked {
+		t.Fatalf("late commit released charge before provider exit: before=%+v after=%+v", blocked, got)
+	}
+	candidate.mu.Lock()
+	busy, initializing := candidate.durable.busy, candidate.initializing
+	candidate.mu.Unlock()
+	if !busy || !initializing || f.owner.continuityReady {
+		t.Fatalf("late commit published before provider exit: busy=%v initializing=%v continuity=%v", busy, initializing, f.owner.continuityReady)
+	}
+	releaseStore()
+	select {
+	case outcome := <-result:
+		if outcome.n != nil || !errors.Is(outcome.err, context.Canceled) {
+			t.Fatalf("late commit outcome = namespace=%v err=%v", outcome.n, outcome.err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("late commit did not finish")
+	}
+}
+
+func TestDurableBootstrapDeliveredNamespaceOutlivesRunCancellation(t *testing.T) {
+	f, _ := durableFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	n, err := f.operation.Run(ctx, f.provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	h, _ := durableHead(t, f, 2)
+	if err := n.Observe(h); err != nil && !errors.Is(err, timev4.ErrPending) {
+		t.Fatalf("Environment-owned namespace rejected post-delivery update: %v", err)
+	}
+}

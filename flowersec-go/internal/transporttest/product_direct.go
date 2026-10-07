@@ -3,103 +3,91 @@ package transporttest
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
-	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/admissionv3"
-	websocketadmission "github.com/floegence/flowersec/flowersec-go/v6/internal/admissionv3/websocket"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/artifactv3"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/quicbase"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/rawquicv3"
-	carrierwsv3 "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/websocketv3"
-	carrierwtv3 "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/webtransportv3"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
-	internalrpc "github.com/floegence/flowersec/flowersec-go/v6/internal/rpc"
-	rpcv1 "github.com/floegence/flowersec/flowersec-go/v6/internal/rpcwire"
-	flowersessionv3 "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
-	gorillaws "github.com/gorilla/websocket"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 const releaseRunnerOrigin = "https://release-runner.flowersec.invalid"
+const releaseServiceNamespace = "flowersec.engineering.release"
 
 var errProductDirectEndpointClosed = errors.New("product direct endpoint closed")
 
-// ProductDirectEndpoint owns one long-lived TLS listener. Each Connect call
-// still issues and durably spends a distinct artifact, so cold-connect timing
-// excludes certificate and listener provisioning without weakening admission.
+// ProductDirectEndpoint reuses the original native listener. Every position
+// owns independently signed material, real admission and normal Noise/READY.
+// Namespace bootstrap and TLS remain original separately authenticated owners.
 type ProductDirectEndpoint struct {
-	kind              carrier.Kind
-	suite             protocolv3.Suite
-	listenHost        string
-	candidateHost     string
-	candidateURL      string
-	trustRoots        *x509.CertPool
-	certificateDER    []byte
-	certificateHash   [sha256.Size]byte
-	allowedOrigin     string
-	maxInboundStreams uint16
-	ctx               context.Context
-	cancel            context.CancelCauseFunc
-
-	pendingMu sync.Mutex
-	pending   map[[sha256.Size]byte]*admissionExpectation
-
-	closeOnce      sync.Once
-	closeErr       error
-	transportClose func() error
-
-	upgradeDiagnosticMu   sync.Mutex
-	upgradeDiagnostic     func(error)
-	admissionDiagnosticMu sync.Mutex
-	admissionDiagnostic   func(error)
+	kind                                                            carrier.Kind
+	profile, listenHost, candidateHost, candidateURL, allowedOrigin string
+	maxInboundStreams                                               uint16
+	browserRuntimeBound, browserIssued                              bool
+	certificateDER                                                  []byte
+	certificateHash                                                 [32]byte
+	server                                                          *interopharness.Server
+	listenerMu                                                      sync.RWMutex
+	transportMu                                                     sync.Mutex
+	handlers                                                        interopharness.HandlerConfig
+	reporter                                                        *interopharness.Reporter
+	registry                                                        *interopharness.AcceptedRegistry
+	ctx                                                             context.Context
+	cancel                                                          context.CancelCauseFunc
+	ready                                                           chan struct{}
+	closeOnce                                                       sync.Once
+	closeErr                                                        error
+	preparationMu                                                   sync.Mutex
+	prepared                                                        []*preparedProductDirectConnection
+	capacityPrepared                                                bool
+	diagnosticMu                                                    sync.Mutex
+	upgradeDiagnostic, admissionDiagnostic                          func(error)
 }
-
-// ProductDirectBrowserArtifact is a one-shot artifact issued by a release
-// endpoint for consumption by the real browser SDK. It intentionally exposes
-// only serialized input and the resulting server session.
 type ProductDirectBrowserArtifact struct {
 	endpoint *ProductDirectEndpoint
+	original interopharness.Material
 	rawJSON  string
-	expected *admissionExpectation
-	digest   [sha256.Size]byte
-
+	record   *interopharness.AcceptedRecord
 	mu       sync.Mutex
 	consumed bool
 }
 
-// ProductDirectPair is a one-shot production connection established through
-// the public opaque artifact and connector APIs.
+// ProductDirectTermination records communication separately from the actual
+// provider cleanup result. Normal local Close is still an observed terminal
+// event; an interrupted transport retains its original failure cause here.
+type ProductDirectTermination struct {
+	Observed bool
+	Cause    error
+}
 type ProductDirectPair struct {
-	Client flowersec.Session
-	Server flowersessionv3.Session
-	Suite  protocolv3.Suite
-
-	spendCount *atomic.Int32
-	closeOnce  sync.Once
-	closeErr   error
-	closers    []func() error
+	terminalMu     sync.Mutex
+	terminal       [2]ProductDirectTermination
+	Client, Server *flowersec.Session
+	Profile        string
+	spend          *ledgerv4.PoolSpendObservation
+	echo           *flowersec.ServiceClient
+	closeOnce      sync.Once
+	closeErr       error
+	closers        []func() error
 }
 
-// OpenProductDirect starts one real server endpoint and connects to it through
-// flowersec.Connect. It includes TLS, admission, durable spend, FSH3, and
-// the encrypted READY boundary in the measured connection path.
 func OpenProductDirect(ctx context.Context, kind carrier.Kind) (*ProductDirectPair, error) {
 	endpoint, err := OpenProductDirectEndpoint(ctx, kind)
 	if err != nil {
@@ -107,1002 +95,910 @@ func OpenProductDirect(ctx context.Context, kind carrier.Kind) (*ProductDirectPa
 	}
 	pair, err := endpoint.Connect(ctx)
 	if err != nil {
-		_ = endpoint.Close()
-		return nil, err
+		return nil, errors.Join(err, endpoint.Close())
 	}
 	pair.closers = append(pair.closers, endpoint.Close)
 	return pair, nil
 }
-
-// OpenProductDirectEndpoint provisions one reusable production endpoint.
 func OpenProductDirectEndpoint(ctx context.Context, kind carrier.Kind) (*ProductDirectEndpoint, error) {
-	return OpenProductDirectEndpointWithSuite(ctx, kind, protocolv3.SuiteChaCha20Poly1305)
+	return OpenProductDirectEndpointWithProfile(ctx, kind, protocolv4.DHProfileX25519)
 }
-
-// OpenProductDirectEndpointWithSuite provisions a reusable endpoint with the
-// exact frozen E2EE suite required by a release case.
-func OpenProductDirectEndpointWithSuite(ctx context.Context, kind carrier.Kind, suite protocolv3.Suite) (*ProductDirectEndpoint, error) {
-	return OpenProductDirectEndpointAtWithSuite(ctx, kind, "127.0.0.1", suite)
+func OpenProductDirectEndpointWithProfile(ctx context.Context, kind carrier.Kind, profile string) (*ProductDirectEndpoint, error) {
+	return OpenProductDirectEndpointAtWithProfile(ctx, kind, "127.0.0.1", profile)
 }
-
-// OpenProductDirectEndpointAt provisions a production endpoint on one explicit
-// IP address. Release workloads use this inside an isolated network namespace.
-func OpenProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost string) (*ProductDirectEndpoint, error) {
-	return OpenProductDirectEndpointAtWithSuite(ctx, kind, listenHost, protocolv3.SuiteChaCha20Poly1305)
+func OpenProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, host string) (*ProductDirectEndpoint, error) {
+	return OpenProductDirectEndpointAtWithProfile(ctx, kind, host, protocolv4.DHProfileX25519)
 }
-
-// OpenProductDirectEndpointAtWithSuite binds the endpoint and its issued
-// session contracts to one explicit E2EE suite.
-func OpenProductDirectEndpointAtWithSuite(ctx context.Context, kind carrier.Kind, listenHost string, suite protocolv3.Suite) (*ProductDirectEndpoint, error) {
-	return openProductDirectEndpointAt(ctx, kind, listenHost, releaseRunnerOrigin, suite, defaultMaxInboundStreams)
+func OpenProductDirectEndpointAtWithProfile(ctx context.Context, kind carrier.Kind, host, profile string) (*ProductDirectEndpoint, error) {
+	return openProductDirectEndpoint(ctx, kind, host, host, releaseRunnerOrigin, profile, defaultMaxInboundStreams, nil)
 }
-
-// OpenProductDirectBrowserEndpointAt provisions a WebTransport endpoint that
-// admits only the isolated browser module-site scheme and explicit IP address.
-func OpenProductDirectBrowserEndpointAt(ctx context.Context, listenHost, browserOrigin string) (*ProductDirectEndpoint, error) {
-	if err := validateBrowserOrigin(browserOrigin); err != nil {
+func OpenProductDirectBrowserEndpointAt(ctx context.Context, host, origin string) (*ProductDirectEndpoint, error) {
+	if err := validateBrowserOrigin(origin); err != nil {
 		return nil, err
 	}
-	return openProductDirectEndpointAt(ctx, carrier.KindWebTransport, listenHost, browserOrigin, protocolv3.SuiteChaCha20Poly1305, defaultMaxInboundStreams)
+	return openProductDirectEndpoint(ctx, carrier.KindWebTransport, host, host, origin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, nil)
 }
-
-// OpenProductDirectBrowserEndpointAtWithTLS provisions the browser endpoint
-// with deployment-owned TLS material. It exists only for explicit public-CA
-// release validation; certificate material remains outside the repository.
-func OpenProductDirectBrowserEndpointAtWithTLS(
-	ctx context.Context,
-	listenHost, candidateHost, browserOrigin string,
-	serverTLS *tls.Config,
-) (*ProductDirectEndpoint, error) {
-	if err := validateBrowserOrigin(browserOrigin); err != nil {
+func OpenProductDirectBrowserStreamCapacityEndpointAt(ctx context.Context, host, origin string) (*ProductDirectEndpoint, error) {
+	if err := validateBrowserOrigin(origin); err != nil {
+		return nil, err
+	}
+	return openProductDirectEndpoint(ctx, carrier.KindWebTransport, host, host, origin, protocolv4.DHProfileX25519, 128, nil)
+}
+func OpenProductDirectBrowserEndpointAtWithTLS(ctx context.Context, host, candidateHost, origin string, serverTLS *tls.Config) (*ProductDirectEndpoint, error) {
+	if err := validateBrowserOrigin(origin); err != nil {
 		return nil, err
 	}
 	if candidateHost == "" || strings.ContainsAny(candidateHost, "[]:/?#@\\") {
 		return nil, errors.New("browser endpoint candidate host is invalid")
 	}
-	return openProductDirectEndpointWithTLS(
-		ctx,
-		carrier.KindWebTransport,
-		listenHost,
-		candidateHost,
-		browserOrigin,
-		protocolv3.SuiteChaCha20Poly1305,
-		defaultMaxInboundStreams,
-		serverTLS,
-		nil,
-	)
+	if serverTLS == nil || len(serverTLS.Certificates) != 1 {
+		return nil, errors.New("original deployment certificate is required")
+	}
+	return openProductDirectEndpoint(ctx, carrier.KindWebTransport, host, candidateHost, origin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, serverTLS)
 }
-
-// OpenProductDirectBrowserStreamCapacityEndpointAt provisions the frozen
-// 128-stream browser capacity contract without changing ordinary defaults.
-func OpenProductDirectBrowserStreamCapacityEndpointAt(ctx context.Context, listenHost, browserOrigin string) (*ProductDirectEndpoint, error) {
-	if err := validateBrowserOrigin(browserOrigin); err != nil {
+func openProductDirectEndpoint(ctx context.Context, kind carrier.Kind, host, candidateHost, origin, profile string, maximum uint16, externalTLS *tls.Config, installedReporters ...*interopharness.Reporter) (*ProductDirectEndpoint, error) {
+	return openProductDirectEndpointWithHandlers(ctx, kind, host, candidateHost, origin, profile, maximum, externalTLS, nil, installedReporters...)
+}
+func OpenProductDirectEndpointWithHandlers(ctx context.Context, kind carrier.Kind, handlers interopharness.HandlerConfig) (*ProductDirectEndpoint, error) {
+	if handlers == nil {
+		return nil, errors.New("original application handler declarations are required")
+	}
+	return openProductDirectEndpointWithHandlers(ctx, kind, "127.0.0.1", "127.0.0.1", releaseRunnerOrigin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, nil, handlers)
+}
+func openProductDirectEndpointWithHandlers(ctx context.Context, kind carrier.Kind, host, candidateHost, origin, profile string, maximum uint16, externalTLS *tls.Config, handlers interopharness.HandlerConfig, installedReporters ...*interopharness.Reporter) (result *ProductDirectEndpoint, resultErr error) {
+	if ctx == nil || maximum == 0 || maximum > 128 {
+		return nil, errors.New("original context and finite stream envelope are required")
+	}
+	if _, err := protocolv4.Profile(profile); err != nil {
 		return nil, err
 	}
-	return openProductDirectEndpointAt(ctx, carrier.KindWebTransport, listenHost, browserOrigin, protocolv3.SuiteChaCha20Poly1305, 128)
-}
-
-func openProductDirectEndpointAt(ctx context.Context, kind carrier.Kind, listenHost, allowedOrigin string, suite protocolv3.Suite, maxStreams uint16) (*ProductDirectEndpoint, error) {
-	serverTLS, clientTLS, err := localTLSForHost(kind, listenHost)
+	physical, err := productCarrier(kind)
 	if err != nil {
 		return nil, err
 	}
-	if kind == carrier.KindRawQUIC {
-		serverTLS.NextProtos = []string{rawquicv3.ALPNDirect}
-		clientTLS.NextProtos = []string{rawquicv3.ALPNDirect}
+	if address, parseErr := netip.ParseAddr(host); parseErr != nil || address.Zone() != "" || address.IsUnspecified() || address.IsMulticast() {
+		return nil, errors.New("product listener requires an explicit numeric unicast address")
 	}
-	return openProductDirectEndpointWithTLS(
-		ctx, kind, listenHost, listenHost, allowedOrigin, suite, maxStreams, serverTLS, clientTLS.RootCAs,
-	)
-}
-
-func openProductDirectEndpointWithTLS(
-	ctx context.Context,
-	kind carrier.Kind,
-	listenHost, candidateHost, allowedOrigin string,
-	suite protocolv3.Suite,
-	maxStreams uint16,
-	serverTLS *tls.Config,
-	trustRoots *x509.CertPool,
-) (*ProductDirectEndpoint, error) {
-	if ctx == nil {
-		ctx = context.Background()
+	var reporter *interopharness.Reporter
+	if len(installedReporters) > 1 {
+		return nil, errors.New("one original listener authority reporter is permitted")
 	}
-	address := net.ParseIP(listenHost)
-	if address == nil || address.IsUnspecified() || address.IsMulticast() {
-		return nil, errors.New("product direct endpoint requires a concrete unicast IP address")
+	if len(installedReporters) == 1 {
+		reporter = installedReporters[0]
+		if reporter == nil {
+			return nil, errors.New("original listener authority reporter is required")
+		}
+	} else {
+		reporter, err = interopharness.NewPeerReporter()
+		if err != nil {
+			return nil, err
+		}
 	}
-	if suite != protocolv3.SuiteChaCha20Poly1305 && suite != protocolv3.SuiteAES256GCM {
-		return nil, protocolv3.ErrInvalidSuite
+	reporter.ApplicationProfile = "services"
+	reporter.MaxStreams, err = sessionv4.EngineeringActiveCapacity(reporter.ApplicationProfile, uint32(maximum))
+	if err != nil {
+		return nil, errors.Join(err, reporter.Close())
 	}
-	if maxStreams == 0 || maxStreams > 128 {
-		return nil, errors.New("product direct endpoint stream capacity is invalid")
-	}
-	if serverTLS == nil || len(serverTLS.Certificates) != 1 || len(serverTLS.Certificates[0].Certificate) == 0 {
-		return nil, errors.New("product direct endpoint TLS configuration is invalid")
-	}
-	serverTLS = serverTLS.Clone()
-	serverTLS.MinVersion = tls.VersionTLS13
-	serverTLS.MaxVersion = tls.VersionTLS13
-	serverTLS.SessionTicketsDisabled = true
-	endpointCtx, cancel := context.WithCancelCause(ctx)
-	certificateHash := sha256.Sum256(serverTLS.Certificates[0].Certificate[0])
-	endpoint := &ProductDirectEndpoint{
-		kind: kind, suite: suite, listenHost: listenHost, candidateHost: candidateHost, trustRoots: trustRoots, ctx: endpointCtx, cancel: cancel,
-		certificateHash: certificateHash, certificateDER: append([]byte(nil), serverTLS.Certificates[0].Certificate[0]...), allowedOrigin: allowedOrigin,
-		maxInboundStreams: maxStreams,
-		pending:           make(map[[sha256.Size]byte]*admissionExpectation),
-	}
-	if err := endpoint.start(serverTLS); err != nil {
+	reporter.RouteHost = candidateHost
+	child, cancel := context.WithCancelCause(ctx)
+	registry, err := interopharness.NewAcceptedRegistry(4096)
+	if err != nil {
 		cancel(err)
+		return nil, errors.Join(err, reporter.Close())
+	}
+	if handlers == nil {
+		handlers = productHandlers(nil)
+	}
+	endpoint := &ProductDirectEndpoint{handlers: handlers, kind: kind, profile: profile, listenHost: host, candidateHost: candidateHost, allowedOrigin: origin, maxInboundStreams: maximum, reporter: reporter, registry: registry, ctx: child, cancel: cancel, ready: make(chan struct{})}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, endpoint.Close())
+		}
+	}()
+	options := interopharness.ServerOptions{Carrier: physical, Profile: profile, Source: "preauthorized_pool", Origin: origin, ListenHost: host, Handlers: handlers, Connections: 16, AcceptedRouteCapacity: 64,
+		OnTransportError: func(phase string, err error) {
+			endpoint.diagnosticMu.Lock()
+			callback := endpoint.admissionDiagnostic
+			if phase == "upgrade" {
+				callback = endpoint.upgradeDiagnostic
+			}
+			endpoint.diagnosticMu.Unlock()
+			if callback != nil {
+				callback(err)
+			}
+		},
+		NextAccepted: func(ctx context.Context, listener *interopharness.Server) (*interopharness.Server, error) {
+			select {
+			case <-endpoint.ready:
+			case <-ctx.Done():
+				return nil, context.Cause(ctx)
+			}
+			return listener.NewAcceptedPosition(registry, endpoint.handlers)
+		},
+	}
+	if reporter.ListenerConnections != 0 {
+		options.Connections = reporter.ListenerConnections
+	}
+	if reporter.AcceptedRoutePositions != 0 {
+		options.AcceptedRouteCapacity = reporter.AcceptedRoutePositions
+	}
+	if externalTLS != nil {
+		roots, err := x509.SystemCertPool()
+		if err != nil {
+			return nil, err
+		}
+		certificate := externalTLS.Certificates[0]
+		if len(certificate.Certificate) == 0 {
+			return nil, errors.New("deployment certificate chain is empty")
+		}
+		var chain strings.Builder
+		for _, der := range certificate.Certificate {
+			parsed, parseErr := x509.ParseCertificate(der)
+			if parseErr != nil {
+				return nil, parseErr
+			}
+			roots.AddCert(parsed)
+			chain.Write(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+		}
+		policy, err := currentCAPolicy(false)
+		if err != nil {
+			return nil, err
+		}
+		options.Certificate = &certificate
+		options.Roots = roots
+		options.TrustPEM = chain.String()
+		options.TLSPolicy = policy
+	}
+	endpoint.server, err = interopharness.NewServer(child, reporter, options)
+	if err != nil {
+		return nil, err
+	}
+	endpoint.certificateDER = endpoint.server.CertificateDER()
+	endpoint.certificateHash = sha256.Sum256(endpoint.certificateDER)
+	endpoint.candidateURL, err = currentCandidateURL(endpoint.server.Runtime.Authority.Route)
+	if err != nil {
+		return nil, err
+	}
+	close(endpoint.ready)
+	if err := endpoint.server.WaitAcceptReady(ctx); err != nil {
 		return nil, err
 	}
 	return endpoint, nil
 }
-
-// CertificateHashBase64URL returns the release endpoint's leaf-certificate
-// SHA-256 digest for Chromium's serverCertificateHashes option.
-func (endpoint *ProductDirectEndpoint) CertificateHashBase64URL() (string, error) {
-	if endpoint == nil || endpoint.kind != carrier.KindWebTransport || endpoint.certificateHash == ([sha256.Size]byte{}) {
-		return "", errors.New("WebTransport certificate hash is unavailable")
+func productCarrier(kind carrier.Kind) (string, error) {
+	switch kind {
+	case carrier.KindWebSocket:
+		return "websocket", nil
+	case carrier.KindRawQUIC:
+		return "raw-quic", nil
+	case carrier.KindWebTransport:
+		return "webtransport", nil
 	}
-	return base64.RawURLEncoding.EncodeToString(endpoint.certificateHash[:]), nil
+	return "", fmt.Errorf("unsupported current carrier %q", kind)
 }
-
-// CandidateURL returns the endpoint URL published inside browser harness
-// artifacts. It is release-test infrastructure, not part of the public SDK.
+func productHandlers(definition **interopharness.RPCDefinition) interopharness.HandlerConfig {
+	return func(runtime *interopharness.Runtime, role uint8) (flowersec.StreamHandlerPlanConfig, error) {
+		rpc := interopharness.ConfigureRPC(runtime, role, releaseServiceNamespace, []interopharness.RPCMethod{{Type: 1, MaxEncodedBytes: 1 << 20, Handle: func(ctx context.Context, payload []byte) ([]byte, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return append([]byte(nil), payload...), nil
+		}}})
+		if definition != nil {
+			*definition = rpc
+		}
+		maximum := runtime.Authority.Admission[role].Core.Session.Contract.Limits().MaxStreams
+		config := flowersec.StreamHandlerPlanConfig{RuntimeBytes: 16384}
+		for _, kind := range []string{"public-release-roundtrip", "release-bulk", "native-isolation", "native-stream-capacity", "release-throughput", "payload-throughput", "performance-throughput", "weaknet-reset", "weaknet-cancel", "weaknet-outage", "weaknet"} {
+			config.Handlers = append(config.Handlers, flowersec.RawStreamHandlerConfig{Kind: kind, Manual: true, Slots: maximum, NormalTerminationMS: 5000, WorkClass: flowersec.WorkResident, AuthorizeOpen: func(ctx context.Context, _ any, _ []byte) error { return ctx.Err() }})
+		}
+		return config, nil
+	}
+}
+func currentCAPolicy(consumerVerification bool) ([]byte, error) {
+	var required uint64
+	if consumerVerification {
+		required = 1
+	}
+	return protocolv4.EncodeMap(make([]byte, 4096), "TLSPolicy", []protocolv4.Field{{Name: "mode"}, {Name: "require_consumer_tls13_verification", Kind: protocolv4.Boolean, Number: required}})
+}
+func currentPinPolicy(der []byte, notAfter uint64, now timev4.Interval, consumerVerification bool) ([]byte, error) {
+	certificate, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil, err
+	}
+	start, end := uint64(certificate.NotBefore.UnixMilli()), uint64(certificate.NotAfter.UnixMilli())
+	if notAfter != 0 && notAfter < end {
+		end = notAfter
+	}
+	pin, err := tlspolicy.PinFromDER(der, start, end, now)
+	if err != nil {
+		return nil, err
+	}
+	digest := pin.Digest()
+	encoded, err := protocolv4.EncodeMap(make([]byte, 4096), "TLSPin", []protocolv4.Field{{Name: "leaf_der_sha256", Kind: protocolv4.ByteString, Bytes: digest[:]}, {Name: "not_before_ms", Number: start}, {Name: "not_after_ms", Number: end}, {Name: "certificate_profile", Kind: protocolv4.TextString, Text: tlspolicy.CertificateProfile}})
+	if err != nil {
+		return nil, err
+	}
+	array := append([]byte{0x81}, encoded...)
+	var required uint64
+	if consumerVerification {
+		required = 1
+	}
+	return protocolv4.EncodeMap(make([]byte, 8192), "TLSPolicy", []protocolv4.Field{{Name: "mode", Number: 1}, {Name: "pin_kind"}, {Name: "pins", Kind: protocolv4.EncodedArray, Bytes: array}, {Name: "require_consumer_tls13_verification", Kind: protocolv4.Boolean, Number: required}})
+}
+func currentCandidateURL(wire []byte) (string, error) {
+	decoder, err := protocolv4.NewDecoder(16384, 1024)
+	if err != nil {
+		return "", err
+	}
+	document, err := decoder.DecodeMap(wire, "Route", protocolv4.DecodeContext{})
+	if err != nil {
+		return "", err
+	}
+	defer document.Release()
+	leg := document.Root().Named("Route", "direct_leg")
+	host, _ := leg.Named("Leg", "host").Text()
+	port, _ := leg.Named("Leg", "port").Uint()
+	path, _ := leg.Named("Leg", "path").Text()
+	kind, _ := leg.Named("Leg", "carrier").Uint()
+	scheme := "quic"
+	if kind == 1 {
+		scheme = "wss"
+	} else if kind == 2 {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s%s", scheme, net.JoinHostPort(host, fmt.Sprint(port)), path), nil
+}
 func (endpoint *ProductDirectEndpoint) CandidateURL() string {
 	if endpoint == nil {
 		return ""
 	}
 	return endpoint.candidateURL
 }
-
-// SetWebTransportUpgradeDiagnostic installs a bounded test diagnostic hook.
-// It reports only request-level upgrade errors, before Flowersec admission.
-func (endpoint *ProductDirectEndpoint) SetWebTransportUpgradeDiagnostic(handler func(error)) {
+func (endpoint *ProductDirectEndpoint) TrustPEM() string {
 	if endpoint == nil {
-		return
+		return ""
 	}
-	endpoint.upgradeDiagnosticMu.Lock()
-	endpoint.upgradeDiagnostic = handler
-	endpoint.upgradeDiagnosticMu.Unlock()
+	return endpoint.nativeServer().TrustPEM
 }
-
-// SetWebTransportAdmissionDiagnostic installs a bounded test diagnostic hook.
-// It reports admission or encrypted-session establishment errors after the
-// WebTransport request has been accepted, without changing the result.
-func (endpoint *ProductDirectEndpoint) SetWebTransportAdmissionDiagnostic(handler func(error)) {
-	if endpoint == nil {
-		return
+func (endpoint *ProductDirectEndpoint) CertificateHashBase64URL() (string, error) {
+	if endpoint == nil || endpoint.kind != carrier.KindWebTransport {
+		return "", errors.New("actual WebTransport leaf is unavailable")
 	}
-	endpoint.admissionDiagnosticMu.Lock()
-	endpoint.admissionDiagnostic = handler
-	endpoint.admissionDiagnosticMu.Unlock()
+	return base64.RawURLEncoding.EncodeToString(endpoint.certificateHash[:]), nil
 }
-
-func (endpoint *ProductDirectEndpoint) reportWebTransportAdmissionDiagnostic(err error) {
-	if endpoint == nil || err == nil {
-		return
-	}
-	endpoint.admissionDiagnosticMu.Lock()
-	diagnostic := endpoint.admissionDiagnostic
-	endpoint.admissionDiagnosticMu.Unlock()
-	if diagnostic != nil {
-		diagnostic(err)
-	}
+func (endpoint *ProductDirectEndpoint) SetWebTransportUpgradeDiagnostic(callback func(error)) {
+	endpoint.diagnosticMu.Lock()
+	endpoint.upgradeDiagnostic = callback
+	endpoint.diagnosticMu.Unlock()
 }
-
-// IssueBrowserArtifact registers a fresh one-shot artifact without opening a
-// Go client connection. The caller must await or cancel every issued artifact.
-func (endpoint *ProductDirectEndpoint) IssueBrowserArtifact() (*ProductDirectBrowserArtifact, error) {
-	return endpoint.issueBrowserArtifact(artifactv3.TLSModePin)
+func (endpoint *ProductDirectEndpoint) SetWebTransportAdmissionDiagnostic(callback func(error)) {
+	endpoint.diagnosticMu.Lock()
+	endpoint.admissionDiagnostic = callback
+	endpoint.diagnosticMu.Unlock()
 }
-
-// IssueBrowserCAArtifact registers a one-shot artifact that delegates endpoint
-// authentication to the browser platform trust store.
-func (endpoint *ProductDirectEndpoint) IssueBrowserCAArtifact() (*ProductDirectBrowserArtifact, error) {
-	return endpoint.issueBrowserArtifact(artifactv3.TLSModeCA)
-}
-
-func (endpoint *ProductDirectEndpoint) issueBrowserArtifact(mode artifactv3.TLSMode) (*ProductDirectBrowserArtifact, error) {
-	if endpoint == nil || endpoint.kind != carrier.KindWebTransport || endpoint.ctx == nil {
-		return nil, errors.New("browser artifact endpoint is not initialized")
-	}
-	if mode != artifactv3.TLSModeCA && mode != artifactv3.TLSModePin {
-		return nil, errors.New("browser artifact TLS mode is invalid")
-	}
+func (endpoint *ProductDirectEndpoint) issue(policy []byte, address netip.AddrPort, installRoute bool) (interopharness.Material, *interopharness.AcceptedRecord, error) {
+	endpoint.transportMu.Lock()
+	defer endpoint.transportMu.Unlock()
 	if err := context.Cause(endpoint.ctx); err != nil {
-		return nil, err
+		return interopharness.Material{}, nil, err
 	}
-	contract, err := releaseSessionContractV3WithStreams(endpoint.suite, endpoint.maxInboundStreams)
+	server := endpoint.nativeServer()
+	authority, err := server.IssueAuthority(policy, address)
 	if err != nil {
-		return nil, err
+		return interopharness.Material{}, nil, err
 	}
-	artifact := directArtifactV3(endpoint.kind, endpoint.candidateURL, contract)
-	certificate, err := x509.ParseCertificate(endpoint.certificateDER)
-	if err != nil || !time.Now().Before(certificate.NotAfter) {
-		return nil, errors.New("browser endpoint certificate is unavailable or expired")
-	}
-	if mode == artifactv3.TLSModePin {
-		artifact.Path.Candidates[0].TLS = artifactv3.TLSPolicy{
-			Mode: artifactv3.TLSModePin,
-			Pins: []artifactv3.CertificatePin{{
-				Algorithm:      "sha-256",
-				ValueBase64URL: base64.RawURLEncoding.EncodeToString(endpoint.certificateHash[:]),
-				NotAfterUnixS:  certificate.NotAfter.Unix(),
-			}},
+	if installRoute {
+		if err = server.InstallAcceptedRoute(authority.Route); err != nil {
+			return interopharness.Material{}, nil, err
 		}
 	}
-	expectedFSB3, err := expectedDirectAdmission(artifact)
+	record, err := endpoint.registry.Install(authority)
+	if err != nil {
+		return interopharness.Material{}, nil, err
+	}
+	return server.MaterialFor(authority), record, nil
+}
+func (endpoint *ProductDirectEndpoint) IssueBrowserArtifact() (*ProductDirectBrowserArtifact, error) {
+	if endpoint == nil {
+		return nil, errors.New("original browser endpoint is required")
+	}
+	now, err := endpoint.reporter.AuthorityClock().Sample()
 	if err != nil {
 		return nil, err
 	}
-	expected := &admissionExpectation{raw: expectedFSB3, contract: contract, result: make(chan productServerResult, 1)}
-	digest, err := endpoint.register(expected)
+	policy, err := currentPinPolicy(endpoint.certificateDER, 0, now.Interval, false)
 	if err != nil {
 		return nil, err
 	}
-	rawArtifact, err := artifactv3.MarshalArtifactJSON(artifact)
+	return endpoint.issueBrowser(policy)
+}
+func (endpoint *ProductDirectEndpoint) IssueBrowserCAArtifact() (*ProductDirectBrowserArtifact, error) {
+	policy, err := currentCAPolicy(false)
 	if err != nil {
-		endpoint.abandon(digest, expected)
 		return nil, err
 	}
-	return &ProductDirectBrowserArtifact{
-		endpoint: endpoint, rawJSON: string(rawArtifact), expected: expected, digest: digest,
-	}, nil
+	return endpoint.issueBrowser(policy)
 }
 
-// ArtifactJSON returns the opaque serialized artifact consumed by the browser.
+// The negative browser fixture still contains a complete independently signed
+// route. A different locally issued leaf is never installed at the real listener.
+func (endpoint *ProductDirectEndpoint) IssueBrowserWrongPinArtifact() (*ProductDirectBrowserArtifact, error) {
+	if endpoint == nil || endpoint.kind != carrier.KindWebTransport {
+		return nil, errors.New("original browser WebTransport endpoint is required")
+	}
+	wrong, _, _, _, err := interopharness.TLSMaterial(endpoint.listenHost)
+	if err != nil {
+		return nil, err
+	}
+	now, err := endpoint.reporter.AuthorityClock().Sample()
+	if err != nil {
+		return nil, err
+	}
+	policy, err := currentPinPolicy(wrong.Certificate[0], 0, now.Interval, false)
+	if err != nil {
+		return nil, err
+	}
+	return endpoint.issueBrowserRoute(policy, false)
+}
+func (endpoint *ProductDirectEndpoint) issueBrowser(policy []byte) (*ProductDirectBrowserArtifact, error) {
+	return endpoint.issueBrowserRoute(policy, true)
+}
+func (endpoint *ProductDirectEndpoint) issueBrowserRoute(policy []byte, installRoute bool) (*ProductDirectBrowserArtifact, error) {
+	if endpoint == nil || endpoint.kind != carrier.KindWebTransport {
+		return nil, errors.New("original browser WebTransport endpoint is required")
+	}
+	endpoint.transportMu.Lock()
+	endpoint.browserIssued = true
+	endpoint.transportMu.Unlock()
+	material, record, err := endpoint.issue(policy, netip.AddrPort{}, installRoute)
+	if err != nil {
+		return nil, err
+	}
+	wire, err := material.JSON()
+	if err != nil {
+		return nil, errors.Join(err, record.Close())
+	}
+	return &ProductDirectBrowserArtifact{endpoint: endpoint, original: material, rawJSON: wire, record: record}, nil
+}
+
 func (artifact *ProductDirectBrowserArtifact) ArtifactJSON() string {
 	if artifact == nil {
 		return ""
 	}
 	return artifact.rawJSON
 }
-
-// AwaitServer waits for the browser to complete admission and encrypted READY.
-// It can be called exactly once.
-func (artifact *ProductDirectBrowserArtifact) AwaitServer(ctx context.Context) (flowersessionv3.Session, error) {
-	if artifact == nil || artifact.endpoint == nil || artifact.expected == nil {
-		return nil, errors.New("browser artifact is not initialized")
+func (artifact *ProductDirectBrowserArtifact) AwaitServer(ctx context.Context) (*flowersec.Session, error) {
+	if artifact == nil || ctx == nil {
+		return nil, errors.New("original browser material and context are required")
 	}
 	artifact.mu.Lock()
 	if artifact.consumed {
 		artifact.mu.Unlock()
-		return nil, errors.New("browser artifact was already consumed")
+		return nil, errors.New("browser material was already consumed")
 	}
 	artifact.consumed = true
 	artifact.mu.Unlock()
-	if ctx == nil {
-		ctx = context.Background()
+	session, err := artifact.record.WaitSession(ctx)
+	if err != nil {
+		return nil, errors.Join(err, artifact.record.Close())
 	}
-	select {
-	case result := <-artifact.expected.result:
-		artifact.endpoint.unregister(artifact.digest, artifact.expected)
-		return result.session, result.err
-	case <-ctx.Done():
-		artifact.endpoint.abandon(artifact.digest, artifact.expected)
-		return nil, context.Cause(ctx)
-	case <-artifact.endpoint.ctx.Done():
-		artifact.endpoint.abandon(artifact.digest, artifact.expected)
-		return nil, context.Cause(artifact.endpoint.ctx)
-	}
+	return session, nil
 }
-
-// Cancel abandons an artifact that will not be consumed by the browser.
 func (artifact *ProductDirectBrowserArtifact) Cancel() {
-	if artifact == nil || artifact.endpoint == nil || artifact.expected == nil {
+	if artifact == nil {
 		return
 	}
 	artifact.mu.Lock()
-	if artifact.consumed {
-		artifact.mu.Unlock()
-		return
-	}
+	already := artifact.consumed
 	artifact.consumed = true
 	artifact.mu.Unlock()
-	artifact.endpoint.abandon(artifact.digest, artifact.expected)
+	if !already {
+		_ = artifact.record.Close()
+	}
 }
 
-// Connect measures one complete public connector path through encrypted READY.
-func (endpoint *ProductDirectEndpoint) Connect(ctx context.Context) (*ProductDirectPair, error) {
-	if endpoint == nil || endpoint.ctx == nil || endpoint.trustRoots == nil {
-		return nil, errors.New("product direct endpoint is not initialized")
+type preparedProductDirectConnection struct {
+	cancel     context.CancelCauseFunc
+	client     *interopharness.Client
+	reporter   *interopharness.Reporter
+	record     *interopharness.AcceptedRecord
+	definition *interopharness.RPCDefinition
+}
+
+func (p *preparedProductDirectConnection) close() error {
+	p.cancel(context.Canceled)
+	return errors.Join(p.reporter.Close(), p.record.Close())
+}
+
+func (endpoint *ProductDirectEndpoint) prepareConnection(parent context.Context) (prepared *preparedProductDirectConnection, resultErr error) {
+	if err := context.Cause(parent); err != nil {
+		return nil, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	ctx, cancel := context.WithCancelCause(endpoint.ctx)
+	stopped := make(chan struct{})
+	stop := context.AfterFunc(parent, func() {
+		defer close(stopped)
+		cancel(context.Cause(parent))
+	})
+	defer func() {
+		if !stop() {
+			<-stopped
+			resultErr = errors.Join(resultErr, context.Cause(parent))
+		}
+		if err := context.Cause(ctx); err != nil {
+			resultErr = errors.Join(resultErr, err)
+		}
+		if resultErr != nil {
+			cancel(resultErr)
+			if prepared != nil {
+				resultErr = errors.Join(resultErr, prepared.close())
+				prepared = nil
+			}
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	policy, err := currentCAPolicy(true)
+	if err != nil {
+		return nil, err
+	}
+	material, record, err := endpoint.issue(policy, netip.AddrPort{}, false)
+	if err != nil {
+		return nil, err
+	}
+	reporter, err := interopharness.NewPeerReporter()
+	if err != nil {
+		return nil, errors.Join(err, record.Close())
+	}
+	reporter.ApplicationProfile = "services"
+	wire, err := material.JSON()
+	if err != nil {
+		return nil, errors.Join(err, reporter.Close(), record.Close())
+	}
+	p := &preparedProductDirectConnection{reporter: reporter, record: record, cancel: cancel}
+	p.client, err = interopharness.NewClient(ctx, reporter, wire, endpoint.nativeServer().TrustPEM, endpoint.allowedOrigin, productHandlers(&p.definition))
+	if err != nil {
+		return nil, errors.Join(err, p.close())
+	}
+	return p, nil
+}
+
+// PrepareCapacity creates finite independent authority and runtime positions
+// before the measured ramp. Each Connect still performs its original spend,
+// carrier establishment, Noise exchange and READY before binding the service.
+func (endpoint *ProductDirectEndpoint) PrepareCapacity(ctx context.Context, sessions int) (resultErr error) {
+	if endpoint == nil || ctx == nil || sessions < 1 || sessions > 1000 {
+		return errors.New("original direct capacity preparation is invalid")
+	}
+	endpoint.preparationMu.Lock()
+	defer endpoint.preparationMu.Unlock()
+	if endpoint.capacityPrepared {
+		return errors.New("direct capacity preparation is single-use")
 	}
 	if err := context.Cause(endpoint.ctx); err != nil {
-		return nil, err
+		return err
 	}
-	contract, err := releaseSessionContractV3WithStreams(endpoint.suite, endpoint.maxInboundStreams)
-	if err != nil {
-		return nil, err
-	}
-	artifact := directArtifactV3(endpoint.kind, endpoint.candidateURL, contract)
-	expectedFSB3, err := expectedDirectAdmission(artifact)
-	if err != nil {
-		return nil, err
-	}
-	expected := &admissionExpectation{
-		raw: expectedFSB3, contract: contract, result: make(chan productServerResult, 1),
-	}
-	digest, err := endpoint.register(expected)
-	if err != nil {
-		return nil, err
-	}
-	established := false
+	prepared := make([]*preparedProductDirectConnection, 0, sessions)
 	defer func() {
-		if established {
-			endpoint.unregister(digest, expected)
-		} else {
-			endpoint.abandon(digest, expected)
+		if resultErr != nil {
+			for _, p := range prepared {
+				resultErr = errors.Join(resultErr, p.close())
+			}
 		}
 	}()
-	rawArtifact, err := artifactv3.MarshalArtifactJSON(artifact)
-	if err != nil {
-		return nil, err
-	}
-	opaqueArtifact, err := flowersec.ParseArtifact(rawArtifact)
-	if err != nil {
-		return nil, err
-	}
-	spendCount := &atomic.Int32{}
-	lease, err := flowersec.NewArtifactLease(opaqueArtifact, func(context.Context) error {
-		if spendCount.Add(1) != 1 {
-			return errors.New("artifact spend callback invoked more than once")
+	for range sessions {
+		p, err := endpoint.prepareConnection(ctx)
+		if err != nil {
+			return err
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
+		prepared = append(prepared, p)
 	}
-	client, err := flowersec.Connect(ctx, lease, flowersec.ConnectorOptions{
-		TrustRoots: endpoint.trustRoots, Origin: releaseRunnerOrigin, ConnectTimeout: connectorTimeout(ctx),
-	})
-	if err != nil {
-		return nil, err
+	if err := context.Cause(endpoint.ctx); err != nil {
+		return err
 	}
-	var server productServerResult
-	select {
-	case server = <-expected.result:
-	case <-ctx.Done():
-		_ = client.Close()
-		return nil, context.Cause(ctx)
-	case <-endpoint.ctx.Done():
-		_ = client.Close()
-		return nil, context.Cause(endpoint.ctx)
-	}
-	if server.err != nil {
-		_ = client.Close()
-		return nil, server.err
-	}
-	if spendCount.Load() != 1 {
-		_ = client.Close()
-		_ = server.session.Close()
-		return nil, fmt.Errorf("artifact spend count = %d, want 1", spendCount.Load())
-	}
-	established = true
-	return &ProductDirectPair{
-		Client: client, Server: server.session, Suite: protocolv3.Suite(contract.DefaultSuite), spendCount: spendCount,
-	}, nil
+	endpoint.prepared, endpoint.capacityPrepared = prepared, true
+	return nil
 }
 
-// SpendCount reports the observed durable spend callback count.
+func (endpoint *ProductDirectEndpoint) Connect(ctx context.Context) (*ProductDirectPair, error) {
+	if endpoint == nil || ctx == nil {
+		return nil, errors.New("original product endpoint and context are required")
+	}
+	endpoint.preparationMu.Lock()
+	var p *preparedProductDirectConnection
+	prepared := endpoint.capacityPrepared
+	if len(endpoint.prepared) > 0 {
+		p = endpoint.prepared[0]
+		endpoint.prepared[0] = nil
+		endpoint.prepared = endpoint.prepared[1:]
+	}
+	endpoint.preparationMu.Unlock()
+	if p == nil {
+		if prepared {
+			return nil, errors.New("original direct capacity positions exhausted")
+		}
+		var err error
+		p, err = endpoint.prepareConnection(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	session, err := p.client.Connect(ctx)
+	if err != nil {
+		return nil, errors.Join(err, p.close())
+	}
+	server, err := p.record.WaitSession(ctx)
+	if err != nil {
+		return nil, errors.Join(err, p.close())
+	}
+	echo, err := p.definition.Bind(ctx, session)
+	if err != nil {
+		return nil, errors.Join(err, p.close())
+	}
+	return &ProductDirectPair{Client: session, Server: server, Profile: endpoint.profile, spend: p.client.Runtime.PoolSpend, echo: echo, closers: []func() error{p.close}}, nil
+}
 func (pair *ProductDirectPair) SpendCount() int32 {
-	if pair == nil || pair.spendCount == nil {
+	if pair == nil || pair.spend == nil || !pair.spend.Snapshot().CommitKnown {
 		return 0
 	}
-	return pair.spendCount.Load()
+	return 1
 }
-
-// RoundTrip transfers bytes through the public client session surface.
+func (pair *ProductDirectPair) CallEcho(ctx context.Context, payload []byte) ([]byte, error) {
+	if pair == nil || pair.echo == nil {
+		return nil, errors.New("current echo service is not bound")
+	}
+	// Independent trusted clocks can have different lower bounds. Ordinary
+	// traffic stays inside the signed 30-second maximum; boundary tests cover it.
+	method := flowersec.MethodSelector{Namespace: releaseServiceNamespace, Type: 1}
+	op, err := pair.echo.PrepareMethod(ctx, method, payload, flowersec.OperationOptions{DefaultLifetimeMS: 15000})
+	if err != nil {
+		return nil, err
+	}
+	started := op.StartContext(ctx)
+	if started.Err != nil {
+		op.Close()
+		return nil, started.Err
+	}
+	result, resultErr := op.TakeResultContext(ctx)
+	op.Close()
+	cleanupErr := op.WaitCleanup(ctx)
+	return result.Payload, errors.Join(resultErr, result.Err, cleanupErr)
+}
 func (pair *ProductDirectPair) RoundTrip(ctx context.Context, request, response []byte) (resultErr error) {
-	if pair == nil || pair.Client == nil || pair.Server == nil {
-		return errors.New("product direct pair is not established")
+	if pair == nil || pair.Client == nil || pair.Server == nil || ctx == nil {
+		return errors.New("original product Sessions are required")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	type acceptResult struct {
-		incoming flowersessionv3.IncomingStream
-		err      error
-	}
-	accepted := make(chan acceptResult, 1)
-	go func() {
-		incoming, err := pair.Server.AcceptStream(ctx)
-		accepted <- acceptResult{incoming: incoming, err: err}
-	}()
 	metadata, err := flowersec.NewStreamMetadata(map[string]any{"direction": "client-to-server"})
 	if err != nil {
 		return err
 	}
-	opened, err := pair.Client.OpenStream(ctx, "public-release-roundtrip", metadata)
+	stream, err := pair.Client.OpenStream(ctx, "public-release-roundtrip", metadata)
 	if err != nil {
 		return err
 	}
-	openedCompleted := false
+	incoming, err := pair.Server.AcceptStream(ctx)
+	if err != nil {
+		return errors.Join(err, stream.Reset())
+	}
+	return roundTripProductStreams(ctx, stream, incoming.Stream, incoming.Kind, incoming.Metadata.Values(), request, response)
+}
+
+type productRoundTripStream interface {
+	releaseByteStream
+	WriteAll(context.Context, []byte) (int, error)
+}
+
+func roundTripProductStreams(ctx context.Context, stream, peer productRoundTripStream, kind string, metadata map[string]any, request, response []byte) (resultErr error) {
+	completed := false
 	defer func() {
-		if !openedCompleted {
-			resultErr = errors.Join(resultErr, opened.Reset())
+		if !completed {
+			resultErr = errors.Join(resultErr, stream.Reset(), peer.Reset())
+		} else {
+			// Finish observes the original send tail; Close relinquishes both
+			// raw capabilities after their peer EOF has also been consumed.
+			resultErr = errors.Join(resultErr, stream.Close(), peer.Close())
 		}
 	}()
-	var peer acceptResult
+	if kind != "public-release-roundtrip" || metadata["direction"] != "client-to-server" {
+		return errors.New("authenticated OPEN metadata mismatch")
+	}
+	requestRead := readAll(peer)
+	if err := writeProductStream(ctx, stream, request); err != nil {
+		return err
+	}
+	if err := stream.CloseWrite(); err != nil {
+		return err
+	}
 	select {
-	case peer = <-accepted:
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	}
-	if peer.err != nil {
-		return peer.err
-	}
-	peerCompleted := false
-	defer func() {
-		if !peerCompleted {
-			resultErr = errors.Join(resultErr, peer.incoming.Stream.Reset())
+	case got := <-requestRead:
+		if got.err != nil || !bytes.Equal(got.payload, request) {
+			return errors.Join(errors.New("request payload mismatch"), got.err)
 		}
-	}()
-	if peer.incoming.Kind != "public-release-roundtrip" || peer.incoming.Metadata["direction"] != "client-to-server" {
-		return errors.New("public encrypted stream metadata mismatch")
-	}
-	requestRead := readAll(peer.incoming.Stream)
-	if err := writeProductStream(ctx, opened, request); err != nil {
-		return err
-	}
-	if err := opened.CloseWrite(); err != nil {
-		return err
-	}
-	var gotRequest readResult
-	select {
-	case gotRequest = <-requestRead:
 	case <-ctx.Done():
 		return context.Cause(ctx)
 	}
-	if gotRequest.err != nil || !bytes.Equal(gotRequest.payload, request) {
-		return errors.Join(errors.New("public request payload mismatch"), gotRequest.err)
-	}
-	responseRead := readAll(opened)
-	if err := writeProductStream(ctx, peer.incoming.Stream, response); err != nil {
+	responseRead := readAll(stream)
+	if err := writeProductStream(ctx, peer, response); err != nil {
 		return err
 	}
-	if err := peer.incoming.Stream.CloseWrite(); err != nil {
+	if err := peer.CloseWrite(); err != nil {
 		return err
 	}
-	var gotResponse readResult
 	select {
-	case gotResponse = <-responseRead:
+	case got := <-responseRead:
+		if got.err != nil || !bytes.Equal(got.payload, response) {
+			return errors.Join(errors.New("response payload mismatch"), got.err)
+		}
 	case <-ctx.Done():
 		return context.Cause(ctx)
 	}
-	if gotResponse.err != nil || !bytes.Equal(gotResponse.payload, response) {
-		return errors.Join(errors.New("public response payload mismatch"), gotResponse.err)
+	if err := stream.Finish(ctx); err != nil {
+		return err
 	}
-	openedCompleted = true
-	peerCompleted = true
+	if err := peer.Finish(ctx); err != nil {
+		return err
+	}
+	completed = true
 	return nil
 }
-
-func writeProductStream(ctx context.Context, stream interface {
-	io.Writer
-	Reset() error
-}, payload []byte) error {
-	result := make(chan error, 1)
-	go func() {
-		written, err := stream.Write(payload)
-		if err == nil && written != len(payload) {
-			err = io.ErrShortWrite
-		}
-		result <- err
-	}()
-	select {
-	case err := <-result:
-		return err
-	case <-ctx.Done():
-		_ = stream.Reset()
-		return context.Cause(ctx)
+func writeProductStream(ctx context.Context, stream productRoundTripStream, payload []byte) error {
+	count, err := stream.WriteAll(ctx, payload)
+	if err == nil && count != len(payload) {
+		err = io.ErrShortWrite
 	}
+	return err
 }
-
-// Close concurrently shuts down both sessions, then their endpoint owners.
 func (pair *ProductDirectPair) Close() error {
 	if pair == nil {
 		return nil
 	}
 	pair.closeOnce.Do(func() {
-		var clientCloseErr error
-		if pair.Client != nil {
-			clientCloseErr = normalizeCloseError(pair.Client.Close())
+		if pair.echo != nil {
+			pair.echo.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			pair.closeErr = errors.Join(pair.closeErr, pair.echo.WaitCleanup(ctx))
+			cancel()
 		}
-		clientWaitCtx, cancelClientWait := context.WithTimeout(context.Background(), 3*time.Second)
-		termination, clientWaitErr := pair.Client.WaitTermination(clientWaitCtx)
-		cancelClientWait()
-		clientTerminated := clientWaitErr == nil
-		if !clientTerminated {
-			pair.closeErr = errors.Join(pair.closeErr, errors.New("client did not terminate after local close"))
+		closeErrors := [2]error{}
+		for index, session := range []*flowersec.Session{pair.Client, pair.Server} {
+			if session != nil {
+				closeErrors[index] = session.Close()
+			}
 		}
-		if clientCloseErr != nil && clientTerminated {
-			terminationCode := termination.Error.Code()
-			pair.closeErr = errors.Join(pair.closeErr, reconcilePublicSessionCloseError(clientCloseErr, terminationCode, nil))
-		} else {
-			pair.closeErr = errors.Join(pair.closeErr, clientCloseErr)
-		}
-		select {
-		case <-pair.Server.Termination():
-		case <-time.After(3 * time.Second):
-			// A lossy path may discard the authenticated close packet. The
-			// release peer still must terminate locally within the cleanup bound.
-			pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.Server.Close()))
-			select {
-			case <-pair.Server.Termination():
-			case <-time.After(time.Second):
-				pair.closeErr = errors.Join(pair.closeErr, errors.New("server did not terminate after forced close"))
+		for index, session := range []*flowersec.Session{pair.Client, pair.Server} {
+			if session != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				cause := session.WaitTermination(ctx)
+				observed := ctx.Err() == nil
+				pair.terminalMu.Lock()
+				pair.terminal[index] = ProductDirectTermination{Observed: observed, Cause: cause}
+				pair.terminalMu.Unlock()
+				if !observed {
+					pair.closeErr = errors.Join(pair.closeErr, fmt.Errorf("original Session %d termination wait: %w", index, ctx.Err()))
+				}
+				closeErr := normalizeCloseError(closeErrors[index])
+				// A public Session.Close may report the carrier-neutral closed
+				// projection after a peer has already terminated. It is safe to
+				// retire that error only after the original termination signal was
+				// observed; unobserved close failures remain visible.
+				if observed && isAuthoritativeSessionClosed(cause) {
+					closeErr = filterSessionClosedErrors(closeErr)
+				}
+				pair.closeErr = errors.Join(pair.closeErr, closeErr)
+				pair.closeErr = errors.Join(pair.closeErr, session.WaitCleanup(ctx))
+				cancel()
 			}
 		}
 		for index := len(pair.closers) - 1; index >= 0; index-- {
-			pair.closeErr = errors.Join(pair.closeErr, normalizeCloseError(pair.closers[index]()))
+			pair.closeErr = errors.Join(pair.closeErr, pair.closers[index]())
 		}
 	})
 	return pair.closeErr
 }
-
-func reconcilePublicSessionCloseError(closeErr error, terminationCode flowersec.SessionErrorCode, waitErr error) error {
-	if closeErr == nil {
-		return waitErr
+func (pair *ProductDirectPair) TerminationResults() [2]ProductDirectTermination {
+	if pair == nil {
+		return [2]ProductDirectTermination{}
 	}
-	if waitErr == nil && terminationCode == flowersec.SessionClosed {
+	pair.terminalMu.Lock()
+	defer pair.terminalMu.Unlock()
+	return pair.terminal
+}
+
+// Filter every joined child independently so a closed projection cannot hide
+// an unrelated failure. Retain mixed wrapped errors conservatively.
+func filterSessionClosedErrors(err error) error {
+	if err == nil {
 		return nil
 	}
-	return errors.Join(closeErr, waitErr)
-}
-
-type admissionExpectation struct {
-	raw      []byte
-	contract artifactv3.SessionContract
-	result   chan productServerResult
-	claimed  bool
-}
-
-type productServerResult struct {
-	session flowersessionv3.Session
-	err     error
-}
-
-func (endpoint *ProductDirectEndpoint) start(serverTLS *tls.Config) error {
-	var err error
-	switch endpoint.kind {
-	case carrier.KindWebSocket:
-		err = endpoint.startWebSocket(serverTLS)
-	case carrier.KindRawQUIC:
-		err = endpoint.startRawQUIC(serverTLS)
-	case carrier.KindWebTransport:
-		err = endpoint.startWebTransport(serverTLS)
-	default:
-		err = fmt.Errorf("unsupported direct carrier %q", endpoint.kind)
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var remaining error
+		for _, child := range joined.Unwrap() {
+			remaining = errors.Join(remaining, filterSessionClosedErrors(child))
+		}
+		return remaining
 	}
-	if err == nil {
-		go func() {
-			<-endpoint.ctx.Done()
-			_ = endpoint.Close()
-		}()
+	if failure, ok := err.(*flowersec.SessionError); ok && failure.Code() == flowersec.SessionClosed {
+		return nil
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok && wrapped.Unwrap() != nil && filterSessionClosedErrors(wrapped.Unwrap()) == nil {
+		return nil
 	}
 	return err
 }
 
-func (endpoint *ProductDirectEndpoint) startRawQUIC(serverTLS *tls.Config) error {
-	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), endpoint.maxInboundStreams)
-	if err != nil {
-		return err
-	}
-	listener, err := rawquicv3.Listen(net.JoinHostPort(endpoint.listenHost, "0"), serverTLS, limits)
-	if err != nil {
-		return err
-	}
-	endpoint.candidateURL = "quic://" + net.JoinHostPort(endpoint.candidateHost, fmt.Sprint(listener.Addr().(*net.UDPAddr).Port))
-	endpoint.transportClose = listener.Close
-	go func() {
-		for {
-			carrierSession, acceptErr := listener.Accept(endpoint.ctx)
-			if acceptErr != nil {
-				if endpoint.ctx.Err() == nil {
-					endpoint.cancel(acceptErr)
-					endpoint.failPending(acceptErr)
-				}
-				return
-			}
-			go endpoint.serveRawQUIC(carrierSession)
-		}
-	}()
-	return nil
+func isAuthoritativeSessionClosed(err error) bool {
+	return filterSessionClosedErrors(err) == nil
 }
 
-func (endpoint *ProductDirectEndpoint) startWebSocket(serverTLS *tls.Config) error {
-	listener, err := tls.Listen("tcp", net.JoinHostPort(endpoint.listenHost, "0"), serverTLS)
-	if err != nil {
-		return err
-	}
-	upgrader := gorillaws.Upgrader{
-		Subprotocols: []string{carrierwsv3.SubprotocolDirect},
-		CheckOrigin: func(request *http.Request) bool {
-			return browserOriginAllowed(request.Header.Get("Origin"), endpoint.allowedOrigin)
-		},
-	}
-	httpServer := &http.Server{Handler: http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		conn, upgradeErr := upgrader.Upgrade(writer, request, nil)
-		if upgradeErr != nil {
-			return
-		}
-		endpoint.serveWebSocket(conn)
-	})}
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- httpServer.Serve(listener) }()
-	endpoint.candidateURL = "wss://" + net.JoinHostPort(endpoint.candidateHost, fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)) + "/flowersec/v3/direct"
-	endpoint.transportClose = func() error {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		shutdownErr := httpServer.Shutdown(closeCtx)
-		serveErr := <-serveDone
-		if errors.Is(serveErr, http.ErrServerClosed) {
-			serveErr = nil
-		}
-		return errors.Join(shutdownErr, serveErr)
-	}
-	return nil
-}
-
-func (endpoint *ProductDirectEndpoint) startWebTransport(serverTLS *tls.Config) error {
-	limits, err := quicbase.BindSessionLimits(quicbase.DefaultLimits(), endpoint.maxInboundStreams)
-	if err != nil {
-		return err
-	}
-	server, err := carrierwtv3.NewServer(serverTLS, limits, func(request *http.Request) bool {
-		return browserOriginAllowed(request.Header.Get("Origin"), endpoint.allowedOrigin)
-	})
-	if err != nil {
-		return err
-	}
-	server.SetHandler(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		endpoint.serveWebTransportUpgrade(server.Upgrade(writer, request))
-	}))
-	packetConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP(endpoint.listenHost)})
-	if err != nil {
-		_ = server.Close()
-		return err
-	}
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.Serve(packetConn) }()
-	endpoint.candidateURL = (&url.URL{
-		Scheme: "https", Host: net.JoinHostPort(endpoint.candidateHost, fmt.Sprint(packetConn.LocalAddr().(*net.UDPAddr).Port)),
-		Path: carrierwtv3.PathDirect,
-	}).String()
-	endpoint.transportClose = func() error {
-		serverErr := server.Close()
-		packetErr := packetConn.Close()
-		serveErr := <-serveDone
-		if errors.Is(serveErr, net.ErrClosed) || strings.Contains(fmt.Sprint(serveErr), "server closed") {
-			serveErr = nil
-		}
-		return errors.Join(serverErr, packetErr, serveErr)
-	}
-	return nil
-}
-
-func (endpoint *ProductDirectEndpoint) serveWebTransportUpgrade(carrierSession *carrierwtv3.Session, upgradeErr error) {
-	if upgradeErr != nil {
-		endpoint.upgradeDiagnosticMu.Lock()
-		diagnostic := endpoint.upgradeDiagnostic
-		endpoint.upgradeDiagnosticMu.Unlock()
-		if diagnostic != nil {
-			diagnostic(upgradeErr)
-		}
-		if carrierSession != nil {
-			_ = carrierSession.Close()
-		}
-		return
-	}
-	if carrierSession != nil {
-		endpoint.serveWebTransport(carrierSession)
-	}
-}
-
-func validateBrowserOrigin(raw string) error {
-	origin, err := url.Parse(raw)
-	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.User != nil ||
-		origin.Host == "" || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
-		return errors.New("browser origin must be an absolute HTTP origin")
-	}
-	address := net.ParseIP(origin.Hostname())
-	if address == nil || address.IsUnspecified() || address.IsMulticast() {
-		return errors.New("browser origin must use a concrete unicast IP address")
-	}
-	return nil
-}
-
-func browserOriginAllowed(raw, allowed string) bool {
-	origin, err := url.Parse(raw)
-	if err != nil || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
-		return false
-	}
-	want, err := url.Parse(allowed)
-	if err != nil || origin.Scheme != want.Scheme || origin.Hostname() != want.Hostname() {
-		return false
-	}
-	return want.Port() == "" || origin.Port() == want.Port()
-}
-
-func (endpoint *ProductDirectEndpoint) serveRawQUIC(carrierSession *rawquicv3.Session) {
-	stream, err := rawquicv3.AcceptAdmissionStream(endpoint.ctx, carrierSession)
-	if err != nil {
-		endpoint.reportWebTransportAdmissionDiagnostic(err)
-		_ = carrierSession.Close()
-		return
-	}
-	endpoint.serveNative(carrierSession, stream)
-}
-
-func (endpoint *ProductDirectEndpoint) serveWebTransport(carrierSession *carrierwtv3.Session) {
-	stream, err := carrierwtv3.OpenAdmissionStream(endpoint.ctx, carrierSession)
-	if err != nil {
-		endpoint.reportWebTransportAdmissionDiagnostic(err)
-		_ = carrierSession.Close()
-		return
-	}
-	endpoint.serveNative(carrierSession, stream)
-}
-
-func (endpoint *ProductDirectEndpoint) serveNative(carrierSession carrier.Session, stream carrier.Stream) {
-	decoded, err := admissionv3.Serve(endpoint.ctx, stream, artifactv3.ReasonRegistry{}, endpoint.authorize)
-	if err != nil {
-		endpoint.reportWebTransportAdmissionDiagnostic(err)
-		_ = carrierSession.Close()
-		return
-	}
-	expected := endpoint.lookup(decoded.Raw)
-	if expected == nil {
-		_ = carrierSession.Close()
-		return
-	}
-	endpoint.complete(expected, establishProductServer(endpoint.ctx, carrierSession, decoded, expected.contract))
-}
-
-func (endpoint *ProductDirectEndpoint) serveWebSocket(conn *gorillaws.Conn) {
-	decoded, err := websocketadmission.Serve(endpoint.ctx, conn, artifactv3.ReasonRegistry{}, endpoint.authorize)
-	if err != nil {
-		_ = conn.Close()
-		return
-	}
-	expected := endpoint.lookup(decoded.Raw)
-	if expected == nil {
-		_ = conn.Close()
-		return
-	}
-	resources, err := carrierwsv3.BindSessionResourcePolicy(carrierwsv3.DefaultResourcePolicy(), endpoint.maxInboundStreams)
-	if err != nil {
-		endpoint.complete(expected, productServerResult{err: err})
-		_ = conn.Close()
-		return
-	}
-	carrierSession, err := carrierwsv3.NewAfterAdmission(conn, carrierwsv3.ServerRole, carrierwsv3.SubprotocolDirect, resources)
-	if err != nil {
-		endpoint.complete(expected, productServerResult{err: err})
-		_ = conn.Close()
-		return
-	}
-	endpoint.complete(expected, establishProductServer(endpoint.ctx, carrierSession, decoded, expected.contract))
-}
-
-func (endpoint *ProductDirectEndpoint) register(expected *admissionExpectation) ([sha256.Size]byte, error) {
-	digest := sha256.Sum256(expected.raw)
-	endpoint.pendingMu.Lock()
-	defer endpoint.pendingMu.Unlock()
-	if err := context.Cause(endpoint.ctx); err != nil {
-		return digest, err
-	}
-	if _, exists := endpoint.pending[digest]; exists {
-		return digest, errors.New("duplicate release admission request")
-	}
-	endpoint.pending[digest] = expected
-	return digest, nil
-}
-
-func (endpoint *ProductDirectEndpoint) unregister(digest [sha256.Size]byte, expected *admissionExpectation) {
-	endpoint.pendingMu.Lock()
-	if endpoint.pending[digest] == expected {
-		delete(endpoint.pending, digest)
-	}
-	endpoint.pendingMu.Unlock()
-}
-
-func (endpoint *ProductDirectEndpoint) abandon(digest [sha256.Size]byte, expected *admissionExpectation) {
-	endpoint.unregister(digest, expected)
-	select {
-	case result := <-expected.result:
-		if result.session != nil {
-			_ = result.session.Close()
-		}
-	default:
-	}
-}
-
-func (endpoint *ProductDirectEndpoint) lookup(raw []byte) *admissionExpectation {
-	digest := sha256.Sum256(raw)
-	endpoint.pendingMu.Lock()
-	expected := endpoint.pending[digest]
-	if expected != nil && !bytes.Equal(expected.raw, raw) {
-		expected = nil
-	}
-	endpoint.pendingMu.Unlock()
-	return expected
-}
-
-func (endpoint *ProductDirectEndpoint) authorize(_ context.Context, decoded *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
-	if decoded == nil {
-		return artifactv3.AdmissionResponse{}, errors.New("admission request was not issued by this endpoint")
-	}
-	digest := sha256.Sum256(decoded.Raw)
-	endpoint.pendingMu.Lock()
-	expected := endpoint.pending[digest]
-	valid := expected != nil && bytes.Equal(expected.raw, decoded.Raw) && !expected.claimed
-	if valid {
-		expected.claimed = true
-	}
-	endpoint.pendingMu.Unlock()
-	if !valid {
-		return artifactv3.AdmissionResponse{}, errors.New("admission request was not issued by this endpoint")
-	}
-	return artifactv3.AdmissionResponse{Status: artifactv3.AdmissionSuccess}, nil
-}
-
-func (endpoint *ProductDirectEndpoint) complete(expected *admissionExpectation, result productServerResult) {
-	if result.err != nil {
-		endpoint.reportWebTransportAdmissionDiagnostic(result.err)
-	}
-	digest := sha256.Sum256(expected.raw)
-	endpoint.pendingMu.Lock()
-	active := endpoint.pending[digest] == expected
-	if active {
-		expected.result <- result
-	}
-	endpoint.pendingMu.Unlock()
-	if !active {
-		if result.session != nil {
-			_ = result.session.Close()
-		}
-		return
-	}
-}
-
-func (endpoint *ProductDirectEndpoint) failPending(err error) {
-	if err == nil {
-		err = errProductDirectEndpointClosed
-	}
-	endpoint.pendingMu.Lock()
-	pending := endpoint.pending
-	endpoint.pending = make(map[[sha256.Size]byte]*admissionExpectation)
-	endpoint.pendingMu.Unlock()
-	for _, expected := range pending {
-		select {
-		case expected.result <- productServerResult{err: err}:
-		default:
-		}
-	}
-}
-
-// Close stops admission of new connections. Established pairs remain owned by
-// their callers and must be closed independently.
 func (endpoint *ProductDirectEndpoint) Close() error {
 	if endpoint == nil {
 		return nil
 	}
 	endpoint.closeOnce.Do(func() {
 		endpoint.cancel(errProductDirectEndpointClosed)
-		endpoint.failPending(context.Cause(endpoint.ctx))
-		if endpoint.transportClose != nil {
-			endpoint.closeErr = normalizeCloseError(endpoint.transportClose())
+		endpoint.preparationMu.Lock()
+		prepared := endpoint.prepared
+		endpoint.prepared = nil
+		endpoint.preparationMu.Unlock()
+		for _, p := range prepared {
+			endpoint.closeErr = errors.Join(endpoint.closeErr, p.close())
 		}
+		endpoint.transportMu.Lock()
+		defer endpoint.transportMu.Unlock()
+		endpoint.closeErr = errors.Join(endpoint.closeErr, endpoint.registry.Close())
+		endpoint.closeErr = errors.Join(endpoint.closeErr, endpoint.reporter.Close())
 	})
 	return endpoint.closeErr
 }
-
-func establishProductServer(ctx context.Context, carrierSession carrier.Session, decoded *artifactv3.DecodedRequest, contract artifactv3.SessionContract) productServerResult {
-	router := internalrpc.NewRouter()
-	router.Register(1, func(_ context.Context, payload json.RawMessage) (json.RawMessage, *rpcv1.RpcError) {
-		return append(json.RawMessage(nil), payload...), nil
-	})
-	config := flowersessionv3.Config{
-		Role: flowersessionv3.RoleServer, Path: flowersessionv3.PathDirect,
-		ChannelID: contract.ChannelID, SessionContractHash: contract.ContractHash,
-		Suite: protocolv3.Suite(contract.DefaultSuite), PSK: contract.E2EEPSK,
-		MaxInboundStreams:      contract.MaxInboundStreams,
-		IdleTimeout:            time.Duration(contract.IdleTimeoutSeconds) * time.Second,
-		EstablishTimeout:       time.Duration(contract.EstablishTimeoutSeconds) * time.Second,
-		RekeyPrepareTimeout:    time.Duration(contract.RekeyPrepareTimeoutSeconds) * time.Second,
-		RekeyCompletionTimeout: time.Duration(contract.RekeyCompletionTimeoutSeconds) * time.Second,
-		LocalAdmissionBinding:  decoded.LocalAdmissionBinding,
-		PeerAdmissionBinding:   decoded.LocalAdmissionBinding,
-		RPCRouter:              router,
+func validateBrowserOrigin(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return errors.New("browser origin must be one exact HTTP or HTTPS origin")
 	}
-	established, err := flowersessionv3.Establish(ctx, carrierSession, config)
-	return productServerResult{session: established, err: err}
+	address, err := netip.ParseAddr(parsed.Hostname())
+	if err != nil || address.Zone() != "" || address.IsUnspecified() || address.IsMulticast() {
+		return errors.New("browser origin requires an explicit numeric unicast host")
+	}
+	return nil
 }
 
-func directArtifactV3(kind carrier.Kind, candidateURL string, contract artifactv3.SessionContract) artifactv3.Artifact {
-	carrierKind := artifactv3.CarrierWebSocket
-	switch kind {
-	case carrier.KindRawQUIC:
-		carrierKind = artifactv3.CarrierRawQUIC
-	case carrier.KindWebTransport:
-		carrierKind = artifactv3.CarrierWebTransport
+func (endpoint *ProductDirectEndpoint) InterruptConnections() error {
+	if endpoint == nil {
+		return errProductDirectEndpointClosed
 	}
-	return artifactv3.Artifact{
-		Version: 3, Profile: artifactv3.Profile, Session: contract,
-		Path: artifactv3.ArtifactPath{
-			Kind: artifactv3.PathDirect, RendezvousGroupID: "release-direct",
-			ListenerAudience: "release-listener", RoutingToken: "release-routing-token",
-			Candidates: []artifactv3.Candidate{{
-				ID: "release-candidate", Carrier: carrierKind, URL: candidateURL, WireProfile: rawquicv3.ALPNDirect,
-				TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
-			}},
-		},
-		Scoped:      []artifactv3.ScopeMetadata{},
-		Correlation: artifactv3.CorrelationContext{Version: 3, Tags: []artifactv3.CorrelationTag{}},
+	endpoint.transportMu.Lock()
+	defer endpoint.transportMu.Unlock()
+	if err := context.Cause(endpoint.ctx); err != nil {
+		return err
 	}
+	return endpoint.nativeServer().InterruptConnections()
 }
 
-// NewRawQUICTestArtifactJSON issues one opaque direct artifact for an
-// externally supervised production Acceptor. It is internal release-harness
-// glue and does not expose candidate or wire state through the public SDK.
-func NewRawQUICTestArtifactJSON(candidateURL string, maxStreams uint16) ([]byte, error) {
-	if candidateURL == "" {
-		return nil, errors.New("raw QUIC release candidate URL is empty")
+func (endpoint *ProductDirectEndpoint) nativeServer() *interopharness.Server {
+	endpoint.listenerMu.RLock()
+	defer endpoint.listenerMu.RUnlock()
+	return endpoint.server
+}
+func (endpoint *ProductDirectEndpoint) RestartListener(ctx context.Context) error {
+	if endpoint == nil || ctx == nil {
+		return errors.New("original endpoint and restart context are required")
 	}
-	contract, err := releaseSessionContractV3WithStreams(protocolv3.SuiteChaCha20Poly1305, maxStreams)
+	endpoint.transportMu.Lock()
+	defer endpoint.transportMu.Unlock()
+	if err := context.Cause(endpoint.ctx); err != nil {
+		return err
+	}
+	current := endpoint.nativeServer()
+	replacement, err := current.RestartTransport(ctx)
+	if err != nil {
+		return err
+	}
+	if err := context.Cause(endpoint.ctx); err != nil {
+		return errors.Join(err, replacement.Runtime.Reporter.Close())
+	}
+	if err := context.Cause(ctx); err != nil {
+		return errors.Join(err, replacement.Runtime.Reporter.Close())
+	}
+	endpoint.listenerMu.Lock()
+	endpoint.server = replacement
+	endpoint.listenerMu.Unlock()
+	return nil
+}
+
+// InstallOriginalBrowserRunner runs on the original source owner before rawJSON
+// is handed to acquisition. The retained structured keys and roots are original
+// issuance inputs, never reconstructed from a delivered browser artifact.
+func (a *ProductDirectBrowserArtifact) InstallOriginalBrowserRunner(ctx context.Context, owner *interopharness.BrowserRunnerInstallationOwner, observation interopharness.BrowserRuntimeObservation, declaration map[string]any) error {
+	if a == nil || a.endpoint == nil {
+		return errors.New("original direct browser issuance is required")
+	}
+	return owner.InstallOriginal(ctx, a.rawJSON, a.original, a.endpoint.TrustPEM(), a.endpoint.allowedOrigin, observation, declaration)
+}
+
+// BindOriginalBrowserRuntimeOrigin narrows the independently installed module
+// host to its actual bound port before the first browser source issuance.
+func (e *ProductDirectEndpoint) BindOriginalBrowserRuntimeOrigin(origin string) error {
+	if e == nil {
+		return errors.New("original browser listener is required")
+	}
+	if err := validateBrowserOrigin(origin); err != nil {
+		return err
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return err
+	}
+	e.transportMu.Lock()
+	defer e.transportMu.Unlock()
+	installed, err := url.Parse(e.allowedOrigin)
+	if err != nil {
+		return err
+	}
+	if e.browserRuntimeBound || e.browserIssued || parsed.Scheme != installed.Scheme || parsed.Hostname() != installed.Hostname() || parsed.Port() == "" {
+		return errors.New("browser runtime origin differs from its unconsumed original module host")
+	}
+	e.allowedOrigin = origin
+	e.nativeServer().Origin = origin
+	e.browserRuntimeBound = true
+	return nil
+}
+
+// OriginalBrowserRunnerDeclaration exports the actual original registered
+// release service and issuer policy, with a separately installed browser native
+// qualification. No material delivered to the browser is read back as trust.
+func (a *ProductDirectBrowserArtifact) OriginalBrowserRunnerDeclaration(ctx context.Context, observation interopharness.BrowserRuntimeObservation, installed *interopharness.BrowserNativeInstallation, minimumStreams uint32) (map[string]any, error) {
+	if a == nil || a.endpoint == nil || a.record == nil {
+		return nil, errors.New("original direct browser issuance is required")
+	}
+	runtime := a.endpoint.nativeServer().Runtime
+	application, err := runtime.OriginalBrowserApplication(1, "echo")
 	if err != nil {
 		return nil, err
 	}
-	return artifactv3.MarshalArtifactJSON(directArtifactV3(carrier.KindRawQUIC, candidateURL, contract))
+	return runtime.OriginalBrowserRunnerDeclaration(ctx, a.original, observation, installed, application, minimumStreams)
 }
 
-func releaseSessionContractV3(suite protocolv3.Suite) (artifactv3.SessionContract, error) {
-	return releaseSessionContractV3WithStreams(suite, defaultMaxInboundStreams)
-}
-
-func releaseSessionContractV3WithStreams(suite protocolv3.Suite, maxStreams uint16) (artifactv3.SessionContract, error) {
-	var channelNonce [16]byte
-	if _, err := rand.Read(channelNonce[:]); err != nil {
-		return artifactv3.SessionContract{}, fmt.Errorf("generate release channel ID: %w", err)
+// OpenProductDirectBrowserBatchEndpointAt captures the complete original batch
+// and its concurrent native positions before issuance. These are trusted local
+// profile declarations; acquisition requests cannot change either bound.
+func OpenProductDirectBrowserBatchEndpointAt(ctx context.Context, host, origin string, plan ProfilePlan, positions int) (*ProductDirectEndpoint, error) {
+	if ctx == nil || positions < 1 || positions > 1000 || plan.Cold.MaxInflight < 1 || plan.Cold.MaxInflight > 128 || plan.Cold.OperationDeadlineSeconds < 1 || plan.Cold.OperationDeadlineSeconds > 90 {
+		return nil, errors.New("finite original browser batch profile is required")
 	}
-	contract := artifactv3.SessionContract{
-		ChannelID: "transport-release-" + hex.EncodeToString(channelNonce[:]), InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(),
-		IdleTimeoutSeconds: 60, EstablishTimeoutSeconds: 30,
-		RekeyPrepareTimeoutSeconds: 10, RekeyCompletionTimeoutSeconds: 30,
-		MaxInboundStreams: maxStreams, AllowedSuites: []uint16{uint16(suite)}, DefaultSuite: uint16(suite),
+	if err := validateBrowserOrigin(origin); err != nil {
+		return nil, err
 	}
-	if _, err := rand.Read(contract.E2EEPSK[:]); err != nil {
-		return artifactv3.SessionContract{}, fmt.Errorf("generate release session PSK: %w", err)
-	}
-	hash, _, err := artifactv3.ComputeSessionContractHash(contract)
-	if err != nil {
-		return artifactv3.SessionContract{}, err
-	}
-	contract.ContractHash = hash
-	return contract, nil
-}
-
-func expectedDirectAdmission(artifact artifactv3.Artifact) ([]byte, error) {
-	request, err := artifactv3.BuildRequest(artifact, artifact.Path.Candidates[0].ID)
+	reporter, err := interopharness.NewPeerReporter()
 	if err != nil {
 		return nil, err
 	}
-	return artifactv3.MarshalRequest(request)
+	reporter.OperationDeadlineMS = uint64(plan.Cold.OperationDeadlineSeconds) * 1000
+	reporter.ListenerConnections = uint16(plan.Cold.MaxInflight)
+	reporter.AcceptedRoutePositions = uint16(positions + 1)
+	return openProductDirectEndpoint(ctx, carrier.KindWebTransport, host, host, origin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, nil, reporter)
 }
 
-func connectorTimeout(ctx context.Context) time.Duration {
-	if deadline, ok := ctx.Deadline(); ok {
-		if remaining := time.Until(deadline); remaining > 0 {
-			return remaining
-		}
-		return time.Nanosecond
+// CloseOriginalBrowser retires this exact accepted record and joins its real
+// runtime. A failed/canceled acquisition never reinstalls or unspends it.
+func (a *ProductDirectBrowserArtifact) CloseOriginalBrowser(ctx context.Context) error {
+	if a == nil {
+		return nil
 	}
-	return 15 * time.Second
+	if ctx == nil {
+		return errors.New("original browser cleanup context is required")
+	}
+	a.mu.Lock()
+	a.consumed = true
+	a.mu.Unlock()
+	return a.record.Close()
+}
+
+func (a *ProductDirectBrowserArtifact) CheckOriginalBrowserBatchWindow(ctx context.Context, admissionMS, sessionMS uint64) error {
+	if a == nil || a.endpoint == nil || a.record == nil {
+		return errors.New("original direct browser issuance is required")
+	}
+	return a.endpoint.nativeServer().Runtime.CheckOriginalBrowserBatchWindow(ctx, a.original, admissionMS, sessionMS)
 }

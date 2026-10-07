@@ -10,13 +10,13 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-func TestV4SessionLifecycleForwardsOriginalOwners(t *testing.T) {
+func TestSessionLifecycleForwardsOriginalOwners(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	info := protocolv4.V4SessionInfo{ApplicationProfile: protocolv4.V4ApplicationProfileTransport, SelectedFeatures: 3}
 	operation := &sessionv4.DrainOperation{}
 	drains := 0
-	s := &V4Session{
+	s := &Session{
 		info: func() protocolv4.V4SessionInfo { return info },
 		drain: func(timeout, cap uint64) (*sessionv4.DrainOperation, error) {
 			drains++
@@ -61,7 +61,7 @@ func TestV4SessionLifecycleForwardsOriginalOwners(t *testing.T) {
 		t.Fatal("termination did not redact provider details", err)
 	}
 	cancel()
-	if result, err := s.WaitDrain(ctx); !errors.Is(err, context.Canceled) || result.Outcome != V4DrainPending {
+	if result, err := s.WaitDrain(ctx); !errors.Is(err, context.Canceled) || result.Outcome != DrainPending {
 		t.Fatal("canceled drain observer changed original operation", result, err)
 	}
 	_ = s.Close()
@@ -70,13 +70,13 @@ func TestV4SessionLifecycleForwardsOriginalOwners(t *testing.T) {
 	}
 }
 
-func TestV4SessionProbePreservesRekeyInterruptionFacts(t *testing.T) {
-	s := &V4Session{probeLiveness: func(context.Context, uint64) (sessionv4.ProbeResult, error) {
+func TestSessionProbePreservesRekeyInterruptionFacts(t *testing.T) {
+	s := &Session{probeLiveness: func(context.Context, uint64) (sessionv4.ProbeResult, error) {
 		return sessionv4.ProbeResult{Submitted: true, Cause: sessionv4.ErrProbeRekey}, sessionv4.ErrProbeRekey
 	}}
 	result, err := s.ProbeLiveness(context.Background(), 100)
 	var failure *SessionError
-	if !errors.As(err, &failure) || failure.Code() != V4SessionRekeyInProgress || !result.Submitted || result.ElapsedAvailable || result.Cause == nil || result.Cause.Code() != failure.Code() {
+	if !errors.As(err, &failure) || failure.Code() != SessionRekeyInProgress || !result.Submitted || result.ElapsedAvailable || result.Cause == nil || result.Cause.Code() != failure.Code() {
 		t.Fatal("rekey interruption lost submission or availability facts", result, err)
 	}
 }

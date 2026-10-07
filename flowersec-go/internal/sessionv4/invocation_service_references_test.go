@@ -56,10 +56,13 @@ func TestInvocationViewUsesAdmittedReferencesAtFullRootCapacity(t *testing.T) {
 			t.Fatal("registration close refunded a selected view")
 		}
 		use.Release()
-		if services.bindings != nil || services.viewReferences != nil {
-			t.Fatal("last actual view failed to settle original admission")
+		if services.bindings == nil || services.viewReferences == nil {
+			t.Fatal("selected-view exit refunded a live invocation declaration")
 		}
 	})
+	if services.bindings != nil || services.viewReferences != nil {
+		t.Fatal("last invocation exit failed to settle original admission")
+	}
 }
 
 func TestInvocationReferenceCapacityDeduplicatesAliasesAndIncludesGenericCalls(t *testing.T) {

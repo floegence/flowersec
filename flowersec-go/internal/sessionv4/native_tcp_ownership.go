@@ -58,7 +58,7 @@ func (n *NativeTCP) own(reservation resourcev4.Reference, deadline *timev4.Deadl
 	if err != nil {
 		return nil, err
 	}
-	tail, err := n.reservation.Borrow()
+	tail, err := n.reservation.BorrowInScopesOf(owned)
 	if err != nil {
 		owned.Release()
 		return nil, err

@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-go",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-go/ae824e5f729367026e2c0ce01e0b0c91b5ee3e35a9a28c8cb307d5943bda14ef",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-go/1232618a035be3df441e87ab7a37162a01a4f844e6ce13aef4086d6b1e3dc6ed",
   "creationInfo": {
     "created": "2026-09-17T15:04:20Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: ae824e5f729367026e2c0ce01e0b0c91b5ee3e35a9a28c8cb307d5943bda14ef",
+      "comment": "Flowersec source inventory SHA-256: 1232618a035be3df441e87ab7a37162a01a4f844e6ce13aef4086d6b1e3dc6ed",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -145,40 +145,6 @@
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
           "referenceLocator": "pkg:golang/github.com/gorilla/websocket@v1.5.3"
-        }
-      ]
-    },
-    {
-      "name": "github.com/libp2p/go-buffer-pool",
-      "SPDXID": "SPDXRef-Package-17214501a636b91f79bd",
-      "versionInfo": "v0.0.2",
-      "downloadLocation": "https://github.com/libp2p/go-buffer-pool",
-      "filesAnalyzed": false,
-      "licenseConcluded": "MIT",
-      "licenseDeclared": "MIT",
-      "copyrightText": "NOASSERTION",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2"
-        }
-      ]
-    },
-    {
-      "name": "github.com/libp2p/go-yamux/v5",
-      "SPDXID": "SPDXRef-Package-fb0f88559a26b25e7611",
-      "versionInfo": "v5.1.0",
-      "downloadLocation": "https://github.com/libp2p/go-yamux/v5",
-      "filesAnalyzed": false,
-      "licenseConcluded": "MPL-2.0",
-      "licenseDeclared": "MPL-2.0",
-      "copyrightText": "NOASSERTION",
-      "externalRefs": [
-        {
-          "referenceCategory": "PACKAGE-MANAGER",
-          "referenceType": "purl",
-          "referenceLocator": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0"
         }
       ]
     },
@@ -470,16 +436,6 @@
     {
       "spdxElementId": "SPDXRef-Package-8fb9942c91085705a1f1",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-17214501a636b91f79bd"
-    },
-    {
-      "spdxElementId": "SPDXRef-Package-8fb9942c91085705a1f1",
-      "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-fb0f88559a26b25e7611"
-    },
-    {
-      "spdxElementId": "SPDXRef-Package-8fb9942c91085705a1f1",
-      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-979db256d5da3081c33c"
     },
     {
@@ -551,11 +507,6 @@
       "spdxElementId": "SPDXRef-Package-d7d200b56b0bf224a5c3",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-2d24524397d729b4463f"
-    },
-    {
-      "spdxElementId": "SPDXRef-Package-fb0f88559a26b25e7611",
-      "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-17214501a636b91f79bd"
     },
     {
       "spdxElementId": "SPDXRef-Package-979db256d5da3081c33c",

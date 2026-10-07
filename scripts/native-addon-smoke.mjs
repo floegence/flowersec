@@ -9,7 +9,7 @@ const addonPath = process.env.FLOWERSEC_NATIVE_ADDON_PATH;
 assert.ok(addonPath, "FLOWERSEC_NATIVE_ADDON_PATH is required");
 const addon = createRequire(import.meta.url)(addonPath);
 assert.equal(typeof addon.contractVersion, "function");
-assert.equal(addon.contractVersion(), 3);
+assert.equal(addon.contractVersion(), 4);
 assert.equal(typeof addon.bindRawQuic, "function");
 assert.equal(typeof addon.connectRawQuic, "function");
 assert.equal("bindRawQuicV3" in addon, false);
@@ -20,6 +20,7 @@ const privateKeyDer = Buffer.from(TEST_PRIVATE_KEY_DER, "base64");
 const listener = await addon.bindRawQuic({
   host: "127.0.0.1", port: 0, path: "direct", certificateChainDer, privateKeyDer,
   inboundBidirectionalStreamCapacity: 4, handshakeTimeoutMs: 2_000,
+  readBufferBytes: 16_384, datagramQueueBytes: 65_536, pendingConnections: 8,
 });
 try {
   const accepting = listener.accept();
@@ -28,9 +29,13 @@ try {
     host: address.host, port: address.port, serverName: "localhost", path: "direct",
     tlsMode: "ca", trustRootsDer: certificateChainDer,
     inboundBidirectionalStreamCapacity: 4, handshakeTimeoutMs: 2_000,
+    readBufferBytes: 16_384, datagramQueueBytes: 65_536,
   });
   const client = await operation.result();
   const server = await accepting.result();
+  assert.equal(client.wireVersion, 4);
+  assert.equal(server.wireVersion, 4);
+  assert.equal(client.tls().alpn, "flowersec-direct/4");
   await Promise.all([client.close(), server.close()]);
   await Promise.all([client.waitTermination(), server.waitTermination()]);
 } finally {

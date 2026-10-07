@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
@@ -220,6 +221,47 @@ func TestSessionMessageInputPreservesOneEnvelopePerMessage(t *testing.T) {
 	}
 	if n, err := m.Write(append(bytes.Clone(first), second...)); n != 0 || !errors.Is(err, ErrSessionMessageFraming) || p.writes.Load() != 1 {
 		t.Fatal("concatenated write reached provider", n, err)
+	}
+}
+
+func TestSessionMessageInputPreservesOriginalTransportFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		cause     error
+		transport bool
+	}{
+		{"native", native.ErrConnectionLost, true},
+		{"incomplete", io.ErrUnexpectedEOF, true},
+		{"closed_pipe", io.ErrClosedPipe, true},
+		{"application", errors.New("application failure"), false},
+		{"wrapped", errors.Join(native.ErrConnectionLost), false},
+	} {
+		for _, write := range []bool{false, true} {
+			t.Run(tc.name+map[bool]string{false: "/read", true: "/write"}[write], func(t *testing.T) {
+				p := &sessionMessageProvider{
+					read:  func(context.Context, []byte) (int, error) { return 0, tc.cause },
+					write: func(context.Context, []byte) error { return tc.cause },
+				}
+				m, _, _ := messageInputFixture(t, context.Background(), p)
+				var err error
+				if write {
+					_, err = m.Write(messageEnvelope(t, protocolv4.FramePing, 40))
+				} else {
+					input := connectionInputReader{reader: m}
+					_, err = input.Read(make([]byte, 8))
+					if input.failed(err) != tc.transport {
+						t.Fatal("shared input lost the original failure classification", err)
+					}
+				}
+				want := tc.cause
+				if !tc.transport {
+					want = ErrSessionMessageProvider
+				}
+				if err != want {
+					t.Fatal("message boundary changed the failure", err, want)
+				}
+			})
+		}
 	}
 }
 

@@ -166,6 +166,22 @@ func (p *RelayParentProjection) Key() (RelayParentKey, error) {
 	return RelayParentKey{Tenant: b.tenant, Issuer: b.issuer, Lease: b.lease, Candidate: b.winner.CandidateID, Attempt: b.attempt}, nil
 }
 
+// PoolWinnerFields returns the immutable public selection held by the original
+// issuer projection. It is a match target, never an admission or commit receipt.
+func (p *RelayParentProjection) PoolWinnerFields() (AdmissionFields, error) {
+	if _, err := p.Key(); err != nil {
+		return AdmissionFields{}, err
+	}
+	b := p.activation.binding
+	if b.source != "preauthorized_pool" {
+		return AdmissionFields{}, ErrHopAuthContext
+	}
+	return AdmissionFields{Source: b.source, Tenant: b.tenant, Audience: b.audience, WinnerAuthority: p.activation.trust.WinnerAuthority,
+		Issuer: b.issuer, Lease: b.lease, Artifact: b.artifactDigest, Proof: b.proofDigest, CandidateSet: b.candidateSetDigest,
+		Candidate: b.winner.CandidateID, Route: b.winner.RouteDigest, Attempt: b.attempt, ClientIdentity: b.clientDigest, ServerIdentity: b.serverDigest,
+		IssuedAt: b.issuedAt, ActivationEnd: b.activationEnd, SessionEnd: b.sessionEnd}, nil
+}
+
 func (p *RelayParentProjection) MatchMapping(mapping RelayIssuerMapping) error {
 	if _, err := p.Key(); err != nil {
 		return err

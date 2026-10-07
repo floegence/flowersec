@@ -1,3 +1,6 @@
+import type { ControllerUnaryRoute, ControllerUnaryRouteRequest } from "./controllerUnaryRoute.js";
+import { controllerUnaryPreparation } from "../unaryOperation.js";
+import { RPCProtocolError } from "./rpcFragment.js";
 import type * as QueryRenewalPositionTypes from "./queryRenewalPosition.js";
 import { resumeStreamSession } from "./resumeStream.js";
 import type { V4ApplicationContext } from "../streamHandlers.js";
@@ -13,6 +16,7 @@ export interface ControllerServiceHost {
   readonly group: object;
   check(): void;
   capture(): V4AuthenticatedSessionRuntime;
+  current(runtime: V4AuthenticatedSessionRuntime): boolean;
   target(session: object): V4AuthenticatedSessionRuntime;
   wait(deadline: TrustedDeadline, context?: V4ApplicationContext, signal?: AbortSignal): Promise<void>;
   retain(reference: ResourceReference, closed: () => void): ServiceBindingLease;
@@ -69,7 +73,32 @@ export function controllerServiceSource(host: ControllerServiceHost, config: Cap
       return fixed.query(targets, bounded, windows, context, delivery, renewal);
     },
     preacceptStreams: (...args) => select().preacceptStreams(...args),
-    prepare: (...args) => select().prepare(...args),
+    prepare: (...args) => select().prepare(...args).then(prepared => controllerUnaryPreparation(prepared, host.group)),
+    prepareDispatch: (method, namespace, contract, offer, value, settings, invocation, cancellation) => {
+      const fixed = select(); let selected = runtime!, selections = 1;
+      const originalAuthority = selected.rpcApplication().unaryRouteAuthority();
+      const route: ControllerUnaryRoute = Object.freeze({
+        get selections() { return selections; },
+        current: () => host.current(selected),
+        check: () => { host.check(); host.capture(); },
+        observe: (reference: ResourceReference, changed: () => void) => host.observeCurrent(reference, changed),
+        reserve: (request: ControllerUnaryRouteRequest) => {
+          host.check(); const next = host.capture();
+          if (next === selected || selections >= 3 || cancellation?.aborted || invocation?.signal.aborted) return undefined;
+          const nextSource = next.rpcApplication().bindingSource(config);
+          nextSource.check(); checkServiceBindingTarget(config.target, nextSource.authentication());
+          nextSource.checkDependency(method, request.contract);
+          if (host.capture() !== next) throw new RPCProtocolError("source_unavailable");
+          // Consume a choice before entering resource/clock/provider callbacks.
+          // A failed allocation cannot restore the revoked route's authority.
+          selections++; selected = next;
+          return next.rpcApplication().adoptControllerUnary(request, method, config.target, method.workClass, route, originalAuthority);
+        },
+      });
+      return selected.rpcApplication().prepareUnary(method.method, namespace, contract, offer, value, settings,
+        { check: () => fixed.check(), current: () => fixed.current() }, method.workClass, invocation, cancellation, config.target, undefined, route)
+        .then(prepared => controllerUnaryPreparation(prepared, host.group));
+    },
     prepareNotify: (...args) => select().prepareNotify(...args),
     prepareStream: (...args) => select().prepareStream(...args),
     resumeSource,

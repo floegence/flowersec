@@ -105,7 +105,7 @@ func streamServiceFloorCharges(c SessionCoreConfig) (count uint32, vectors [stre
 		return
 	}
 	copy(vectors[:], stream[:])
-	if c.Native {
+	if c.Native || c.MixedCarrier {
 		vectors[streamFactoryNativeReceive], err = NativeDataAssemblyCharge(math.MaxInt64, protocolv4.ServerToClient, c.Session.Profile, c.Session.Contract.Limits().MaxFrame)
 		if err != nil {
 			return

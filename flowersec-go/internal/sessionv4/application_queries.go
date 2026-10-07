@@ -75,6 +75,9 @@ func sdkQueryLaneCharge(c ApplicationExecutorConfig) (resourcev4.Vector, error) 
 	if err != nil || charge[resourcev4.SDKBytes] > 256*1024 {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
+	if c.Profile != ApplicationProfileCustom {
+		charge[resourcev4.SDKBytes] = 256 * 1024
+	}
 	return charge, nil
 }
 

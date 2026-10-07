@@ -60,6 +60,11 @@ func TestContractRoutesCaptureExactImmutableSemantics(t *testing.T) {
 	if routes.CleanupComplete() {
 		t.Fatal("registry refunded captured semantics")
 	}
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := routes.WaitCleanup(canceled); !errors.Is(err, context.Canceled) {
+		t.Fatal("cleanup join ignored the original route capture", err)
+	}
 	if err := route.CheckRequest(h); err != nil {
 		t.Fatal("close erased accepted semantics", err)
 	}
@@ -67,6 +72,9 @@ func TestContractRoutesCaptureExactImmutableSemantics(t *testing.T) {
 	route.Release()
 	if !routes.CleanupComplete() {
 		t.Fatal("registry retained released capture")
+	}
+	if err := routes.WaitCleanup(context.Background()); err != nil {
+		t.Fatal("released capture did not complete its original cleanup", err)
 	}
 	if _, _, err := alias.Policy(); !errors.Is(err, ErrOwner) {
 		t.Fatal("stale capture revived", err)

@@ -47,6 +47,8 @@ type StreamOwnership struct {
 	typed                      *TypedMessageStream
 	conn                       *StreamConn
 	connAbort                  <-chan struct{}
+	duplexAbort                <-chan struct{}
+	messageAbort               <-chan struct{}
 	connSignal                 atomic.Pointer[streamConnSignal]
 	resume                     *resumeTarget
 	recoveryProgress           *streamRecoveryProgress
@@ -253,6 +255,12 @@ func (o *StreamOwnership) enterCallback() error {
 func (o *StreamOwnership) handlerSupervision() (<-chan struct{}, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if o.messageAbort != nil {
+		return o.messageAbort, nil
+	}
+	if o.duplexAbort != nil {
+		return o.duplexAbort, nil
+	}
 	if o.connAbort != nil {
 		return o.connAbort, nil
 	}
@@ -638,4 +646,28 @@ func (o *StreamOwnership) releaseConn(conn *StreamConn) error {
 	o.reservation.Release()
 	o.reservation = resourcev4.Reference{}
 	return nil
+}
+
+// checkLifetimeAt retains the same capability and hard deadlines while using
+// the publisher's original clock observation; it never calls the host clock.
+func (o *StreamOwnership) checkLifetimeAt(sample timev4.Sample) error {
+	if o.operationContext != nil {
+		if err := o.operationContext.Err(); err != nil {
+			return err
+		}
+	}
+	if o.conn != nil {
+		if err := o.conn.parent.Err(); err != nil {
+			return err
+		}
+		if err := o.conn.deadline.CheckAt(sample); err != nil {
+			return err
+		}
+	}
+	if o.deadline != nil {
+		if err := o.deadline.CheckAt(sample); err != nil {
+			return err
+		}
+	}
+	return o.reservation.Check()
 }

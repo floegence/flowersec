@@ -217,7 +217,7 @@ func (h *sessionHeadroom) claim(requests []resourcev4.Request, refs []resourcev4
 			return resourcev4.ErrOwner
 		}
 		for i, ref := range h.coreBorrows {
-			if i == 2 && !core.config.MessageCarrier {
+			if i == 2 && !core.config.MessageCarrier && !core.config.MixedCarrier {
 				if ref != (resourcev4.Reference{}) {
 					return resourcev4.ErrOwner
 				}

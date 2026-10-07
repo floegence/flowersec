@@ -1,11 +1,14 @@
 import Foundation
 
+public enum ConnectionEndpointRole: UInt8, Sendable { case client = 0, server = 1 }
+
 public struct ConnectionRequirements: Sendable, Equatable {
   public var independentReliableReadProgress: Bool
   public var boundStreamInputIsolation: Bool
   public var datagram: Bool
   public var localConsumerTLS13Verification: Bool
   public var applicationProfile: String?
+  var nativeListenerAcceptance = false
 
   public init(
     independentReliableReadProgress: Bool = false,
@@ -35,34 +38,103 @@ public struct CleanupStatus: Sendable, Equatable {
   }
 }
 
-public enum TransportV4AvailabilityError: Error, Sendable {
+extension CleanupStatus {
+  // Observations may cover the same original physical tail. Preserve their
+  // refusal without counting one callback twice at nested error boundaries.
+  func preserving(_ other: CleanupStatus) -> CleanupStatus {
+    CleanupStatus(complete: complete && other.complete,
+      cleanupIncomplete: cleanupIncomplete || other.cleanupIncomplete,
+      pendingCallbacks: max(pendingCallbacks, other.pendingCallbacks))
+  }
+}
+
+public enum TransportAvailabilityError: Error, Sendable {
   case runtimeUnavailable
 }
 
-// Only the authenticated v4 assembly may supply these owners. In particular,
-// an arbitrary Session is not an ArtifactLease/ApplicationIdentity pair.
+// Only authenticated current assembly may supply these original material owners.
 protocol ConnectionMaterialOwner: Sendable {
   func close()
   func waitCleanup() async throws -> CleanupStatus
+  func waitPhysicalCleanup() async -> CleanupStatus
   func cleanupStatus() -> CleanupStatus
 }
 
-public final class ConnectionMaterial: Sendable {
+extension ConnectionMaterialOwner {
+  func waitPhysicalCleanup() async -> CleanupStatus { (try? await waitCleanup()) ?? cleanupStatus() }
+}
+
+public final class ConnectionMaterial: Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
   let owner: any ConnectionMaterialOwner
   init(owner: any ConnectionMaterialOwner) { self.owner = owner }
   public func close() { owner.close() }
   public func waitCleanup() async throws -> CleanupStatus { try await owner.waitCleanup() }
+  func waitPhysicalCleanup() async -> CleanupStatus { await owner.waitPhysicalCleanup() }
   public func cleanupStatus() -> CleanupStatus { owner.cleanupStatus() }
+  public var description: String { "Flowersec.ConnectionMaterial(<redacted>)" }
+  public var debugDescription: String { description }
+  public var customMirror: Mirror { Mirror(self, children: EmptyCollection<(label: String?, value: Any)>()) }
+  deinit { owner.close() }
 }
 
-public protocol ConnectionMaterialSource: Sendable {
-  func acquire(_ requirements: ConnectionRequirements) async throws -> ConnectionMaterial
+public enum ConnectionMaterialSourceError: String, Error, Sendable {
+  case closed
+  case exhausted
+  case generationConflict = "generation_conflict"
 }
+
+protocol ConnectionMaterialSourceOwner: Sendable {
+  func acquire(_ requirements: ConnectionRequirements) async throws -> ConnectionMaterial
+  func close()
+  func cleanupStatus() -> CleanupStatus
+  func waitCleanup() async throws -> CleanupStatus
+}
+
+extension ConnectionMaterialSourceOwner {
+  func close() {}
+  func cleanupStatus() -> CleanupStatus { CleanupStatus(complete: true) }
+  func waitCleanup() async throws -> CleanupStatus { cleanupStatus() }
+}
+
+/// A closed SDK source. The TransportEnvironment fixes its activation profile, trusted
+/// provider and authority configuration; Acquire captures one complete local
+/// identity generation before preparing its matching independently usable lease.
+public final class ConnectionMaterialSource: Sendable, CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+  let owner: any ConnectionMaterialSourceOwner
+  init(owner: any ConnectionMaterialSourceOwner) { self.owner = owner }
+  public func acquire(_ requirements: ConnectionRequirements = ConnectionRequirements()) async throws -> ConnectionMaterial {
+    try await owner.acquire(requirements)
+  }
+  public func close() { owner.close() }
+  public func cleanupStatus() -> CleanupStatus { owner.cleanupStatus() }
+  public func waitCleanup() async throws -> CleanupStatus { try await owner.waitCleanup() }
+  public var description: String { "Flowersec.ConnectionMaterialSource(<redacted>)" }
+  public var debugDescription: String { description }
+  public var customMirror: Mirror { Mirror(self, children: EmptyCollection<(label: String?, value: Any)>()) }
+  deinit { owner.close() }
+}
+
+#if os(macOS) || os(iOS)
+extension ConnectionMaterialSource {
+  public func replaceLiveConfiguration(_ configuration: TransportLiveAuthoritySourceConfiguration,
+    identity: TransportApplicationIdentity) throws {
+    guard let live = owner as? V4LiveMaterialSource else { throw ConnectionMaterialSourceError.generationConflict }
+    try live.replace(configuration: configuration, identity: identity)
+  }
+  /// Publishes a complete replacement snapshot. The SDK advances its local
+  /// generation; callers do not maintain transport generation counters.
+  public func replacePoolGeneration(_ credentials: [TransportPoolCredential],
+    identity: TransportApplicationIdentity) throws {
+    guard let pool = owner as? V4PoolMaterialSource else { throw ConnectionMaterialSourceError.generationConflict }
+    try pool.replace(credentials, identity: identity)
+  }
+}
+#endif
 
 protocol TransportEnvironmentOwner: Sendable {
   // The owner must fence Acquire, material consumption and Session publication
   // against Close, retaining late preparation work until actual cleanup.
-  func connect(source: any ConnectionMaterialSource, requirements: ConnectionRequirements)
+  func connect(source: ConnectionMaterialSource, requirements: ConnectionRequirements)
     async throws -> any Session
   func connectMaterial(_ material: ConnectionMaterial, requirements: ConnectionRequirements)
     async throws -> any Session
@@ -79,32 +151,133 @@ public actor TransportEnvironment {
   public init() { owner = nil }
   init(owner: any TransportEnvironmentOwner) { self.owner = owner }
   #if os(macOS) || os(iOS)
-    public init(configuration: TransportV4ClientConfiguration) async throws {
-      owner = try await V4ClientEnvironment.create(configuration)
+    public init(configuration: TransportClientConfiguration) async throws {
+      do { owner = try await V4ClientEnvironment.create(configuration) }
+      catch { throw TransportConnectError.namespaceFailure(error) }
     }
-    public func generateApplicationIdentity(profile: TransportV4CryptoProfile) throws
-      -> TransportV4ApplicationIdentity
+    public func makeNativeProxyUpstream(_ configuration: NativeProxyUpstreamConfiguration) throws -> NativeProxyUpstream {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try NativeProxyUpstream(environment: client.foundation, configuration: configuration)
+    }
+    public func makeParentWinnerAuthority(_ configuration: ParentWinnerStoreConfiguration) throws -> ParentWinnerAuthority {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try ParentWinnerAuthority(environment: client.foundation, configuration: configuration)
+    }
+    /// Installs a common CAS on this TransportEnvironment's server pool history. Call
+    /// after creating the authority and before any server-role pool consumption.
+    /// Environments without pool history, a mismatched authority ID, or a second
+    /// installation fail closed.
+    public func installParentWinnerAuthority(_ configuration: ParentWinnerAuthorityConfiguration) throws {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      try client.installParentWinnerAuthority(configuration)
+    }
+    public func makeRelayHost(_ configuration: RelayHostConfiguration,
+      identity: TransportApplicationIdentity) throws -> RelayHost {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try client.relayHost(configuration, identity: identity)
+    }
+    public func makeServiceMaintenanceOwner(maximumPublications: Int = 16) throws -> ServiceMaintenanceOwner {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try ServiceMaintenanceOwner(environment: client.foundation, maximumPublications: maximumPublications)
+    }
+    public func makeServiceRegistry(_ configuration: ServiceRegistryConfiguration) throws -> ServiceRegistry {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      let registry = try ServiceRegistry(environment: client.foundation, configuration: configuration)
+      try client.foundation.installServiceRegistry(registry); return registry
+    }
+    public func openServiceExecutionStore(_ configuration: SQLiteServiceExecutionConfiguration) throws -> SQLiteServiceExecutionStore {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try SQLiteServiceExecutionStore(environment: client.foundation, configuration: configuration)
+    }
+    public func openOperationReferenceStore(_ configuration: SQLiteOperationReferenceConfiguration) throws -> SQLiteOperationReferenceStore {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try SQLiteOperationReferenceStore(environment: client.foundation, configuration: configuration)
+    }
+    public func captureCheckpointToken(_ encoded: Data, protection: CheckpointTokenProtection,
+      verificationKey: CheckpointVerificationKey? = nil) throws -> ApplicationCheckpointToken {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try ApplicationCheckpointToken(environment: client.foundation, encoded: encoded,
+        protection: protection, verificationKey: verificationKey)
+    }
+    public func makeOperationReferenceCodec() throws -> OperationReferenceCodec {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try OperationReferenceCodec(environment: client.foundation)
+    }
+    public func captureServiceContract(_ canonical: Data) throws -> ServiceContract {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try ServiceContract(environment: client.foundation, canonical: canonical)
+    }
+    public func generateApplicationIdentity(profile: TransportCryptoProfile) throws
+      -> TransportApplicationIdentity
     {
       guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
-      return try TransportV4ApplicationIdentity(
+      return try TransportApplicationIdentity(
         client.foundation.generateIdentity(profile: V4CryptoProfile(rawValue: profile.rawValue)!))
     }
     public func importApplicationIdentity(
-      profile: TransportV4CryptoProfile, signingSeed: Data,
+      profile: TransportCryptoProfile, signingSeed: Data,
       noiseStaticPrivateKey: Data
-    ) throws -> TransportV4ApplicationIdentity {
+    ) throws -> TransportApplicationIdentity {
       guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
-      return try TransportV4ApplicationIdentity(
+      return try TransportApplicationIdentity(
         client.foundation.importIdentity(
           profile: V4CryptoProfile(rawValue: profile.rawValue)!, signingSeed: signingSeed,
           staticKey: noiseStaticPrivateKey))
     }
     public func preparePoolMaterial(
-      _ credential: TransportV4PoolCredential,
-      identity: TransportV4ApplicationIdentity
+      _ credential: TransportPoolCredential,
+      identity: TransportApplicationIdentity, role: ConnectionEndpointRole = .client
     ) throws -> ConnectionMaterial {
       guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
-      return try client.material(credential, identity: identity)
+      return try client.material(credential.withRole(role), identity: identity)
+    }
+    /// Creates a finite, local preauthorized source. Acquire never issues or
+    /// tops up authorization and never changes the source's activation profile.
+    public func makePreauthorizedPoolSource(_ credentials: [TransportPoolCredential],
+      identity: TransportApplicationIdentity, role: ConnectionEndpointRole = .client) throws -> ConnectionMaterialSource {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try client.poolSource(credentials.map { $0.withRole(role) }, identity: identity)
+    }
+    public func makeConnectionMaterialSource(_ configuration: TransportMaterialSourceConfiguration,
+      identity: TransportApplicationIdentity) throws -> ConnectionMaterialSource {
+      switch configuration {
+      case .preauthorizedPool(let credentials): return try makePreauthorizedPoolSource(credentials, identity: identity)
+      case .liveAuthority(let control): return try makeLiveAuthoritySource(control, identity: identity)
+      case .registeredLiveAuthority(let control): return try makeRegisteredLiveAuthoritySource(control, identity: identity)
+      case .managedPreauthorizedPool(let pool): return try makeManagedPreauthorizedPoolSource(pool, identity: identity)
+      }
+    }
+    public func makeManagedPreauthorizedPoolSource(_ configuration: TransportManagedPoolSourceConfiguration,
+      identity: TransportApplicationIdentity) throws -> ConnectionMaterialSource {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try client.managedPoolSource(configuration, identity: identity)
+    }
+    public func makeLiveAuthoritySource(_ configuration: TransportLiveAuthoritySourceConfiguration,
+      identity: TransportApplicationIdentity) throws -> ConnectionMaterialSource {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try client.liveSource(configuration, identity: identity)
+    }
+    /// Consumes one original independently installed live Artifact through its
+    /// authenticated registered authority and the original relay continuation.
+    public func makeRegisteredLiveAuthoritySource(_ configuration: TransportRegisteredLiveAuthoritySourceConfiguration,
+      identity: TransportApplicationIdentity) throws -> ConnectionMaterialSource {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try client.registeredLiveSource(configuration, identity: identity)
+    }
+    /// Installs finite original tunnel server preparations behind authenticated
+    /// Allow delivery. Use materialSource with Accept or Serve and deliver the
+    /// matching binding to the independently configured client.
+    public func makePreauthorizedPoolServerSource(_ credentials: [TransportPoolCredential],
+      identity: TransportApplicationIdentity, control: TransportServerAllowHTTPSConfiguration) async throws -> TransportPoolServerSource {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try await client.poolServerSource(credentials.map { $0.withRole(.server) }, identity: identity, control: control)
+    }
+    /// Starts an independent original server-allow listener. Registrations are
+    /// fixed before advertising their binding to the authorization authority.
+    public func makeLiveServerSource(_ configuration: TransportLiveServerSourceConfiguration,
+      identity: TransportApplicationIdentity) async throws -> TransportLiveServerSource {
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return try await client.liveServerSource(configuration, identity: identity)
     }
     public func invalidateTimeContinuity() {
       (owner as? V4ClientEnvironment)?.invalidateTimeContinuity()
@@ -115,35 +288,180 @@ public actor TransportEnvironment {
     }
     public func refreshNamespace(authority: String, head: Data, state: Data) throws {
       guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
-      try client.refreshNamespace(authority: authority, head: head, state: state)
+      do { try client.refreshNamespace(authority: authority, head: head, state: state) }
+      catch { throw TransportConnectError.namespaceFailure(error) }
     }
   #endif
 
+  func notificationFoundation() throws -> V4EnvironmentFoundation {
+    #if os(macOS) || os(iOS)
+      guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+      return client.foundation
+    #else
+      throw TransportAvailabilityError.runtimeUnavailable
+    #endif
+  }
+  func controllerHandoffReservation(previous: (any Session)?, capacity: ConnectionReplacementCapacity?, notificationTokens: [UUID]) throws -> any V4ControllerHandoffReservation {
+    #if os(macOS) || os(iOS)
+    guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+    let ceiling: ConnectionReplacementCapacity
+    if let capacity { ceiling = capacity }
+    else if let original = previous as? V4NativeSession { ceiling = try original.replacementCapacity() }
+    else { throw ServiceFailure.configurationCapacity }
+    try ceiling.check()
+    guard notificationTokens.count <= 128, Set(notificationTokens).count == notificationTokens.count else { throw ServiceFailure.configurationCapacity }
+    var notifications: [UUID: V4CryptoReservation] = [:]
+    for token in notificationTokens { notifications[token] = try client.foundation.controllerNotificationSourceStorage() }
+    return try V4NativeHandoffReservation(client.foundation.controllerHandoffStorage(),
+      nativeStorage: client.foundation.nativeConnectionStorage(maximumFrame: ceiling.maximumFrameBytes, listener: true),
+      sessionResources: V4PrepaidSessionResources(environment: client.foundation, capacity: ceiling), maximumFrame: ceiling.maximumFrameBytes,
+      initializationStorage: client.foundation.controllerInitializationStorage(), notificationStorage: notifications)
+    #else
+    throw SessionError.operationFailed
+    #endif
+  }
+
+  func controllerInitializationReservation() throws -> V4CryptoReservation {
+    #if os(macOS) || os(iOS)
+    guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+    return try client.foundation.controllerInitializationStorage()
+    #else
+    throw TransportAvailabilityError.runtimeUnavailable
+    #endif
+  }
+
+  func initializeControllerCandidate(_ candidate: any Session, handoff: (any V4ControllerHandoffReservation)? = nil,
+    prepaidInitialization: V4CryptoReservation? = nil,
+    callback: @isolated(any) @Sendable (any Session) async throws -> Void) async throws {
+    #if os(macOS) || os(iOS)
+      guard !closed, let client = owner as? V4ClientEnvironment,
+        let native = candidate as? V4NativeSession,
+        native.serviceEnvironment === client.foundation else { throw SessionError.closed }
+      let storage = try prepaidInitialization ?? handoff?.takeInitialization(in: client.foundation) ?? client.foundation.controllerInitializationStorage()
+      guard storage.environment === client.foundation else { throw SessionError.closed }
+      let tail = try storage.executionTail()
+      defer { tail.release() }
+      try storage.check(); try native.checkServiceSession(); try Task.checkCancellation()
+      try await callback(candidate)
+      try storage.check(); try native.checkServiceSession(); try Task.checkCancellation()
+    #else
+      throw TransportAvailabilityError.runtimeUnavailable
+    #endif
+  }
+  func connectForController(source: ConnectionMaterialSource, requirements: ConnectionRequirements,
+    notifications: V4ControllerNotificationPlan, handoff: (any V4ControllerHandoffReservation)? = nil,
+    diagnosticAttempt: UInt64 = 1) async throws -> any Session {
+    #if os(macOS) || os(iOS)
+      do {
+        guard !closed, let client = owner as? V4ClientEnvironment else { throw SessionError.closed }
+        let session = try await client.connect(source: source, requirements: requirements, notificationPlan: notifications,
+          handoff: handoff, diagnosticAttempt: diagnosticAttempt)
+        return try await publish(session, applicationPublication: false)
+      } catch {
+        throw await projected(error)
+      }
+    #else
+      throw TransportAvailabilityError.runtimeUnavailable
+    #endif
+  }
+
   public func connect(
-    source: any ConnectionMaterialSource,
+    source: ConnectionMaterialSource,
     requirements: ConnectionRequirements = ConnectionRequirements()
   ) async throws -> any Session {
-    guard !closed else { throw SessionError.closed }
-    guard let owner else { throw TransportV4AvailabilityError.runtimeUnavailable }
-    let session = try await owner.connect(source: source, requirements: requirements)
-    return try await publish(session)
+    do {
+      guard !closed else { throw SessionError.closed }
+      guard let owner else { throw TransportAvailabilityError.runtimeUnavailable }
+      let session = try await owner.connect(source: source, requirements: requirements)
+      return try await publish(session)
+    } catch {
+      throw await projected(error)
+    }
+  }
+
+  #if os(macOS) || os(iOS)
+  /// Starts one bounded admission aggregate over the original server source.
+  /// The returned owner drains and closes its Sessions without closing this
+  /// borrowed Environment, source, maintenance owner or handler registry.
+  public func serve(_ options: ServeOptions) throws -> ServeHandle {
+    guard !closed, let client = owner as? V4ClientEnvironment else { throw ServeError(.closed) }
+    do {
+      let aggregate = try V4ServeOwner(client: client, options: options)
+      try aggregate.start()
+      return ServeHandle(aggregate)
+    } catch let error as ServeError { throw error }
+    catch { throw ServeError(.configurationCapacity) }
+  }
+  #endif
+
+  /// Accept one native connection on the listener fixed by the original signed
+  /// route. A dialer-only finite record is refused before acquisition.
+  public func accept(source: ConnectionMaterialSource,
+    requirements: ConnectionRequirements = ConnectionRequirements()) async throws -> any Session {
+    var requirements = requirements
+    requirements.nativeListenerAcceptance = true
+    return try await connect(source: source, requirements: requirements)
   }
 
   public func connectMaterial(
     _ material: ConnectionMaterial,
     requirements: ConnectionRequirements = ConnectionRequirements()
   ) async throws -> any Session {
-    guard !closed else { throw SessionError.closed }
-    guard let owner else { throw TransportV4AvailabilityError.runtimeUnavailable }
-    let session = try await owner.connectMaterial(material, requirements: requirements)
-    return try await publish(session)
+    do {
+      guard !closed else { throw SessionError.closed }
+      guard let owner else { throw TransportAvailabilityError.runtimeUnavailable }
+      let session = try await owner.connectMaterial(material, requirements: requirements)
+      return try await publish(session)
+    } catch {
+      throw await projected(error)
+    }
   }
 
-  private func publish(_ session: any Session) async throws -> any Session {
-    if closed || Task.isCancelled {
-      try await session.close()
-      throw closed ? SessionError.closed : SessionError.canceled
+  private func projected(_ error: any Error) async -> any Error {
+    #if os(macOS) || os(iOS)
+    if let failure = error as? V4ConnectFailureProjection { return await failure.delivered() }
+    #endif
+    if let failure = error as? ConnectError { return failure }
+    if error is TransportAvailabilityError { return error }
+    // Public connection entry points expose terminal connection facts. A
+    // closed Environment is rejected before source acquisition, so preserve
+    // the notStarted/unspent/cleanup-complete projection rather than leaking
+    // the lower-level SessionError into the connection API.
+    if let session = error as? SessionError, session == .closed {
+      return ConnectError.capture(session, connection: .notStarted,
+        cleanup: CleanupStatus(complete: true))
     }
+    return ConnectError.capture(error, connection: .notStarted,
+      cleanup: CleanupStatus(complete: true))
+  }
+
+  private func publish(_ session: any Session, applicationPublication: Bool = true) async throws -> any Session {
+    if closed || Task.isCancelled {
+      #if os(macOS) || os(iOS)
+      let error: any Error = closed ? TransportConnectError.closed : TransportConnectError.canceled
+      if let native = session as? V4NativeSession {
+        native.connectionFactsOwner.publicationFailed()
+        try? await native.close()
+        let pending = UInt64(await native.retirementPendingCallbacks())
+        let observed = CleanupStatus(complete: pending == 0, pendingCallbacks: pending)
+        let failure = ConnectError.capture(error,
+          connection: native.connectionFactsOwner.snapshot(), cleanup: observed)
+        throw V4ConnectFailureProjection(failure: failure, observeCleanup: {
+          let remaining = UInt64(await native.retirementPendingCallbacks())
+          return observed.preserving(CleanupStatus(
+            complete: remaining == 0, pendingCallbacks: remaining))
+        })
+      }
+      #else
+      let error: any Error = closed ? SessionError.closed : SessionError.canceled
+      #endif
+      if let facts = (session as? V4ConnectionFactsOwner)?.connectionFactsOwner {
+        facts.publicationFailed()
+      }
+      try await session.close()
+      throw error
+    }
+    if applicationPublication, let facts = (session as? V4ConnectionFactsOwner)?.connectionFactsOwner { facts.published() }
     return session
   }
 
@@ -159,6 +477,21 @@ public actor TransportEnvironment {
   public func cleanupStatus() -> CleanupStatus {
     owner?.cleanupStatus() ?? CleanupStatus(complete: closed)
   }
+
+  /// Fixed aggregate counters are collected even when detailed events are off.
+  /// This snapshot has no correlation identifiers or caller-selected labels.
+  public func diagnosticCounters() -> [TransportDiagnosticCounter: UInt64] {
+    #if os(macOS) || os(iOS)
+    if let client = owner as? V4ClientEnvironment { return client.foundation.root.diagnosticCounters.snapshot() }
+    #endif
+    return Dictionary(uniqueKeysWithValues: TransportDiagnosticCounter.allCases.map { ($0, 0) })
+  }
+  #if os(macOS) || os(iOS)
+  public func diagnosticSink() -> TransportDiagnosticSink? {
+    guard let client = owner as? V4ClientEnvironment else { return nil }
+    return client.foundation.gate.withLock { client.foundation.diagnosticSink.map(TransportDiagnosticSink.init) }
+  }
+  #endif
 }
 
 public struct ReadProgress: Sendable, Equatable {
@@ -683,10 +1016,6 @@ public final class NotificationSubscription: Sendable {
   public func cleanupStatus() -> CleanupStatus { owner.cleanupStatus() }
 }
 
-public struct OperationReference: Sendable, Equatable {
-  public let bytes: Data
-  init(bytes: Data) { self.bytes = bytes }
-}
 public enum OperationStatus: String, Sendable {
   case pending, accepted, executing, completed, failed, unknown
 }

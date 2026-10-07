@@ -9,6 +9,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
@@ -150,7 +151,7 @@ func messageFailure(err error) error {
 	switch err {
 	case nil:
 		return cryptov4.ErrClosed
-	case context.Canceled, context.DeadlineExceeded, io.EOF, cryptov4.ErrClosed, ErrSessionMessageFraming:
+	case context.Canceled, context.DeadlineExceeded, io.EOF, io.ErrUnexpectedEOF, io.ErrClosedPipe, native.ErrConnectionLost, cryptov4.ErrClosed, ErrSessionMessageFraming:
 		return err
 	case io.ErrShortBuffer, protocolv4.ErrPayloadTooLarge:
 		return protocolv4.ErrPayloadTooLarge

@@ -1,16 +1,22 @@
 import type { IncomingMessage } from "node:http";
 import type { ClientSessionAdmission } from "../v4/runtime/sessionAdmission.js";
 import { createHash, constants, type X509Certificate } from "node:crypto";
-import { isIP } from "node:net";
+import { isIP, type Socket } from "node:net";
 import { connect as tlsConnect, checkServerIdentity, type TLSSocket, type ConnectionOptions } from "node:tls";
 import WebSocket from "ws";
 import type { OperationOptions } from "../public/contract.js";
 import type { V4AuthenticatedTransport } from "../v4/runtime/session.js";
 import type { V4EnvironmentRuntime, EnvironmentDependency } from "../v4/runtime/environment.js";
-import { CredentialWork, credentialWorkCharge, requireCredential, equalCredential } from "../v4/runtime/credentialSupport.js";
-import type { ClientPreparationFields } from "../v4/runtime/credentialVerifier.js";
-import { ResourceVector } from "../v4/runtime/resources.js";
+import { CredentialWork, credentialWorkCharge, requireCredential, equalCredential, type OwnedCredentialMap } from "../v4/runtime/credentialSupport.js";
+import type { ClientPreparationFields, CarrierPreparationFields } from "../v4/runtime/credentialVerifier.js";
+import { ResourceVector, type ResourceReference } from "../v4/runtime/resources.js";
+import type { TrustedDeadline} from "../v4/runtime/deadline.js";
 import { timerChunk } from "../v4/runtime/deadline.js";
+import { HopAuthentication, HopAuthenticationPreparation, hopAuthenticationCharge } from "../v4/runtime/hopAuthentication.js";
+import type { VerifiedRelayCredentials } from "../v4/runtime/relayCredentials.js";
+import type { ReadyIdentitySigner } from "../v4/runtime/noiseHandshake.js";
+import type { RandomFill } from "../v4/runtime/random.js";
+import type { CredentialResources } from "../v4/runtime/credentialSupport.js";
 import type { TimeInterval } from "../v4/runtime/timeArithmetic.js";
 
 export interface V4NodeWSSOptions {
@@ -26,7 +32,7 @@ export interface V4NodeWSSOptions {
 }
 export interface AcceptedWSSEndpoint { readonly host: string; readonly port: number; }
 interface Pin { digest: Uint8Array; from: bigint; until: bigint }
-interface Policy { host: string; port: number; path: string; subprotocol: string; origin: string; mode: bigint; pins: Pin[] }
+export interface NodeWSSDialPolicy { host: string; port: number; path: string; subprotocol: string; origin: string; mode: bigint; pins: Pin[] }
 function validity(certificate: X509Certificate, now: TimeInterval): { from: bigint; until: bigint } {
   const a = certificate.validFromDate.getTime(), b = certificate.validToDate.getTime();
   requireCredential(Number.isSafeInteger(a) && Number.isSafeInteger(b) && a >= 0 && b > a);
@@ -43,7 +49,7 @@ function der(bytes: Uint8Array, at: number, tag?: number): DER {
   requireCredential(at + length <= bytes.length); return { tag: actual, body: bytes.subarray(at, at + length), next: at + length };
 }
 function hex(bytes: Uint8Array): string { return Buffer.from(bytes).toString("hex"); }
-function pinProfile(certificate: X509Certificate, now: TimeInterval): { from: bigint; until: bigint } {
+export function pinProfile(certificate: X509Certificate, now: TimeInterval): { from: bigint; until: bigint } {
   const window = validity(certificate, now), key = certificate.publicKey;
   requireCredential(window.until - window.from <= 1209600000n && key.asymmetricKeyType === "ec" && key.asymmetricKeyDetails?.namedCurve === "prime256v1");
   const outer = der(certificate.raw, 0, 0x30); requireCredential(outer.next === certificate.raw.length);
@@ -83,6 +89,7 @@ function pinProfile(certificate: X509Certificate, now: TimeInterval): { from: bi
 /** One native WebSocket, with finite native/SDK queues and original send tails. */
 export class NodeWSSCarrier implements V4AuthenticatedTransport {
   readonly mode = "message" as const;
+  get preparationBytesUsed(): number { return this.#socket?.bytesRead ?? 0; }
   exportBinding(artifactDigest: Uint8Array): Uint8Array {
     this.checkPreparation();
     const socket = this.#socket;
@@ -97,6 +104,7 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
   readonly #done: Promise<void>;
   #resolve!: () => void;
   #socket: TLSSocket | undefined;
+  #pendingSocket: Socket | undefined; #pendingEnded = true;
   #websocket: WebSocket | undefined;
   #socketEnded = true;
   #websocketEnded = true;
@@ -106,16 +114,32 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
   #queue: Uint8Array[] = [];
   #read: { max: number; resolve: (value: Uint8Array | null) => void; reject: (reason: unknown) => void; signal: AbortSignal | undefined; abort: () => void } | undefined;
   #validity: { from: bigint; until: bigint } | undefined;
+  #established = false;
   #accepted: { host: string; port: number; origin: string; leaf: X509Certificate } | undefined;
   constructor(private readonly environment: V4EnvironmentRuntime, private readonly dependency: EnvironmentDependency,
-    private readonly maximum: number, private readonly queueMessages: number, readonly role: "client" | "server" = "client") {
-    this.#done = new Promise(resolve => { this.#resolve = resolve; }); dependency.onClose(() => { void this.close(); });
+    private readonly maximum: number, private readonly queueMessages: number, readonly role: "client" | "server" = "client", private readonly path: "direct" | "tunnel" = "direct", private preparation?: TrustedDeadline, readonly selectedCandidateIndex = -1, private ownsDependency = true, registerDependencyClose = true) {
+    this.#done = new Promise(resolve => { this.#resolve = resolve; });
+    if (registerDependencyClose) dependency.onClose(() => { void this.close(); });
   }
   check(): void {
     this.dependency.check(); requireCredential(!this.#closing && this.#validity !== undefined, "credential_closed");
-    const now = this.environment.clock.sample().requireInterval(); requireCredential(now.lowerMS >= this.#validity.from && now.upperMS < this.#validity.until, "credential_expired");
+    if (!this.#established) this.#checkTLSWindow();
   }
-  checkPreparation(): void { this.check(); }
+  #checkTLSWindow(): void {
+    const window = this.#validity; requireCredential(window !== undefined, "credential_closed");
+    const now = this.environment.clock.sample().requireInterval(); requireCredential(now.lowerMS >= window.from && now.upperMS < window.until, "credential_expired");
+  }
+  checkPreparation(): void { this.check(); this.#checkTLSWindow(); this.preparation?.check(); }
+  completePreparation(): void {
+    this.checkPreparation(); requireCredential(!this.#established, "credential_binding");
+    this.#established = true;
+  }
+  /** Reserve the accepted TCP owner before the TLS engine can receive bytes. */
+  ownPendingSocket(socket: Socket): void {
+    this.dependency.check(); requireCredential(this.role === "server" && this.#pendingSocket === undefined && this.#socket === undefined && !this.#closing);
+    this.#pendingSocket = socket; this.#pendingEnded = socket.closed;
+    socket.on("error", () => { void this.close(); }); socket.once("close", () => { this.#pendingEnded = true; void this.close(); this.#finish(); });
+  }
   /** Called only by the controlled HTTPS listener, immediately after upgrade.
    * The accepted socket and native send tails keep the same lifecycle owner. */
   accept(websocket: WebSocket, request: IncomingMessage, endpoint: AcceptedWSSEndpoint): void {
@@ -127,12 +151,12 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
     try {
         requireCredential(
         socket.getProtocol() === "TLSv1.3" && socket.alpnProtocol === "http/1.1" && !socket.isSessionReused() && websocket.readyState === WebSocket.OPEN &&
-        websocket.protocol === "flowersec.direct.v4" && websocket.extensions === "", "credential_binding");
+        websocket.protocol === (this.path === "direct" ? "flowersec.direct.v4" : "flowersec.tunnel.v4") && websocket.extensions === "", "credential_binding");
       const leaf = socket.getX509Certificate(); requireCredential(leaf !== undefined && leaf.raw.length <= 65536);
       const host = endpoint.host, port = endpoint.port, expectedHost = `${isIP(host) === 6 ? `[${host}]` : host}${port === 443 ? "" : `:${port}`}`;
       requireCredential(typeof host === "string" && host.length > 0 && host.length <= 253 && Number.isSafeInteger(port) && port > 0 && port <= 65535 &&
-        request.method === "GET" && request.httpVersion === "1.1" && request.url === "/flowersec/v4/direct" && request.headers.host === expectedHost &&
-        request.headers["sec-websocket-protocol"] === "flowersec.direct.v4" && request.headers["sec-websocket-version"] === "13" &&
+        request.method === "GET" && request.httpVersion === "1.1" && request.url === (this.path === "direct" ? "/flowersec/v4/direct" : "/flowersec/v4/tunnel") && request.headers.host === expectedHost &&
+        request.headers["sec-websocket-protocol"] === (this.path === "direct" ? "flowersec.direct.v4" : "flowersec.tunnel.v4") && request.headers["sec-websocket-version"] === "13" &&
         request.headers["content-length"] === undefined && request.headers["transfer-encoding"] === undefined &&
         request.headers["expect"] === undefined && socket.localPort === port && (isIP(host) ? !socket.servername : socket.servername === host) &&
         (isIP(host) ? leaf.checkIP(host) === host : leaf.checkHost(host, { subject: "never" }) !== undefined), "credential_binding");
@@ -155,38 +179,89 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
   }
   /** Compare the signed route with this original accepted TLS/HTTP endpoint.
    * No forwarded header or peer-selected authority can replace local facts. */
-  checkAcceptedRoute(fields: ClientPreparationFields): void {
+  checkAcceptedRoute(fields: CarrierPreparationFields, endpointRole: 0 | 1 = 1): void {
     this.check(); const actual = this.#accepted; requireCredential(this.role === "server" && actual !== undefined, "credential_binding");
     const ref = this.environment.reserveConnectionWork("accepted_wss_route", credentialWorkCharge(16384, this.environment.resources.runtimeBytes));
     let work: CredentialWork | undefined;
     try {
       work = new CredentialWork(this.environment.resources, 16384, ref); const route = work.parse(fields.route, "Route", 16384);
       try {
-        const leg = route.field("direct_leg"), tls = route.field("tls_policy", leg, "Leg");
-        requireCredential(route.uint("path_kind") === 0n && route.uint("access_class", leg, "Leg") === 0n && route.uint("carrier", leg, "Leg") === 1n &&
-          route.uint("dialer_role", leg, "Leg") === 0n && route.uint("listener_role", leg, "Leg") === 1n && route.text("alpn", leg, "Leg") === "http/1.1" &&
-          route.text("path", leg, "Leg") === "/flowersec/v4/direct" && route.text("subprotocol", leg, "Leg") === "flowersec.direct.v4" &&
+        const leg = route.field(this.path === "direct" ? "direct_leg" : endpointRole === 0 ? "client_leg" : "server_leg"), tls = route.field("tls_policy", leg, "Leg");
+        requireCredential(route.uint("path_kind") === (this.path === "direct" ? 0n : 1n) && route.uint("access_class", leg, "Leg") === 0n && route.uint("carrier", leg, "Leg") === 1n &&
+          route.uint("dialer_role", leg, "Leg") === (this.path === "direct" ? 0n : 2n) && route.uint("listener_role", leg, "Leg") === BigInt(endpointRole) && route.text("alpn", leg, "Leg") === "http/1.1" &&
+          route.text("path", leg, "Leg") === (this.path === "direct" ? "/flowersec/v4/direct" : "/flowersec/v4/tunnel") && route.text("subprotocol", leg, "Leg") === (this.path === "direct" ? "flowersec.direct.v4" : "flowersec.tunnel.v4") &&
           route.text("host", leg, "Leg") === actual.host && route.uint("port", leg, "Leg") === BigInt(actual.port));
         const origin = route.optional("origin_policy", leg, "Leg");
         if (origin < 0) requireCredential(actual.origin === "");
         else if (actual.origin === "") requireCredential(route.doc.boolean(route.field("allow_absent", origin, "OriginPolicy")));
         else requireCredential([...route.items("origins", origin, "OriginPolicy")].some(node => route.doc.text(node) === actual.origin));
-        if (route.uint("mode", tls, "TLSPolicy") === 1n) {
+        const tlsMode = route.uint("mode", tls, "TLSPolicy");
+        if (tlsMode === 0n) requireCredential(isIP(actual.host) ? actual.leaf.checkIP(actual.host) === actual.host : actual.leaf.checkHost(actual.host, { subject: "never" }) !== undefined, "credential_binding");
+        else { requireCredential(tlsMode === 1n && route.uint("pin_kind", tls, "TLSPolicy") === 0n, "credential_binding");
           const now = this.environment.clock.sample().requireInterval(), window = pinProfile(actual.leaf, now), hash = createHash("sha256").update(actual.leaf.raw).digest();
           try {
-            requireCredential([...route.items("pins", tls, "TLSPolicy")].some(pin => {
-              const from = route.uint("not_before_ms", pin, "TLSPin"), until = route.uint("not_after_ms", pin, "TLSPin");
-              return now.lowerMS >= from && now.upperMS < until && from >= window.from && until <= window.until && equalCredential(hash, route.bytes("leaf_der_sha256", pin, "TLSPin"));
-            }));
+            let matched: { from: bigint; until: bigint } | undefined;
+            for (const pin of route.items("pins", tls, "TLSPolicy")) {
+              const from = route.uint("not_before_ms", pin, "TLSPin"), until = route.uint("not_after_ms", pin, "TLSPin"), expected = route.bytes("leaf_der_sha256", pin, "TLSPin");
+              try {
+                if (matched === undefined && now.lowerMS >= from && now.upperMS < until && from >= window.from && until <= window.until && equalCredential(hash, expected)) matched = { from, until };
+              } finally { expected.fill(0); }
+            }
+            requireCredential(matched !== undefined); this.#validity = matched;
           } finally { hash.fill(0); }
         }
       } finally { route.close(); }
       this.check();
     } finally { work?.close(); ref.release(); }
   }
-  async prepare(fields: ClientPreparationFields, options: V4NodeWSSOptions, policy: Policy, signal?: AbortSignal): Promise<void> {
-    this.dependency.check(); requireCredential(this.role === "client" && !this.#closing, "credential_closed");
+  checkAcceptedHopRoute(credentials: VerifiedRelayCredentials, reference: ResourceReference, localRole: 0 | 1 | 2 = 2): void {
+    this.checkPreparation(); credentials.check(reference); const actual = this.#accepted;
+    requireCredential(this.path === "tunnel" && actual !== undefined, "credential_binding");
+    const ref = this.environment.reserveConnectionWork("accepted_relay_wss_policy", credentialWorkCharge(16384, this.environment.resources.runtimeBytes));
+    const bytes = credentials.descriptor(reference); let work: CredentialWork | undefined;
+    try {
+      work = new CredentialWork(this.environment.resources, 16384, ref); const leg = work.parse(bytes, "Leg", 16384, 16384, { selectors: { path_kind: "tunnel" } });
+      try {
+        const tls = leg.field("tls_policy"), origin = leg.optional("origin_policy");
+        requireCredential(leg.uint("access_class") === 0n && leg.uint("carrier") === 1n && leg.uint("dialer_role") === (localRole === 2 ? BigInt(credentials.role) : 2n) && leg.uint("listener_role") === BigInt(localRole) &&
+          leg.text("alpn") === "http/1.1" && leg.text("path") === "/flowersec/v4/tunnel" && leg.text("subprotocol") === "flowersec.tunnel.v4" &&
+          leg.text("host") === actual.host && leg.uint("port") === BigInt(actual.port), "credential_binding");
+        checkWSSOrigin(leg, origin, actual.origin);
+        const mode = leg.uint("mode", tls, "TLSPolicy");
+        requireCredential(mode === 0n || mode === 1n && leg.uint("pin_kind", tls, "TLSPolicy") === 0n, "credential_binding");
+        if (mode === 0n) requireCredential(isIP(actual.host) ? actual.leaf.checkIP(actual.host) === actual.host : actual.leaf.checkHost(actual.host, { subject: "never" }) !== undefined, "credential_binding");
+        if (mode === 1n) {
+          const now = this.environment.clock.sample().requireInterval(), window = pinProfile(actual.leaf, now), digest = new Uint8Array(createHash("sha256").update(actual.leaf.raw).digest());
+          try {
+            let matched: { from: bigint; until: bigint } | undefined;
+            for (const pin of leg.items("pins", tls, "TLSPolicy")) {
+              const from = leg.uint("not_before_ms", pin, "TLSPin"), until = leg.uint("not_after_ms", pin, "TLSPin"), expected = leg.bytes("leaf_der_sha256", pin, "TLSPin");
+              try {
+                if (matched === undefined && now.lowerMS >= from && now.upperMS < until && from >= window.from && until <= window.until && equalCredential(digest, expected)) matched = { from, until };
+              } finally { expected.fill(0); }
+            }
+            requireCredential(matched !== undefined, "credential_binding"); this.#validity = matched;
+          } finally { digest.fill(0); }
+        }
+      } finally { leg.close(); }
+    } finally { bytes.fill(0); work?.close(); ref.release(); }
+  }
+  async authenticateHop(credentials: VerifiedRelayCredentials, signer: ReadyIdentitySigner, random: RandomFill, resources: CredentialResources, reference: ResourceReference,
+    options?: OperationOptions, acceptedHello?: Uint8Array, prepared?: HopAuthenticationPreparation, originalDeadline?: TrustedDeadline): Promise<void> {
+    let ref: ResourceReference | HopAuthenticationPreparation | undefined = prepared, hop: HopAuthentication | undefined; const incarnation = new Uint8Array(16);
+    try {
+      this.checkPreparation(); requireCredential(this.path === "tunnel" && this.preparation !== undefined && (credentials.role === 0 || credentials.role === 1));
+      if (originalDeadline !== undefined) this.preparation.tightenFrom(originalDeadline);
+      if (this.role === "server") this.checkAcceptedHopRoute(credentials, reference, credentials.role);
+      ref ??= this.environment.reserveConnectionWork("endpoint_wss_hop", hopAuthenticationCharge(resources.runtimeBytes)); random(incarnation);
+      hop = new HopAuthentication({ resources, transport: this, credentials, localRole: credentials.role, localIncarnation: incarnation, random, signer, deadline: this.preparation,
+        guard: () => this.checkPreparation(), ...(acceptedHello === undefined ? {} : { acceptedHello }) }, ref, reference); await hop.authenticateEndpoint(options);
+    } finally { hop?.close(); incarnation.fill(0); if (ref instanceof HopAuthenticationPreparation) ref.close(); else ref?.release(); }
+  }
+  async prepare(fields: Pick<ClientPreparationFields, "pathKind" | "preparationDeadline">, options: V4NodeWSSOptions, policy: NodeWSSDialPolicy, signal?: AbortSignal): Promise<void> {
+    this.dependency.check(); requireCredential(this.role === "client" && !this.#closing && fields.pathKind === (this.path === "direct" ? 0 : 1), "credential_closed"); this.preparation = fields.preparationDeadline;
     let failure: unknown, timer: ReturnType<typeof setTimeout> | undefined;
+    let tlsVerified = false;
     const guard = (): void => { this.dependency.check(); if (failure !== undefined) throw failure; if (signal?.aborted || this.#closing) throw new Error("canceled"); fields.preparationDeadline.check(); };
     const stop = (error: unknown): void => { failure ??= error; void this.close(); };
     const abort = (): void => stop(new Error("canceled"));
@@ -212,8 +287,10 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
       const now = this.environment.clock.sample().requireInterval(), leaf = socket.getPeerX509Certificate(); requireCredential(leaf !== undefined && leaf.raw.length <= 65536);
       if (policy.mode === 1n) {
         const actual = pinProfile(leaf, now), hash = createHash("sha256").update(leaf.raw).digest();
-        const matched = policy.pins.find(pin => equalCredential(pin.digest, hash)); requireCredential(matched !== undefined && matched.from >= actual.from && matched.until <= actual.until && now.lowerMS >= matched.from && now.upperMS < matched.until);
-        this.#validity = { from: matched.from, until: matched.until };
+        try {
+          const matched = policy.pins.find(pin => equalCredential(pin.digest, hash)); requireCredential(matched !== undefined && matched.from >= actual.from && matched.until <= actual.until && now.lowerMS >= matched.from && now.upperMS < matched.until);
+          this.#validity = { from: matched.from, until: matched.until };
+        } finally { hash.fill(0); }
       } else {
         requireCredential(socket.authorized && leaf.subjectAltName !== undefined);
         requireCredential(isIP(policy.host) ? leaf.checkIP(policy.host) === policy.host : leaf.checkHost(policy.host, { subject: "never" }) !== undefined);
@@ -226,7 +303,7 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
         }
         requireCredential(count > 0); this.#validity = { from, until };
       }
-      guard();
+      tlsVerified = true; guard();
       const host = isIP(policy.host) === 6 ? `[${policy.host}]` : policy.host, url = `wss://${host}:${policy.port}${policy.path}`;
       let connectionUsed = false;
       const configuration = { createConnection: () => { requireCredential(!connectionUsed); connectionUsed = true; guard(); return socket; },
@@ -249,7 +326,18 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
         websocket.once("open", opened); websocket.once("error", failed); websocket.once("close", closed);
       });
       guard(); requireCredential(websocket.protocol === policy.subprotocol && websocket.extensions === "" && socket.bytesRead <= options.prepareBytes); this.check();
-    } catch (error) { await this.close(); throw error; }
+    } catch (error) {
+      const tlsRejected = !tlsVerified && error instanceof Error && (
+        ["credential_binding", "credential_expired", "credential_untrusted"].includes(error.message) ||
+        "code" in error && typeof error.code === "string" && (
+          error.code.startsWith("ERR_SSL_") ||
+          ["ERR_TLS_CERT_ALTNAME_INVALID", "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"].includes(error.code)));
+      if (tlsRejected) {
+        this.environment.diagnosticCounters.observe("tls_rejection", { phase: "prepare", code: "tls_rejected" });
+        await this.close(); throw new Error("authentication_failed");
+      }
+      await this.close(); throw error;
+    }
     finally { if (timer !== undefined) clearTimeout(timer); signal?.removeEventListener("abort", abort); }
   }
   #deliver(): void {
@@ -268,7 +356,7 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
       this.#read = { max: maxBytes, resolve, reject, signal: options?.signal, abort }; options?.signal?.addEventListener("abort", abort, { once: true }); this.#deliver();
     });
   }
-  submit(data: Uint8Array, admitted: () => void): { completion: Promise<void> } | undefined {
+  submit(data: Uint8Array, admitted: () => void, beforeSubmit?: () => void): { completion: Promise<void> } | undefined {
     try { this.check(); } catch { return undefined; }
     const ws = this.#websocket; if (this.#sending || ws?.readyState !== WebSocket.OPEN || data.length > this.maximum || ws.bufferedAmount !== 0) return undefined;
     this.#sending = true;
@@ -278,6 +366,7 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
       if (!entered || !returned || !callback) return;
       this.#sending = false; if (failure !== undefined) { reject(failure); void this.close(); } else resolve(); this.#finish();
     };
+    try { beforeSubmit?.(); } catch (error) { this.#sending = false; this.#finish(); throw error; }
     try {
       // ws.send synchronously accepts one original message into its finite
       // native sender. The callback, including failure, ends the byte borrow.
@@ -293,12 +382,13 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
     if (options?.signal?.aborted) throw new Error("canceled"); const result = this.submit(data, () => undefined); if (result === undefined) throw new Error("carrier_closed"); await result.completion; return data.length;
   }
   close(): Promise<void> {
-    if (!this.#closing) { this.#closing = true; for (const bytes of this.#queue) bytes.fill(0); this.#queue = []; this.#deliver(); this.#websocket?.terminate(); this.#socket?.destroy(); }
+    if (!this.#closing) { this.#closing = true; for (const bytes of this.#queue) bytes.fill(0); this.#queue = []; this.#deliver(); this.#websocket?.terminate(); this.#socket?.destroy(); this.#pendingSocket?.destroy(); }
     this.#finish(); return this.#done;
   }
+  retainDependency(): void { this.dependency.check(); requireCredential(this.role === "client" && !this.#closing && !this.#cleaned); this.ownsDependency = true; }
   #finish(): void {
-    if (this.#cleaned || !this.#closing || !this.#socketEnded || !this.#websocketEnded || this.#sending) return;
-    this.#cleaned = true; this.#validity = undefined; this.#accepted = undefined; this.dependency.release(); this.#resolve();
+    if (this.#cleaned || !this.#closing || !this.#pendingEnded || !this.#socketEnded || !this.#websocketEnded || this.#sending) return;
+    this.#cleaned = true; this.#validity = undefined; this.#accepted = undefined; if (this.ownsDependency) this.dependency.release(); this.#resolve();
   }
   waitTermination(): Promise<void> { return this.#done; }
 }
@@ -315,39 +405,107 @@ export function nodeWSSAdmissionCosts(maxFrame: number, options: V4NodeWSSOption
   return [["node_wss", charge], ["node_wss_policy", credentialWorkCharge(16384, runtimeBytes)]];
 }
 
-export async function prepareNodeWSS(environment: V4EnvironmentRuntime, fields: ClientPreparationFields, options: V4NodeWSSOptions, signal?: AbortSignal, admission?: ClientSessionAdmission): Promise<NodeWSSCarrier> {
+export async function prepareNodeWSS(environment: V4EnvironmentRuntime, fields: CarrierPreparationFields, options: V4NodeWSSOptions, signal?: AbortSignal, admission?: ClientSessionAdmission, endpointRole: 0 | 1 = 0, physicalDialerRole: 0 | 1 | 2 = endpointRole): Promise<NodeWSSCarrier> {
   const maximum = Math.max(fields.maxFrame, 65536) + 8;
   if (fields.source === "preauthorized_pool") requireCredential(fields.preparationBytes >= options.prepareBytes && fields.preparationWork >= 1, "configuration_capacity");
   const costs = nodeWSSAdmissionCosts(fields.maxFrame, options, environment.resources.runtimeBytes), charge = costs[0]![1];
-  const reference = admission?.take([costs[0]!])[0];
-  let dependency: EnvironmentDependency;
+  const reference = admission?.take([costs[0]!])[0]; let dependency: EnvironmentDependency;
   try { dependency = environment.admitDependency("node_wss", charge, reference, admission); } finally { reference?.release(); }
-  let carrier: NodeWSSCarrier | undefined, work: CredentialWork | undefined;
+  let work: CredentialWork | undefined, selected: NodeWSSCarrier | undefined, active: NodeWSSCarrier | undefined;
+  dependency.onClose(() => { void active?.close(); });
   try {
     const resources = environment.resources, ref = environment.reserveConnectionWork("node_wss_policy", costs[1]![1], admission);
     try { work = new CredentialWork(resources, 16384, ref); } finally { ref.release(); }
-    const route = work.parse(fields.route, "Route", 16384);
-    let policy: Policy;
+    const alternatives = fields.source === "preauthorized_pool" && fields.candidates !== undefined ? fields.candidates : [{
+      candidateIndex: fields.candidateIndex ?? -1, pathKind: fields.pathKind, route: fields.route,
+    }];
+    requireCredential(alternatives.length > 0, "credential_binding");
+    const ordered = fields.candidateIndex === undefined ? alternatives : [
+      ...alternatives.filter(candidate => candidate.candidateIndex === fields.candidateIndex),
+      ...alternatives.filter(candidate => candidate.candidateIndex !== fields.candidateIndex),
+    ];
+    const boundedAlternatives = ordered.slice(0, fields.totalCandidateAttempts ?? ordered.length);
+    requireCredential(boundedAlternatives.length > 0, "credential_binding");
+    let lastFailure: unknown, preparationBytesUsed = 0;
+    for (const candidate of boundedAlternatives) {
+      if (signal?.aborted) throw new Error("canceled");
+      const byteBudget = fields.source === "preauthorized_pool" ? Math.min(fields.preparationBytes, (fields.totalPreparationBytes ?? fields.preparationBytes) - preparationBytesUsed) : options.prepareBytes;
+      if (fields.source === "preauthorized_pool" && byteBudget < 16384) break;
+      const attemptOptions = byteBudget < options.prepareBytes ? { ...options, prepareBytes: byteBudget } : options;
+      const route = work.parse(candidate.route, "Route", 16384);
+      let policy: NodeWSSDialPolicy;
+      try {
+        const leg = route.field(fields.pathKind === 0 ? "direct_leg" : endpointRole === 0 ? "client_leg" : "server_leg"), tls = route.field("tls_policy", leg, "Leg");
+        requireCredential(route.uint("path_kind") === BigInt(fields.pathKind) && route.uint("access_class", leg, "Leg") === 0n && route.uint("carrier", leg, "Leg") === 1n &&
+          route.uint("endpoint_role", leg, "Leg") === (fields.pathKind === 0 ? 1n : BigInt(endpointRole)) && route.uint("dialer_role", leg, "Leg") === BigInt(physicalDialerRole) && route.uint("listener_role", leg, "Leg") === (fields.pathKind === 0 ? 1n : physicalDialerRole === 2 ? BigInt(endpointRole) : 2n) && route.text("alpn", leg, "Leg") === "http/1.1" &&
+          route.text("path", leg, "Leg") === (fields.pathKind === 0 ? "/flowersec/v4/direct" : "/flowersec/v4/tunnel") && route.text("subprotocol", leg, "Leg") === (fields.pathKind === 0 ? "flowersec.direct.v4" : "flowersec.tunnel.v4"));
+        const host = route.text("host", leg, "Leg"), origin = options.origin ?? "", originNode = route.optional("origin_policy", leg, "Leg");
+        requireCredential(!isIP(host) || host === options.remoteAddress);
+        if (originNode < 0) requireCredential(origin === "");
+        else if (origin === "") requireCredential(route.doc.boolean(route.field("allow_absent", originNode, "OriginPolicy")));
+        else requireCredential([...route.items("origins", originNode, "OriginPolicy")].some(node => route.doc.text(node) === origin));
+        const mode = route.uint("mode", tls, "TLSPolicy"), pins: Pin[] = [], now = environment.clock.sample().requireInterval();
+        if (mode === 0n) requireCredential(options.ca !== undefined && options.ca.length > 0 && options.ca.length <= 64, "configuration_capacity");
+        else for (const pin of route.items("pins", tls, "TLSPolicy")) {
+          const from = route.uint("not_before_ms", pin, "TLSPin"), until = route.uint("not_after_ms", pin, "TLSPin");
+          if (now.lowerMS >= from && now.upperMS < until) pins.push({ from, until, digest: route.bytes("leaf_der_sha256", pin, "TLSPin") });
+        }
+        requireCredential(mode === 0n || pins.length > 0, "credential_expired");
+        policy = { host, port: Number(route.uint("port", leg, "Leg")), path: route.text("path", leg, "Leg"), subprotocol: route.text("subprotocol", leg, "Leg"), origin, mode, pins };
+      } finally { route.close(); }
+      const carrier = new NodeWSSCarrier(environment, dependency, maximum, options.queueMessages, "client", fields.pathKind === 0 ? "direct" : "tunnel", fields.preparationDeadline, candidate.candidateIndex, false, false);
+      active = carrier;
+      try {
+        await carrier.prepare({ pathKind: candidate.pathKind, preparationDeadline: fields.preparationDeadline }, attemptOptions, policy, signal);
+        carrier.retainDependency(); selected = carrier; return carrier;
+      } catch (error) {
+        lastFailure = error; preparationBytesUsed += carrier.preparationBytesUsed; await carrier.close(); await carrier.waitTermination(); active = undefined;
+        if (signal?.aborted) throw new Error("canceled");
+      } finally { for (const pin of policy.pins) pin.digest.fill(0); }
+    }
+    throw lastFailure ?? new Error("carrier_unavailable");
+  } catch (error) { await selected?.close(); if (selected === undefined) dependency.release(); throw error; }
+  finally { work?.close(); }
+}
+
+/** Capture all physical WSS capacities and explicit roots before connection ownership. */
+export function captureNodeWSS(input: V4NodeWSSOptions): V4NodeWSSOptions {
+  nodeWSSAdmissionCosts(65536, input, input.runtimeBytes);
+  requireCredential(input.origin === undefined || typeof input.origin === "string" && input.origin.length <= 2048, "configuration_capacity");
+  if (input.ca !== undefined) requireCredential(Array.isArray(input.ca) && input.ca.length > 0 && input.ca.length <= 64 && input.ca.every(value =>
+    typeof value === "string" ? value.length > 0 && value.length <= 65536 : value instanceof Uint8Array && value.length > 0 && value.length <= 65536), "configuration_capacity");
+  return Object.freeze({ ...input, ...(input.ca === undefined ? {} : { ca: Object.freeze(input.ca.map(value => typeof value === "string" ? value : new Uint8Array(value))) }) });
+}
+function checkWSSOrigin(leg: OwnedCredentialMap, originNode: number, origin: string): void {
+  if (originNode < 0) requireCredential(origin === "", "credential_binding");
+  else if (origin === "") requireCredential(leg.doc.boolean(leg.field("allow_absent", originNode, "OriginPolicy")), "credential_binding");
+  else requireCredential([...leg.items("origins", originNode, "OriginPolicy")].some(node => leg.doc.text(node) === origin), "credential_binding");
+}
+/** Signed relay-to-endpoint leg only; physical TLS success never selects a route. */
+export function nodeWSSRelayDialPolicy(environment: V4EnvironmentRuntime, credentials: VerifiedRelayCredentials, options: V4NodeWSSOptions, reference: ResourceReference): NodeWSSDialPolicy {
+  credentials.check(reference);
+  const ref = environment.reserveConnectionWork("relay_wss_dial_policy", credentialWorkCharge(16384, environment.resources.runtimeBytes));
+  const bytes = credentials.descriptor(reference); let work: CredentialWork | undefined; const pins: Pin[] = [];
+  try {
+    work = new CredentialWork(environment.resources, 16384, ref); const leg = work.parse(bytes, "Leg", 16384, 16384, { selectors: { path_kind: "tunnel" } });
     try {
-      const leg = route.field("direct_leg"), tls = route.field("tls_policy", leg, "Leg");
-      requireCredential(route.uint("path_kind") === 0n && route.uint("access_class", leg, "Leg") === 0n && route.uint("carrier", leg, "Leg") === 1n &&
-        route.uint("dialer_role", leg, "Leg") === 0n && route.uint("listener_role", leg, "Leg") === 1n && route.text("alpn", leg, "Leg") === "http/1.1" &&
-        route.text("path", leg, "Leg") === "/flowersec/v4/direct" && route.text("subprotocol", leg, "Leg") === "flowersec.direct.v4");
-      const host = route.text("host", leg, "Leg"), origin = options.origin ?? "", originNode = route.optional("origin_policy", leg, "Leg");
-      requireCredential(!isIP(host) || host === options.remoteAddress);
-      if (originNode < 0) requireCredential(origin === "");
-      else if (origin === "") requireCredential(route.doc.boolean(route.field("allow_absent", originNode, "OriginPolicy")));
-      else requireCredential([...route.items("origins", originNode, "OriginPolicy")].some(node => route.doc.text(node) === origin));
-      const mode = route.uint("mode", tls, "TLSPolicy"), pins: Pin[] = [], now = environment.clock.sample().requireInterval();
-      if (mode === 0n) requireCredential(options.ca !== undefined && options.ca.length > 0 && options.ca.length <= 64, "configuration_capacity");
-      else for (const pin of route.items("pins", tls, "TLSPolicy")) {
-        const from = route.uint("not_before_ms", pin, "TLSPin"), until = route.uint("not_after_ms", pin, "TLSPin");
-        if (now.lowerMS >= from && now.upperMS < until) pins.push({ from, until, digest: route.bytes("leaf_der_sha256", pin, "TLSPin") });
+      const tls = leg.field("tls_policy"), host = leg.text("host"), port = Number(leg.uint("port")), origin = options.origin ?? "", mode = leg.uint("mode", tls, "TLSPolicy");
+      requireCredential(leg.uint("access_class") === 0n && leg.uint("carrier") === 1n && leg.uint("dialer_role") === 2n && leg.uint("listener_role") === BigInt(credentials.role) &&
+        leg.text("alpn") === "http/1.1" && leg.text("path") === "/flowersec/v4/tunnel" && leg.text("subprotocol") === "flowersec.tunnel.v4" &&
+        Number.isSafeInteger(port) && port > 0 && port <= 65535 && (!isIP(host) || host === options.remoteAddress), "credential_binding");
+      checkWSSOrigin(leg, leg.optional("origin_policy"), origin);
+      const now = environment.clock.sample().requireInterval();
+      if (mode === 0n) requireCredential(options.ca !== undefined && options.ca.length > 0, "configuration_capacity");
+      else {
+        requireCredential(mode === 1n && leg.uint("pin_kind", tls, "TLSPolicy") === 0n, "credential_binding");
+        for (const pin of leg.items("pins", tls, "TLSPolicy")) {
+          const from = leg.uint("not_before_ms", pin, "TLSPin"), until = leg.uint("not_after_ms", pin, "TLSPin");
+          if (now.lowerMS >= from && now.upperMS < until) pins.push({ from, until, digest: leg.bytes("leaf_der_sha256", pin, "TLSPin") });
+        }
+        requireCredential(pins.length > 0, "credential_expired");
       }
-      requireCredential(mode === 0n || pins.length > 0, "credential_expired");
-      policy = { host, port: Number(route.uint("port", leg, "Leg")), path: route.text("path", leg, "Leg"), subprotocol: route.text("subprotocol", leg, "Leg"), origin, mode, pins };
-    } finally { route.close(); work.close(); work = undefined; }
-    carrier = new NodeWSSCarrier(environment, dependency, maximum, options.queueMessages);
-    await carrier.prepare(fields, options, policy, signal); return carrier;
-  } catch (error) { work?.close(); if (carrier !== undefined) await carrier.close(); else dependency.release(); throw error; }
+      return { host, port, path: "/flowersec/v4/tunnel", subprotocol: "flowersec.tunnel.v4", origin, mode, pins };
+    } finally { leg.close(); }
+  } catch (error) { for (const pin of pins) pin.digest.fill(0); throw error; }
+  finally { bytes.fill(0); work?.close(); ref.release(); }
 }

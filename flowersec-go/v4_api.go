@@ -21,57 +21,57 @@ import (
 // Begin/Install/Ack journal remains owned by the configured control plane;
 // these aliases let applications handle the same typed outcome without
 // importing an internal protocol package.
-type V4TopUpWireResult = protocolv4.V4TopUpWireResult
-type V4TopUpErrorCode = protocolv4.V4TopUpErrorCode
-type V4TopUpErrorScope = protocolv4.V4TopUpErrorScope
-type V4TopUpWriteAction = protocolv4.V4TopUpWriteAction
-type V4TopUpError = protocolv4.V4TopUpError
+type TopUpWireResult = protocolv4.V4TopUpWireResult
+type TopUpErrorCode = protocolv4.V4TopUpErrorCode
+type TopUpErrorScope = protocolv4.V4TopUpErrorScope
+type TopUpWriteAction = protocolv4.V4TopUpWriteAction
+type TopUpError = protocolv4.V4TopUpError
 
 const (
-	V4TopUpWireResultSuccess               = protocolv4.V4TopUpWireResultSuccess
-	V4TopUpWireResultReplay                = protocolv4.V4TopUpWireResultReplay
-	V4TopUpWireResultSourceExhausted       = protocolv4.V4TopUpWireResultSourceExhausted
-	V4TopUpWireResultSourceUnavailable     = protocolv4.V4TopUpWireResultSourceUnavailable
-	V4TopUpWireResultSourceContractInvalid = protocolv4.V4TopUpWireResultSourceContractInvalid
-	V4TopUpWireResultSourceStateUnknown    = protocolv4.V4TopUpWireResultSourceStateUnknown
-	V4TopUpWireResultOperationConflict     = protocolv4.V4TopUpWireResultOperationConflict
-	V4TopUpWireResultStaleGeneration       = protocolv4.V4TopUpWireResultStaleGeneration
-	V4TopUpWireResultFutureGeneration      = protocolv4.V4TopUpWireResultFutureGeneration
-	V4TopUpWireResultStaleOperation        = protocolv4.V4TopUpWireResultStaleOperation
-	V4TopUpWireResultFutureOperation       = protocolv4.V4TopUpWireResultFutureOperation
-	V4TopUpWireResultSequenceGap           = protocolv4.V4TopUpWireResultSequenceGap
-	V4TopUpWireResultConfigurationCapacity = protocolv4.V4TopUpWireResultConfigurationCapacity
-	V4TopUpWireResultCapacityExhausted     = protocolv4.V4TopUpWireResultCapacityExhausted
-	V4TopUpWireResultRelinkRequired        = protocolv4.V4TopUpWireResultRelinkRequired
-	V4TopUpWireResultSpentUnknown          = protocolv4.V4TopUpWireResultSpentUnknown
-	V4TopUpWireResultTopUpRequestExpired   = protocolv4.V4TopUpWireResultTopUpRequestExpired
-	V4TopUpWireResultSourceResetRequired   = protocolv4.V4TopUpWireResultSourceResetRequired
-	V4TopUpWireResultPermissionDenied      = protocolv4.V4TopUpWireResultPermissionDenied
-	V4TopUpErrorCodeSourceExhausted        = protocolv4.V4TopUpErrorCodeSourceExhausted
-	V4TopUpErrorCodeSourceUnavailable      = protocolv4.V4TopUpErrorCodeSourceUnavailable
-	V4TopUpErrorCodeSourceContractInvalid  = protocolv4.V4TopUpErrorCodeSourceContractInvalid
-	V4TopUpErrorCodeSourceStateUnknown     = protocolv4.V4TopUpErrorCodeSourceStateUnknown
-	V4TopUpErrorCodeOperationConflict      = protocolv4.V4TopUpErrorCodeOperationConflict
-	V4TopUpErrorCodeStaleGeneration        = protocolv4.V4TopUpErrorCodeStaleGeneration
-	V4TopUpErrorCodeFutureGeneration       = protocolv4.V4TopUpErrorCodeFutureGeneration
-	V4TopUpErrorCodeStaleOperation         = protocolv4.V4TopUpErrorCodeStaleOperation
-	V4TopUpErrorCodeFutureOperation        = protocolv4.V4TopUpErrorCodeFutureOperation
-	V4TopUpErrorCodeSequenceGap            = protocolv4.V4TopUpErrorCodeSequenceGap
-	V4TopUpErrorCodeConfigurationCapacity  = protocolv4.V4TopUpErrorCodeConfigurationCapacity
-	V4TopUpErrorCodeCapacityExhausted      = protocolv4.V4TopUpErrorCodeCapacityExhausted
-	V4TopUpErrorCodeRelinkRequired         = protocolv4.V4TopUpErrorCodeRelinkRequired
-	V4TopUpErrorCodeSpentUnknown           = protocolv4.V4TopUpErrorCodeSpentUnknown
-	V4TopUpErrorCodeTopUpRequestExpired    = protocolv4.V4TopUpErrorCodeTopUpRequestExpired
-	V4TopUpErrorCodeSourceResetRequired    = protocolv4.V4TopUpErrorCodeSourceResetRequired
-	V4TopUpErrorCodePermissionDenied       = protocolv4.V4TopUpErrorCodePermissionDenied
-	V4TopUpErrorScopeSource                = protocolv4.V4TopUpErrorScopeSource
-	V4TopUpErrorScopeOperation             = protocolv4.V4TopUpErrorScopeOperation
-	V4TopUpErrorScopeRequest               = protocolv4.V4TopUpErrorScopeRequest
-	V4TopUpWriteActionNone                 = protocolv4.V4TopUpWriteActionNone
-	V4TopUpWriteActionTerminal             = protocolv4.V4TopUpWriteActionTerminal
+	TopUpWireResultSuccess               = protocolv4.V4TopUpWireResultSuccess
+	TopUpWireResultReplay                = protocolv4.V4TopUpWireResultReplay
+	TopUpWireResultSourceExhausted       = protocolv4.V4TopUpWireResultSourceExhausted
+	TopUpWireResultSourceUnavailable     = protocolv4.V4TopUpWireResultSourceUnavailable
+	TopUpWireResultSourceContractInvalid = protocolv4.V4TopUpWireResultSourceContractInvalid
+	TopUpWireResultSourceStateUnknown    = protocolv4.V4TopUpWireResultSourceStateUnknown
+	TopUpWireResultOperationConflict     = protocolv4.V4TopUpWireResultOperationConflict
+	TopUpWireResultStaleGeneration       = protocolv4.V4TopUpWireResultStaleGeneration
+	TopUpWireResultFutureGeneration      = protocolv4.V4TopUpWireResultFutureGeneration
+	TopUpWireResultStaleOperation        = protocolv4.V4TopUpWireResultStaleOperation
+	TopUpWireResultFutureOperation       = protocolv4.V4TopUpWireResultFutureOperation
+	TopUpWireResultSequenceGap           = protocolv4.V4TopUpWireResultSequenceGap
+	TopUpWireResultConfigurationCapacity = protocolv4.V4TopUpWireResultConfigurationCapacity
+	TopUpWireResultCapacityExhausted     = protocolv4.V4TopUpWireResultCapacityExhausted
+	TopUpWireResultRelinkRequired        = protocolv4.V4TopUpWireResultRelinkRequired
+	TopUpWireResultSpentUnknown          = protocolv4.V4TopUpWireResultSpentUnknown
+	TopUpWireResultTopUpRequestExpired   = protocolv4.V4TopUpWireResultTopUpRequestExpired
+	TopUpWireResultSourceResetRequired   = protocolv4.V4TopUpWireResultSourceResetRequired
+	TopUpWireResultPermissionDenied      = protocolv4.V4TopUpWireResultPermissionDenied
+	TopUpErrorCodeSourceExhausted        = protocolv4.V4TopUpErrorCodeSourceExhausted
+	TopUpErrorCodeSourceUnavailable      = protocolv4.V4TopUpErrorCodeSourceUnavailable
+	TopUpErrorCodeSourceContractInvalid  = protocolv4.V4TopUpErrorCodeSourceContractInvalid
+	TopUpErrorCodeSourceStateUnknown     = protocolv4.V4TopUpErrorCodeSourceStateUnknown
+	TopUpErrorCodeOperationConflict      = protocolv4.V4TopUpErrorCodeOperationConflict
+	TopUpErrorCodeStaleGeneration        = protocolv4.V4TopUpErrorCodeStaleGeneration
+	TopUpErrorCodeFutureGeneration       = protocolv4.V4TopUpErrorCodeFutureGeneration
+	TopUpErrorCodeStaleOperation         = protocolv4.V4TopUpErrorCodeStaleOperation
+	TopUpErrorCodeFutureOperation        = protocolv4.V4TopUpErrorCodeFutureOperation
+	TopUpErrorCodeSequenceGap            = protocolv4.V4TopUpErrorCodeSequenceGap
+	TopUpErrorCodeConfigurationCapacity  = protocolv4.V4TopUpErrorCodeConfigurationCapacity
+	TopUpErrorCodeCapacityExhausted      = protocolv4.V4TopUpErrorCodeCapacityExhausted
+	TopUpErrorCodeRelinkRequired         = protocolv4.V4TopUpErrorCodeRelinkRequired
+	TopUpErrorCodeSpentUnknown           = protocolv4.V4TopUpErrorCodeSpentUnknown
+	TopUpErrorCodeTopUpRequestExpired    = protocolv4.V4TopUpErrorCodeTopUpRequestExpired
+	TopUpErrorCodeSourceResetRequired    = protocolv4.V4TopUpErrorCodeSourceResetRequired
+	TopUpErrorCodePermissionDenied       = protocolv4.V4TopUpErrorCodePermissionDenied
+	TopUpErrorScopeSource                = protocolv4.V4TopUpErrorScopeSource
+	TopUpErrorScopeOperation             = protocolv4.V4TopUpErrorScopeOperation
+	TopUpErrorScopeRequest               = protocolv4.V4TopUpErrorScopeRequest
+	TopUpWriteActionNone                 = protocolv4.V4TopUpWriteActionNone
+	TopUpWriteActionTerminal             = protocolv4.V4TopUpWriteActionTerminal
 )
 
-func TopUpErrorProjection(code V4TopUpErrorCode, action V4TopUpWriteAction) (V4TopUpError, bool) {
+func TopUpErrorProjection(code TopUpErrorCode, action TopUpWriteAction) (TopUpError, bool) {
 	return protocolv4.TopUpErrorProjection(code, action)
 }
 
@@ -117,55 +117,63 @@ type Stream interface {
 	AsTypedMessages(MessageStreamDefinition) (*TypedMessageStream, error)
 }
 
-// V4Session is the opaque authenticated session returned by its original
+// Session is the opaque authenticated session returned by its original
 // TransportEnvironment. Only that admission path can create its stream owners.
-type V4Session struct {
-	mu                     sync.Mutex
-	closed                 bool
-	info                   func() protocolv4.V4SessionInfo
-	open                   func(context.Context, string, []byte, *timev4.Deadline) (*sessionv4.StreamOwnership, error)
-	accept                 func(context.Context) (string, []byte, *sessionv4.StreamOwnership, error)
-	close                  func() error
-	waitCleanup            func(context.Context) error
-	waitPhysicalCleanup    func(context.Context) error
-	cleanupStatus          func() protocolv4.V4CleanupStatus
-	drain                  func(uint64, uint64) (*sessionv4.DrainOperation, error)
-	drainOperation         *sessionv4.DrainOperation
-	rekey                  func(context.Context) error
-	probeLiveness          func(context.Context, uint64) (sessionv4.ProbeResult, error)
-	unreliable             func() (*sessionv4.UnreliableMessages, error)
-	waitTermination        func(context.Context) error
-	prepareUnary           func(context.Context, sessionv4.UnaryMethodDefinition, []byte, rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error)
-	prepareResume          func(context.Context, sessionv4.ResumeMethodDefinition, *sessionv4.StreamOwnership, protocolv4.ResumeToken, rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error)
-	prepareStreaming       func(context.Context, sessionv4.UnaryMethodDefinition, string, []byte, []byte, rpcv4.UnaryPreparation) (*sessionv4.StreamOperation, error)
-	prepareNotify          func(context.Context, sessionv4.UnaryMethodDefinition, []byte, rpcv4.UnaryPreparation) (*sessionv4.NotifyOperation, error)
-	bindMethods            func(context.Context, sessionv4.ServiceDefinition, sessionv4.UnaryServiceBindOptions) (*sessionv4.UnaryServiceClient, error)
-	bindUnaryService       func(sessionv4.UnaryMethodDefinition) (*sessionv4.UnaryServiceClient, error)
-	bindUnaryMethods       func(context.Context, sessionv4.UnaryServiceDefinition, sessionv4.UnaryServiceBindOptions) (*sessionv4.UnaryServiceClient, error)
-	referenceManagement    func(context.Context, protocolv4.OperationReference, bool, uint64) (rpcv4.ManagementResponse, error)
-	validateReferenceStore func(context.Context, sessionv4.ReferenceStoreBinding) error
-	queryServiceContracts  func(context.Context, []sessionv4.ServiceContractTarget) (*sessionv4.ContractQuerySnapshots, error)
+type Session struct {
+	mu                         sync.Mutex
+	closed                     bool
+	info                       func() protocolv4.V4SessionInfo
+	open                       func(context.Context, string, []byte, *timev4.Deadline) (*sessionv4.StreamOwnership, error)
+	openMessages               func(context.Context, sessionv4.TypedMessageConfig, []byte) (*sessionv4.TypedMessageStream, error)
+	accept                     func(context.Context) (string, []byte, *sessionv4.StreamOwnership, error)
+	close                      func() error
+	waitCleanup                func(context.Context) error
+	waitPhysicalCleanup        func(context.Context) error
+	cleanupStatus              func() protocolv4.V4CleanupStatus
+	connectionDiagnostic       func() sessionv4.ConnectionDiagnostic
+	localReport                func() sessionv4.LocalReport
+	drain                      func(uint64, uint64) (*sessionv4.DrainOperation, error)
+	drainOperation             *sessionv4.DrainOperation
+	rekey                      func(context.Context) error
+	probeLiveness              func(context.Context, uint64) (sessionv4.ProbeResult, error)
+	unreliable                 func() (*sessionv4.UnreliableMessages, error)
+	waitTermination            func(context.Context) error
+	prepareUnary               func(context.Context, sessionv4.UnaryMethodDefinition, []byte, rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error)
+	prepareResume              func(context.Context, sessionv4.ResumeMethodDefinition, *sessionv4.StreamOwnership, protocolv4.ResumeToken, rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error)
+	prepareStreaming           func(context.Context, sessionv4.UnaryMethodDefinition, string, []byte, []byte, rpcv4.UnaryPreparation) (*sessionv4.StreamOperation, error)
+	prepareNotify              func(context.Context, sessionv4.UnaryMethodDefinition, []byte, rpcv4.UnaryPreparation) (*sessionv4.NotifyOperation, error)
+	bindMethods                func(context.Context, sessionv4.ServiceDefinition, sessionv4.UnaryServiceBindOptions) (*sessionv4.UnaryServiceClient, error)
+	bindUnaryService           func(sessionv4.UnaryMethodDefinition) (*sessionv4.UnaryServiceClient, error)
+	bindUnaryMethods           func(context.Context, sessionv4.UnaryServiceDefinition, sessionv4.UnaryServiceBindOptions) (*sessionv4.UnaryServiceClient, error)
+	referenceManagement        func(context.Context, protocolv4.OperationReference, bool, uint64) (rpcv4.ManagementResponse, error)
+	validateReferenceStore     func(context.Context, sessionv4.ReferenceStoreBinding) error
+	queryServiceContracts      func(context.Context, []sessionv4.ServiceContractTarget) (*sessionv4.ContractQuerySnapshots, error)
+	replaceServiceDependencies func(context.Context, sessionv4.UnaryMethodSelector, []sessionv4.ServiceDependency) error
+	subscribeNotification      func(sessionv4.UnaryMethodSelector, sessionv4.NotificationPendingPolicy, sessionv4.NotificationObserver) (*sessionv4.NotificationSubscription, error)
 }
 
-// newV4SessionFromEnvironment adapts a delivered internal v4 session without
+// newSessionFromEnvironment adapts a delivered internal v4 session without
 // exposing its carrier, key material, or admission objects. The supplied
 // session must be the original EnvironmentSession; the adapter only forwards
 // calls to its authenticated SessionCore and physical cleanup owner.
-func newV4SessionFromEnvironment(s *sessionv4.EnvironmentSession) *V4Session {
+func newSessionFromEnvironment(s *sessionv4.EnvironmentSession) *Session {
 	if s == nil {
-		return &V4Session{}
+		return &Session{}
 	}
-	return s.PublicView(func() any { return makeV4SessionFromEnvironment(s) }).(*V4Session)
+	return s.PublicView(func() any { return makeSessionFromEnvironment(s) }).(*Session)
 }
 
-func makeV4SessionFromEnvironment(s *sessionv4.EnvironmentSession) *V4Session {
-	result := newV4SessionFromOwnerFactory(
+func makeSessionFromEnvironment(s *sessionv4.EnvironmentSession) *Session {
+	result := newSessionFromOwnerFactory(
 		s.OpenStream,
 		func() error { s.Close(); return nil },
 		func(ctx context.Context) error { return s.WaitCleanup(ctx) },
 	)
 	result.info = s.Info
+	result.connectionDiagnostic = s.ConnectionDiagnostic
+	result.localReport = s.LocalReport
 	result.accept = s.AcceptStream
+	result.openMessages = s.OpenMessageStream
 	result.cleanupStatus = s.CleanupStatus
 	result.waitPhysicalCleanup = s.WaitPhysicalCleanup
 	result.drain = s.Drain
@@ -183,25 +191,27 @@ func makeV4SessionFromEnvironment(s *sessionv4.EnvironmentSession) *V4Session {
 	result.referenceManagement = s.ReferenceManagement
 	result.validateReferenceStore = s.ValidateReferenceStore
 	result.queryServiceContracts = s.QueryServiceContracts
+	result.replaceServiceDependencies = s.ReplaceServiceDependencies
+	result.subscribeNotification = s.SubscribeNotification
 	return result
 }
 
-// newV4SessionFromOwnerFactory is the only constructor that can publish a v4
+// newSessionFromOwnerFactory is the only constructor that can publish a v4
 // session. The factory is installed by the real sessionv4 admission path and
 // must return the original StreamOwnership.
-func newV4SessionFromOwnerFactory(open func(context.Context, string, []byte, *timev4.Deadline) (*sessionv4.StreamOwnership, error), close func() error, waitCleanup ...func(context.Context) error) *V4Session {
+func newSessionFromOwnerFactory(open func(context.Context, string, []byte, *timev4.Deadline) (*sessionv4.StreamOwnership, error), close func() error, waitCleanup ...func(context.Context) error) *Session {
 	var wait func(context.Context) error
 	if len(waitCleanup) != 0 {
 		wait = waitCleanup[0]
 	}
-	return &V4Session{open: open, close: close, waitCleanup: wait}
+	return &Session{open: open, close: close, waitCleanup: wait}
 }
 
-func (s *V4Session) available() bool {
+func (s *Session) available() bool {
 	return s != nil && s.open != nil
 }
 
-func (s *V4Session) OpenStream(ctx context.Context, kind string, metadata StreamMetadata) (Stream, error) {
+func (s *Session) OpenStream(ctx context.Context, kind string, metadata StreamMetadata) (Stream, error) {
 	if s == nil || !s.available() {
 		return nil, ErrTransportUnavailable
 	}
@@ -220,10 +230,10 @@ func (s *V4Session) OpenStream(ctx context.Context, kind string, metadata Stream
 	if err != nil {
 		return nil, err
 	}
-	return newV4StreamFromOwnership(owner, resourcev4.Reference{}, nil, nil), nil
+	return newStreamFromOwnership(owner, resourcev4.Reference{}, nil, nil), nil
 }
 
-func (s *V4Session) Close() error {
+func (s *Session) Close() error {
 	if s == nil {
 		return nil
 	}
@@ -243,7 +253,7 @@ func (s *V4Session) Close() error {
 
 // CleanupStatus passively reports the original close operation, including
 // callbacks that remain charged after its fixed cleanup deadline.
-func (s *V4Session) CleanupStatus() CleanupStatus {
+func (s *Session) CleanupStatus() CleanupStatus {
 	if s == nil || s.cleanupStatus == nil {
 		return CleanupStatus{Status: protocolv4.V4CleanupStatePending, CoreCleanup: protocolv4.V4CoreCleanupPending}
 	}
@@ -253,7 +263,7 @@ func (s *V4Session) CleanupStatus() CleanupStatus {
 // WaitCleanup observes the original close operation. ErrCleanupIncomplete
 // reports its fixed deadline without claiming physical release; subsequent
 // status reads and waits converge when the actual cleanup finishes.
-func (s *V4Session) WaitCleanup(ctx context.Context) error {
+func (s *Session) WaitCleanup(ctx context.Context) error {
 	if s == nil || ctx == nil {
 		return ErrTransportUnavailable
 	}
@@ -288,6 +298,7 @@ type ReadResult struct {
 	Progress     ReadProgress
 	WaitStatus   protocolv4.V4WaitStatus
 	StreamStatus protocolv4.V4StreamStatus
+	ReadTerminal protocolv4.V4ReadTerminal
 	Cause        *protocolv4.V4ReadCause
 	Error        *protocolv4.V4TypedError
 }
@@ -362,7 +373,11 @@ func publicReadProgress(p protocolv4.V4ReadProgress) ReadProgress {
 }
 
 func publicReadResult(r protocolv4.V4ReadResult, _ error) ReadResult {
-	result := ReadResult{Data: r.Data, Progress: publicReadProgress(r.Progress), WaitStatus: r.WaitStatus, StreamStatus: r.StreamStatus}
+	terminal := protocolv4.V4ReadTerminalOpen
+	if r.StreamStatus == protocolv4.V4StreamStatusEof {
+		terminal = protocolv4.V4ReadTerminalEof
+	}
+	result := ReadResult{Data: r.Data, Progress: publicReadProgress(r.Progress), WaitStatus: r.WaitStatus, StreamStatus: r.StreamStatus, ReadTerminal: terminal}
 	if r.Cause != nil {
 		cause := *r.Cause
 		result.Cause = &cause
@@ -453,7 +468,7 @@ type v4Stream struct {
 	hardDeadline  *timev4.Deadline
 }
 
-func newV4StreamFromOwnership(owner *sessionv4.StreamOwnership, reservation resourcev4.Reference, authorization *protocolv4.DeliveryAuthorization, hardDeadline *timev4.Deadline) *v4Stream {
+func newStreamFromOwnership(owner *sessionv4.StreamOwnership, reservation resourcev4.Reference, authorization *protocolv4.DeliveryAuthorization, hardDeadline *timev4.Deadline) *v4Stream {
 	return &v4Stream{owner: owner, reservation: reservation, authorization: authorization, hardDeadline: hardDeadline}
 }
 
@@ -474,7 +489,10 @@ func (s *v4Stream) Write(p []byte) (int, error) {
 	if s == nil || s.owner == nil {
 		return 0, ErrTransportUnavailable
 	}
-	return s.owner.Write(context.Background(), p)
+	// Stream implements io.Writer. The internal queue may accept only a
+	// prefix in one turn, so the public Write facade must retain the original
+	// owner and advance the suffix until the requested input is fully accepted.
+	return s.owner.WriteAll(context.Background(), p)
 }
 func (s *v4Stream) CloseWrite() error {
 	if s == nil || s.owner == nil {
@@ -712,8 +730,9 @@ func (p *ResponsePublication) TransferTo(target any) error {
 // same admitted duplex owner used by the Session's typed stream registry.
 type TypedMessageStream struct{ inner *sessionv4.TypedMessageStream }
 
-// MessageStreamDefinition is frozen by the configured message registry. Codec
-// hooks cannot establish a definition or bypass its authenticated OPEN binding.
+// MessageStreamDefinition captures immutable wire fields and trusted local
+// codecs/options. The normal constructor validates both direction bindings;
+// codec hooks cannot bypass the authenticated OPEN digest.
 type MessageStreamDefinition struct{ config sessionv4.TypedMessageConfig }
 
 func (s *v4Stream) AsTypedMessages(def MessageStreamDefinition) (*TypedMessageStream, error) {
@@ -730,6 +749,11 @@ func (s *v4Stream) AsTypedMessages(def MessageStreamDefinition) (*TypedMessageSt
 type MessageSendResult = sessionv4.MessageSendResult
 type MessageSendOptions = sessionv4.MessageSendOptions
 type MessageSendAdmission = sessionv4.MessageSendAdmission
+type MessageCodecIdentity = sessionv4.MessageCodecIdentity
+type MessageReceiveResult = sessionv4.MessageReceiveResult
+type EncodedMessageReceiveResult = sessionv4.EncodedMessageReceiveResult
+type MessageReceiveError = sessionv4.MessageReceiveError
+type MessageResultModeConflict = sessionv4.MessageResultModeConflict
 
 const (
 	MessageSendQueued = sessionv4.MessageSendQueued
@@ -749,15 +773,15 @@ func (m *TypedMessageStream) Send(ctx context.Context, value any, options ...Mes
 	}
 	return m.inner.Send(ctx, value, option)
 }
-func (m *TypedMessageStream) Receive(ctx context.Context) (any, error) {
+func (m *TypedMessageStream) Receive(ctx context.Context) (MessageReceiveResult, error) {
 	if m == nil || m.inner == nil || ctx == nil {
-		return nil, ErrTransportUnavailable
+		return MessageReceiveResult{}, ErrTransportUnavailable
 	}
 	return m.inner.Receive(ctx)
 }
-func (m *TypedMessageStream) ReceiveEncoded(ctx context.Context) ([]byte, error) {
+func (m *TypedMessageStream) ReceiveEncoded(ctx context.Context) (EncodedMessageReceiveResult, error) {
 	if m == nil || m.inner == nil || ctx == nil {
-		return nil, ErrTransportUnavailable
+		return EncodedMessageReceiveResult{}, ErrTransportUnavailable
 	}
 	return m.inner.ReceiveEncoded(ctx)
 }

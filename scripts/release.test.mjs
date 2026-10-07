@@ -1465,22 +1465,21 @@ test("bounded child readback classifies limits and kills background descendants"
 
 test("documentation distinguishes injector, real weaknet, required performance, and optional WebTransport", () => {
   const matrix = fs.readFileSync(path.join(sourceRoot, "docs/TEST_MATRIX.md"), "utf8");
-  const architecture = fs.readFileSync(path.join(sourceRoot, "docs/TRANSPORT_V3_ARCHITECTURE.md"), "utf8");
+  const architecture = fs.readFileSync(path.join(sourceRoot, "docs/TRANSPORT_V4_BINDING.md"), "utf8");
   assert.match(matrix, /diagnostic\/flowersec-weaknet\/\{websocket,raw-quic\}\/direct/);
   assert.match(matrix, /diagnostic\/flowersec-weaknet\/\{websocket,raw-quic\}\/tunnel\/representative/);
   assert.match(matrix, /Go-owned/);
   assert.match(matrix, /performance\/throughput\/\{wss,raw-quic\}/);
   assert.match(matrix, /performance-optional/);
   assert.doesNotMatch(matrix, /Swift WSS against Go, Rust, and Node/);
-  assert.match(architecture, /typescript\/node[^\n]*node_webtransport_driver_unavailable/);
-  assert.match(architecture, /\| go\/native \|[^\n]*no migration \|/);
+  assert.match(architecture, /provider qualification/u);
+  assert.match(architecture, /WebTransport/u);
   assert.doesNotMatch(architecture, /Linux system tests include[^\n]*real path migration[^\n]*IPv4\/IPv6 PMTUD/);
 });
 
-test("npm release readback verifies tarballs, ABI, CLI, and public consumers", () => {
+test("npm release readback verifies published tarballs and platform package metadata", () => {
   const workflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const readback = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-package.mjs"), "utf8");
-  const consumer = fs.readFileSync(path.join(sourceRoot, "scripts/verify-npm-release-consumer.mjs"), "utf8");
   assert.match(workflow, /node scripts\/verify-npm-release-package\.mjs/);
   assert.match(
     readback,
@@ -1501,33 +1500,13 @@ test("npm release readback verifies tarballs, ABI, CLI, and public consumers", (
   assert.match(readback, /manifest\.main/);
   assert.match(readback, /flowersec-node-native/);
   assert.doesNotMatch(workflow, /npm-consumer-smoke:/);
-  assert.match(workflow, /node scripts\/verify-npm-release-consumer\.mjs "\$RELEASE_VERSION"/);
-  assert.match(consumer, /addon\.contractVersion\(\), 3/);
-  assert.match(consumer, /release\/npm-consumer\/cli-websocket GREEN/);
-  assert.match(consumer, /cliPath, "server"/);
-  assert.match(consumer, /cliPath, "client"/);
-  assert.match(consumer, /\{ origin: ready\.origin, roots: ready\.trust_pem \}/);
-  assert.doesNotMatch(consumer, /tls:\s*\{\s*ca:/);
-  assert.match(workflow, /actions\/setup-go/);
-  const goConsumer = fs.readFileSync(
-    path.join(sourceRoot, "scripts/fixtures/npm-release-go-node-raw-quic/main.go"),
-    "utf8",
-  );
-  assert.match(goConsumer, /NewRawQUICDirectListener/);
-  assert.match(goConsumer, /NewAcceptor/);
-  assert.match(goConsumer, /IssueDirect/);
-  assert.match(goConsumer, /HandleRPC/);
-  assert.match(goConsumer, /HandleStream/);
-  assert.match(goConsumer, /SessionClosed/);
-  assert.match(goConsumer, /accepted lease was not released/);
-  assert.doesNotMatch(goConsumer, /\/internal\//);
 });
 
 test("release recovery restores readback scripts from the reviewed workflow SHA after immutable tag checkout", () => {
   const releaseWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const rustWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
   const npmRecovery = releaseWorkflow.slice(releaseWorkflow.indexOf("\n  npm-recovery:"));
-  for (const [workflow, files, invocation] of [[npmRecovery, ["scripts/release-readback.mjs", "scripts/verify-npm-release-package.mjs", "scripts/verify-npm-release-consumer.mjs", "scripts/native-addon-smoke.mjs"], "node scripts/verify-npm-release-package.mjs"], [rustWorkflow, ["scripts/release-readback.mjs", "scripts/verify-crates-release-package.mjs", "scripts/verify-crates-release-consumer.mjs"], "node scripts/verify-crates-release-package.mjs"]]) {
+  for (const [workflow, files, invocation] of [[npmRecovery, ["scripts/release-readback.mjs", "scripts/verify-npm-release-package.mjs", "scripts/verify-npm-release-consumer.mjs", "scripts/native-addon-smoke.mjs", "scripts/fixtures/npm-release-go-node-raw-quic/main.go"], "node scripts/verify-npm-release-package.mjs"], [rustWorkflow, ["scripts/release-readback.mjs", "scripts/verify-crates-release-package.mjs", "scripts/verify-crates-release-consumer.mjs"], "node scripts/verify-crates-release-package.mjs"]]) {
     const restore = workflow.indexOf("git checkout \"$GITHUB_SHA\" --");
     assert.ok(restore >= 0);
     const checkout = workflow.lastIndexOf("refs/tags/flowersec-", restore);
@@ -1537,7 +1516,7 @@ test("release recovery restores readback scripts from the reviewed workflow SHA 
   }
 });
 
-test("standalone npm recovery uses the target tag Go requirement without current toolchain files", async (t) => {
+test("standalone npm recovery restores only registry readback scripts", () => {
   const recovery = extractWorkflowStepRun(
     path.join(sourceRoot, ".github/workflows/release.yml"),
     "npm-recovery",
@@ -1555,58 +1534,6 @@ test("standalone npm recovery uses the target tag Go requirement without current
     "scripts/native-addon-smoke.mjs",
     "scripts/fixtures/npm-release-go-node-raw-quic/main.go",
   ]);
-
-  for (const fixture of [
-    { name: "old tag", goModule: "module example.com/release\n\ngo 1.27.0\n", expected: "1.27.0" },
-    { name: "current tag", goModule: fs.readFileSync(path.join(sourceRoot, "flowersec-go/go.mod"), "utf8"), expected: toolchains.go.version },
-    { name: "Go requirement differs from toolchain suggestion", goModule: "module example.com/release\r\n\r\ngo\t1.27.0 // release requirement\r\ntoolchain go1.27.1\r\n", expected: "1.27.0" },
-    { name: "missing Go requirement", goModule: "module example.com/release\n// go 1.27.0\ntoolchain go1.27.1\n", expected: null },
-  ]) {
-    await t.test(fixture.name, (t) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-npm-old-tag-"));
-      t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-      for (const file of copiedFiles) {
-        fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-        fs.copyFileSync(path.join(sourceRoot, file), path.join(root, file));
-      }
-      fs.mkdirSync(path.join(root, "flowersec-go"));
-      fs.writeFileSync(path.join(root, "flowersec-go/go.mod"), fixture.goModule);
-      const bin = path.join(root, "bin");
-      fs.mkdirSync(bin);
-      const capture = path.join(root, "consumer.json");
-      writeExecutable(path.join(bin, "npm"), `#!/usr/bin/env node
-const fs = require("node:fs");
-const path = require("node:path");
-fs.writeFileSync(process.env.FLOWERSEC_TEST_CONSUMER_CAPTURE, JSON.stringify({
-  root: process.cwd(),
-  goModule: fs.readFileSync(path.join(process.cwd(), "go-consumer/go.mod"), "utf8"),
-}));
-process.stderr.write("stopped before registry access\\n");
-process.exit(73);
-`);
-      assert.equal(fs.existsSync(path.join(root, "toolchains.json")), false);
-      assert.equal(fs.existsSync(path.join(root, "scripts/toolchains.mjs")), false);
-      const result = spawnSync(process.execPath, ["scripts/verify-npm-release-consumer.mjs", "0.26.0"], {
-        cwd: root,
-        encoding: "utf8",
-        timeout: 10_000,
-        env: isolatedEnvironment({
-          PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-          FLOWERSEC_TEST_CONSUMER_CAPTURE: capture,
-        }),
-      });
-      assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
-      if (fixture.expected === null) {
-        assert.match(result.stderr, /must contain exactly one Go version requirement/);
-        assert.equal(fs.existsSync(capture), false, "invalid Go requirements must fail before npm");
-      } else {
-        assert.match(result.stderr, /stopped before registry access/);
-        const consumer = JSON.parse(fs.readFileSync(capture, "utf8"));
-        assert.equal(consumer.goModule, `module flowersec_release_consumer\n\ngo ${fixture.expected}\n\nrequire github.com/floegence/flowersec/flowersec-go/v6 v0.26.0\n`);
-        assert.equal(fs.existsSync(consumer.root), false, "failed readback must clean its scratch directory");
-      }
-    });
-  }
 });
 
 test("release recovery preserves immutable assets and publishes npm from those exact archives", () => {
@@ -3666,7 +3593,12 @@ test("browser compatibility remains explicit and separate from Chromium smoke", 
   assert.doesNotMatch(registry, /"diagnostic\/browser"/);
   const packageManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-ts/package.json"), "utf8");
   assert.match(packageManifest, /"test:browser": "npm run test:browser:chromium"/);
-  assert.match(packageManifest, /"test:browser:chromium": "npm run ensure:browser && npm run build && playwright test --project=chromium"/);
-  assert.match(packageManifest, /"test:browser:firefox": "npm run ensure:browser:firefox && npm run build && playwright test --project=firefox-compat"/);
-  assert.match(packageManifest, /"test:browser:webkit": "npm run ensure:browser:webkit && npm run build && playwright test --project=webkit-smoke"/);
+  const scripts = JSON.parse(packageManifest).scripts;
+  for (const [browser, ensure, project] of [
+    ["chromium", "ensure:browser", "chromium"],
+    ["firefox", "ensure:browser:firefox", "firefox-compat"],
+    ["webkit", "ensure:browser:webkit", "webkit-smoke"],
+  ]) {
+    assert.equal(scripts[`test:browser:${browser}`], `npm run ${ensure} && npm run build && node ../scripts/server-parity-native-addon.mjs --playwright test --project=${project}`);
+  }
 });

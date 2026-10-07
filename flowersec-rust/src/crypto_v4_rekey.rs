@@ -208,6 +208,7 @@ pub(super) struct Coordinator {
     round: Option<Round>,
     intent: Option<Instant>,
     requested: bool,
+    timeout_reported: std::sync::atomic::AtomicBool,
     deadline: Option<Instant>,
     output: Vec<u8>,
     init: Vec<u8>,
@@ -241,6 +242,7 @@ impl Coordinator {
             round: None,
             intent: None,
             requested: false,
+            timeout_reported: std::sync::atomic::AtomicBool::new(false),
             deadline: None,
             output,
             init,
@@ -256,6 +258,14 @@ impl Coordinator {
             return Err(CryptoError::Deadline);
         }
         Ok(())
+    }
+    pub(super) fn record_timeout(&self, account: &crate::environment_v4::ResourceAccount) {
+        if !self
+            .timeout_reported
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            account.diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::RekeyTimeouts);
+        }
     }
     pub(super) fn busy(&self) -> bool {
         self.intent.is_some() || self.round.is_some()
@@ -452,7 +462,11 @@ impl RecordEngine {
         }
 
         for key in &self.keys {
-            if key.scope != 0 && key.direction == self.role && !self.streams.exists(key.scope) {
+            if key.scope != 0
+                && key.scope != datagrams::SCOPE
+                && key.direction == self.role
+                && !self.streams.exists(key.scope)
+            {
                 // A failed direction needs the Session's authenticated abort
                 // proof. This crypto owner cannot manufacture that proof.
                 if key.disabled {
@@ -627,7 +641,7 @@ impl RecordEngine {
         self.charge_keys(self.keys.len())?;
         let mut keys = std::mem::take(&mut self.spare_keys);
         for old in &self.keys {
-            if old.disabled {
+            if old.disabled && old.scope != datagrams::SCOPE {
                 if self.streams.exists(old.scope) {
                     continue;
                 }
@@ -677,6 +691,7 @@ impl RecordEngine {
             self.streams.release(entry.scope);
         }
         self.streams.install_epoch(self.epoch);
+        self.datagrams.install_epoch();
         self.rekey.finish(now)?;
         self.streams.controls.rekey_complete(now);
         self.frozen = false;
@@ -688,6 +703,10 @@ impl RecordEngine {
         marker: bool,
         publisher: &mut dyn RecordPublisher,
     ) -> Result<()> {
+        publisher.prepare_publication(
+            body.len().checked_add(44).ok_or(CryptoError::Capacity)?,
+            self.rekey.geometry.scopes + 1,
+        )?;
         let mut out = std::mem::take(&mut self.rekey.output);
         let result = (|| {
             let n = self.seal(0, 6, body, &mut out, marker, true)?;
@@ -729,7 +748,7 @@ impl RecordEngine {
             blocks: u.blocks / 2,
             bytes: u.bytes / 2,
         };
-        if !self.epoch_usage.fits(half(epoch_limit))
+        if !self.datagram_soft_epoch_usage().fits(half(epoch_limit))
             || !self
                 .session_usage
                 .add(self.rekey.geometry.margin)?
@@ -738,10 +757,18 @@ impl RecordEngine {
         {
             return Ok(true);
         }
-        Ok(self.keys.iter().any(|k| !k.usage.fits(half(key_limit))))
+        Ok(self
+            .keys
+            .iter()
+            .any(|k| !self.datagram_soft_key_usage(k).fits(half(key_limit))))
     }
     fn remember_intent(&mut self, now: TrustedTimeSample) -> Result<()> {
-        if self.rekey.intent.is_none() {
+        if self.rekey.intent.is_none() && self.rekey.round.is_none() {
+            self.account
+                .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::RekeyStarts);
+            self.rekey
+                .timeout_reported
+                .store(false, std::sync::atomic::Ordering::Release);
             // A legitimate request gets the next credit opportunity plus the
             // signed start budget; repeats never refresh this original bound.
             self.streams
@@ -835,7 +862,13 @@ impl RecordEngine {
                 .ok_or(CryptoError::State)?
                 .outgoing
             {
-                self.streams.published(entry.scope);
+                if publisher.is_deferred() {
+                    publisher.defer_publication(crate::crypto_v4::DeferredPublication::published(
+                        entry.scope,
+                    ));
+                } else {
+                    self.streams.published(entry.scope);
+                }
             }
             return Ok(true);
         }
@@ -870,18 +903,34 @@ impl RecordEngine {
                 self.rekey.deadline =
                     Some(Coordinator::deadline_after(now.monotonic_sample, 30_000)?);
             }
+            publisher
+                .prepare_publication(body.len().checked_add(44).ok_or(CryptoError::Capacity)?, 1)?;
             let mut out = std::mem::take(&mut self.rekey.output);
-            let result = (|| {
+            let result: Result<()> = (|| {
                 let n = self.seal(0, 6, &body, &mut out, true, true)?;
                 self.candidate.as_mut().ok_or(CryptoError::State)?.sent = true;
                 if phase == 4 {
                     self.finish_round(now)?;
                 }
                 publisher.publish(&out[..n])?;
-                self.check()?;
-                self.streams
-                    .controls
-                    .activity(self.account.security_time()?)
+                if publisher.is_deferred() {
+                    publisher.defer_publication(if phase == 4 {
+                        crate::crypto_v4::DeferredPublication::rekey_success()
+                    } else {
+                        crate::crypto_v4::DeferredPublication::handoff(None)
+                    });
+                } else {
+                    if phase == 4 {
+                        self.account.diagnostic_count(
+                            crate::diagnostics_v4::DiagnosticCounter::RekeySuccesses,
+                        );
+                    }
+                    self.check()?;
+                    self.streams
+                        .controls
+                        .activity(self.account.security_time()?)?;
+                }
+                Ok(())
             })();
             out.as_mut_slice().zeroize();
             self.rekey.output = out;
@@ -896,7 +945,13 @@ impl RecordEngine {
                     .ok_or(CryptoError::State)?
                     .outgoing
                 {
-                    self.streams.published(entry.scope);
+                    if publisher.is_deferred() {
+                        publisher.defer_publication(
+                            crate::crypto_v4::DeferredPublication::published(entry.scope),
+                        );
+                    } else {
+                        self.streams.published(entry.scope);
+                    }
                 }
             }
         }
@@ -1067,6 +1122,13 @@ impl RecordEngine {
                 return Ok(());
             }
             if phase == 1 {
+                if !self.rekey.busy() {
+                    self.account
+                        .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::RekeyStarts);
+                    self.rekey
+                        .timeout_reported
+                        .store(false, std::sync::atomic::Ordering::Release);
+                }
                 let value = self.parse_phase(body, 1)?;
                 let id = value.b("REKEY_INIT", "rekey_id")?;
                 let post = self.rekey.credit.charge(now, true)?;
@@ -1110,6 +1172,8 @@ impl RecordEngine {
                         Some(Coordinator::deadline_after(now.monotonic_sample, 30_000)?);
                 } else {
                     self.finish_round(now)?;
+                    self.account
+                        .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::RekeySuccesses);
                 }
             }
             self.check()

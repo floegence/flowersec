@@ -26,16 +26,35 @@ fn signed(fields: &[(u64, Vec<u8>)], signature_id: u64, label: &[u8], key: &Loca
 }
 impl Exchange {
     fn new(profile: Profile, source: ActivationSource) -> Self {
+        Self::with_recovery(profile, source, false)
+    }
+    fn with_recovery(profile: Profile, source: ActivationSource, recovery: bool) -> Self {
+        Self::with_credit(profile, source, recovery, None)
+    }
+    fn with_credit(
+        profile: Profile,
+        source: ActivationSource,
+        recovery: bool,
+        maximum_credit: Option<u64>,
+    ) -> Self {
+        let selected_features = if recovery { 2 } else { 0 };
         let keys = [
             LocalKeys::generate(profile).unwrap(),
             LocalKeys::generate(profile).unwrap(),
         ];
         let ed = [keys[0].ed_public(), keys[1].ed_public()];
-        let fixture = Fixture::with_identity(
+        let mut fixture = Fixture::with_identity_and_execution(
             source,
             profile.name(),
             Some([(keys[0].dh_public(), &ed[0]), (keys[1].dh_public(), &ed[1])]),
+            recovery,
         );
+        if recovery {
+            fixture.enable_execution_recovery();
+        }
+        if let Some(maximum) = maximum_credit {
+            fixture.set_max_credit(maximum);
+        }
         let admission = fixture.reserve().unwrap();
         let client_hello = encode_map(&[
             (0, t("flowersec/4")),
@@ -46,7 +65,7 @@ impl Exchange {
             (5, b(&admission.route_digest)),
             (6, b(&admission.attempt_id)),
             (7, b(&[23; 32])),
-            (8, u(0)),
+            (8, u(selected_features)),
             (9, u(2)),
             (10, b(&[])),
         ]);
@@ -60,8 +79,8 @@ impl Exchange {
             (6, b(&admission.attempt_id)),
             (7, b(&[23; 32])),
             (8, b(&[31; 32])),
-            (9, u(0)),
-            (10, u(0)),
+            (9, u(selected_features)),
+            (10, u(selected_features)),
             (11, u(1)),
             (12, b(&[])),
         ]);
@@ -83,7 +102,7 @@ impl Exchange {
             (6, b(&admission.attempt_id)),
             (7, b(&[23; 32])),
             (8, b(&hello)),
-            (9, u(0)),
+            (9, u(selected_features)),
             (10, u(1)),
             (11, u(0)),
             (12, b(&[])),
@@ -105,7 +124,7 @@ impl Exchange {
                 (7, b(&admission.attempt_id)),
                 (8, b(&[32; 32])),
                 (9, b(&hello)),
-                (10, u(0)),
+                (10, u(selected_features)),
                 (11, u(1)),
                 (12, b(&context_digest)),
                 (13, b(&fixture.activation)),
@@ -135,7 +154,7 @@ impl Exchange {
                 (4, b(&binding)),
                 (5, b(&admission.route_digest)),
                 (6, b(&hello)),
-                (7, u(0)),
+                (7, u(selected_features)),
                 (8, u(1)),
                 (9, b(&context_digest)),
                 (10, b(&admission.certificate_digests[0])),
@@ -505,4 +524,28 @@ pub(super) fn record_pair_for_limits(profile: Profile) -> (Fixture, RecordEngine
     let (c, s) = exchange.noise_pair();
     let (c, s) = ready_pair(c, s);
     (exchange.fixture, c, s)
+}
+
+/// Two simultaneous 64 KiB receive windows require 128 KiB of issuer-signed
+/// Session credit. Preserve the normal fixture's smaller capacity for tests
+/// that exercise its original resource limits.
+pub(super) fn record_pair_for_bridge(profile: Profile) -> (Fixture, RecordEngine, RecordEngine) {
+    let exchange = Exchange::with_credit(
+        profile,
+        ActivationSource::LiveAuthority,
+        false,
+        Some(2 * 65_536),
+    );
+    let (client, server) = exchange.noise_pair();
+    let (client, server) = ready_pair(client, server);
+    (exchange.fixture, client, server)
+}
+
+/// Positive recovery uses the same real issuer, certificate authorization,
+/// HELLO/FSB/FSA transcript, Noise handshake and READY exchange as ordinary tests.
+pub(super) fn record_pair_for_recovery(profile: Profile) -> (Fixture, RecordEngine, RecordEngine) {
+    let exchange = Exchange::with_recovery(profile, ActivationSource::LiveAuthority, true);
+    let (client, server) = exchange.noise_pair();
+    let (client, server) = ready_pair(client, server);
+    (exchange.fixture, client, server)
 }

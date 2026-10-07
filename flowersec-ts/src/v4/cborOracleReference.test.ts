@@ -54,7 +54,7 @@ describe("v4.ts_oracles", () => {
       } else { positive += 1; expect(encode(receive(raw, vector)), vector.id).toEqual(raw); }
       if (vector.pool_derivation) pools += 1; if (vector.schema === "OPEN_STREAM") opens += 1;
     }
-    expect(positive).toBe(348); expect(negative).toBe(833); expect(pools).toBeGreaterThan(0); expect(opens).toBeGreaterThan(0);
+    expect(positive).toBe(349); expect(negative).toBe(833); expect(pools).toBeGreaterThan(0); expect(opens).toBeGreaterThan(0);
   });
 
   // v4.ts_oracles.open_digest

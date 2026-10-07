@@ -406,3 +406,42 @@ func TestControllerServiceConvenienceCallClosesItsOriginalScope(t *testing.T) {
 		t.Fatal("convenience scope closed Controller")
 	}
 }
+
+func TestControllerServiceCapturesApprovedPeerMappingAcrossSourceAndPreparation(t *testing.T) {
+	f, services, controller, sessions, _ := controllerReselectionFixture(t)
+	definition := controllerServiceDefinition(f)
+	peers := []string{"server-1", "server-replica"}
+	client, err := controller.BindMethods(context.Background(), definition, UnaryServiceBindOptions{PeerReplicas: peers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { closeControllerService(t, client) })
+	peers[0] = "unapproved"
+	original, err := client.Prepare(context.Background(), []byte("request"), rpcv4.UnaryPreparation{DeadlineAtMS: 2000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(original.Close)
+	if original.controller.routing.peers != client.source.routing.peers || original.controller.routing.peers.count != 2 {
+		t.Fatal("original operation lost the captured finite replica mapping")
+	}
+	controller.mu.Lock()
+	controller.current = sessions[1]
+	controller.mu.Unlock()
+	services[0].draining.Store(true)
+	if _, err := client.checkControllerSource(sessions[1]); err != nil {
+		t.Fatal(err)
+	}
+	if start := original.Start(context.Background()); start.Error != nil || start.NotAdmitted {
+		t.Fatal(start)
+	}
+	if original.controller.session != sessions[1] {
+		t.Fatal("mapped queued operation did not select current")
+	}
+	if bad, err := controller.BindMethods(context.Background(), definition, UnaryServiceBindOptions{PeerReplicas: []string{"unapproved"}}); bad != nil || !errors.Is(err, ErrApplicationAuthorization) {
+		t.Fatal("unapproved initial peer entered binding", bad, err)
+	}
+	if fixed, err := services[1].bindMethods(context.Background(), definition, UnaryServiceBindOptions{PeerReplicas: []string{"server-1"}}); fixed != nil || !errors.Is(err, cryptov4.ErrConfiguration) {
+		t.Fatal("fixed Session accepted a replacement mapping", fixed, err)
+	}
+}

@@ -43,7 +43,7 @@ func TestProxyDeadlineBoundsIncompleteMetadataAndBody(t *testing.T) {
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
-				proxy.serveHTTP(ctx, IncomingStream{Stream: &proxyServerTestStream{Conn: local, kind: proxyHTTPStreamKind}})
+				proxy.serveHTTPStream(ctx, &proxyServerTestStream{Conn: local, kind: proxyHTTPStreamKind})
 			}()
 			if method != "" {
 				if err := writeProxyMetadata(remote, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "stalled", Method: method, Path: "/", TimeoutMS: 20}); err != nil {

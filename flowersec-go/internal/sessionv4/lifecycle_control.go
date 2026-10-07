@@ -43,7 +43,20 @@ func (a *OpenAdmission) applyLifecycleControl(record *ReceivedRecord) (err error
 			}
 			a.peerGoAway = boundary
 			a.openGate.close()
+			if a.application != nil {
+				// Stop local requests, retaining the peer's already submitted
+				// input until its original channels reach EOF.
+				a.application.mu.Lock()
+				if a.application.rpc != nil {
+					a.application.rpc.sealBusiness()
+				}
+				a.application.mu.Unlock()
+			}
+			a.cancelUnacceptedManagementLocked()
 			a.notifyDecisionOpportunityLocked()
+			if a.lifecycle != nil {
+				a.lifecycle.notify()
+			}
 		}
 		return record.accepted()
 	}

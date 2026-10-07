@@ -1,3 +1,4 @@
+import Clibsodium
 import Crypto
 import Foundation
 import XCTest
@@ -5,7 +6,7 @@ import XCTest
 @testable import Flowersec
 
 @MainActor
-final class TransportV4NamespaceTests: XCTestCase {
+final class TransportNamespaceTests: XCTestCase {
   func testNonceBoundBootstrapAuthenticatesPinnedRootAndCompleteState() throws {
     let fixture = try NamespaceFixture()
     let initial = fixture.root.snapshot()
@@ -42,21 +43,34 @@ final class TransportV4NamespaceTests: XCTestCase {
     try fixture.owner!.checkCurrent()
   }
 
-  func testAuthenticatedNewHeadFencesOldStateBeforeFailedFetch() throws {
+  func testInvalidNewHeadStatePreservesCurrentStateUntilCompleteValidation() throws {
     let fixture = try NamespaceFixture()
     let state = fixture.state()
     try fixture.owner!.bootstrap(response: fixture.response(state: state), state: state)
     let next = try fixture.head(state: state, sequence: 2)
     XCTAssertThrowsError(try fixture.owner!.refresh(head: next, state: Data([0xa0])))
-    XCTAssertThrowsError(try fixture.owner!.checkCurrent()) { error in
-      XCTAssertEqual(error as? V4NamespaceFailure, .pendingState)
-    }
+    try fixture.owner!.checkCurrent()
+    XCTAssertEqual(fixture.owner!.currentSequence, 1)
     XCTAssertThrowsError(try fixture.owner!.refresh(head: fixture.head(state: state), state: state))
-    { error in
-      XCTAssertEqual(error as? V4NamespaceFailure, .rollback)
+    {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .rollback)
     }
     try fixture.owner!.refresh(head: next, state: state)
     XCTAssertEqual(fixture.owner!.currentSequence, 2)
+  }
+
+  func testIndependentMatureFloorsDenyOnlyTheirCredentialClassBeforeState() throws {
+    let fixture = try NamespaceFixture()
+    let state = fixture.state()
+    try fixture.owner!.bootstrap(response: fixture.response(state: state), state: state)
+    let floorState = fixture.state(floors: [1, 0])
+    let floorHead = try fixture.head(state: floorState, sequence: 2, floors: [1, 0])
+    XCTAssertThrowsError(try fixture.owner!.refresh(head: floorHead, state: Data([0xa0])))
+    try fixture.owner!.checkCurrent()
+    XCTAssertEqual(fixture.owner!.currentSequence, 1)
+    fixture.source.advance(101)
+    XCTAssertThrowsError(try fixture.owner!.refresh(head: floorHead, state: Data([0xa0])))
+    XCTAssertEqual(fixture.owner!.currentSequence, 1)
   }
 
   func testAuthenticatedSameSequenceConflictPermanentlyClosesOwner() throws {
@@ -94,7 +108,8 @@ final class TransportV4NamespaceTests: XCTestCase {
     ) { error in
       XCTAssertEqual(error as? V4NamespaceFailure, .rollback)
     }
-    XCTAssertNil(fixture.owner!.currentSequence)
+    try fixture.owner!.checkCurrent()
+    XCTAssertEqual(fixture.owner!.currentSequence, 1)
     try fixture.owner!.refresh(head: fixture.head(state: state, sequence: 3), state: state)
     XCTAssertEqual(fixture.owner!.currentSequence, 3)
   }
@@ -159,23 +174,41 @@ final class TransportV4NamespaceTests: XCTestCase {
     let state = fixture.state()
     try fixture.owner!.bootstrap(response: fixture.response(state: state), state: state)
     let premature = fixture.state(floors: [1, 0])
+    let pendingHead = try fixture.head(state: premature, sequence: 2, floors: [1, 0])
+    XCTAssertThrowsError(
+      try fixture.owner!.refresh(
+        head: pendingHead, state: premature)
+    ) { error in
+      XCTAssertEqual(error as? V4TimeFailure, .pending)
+    }
+    try fixture.owner!.checkCurrent()
+    XCTAssertEqual(fixture.owner!.currentSequence, 1)
+    let newer = fixture.state(floors: [1, 0])
+    XCTAssertThrowsError(
+      try fixture.owner!.refresh(
+        head: fixture.head(state: newer, sequence: 4, floors: [1, 0]), state: newer)
+    ) { error in
+      XCTAssertEqual(error as? V4TimeFailure, .pending)
+    }
+    fixture.source.advance(101)
+    try fixture.owner!.refresh(
+      head: pendingHead, state: premature)
+    XCTAssertEqual(fixture.owner!.currentSequence, 2)
+    try fixture.owner!.refresh(
+      head: fixture.head(state: newer, sequence: 4, floors: [1, 0]), state: newer)
+    try fixture.owner!.checkCurrent()
+    XCTAssertEqual(fixture.owner!.currentSequence, 4)
     XCTAssertThrowsError(
       try fixture.owner!.refresh(
         head: fixture.head(state: premature, sequence: 2, floors: [1, 0]), state: premature)
     ) { error in
-      XCTAssertEqual(error as? V4TimeFailure, .pending)
+      XCTAssertEqual(error as? V4NamespaceFailure, .rollback)
     }
-    XCTAssertNil(fixture.owner!.currentSequence)
     XCTAssertThrowsError(
-      try fixture.owner!.refresh(
-        head: fixture.head(state: state, sequence: 3), state: state)
+      try fixture.owner!.refresh(head: fixture.head(state: state, sequence: 3), state: state)
     ) { error in
       XCTAssertEqual(error as? V4NamespaceFailure, .rollback)
     }
-    fixture.source.advance(101)
-    try fixture.owner!.refresh(
-      head: fixture.head(state: premature, sequence: 3, floors: [1, 0]), state: premature)
-    try fixture.owner!.checkCurrent()
   }
 
   func testNonOverlappingPerClassSegmentsAndCheckedCohortArithmetic() throws {
@@ -236,6 +269,219 @@ final class TransportV4NamespaceTests: XCTestCase {
       try fixture.environment.namespace(
         pinnedRoot: fixture.pin, configuration: fixture.configuration))
   }
+
+  func testPendingBootstrapRetainsOriginalNonceAndCompleteBytes() throws {
+    let fixture = try NamespaceFixture()
+    let nonce = try fixture.owner!.bootstrapNonce()
+    let state = fixture.state()
+    let response = try fixture.response(state: state, issued: 1005)
+    for _ in 0..<2 {
+      XCTAssertThrowsError(try fixture.owner!.bootstrap(response: response, state: state)) {
+        XCTAssertEqual($0 as? V4TimeFailure, .pending)
+      }
+      XCTAssertEqual(try fixture.owner!.bootstrapNonce(), nonce)
+      XCTAssertNil(fixture.owner!.currentSequence)
+    }
+    let replacement = try fixture.response(state: state, issued: 1006)
+    XCTAssertThrowsError(try fixture.owner!.bootstrap(response: replacement, state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .untrusted)
+    }
+    fixture.source.advance(6)
+    try fixture.owner!.bootstrap(response: response, state: state)
+    try fixture.owner!.checkCurrent()
+  }
+
+  func testPendingDoesNotMaskInvalidStateSignatureOrProvablyFutureIssuance() throws {
+    let fixture = try NamespaceFixture()
+    let state = fixture.state()
+    let pending = try fixture.response(state: state, issued: 1005)
+    XCTAssertThrowsError(try fixture.owner!.bootstrap(response: pending, state: Data([0xa0]))) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .schema)
+    }
+    let wrongSigner = try fixture.response(state: state, headSeed: 13, issued: 1005)
+    XCTAssertThrowsError(try fixture.owner!.bootstrap(response: wrongSigner, state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .signature)
+    }
+    let future = try fixture.response(state: state, issued: 1011)
+    XCTAssertThrowsError(try fixture.owner!.bootstrap(response: future, state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .futureTimestamp)
+    }
+    // Independently invalid candidates never become the retained pending pair.
+    try fixture.owner!.bootstrap(response: fixture.response(state: state), state: state)
+  }
+
+  func testPendingLocalDeadlineAndOriginalMaterialExpiryRemainDistinct() throws {
+    for materialExpiresFirst in [false, true] {
+      let fixture = try NamespaceFixture(bootstrapMS: materialExpiresFirst ? 1000 : 40)
+      let state = fixture.state(floors: [1, 0])
+      let response = try fixture.response(
+        state: state, until: materialExpiresFirst ? 1060 : 2000, floors: [1, 0])
+      XCTAssertThrowsError(try fixture.owner!.bootstrap(response: response, state: state)) {
+        XCTAssertEqual($0 as? V4TimeFailure, .pending)
+      }
+      fixture.source.advance(10)
+      // A tighter new anchor would project a later deadline if the original
+      // monotonic cap were discarded. It cannot restart either bound.
+      try fixture.environment.clock.installTrusted(
+        at: fixture.environment.clock.mark(), interval: V4TimeInterval(lowerMS: 1010, upperMS: 1011)
+      )
+      XCTAssertThrowsError(try fixture.owner!.bootstrap(response: response, state: state)) {
+        XCTAssertEqual($0 as? V4TimeFailure, .pending)
+      }
+      fixture.source.advance(materialExpiresFirst ? 40 : 20)
+      for _ in 0..<2 {
+        XCTAssertThrowsError(try fixture.owner!.bootstrap(response: response, state: state)) {
+          if materialExpiresFirst {
+            XCTAssertEqual($0 as? V4TimeFailure, .expired)
+          } else {
+            XCTAssertEqual($0 as? V4NamespaceFailure, .timeNotProven)
+          }
+        }
+      }
+    }
+    let unused = try NamespaceFixture(bootstrapMS: 40)
+    let state = unused.state()
+    let response = try unused.response(state: state)
+    unused.source.advance(30)
+    XCTAssertThrowsError(try unused.owner!.bootstrap(response: response, state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .bootstrapDeadline)
+    }
+  }
+
+  #if os(macOS) || os(iOS)
+    private func awaitBootstrapTail(_ fixture: NamespaceFixture) async throws {
+      let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+      while fixture.root.snapshot().executionTails == 0 {
+        guard ContinuousClock.now < deadline else { throw V4TimeFailure.expired }
+        await Task.yield()
+      }
+    }
+
+    func testPendingWaitProvesOriginalBytesAndJoinsItsTimer() async throws {
+      let fixture = try NamespaceFixture()
+      let state = fixture.state()
+      let response = try fixture.response(state: state, issued: 1005)
+      XCTAssertThrowsError(try fixture.owner!.bootstrap(response: response, state: state)) {
+        XCTAssertEqual($0 as? V4TimeFailure, .pending)
+      }
+      let owner = fixture.owner!
+      let waiting = Task { try await owner.bootstrapWhenReady(response: response, state: state) }
+      try await awaitBootstrapTail(fixture)
+      fixture.source.advance(6)
+      try await waiting.value
+      XCTAssertEqual(owner.currentSequence, 1)
+      XCTAssertEqual(fixture.root.snapshot().executionTails, 0)
+      waiting.cancel()
+      try owner.checkCurrent()
+    }
+
+    func testPendingWaitCancelAndCloseJoinPhysicalTailsAndNeverRevive() async throws {
+      for closeEnvironment in [false, true] {
+        let fixture = try NamespaceFixture()
+        let state = fixture.state(floors: [1, 0])
+        let response = try fixture.response(state: state, floors: [1, 0])
+        let owner = fixture.owner!
+        let waiting = Task { try await owner.bootstrapWhenReady(response: response, state: state) }
+        try await awaitBootstrapTail(fixture)
+        if closeEnvironment { fixture.environment.beginClose() } else { waiting.cancel() }
+        do {
+          try await waiting.value
+          XCTFail("bootstrap survived cancellation or Close")
+        } catch {
+          if closeEnvironment {
+            XCTAssertEqual(error as? V4NamespaceFailure, .closed)
+          } else {
+            XCTAssertTrue(error is CancellationError || error as? V4TimeFailure == .canceled)
+          }
+        }
+        XCTAssertEqual(fixture.root.snapshot().executionTails, 0)
+        fixture.source.advance(101)
+        XCTAssertThrowsError(try owner.bootstrap(response: response, state: state)) {
+          if closeEnvironment {
+            XCTAssertEqual($0 as? V4NamespaceFailure, .closed)
+          } else {
+            XCTAssertEqual($0 as? V4TimeFailure, .canceled)
+          }
+        }
+        XCTAssertNil(owner.currentSequence)
+        if !closeEnvironment { XCTAssertFalse(try fixture.environment.account.snapshot().closed) }
+      }
+    }
+
+    func testPublicRefreshKeepsH1WhileH2IsInvalidOrPendingThenCommitsExactH2() async throws {
+      let fixture = try NamespaceFixture()
+      let owner = fixture.owner!
+      let state = fixture.state()
+      try owner.bootstrap(response: fixture.response(state: state), state: state)
+      let client = try V4ClientEnvironment(
+        foundation: fixture.environment, namespaces: [owner],
+        credentials: V4CredentialConfiguration(
+          namespaces: [owner], tenant: "tenant", audience: "service",
+          clientSubject: "client", serverSubject: "server", cryptoProfiles: []),
+        endpoints: [], roots: [], backing: nil, store: nil,
+        provider: fixture.environment.clientProviderStorage(bytes: 1 << 20))
+      let environment = TransportEnvironment(owner: client)
+      let h2 = try fixture.head(state: state, sequence: 2, issued: 1005)
+      do {
+        try await environment.refreshNamespace(
+          authority: "authority", head: h2, state: Data([0xa0]))
+        XCTFail("invalid State was accepted")
+      } catch { XCTAssertEqual(error as? TransportConnectError, .securityFailed) }
+      try owner.checkCurrent()
+      XCTAssertEqual(owner.currentSequence, 1)
+      do {
+        try await environment.refreshNamespace(authority: "authority", head: h2, state: state)
+        XCTFail("unproved H2 was installed")
+      } catch { XCTAssertEqual(error as? TransportConnectError, .timePending) }
+      try owner.checkCurrent()
+      XCTAssertEqual(owner.currentSequence, 1)
+      fixture.source.advance(6)
+      try await environment.refreshNamespace(authority: "authority", head: h2, state: state)
+      XCTAssertEqual(owner.currentSequence, 2)
+      try owner.checkCurrent()
+    }
+
+    func testPublicFactoryFetchesOriginalNonceOnceWhileWaitingForProof() async throws {
+      let fixture = try NamespaceFixture()
+      let state = fixture.state()
+      let original = try fixture.response(state: state, issued: 1300)
+      let calls = NamespaceBootstrapCalls()
+      let namespace = TransportTrustNamespace(
+        authority: "authority", rootKeyID: fixture.pin.keyID, rootPublicKey: fixture.pin.publicKey,
+        maximumTrustLifetimeMilliseconds: 10000, maximumStateBytes: 8192, maximumStateNodes: 4096
+      ) { nonce in
+        await calls.record(nonce)
+        let reply = try V4NamespaceDocument(
+          original, schema: "TrustBootstrapResponse",
+          bytes: 270336, nodes: 32768, registry: V4NamespaceRegistry()
+        ).root
+        var fields = try (0...8).map { (UInt64($0), Data(try reply.fieldID($0).raw)) }
+        fields[3] = (3, V4Crypto.bytes(nonce))
+        let signature = try NamespaceFixture.sign(
+          V4Crypto.domain("trust-bootstrap/signature", [V4Crypto.map(fields)]), seed: 7)
+        fields.append((9, V4Crypto.bytes(signature)))
+        return TransportNamespaceSnapshot(response: V4Crypto.map(fields), state: state)
+      }
+      var configuration = TransportClientConfiguration(
+        tenant: "tenant", audience: "service", clientSubject: "client", serverSubject: "server",
+        namespaces: [namespace],
+        endpoints: [
+          TransportEndpoint(hostname: "localhost", port: 443, numericAddress: "127.0.0.1")
+        ],
+        trustedTime: { TransportTrustedTime(lowerMilliseconds: 1000, upperMilliseconds: 1500) })
+      configuration.timePolicy.driftNumerator = 0
+      configuration.timePolicy.quantizationMilliseconds = 0
+      let start = ContinuousClock.now
+      let environment = try await TransportEnvironment(configuration: configuration)
+      XCTAssertGreaterThanOrEqual(start.duration(to: .now), .milliseconds(300))
+      let nonces = await calls.nonces
+      XCTAssertEqual(nonces.count, 1)
+      XCTAssertEqual(nonces.first?.count, 32)
+      try await environment.refreshNamespace(
+        authority: "authority", head: fixture.head(state: state, sequence: 2), state: state)
+      try await environment.close()
+    }
+  #endif
 
   func testProductionNamespaceDecoderRejectsNoncanonicalAndUnboundedInput() throws {
     let fixture = try NamespaceFixture()
@@ -317,21 +563,29 @@ final class NamespaceFixture {
   let root: V4ResourceRoot
   let environment: V4EnvironmentFoundation
   let pin: V4NamespaceTrustRoot
-  let configuration = V4NamespaceConfiguration(
-    stateBytes: 8192, stateNodes: 4096, bootstrapMS: 10_000)
+  let configuration: V4NamespaceConfiguration
   var owner: V4NamespaceVerifier?
   let capacity: V4CBORValue
   let capacityDigest: Data
   let delegation: V4CBORValue
 
-  init(createOwner: Bool = true) throws {
+  init(
+    createOwner: Bool = true, nativeResources: Bool = false,
+    cleanupTimeout: Duration = .milliseconds(10), bootstrapMS: UInt64 = 10_000
+  ) throws {
+    configuration = V4NamespaceConfiguration(
+      stateBytes: 8192, stateNodes: 4096, bootstrapMS: bootstrapMS)
     let limit = V4ResourceVector(
-      sdkBytes: 1 << 30, diskBytes: 1 << 30, items: 128, work: 128, tasks: 128,
-      timers: 128, connections: 16, handshakes: 16, sessions: 16, handles: 128)
+      sdkBytes: nativeResources ? 4 << 30 : 1 << 30, providerBytes: 64 << 20, diskBytes: 1 << 30,
+      items: nativeResources ? 65_536 : 128, work: nativeResources ? 512 : 128,
+      tasks: nativeResources ? 512 : 128,
+      timers: nativeResources ? 512 : 128, connections: 16, handshakes: 16, sessions: 16,
+      handles: nativeResources ? 4096 : 128)
     root = try V4ResourceRoot(
       V4ResourceRootConfiguration(
         limit: limit, accounts: 16,
-        reservations: 32, references: 64, cleanupWaiters: 4, runtimeOverheadBytes: 1024))
+        reservations: nativeResources ? 8192 : 32, references: nativeResources ? 16_384 : 64,
+        cleanupWaiters: 4, runtimeOverheadBytes: 1024))
     let tenant = try root.account(
       kind: .tenant, identity: V4ResourceIdentity(high: 1, low: 1), limit: limit)
     environment = try V4EnvironmentFoundation(
@@ -339,7 +593,7 @@ final class NamespaceFixture {
       configuration: V4EnvironmentConfiguration(
         identity: V4ResourceIdentity(high: 2, low: 2),
         limit: limit, maximumReadBudgets: 2, maximumWork: 2, runtimeOverheadBytes: 1024,
-        cleanupTimeout: .milliseconds(10), verificationContinuity: .onlineBootstrap),
+        cleanupTimeout: cleanupTimeout, verificationContinuity: .onlineBootstrap),
       timeProfile: V4TimeProfile(
         rateNumerator: 0, rateDenominator: 1, quantizationMS: 0,
         maximumWidthMS: 100, maximumAnchorAgeMS: 100_000), monotonicSource: source)
@@ -392,8 +646,27 @@ final class NamespaceFixture {
     throws -> Data
   {
     var fields = fields
-    fields[signature] = .bytes(try key(seed).signature(for: input(label, map(fields).encoded())))
+    fields[signature] = .bytes(try sign(input(label, map(fields).encoded()), seed: seed))
     return map(fields).encoded()
+  }
+  static func sign(_ message: Data, seed: UInt8) throws -> Data {
+    // Fixtures may reproduce the same issuer object in independent Environments.
+    // Use the deterministic RFC 8032 signer for byte-identical original objects.
+    let seedBytes = [UInt8](repeating: seed, count: 32)
+    var publicKey = [UInt8](repeating: 0, count: 32)
+    var privateKey = [UInt8](repeating: 0, count: 64)
+    defer { privateKey.withUnsafeMutableBytes { sodium_memzero($0.baseAddress, $0.count) } }
+    guard sodium_init() >= 0,
+      crypto_sign_seed_keypair(&publicKey, &privateKey, seedBytes) == 0
+    else { throw V4CryptoFailure.key }
+    var signed = [UInt8](repeating: 0, count: 64)
+    let result = message.withUnsafeBytes { bytes in
+      crypto_sign_detached(
+        &signed, nil, bytes.bindMemory(to: UInt8.self).baseAddress, UInt64(message.count),
+        privateKey)
+    }
+    guard result == 0 else { throw V4CryptoFailure.authentication }
+    return Data(signed)
   }
   func authorization() -> V4CBORValue {
     Self.map([
@@ -418,13 +691,13 @@ final class NamespaceFixture {
   }
   func head(
     state: Data, sequence: UInt64 = 1, until: UInt64 = 4000,
-    floors: [UInt64] = [0, 0], seed: UInt8 = 9
+    floors: [UInt64] = [0, 0], seed: UInt8 = 9, issued: UInt64 = 900
   ) throws -> Data {
     try Self.signed(
       [
         0: .text("4"), 1: .text("tenant"), 2: .text("authority"), 3: .bytes(capacityDigest),
         4: .uint(1), 5: .array(floors.map(V4CBORValue.uint)), 6: .text("publication"), 7: .uint(1),
-        8: .uint(sequence), 9: .uint(900), 10: .uint(until),
+        8: .uint(sequence), 9: .uint(issued), 10: .uint(until),
         11: .bytes(Self.digest("revocation-state", state)),
         12: .uint(UInt64(state.count)), 13: .bytes(Data(repeating: 3, count: 16)),
         14: .bytes(Self.digest("head-signer-delegation", delegation.encoded())),
@@ -435,7 +708,8 @@ final class NamespaceFixture {
     state: Data, nonce: Data? = nil, responseSeed: UInt8 = 7, trustSeed: UInt8 = 7,
     headSeed: UInt8 = 9, authorizations: [V4CBORValue] = [],
     policies: [V4CBORValue] = [], activationDelegations: [V4CBORValue] = [],
-    onceAuthorities: [V4CBORValue] = []
+    onceAuthorities: [V4CBORValue] = [], issued: UInt64 = 900,
+    until: UInt64 = 2000, floors: [UInt64] = [0, 0]
   ) throws -> Data {
     let trust = try Self.signed(
       [
@@ -450,9 +724,15 @@ final class NamespaceFixture {
     return try Self.signed(
       [
         0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
-        3: .bytes(nonce ?? owner!.bootstrapNonce()), 4: .uint(900), 5: .uint(2000),
-        6: .bytes(trust), 7: .bytes(head(state: state, seed: headSeed)), 8: .bytes(pin.keyID),
+        3: .bytes(nonce ?? owner!.bootstrapNonce()), 4: .uint(issued), 5: .uint(until),
+        6: .bytes(trust), 7: .bytes(head(state: state, floors: floors, seed: headSeed)),
+        8: .bytes(pin.keyID),
       ],
       signature: 9, label: "trust-bootstrap/signature", seed: responseSeed)
   }
+}
+
+private actor NamespaceBootstrapCalls {
+  private(set) var nonces: [Data] = []
+  func record(_ nonce: Data) { nonces.append(nonce) }
 }

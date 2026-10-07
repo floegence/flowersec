@@ -6,12 +6,10 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,29 +19,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
-
-func initialFixture(t *testing.T, id string) []byte {
-	t.Helper()
-	raw, err := os.ReadFile("../../../testdata/transport_v4/corpus.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var corpus struct{ Vectors []struct{ ID, Hex string } }
-	if err = json.Unmarshal(raw, &corpus); err != nil {
-		t.Fatal(err)
-	}
-	for _, v := range corpus.Vectors {
-		if v.ID == id {
-			b, err := hex.DecodeString(v.Hex)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return b
-		}
-	}
-	t.Fatal("missing fixture", id)
-	return nil
-}
 
 func initialTestConfig(t *testing.T, role protocolv4.Direction, profile string) InitialConfig {
 	t.Helper()

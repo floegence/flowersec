@@ -50,6 +50,8 @@ export class ServeGroup<Plan extends object> implements ServeHandleOwner {
   #drainWindow: TrustedWindow | undefined;
   #drainTimer: ReturnType<typeof setTimeout> | undefined;
   #finished = false;
+  #cleanupObserved = false;
+  #cleanupObserver: (() => void) | undefined;
   #failed = false;
   #waiters = 0;
   #parentSignal: AbortSignal | undefined;
@@ -71,6 +73,7 @@ export class ServeGroup<Plan extends object> implements ServeHandleOwner {
     if (signal?.aborted) this.close();
   }
   get environment(): V4EnvironmentRuntime { if (this.#environment === undefined) throw this.failure("closed"); return this.#environment; }
+  get closing(): boolean { return this.#closing; }
   bindListener(seal: () => void, abort: () => void): void {
     if (this.#sealListener !== undefined) throw this.failure("owner_unavailable");
     this.#sealListener = seal; this.#abortListener = abort;
@@ -138,6 +141,11 @@ export class ServeGroup<Plan extends object> implements ServeHandleOwner {
     if (this.#drainTimer !== undefined) clearTimeout(this.#drainTimer); this.#drainTimer = undefined;
     this.#abortListener?.(); for (const child of this.#children) child.abort(); this.#collect();
   }
+  onCleanup(callback: () => void): void {
+    if (this.#cleanupObserved || typeof callback !== "function") throw this.failure("owner_unavailable");
+    this.#cleanupObserved = true;
+    if (this.#finished) callback(); else this.#cleanupObserver = callback;
+  }
   cleanupStatus(): V4CleanupStatus {
     if (this.#finished) return complete;
     let callbacks = 0n, core = this.#listenerCoreEnded;
@@ -164,6 +172,10 @@ export class ServeGroup<Plan extends object> implements ServeHandleOwner {
       this.#drain.cleanup(complete); this.#drain.finish("failed"); this.#dependency!.release(); this.#dependency = undefined; this.#environment = undefined;
     } else this.#drain.cleanup(this.cleanupStatus());
     for (const wake of this.#observers) wake();
+    if (this.#finished) {
+      const observer = this.#cleanupObserver; this.#cleanupObserver = undefined;
+      observer?.();
+    }
   }
   waitCleanup(options?: OperationOptions): Promise<V4CleanupStatus> {
     if (options?.signal?.aborted) return Promise.reject(this.failure("canceled"));
@@ -213,6 +225,8 @@ export class ServeIngress<Plan extends object> {
   #releaseCleanup: V4CleanupStatus | undefined;
   #finishing = false;
   #finished = false;
+  #cleanupObserved = false;
+  #cleanupObserver: (() => void) | undefined;
   #nativeEnded = false;
   get coreEnded(): boolean { return this.#nativeEnded && (this.#session === undefined || this.#session.cleanupStatus().core_cleanup === "complete"); }
   nativeEnded(): void { this.#nativeEnded = true; this.group.changed(); }
@@ -276,7 +290,7 @@ export class ServeIngress<Plan extends object> {
     // Drain/Close cannot revoke that one handoff; the Session may be closing.
     const facade = new V4Session(session); this.#delivered = true;
     const result = await this.#call(() => this.group.callbacks().onSession(facade, this.#context!), true);
-    if (result?.accepted !== true || this.signal.aborted) { this.abort(); throw this.group.failure("rejected"); }
+    if (result?.accepted !== true) { this.abort(); throw this.group.failure("rejected"); }
   }
   drain(duration: bigint): void {
     // A Session that already terminated before this Drain owns cleanup only.

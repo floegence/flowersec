@@ -42,10 +42,50 @@ func (c *TypedMessageConfig) releaseCodecs() {
 	c.AcceptorToOpener.release()
 }
 
+// MessageCodecIdentity is detached from the definition, callbacks and live
+// Stream. Its digest and bounded revision describe the received wire payload.
+type MessageCodecIdentity struct {
+	SchemaDigest [32]byte
+	Revision     string
+}
+
+type MessageReceiveResult struct {
+	Value                     any
+	Codec                     MessageCodecIdentity
+	ApplicationInputDelivered bool
+}
+
+type EncodedMessageReceiveResult struct {
+	Payload                   []byte
+	Codec                     MessageCodecIdentity
+	ApplicationInputDelivered bool
+}
+
+// MessageReceiveError retains only the fixed failure and original input fact.
+// Arbitrary application exceptions are never retained in its error chain.
+type MessageReceiveError struct {
+	Codec                     MessageCodecIdentity
+	ApplicationInputDelivered bool
+}
+
+func (e MessageReceiveError) Error() string { return "decode_failed" }
+func (e MessageReceiveError) Unwrap() error { return ErrStreamDecodeFailed }
+
+type MessageResultModeConflict struct {
+	Codec                     MessageCodecIdentity
+	ApplicationInputDelivered bool
+}
+
+func (e MessageResultModeConflict) Error() string { return "result_mode_conflict" }
+func (e MessageResultModeConflict) Cause() string { return "decoder_started" }
+func (e MessageResultModeConflict) Unwrap() error { return ErrStreamInputDelivered }
+
 // TypedMessageStream holds the original duplex Stream capability and its one
 // receive cursor. Idle construction admits fixed metadata, notifications and
 // lifecycle work only. A message body is admitted at its authenticated length.
 type TypedMessageStream struct {
+	abortSignal                                       chan struct{}
+	abortSignaled                                     bool
 	clock                                             *timev4.Clock
 	decoder                                           *typedMessageDecode
 	dependencyFloor                                   *resourcev4.BorrowPool
@@ -62,9 +102,12 @@ type TypedMessageStream struct {
 	publishWake, finDone                              chan struct{}
 	closeWaiters                                      uint8
 	finError                                          error
+	finishSettled                                     bool
+	finishError                                       error
 	mu                                                sync.Mutex
 	config                                            TypedMessageConfig
 	inbound, outbound                                 protocolv4.MessageStreamDirection
+	inboundIdentity                                   MessageCodecIdentity
 	owner                                             *StreamOwnership
 	root                                              *resourcev4.Root
 	key                                               resourcev4.OwnerKey
@@ -97,6 +140,13 @@ type TypedMessageStream struct {
 	changed, closing, done                            chan struct{}
 }
 
+// ValidateTypedMessageConfig checks a local declaration without constructing a
+// candidate, admitting transport, allocating a worker or claiming raw I/O.
+func ValidateTypedMessageConfig(config TypedMessageConfig) error {
+	_, err := typedMessageCharges(config)
+	return err
+}
+
 func typedMessageCharges(config TypedMessageConfig) (charges [4]resourcev4.Vector, err error) {
 	if !config.Definition.Valid() || config.AssemblyTimeoutMS == 0 || config.AssemblyTimeoutMS > uint64(math.MaxInt64/time.Millisecond) || config.RuntimeBytes == 0 || config.SendTimeoutMS == 0 || config.SendTimeoutMS > uint64(math.MaxInt64/time.Millisecond) || config.CleanupTimeoutMS == 0 || config.CleanupTimeoutMS > uint64(math.MaxInt64/time.Millisecond) {
 		return charges, cryptov4.ErrConfiguration
@@ -110,7 +160,7 @@ func typedMessageCharges(config TypedMessageConfig) (charges [4]resourcev4.Vecto
 	if err != nil {
 		return charges, err
 	}
-	charges[0], err = (resourcev4.Vector{resourcev4.SDKBytes: 2*4006 + uint64(unsafe.Sizeof(TypedMessageStream{})) + uint64(unsafe.Sizeof(timev4.Deadline{})) + 2*uint64(unsafe.Sizeof(time.Timer{})) + uint64(unsafe.Sizeof(timev4.Window{})), resourcev4.Items: 6, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2, resourcev4.Timers: 2}).Add(dependencyCharge)
+	charges[0], err = (resourcev4.Vector{resourcev4.SDKBytes: 2*4006 + uint64(unsafe.Sizeof(TypedMessageStream{})) + 128 + uint64(unsafe.Sizeof(timev4.Deadline{})) + 2*uint64(unsafe.Sizeof(time.Timer{})) + uint64(unsafe.Sizeof(timev4.Window{})), resourcev4.Items: 6, resourcev4.Tasks: 2, resourcev4.WorkSlots: 2, resourcev4.Timers: 2}).Add(dependencyCharge)
 	if err != nil {
 		return charges, err
 	}
@@ -163,7 +213,7 @@ func prepareTypedMessages(o *StreamOwnership, config TypedMessageConfig) (_ *Typ
 		return nil, err
 	}
 	m := &TypedMessageStream{root: o.allocationRoot, key: o.allocationOwner, accounts: o.allocationScopes, accountCount: o.allocationCount,
-		reservation: refs[0], workspace: refs[3], changed: make(chan struct{}, 1), closing: make(chan struct{}), done: make(chan struct{}), cleanupStarted: make(chan struct{})}
+		reservation: refs[0], workspace: refs[3], changed: make(chan struct{}, 1), closing: make(chan struct{}), abortSignal: make(chan struct{}), done: make(chan struct{}), cleanupStarted: make(chan struct{})}
 	defer func() {
 		if err != nil {
 			m.disposeCandidate()
@@ -182,10 +232,11 @@ func prepareTypedMessages(o *StreamOwnership, config TypedMessageConfig) (_ *Typ
 		return nil, err
 	}
 
-	m.executionBacking, err = o.allocationExecutionBacking.Borrow()
+	m.executionBacking, err = o.allocationExecutionBacking.TakeBorrow()
 	if err != nil {
 		return nil, err
 	}
+	o.allocationExecutionBacking = resourcev4.Reference{}
 	m.executor, m.group = o.allocationExecutor, o.allocationGroup
 	m.ioContext, m.ioCancel = context.WithCancel(context.Background())
 	m.publishWake, m.finDone = make(chan struct{}, 1), make(chan struct{})
@@ -259,6 +310,7 @@ func (m *TypedMessageStream) match(kind string, metadata []byte, localOpener boo
 	if err != nil {
 		return err
 	}
+	m.inboundIdentity = MessageCodecIdentity{SchemaDigest: m.inbound.SchemaDigest, Revision: m.inbound.Revision()}
 	m.framing, err = protocolv4.NewMessageFraming(m.inbound.MaximumBytes)
 	return err
 }
@@ -302,6 +354,7 @@ func (m *TypedMessageStream) bindTypedMessages(o *StreamOwnership) error {
 		return err
 	}
 	o.typed, m.owner, m.bound = m, o, true
+	o.messageAbort = m.abortSignal
 	m.clock = o.admission.engine.Clock()
 	m.codec = nil
 	m.workspace.Release()
@@ -399,6 +452,10 @@ func (m *TypedMessageStream) endIOLocked(cause error) {
 		return
 	}
 	m.ioEnded, m.inputEnded, m.sendSealed = true, true, true
+	if cause != nil && !m.abortSignaled {
+		close(m.abortSignal)
+		m.abortSignaled = true
+	}
 	if m.failure == nil {
 		m.failure = cause
 	}
@@ -430,6 +487,10 @@ func (m *TypedMessageStream) closeLocked(cause error) {
 		return
 	}
 	m.closed = true
+	if !m.abortSignaled {
+		close(m.abortSignal)
+		m.abortSignaled = true
+	}
 	if m.failure == nil {
 		m.failure = cause
 	}
@@ -532,6 +593,7 @@ func (m *TypedMessageStream) superviseTypedMessages() {
 			}
 		}
 		if m.ioEnded && !m.transportCleaned && m.publisherExited && m.closeWaiters == 0 && (!m.readBusy || m.framing.Complete()) {
+			completion := o.queue.completion
 			m.mu.Unlock()
 			// This original preadmitted task joins real transport tails. The fixed
 			// cleanup context remains independently observable while a provider stalls.
@@ -552,6 +614,11 @@ func (m *TypedMessageStream) superviseTypedMessages() {
 				m.mu.Unlock()
 				<-o.changed
 				continue
+			}
+			// Retain only the original authenticated completion observation after
+			// transport retirement, never the queue or Session graph.
+			if settled, failure := completion.result(true); settled {
+				m.finishSettled, m.finishError = true, failure
 			}
 			m.owner, m.transportCleaned = nil, true
 			m.executionBacking.Release()

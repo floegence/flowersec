@@ -23,6 +23,7 @@ type UnaryServiceClient struct {
 	mu                       sync.Mutex
 	environment              *Environment
 	services                 *RPCServices
+	notificationExecutor     *ApplicationExecutor
 	source                   controllerDispatch
 	clock                    *timev4.Clock
 	root                     *resourcev4.Root
@@ -464,6 +465,7 @@ func (c *UnaryServiceClient) advance() bool {
 	c.source.close()
 	c.metadata, c.shared = resourcev4.Reference{}, resourcev4.Reference{}
 	c.environment, c.services, c.methods = nil, nil, nil
+	c.notificationExecutor = nil
 	c.clock, c.root = nil, nil
 	c.namespace = ""
 	c.cleaned = true

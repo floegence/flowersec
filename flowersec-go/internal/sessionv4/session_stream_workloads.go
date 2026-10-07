@@ -23,7 +23,7 @@ func sessionStreamWorkloadRequirements(core SessionCoreConfig, rpc RPCServicesCo
 			if target.Method.Shape != 1 {
 				continue
 			}
-			if role > protocolv4.ServerToClient || !serviceStreamGeometry(core.Streams) || core.Native != rpc.Native {
+			if role > protocolv4.ServerToClient || !serviceStreamGeometry(core.Streams) || core.Native != rpc.Native || core.MixedCarrier != rpc.MixedCarrier {
 				return total, 0, cryptov4.ErrConfiguration
 			}
 			charges, metadata, e := streamCallerFloorCharges(core, len(target.Method.StreamKind)+len(target.Method.StreamMetadata))

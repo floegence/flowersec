@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-const externalParityTitle = "Chromium runs the WebSocket client profile";
+const externalParityTitle = "Chromium runs the current WebSocket client profile";
 const externalParityRequested = process.env.FLOWERSEC_PARITY_READY_BASE64 !== undefined ||
   process.argv.some((argument) => argument.includes(externalParityTitle));
 const chromiumTests = externalParityRequested

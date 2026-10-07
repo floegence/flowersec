@@ -183,6 +183,9 @@ func (l *SessionLifecycle) Drain(timeoutMS, absoluteCap uint64, reason string) (
 		return nil, err
 	}
 	l.deadline = deadline
+	a.managementGate.Lock()
+	a.managementDeadline.Store(deadline)
+	a.managementGate.Unlock()
 	l.boundary = goAwayBoundary{true, a.highestAccepted[1-a.direction], code}
 	a.drainLocked()
 	if a.application != nil {
@@ -194,11 +197,31 @@ func (l *SessionLifecycle) Drain(timeoutMS, absoluteCap uint64, reason string) (
 
 func (l *SessionLifecycle) notify() { notifyOpenWait(l.wake) }
 
-// Communication completion uses actual terminal proofs. Recent/held proof or
-// callback/provider cleanup may outlive it; neither is an active communication.
+// Communication completion uses actual terminal proofs and original active
+// business work. Recent/held proof and physical provider cleanup may outlive it.
 func (a *OpenAdmission) communicationDrainedLocked() bool {
+	return a.communicationDrainedExceptLocked(false)
+}
+
+func (a *OpenAdmission) communicationDrainedExceptLocked(management bool) bool {
+	if a.handlerGroup != nil && a.handlerGroup.activeWork.Load() != 0 {
+		return false
+	}
+	if a.application != nil {
+		a.application.mu.Lock()
+		group := a.application.applicationGroup
+		a.application.mu.Unlock()
+		// Dormant subscription descriptors retain resources but are not pending
+		// business work. Actual queued/running callbacks must really exit.
+		if group != nil && group.activeWork.Load() != 0 {
+			return false
+		}
+	}
 	for i := range a.slots {
 		s := &a.slots[i]
+		if management && s.class == ManagementStream {
+			continue
+		}
 		if s.phase != openFree && s.phase != openRecent && s.phase != openHeld {
 			return false
 		}
@@ -366,12 +389,33 @@ func (l *SessionLifecycle) Run(ctx context.Context) (err error) {
 	busy, retry := false, false
 	for {
 		a.mu.Lock()
+		var rpc *RPCServices
+		if (l.boundary.set || a.peerGoAway.set) && a.application != nil {
+			if a.communicationDrainedExceptLocked(true) {
+				a.managementGate.Lock()
+				a.managementSealed.Store(true)
+				a.managementGate.Unlock()
+			}
+			a.application.mu.Lock()
+			rpc = a.application.rpc
+			a.application.mu.Unlock()
+		}
+		a.mu.Unlock()
+		if rpc != nil {
+			rpc.progressDrain()
+		}
+		a.mu.Lock()
 		if l.closed {
 			a.mu.Unlock()
 			return cryptov4.ErrClosed
 		}
 		var submit chan<- struct{}
 		remaining := uint64(0)
+		if a.peerGoAway.set {
+			// Revisit accepted application publication tails on the existing
+			// worker even when only the peer has initiated graceful shutdown.
+			remaining = 10
+		}
 		if l.boundary.set {
 			if l.closeSent && l.operation.Result().Outcome == Drained {
 				a.mu.Unlock()

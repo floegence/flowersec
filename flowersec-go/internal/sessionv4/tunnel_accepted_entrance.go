@@ -10,16 +10,10 @@ import (
 )
 
 // TunnelAcceptedEntranceRequirements excludes the already owned prepared
-// carrier. The metadata owns the endpoint HOP work and its bounded scratch.
+// carrier. The metadata owns the endpoint HOP work, its bounded scratch and
+// the original preadmission plan through the entrance retirement.
 func TunnelAcceptedEntranceRequirements(c AcceptedEntranceConfig) (resourcev4.Vector, error) {
-	metadata, initial, _, err := acceptedEntranceCharges(c)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	scratch, err := hopAuthenticationScratchBytes()
-	if err == nil {
-		metadata, err = metadata.Add(resourcev4.Vector{resourcev4.SDKBytes: scratch})
-	}
+	metadata, initial, err := tunnelAcceptedEntranceCharges(c)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
@@ -30,18 +24,27 @@ func TunnelAcceptedEntranceRequirements(c AcceptedEntranceConfig) (resourcev4.Ve
 // preauth. No consumer spend, admission receipt, or replacement connection is
 // involved. ReadClientHello performs HOP_AUTH before exposing NEGOTIATE bytes.
 // A nonnil entrance owns cleanup even when construction returns an error.
-func NewTunnelAcceptedEntrance(ctx context.Context, c AcceptedEntranceConfig, recipient *TunnelServerAllowRecipient, root *resourcev4.Root, owner resourcev4.OwnerKey, environment resourcev4.Reference, accounts ...resourcev4.Account) (_ *AcceptedEntrance, err error) {
-	if ctx == nil || recipient == nil || root == nil {
+func NewTunnelAcceptedEntrance(ctx context.Context, c AcceptedEntranceConfig, recipient *TunnelServerAllowRecipient, root *resourcev4.Root, owner resourcev4.OwnerKey, environment resourcev4.Reference, accounts ...resourcev4.Account) (*AcceptedEntrance, error) {
+	if recipient == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
-	metadata, initial, _, err := acceptedEntranceCharges(c)
-	if err != nil {
+	recipient.mu.Lock()
+	plan := recipient.entrancePlan
+	recipient.mu.Unlock()
+	if plan == nil {
+		return nil, resourcev4.ErrOwner
+	}
+	if err := plan.match(c, root, owner, environment, accounts); err != nil {
 		return nil, err
 	}
-	scratch, err := hopAuthenticationScratchBytes()
-	if err == nil {
-		metadata, err = metadata.Add(resourcev4.Vector{resourcev4.SDKBytes: scratch})
+	return plan.Build(ctx, recipient)
+}
+
+func newAdmittedTunnelAcceptedEntrance(ctx context.Context, c AcceptedEntranceConfig, recipient *TunnelServerAllowRecipient, refs [2]resourcev4.Reference, environment resourcev4.Reference) (_ *AcceptedEntrance, err error) {
+	if ctx == nil || recipient == nil {
+		return nil, cryptov4.ErrConfiguration
 	}
+	metadata, _, err := tunnelAcceptedEntranceCharges(c)
 	if err != nil {
 		return nil, err
 	}
@@ -73,16 +76,6 @@ func NewTunnelAcceptedEntrance(ctx context.Context, c AcceptedEntranceConfig, re
 	if err = lease.maps[0].CheckConnectionGuarantees(r.expected.Candidate.Index, protocolv4.ServerToClient, prepared.guarantees); err != nil {
 		return nil, err
 	}
-	var refs [2]resourcev4.Reference
-	requests := [2]resourcev4.Request{{Owner: admissionResourceKey(owner, 0), Charge: metadata, Accounts: accounts}, {Owner: admissionResourceKey(owner, 1), Charge: initial, Accounts: accounts}}
-	if err = root.ReserveBatch(requests[:], refs[:]); err != nil {
-		return nil, err
-	}
-	defer func() {
-		for _, ref := range refs {
-			ref.Release()
-		}
-	}()
 	if err = refs[0].CheckSameEnvironment(environment); err != nil {
 		return nil, err
 	}

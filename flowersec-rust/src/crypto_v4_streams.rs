@@ -15,14 +15,23 @@ use tokio::time::Instant;
 
 #[path = "crypto_v4_controls.rs"]
 mod controls;
+pub(crate) use controls::ProbePublication;
 pub use controls::{DrainOutcome, DrainResult, ProbeOutcome, ProbeResult};
 
 #[path = "session_v4.rs"]
 mod session;
-pub(crate) use session::SessionTransport;
 pub use session::{
     DrainOperation, Metadata, OpenRequest, RawStreamMetadataContract, RawStreamMetadataField,
-    RawStreamMetadataType, Session, Stream,
+    RawStreamMetadataType, Session, Stream, UnreliableMessages,
+};
+#[cfg(test)]
+pub(crate) use session::{
+    MaintenanceReceiveProbe, TerminalPublicationProbe, install_maintenance_receive_probe,
+    install_terminal_publication_probe,
+};
+pub(crate) use session::{
+    NativeStreamBinding, ResumeMessageClaim, SessionLink, SessionReceiver, SessionTransport,
+    StreamPreparation, StreamPublicationAdmission,
 };
 
 const USED_BYTES: usize = 524_292;
@@ -31,11 +40,17 @@ const INGRESS: usize = 128;
 const BATCH: usize = 1024;
 const RPC: &str = "flowersec.rpc.v4";
 const NOTIFY: &str = "flowersec.notify.v4";
-const MANAGEMENT: &str = "flowersec.management.v4";
-struct StreamView {
-    _charge: ResourceCharge,
+const MANAGEMENT: &str = "flowersec.execution-management.v4";
+pub(crate) struct StreamView {
+    _charge: Arc<ResourceCharge>,
+    management: bool,
     end: AtomicU8,
     fin_submitted: AtomicBool,
+    native_bound: AtomicBool,
+    rejected: AtomicBool,
+    normal_drained: AtomicBool,
+    native_send_end: AtomicU8,
+    native_receive_end: AtomicU8,
     send_end: AtomicU8,
     accepted: AtomicU64,
     authenticated: AtomicU64,
@@ -55,6 +70,9 @@ impl std::fmt::Debug for StreamHandle {
     }
 }
 impl StreamHandle {
+    pub(crate) fn is_management(&self) -> bool {
+        self.view.management
+    }
     pub(crate) fn scope(&self) -> u64 {
         self.scope
     }
@@ -268,6 +286,9 @@ struct BatchState {
 pub(super) struct State {
     pub(super) controls: controls::State,
     _charge: ResourceCharge,
+    bootstrap_view_charge: Option<ResourceCharge>,
+    management_view_charge: Option<Arc<ResourceCharge>>,
+    maintenance_publication: Option<ResourceCharge>,
     account: ResourceAccount,
     owner: [u8; 16],
     role: u8,
@@ -299,11 +320,119 @@ pub(super) struct State {
     repeat_ack: bool,
 }
 impl State {
-    pub(super) fn prepare(
+    fn maintenance_publication_limits(shape: &super::super::RecordShape) -> Result<ResourceLimits> {
+        let tails = shape
+            .max_streams
+            .checked_add(1)
+            .ok_or(CryptoError::Capacity)?;
+        let metadata = std::mem::size_of::<crate::crypto_v4::DeferredPublication>()
+            + std::mem::size_of::<Vec<u8>>()
+            + std::mem::size_of::<ResourceCharge>();
+        let bytes = tails
+            .checked_mul(metadata)
+            .and_then(|bytes| bytes.checked_add(shape.max_frame))
+            .and_then(|bytes| bytes.checked_add(256))
+            .ok_or(CryptoError::Capacity)?;
+        Ok(ResourceLimits {
+            sdk_bytes: bytes as u64,
+            items: tails as u64,
+            ..ResourceLimits::default()
+        })
+    }
+    pub(super) fn preparation_limits(
+        shape: &super::super::RecordShape,
+        automatic: bool,
+    ) -> Result<ResourceLimits> {
+        if shape.max_streams > 1035 || shape.max_frame > 1_048_576 || shape.max_credit > 8 << 20 {
+            return Err(CryptoError::Capacity);
+        }
+        let max_tokens = (2 * shape.max_streams + REJECT_RESERVED).min(4096);
+        let max_slots = max_tokens + INGRESS;
+        let bytes = std::mem::size_of::<State>()
+            + USED_BYTES
+            + max_slots * std::mem::size_of::<Slot>()
+            + max_tokens * 2048
+            + INGRESS * 4096
+            + 2 * (2048 + 64 * BATCH)
+            + 3 * (shape.max_frame + 8)
+            + 2 * shape.max_credit as usize;
+        let limits = crate::crypto_v4::connect::candidate_add_limits(
+            ResourceLimits {
+                sdk_bytes: bytes as u64,
+                items: (max_slots + max_tokens + INGRESS + 4) as u64,
+                timers: (max_slots * 5 + 4) as u64,
+                work_slots: 10,
+                tasks: 1,
+                ..ResourceLimits::default()
+            },
+            controls::State::preparation_limits(automatic),
+        )?;
+        let limits = crate::crypto_v4::connect::candidate_add_limits(
+            limits,
+            Self::maintenance_publication_limits(shape)?,
+        )?;
+        let limits = crate::crypto_v4::connect::candidate_add_limits(
+            limits,
+            if shape.application_profile != 0 {
+                ResourceLimits {
+                    sdk_bytes: 128,
+                    items: 1,
+                    ..ResourceLimits::default()
+                }
+            } else {
+                ResourceLimits::default()
+            },
+        )?;
+        Ok(crate::crypto_v4::connect::candidate_add_limits(
+            limits,
+            if shape.application_profile == 2 {
+                // Every actual M ordinal may retain its original view until
+                // proof and physical cleanup finish; lifetime is capped at 16.
+                ResourceLimits {
+                    sdk_bytes: 16 * 128,
+                    items: 16,
+                    ..ResourceLimits::default()
+                }
+            } else {
+                ResourceLimits::default()
+            },
+        )?)
+    }
+    pub(super) fn prepare_prepaid(
         account: ResourceAccount,
         shape: &super::super::RecordShape,
         role: super::super::Role,
+        mut charge: ResourceCharge,
     ) -> Result<Self> {
+        let automatic = account.automatic_liveness().is_some();
+        if !charge.matches(&account, Self::preparation_limits(shape, automatic)?) {
+            return Err(CryptoError::Configuration);
+        }
+        let maintenance_publication =
+            Some(charge.split(Self::maintenance_publication_limits(shape)?)?);
+        let control_charge = if automatic {
+            Some(charge.split(controls::State::preparation_limits(true))?)
+        } else {
+            None
+        };
+        let bootstrap_view_charge = if shape.application_profile != 0 {
+            Some(charge.split(ResourceLimits {
+                sdk_bytes: 128,
+                items: 1,
+                ..ResourceLimits::default()
+            })?)
+        } else {
+            None
+        };
+        let management_view_charge = if shape.application_profile == 2 {
+            Some(Arc::new(charge.split(ResourceLimits {
+                sdk_bytes: 16 * 128,
+                items: 16,
+                ..ResourceLimits::default()
+            })?))
+        } else {
+            None
+        };
         let max_tokens = (2 * shape.max_streams + REJECT_RESERVED).min(4096);
         let max_slots = max_tokens + INGRESS;
         let max_credit = shape.max_credit;
@@ -314,23 +443,6 @@ impl State {
         {
             return Err(CryptoError::Configuration);
         }
-        let bytes = std::mem::size_of::<State>()
-            + USED_BYTES
-            + max_slots * std::mem::size_of::<Slot>()
-            + max_tokens * 2048
-            + INGRESS * 4096
-            + 2 * (2048 + 64 * BATCH)
-            + 3 * (shape.max_frame + 8)
-            + 2 * max_credit as usize;
-        let charge = account.reserve(ResourceLimits {
-            sdk_bytes: bytes as u64,
-            items: (max_slots + max_tokens + INGRESS + 4) as u64,
-            timers: (max_slots * 5 + 4) as u64,
-            work_slots: 10,
-            tasks: 1,
-            sessions: 0,
-            ..ResourceLimits::default()
-        })?;
         let mut used = Vec::new();
         used.try_reserve_exact(USED_BYTES)
             .map_err(|_| CryptoError::Capacity)?;
@@ -351,8 +463,15 @@ impl State {
             .fill(&mut owner)
             .map_err(|_| CryptoError::Key)?;
         let mut state = Self {
-            controls: controls::State::new(shape.idle_duration_ms, &account)?,
+            controls: controls::State::new_prepaid(
+                shape.idle_duration_ms,
+                &account,
+                control_charge,
+            )?,
             _charge: charge,
+            bootstrap_view_charge,
+            management_view_charge,
+            maintenance_publication,
             account,
             owner,
             role: role.index() as u8,
@@ -460,32 +579,83 @@ impl State {
             Class::Management => 2,
         }
     }
-    fn count_lifetime(&mut self, opener: u8, class: Class) -> Result<()> {
+    fn check_lifetime(&self, opener: u8, class: Class) -> Result<()> {
         let c = Self::class_index(class);
         let max = if c == 2 { 16 } else { 1 << 20 };
-        let value = &mut self.lifetime[usize::from(opener)][c];
-        if *value >= max {
+        if self.lifetime[usize::from(opener)][c] >= max {
             return Err(CryptoError::Capacity);
         }
-        *value += 1;
         Ok(())
     }
-    fn active_room(&self, class: Class, opener: u8) -> bool {
-        if self.slots.iter().filter(|s| s.active()).count() >= self.max_active {
+    fn count_lifetime(&mut self, opener: u8, class: Class) -> Result<()> {
+        self.check_lifetime(opener, class)?;
+        self.lifetime[usize::from(opener)][Self::class_index(class)] += 1;
+        Ok(())
+    }
+    fn rpc_lane(metadata: &[u8]) -> Option<u8> {
+        if metadata.is_empty() {
+            return Some(0);
+        }
+        let metadata = Metadata::from_encoded(metadata).ok()?;
+        if metadata.namespace() != Some("sdk.flowersec/rpc") || metadata.version() != Some(1) {
+            return None;
+        }
+        let fields = metadata.byte_values();
+        if fields.len() != 1 {
+            return None;
+        }
+        match fields.get("class")?.as_ref() {
+            b"interactive" => Some(0),
+            b"bulk" => Some(1),
+            _ => None,
+        }
+    }
+    fn active_room(&self, class: Class, opener: u8, metadata: &[u8]) -> bool {
+        let active = self.slots.iter().filter(|s| s.active()).count();
+        if active >= self.max_active {
             return false;
         }
-        let cap = match class {
-            Class::Business => 1024,
-            Class::Rpc => 4,
-            Class::Notify | Class::Management => 1,
-        };
-        self.slots
+        if class == Class::Business {
+            // Business admissions leave room for all future original I10/M1
+            // channels, including physically unfinished old channel tails.
+            let internal_floor = if self.profile == 0 {
+                0
+            } else {
+                10 + usize::from(self.profile == 2)
+            };
+            return self
+                .slots
+                .iter()
+                .filter(|s| s.active() && s.class == Class::Business)
+                .count()
+                < 1024.min(self.max_active.saturating_sub(internal_floor));
+        }
+        let cap = if class == Class::Rpc { 4 } else { 1 };
+        let used = self
+            .slots
             .iter()
-            .filter(|s| {
-                s.active() && s.class == class && (class == Class::Business || s.opener == opener)
-            })
-            .count()
-            < cap
+            .filter(|s| s.active() && s.class == class && s.opener == opener)
+            .count();
+        if used >= cap {
+            return false;
+        }
+        if class == Class::Rpc {
+            let Some(lane) = Self::rpc_lane(metadata) else {
+                return false;
+            };
+            return self
+                .slots
+                .iter()
+                .filter(|s| {
+                    s.active()
+                        && s.class == class
+                        && s.opener == opener
+                        && Self::rpc_lane(&s.metadata) == Some(lane)
+                })
+                .count()
+                < 2;
+        }
+        true
     }
     fn take_token(&mut self, rejected: bool) -> Result<Token> {
         if rejected && self.reject_tokens < REJECT_RESERVED {
@@ -504,6 +674,29 @@ impl State {
             Token::Rejection => self.reject_tokens -= 1,
             Token::None => {}
         }
+    }
+    fn future_internal_credit(&self) -> u64 {
+        if self.profile == 0 {
+            return 0;
+        }
+        let total = 10 + usize::from(self.profile == 2);
+        let existing = self
+            .slots
+            .iter()
+            .filter(|slot| slot.active() && slot.class != Class::Business)
+            .count();
+        total.saturating_sub(existing) as u64 * 16384
+    }
+    fn credit_room(&self, class: Class, delta: u64, initial: bool) -> bool {
+        let mut protected = self.future_internal_credit();
+        if class != Class::Business && initial {
+            protected = protected.saturating_sub(16384);
+        }
+        delta
+            <= self
+                .max_credit
+                .saturating_sub(self.promised)
+                .saturating_sub(protected)
     }
     fn reserve_window(&mut self, window: u64) -> Result<VecDeque<u8>> {
         let size = usize::try_from(window).map_err(|_| CryptoError::Capacity)?;
@@ -540,22 +733,42 @@ impl State {
             return Err(CryptoError::Capacity);
         }
         let class = self.class(kind, opener).unwrap_or(Class::Business);
-        let view = Arc::new(StreamView {
-            _charge: self.account.reserve(ResourceLimits {
+        let view_charge = if bootstrap {
+            Arc::new(
+                self.bootstrap_view_charge
+                    .take()
+                    .ok_or(CryptoError::Configuration)?,
+            )
+        } else if class == Class::Management {
+            self.management_view_charge
+                .as_ref()
+                .ok_or(CryptoError::Configuration)?
+                .clone()
+        } else {
+            Arc::new(self.account.reserve(ResourceLimits {
                 sdk_bytes: 128,
                 items: 1,
-                work_slots: 0,
-                tasks: 0,
-                sessions: 0,
                 ..ResourceLimits::default()
-            })?,
+            })?)
+        };
+        let view = Arc::new(StreamView {
+            _charge: view_charge,
+            management: class == Class::Management,
             end: AtomicU8::new(0),
             fin_submitted: AtomicBool::new(false),
+            native_bound: AtomicBool::new(false),
+            rejected: AtomicBool::new(false),
+            normal_drained: AtomicBool::new(false),
+            native_send_end: AtomicU8::new(0),
+            native_receive_end: AtomicU8::new(0),
             send_end: AtomicU8::new(0),
             accepted: AtomicU64::new(0),
             authenticated: AtomicU64::new(0),
             authentication_waiters: AtomicUsize::new(0),
         });
+        if !bootstrap && !self.credit_room(class, local_window, true) {
+            return Err(CryptoError::Capacity);
+        }
         let queue = self.reserve_window(local_window)?;
         let physical = queue.capacity();
         let mut directions = [Direction::new(epoch, 0); 2];
@@ -953,6 +1166,23 @@ impl ReliableSession {
         protected: bool,
         publisher: &mut dyn RecordPublisher,
     ) -> Result<()> {
+        self.send_observed(scope, frame, body, protected, publisher, None)
+    }
+    fn send_observed(
+        &mut self,
+        scope: u64,
+        frame: u8,
+        body: &[u8],
+        protected: bool,
+        publisher: &mut dyn RecordPublisher,
+        handoff: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<()> {
+        if let Err(error) = publisher
+            .prepare_publication(body.len().checked_add(44).ok_or(CryptoError::Capacity)?, 1)
+        {
+            self.engine.fail();
+            return Err(error);
+        }
         self.local_liveness_stall();
         let mut out = std::mem::take(&mut self.engine.streams.output);
         let result = (|| {
@@ -960,6 +1190,16 @@ impl ReliableSession {
                 .engine
                 .seal(scope, frame, body, &mut out, false, protected)?;
             publisher.publish(&out[..size])?;
+            if publisher.is_deferred() {
+                publisher
+                    .defer_publication(crate::crypto_v4::DeferredPublication::handoff(handoff));
+                return Ok(());
+            }
+            // Only SDK-owned scalar observers run here, after the original
+            // provider has accepted the complete record and before later tails.
+            if let Some(handoff) = handoff {
+                handoff();
+            }
             self.engine.check()?;
             let now = self.engine.account.security_time()?;
             self.engine.streams.controls.activity(now)
@@ -967,7 +1207,16 @@ impl ReliableSession {
         out.as_mut_slice().zeroize();
         self.engine.streams.output = out;
         if result.is_err() {
-            self.engine.fail()
+            if scope != 0 && frame == 8 {
+                if let Some(normal) = publisher.failed_stream_publication(scope) {
+                    let handle = self.engine.streams.handle(scope);
+                    self.native_hint(&handle, true, normal)?;
+                } else {
+                    self.engine.fail();
+                }
+            } else {
+                self.engine.fail();
+            }
         }
         result
     }
@@ -1007,6 +1256,7 @@ impl ReliableSession {
     }
     /// A trusted local kind registration chooses business use here. Reserved
     /// service kinds are unavailable through this ordinary Stream entry.
+    #[cfg(test)]
     pub(crate) fn open_stream(
         &mut self,
         kind: &str,
@@ -1014,18 +1264,84 @@ impl ReliableSession {
         receive_window: u64,
         publisher: &mut dyn RecordPublisher,
     ) -> Result<StreamHandle> {
+        self.open_stream_class(kind, metadata, receive_window, Class::Business, publisher)
+    }
+    pub(crate) fn open_stream_prepared(
+        &mut self,
+        kind: &str,
+        metadata: &[u8],
+        receive_window: u64,
+        publisher: &mut dyn RecordPublisher,
+        before_commit: impl FnOnce(StreamHandle),
+    ) -> Result<StreamHandle> {
+        self.open_stream_class_prepared(
+            kind,
+            metadata,
+            receive_window,
+            Class::Business,
+            publisher,
+            before_commit,
+        )
+    }
+    pub(crate) fn open_service_stream_prepared(
+        &mut self,
+        kind: &str,
+        receive_window: u64,
+        publisher: &mut dyn RecordPublisher,
+        before_commit: impl FnOnce(StreamHandle),
+    ) -> Result<StreamHandle> {
+        let class = self.engine.streams.class(kind, self.engine.role)?;
+        if !matches!(class, Class::Notify | Class::Management) || receive_window != 16384 {
+            return Err(CryptoError::Configuration);
+        }
+        self.open_stream_class_prepared(kind, &[], receive_window, class, publisher, before_commit)
+    }
+    pub(crate) fn open_rpc_stream_prepared(
+        &mut self,
+        metadata: &[u8],
+        publisher: &mut dyn RecordPublisher,
+        before_commit: impl FnOnce(StreamHandle),
+    ) -> Result<StreamHandle> {
+        if metadata.is_empty() || State::rpc_lane(metadata).is_none() {
+            return Err(CryptoError::Configuration);
+        }
+        self.open_stream_class_prepared(RPC, metadata, 16384, Class::Rpc, publisher, before_commit)
+    }
+    #[cfg(test)]
+    fn open_stream_class(
+        &mut self,
+        kind: &str,
+        metadata: &[u8],
+        receive_window: u64,
+        class: Class,
+        publisher: &mut dyn RecordPublisher,
+    ) -> Result<StreamHandle> {
+        self.open_stream_class_prepared(kind, metadata, receive_window, class, publisher, |_| {})
+    }
+    fn open_stream_class_prepared(
+        &mut self,
+        kind: &str,
+        metadata: &[u8],
+        receive_window: u64,
+        class: Class,
+        publisher: &mut dyn RecordPublisher,
+        before_commit: impl FnOnce(StreamHandle),
+    ) -> Result<StreamHandle> {
         self.check()?;
         let role = self.engine.role;
         if self.engine.frozen
             || self.engine.streams.draining
             || self.engine.streams.controls.peer_goaway.is_some()
-            || self.engine.streams.class(kind, role)? != Class::Business
+            || self.engine.streams.class(kind, role)? != class
             || metadata.len() > 4096
         {
             return Err(CryptoError::State);
         }
         let state = &mut self.engine.streams;
-        if !state.active_room(Class::Business, role)
+        // Reject exhausted lifetime capacity before publishing a facade. No
+        // later observer may retain a handle for an ordinal never allocated.
+        state.check_lifetime(role, class)?;
+        if !state.active_room(class, role, metadata)
             || state
                 .slots
                 .iter()
@@ -1035,7 +1351,8 @@ impl ReliableSession {
         {
             return Err(CryptoError::Capacity);
         }
-        if role == 1
+        if class == Class::Business
+            && role == 1
             && state
                 .slots
                 .iter()
@@ -1072,7 +1389,22 @@ impl ReliableSession {
                 return Err(e);
             }
         };
-        if let Err(e) = state.count_lifetime(role, Class::Business) {
+        if class == Class::Management
+            && let Err(error) = publisher.prepare_management_stream(scope)
+        {
+            state.promised -= receive_window;
+            state.backing -= slot.capacity;
+            state.return_token(token);
+            return Err(error);
+        }
+        // The local facade and adapter are complete before the ordinal,
+        // lifetime budget, record scope, or OPEN become irreversible.
+        before_commit(StreamHandle {
+            owner: state.owner,
+            scope,
+            view: slot.view.clone(),
+        });
+        if let Err(e) = state.count_lifetime(role, class) {
             state.promised -= receive_window;
             state.backing -= slot.capacity;
             state.return_token(token);
@@ -1108,10 +1440,23 @@ impl ReliableSession {
         self.send(scope, 7, &body, false, publisher)?;
         Ok(self.engine.streams.handle(scope))
     }
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Native v4 bootstrap publisher is not yet wired")
-    )]
+    pub(crate) fn bootstrap_stream_handle(&mut self) -> Result<StreamHandle> {
+        self.check()?;
+        if !self.engine.streams.has_bootstrap() {
+            return Err(CryptoError::State);
+        }
+        let i = self.engine.streams.index(1).ok_or(CryptoError::State)?;
+        let slot = &self.engine.streams.slots[i];
+        if !slot.bootstrap
+            || slot
+                .directions
+                .iter()
+                .any(|direction| direction.terminal.is_some())
+        {
+            return Err(CryptoError::State);
+        }
+        Ok(self.engine.streams.handle(1))
+    }
     pub(crate) fn materialize_bootstrap(
         &mut self,
         publisher: &mut dyn RecordPublisher,
@@ -1143,12 +1488,45 @@ impl ReliableSession {
     /// Claiming pending input obtains its one terminal token before metadata is
     /// available to any application authorizer. It is not an accepted Stream.
     pub(crate) fn pending_open(&mut self) -> Result<Option<StreamHandle>> {
+        self.pending_open_class(false, None)
+    }
+    pub(crate) fn pending_service_open(&mut self) -> Result<Option<StreamHandle>> {
+        self.pending_open_class(true, None)
+    }
+    pub(crate) fn pending_service_kind(&mut self, kind: &str) -> Result<Option<StreamHandle>> {
+        self.pending_open_class(true, Some(kind))
+    }
+    pub(crate) fn pending_business_kinds(
+        &mut self,
+        kinds: &[String],
+        include: bool,
+    ) -> Result<Option<StreamHandle>> {
+        self.pending_open_matching(false, |kind| {
+            kinds.iter().any(|reserved| reserved == kind) == include
+        })
+    }
+    fn pending_open_class(
+        &mut self,
+        service: bool,
+        kind: Option<&str>,
+    ) -> Result<Option<StreamHandle>> {
+        self.pending_open_matching(service, |candidate| {
+            kind.is_none_or(|kind| candidate == kind)
+        })
+    }
+    fn pending_open_matching(
+        &mut self,
+        service: bool,
+        matches: impl Fn(&str) -> bool,
+    ) -> Result<Option<StreamHandle>> {
         self.check()?;
-        let Some(i) =
-            self.engine.streams.slots.iter().position(|s| {
-                s.phase == Phase::Pending && !s.claimed && s.forced_rejection.is_none()
-            })
-        else {
+        let Some(i) = self.engine.streams.slots.iter().position(|s| {
+            s.phase == Phase::Pending
+                && !s.claimed
+                && s.forced_rejection.is_none()
+                && (s.class != Class::Business) == service
+                && matches(&s.kind)
+        }) else {
             return Ok(None);
         };
         if self.engine.streams.slots[i].token == Token::None {
@@ -1222,6 +1600,7 @@ impl ReliableSession {
         self.engine.streams.promised -= remaining;
         let s = &mut self.engine.streams.slots[index];
         s.view.end.store(2, Ordering::Release);
+        s.view.rejected.store(true, Ordering::Release);
         for direction in 0..2 {
             let final_tuple = Tuple {
                 epoch: s.open_epoch,
@@ -1266,11 +1645,21 @@ impl ReliableSession {
         }
         if !s.metadata.is_empty()
             && decode(&s.metadata, "StreamMetadata", 4096, Context::default()).is_err()
+            && decode(
+                &s.metadata,
+                "TypedMessageMetadata",
+                4096,
+                Context::default(),
+            )
+            .is_err()
         {
             decision = OpenDecision::Reject(Rejection::Metadata);
         }
         if matches!(decision, OpenDecision::Accept { .. })
-            && !self.engine.streams.active_room(s.class, s.opener)
+            && !self
+                .engine
+                .streams
+                .active_room(s.class, s.opener, &s.metadata)
         {
             if self.engine.role == 1
                 && s.opener == 0
@@ -1294,6 +1683,13 @@ impl ReliableSession {
         }
         let body = self.outcome_body(i, decision)?;
         if let OpenDecision::Accept { receive_window } = decision {
+            if !self.engine.streams.credit_room(
+                self.engine.streams.slots[i].class,
+                receive_window,
+                true,
+            ) {
+                return Err(CryptoError::Capacity);
+            }
             let queue = self.engine.streams.reserve_window(receive_window)?;
             let s = &mut self.engine.streams.slots[i];
             s.capacity = queue.capacity();
@@ -1333,6 +1729,45 @@ impl ReliableSession {
         fin: bool,
         admission: Option<&crate::api_v4::WriteRequestAdmission>,
         publisher: &mut dyn RecordPublisher,
+    ) -> Result<usize> {
+        self.write_with_admission_observed(handle, data, fin, admission, publisher, None, None)
+    }
+    pub(crate) fn write_management(
+        &mut self,
+        handle: &StreamHandle,
+        data: &[u8],
+        publisher: &mut dyn RecordPublisher,
+        before_accept: &mut dyn FnMut() -> Result<()>,
+    ) -> Result<usize> {
+        self.write_with_admission_observed(
+            handle,
+            data,
+            false,
+            None,
+            publisher,
+            None,
+            Some(before_accept),
+        )
+    }
+    #[cfg(test)]
+    pub(super) fn publication_frontier_for_test(
+        &self,
+        handle: &StreamHandle,
+    ) -> Result<(Tuple, bool)> {
+        let index = self.engine.streams.resolve(handle)?;
+        let direction = self.engine.streams.slots[index].directions[usize::from(self.engine.role)];
+        Ok((direction.current, direction.fin))
+    }
+    #[allow(clippy::too_many_arguments)] // Original write owners and its two admission observers.
+    fn write_with_admission_observed(
+        &mut self,
+        handle: &StreamHandle,
+        data: &[u8],
+        fin: bool,
+        admission: Option<&crate::api_v4::WriteRequestAdmission>,
+        publisher: &mut dyn RecordPublisher,
+        handoff: Option<Arc<dyn Fn() + Send + Sync>>,
+        before_accept: Option<&mut dyn FnMut() -> Result<()>>,
     ) -> Result<usize> {
         self.check()?;
         if self.engine.frozen {
@@ -1389,24 +1824,58 @@ impl ReliableSession {
             next: sequence.checked_add(1).ok_or(CryptoError::Sequence)?,
             offset: end,
         };
+        // Both the wire bytes and the accepted/FIN completion metadata are
+        // prepaid before admission and the reliable direction frontier move.
+        let unpublished = if publisher.is_deferred() {
+            Some(
+                self.engine.streams.slots[i]
+                    .unpublished
+                    .checked_add(1)
+                    .ok_or(CryptoError::Capacity)?,
+            )
+        } else {
+            None
+        };
+        publisher
+            .prepare_publication(body.len().checked_add(44).ok_or(CryptoError::Capacity)?, 2)?;
+        let mut direction = d;
+        direction.current = current;
+        direction.last = current;
+        if fin {
+            direction.terminal = Some(current);
+            direction.fin = true;
+            direction.stop = true;
+            direction.begin(self.engine.account.security_time()?.monotonic_sample, false)?;
+        }
         if let Some(admission) = admission {
             admission
                 .accept(data.len())
                 .map_err(|_| CryptoError::State)?;
         }
-        let d = &mut self.engine.streams.slots[i].directions[role];
-        d.current = current;
-        d.last = current;
-        handle.view.accepted.store(end, Ordering::Release);
-        if fin {
-            d.terminal = Some(current);
-            d.fin = true;
-            d.stop = true;
-            d.begin(self.engine.account.security_time()?.monotonic_sample, false)?;
+        // M serial allocation shares the irreversible DATA admission gate,
+        // after complete encoding and publication capacity are available.
+        if let Some(before_accept) = before_accept {
+            before_accept()?;
         }
-        self.send(handle.scope, 8, &body, false, publisher)?;
-        if fin {
-            handle.view.fin_submitted.store(true, Ordering::Release);
+        self.engine.streams.slots[i].directions[role] = direction;
+        // The caller-visible frontier is committed only after the native
+        // publisher accepts the complete encrypted record. Until then the
+        // handle remains at its prior accepted offset, so a failed provider
+        // write cannot be observed as an accepted application write.
+        self.send_observed(handle.scope, 8, &body, false, publisher, handoff)?;
+        if publisher.is_deferred() {
+            self.engine.streams.slots[i].unpublished = unpublished.ok_or(CryptoError::State)?;
+            publisher.defer_publication(crate::crypto_v4::DeferredPublication::stream(
+                handle.view.clone(),
+                handle.scope,
+                end,
+                fin,
+            ));
+        } else {
+            handle.view.accepted.store(end, Ordering::Release);
+            if fin {
+                handle.view.fin_submitted.store(true, Ordering::Release);
+            }
         }
         Ok(data.len())
     }
@@ -1483,7 +1952,7 @@ impl ReliableSession {
         let delta = limit - d.limit;
         let required = usize::try_from(limit - d.released).map_err(|_| CryptoError::Capacity)?;
         let growth = required.saturating_sub(s.capacity);
-        if delta > self.engine.streams.max_credit - self.engine.streams.promised
+        if !self.engine.streams.credit_room(s.class, delta, false)
             || growth > self.engine.streams.max_credit as usize - self.engine.streams.backing
         {
             return Err(CryptoError::Capacity);
@@ -1883,13 +2352,150 @@ impl ReliableSession {
     pub(crate) fn receive(&mut self, scope: u64, wire: &[u8]) -> Result<()> {
         self.receive_input(scope, wire, None)
     }
+    pub(crate) fn capture_native_binding(&mut self, scope: u64) -> Result<StreamHandle> {
+        self.check()?;
+        let index = self.engine.streams.index(scope).ok_or(CryptoError::State)?;
+        let slot = &self.engine.streams.slots[index];
+        if !slot.prefix || slot.phase == Phase::Held {
+            return Err(CryptoError::State);
+        }
+        slot.view
+            .native_bound
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| CryptoError::State)?;
+        Ok(self.engine.streams.handle(scope))
+    }
+    pub(crate) fn native_hint(
+        &mut self,
+        handle: &StreamHandle,
+        sending: bool,
+        normal: bool,
+    ) -> Result<()> {
+        self.check()?;
+        if self.phase(handle)? == StreamPhase::Stable {
+            return Ok(());
+        }
+        let index = self.engine.streams.resolve(handle)?;
+        let view = &self.engine.streams.slots[index].view;
+        let flag = if sending {
+            &view.native_send_end
+        } else {
+            &view.native_receive_end
+        };
+        // These are physical direction facts, never acceptance or drain proof.
+        // A stronger abnormal observation cannot be weakened by a later hint.
+        flag.fetch_max(if normal { 1 } else { 2 }, Ordering::AcqRel);
+        self.apply_native_hints(index)
+    }
+    fn apply_native_hints(&mut self, index: usize) -> Result<()> {
+        if !self.engine.streams.slots[index].accepted() {
+            return Ok(());
+        }
+        let now = self.engine.account.security_time()?.monotonic_sample;
+        let role = usize::from(self.engine.role);
+        let send_hint = self.engine.streams.slots[index]
+            .view
+            .native_send_end
+            .load(Ordering::Acquire);
+        let read_hint = self.engine.streams.slots[index]
+            .view
+            .native_receive_end
+            .load(Ordering::Acquire);
+        if send_hint != 0 {
+            let fin_submitted = self.engine.streams.slots[index]
+                .view
+                .fin_submitted
+                .load(Ordering::Acquire);
+            let direction = &mut self.engine.streams.slots[index].directions[role];
+            if !direction.complete() {
+                direction.stop = true;
+                if !fin_submitted {
+                    direction.stopped_requested = true;
+                }
+                if direction.terminal.is_none() {
+                    direction.terminal = Some(direction.current);
+                }
+                direction.begin(now, send_hint == 2)?;
+            }
+        }
+        if read_hint != 0 {
+            let direction = &mut self.engine.streams.slots[index].directions[1 - role];
+            if !direction.complete() {
+                direction.begin(now, read_hint == 2)?;
+                if read_hint == 2 {
+                    direction.stop = true;
+                    direction.disabled = true;
+                    direction.fin = false;
+                }
+            }
+            if read_hint == 2 {
+                for key in &mut self.engine.keys {
+                    if key.scope == self.engine.streams.slots[index].scope
+                        && key.direction == (1 - role) as u8
+                    {
+                        key.disabled = true;
+                    }
+                }
+                if let Some(candidate) = &mut self.engine.candidate {
+                    for key in &mut candidate.keys {
+                        if key.scope == self.engine.streams.slots[index].scope
+                            && key.direction == (1 - role) as u8
+                        {
+                            key.disabled = true;
+                        }
+                    }
+                }
+                self.engine.streams.release_queue(index);
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn native_projection(
+        &mut self,
+        handle: &StreamHandle,
+    ) -> Result<session::NativeStreamProjection> {
+        self.check()?;
+        if self.phase(handle)? == StreamPhase::Stable {
+            let rejected = handle.view.rejected.load(Ordering::Acquire);
+            let normal_read = rejected || handle.view.normal_drained.load(Ordering::Acquire);
+            let send_end = handle.view.send_end.load(Ordering::Acquire);
+            return Ok(session::NativeStreamProjection {
+                accepted: !rejected,
+                retired: true,
+                close_write: rejected || handle.view.fin_submitted.load(Ordering::Acquire),
+                reset_write: !rejected && send_end == 2,
+                stop_read: true,
+                normal_read,
+            });
+        }
+        let index = self.engine.streams.resolve(handle)?;
+        self.apply_native_hints(index)?;
+        let slot = &self.engine.streams.slots[index];
+        let send = slot.directions[usize::from(self.engine.role)];
+        let receive = slot.directions[usize::from(1 - self.engine.role)];
+        let rejected = matches!(slot.outcome, Some(OpenDecision::Reject(_)));
+        let normal_read = rejected
+            || receive.drain_sent
+                && receive
+                    .proof
+                    .is_some_and(|proof| !proof.aborted && proof.observed == proof.terminal)
+                && receive.terminal == receive.proof.map(|proof| proof.terminal);
+        Ok(session::NativeStreamProjection {
+            accepted: slot.accepted() && slot.prefix,
+            retired: false,
+            // Sealing FIN only stages its authenticated record. The native
+            // writer must stay open until the provider accepts that record.
+            close_write: rejected || handle.view.fin_submitted.load(Ordering::Acquire),
+            reset_write: !rejected
+                && send.stopped_sent
+                && !handle.view.fin_submitted.load(Ordering::Acquire),
+            stop_read: normal_read || receive.disabled || receive.quarantined,
+            normal_read,
+        })
+    }
     /// The native input owner retains this original authenticated association.
     /// Shared carrier input always uses receive and cannot project a bad tag
     /// onto a Stream merely by inspecting its unauthenticated header.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Native v4 stream input owner is not yet wired")
-    )]
     pub(crate) fn receive_bound(&mut self, handle: &StreamHandle, wire: &[u8]) -> Result<()> {
         self.check()?;
         let i = self.engine.streams.resolve(handle)?;
@@ -2470,6 +3076,12 @@ impl ReliableSession {
                     .recent(i, self.engine.account.security_time()?.monotonic_sample);
                 self.retire_keys();
                 self.send(0, 9, &body, true, publisher)?;
+                if !aborted {
+                    self.engine.streams.slots[i]
+                        .view
+                        .normal_drained
+                        .store(true, Ordering::Release);
+                }
                 self.engine.streams.discard_backing(i);
                 return Ok(true);
             }
@@ -2689,6 +3301,22 @@ impl ReliableSession {
             Phase::Recent => StreamPhase::Recent,
             Phase::Held => StreamPhase::Stable,
         })
+    }
+    pub(crate) fn management_retired(&self, handle: &StreamHandle) -> Result<bool> {
+        self.engine.check()?;
+        if handle.owner != self.engine.streams.owner {
+            return Err(CryptoError::State);
+        }
+        // Stable public state can still retain a barrier or retirement-batch
+        // proof. A replacement M waits until that actual slot is collected.
+        Ok(self.engine.streams.index(handle.scope).is_none()
+            && self.engine.streams.used(handle.scope)?)
+    }
+    pub(crate) fn management_allocations_exhausted(&self) -> bool {
+        self.engine
+            .streams
+            .check_lifetime(0, Class::Management)
+            .is_err()
     }
 }
 

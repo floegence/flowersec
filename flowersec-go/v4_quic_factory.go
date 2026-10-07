@@ -6,20 +6,20 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/rawquic"
 )
 
-type V4QUICLimits = quicbase.Limits
-type V4QUICProviderOptions = rawquic.OwnedOptions
-type V4QUICFactoryConfig = assemblyv4.QUICFactoryConfig
-type V4QUICCarrierFactory = assemblyv4.QUICCarrierFactory
+type QUICLimits = quicbase.Limits
+type QUICProviderOptions = rawquic.OwnedOptions
+type QUICFactoryConfig = assemblyv4.QUICFactoryConfig
+type QUICCarrierFactory = assemblyv4.QUICCarrierFactory
 
-func DefaultV4QUICLimits() V4QUICLimits { return quicbase.DefaultLimits() }
+func DefaultQUICLimits() QUICLimits { return quicbase.DefaultLimits() }
 
-func V4QUICCarrierFactoryCharge(c V4QUICFactoryConfig) (V4ResourceVector, error) {
+func QUICCarrierFactoryCharge(c QUICFactoryConfig) (ResourceVector, error) {
 	return assemblyv4.QUICCarrierFactoryCharge(c)
 }
 
-// NewV4QUICCarrierFactory fixes one signed route and its physical role and numeric address.
+// NewQUICCarrierFactory fixes one signed route and its physical role and numeric address.
 // It prepares TLS and the native maintenance stream without transmitting
-// Flowersec credentials. Environment.Connect owns admission and activation.
-func NewV4QUICCarrierFactory(c V4QUICFactoryConfig, reservation, environment V4ResourceReference) (*V4QUICCarrierFactory, error) {
+// Flowersec credentials. TransportEnvironment.Connect owns admission and activation.
+func NewQUICCarrierFactory(c QUICFactoryConfig, reservation, environment ResourceReference) (*QUICCarrierFactory, error) {
 	return assemblyv4.NewQUICCarrierFactory(c, reservation, environment)
 }

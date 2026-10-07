@@ -1,84 +1,51 @@
-# Flowersec v3 Error Model
+# Flowersec Error Model
 
-Public connection and session failures expose only stable, bounded codes. Error
-values and text do not contain artifacts, credentials, candidate URLs, TLS
-policies, certificate pins, selected carriers or paths, connection stages,
-endpoint identities, logical stream IDs, peer payloads, key material, carrier
-handles, lease identities, or native TLS diagnostics.
+Public failures use closed, bounded codes. Error text and generic serialization
+must not expose Artifacts, credentials, URLs, certificate pins, session keys,
+carrier handles, native TLS diagnostics or peer payloads. Applications inspect
+structured codes and progress rather than parsing error messages.
 
-Cancellation and deadlines preserve their language-native semantics where the
-SDK supports causal errors. Artifact, TLS, transport, admission, protocol, and
-cryptographic failures are mapped to closed public outcomes before crossing an
-SDK boundary. Applications do not classify error text or run a second
-Flowersec retry scheduler.
+## Connection and lifecycle
 
-## Connection Boundary
+The material source, one-shot connection and ConnectionController retain their
+own failure boundaries. An unavailable source differs from an established
+Session failure. Progress records irreversible spend and READY separately from
+application publication. Initialization can fail after READY without publishing
+a current Session.
 
-The cross-language v3 public connection codes are:
+An uncertain live authorization is terminal for that attempt. Pool consumption
+and admission are not undone by cancellation or failed writes. Retrying obtains
+fresh material through the original source; it never reuses a spent credential.
+The Controller owns the bounded recovery scheduler. Explicit replacement can
+recover from a stopped lifecycle, including when no first Session was published.
+It does not replay application calls or move accepted work to a new Session.
 
-| Code | Meaning |
-| --- | --- |
-| `artifact_invalid` | The artifact, lease, source result, option, or adapter contract is invalid. |
-| `expired_artifact` | The exclusive initiation deadline has been reached. |
-| `transport_security_unsupported` | No declared candidate can be enforced by the runtime capability snapshot. |
-| `transport_security_failed` | A native CA or pin security failure could not be resolved by the single policy refresh. |
-| `connection_failed` | No candidate established a Session and no more specific public code is justified. |
+TLS policy, namespace trust and protocol authentication failures fail closed.
+A native failure is classified only when its original provider supplies the
+required evidence. Browser APIs can produce less specific failures. No public
+failure grants permission to downgrade security or bypass an authorization gate.
 
-These public codes are distinct from internal transport-security results and
-from FSA3 admission reasons. TLS failures occur before durable spend and FSB3,
-and therefore are never represented as FSA3 reasons. Browser pin failures may
-remain opaque `connection_failed` results because browser APIs do not provide
-evidence for a more specific TLS classification.
+## Application operations
 
-## Recovery Decisions
+Transport, application, execution and delivery outcomes remain separate.
+An accepted write can have partial progress before cancellation or failure;
+callers use its structured result rather than assuming zero bytes were sent.
+A canceled observer does not cancel the underlying operation unless the
+corresponding API explicitly owns cancellation. Finish, Drain, Abort and cleanup
+report distinct ownership transitions.
 
-Every SDK implements one `ConnectionController` above its one-shot connector.
-A controller failure carries exactly one validated disposition:
+Typed service errors carry their declared semantic code and bounded sanitized
+message. Decoder failures, unavailable execution history, operation conflicts,
+expired retained results and unknown execution outcomes are explicit results;
+none is permission to repeat a business action automatically. A service
+contract controls any idempotent join, retained-result read or resume behavior.
 
-- `terminal` ends the current controller lifecycle.
-- `retryable` permits a fresh artifact acquisition after deterministic
-  monotonic backoff.
-- `retry_after` additionally requires a valid absolute Unix-millisecond
-  deadline before retry.
+Raw stream and negotiated unreliable-message errors remain carrier-neutral.
+Accepted or dropped unreliable sends are outcomes rather than transport errors.
+Unsupported capabilities fail before consuming connection material whenever
+requirements can be determined at that boundary.
 
-Invalid dispositions fail closed as `artifact_invalid / terminal`. Multiple
-ordinary candidate failures aggregate independently of completion order:
-the latest valid `retry_after` wins, then `retryable`, then `terminal`.
-`retryNow` may skip only an existing backoff and cannot cross a future absolute
-deadline.
-
-`waitForSession` / `WaitForSession` / `wait_for_session` never starts a
-controller. It returns immediately for an established Session and otherwise
-waits for a state transition. Failed, closed, and caller-canceled outcomes use
-a structured controller error. Its `ConnectionDiagnostic` contains only state,
-attempt, failure phase/code, and retry disposition; it never retains a Session,
-raw error, URL, carrier, candidate, credential, or peer identity.
-
-One connection cycle may obtain at most one policy-sensitive replacement
-lease. A pin trigger blocks the same endpoint and policy digest immediately.
-A replacement must keep that endpoint in pin mode with a changed complete
-declared policy; pin-to-CA replacement and retries of an old pin set are
-terminal. Unsupported candidates may be skipped in favor of other explicitly
-authorized endpoints, but no candidate changes security mode after failure.
-
-## Lease and Session Failures
-
-A claimed lease that fails before durable spend is retired. Once durable spend
-begins, every success, failure, cancellation, or uncertain outcome consumes the
-lease permanently. No disposition authorizes credential reuse.
-
-Remote RPC application errors remain separate from connection and session
-failures. They may contain only their bounded semantic code and sanitized
-message. Invalid, oversized, zero-code, or panicking handlers use code `500`
-with the fixed sanitized message `internal error`. Session replacement never migrates streams or replays RPC calls,
-notifications, or writes.
-
-Negotiated unreliable-message operations use one portable error set:
-`unavailable`, `invalid_message`, `too_large`, `canceled`, `closed`, and
-`operation_failed`. Accepted and dropped sends are outcomes, not errors. Swift
-does not expose this optional capability.
-
-The normative ordering, retry clocks, replacement state machine, and redaction
-requirements are defined in
-[`TRANSPORT_V3_ARCHITECTURE.md`](TRANSPORT_V3_ARCHITECTURE.md) and frozen by
-`stability/transport_v3_contract.json` plus the v3 controller vectors.
+The exact code sets and result shapes are in
+`stability/transport_v4_schema.json` and `stability/api_contract_manifest.json`.
+See [API_CONTRACT.md](API_CONTRACT.md) and the language-specific current
+transport guides for concrete APIs.

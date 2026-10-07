@@ -48,6 +48,8 @@ type MessageDefinitionCodec struct {
 	mu                   sync.Mutex
 	definition, metadata *Decoder
 	values               [4096]byte
+	declaration          [8192]byte
+	directions           [2][512]byte
 }
 
 func MessageDefinitionCodecBackingBytes() (uint64, error) {
@@ -74,12 +76,57 @@ func NewMessageDefinitionCodec() (*MessageDefinitionCodec, error) {
 	return &MessageDefinitionCodec{definition: definition, metadata: metadata}, nil
 }
 
+// MessageDirectionDefinition is input to trusted local declaration capture.
+// It grants neither decoder behavior nor writer or remote authorization.
+type MessageDirectionDefinition struct {
+	SchemaDigest [32]byte
+	Revision     string
+	MaximumBytes uint32
+}
+
+func (c *MessageDefinitionCodec) Define(kind, revision string, openerToAcceptor, acceptorToOpener MessageDirectionDefinition) (MessageStreamDefinition, error) {
+	if c == nil {
+		return MessageStreamDefinition{}, CBORFailure("configuration_capacity")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	defer clear(c.declaration[:])
+	defer clear(c.directions[0][:])
+	defer clear(c.directions[1][:])
+	var encoded [2][]byte
+	for i, input := range [...]MessageDirectionDefinition{openerToAcceptor, acceptorToOpener} {
+		var err error
+		encoded[i], err = EncodeMap(c.directions[i][:], "MessageStreamDirection", []Field{
+			{Name: "codec_schema_digest", Kind: ByteString, Bytes: input.SchemaDigest[:]},
+			{Name: "codec_revision", Kind: TextString, Text: input.Revision},
+			{Name: "max_message_bytes", Kind: Unsigned, Number: uint64(input.MaximumBytes)},
+		})
+		if err != nil {
+			return MessageStreamDefinition{}, err
+		}
+	}
+	wire, err := EncodeMap(c.declaration[:], "MessageStreamDefinition", []Field{
+		{Name: "kind", Kind: TextString, Text: kind},
+		{Name: "revision", Kind: TextString, Text: revision},
+		{Name: "opener_to_acceptor", Kind: EncodedMap, Bytes: encoded[0]},
+		{Name: "acceptor_to_opener", Kind: EncodedMap, Bytes: encoded[1]},
+	})
+	if err != nil {
+		return MessageStreamDefinition{}, err
+	}
+	return c.decodeLocked(wire)
+}
+
 func (c *MessageDefinitionCodec) Decode(wire []byte) (result MessageStreamDefinition, err error) {
 	if c == nil {
 		return result, CBORFailure("configuration_capacity")
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.decodeLocked(wire)
+}
+
+func (c *MessageDefinitionCodec) decodeLocked(wire []byte) (result MessageStreamDefinition, err error) {
 	doc, err := c.definition.DecodeMap(wire, "MessageStreamDefinition", DecodeContext{})
 	if err != nil {
 		return result, err

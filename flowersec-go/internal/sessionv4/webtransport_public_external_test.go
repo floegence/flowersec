@@ -64,7 +64,7 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 	if len(enableDatagrams) > 1 && enableDatagrams[1] {
 		h.Hello.Policy.BindingMode, h.Hello.BindingModes = 0, 1
 	}
-	reserve := func(cost fs.V4ResourceVector, err error) fs.V4ResourceReference {
+	reserve := func(cost fs.ResourceVector, err error) fs.ResourceReference {
 		t.Helper()
 		if err != nil {
 			t.Fatal(err)
@@ -74,8 +74,8 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 	cleanupContext := func() (context.Context, context.CancelFunc) {
 		return context.WithTimeout(context.Background(), 5*time.Second)
 	}
-	executorConfig := fs.V4ApplicationExecutorConfig{Running: 8, ResidentRunning: 4, CompletionRunning: 1, CompletionReserved: 4, RuntimeBytes: 8192, RuntimeBytesPerTask: 65536}
-	executor, err := fs.NewV4ApplicationExecutor(executorConfig, reserve(fs.V4ApplicationExecutorCharge(executorConfig)))
+	executorConfig := fs.ApplicationExecutorConfig{Running: 8, ResidentRunning: 4, CompletionRunning: 1, CompletionReserved: 4, RuntimeBytes: 8192, RuntimeBytesPerTask: 65536}
+	executor, err := fs.NewApplicationExecutor(executorConfig, reserve(fs.ApplicationExecutorCharge(executorConfig)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,8 +89,8 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 			t.Error("public WebTransport executor retained callbacks")
 		}
 	})
-	config := fs.V4EnvironmentConfig{Positions: 2, Materials: 2, MaterialCreateMS: 1000, Clock: h.Clock, Verification: h.Verification, RuntimeBytes: 65536}
-	environment, err := fs.NewTransportEnvironment(fs.TransportEnvironmentOptions{Config: config, Reservation: reserve(fs.V4EnvironmentCharge(config)), Dependencies: h.Environment})
+	config := fs.EnvironmentConfig{Positions: 2, Materials: 2, MaterialCreateMS: 1000, Clock: h.Clock, Verification: h.Verification, RuntimeBytes: 65536}
+	environment, err := fs.NewTransportEnvironment(fs.EnvironmentOptions{Config: config, Reservation: reserve(fs.EnvironmentCharge(config)), Dependencies: h.Environment})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 	})
 	var materials [2]*fs.ConnectionMaterial
 	for role := range 2 {
-		lease, err := fs.NewV4ArtifactLeaseFromBytes(h.Lease, reserve(fs.V4ArtifactLeaseCharge(h.Lease.MapBytes, h.Lease.MapNodes, h.Lease.RuntimeBytes)), h.Preauth)
+		lease, err := fs.NewArtifactLeaseFromBytes(h.Lease, reserve(fs.ArtifactLeaseCharge(h.Lease.MapBytes, h.Lease.MapNodes, h.Lease.RuntimeBytes)), h.Preauth)
 		if err != nil {
 			t.Fatal("lease", role, err)
 		}
@@ -117,7 +117,7 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 			}
 		})
 		identityConfig := h.Identity[role]
-		identity, err := fs.NewV4ApplicationIdentityFromBytes(identityConfig, reserve(fs.V4ApplicationIdentityCharge(identityConfig.MapNodes, identityConfig.RuntimeBytes)), h.Preauth)
+		identity, err := fs.NewApplicationIdentityFromBytes(identityConfig, reserve(fs.ApplicationIdentityCharge(identityConfig.MapNodes, identityConfig.RuntimeBytes)), h.Preauth)
 		if err != nil {
 			t.Fatal("identity", role, err)
 		}
@@ -129,7 +129,7 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 				t.Error("identity cleanup", role, err)
 			}
 		})
-		materials[role], err = fs.NewConnectionMaterial(lease, identity, h.Generation, 8192, reserve(fs.V4ConnectionMaterialCharge(8192)))
+		materials[role], err = fs.NewConnectionMaterial(lease, identity, h.Generation, 8192, reserve(fs.ConnectionMaterialCharge(8192)))
 		if err != nil {
 			t.Fatal("material", role, err)
 		}
@@ -149,15 +149,15 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 	var authorized, released [2]atomic.Int32
 	reports := make(chan error, 2)
 	for role := range 2 {
-		handlersConfig := fs.V4StreamHandlerPlanConfig{RuntimeBytes: 8192, Handlers: []fs.V4RawStreamHandlerConfig{{
-			Kind: "example/quic", Slots: 2, WorkClass: fs.V4WorkResident,
+		handlersConfig := fs.StreamHandlerPlanConfig{RuntimeBytes: 8192, Handlers: []fs.RawStreamHandlerConfig{{
+			Kind: "example/quic", Slots: 2, WorkClass: fs.WorkResident,
 			AuthorizeOpen: func(_ context.Context, binding any, _ []byte) error {
 				if binding != role {
 					return fmt.Errorf("unexpected application binding %v", binding)
 				}
 				return nil
 			},
-			Handler: func(ctx context.Context, _ any, _ []byte, stream *fs.V4StreamOwnership) error {
+			Handler: func(ctx context.Context, _ any, _ []byte, stream *fs.StreamOwnership) error {
 				var payload [64]byte
 				read, err := stream.ReadInto(ctx, payload[:])
 				if err == nil {
@@ -172,18 +172,18 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 		if err != nil {
 			t.Fatal(err)
 		}
-		handlers, err := fs.NewV4StreamHandlerPlan(handlersConfig, executor, reserve(fs.V4StreamHandlerPlanCharge(handlersConfig)), delegates)
+		handlers, err := fs.NewStreamHandlerPlan(handlersConfig, executor, reserve(fs.StreamHandlerPlanCharge(handlersConfig)), delegates)
 		if err != nil {
 			delegates.Release()
 			t.Fatal("handler plan", err)
 		}
 		t.Cleanup(handlers.Close)
-		plan, err := (fs.V4SessionPlanFactory{Root: h.Root, Executor: executor, Dependencies: h.Environment}).Create(fs.V4SessionPlanConfig{
+		plan, err := (fs.SessionPlanFactory{Root: h.Root, Executor: executor, Dependencies: h.Environment}).Create(fs.SessionPlanConfig{
 			RuntimeBytes: 8192, Handlers: handlers,
-			AuthorizeApplication: func(_ context.Context, request fs.V4AuthenticatedRequestContext) (fs.V4AuthorizeApplicationResult, error) {
+			AuthorizeApplication: func(_ context.Context, request fs.AuthenticatedRequestContext) (fs.AuthorizeApplicationResult, error) {
 				authorized[role].Add(1)
 				lease, err := request.ReserveLease(request.Binding(), role, func(context.Context) error { released[role].Add(1); return nil })
-				return fs.V4AuthorizeApplicationResult{Handlers: handlers, Lease: lease}, err
+				return fs.AuthorizeApplicationResult{Handlers: handlers, Lease: lease}, err
 			},
 		}, h.Owner(), h.Scope[role].Tenant, h.Scope[role].Session)
 		if err != nil {
@@ -191,20 +191,20 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 		}
 		t.Cleanup(func() { plan.Close(); _ = plan.Retire() })
 		h.Admission[role].Application = plan
-		h.Admission[role].Core.Handlers = fs.V4SessionStreamHandlerConfig{Plan: handlers, Concurrency: 2, TimeoutMS: 3000, RuntimeBytes: 8192, RuntimeBytesPerInvocation: 32768}
+		h.Admission[role].Core.Handlers = fs.SessionStreamHandlerConfig{Plan: handlers, Concurrency: 2, TimeoutMS: 3000, RuntimeBytes: 8192, RuntimeBytesPerInvocation: 32768}
 	}
-	limits := fs.DefaultV4WebTransportLimits()
+	limits := fs.DefaultWebTransportLimits()
 	limits.MaxInboundStreams = 8
-	provider := fs.V4WebTransportProviderOptions{Limits: limits, StreamSlots: 8, RuntimeBytes: 65536, ProviderBytes: 32 << 20, ProviderTasks: 16}
-	accounts := []fs.V4ResourceAccount{h.Scope[1].Tenant}
-	serverConfig := fs.V4WebTransportServerConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Accounts: accounts, Address: address,
+	provider := fs.WebTransportProviderOptions{Limits: limits, StreamSlots: 8, RuntimeBytes: 65536, ProviderBytes: 32 << 20, ProviderTasks: 16}
+	accounts := []fs.ResourceAccount{h.Scope[1].Tenant}
+	serverConfig := fs.WebTransportServerConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Accounts: accounts, Address: address,
 		Route: h.Route, Certificate: certificate, Roots: roots, Connection: provider, Connections: 2, RuntimeBytes: 65536,
 		ListenerRuntimeBytes: 65536, ListenerProviderBytes: 1 << 20, ListenerProviderTasks: 4}
-	serverCharge, err := fs.V4WebTransportServerCharge(serverConfig)
+	serverCharge, err := fs.WebTransportServerCharge(serverConfig)
 	if err != nil {
 		t.Fatal("server charge", err)
 	}
-	server, err := fs.NewV4WebTransportServer(serverConfig, h.Reserve(serverCharge, accounts...), h.Environment)
+	server, err := fs.NewWebTransportServer(serverConfig, h.Reserve(serverCharge, accounts...), h.Environment)
 	if err != nil {
 		t.Fatal("server", err)
 	}
@@ -216,8 +216,8 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 			t.Error("server cleanup", err)
 		}
 	})
-	factoryConfig := fs.V4WebTransportFactoryConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Route: h.Route, RemoteAddress: address, Roots: roots, Options: provider, Connections: 1, RuntimeBytes: 65536}
-	factory, err := fs.NewV4WebTransportCarrierFactory(factoryConfig, reserve(fs.V4WebTransportCarrierFactoryCharge(factoryConfig)), h.Environment)
+	factoryConfig := fs.WebTransportFactoryConfig{Root: h.Root, Owner: h.Owner(), Clock: h.Clock, Route: h.Route, RemoteAddress: address, Roots: roots, Options: provider, Connections: 1, RuntimeBytes: 65536}
+	factory, err := fs.NewWebTransportCarrierFactory(factoryConfig, reserve(fs.WebTransportCarrierFactoryCharge(factoryConfig)), h.Environment)
 	if err != nil {
 		t.Fatal("factory", err)
 	}
@@ -229,8 +229,8 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 			t.Error("factory cleanup", err)
 		}
 	})
-	serveConfig := fs.V4ServeConfig{Positions: 2, RuntimeBytes: 8192, DrainTimeoutMS: 1000, Clock: h.Clock}
-	serve, err := environment.Serve(ctx, fs.V4ServeOptions{Config: serveConfig, Reservation: reserve(fs.V4ServeCharge(serveConfig))})
+	serveConfig := fs.ServeConfig{Positions: 2, RuntimeBytes: 8192, DrainTimeoutMS: 1000, Clock: h.Clock}
+	serve, err := fs.NewAcceptor(ctx, fs.AcceptorOptions{Environment: environment, ServeOptions: fs.ServeOptions{Config: serveConfig, Reservation: reserve(fs.ServeCharge(serveConfig))}})
 	if err != nil {
 		t.Fatal("serve", err)
 	}
@@ -242,8 +242,8 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 			t.Error("serve cleanup", err)
 		}
 	})
-	entrance := fs.V4AcceptedEntranceConfig{Initial: h.Admission[1].Initial, RuntimeBytes: 8192, InitialRuntimeBytes: 8192, CarrierRuntimeBytes: 8192}
-	acceptOptions := fs.V4WebTransportAcceptOptions{Input: fs.V4AcceptedSessionInput{Config: h.Admission[1], Root: h.Root, ResourceOwner: h.Owner(),
+	entrance := fs.AcceptedEntranceConfig{Initial: h.Admission[1].Initial, RuntimeBytes: 8192, InitialRuntimeBytes: 8192, CarrierRuntimeBytes: 8192}
+	acceptOptions := fs.WebTransportAcceptOptions{Input: fs.AcceptedSessionInput{Config: h.Admission[1], Root: h.Root, ResourceOwner: h.Owner(),
 		Environment: h.Environment, Preauth: h.Preauth, Scope: h.Scope[1], Store: h.Store, Authority: h.Authority},
 		Source: publicQUICMaterialSource{materials[1], h.Hello}, Limits: h.Limits, Entrance: entrance, Dependencies: h.Environment,
 		Accounts: accounts, LocalCapabilities: h.Hello.Offered, IngressRuntimeBytes: 8192, IntakeRuntimeBytes: 8192, MaxAdmissionRecordBytes: 16384}
@@ -251,7 +251,7 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 		acceptOptions.MaxAdmissionRecordBytes = 4096
 	}
 	type result struct {
-		session *fs.V4Session
+		session *fs.Session
 		err     error
 	}
 	accepted := make(chan result, 1)
@@ -265,16 +265,16 @@ func publicWebTransportEnvironmentRoundTrip(t *testing.T, source, profile string
 		session, err := serve.AcceptWebTransport(ctx, ingress, acceptOptions)
 		accepted <- result{session, err}
 	}()
-	client, clientErr := environment.ConnectMaterial(ctx, materials[0], fs.V4ConnectOptions{Pool: h.Pool, Live: h.Live,
-		Preparation: fs.V4SourceConnectConfig{Generation: h.Generation, LocalCapabilities: h.Hello.Offered, Requirements: fs.V4MaterialRequirements{ApplicationProfile: "transport", Connection: fs.V4RequiredGuarantees{LocalConsumerTls13Verification: true, Datagram: datagrams}},
+	client, clientErr := fs.ConnectMaterial(ctx, materials[0], fs.ConnectorOptions{Environment: environment, ConnectOptions: fs.ConnectOptions{Pool: h.Pool, Live: h.Live,
+		Preparation: fs.SourceConnectConfig{Generation: h.Generation, LocalCapabilities: h.Hello.Offered, Requirements: fs.MaterialRequirements{ApplicationProfile: "transport", Connection: fs.RequiredGuarantees{LocalConsumerTls13Verification: true, Datagram: datagrams}},
 			Carrier: factory, Hello: h.Hello, Limits: h.Limits, Admission: h.Admission[0], Root: h.Root, Owner: h.Owner(),
 			Environment: h.Environment, Preauth: h.Preauth, Dependencies: h.Environment, Scope: h.Scope[0], RuntimeBytes: 8192, CarrierRuntimeBytes: 8192,
-			AddressAttempts: 1, AttemptBudget: fs.V4CarrierAttemptBudget{PreauthBytes: 131072, WorkUnits: 128}, LiveIssuance: h.LiveIssuance}})
+			AddressAttempts: 1, AttemptBudget: fs.CarrierAttemptBudget{PreauthBytes: 131072, WorkUnits: 128}, LiveIssuance: h.LiveIssuance}}})
 	if clientErr != nil {
 		cancel()
 	}
 	peer := <-accepted
-	sessions := [2]*fs.V4Session{client, peer.session}
+	sessions := [2]*fs.Session{client, peer.session}
 	t.Cleanup(func() {
 		for _, session := range sessions {
 			if session != nil {

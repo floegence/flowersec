@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/quicbase"
-	rawquic "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/rawquicv3"
+	rawquic "github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/rawquic"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 )
 
@@ -422,16 +422,17 @@ func (engine *rawQUICSoakEngine) RunCycle(ctx context.Context, ordinal int) (soa
 	// Closing both ends is an actual transport outage. The next connection and
 	// its migrated path must be newly established; no counter is predeclared.
 	faultApplied := true
+	var outageErr error
 	if oldClient != nil {
-		if err := oldClient.Close(); err != nil {
-			return soakCycleObservation{}, fmt.Errorf("cycle %d client outage: %w", ordinal, err)
-		}
+		outageErr = errors.Join(outageErr, oldClient.Close())
 	}
 	if oldServer != nil {
-		if err := oldServer.Close(); err != nil {
-			return soakCycleObservation{}, fmt.Errorf("cycle %d server outage: %w", ordinal, err)
-		}
+		outageErr = errors.Join(outageErr, oldServer.Close())
 	}
+	if outageErr != nil {
+		return soakCycleObservation{}, fmt.Errorf("cycle %d transport outage: %w", ordinal, outageErr)
+	}
+
 	client, server, err := engine.connectPair(ctx)
 	if err != nil {
 		return soakCycleObservation{}, fmt.Errorf("cycle %d reconnect: %w", ordinal, err)
@@ -473,59 +474,110 @@ func (engine *rawQUICSoakEngine) RunCycle(ctx context.Context, ordinal int) (soa
 }
 
 func (engine *rawQUICSoakEngine) connectPair(ctx context.Context) (*rawquic.Session, *rawquic.Session, error) {
-	accepted := make(chan struct {
+	if ctx == nil {
+		return nil, nil, errors.New("native QUIC connection requires its original context")
+	}
+	call, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type acceptResult struct {
 		session *rawquic.Session
 		err     error
-	}, 1)
+	}
+	accepted := make(chan acceptResult, 1)
+	done := make(chan struct{})
 	go func() {
-		session, err := engine.listener.Accept(ctx)
-		accepted <- struct {
-			session *rawquic.Session
-			err     error
-		}{session: session, err: err}
+		defer close(done)
+		session, err := engine.listener.Accept(call)
+		accepted <- acceptResult{session, err}
 	}()
-	client, err := rawquic.Dial(ctx, engine.listener.Addr().String(), engine.clientTLS.Clone(), quicbase.DefaultLimits())
+	client, err := rawquic.Dial(call, engine.listener.Addr().String(), engine.clientTLS.Clone(), quicbase.DefaultLimits())
 	if err != nil {
+		cancel()
+		peer := <-accepted
+		<-done
+		if peer.session != nil {
+			err = errors.Join(err, peer.session.Close())
+		}
 		return nil, nil, err
 	}
 	peer := <-accepted
+	<-done
 	if peer.err != nil || peer.session == nil {
-		_ = client.Close()
-		return nil, nil, peer.err
+		if peer.err == nil {
+			peer.err = errors.New("native QUIC acceptance returned no original Session")
+		}
+		return nil, nil, errors.Join(peer.err, client.Close())
 	}
 	return client, peer.session, nil
 }
 
-func rawQUICSoakRoundTrip(ctx context.Context, client, server *rawquic.Session, ordinal int) (int64, error) {
-	accepted := make(chan struct {
+func rawQUICSoakRoundTrip(ctx context.Context, client, server *rawquic.Session, ordinal int) (streamID int64, resultErr error) {
+	if ctx == nil || client == nil || server == nil {
+		return -1, errors.New("native QUIC round trip requires original Sessions and context")
+	}
+	call, cancel := context.WithCancel(ctx)
+	type acceptResult struct {
 		stream io.ReadWriteCloser
 		err    error
-	}, 1)
+	}
+	accepted := make(chan acceptResult, 1)
+	acceptDone := make(chan struct{})
 	go func() {
-		stream, err := server.AcceptStream(ctx)
-		accepted <- struct {
-			stream io.ReadWriteCloser
-			err    error
-		}{stream: stream, err: err}
+		defer close(acceptDone)
+		stream, err := server.AcceptStream(call)
+		accepted <- acceptResult{stream, err}
 	}()
-	stream, err := client.OpenStream(ctx)
+	var outgoing io.ReadWriteCloser
+	var peer acceptResult
+	received := false
+	// A failed Open/Write cancels and joins the original stream acceptance. Any
+	// accepted handle still belongs to this invocation and is reset before exit.
+	defer func() {
+		cancel()
+		if outgoing != nil {
+			resultErr = errors.Join(resultErr, outgoing.Close())
+		}
+		if !received {
+			peer = <-accepted
+		}
+		<-acceptDone
+		if peer.stream != nil {
+			resultErr = errors.Join(resultErr, peer.stream.Close())
+		}
+	}()
+	stream, err := client.OpenStream(call)
 	if err != nil {
 		return -1, err
 	}
-	streamID := nativeStreamID(stream)
-	defer stream.Close()
+	outgoing = stream
+	stopOutgoing := closeSoakStreamOnCancellation(call, stream)
+	defer stopOutgoing()
+	streamID = nativeStreamID(stream)
 	message := []byte(fmt.Sprintf("soak-cycle-%d", ordinal))
-	if _, err := stream.Write(message); err != nil {
+	count, err := stream.Write(message)
+	if err != nil {
 		return -1, err
 	}
-	if err := stream.CloseWrite(); err != nil {
+	if count != len(message) {
+		return -1, io.ErrShortWrite
+	}
+	if err = stream.CloseWrite(); err != nil {
 		return -1, err
 	}
-	peer := <-accepted
+	select {
+	case peer = <-accepted:
+		received = true
+	case <-call.Done():
+		return -1, context.Cause(call)
+	}
 	if peer.err != nil {
 		return -1, peer.err
 	}
-	defer peer.stream.Close()
+	if peer.stream == nil {
+		return -1, errors.New("native QUIC acceptance returned no original stream")
+	}
+	stopPeer := closeSoakStreamOnCancellation(call, peer.stream)
+	defer stopPeer()
 	got, err := io.ReadAll(peer.stream)
 	if err != nil {
 		return -1, err
@@ -534,6 +586,18 @@ func rawQUICSoakRoundTrip(ctx context.Context, client, server *rawquic.Session, 
 		return -1, errors.New("post-migration payload mismatch")
 	}
 	return streamID, nil
+}
+
+// The original native stream resets blocked I/O when its caller is canceled.
+// Stopping an already-running callback joins it before this owner can retire.
+func closeSoakStreamOnCancellation(ctx context.Context, stream io.Closer) func() {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(done); _ = stream.Close() })
+	return func() {
+		if !stop() {
+			<-done
+		}
+	}
 }
 
 func (engine *rawQUICSoakEngine) Close(ctx context.Context) error {

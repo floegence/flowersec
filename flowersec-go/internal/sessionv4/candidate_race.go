@@ -27,38 +27,43 @@ const candidateCleanupMS = 5000
 // after its actual original method and cleanup finish. No loser holds final
 // Session capacity or obtains credential-bearing I/O.
 type candidateRace struct {
-	mu                    sync.Mutex
-	source                *sourcePreparation
-	session               *EnvironmentSession
-	config                SessionAdmissionConfig
-	slots                 [2]candidatePreparation
-	wake                  chan struct{}
-	next                  int
-	attempts, bytes, work uint64
-	winner                *PreparedCarrier
-	winnerSlot            *candidatePreparation
-	winnerConfig          SessionAdmissionConfig
-	nextStart             time.Time
-	preparationWindow     *timev4.Window
-	closed                bool
-	last                  error
-	transportFailure      bool
-	nonTransportFailure   bool
+	mu                                                                sync.Mutex
+	source                                                            *sourcePreparation
+	session                                                           *EnvironmentSession
+	config                                                            SessionAdmissionConfig
+	slots                                                             [2]candidatePreparation
+	wake                                                              chan struct{}
+	next                                                              int
+	attempts, bytes, work                                             uint64
+	winner                                                            *PreparedCarrier
+	winnerSlot                                                        *candidatePreparation
+	winnerConfig                                                      SessionAdmissionConfig
+	nextStart                                                         time.Time
+	preparationWindow                                                 *timev4.Window
+	closed                                                            bool
+	last                                                              error
+	transportFailure                                                  bool
+	nonTransportFailure                                               bool
+	initialGate                                                       chan struct{}
+	initialLimit, initialDispatched, initialStarted, initialUnstarted int
+	initialClosed                                                     bool
 }
 
 type candidatePreparation struct {
-	parent              preparedCarrierReference
-	floor               *resourcev4.ProtectedReservation
-	providerPreparation CarrierPreparation
-	cleanupWindow       *timev4.Window
-	ctx                 sessionRuntimeContext
-	done                chan struct{}
-	route               []byte
-	member              protocolv4.PoolMember
-	config              SessionAdmissionConfig
-	cleanupError        error
-	retained            *PreparedCarrier
-	retainedReservation resourcev4.Reference
+	parent                  preparedCarrierReference
+	floor                   *resourcev4.ProtectedReservation
+	providerPreparation     CarrierPreparation
+	cleanupWindow           *timev4.Window
+	ctx                     sessionRuntimeContext
+	done                    chan struct{}
+	route                   []byte
+	member                  protocolv4.PoolMember
+	config                  SessionAdmissionConfig
+	rpc                     RPCServicesConfig
+	cleanupError            error
+	retained                *PreparedCarrier
+	retainedReservation     resourcev4.Reference
+	initial, initialEntered bool
 }
 
 func (r *candidateRace) init(p *sourcePreparation, s *EnvironmentSession, c SessionAdmissionConfig) error {
@@ -69,6 +74,14 @@ func (r *candidateRace) init(p *sourcePreparation, s *EnvironmentSession, c Sess
 	r.source, r.session, r.config = p, s, c
 	r.preparationWindow = window
 	r.wake = make(chan struct{}, 1)
+	if p.config.CandidateStartIntervalConfigured && p.config.CandidateStartIntervalMS == 0 {
+		r.initialGate = make(chan struct{})
+		parallel := int(p.config.ParallelCandidates)
+		if parallel == 0 {
+			parallel = 2
+		}
+		r.initialLimit = min(parallel, p.references.carrierCount, int(p.selection.budget.ParallelCandidates), p.selection.count)
+	}
 	for i := range r.slots {
 		r.slots[i].route = make([]byte, p.config.Limits.Hello.RouteBytes)
 		r.slots[i].parent.origin = p.config.Environment
@@ -171,6 +184,29 @@ func (r *candidateRace) prepare() (*PreparedCarrier, SessionAdmissionConfig, err
 			slot := &r.slots[free]
 			member, route, err := p.selection.candidate(position, slot.route)
 			config := r.config
+			if err == nil && config.Core.MixedCarrier {
+				candidate := p.material.lease.lease.maps[0].Field("candidates").Index(int(member.Index))
+				path, ok := candidate.Named("Candidate", "path_kind").Uint()
+				leg := "direct_leg"
+				if path == 1 {
+					leg = "client_leg"
+				}
+				if !ok || path > 1 {
+					err = cryptov4.ErrConfiguration
+				} else {
+					kind, ok := candidate.Named("Candidate", leg).Named("Leg", "carrier").Uint()
+					if !ok || kind > 2 {
+						err = cryptov4.ErrConfiguration
+					} else {
+						config.Core = coreCarrierMode(config.Core, kind == 1)
+					}
+				}
+				if err == nil && config.RPC != nil {
+					slot.rpc = *config.RPC
+					slot.rpc.Native = config.Core.Native
+					config.RPC = &slot.rpc
+				}
+			}
 			if err == nil {
 				err = p.material.lease.lease.maps[0].CheckConnectionRequirements(member.Index, config.Requirements)
 			}
@@ -184,6 +220,7 @@ func (r *candidateRace) prepare() (*PreparedCarrier, SessionAdmissionConfig, err
 				r.mu.Lock()
 				r.last = err
 				r.nonTransportFailure = true
+				r.closeInitialGateLocked()
 				r.mu.Unlock()
 				continue
 			}
@@ -191,9 +228,18 @@ func (r *candidateRace) prepare() (*PreparedCarrier, SessionAdmissionConfig, err
 			slot.ctx = sessionRuntimeContext{parent: &r.session.context, done: make(chan struct{})}
 			slot.done, slot.member, slot.config, slot.cleanupError = make(chan struct{}), member, config, nil
 			slot.cleanupWindow = nil
+			slot.initial, slot.initialEntered = r.initialGate != nil && position < r.initialLimit, false
+			if slot.initial {
+				r.initialDispatched++
+			}
+			r.closeInitialGateLocked()
 			r.mu.Unlock()
 			go r.run(slot, route)
-			r.nextStart = time.Now().Add(250 * time.Millisecond)
+			spacing := uint64(250)
+			if p.config.CandidateStartIntervalConfigured {
+				spacing = p.config.CandidateStartIntervalMS
+			}
+			r.nextStart = time.Now().Add(time.Duration(spacing) * time.Millisecond)
 			continue
 		}
 		// One original timer observes pacing, total preparation and canceled
@@ -273,6 +319,10 @@ func (r *candidateRace) run(slot *candidatePreparation, route []byte) {
 			slot.retained, slot.retainedReservation = prepared, ref
 		}
 		r.mu.Lock()
+		if slot.initial && !slot.initialEntered {
+			r.initialUnstarted++
+			r.closeInitialGateLocked()
+		}
 		if err != nil {
 			r.last = err
 			r.transportFailure = transport
@@ -320,7 +370,21 @@ func (r *candidateRace) run(slot *candidatePreparation, route []byte) {
 		if slot.providerPreparation != nil {
 			factory = slot.providerPreparation
 		}
+		r.mu.Lock()
+		if slot.initial && !slot.initialEntered {
+			slot.initialEntered = true
+			r.initialStarted++
+			r.closeInitialGateLocked()
+		}
+		r.mu.Unlock()
 		prepared, err = factory.PrepareCarrier(&slot.ctx, request)
+		if err == nil && r.initialGate != nil {
+			select {
+			case <-r.initialGate:
+			case <-slot.ctx.Done():
+				err = slot.ctx.Err()
+			}
+		}
 		addressesExhausted := err == native.ErrAddressesExhausted
 		if addressesExhausted {
 			if prepared != nil {
@@ -496,4 +560,11 @@ func (r *candidateRace) cleanup() error {
 		}
 	}
 	return nil
+}
+
+func (r *candidateRace) closeInitialGateLocked() {
+	if r.initialGate != nil && !r.initialClosed && r.next >= r.initialLimit && r.initialStarted+r.initialUnstarted >= r.initialDispatched {
+		r.initialClosed = true
+		close(r.initialGate)
+	}
 }

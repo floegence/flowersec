@@ -1,43 +1,43 @@
 # TypeScript Example
 
-Install the ESM package and use the runtime-specific opaque session connector:
+Build the local TypeScript package before running the maintained example:
 
 ```bash
-npm install @floegence/flowersec-core
+cd flowersec-ts
+npm install
+npm run build
+cd ..
 ```
 
-- Browsers: `connect(...)` from `@floegence/flowersec-core/browser`
-- Node.js: `connect(...)` from `@floegence/flowersec-core/node`
-
-Both connectors consume a durable opaque `ArtifactLease` and return the same
-`Session` API. The application does not need to know which connection path was
-selected.
+The example uses the repository's current engineering peer fixture. It is not a
+production material loader and must be given a fresh original pool material
+JSON, an exact HTTP(S) origin, and a new durable receipt path.
 
 ## Node.js client
 
-Run the maintained Node.js example with a fresh artifact, an exact HTTP(S)
-origin, and a new durable receipt path:
+Run the Node.js example from the repository root:
 
 ```bash
 node examples/ts/node-client.mjs \
-  /secure/path/artifact-v3.json \
+  /secure/path/current-material.json \
   https://app.example \
-  /durable/state/artifact.spent \
+  /durable/state/material.spent \
   /secure/path/custom-root.pem
 ```
 
 The trust root is optional when the endpoint uses a system-trusted certificate.
-The example atomically creates and synchronizes the spend receipt before the
-connector sends connection credentials. Reusing a receipt path fails closed.
-After connecting, it makes typed RPC type `7001`, sends notification type
-`7002`, writes `hello` to a
-`parity.echo` reliable stream, sends FIN, reads `world` through peer FIN, probes
-liveness, and closes the session. The typed RPC decoder rejects invalid payloads
-before application code uses them.
+The fixture consumes one original pool record through its configured source and
+checks that exactly one spend was recorded. The receipt is an independent,
+post-connect observation marker; reusing an existing receipt path fails closed.
 
-The repository server-parity peers implement this application contract for
+After connecting, the example binds the `flowersec.parity` service, performs a
+typed RPC using method type `7001`, sends an observation notification using type
+`7002`, writes `hello` to the `parity.echo` reliable stream, sends FIN, reads
+`world` through peer FIN, probes liveness, and closes the session. The typed RPC
+decoder rejects invalid payloads before application code uses them.
+
+The repository's server-parity peers implement this application contract for
 integration coverage; a deployed service must register equivalent handlers.
-When a connection or session operation fails, the one-shot example prints only
-the redacted public error code. Long-lived applications use
-`ConnectionController` with a refreshable artifact source; the example never
-reuses the spent receipt.
+The example reports the operation error message for local diagnostics and does
+not retry or reuse spent material. Long-lived applications should use
+`ConnectionController` with a refreshable material source.

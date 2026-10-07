@@ -119,6 +119,12 @@ func (x *InitialExchange) admissionHello() (*protocolv4.HelloBinding, error) {
 // The returned map retains its bytes for FSA/Noise and caller cleanup. It is
 // returned even on a later publication error to preserve the original facts.
 func (x *InitialExchange) SendAdmission(activation *protocolv4.ActivationBinding, proof, certificate *protocolv4.SignedMap, codec *protocolv4.SignedMapCodec, signer protocolv4.MapSigner, guard func() error) (*protocolv4.SignedMap, InitialWriteResult, error) {
+	return x.sendAdmission(activation, proof, certificate, codec, signer, guard, nil)
+}
+
+// sendAdmission records the original publication cutpoint after final guard
+// validation and before the provider takes responsibility for the FSB4 input.
+func (x *InitialExchange) sendAdmission(activation *protocolv4.ActivationBinding, proof, certificate *protocolv4.SignedMap, codec *protocolv4.SignedMapCodec, signer protocolv4.MapSigner, guard func() error, submitted func()) (*protocolv4.SignedMap, InitialWriteResult, error) {
 	h, err := x.admissionHello()
 	if err != nil {
 		return nil, InitialWriteResult{}, err
@@ -136,6 +142,15 @@ func (x *InitialExchange) SendAdmission(activation *protocolv4.ActivationBinding
 			return err
 		}
 		return guard()
+	}
+	submit := func() error {
+		if err := check(); err != nil {
+			return err
+		}
+		if submitted != nil {
+			submitted()
+		}
+		return nil
 	}
 	var fsb *protocolv4.SignedMap
 	result, err := x.sendFlight(protocolv4.FrameAdmission, func(dst []byte) (int, error) {
@@ -156,7 +171,7 @@ func (x *InitialExchange) SendAdmission(activation *protocolv4.ActivationBinding
 			return 0, protocolv4.ErrPayloadTooLarge
 		}
 		return copy(dst, wire), nil
-	}, check, false)
+	}, submit, false)
 	return fsb, result, err
 }
 

@@ -41,7 +41,7 @@ func (h *SQLiteNamespaceHistory) createSchema() (err error) {
 	return s.checkpoint()
 }
 
-func (h *SQLiteNamespaceHistory) openSchema() (err error) {
+func (h *SQLiteNamespaceHistory) openSchema(readOnly bool) (err error) {
 	s := h.store.sqliteStore
 	version, err := s.scalar("PRAGMA user_version")
 	if err != nil || version != int64(1) {
@@ -61,18 +61,20 @@ func (h *SQLiteNamespaceHistory) openSchema() (err error) {
 			return ErrStorageFormat
 		}
 	}
-	if err = s.boundPages(); err != nil {
-		return err
+	if !readOnly {
+		if err = s.boundPages(); err != nil {
+			return err
+		}
+		if err = s.checkpoint(); err != nil {
+			return err
+		}
+		// Authenticate and fence the exact same transaction snapshot. A concurrent
+		// opener cannot pass the old epoch check and later overwrite a newer fence.
+		if err = s.exec("BEGIN IMMEDIATE"); err != nil {
+			return err
+		}
+		defer namespaceRollback(s, &err)
 	}
-	if err = s.checkpoint(); err != nil {
-		return err
-	}
-	// Authenticate and fence the exact same transaction snapshot. A concurrent
-	// opener cannot pass the old epoch check and later overwrite a newer fence.
-	if err = s.exec("BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	defer namespaceRollback(s, &err)
 	var epoch uint64
 	err = s.readOne("SELECT format,revision,CASE WHEN length(CAST(authority AS BLOB))<=128 THEN authority ELSE NULL END,CASE WHEN length(instance)=32 THEN instance ELSE NULL END,CASE WHEN length(generation)=8 THEN generation ELSE NULL END,CASE WHEN length(epoch)=8 THEN epoch ELSE NULL END,max_pages,max_records,max_record_bytes,CASE WHEN length(configuration)<=512 THEN configuration ELSE NULL END FROM manifest WHERE id=1", 10, func(v []driver.Value) error {
 		id, ok := v[3].([]byte)
@@ -98,6 +100,12 @@ func (h *SQLiteNamespaceHistory) openSchema() (err error) {
 	}
 	if err = h.checkChunkShape(size); err != nil {
 		return err
+	}
+	if err = h.inspectChunks(size, v.Digest); err != nil {
+		return err
+	}
+	if readOnly {
+		return nil
 	}
 	if err = s.continuity.Check(s.identity, epoch, false); err != nil {
 		return err

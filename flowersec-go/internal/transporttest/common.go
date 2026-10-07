@@ -17,8 +17,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/rawquicv3"
-	carrieryamux "github.com/floegence/flowersec/flowersec-go/v6/internal/mux/yamux"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/rawquic"
 	gorillaws "github.com/gorilla/websocket"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -29,7 +28,7 @@ func localTLSForHost(kind carrier.Kind, listenHost string) (*tls.Config, *tls.Co
 	nextProtocol := ""
 	switch kind {
 	case carrier.KindRawQUIC:
-		nextProtocol = rawquicv3.ALPNDirect
+		nextProtocol = rawquic.ALPNDirect
 	case carrier.KindWebTransport:
 		nextProtocol = http3.NextProtoH3
 	case carrier.KindWebSocket:
@@ -121,8 +120,7 @@ func normalizeCloseError(err error) error {
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) ||
-		errors.Is(err, gorillaws.ErrCloseSent) || errors.Is(err, syscall.EPIPE) ||
-		errors.Is(err, carrieryamux.ErrStreamReset) {
+		errors.Is(err, gorillaws.ErrCloseSent) || errors.Is(err, syscall.EPIPE) {
 		return nil
 	}
 	var websocketClose *gorillaws.CloseError

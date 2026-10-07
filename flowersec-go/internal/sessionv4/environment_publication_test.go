@@ -9,6 +9,7 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
 )
 
 func TestEnvironmentPublicationOwnsFirstHandlerWhileTransportProgresses(t *testing.T) {
@@ -16,6 +17,19 @@ func TestEnvironmentPublicationOwnsFirstHandlerWhileTransportProgresses(t *testi
 		publish := outcome == "publish"
 		for _, framing := range []string{"stream", "messages"} {
 			t.Run(outcome+"/"+framing, func(t *testing.T) {
+				// No Environment coordinator runs in this fixture. Delivery must
+				// make the original application usable before it returns.
+				notifications := newNotificationFixture(t)
+				notifications.d.mu.Lock()
+				notifications.d.activated = false
+				notifications.d.mu.Unlock()
+				observer := notificationStrings(func(context.Context, string) error { return nil })
+				assertUnpublished := func() {
+					t.Helper()
+					if subscription, err := notifications.d.Subscribe(0, NotificationDropNewest, observer); subscription != nil || !errors.Is(err, rpcv4.ErrClosed) {
+						t.Fatal("unpublished Session accepted notification subscription", err)
+					}
+				}
 				var host *EnvironmentSession
 				provider := &changingAssuranceProvider{preparedTestProvider: &preparedTestProvider{}}
 				var authorized, handled atomic.Uint32
@@ -30,6 +44,7 @@ func TestEnvironmentPublicationOwnsFirstHandlerWhileTransportProgresses(t *testi
 				}, nil, func(cores [2]*SessionCore) {
 					host = newEnvironmentSession(&Environment{}, 0, context.Background())
 					host.core = cores[1]
+					host.application = notifications.plan
 					guarantees, _ := provider.ConnectionGuarantees()
 					host.info = protocolv4.V4SessionInfo{ApplicationProfile: protocolv4.V4ApplicationProfileTransport, Guarantees: guarantees}
 					host.admission = &SessionAdmissionReservation{prepared: &PreparedCarrier{&preparedCarrier{provider: provider, guarantees: guarantees}}}
@@ -87,10 +102,12 @@ func TestEnvironmentPublicationOwnsFirstHandlerWhileTransportProgresses(t *testi
 				if err := cores[1].Runtime().bindApplicationPublication(make(chan struct{})); !errors.Is(err, cryptov4.ErrTransition) {
 					t.Fatal("rebound runtime publication", err)
 				}
+				assertUnpublished()
 				if publish {
 					if session, err := host.deliver(ctx); err != nil || session != host {
 						t.Fatal(session, err)
 					}
+					notifications.subscribe(t, NotificationDropNewest, observer).Close()
 					result := awaitOpening()
 					if result.err != nil || result.stream == nil {
 						t.Fatal(result.err)
@@ -119,6 +136,7 @@ func TestEnvironmentPublicationOwnsFirstHandlerWhileTransportProgresses(t *testi
 					if _, err := host.deliver(ctx); !errors.Is(err, cryptov4.ErrClosed) && !errors.Is(err, protocolv4.ErrRequiredGuaranteeUnavailable) {
 						t.Fatal("late READY published", err)
 					}
+					assertUnpublished()
 					if authorized.Load() != 0 || handled.Load() != 0 {
 						t.Fatal("close dispatched original application candidate")
 					}

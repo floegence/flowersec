@@ -38,6 +38,9 @@ type sessionStreamDispatcher struct {
 	started, running, closed, cleaned bool
 	stop, done                        chan struct{}
 	publication                       <-chan struct{}
+	manualHead, manualTail            *streamHandlerInvocation
+	manualWake                        chan struct{}
+	manualWaiting                     bool
 }
 
 type streamHandlerContext struct {
@@ -53,23 +56,26 @@ func (c *streamHandlerContext) Deadline() (time.Time, bool) {
 }
 
 type streamHandlerInvocation struct {
-	watchMu         sync.Mutex
-	service         *preparedStreamService
-	dispatcher      *sessionStreamDispatcher
-	allocation      *sessionStreamAllocation
-	handle          OpenHandle
-	preparation     OpenPreparation
-	capture         StreamHandlerCapture
-	metadata        []byte
-	deadline        *timev4.Deadline
-	context         streamHandlerContext
-	cancel          context.CancelFunc
-	done, watchDone chan struct{}
-	owner           *StreamOwnership
-	messages        *TypedMessageStream
-	recovery        *resumeStreamServer
-	ownerReady      chan struct{}
-	stopWatch       sync.Once
+	watchMu                   sync.Mutex
+	service                   *preparedStreamService
+	dispatcher                *sessionStreamDispatcher
+	allocation                *sessionStreamAllocation
+	handle                    OpenHandle
+	preparation               OpenPreparation
+	capture                   StreamHandlerCapture
+	metadata                  []byte
+	deadline                  *timev4.Deadline
+	context                   streamHandlerContext
+	cancel                    context.CancelFunc
+	done, watchDone           chan struct{}
+	owner                     *StreamOwnership
+	messages                  *TypedMessageStream
+	recovery                  *resumeStreamServer
+	ownerReady                chan struct{}
+	stopWatch                 sync.Once
+	manualNext                *streamHandlerInvocation
+	manualKind                string
+	manualQueued, manualTaken bool
 }
 
 func sessionStreamDispatcherCharge(c SessionStreamHandlerConfig) (resourcev4.Vector, error) {
@@ -124,7 +130,7 @@ func newSessionStreamDispatcher(core *SessionCore, config SessionStreamHandlerCo
 	if config.ServiceTarget == 0 {
 		config.ServiceTarget = 64
 	}
-	return &sessionStreamDispatcher{config: config, core: core, executor: executor, reservation: owned, context: ctx, cancel: cancel, stop: make(chan struct{}), done: make(chan struct{})}, nil
+	return &sessionStreamDispatcher{config: config, core: core, executor: executor, reservation: owned, context: ctx, cancel: cancel, stop: make(chan struct{}), done: make(chan struct{}), manualWake: make(chan struct{}, 1)}, nil
 }
 
 func (d *sessionStreamDispatcher) Run(ctx context.Context) error {
@@ -322,6 +328,18 @@ func (job *streamHandlerInvocation) watch() {
 func (job *streamHandlerInvocation) run() {
 	d, a := job.dispatcher, job.handle.owner
 	defer func() {
+		if job.owner == nil {
+			a.mu.Lock()
+			slot, err := a.slot(job.handle)
+			accepted := err == nil && slot.accepted
+			a.mu.Unlock()
+			if accepted {
+				// Acceptance can precede a failed publication return, outcome
+				// observation or ownership bind. This original invocation still
+				// owns the preparation and allocation until real flow cleanup.
+				cleanupStreamHandlerOwner(a, job.handle, nil)
+			}
+		}
 		job.finishWatch()
 		job.recovery.close()
 		if job.messages != nil && !job.messages.bound {
@@ -329,6 +347,7 @@ func (job *streamHandlerInvocation) run() {
 		}
 		job.capture.Release()
 		job.preparation.Release()
+		d.removeManual(job)
 		job.metadata = nil
 		d.core.plan.finishStream(job.allocation)
 		if job.service == nil || !job.service.transferred {
@@ -400,7 +419,7 @@ func (job *streamHandlerInvocation) run() {
 		job.metadata = metadata
 		job.allocation.candidate.typed = job.messages
 	}
-	permit, err := d.executor.TryAcquire(job.capture.WorkClass(), job.allocation.refs[streamFactoryAuthorizeTask], job.allocation.refs[streamFactoryInvocation])
+	permit, err := d.executor.tryAcquireInGroup(job.capture.plan.group, job.capture.WorkClass(), job.allocation.refs[streamFactoryAuthorizeTask], job.allocation.refs[streamFactoryInvocation])
 	if err != nil {
 		_ = d.reject(job.handle, "resource_exhausted")
 		return
@@ -451,7 +470,7 @@ func (job *streamHandlerInvocation) run() {
 	if job.recovery != nil {
 		handlerReady, err = d.executor.prepareApplication(job.capture.plan.group, job.capture.WorkClass(), job.allocation.refs[streamFactoryHandlerTask], job.allocation.refs[streamFactoryInvocation])
 	} else if job.service == nil {
-		permit, err = d.executor.TryAcquire(job.capture.WorkClass(), job.allocation.refs[streamFactoryHandlerTask], job.allocation.refs[streamFactoryInvocation])
+		permit, err = d.executor.tryAcquireInGroup(job.capture.plan.group, job.capture.WorkClass(), job.allocation.refs[streamFactoryHandlerTask], job.allocation.refs[streamFactoryInvocation])
 	}
 	if err != nil {
 		_ = d.reject(job.handle, "resource_exhausted")
@@ -500,7 +519,6 @@ func (job *streamHandlerInvocation) run() {
 		return
 	}
 	if err = a.WaitOutcome(&job.context, job.handle); err != nil {
-		_ = a.Cancel(job.handle)
 		return
 	}
 	o := job.allocation.candidate
@@ -510,7 +528,6 @@ func (job *streamHandlerInvocation) run() {
 	}
 	owner, err := a.bindStreamOwnership(job.handle, o.reservation, deadline, ownerContext, o)
 	if err != nil {
-		_ = a.Cancel(job.handle)
 		return
 	}
 	job.allocation.candidate = nil
@@ -524,9 +541,7 @@ func (job *streamHandlerInvocation) run() {
 			owner.mu.Lock()
 			owner.typed = nil
 			owner.mu.Unlock()
-			owner.Revoke()
-			_ = owner.Cancel()
-			_ = owner.Release()
+			cleanupStreamHandlerOwner(a, job.handle, owner)
 			return
 		}
 		job.messages.handlerPending = true
@@ -546,11 +561,7 @@ func (job *streamHandlerInvocation) run() {
 			_ = job.messages.WaitCleanup(context.Background())
 			return
 		}
-		owner.Revoke()
-		_ = owner.Cancel()
-		for errors.Is(owner.Release(), ErrStreamOwnershipBusy) {
-			<-owner.changed
-		}
+		cleanupStreamHandlerOwner(a, job.handle, owner)
 	}()
 	if job.recovery != nil {
 		if err := job.recovery.run(owner); err != nil {
@@ -565,7 +576,7 @@ func (job *streamHandlerInvocation) run() {
 			return
 		}
 		defer exit()
-		_ = job.capture.Handle(callCtx, metadata, owner)
+		_ = job.capture.handle(callCtx, metadata, owner, func(ctx context.Context) error { return d.offerManual(ctx, job, metadata, owner) })
 	}
 	var handlerDone <-chan struct{}
 	if handlerReady != nil {
@@ -589,6 +600,70 @@ func (job *streamHandlerInvocation) run() {
 		owner.Revoke()
 		_ = owner.Cancel()
 		<-handlerDone
+	}
+}
+
+// The original invocation retains its flow until both authenticated terminal
+// directions and all physical I/O tails finish. Releasing the capability alone
+// cannot clean the flow or return its shared-carrier active position.
+func cleanupStreamHandlerOwner(a *OpenAdmission, handle OpenHandle, owner *StreamOwnership) {
+	if owner == nil {
+		_ = a.Cancel(handle)
+		for {
+			if err := a.CleanupStream(context.Background(), handle); err == nil {
+				return
+			}
+			// No application capability was delivered. Reuse the original
+			// admission observer while its terminal/provider tails settle.
+			_ = a.waitStreamCleanupReady(context.Background(), handle)
+		}
+	}
+	owner.Revoke()
+	_ = owner.Cancel()
+	for {
+		select {
+		case <-owner.changed:
+		default:
+		}
+		// A handler can explicitly Close its raw capability. Its original
+		// coordinator may already have detached that capability, while this
+		// invocation still owns the admitted flow and preparation reference.
+		owner.mu.Lock()
+		detached := owner.admission == nil
+		owner.mu.Unlock()
+		var err error
+		if detached {
+			_ = a.Cancel(handle)
+			err = a.CleanupStream(context.Background(), handle)
+		} else {
+			err = owner.Cleanup(context.Background())
+		}
+		if err == nil {
+			break
+		}
+		if errors.Is(err, ErrStreamOwned) {
+			owner.mu.Lock()
+			detached = owner.admission == nil
+			owner.mu.Unlock()
+			if detached {
+				continue // Revisit the original flow after the actual handoff.
+			}
+		}
+		if errors.Is(err, ErrOpenPending) || errors.Is(err, ErrTerminal) {
+			_ = a.waitStreamCleanupReady(context.Background(), handle)
+			continue
+		}
+		<-owner.changed
+	}
+	for {
+		select {
+		case <-owner.changed:
+		default:
+		}
+		if err := owner.Release(); err == nil {
+			return
+		}
+		<-owner.changed
 	}
 }
 

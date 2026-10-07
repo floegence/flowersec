@@ -79,6 +79,7 @@ type MaterialAcquisition struct {
 	reservation, material, establishment resourcev4.Reference
 	materialCharge                       resourcev4.Vector
 	started, active, closed, cleaned     bool
+	batched                              bool
 	done                                 chan struct{}
 }
 
@@ -181,12 +182,20 @@ func (a *MaterialAcquisition) sampleInvocation() (timev4.Sample, error) {
 	return a.deadline.Sample()
 }
 
-func (a *MaterialAcquisition) Acquire(provider MaterialLeaseProvider) (result *ConnectionMaterial, err error) {
+func (a *MaterialAcquisition) Acquire(provider MaterialLeaseProvider) (*ConnectionMaterial, error) {
+	return a.acquire(provider, false)
+}
+
+func (a *MaterialAcquisition) acquireBatchMember(provider MaterialLeaseProvider) (*ConnectionMaterial, error) {
+	return a.acquire(provider, true)
+}
+
+func (a *MaterialAcquisition) acquire(provider MaterialLeaseProvider, batchMember bool) (result *ConnectionMaterial, err error) {
 	if a == nil || provider == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
 	a.mu.Lock()
-	if a.started || a.active {
+	if a.started || a.active || a.batched != batchMember {
 		a.mu.Unlock()
 		return nil, cryptov4.ErrTransition
 	}
@@ -303,6 +312,13 @@ func (a *MaterialAcquisition) Acquire(provider MaterialLeaseProvider) (result *C
 	}
 	if err == nil {
 		err = a.reservation.Check()
+	}
+	if err == nil {
+		// Retire this one-shot owner at the publication gate. The identity
+		// and establishment pin have moved to result, whose reservation was
+		// carved from the acquisition's material reference; cleanup releases
+		// only the acquisition-owned references that remain.
+		a.closed = true
 	}
 	a.mu.Unlock()
 	returned = true

@@ -1,831 +1,442 @@
 import { createInterface } from "node:readline";
-import { createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
-import { spawn } from "node:child_process";
+import { open as openFile, unlink, lstat } from "node:fs/promises";
+import { createHash, createPrivateKey, createPublicKey, X509Certificate } from "node:crypto";
 import { fileURLToPath } from "node:url";
-
-import {
-  createStreamMetadata,
-} from "../public/streamMetadata.js";
-import { RPCHandlers, SessionHandlersV3 } from "../node/acceptor.js";
-import { SessionError, type ByteStream, type JsonValue, type Session } from "../public/contract.js";
-import { createAcceptorV3, type AcceptorListenerV3 } from "../node/acceptorV3.js";
-import { createTunnelRuntimeV3, type TunnelRuntimeListenerV3 } from "../node/tunnelRuntimeV3.js";
-import { verifyTunnelAuthorizationGrantV3 } from "../node/runtimeAuthorizationV3.js";
-import { connectV3 } from "../node/connectSessionV3.js";
-import { createArtifactLeaseV3, parseArtifactV3 } from "../v3/publicApi.js";
+import { isDeepStrictEqual } from "node:util";
+import { isAbsolute, resolve as resolvePath } from "node:path";
+import type { NodeLiveHTTPSOptions, Session, PoolServerAllowBinding } from "../node/index.js";
+import { runCurrentParityServer, runCurrentParityClient, CurrentParityState, bindParity, exerciseCurrentParityServer, type CurrentParityReady, type CurrentPoolClientInstallation } from "./currentParity.js";
+import { createCurrentRegisteredTunnelPeerServer, type CurrentRegisteredTunnelPeerDeployment } from "./currentRegisteredTunnelPeer.js";
+import { createCurrentRelayPeer, type CurrentRelayPeerDeployment } from "./currentRelayPeer.js";
+import { inspectCurrentTunnelMaterial, currentTunnelAuthorizations, type CurrentTunnelAuthorization } from "./currentTunnelMaterial.js";
+import { readCurrentPeerMaterial, type CurrentPoolPeerMaterial, type CurrentRegisteredLiveClientInstallation, peerBytes } from "./currentPeer.js";
 
 const RUNTIME = "node-typescript";
 const ORIGIN = process.env.FLOWERSEC_PARITY_ORIGIN ?? "https://client.example";
-const ECHO_RPC = 7001;
-const NOTIFY_RPC = 7002;
-const COMPLETE_RPC = 7003;
-const DATAGRAM_READY_RPC = 7005;
-const ECHO_KIND = "parity.echo";
-const RESET_KIND = "parity.reset";
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-// Static test-only P-256 material keeps browser parity hermetic and is never
-// exposed by a production package entrypoint.
-const TEST_CERT_DER_B64 =
-  "MIIB0DCCAXWgAwIBAgIUN1vflbzlJfrU4ZKED+4S+7sCtiYwCgYIKoZIzj0EAwIwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDgxNDAyNDM0MloXDTM2MDgxMTAyNDM0MlowFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEajwb7qy6VxUFH+WjP/RG8LabjthsjlqZweN2NAkwClGhWdp5XI5HEsP7p5pOpYjjD4kLsvjnBISRRf0CJIW2GKOBpDCBoTAdBgNVHQ4EFgQUe4BGlwqmqkqzEKuW7ACsFr6Dk4YwHwYDVR0jBBgwFoAUe4BGlwqmqkqzEKuW7ACsFr6Dk4YwLAYDVR0RBCUwI4IJbG9jYWxob3N0hwR/AAABhxAAAAAAAAAAAAAAAAAAAAABMAwGA1UdEwEB/wQCMAAwDgYDVR0PAQH/BAQDAgeAMBMGA1UdJQQMMAoGCCsGAQUFBwMBMAoGCCqGSM49BAMCA0kAMEYCIQCYzxx1Zev7TI4aHaXKrj7uV4F8wkJ2kEJtogyGlMJOFwIhAOAEs50N+UKa+0B9JK6xRACX82a6bFBZCY+H9nUKikV9";
-const TEST_KEY_DER_B64 =
-  "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgGw0KRCu5rtYpQtqfTVTSz97sUToj2S3UhuA/cxsDa5KhRANCAARqPBvurLpXFQUf5aM/9EbwtpuO2GyOWpnB43Y0CTAKUaFZ2nlcjkcSw/unmk6liOMPiQuy+OcEhJFF/QIkhbYY";
-
-type Role =
+export type Role =
   "server" | "client" | "relay" | "tunnel-endpoint-a" | "tunnel-endpoint-b";
-type ParityCarrier = "websocket" | "raw-quic";
+export type ParityCarrier = "websocket" | "raw-quic";
+export type ParityListener = "endpoint" | "relay";
 
-type TLSFixture = Readonly<{
-  tls: Readonly<{
-    certificate_chain_pem: string;
-    private_key_pem: string;
-    root_certificate_pem: string;
-    root_certificate_der_base64: string;
-    leaf_certificate_der_base64: string;
-  }>;
-}>;
-
-type Ready = Readonly<{
-  type: "ready";
-  runtime: string;
-  carrier: string;
-  path: "direct";
-  artifact_json: string;
-  trust_pem: string;
-  origin: string;
-}>;
-
-type RelayReady = Readonly<{
-  type: "relay-ready";
-  runtime: string;
-  carrier: string;
-  path: "tunnel";
-  endpoint_url: string;
-  trust_pem: string;
-  trust_roots_der: readonly string[];
-  server_certificate_der: string;
-  origin: string;
-}>;
-
-type TunnelAuthorizationWire = Readonly<{
-  decision: "allow";
-  credentialId: string;
-  leaseId: string;
-  expiresAtUnixSeconds: number;
-  expectedPeerEndpointInstanceId: string;
-  allowReplacement: boolean;
-}>;
-
-type Topology = Readonly<{
-  id: string;
-  endpoint_a: string;
-  endpoint_b: string;
-  tunnel_runtime: string;
-  ingress_carrier_a: string;
-  ingress_carrier_b: string;
-}>;
-
-type EndpointBReady = Readonly<{
-  type: "endpoint-b-ready";
-  runtime: string;
-  carrier: string;
-  path: "tunnel";
-  endpoint_a_artifact_json: string;
-  endpoint_b_artifact_json: string;
-  relay: RelayReady;
-  authorizations: readonly TunnelAuthorizationWire[];
-  verification_records?: Readonly<Record<string, string>>;
-}>;
-
-type IssuerResponse = Readonly<{
-  artifact_json?: string;
-  endpoint_a_artifact_json?: string;
-  endpoint_b_artifact_json?: string;
-  authorizations?: readonly TunnelAuthorizationWire[];
-  verification_records?: Readonly<Record<string, string>>;
-}>;
-
-type TunnelInput = Readonly<{
-  topology: Topology;
-  relay: RelayReady;
-  endpoint_b: EndpointBReady;
-}>;
-
-class SignalQueue {
-  readonly #values: undefined[] = [];
-  readonly #waiters: Array<() => void> = [];
-
-  push(): void {
-    const waiter = this.#waiters.shift();
-    if (waiter === undefined) this.#values.push(undefined);
-    else waiter();
-  }
-
-  async shift(): Promise<void> {
-    if (this.#values.length > 0) {
-      this.#values.shift();
-      return;
-    }
-    await new Promise<void>((resolve) => this.#waiters.push(resolve));
-  }
+export interface CurrentParityTopology {
+  readonly id: string; readonly endpoint_a: string; readonly endpoint_b: string; readonly tunnel_runtime: string;
+  readonly ingress_carrier_a: ParityCarrier; readonly ingress_carrier_b: ParityCarrier;
+}
+interface TunnelInput { readonly topology: CurrentParityTopology; readonly relay: CurrentRelayReady; readonly endpoint_b: CurrentEndpointBReady; }
+function writeJSON(value: unknown): void { process.stdout.write(`${JSON.stringify(value)}\n`); }
+function validateTunnelDimensions(topology: CurrentParityTopology, relay: CurrentRelayReady, endpoint: "endpoint_a" | "endpoint_b", carrier: ParityCarrier): void {
+  if (topology === null || typeof topology !== "object" || relay === null || typeof relay !== "object" ||
+    topology[endpoint] !== RUNTIME || topology.tunnel_runtime !== relay.runtime || topology.ingress_carrier_a !== relay.carrier ||
+    topology.ingress_carrier_b !== (relay.server_carrier ?? relay.carrier) || topology[endpoint === "endpoint_a" ? "ingress_carrier_a" : "ingress_carrier_b"] !== carrier ||
+    relay.type !== "relay-ready" || relay.path !== "tunnel") throw new Error("invalid tunnel topology dimensions");
 }
 
-class PeerInput {
-  readonly #lines = createInterface({
-    input: process.stdin,
-    crlfDelay: Infinity,
-  })[Symbol.asyncIterator]();
+export interface ParityPeerInput { next<T>(): Promise<T>; }
+class PeerInput implements ParityPeerInput {
+  readonly #reader = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  readonly #lines = this.#reader[Symbol.asyncIterator]();
+  close(): void { this.#reader.close(); }
 
   async next<T>(): Promise<T> {
     const item = await this.#lines.next();
     if (item.done || item.value.trim() === "")
       throw new Error("peer stdin ended before the next protocol message");
+    if (Buffer.byteLength(item.value) > 4194304) throw new Error("peer protocol message exceeds its input bound");
     return JSON.parse(item.value) as T;
   }
 }
 
-type HandlerState = Readonly<{
-  rpcHandlers: RPCHandlers;
-  sessionHandlers: SessionHandlersV3;
-  notifications: SignalQueue;
-  activeStreams: { value: number };
-  executed: ExecutedCases;
-}>;
-
-class ExecutedCases {
-  readonly #cases = new Set<string>();
-
-  record(...caseIds: readonly string[]): void {
-    for (const caseId of caseIds) this.#cases.add(caseId);
-  }
-
-  snapshot(): readonly string[] {
-    return [...this.#cases];
-  }
+export interface CurrentRelayReady {
+  readonly type: "relay-ready"; readonly runtime: string; readonly carrier: ParityCarrier; readonly path: "tunnel";
+  readonly wire_revision: 4; readonly profile: string; readonly source: "preauthorized_pool" | "live_authority";
+  readonly endpoint_url?: string; readonly trust_pem: string; readonly origin: string;
+  readonly trust_roots_der?: readonly string[]; readonly server_certificate_der?: string;
+  readonly server_carrier?: ParityCarrier; readonly route_digest: string;
+  readonly client_tls_certificate_pem?: string; readonly client_tls_private_key_pem?: string;
+  readonly server_tls_certificate_pem?: string; readonly server_tls_private_key_pem?: string;
+  readonly material_digest?: string; readonly endpoint_a_artifact_json?: string; readonly endpoint_b_artifact_json?: string;
+  readonly authorizations?: readonly CurrentTunnelAuthorization[]; readonly verification_records?: CurrentPoolPeerMaterial["namespaces"];
 }
-
-function createHandlers(path: "direct" | "tunnel"): HandlerState {
-  const rpcHandlers = new RPCHandlers();
-  const sessionHandlers = new SessionHandlersV3({ maxConcurrentStreams: 16 });
-  const notifications = new SignalQueue();
-  const activeStreams = { value: 0 };
-  const executed = new ExecutedCases();
-  const registerRPC = (handlers: Pick<RPCHandlers, "handleRPC" | "handleNotification">) => {
-    handlers.handleRPC(ECHO_RPC, async (payload) => {
-      if (!validValuePayload(payload, "ping"))
-        return { error: { code: 400, message: "invalid echo payload" } };
-      executed.record("rpc");
-      return { payload };
-    });
-    handlers.handleRPC(COMPLETE_RPC, async (payload) => {
-      if (!validValuePayload(payload, "complete"))
-        return { error: { code: 400, message: "invalid completion payload" } };
-      executed.record("rekey", "liveness");
-      notifications.push();
-      return { payload };
-    });
-    handlers.handleRPC(DATAGRAM_READY_RPC, async (payload) => {
-      if (!validValuePayload(payload, "datagram-ready"))
-        return {
-          error: { code: 400, message: "invalid datagram barrier payload" },
-        };
-      notifications.push();
-      return { payload };
-    });
-    handlers.handleNotification(NOTIFY_RPC, (payload) => {
-      if (!validValuePayload(payload, "notify"))
-        throw new Error("invalid notification payload");
-      executed.record("notification");
-      notifications.push();
-    });
-  };
-  registerRPC(rpcHandlers);
-  registerRPC(sessionHandlers);
-  sessionHandlers.handleStream(ECHO_KIND, async (incoming) => {
-    activeStreams.value++;
-    try {
-      if (incoming.metadata.values.cell !== path)
-        throw new Error("invalid stream metadata");
-      executed.record("stream-metadata");
-      if (decoder.decode(await readAll(incoming.stream)) !== "hello")
-        throw new Error("invalid stream payload");
-      await writeAll(incoming.stream, encoder.encode("world"));
-      executed.record("stream-fin");
-    } finally {
-      activeStreams.value--;
-    }
-  });
-  sessionHandlers.handleStream(RESET_KIND, async (incoming) => {
-    if (decoder.decode(await readAll(incoming.stream)) !== "reset")
-      throw new Error("invalid reset stream payload");
-    executed.record("stream-reset");
-    throw new Error("intentional parity reset");
-  });
-  return { rpcHandlers, sessionHandlers, notifications, activeStreams, executed };
+export interface CurrentParityMaterialPublication {
+  readonly wire_revision: 4; readonly endpoint_a_artifact_json: string; readonly endpoint_b_artifact_json: string;
+  readonly client_tls_certificate_pem?: string; readonly client_tls_private_key_pem?: string;
+  readonly server_tls_certificate_pem?: string; readonly server_tls_private_key_pem?: string;
 }
-
-function validValuePayload(payload: JsonValue, expected: string): boolean {
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload))
-    return false;
-  return (payload as Readonly<Record<string, JsonValue>>).value === expected;
+export interface CurrentEndpointBReady {
+  readonly server_allow?: PoolServerAllowBinding;
+  readonly client_tls_certificate_pem?: string; readonly client_tls_private_key_pem?: string;
+  readonly type: "endpoint-b-ready"; readonly runtime: string; readonly carrier: ParityCarrier; readonly path: "tunnel"; readonly wire_revision: 4;
+  readonly profile?: string; readonly source?: "preauthorized_pool" | "live_authority"; readonly relay: CurrentRelayReady;
+  readonly endpoint_a_artifact_json: string; readonly endpoint_b_artifact_json: string;
+  readonly authorizations?: readonly CurrentTunnelAuthorization[]; readonly verification_records?: CurrentPoolPeerMaterial["namespaces"];
 }
-
-async function writeAll(stream: ByteStream, bytes: Uint8Array): Promise<void> {
-  let offset = 0;
-  while (offset < bytes.length) {
-    const written = await stream.write(bytes.subarray(offset));
-    if (written < 1 || written > bytes.length - offset)
-      throw new Error("invalid stream write count");
-    offset += written;
-  }
-}
-
-async function readAll(stream: ByteStream): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  while (true) {
-    const chunk = await stream.read();
-    if (chunk === null) break;
-    chunks.push(chunk);
-    length += chunk.length;
-  }
-  const output = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return output;
-}
-
-async function callBarrier(
-  session: Session,
-  typeId: number,
-  value: string,
-  label = "peer",
-): Promise<void> {
-  const result = await session.rpc.call(
-    typeId,
-    { value },
-    (payload) => payload,
-  );
-  if (!result.ok || !validValuePayload(result.payload, value))
-    throw new Error(
-      `${label} RPC barrier ${typeId} failed: ${JSON.stringify(result)}`,
-    );
-}
-
-async function assertCancellableWait(session: Session): Promise<void> {
-  const cancellation = new AbortController();
-  cancellation.abort();
+async function currentV4Deployment(path: string | undefined): Promise<CurrentRelayPeerDeployment> {
+  if (path === undefined || path.length === 0 || path.length > 4096) throw new Error("current relay requires --deployment or FLOWERSEC_PARITY_CURRENT_V4_DEPLOYMENT");
+  const file = await openFile(path, "r"), storage = Buffer.alloc(4194305); let length = 0;
   try {
-    await session.waitTermination({ signal: cancellation.signal });
-  } catch (error) {
-    if (error instanceof SessionError && error.code === "canceled") return;
-    throw error;
-  }
-  throw new Error("termination wait ignored cancellation");
-}
-
-async function clientStreams(
-  session: Session,
-  path: "direct" | "tunnel",
-  executed: ExecutedCases,
-): Promise<void> {
-  const stream = await session.openStream(ECHO_KIND, {
-    metadata: createStreamMetadata({ cell: path }),
-  });
-  await writeAll(stream, encoder.encode("hello"));
-  await stream.closeWrite();
-  if (decoder.decode(await readAll(stream)) !== "world")
-    throw new Error("echo stream did not preserve metadata and FIN");
-  executed.record("stream-metadata", "stream-fin");
-
-  // Let the peer finish the echo handler before opening the reset stream. This
-  // barrier makes the handler lifecycle ordering explicit across runtimes.
-  await callBarrier(session, ECHO_RPC, "ping", "echo stream cleanup");
-
-  const reset = await session.openStream(RESET_KIND);
-  let resetObserved = false;
-  try {
-    await writeAll(reset, encoder.encode("reset"));
-    await reset.closeWrite();
-    await readAll(reset);
-    resetObserved = reset.terminalError !== undefined;
-  } catch (error) {
-    resetObserved =
-      error instanceof SessionError && error.code === "stream_reset";
-  } finally {
-    await reset.close().catch(() => undefined);
-  }
-  if (!resetObserved) throw new Error("reset stream did not fail");
-  executed.record("stream-reset");
-}
-
-async function serverStreams(
-  session: Session,
-  path: "direct" | "tunnel",
-  executed: ExecutedCases,
-): Promise<void> {
-  const incoming = await session.acceptStream();
-  if (incoming.kind !== ECHO_KIND || incoming.metadata.values.cell !== path)
-    throw new Error("invalid echo stream metadata");
-  executed.record("stream-metadata");
-  if (decoder.decode(await readAll(incoming.stream)) !== "hello")
-    throw new Error("invalid echo stream payload");
-  await writeAll(incoming.stream, encoder.encode("world"));
-  await incoming.stream.closeWrite();
-  executed.record("stream-fin");
-
-  const reset = await session.acceptStream();
-  if (
-    reset.kind !== RESET_KIND ||
-    decoder.decode(await readAll(reset.stream)) !== "reset"
-  )
-    throw new Error("invalid reset stream payload");
-  await reset.stream.reset();
-  await reset.stream.close().catch(() => undefined);
-  executed.record("stream-reset");
-}
-
-async function exerciseClient(
-  session: Session,
-  state: HandlerState,
-  path: "direct" | "tunnel",
-  carrier: ParityCarrier,
-): Promise<void> {
-  await callBarrier(session, ECHO_RPC, "ping", "client");
-  state.executed.record("rpc");
-  await session.rpc.notify(NOTIFY_RPC, { value: "notify" });
-  await state.notifications.shift();
-  state.executed.record("notification");
-  await clientStreams(session, path, state.executed);
-  await assertCancellableWait(session);
-  state.executed.record("cancel");
-  await callBarrier(session, ECHO_RPC, "ping", "client cleanup");
-  await callBarrier(
-    session,
-    DATAGRAM_READY_RPC,
-    "datagram-ready",
-    "client datagram",
-  );
-  await exchangeDatagram(session, carrier, true);
-  if (carrier === "raw-quic") state.executed.record("datagram");
-  await session.rekey();
-  state.executed.record("rekey");
-  await session.probeLiveness();
-  state.executed.record("liveness");
-  await callBarrier(session, COMPLETE_RPC, "complete", "client completion");
-  await session.rpc.notify(NOTIFY_RPC, { value: "notify" });
-}
-
-async function exerciseServer(
-  session: Session,
-  state: HandlerState,
-  path: "direct" | "tunnel",
-  streamsServed: boolean,
-  carrier: ParityCarrier,
-): Promise<void> {
-  await assertCancellableWait(session);
-  state.executed.record("cancel");
-  const streams = streamsServed
-    ? Promise.resolve()
-    : serverStreams(session, path, state.executed);
-  await state.notifications.shift();
-  await callBarrier(session, ECHO_RPC, "ping", "server");
-  state.executed.record("rpc");
-  await session.rpc.notify(NOTIFY_RPC, { value: "notify" });
-  await state.notifications.shift();
-  await exchangeDatagram(session, carrier, false);
-  if (carrier === "raw-quic") state.executed.record("datagram");
-  await streams;
-  await session.waitTermination();
-  state.executed.record("close");
-}
-
-async function exchangeDatagram(
-  session: Session,
-  carrier: ParityCarrier,
-  initiator: boolean,
-): Promise<void> {
-  if (carrier === "websocket") return;
-  const channel = session.unreliableMessages;
-  if (channel === undefined) throw new Error("raw QUIC session omitted unreliable messages");
-  const request = Uint8Array.of(1, 2, 3);
-  const response = Uint8Array.of(3, 2, 1);
-  if (initiator) {
-    const outcome = await channel.send(request, { expiresAtUnixMs: Date.now() + 2_000 });
-    if (outcome !== "accepted") throw new Error(`raw QUIC datagram was ${outcome}`);
-  }
-  const received = await channel.receive();
-  const expected = initiator ? response : request;
-  if (received.length !== expected.length || !expected.every((value, index) => received[index] === value)) {
-    throw new Error("raw QUIC datagram payload mismatch");
-  }
-  if (!initiator) {
-    const outcome = await channel.send(response, { expiresAtUnixMs: Date.now() + 2_000 });
-    if (outcome !== "accepted") throw new Error(`raw QUIC datagram was ${outcome}`);
-  }
-}
-
-function fixture(): TLSFixture {
-  const certificate = pem("CERTIFICATE", TEST_CERT_DER_B64);
-  const privateKey = pem("PRIVATE KEY", TEST_KEY_DER_B64);
-  validateTestTLSFixture(certificate, privateKey);
-  return {
-    tls: {
-      certificate_chain_pem: certificate,
-      private_key_pem: privateKey,
-      root_certificate_pem: certificate,
-      root_certificate_der_base64: TEST_CERT_DER_B64,
-      leaf_certificate_der_base64: TEST_CERT_DER_B64,
-    },
-  };
-}
-
-function validateTestTLSFixture(certificatePEM: string, privateKeyPEM: string): void {
-  const certificate = new X509Certificate(certificatePEM);
-  const validFrom = Date.parse(certificate.validFrom);
-  const validTo = Date.parse(certificate.validTo);
-  const maximumValidityMs = 11 * 366 * 24 * 60 * 60 * 1_000;
-  const certificatePublicKey = certificate.publicKey.export({ type: "spki", format: "der" });
-  const privateKeyPublicKey = createPublicKey(createPrivateKey(privateKeyPEM)).export({ type: "spki", format: "der" });
-  if (
-    certificate.ca ||
-    certificate.publicKey.asymmetricKeyType !== "ec" ||
-    certificate.publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1" ||
-    certificate.checkHost("localhost") !== "localhost" ||
-    certificate.checkIP("127.0.0.1") !== "127.0.0.1" ||
-    certificate.checkIP("::1") !== "::1" ||
-    !certificate.keyUsage.includes("1.3.6.1.5.5.7.3.1") ||
-    !Number.isFinite(validFrom) ||
-    !Number.isFinite(validTo) ||
-    Date.now() < validFrom ||
-    Date.now() >= validTo ||
-    validTo - validFrom > maximumValidityMs ||
-    !certificatePublicKey.equals(privateKeyPublicKey)
-  ) {
-    throw new Error("browser parity TLS fixture is invalid");
-  }
-}
-
-function pem(label: string, encoded: string): string {
-  const lines = encoded.match(/.{1,64}/g);
-  if (lines === null) throw new Error("invalid embedded TLS fixture");
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
-}
-
-async function connectArtifact(
-  artifactJSON: string,
-  relay: Pick<RelayReady, "origin" | "trust_pem">,
-  rpcHandlers: RPCHandlers,
-): Promise<Session> {
-  return await connectV3(
-    createArtifactLeaseV3(parseArtifactV3(artifactJSON), async () => undefined),
-    { origin: relay.origin, roots: relay.trust_pem, rpcHandlers },
-  );
-}
-
-async function issue(input: Readonly<{ mode: "direct" | "tunnel"; endpoint: string; topology_id?: string }>): Promise<IssuerResponse> {
-  const goRoot = fileURLToPath(new URL("../../../flowersec-go", import.meta.url));
-  const child = spawn("go", ["run", "./internal/cmd/parity-artifact-issuer"], {
-    cwd: goRoot,
-    env: { ...process.env, FLOWERSEC_SERVER_PARITY_PEER: "1" },
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  child.stdin.end(`${JSON.stringify(input)}\n`);
-  const stdout: Buffer[] = [];
-  const stderr: Buffer[] = [];
-  child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-  child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-  const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
-  if (code !== 0) throw new Error(`v3 parity issuer failed: ${Buffer.concat(stderr).toString("utf8").trim()}`);
-  return JSON.parse(Buffer.concat(stdout).toString("utf8")) as IssuerResponse;
-}
-
-async function runServer(tls: TLSFixture, carrier: ParityCarrier): Promise<void> {
-  const state = createHandlers("direct");
-  let trustedArtifact: ReturnType<typeof parseArtifactV3> | undefined;
-  const acceptor = await createAcceptorV3({
-    listeners: [directListenerOptions(carrier, tls)],
-    maxInboundStreams: 16,
-    authorize: async () => trustedArtifact === undefined
-      ? { accepted: false, retryable: false, reason: "invalid_credential" }
-      : { accepted: true, artifact: trustedArtifact },
-    resolveHandlers: () => state.sessionHandlers as SessionHandlersV3,
-  });
-  try {
-    const address = acceptor.addresses()[0];
-    if (address === undefined) throw new Error(`direct ${carrier} listener did not bind`);
-    const issued = await issue({ mode: "direct", endpoint: endpointURL(carrier, "direct", address.port) });
-    if (issued.artifact_json === undefined) throw new Error("v3 parity issuer omitted direct artifact");
-    trustedArtifact = parseArtifactV3(issued.artifact_json);
-    const accepting = acceptor.accept();
-    writeJSON({
-      type: "ready", runtime: RUNTIME, carrier, path: "direct",
-      artifact_json: issued.artifact_json, trust_pem: tls.tls.root_certificate_pem, origin: ORIGIN,
-    });
-    const accepted = await accepting;
-    state.executed.record("admission");
-    const serving = accepted.serve().catch((error: unknown) => error);
-    if (process.env.FLOWERSEC_PARITY_CLIENT_PROFILE !== undefined) {
-      await externalServer(accepted.session, state);
-    } else {
-      await exerciseServer(accepted.session, state, "direct", true, carrier);
+    for (;;) {
+      if (length === storage.length) throw new Error("current relay deployment exceeds its input bound");
+      const read = await file.read(storage, length, storage.length - length, null);
+      if (read.bytesRead === 0) break; length += read.bytesRead;
     }
-    await serving;
-    await accepted.close().catch(() => undefined);
-    if (state.activeStreams.value !== 0) throw new Error(`direct server cleanup left ${state.activeStreams.value} streams`);
-    state.executed.record("cleanup");
-    writeJSON(result("server-result", "direct", state.executed.snapshot(), carrier));
-  } finally {
-    await acceptor.close();
-  }
+    if (length > 4194304) throw new Error("current relay deployment exceeds its input bound");
+    const parsed = JSON.parse(storage.subarray(0, length).toString("utf8")) as CurrentRelayPeerDeployment;
+    if (parsed === null || typeof parsed !== "object" || parsed.wire_revision !== 4 || typeof parsed.registration_json !== "string") throw new Error("invalid current relay deployment");
+    return parsed;
+  } finally { storage.fill(0); await file.close(); }
 }
-
-async function runClient(input: PeerInput, carrier: ParityCarrier): Promise<void> {
-  const ready = await input.next<Ready>();
-  if (
-    ready.type !== "ready" ||
-    ready.carrier !== carrier ||
-    ready.path !== "direct" ||
-    ready.artifact_json === ""
-  )
-    throw new Error("invalid direct ready message");
-  const state = createHandlers("direct");
-  const session = await connectArtifact(ready.artifact_json, ready, state.rpcHandlers);
-  state.executed.record("admission");
-  await exerciseClient(session, state, "direct", carrier);
-  await session.close().catch((error: unknown) => {
-    if (!(error instanceof SessionError) || error.code !== "closed")
-      throw error;
-  });
-  state.executed.record("close");
-  if (state.activeStreams.value !== 0)
-    throw new Error(`direct client cleanup left ${state.activeStreams.value} streams`);
-  state.executed.record("cleanup");
-  writeJSON(result("client-result", "direct", state.executed.snapshot(), carrier));
-}
-
-async function runRelay(tls: TLSFixture, input: PeerInput, carrier: ParityCarrier): Promise<void> {
-  const authorizations = new Map<string, TunnelAuthorizationWire>();
-  const verificationRecords = new Map<string, string>();
-  const released = new Set<string>();
-  const executed = new ExecutedCases();
-  const runtime = createTunnelRuntimeV3({
-    listeners: [tunnelListenerOptions(carrier, tls)],
-    maxInboundStreams: 16,
-    maxPendingLegs: 16,
-    maxActivePairs: 8,
-    authorize: async (request) => {
-      const item = authorizations.get(request.lookupKey());
-      const artifactJSON = verificationRecords.get(request.lookupKey());
-      if (item === undefined || artifactJSON === undefined) return { decision: "reject", reason: "invalid_credential" };
-      return {
-        decision: "allow",
-        grant: verifyTunnelAuthorizationGrantV3(request, parseArtifactV3(artifactJSON), {
-          leaseId: item.leaseId,
-          allowReplacement: item.allowReplacement,
-        }),
-      };
-    },
-    release: (leaseId) => { released.add(leaseId); },
-  });
-  try {
-    await runtime.start();
-    const address = runtime.addresses()[0];
-    if (address === undefined) throw new Error(`tunnel ${carrier} listener did not bind`);
-    writeJSON({
-      type: "relay-ready", runtime: RUNTIME, carrier, path: "tunnel",
-      endpoint_url: endpointURL(carrier, "tunnel", address.port),
-      trust_pem: tls.tls.root_certificate_pem,
-      trust_roots_der: [tls.tls.root_certificate_der_base64],
-      server_certificate_der: tls.tls.leaf_certificate_der_base64,
-      origin: ORIGIN,
-    });
-    const configure = await input.next<{
-      type: string;
-      authorizations: readonly TunnelAuthorizationWire[];
-      verification_records?: Readonly<Record<string, string>>;
-    }>();
-    if (configure.type !== "configure" || !Array.isArray(configure.authorizations) ||
-        configure.authorizations.length === 0 || configure.verification_records === undefined) {
-      throw new Error("invalid v3 tunnel relay configuration");
+export function requireCurrentRelay(ready: unknown, endpointRole?: 0 | 1): asserts ready is CurrentRelayReady {
+  if (ready === null || typeof ready !== "object") throw new Error("invalid current relay ready envelope");
+  const current = ready as Partial<CurrentRelayReady>;
+  const inline = current.endpoint_a_artifact_json !== undefined || current.endpoint_b_artifact_json !== undefined;
+  const localLive = current.source === "live_authority" && endpointRole !== undefined;
+  const ownMaterial = endpointRole === 0 ? current.endpoint_a_artifact_json : current.endpoint_b_artifact_json;
+  const oppositeMaterial = endpointRole === 0 ? current.endpoint_b_artifact_json : current.endpoint_a_artifact_json;
+  if (current.type !== "relay-ready" || current.path !== "tunnel" || current.wire_revision !== 4 || (current.source !== "preauthorized_pool" && current.source !== "live_authority") ||
+    typeof current.runtime !== "string" || current.runtime.length === 0 || !["websocket", "raw-quic"].includes(current.carrier ?? "") ||
+    typeof current.profile !== "string" || !["fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1"].includes(current.profile) || typeof current.trust_pem !== "string" || current.trust_pem.length === 0 || Buffer.byteLength(current.trust_pem) > 1048576 ||
+    typeof current.origin !== "string" || current.origin.length === 0 || current.origin.length > 2048 ||
+    (localLive ? !inline || !boundedMaterial(ownMaterial) || oppositeMaterial !== ""
+      : inline ? !boundedMaterial(current.endpoint_a_artifact_json) || !boundedMaterial(current.endpoint_b_artifact_json)
+      : typeof current.material_digest !== "string" || !/^[a-f0-9]{64}$/u.test(current.material_digest))) throw new Error("current tunnel requires material from the original relay issuance");
+  if (current.material_digest !== undefined && !/^[a-f0-9]{64}$/u.test(current.material_digest)) throw new Error("invalid current material digest");
+  if (current.server_carrier !== undefined && current.server_carrier !== "websocket" && current.server_carrier !== "raw-quic") throw new Error("unsupported current server carrier");
+  if (localLive) {
+    const ownCertificate = endpointRole === 0 ? current.client_tls_certificate_pem : current.server_tls_certificate_pem;
+    const ownKey = endpointRole === 0 ? current.client_tls_private_key_pem : current.server_tls_private_key_pem;
+    const publicCertificate = endpointRole === 0 ? current.server_tls_certificate_pem : current.client_tls_certificate_pem;
+    const oppositeKey = endpointRole === 0 ? current.server_tls_private_key_pem : current.client_tls_private_key_pem;
+    if (oppositeKey !== "") throw new Error("current live endpoint received the opposite TLS private key");
+    if (ownCertificate !== undefined || ownKey !== undefined) requireCurrentListenerTLS(ownCertificate, ownKey);
+    if (publicCertificate !== undefined) {
+      if (typeof publicCertificate !== "string" || publicCertificate.length === 0 || Buffer.byteLength(publicCertificate) > 262144 || new X509Certificate(publicCertificate).checkIP("127.0.0.1") !== "127.0.0.1") throw new Error("current live endpoint requires its opposite public TLS identity");
     }
-    for (const item of configure.authorizations) authorizations.set(item.credentialId, item);
-    for (const [credentialID, artifactJSON] of Object.entries(configure.verification_records)) {
-      verificationRecords.set(credentialID, artifactJSON);
-    }
-    const close = await input.next<{ type: string }>();
-    if (close.type !== "close") throw new Error("invalid tunnel relay close command");
-    executed.record("close");
-  } finally {
-    await runtime.close();
-    executed.record("cancel");
-  }
-  if (released.size !== authorizations.size) throw new Error(`relay cleanup released ${released.size} of ${authorizations.size} leases`);
-  executed.record("admission", "pairing", "opaque-forwarding");
-  if (carrier === "raw-quic") executed.record("datagram-forwarding");
-  executed.record("cleanup");
-  writeJSON({
-    type: "relay-result", runtime: RUNTIME, carrier, path: "tunnel", cases: executed.snapshot(),
-    observed_plaintext: false, released_leases: released.size,
-  });
-}
-
-async function runTunnelEndpointB(input: PeerInput, carrier: ParityCarrier): Promise<void> {
-  const envelope = await input.next<TunnelInput>();
-  const { topology, relay } = envelope;
-  validateTunnelDimensions(topology, relay, "endpoint_b", carrier);
-  const issued = await issue({ mode: "tunnel", endpoint: relay.endpoint_url, topology_id: topology.id });
-  if (issued.endpoint_a_artifact_json === undefined || issued.endpoint_b_artifact_json === undefined ||
-      issued.authorizations === undefined || issued.verification_records === undefined) {
-    throw new Error("v3 parity issuer omitted tunnel material");
-  }
-  const ready: EndpointBReady = {
-    type: "endpoint-b-ready", runtime: RUNTIME, carrier, path: "tunnel",
-    endpoint_a_artifact_json: issued.endpoint_a_artifact_json,
-    endpoint_b_artifact_json: issued.endpoint_b_artifact_json,
-    relay, authorizations: issued.authorizations, verification_records: issued.verification_records,
-  };
-  writeJSON(ready);
-  const command = await input.next<{ type: string }>();
-  if (command.type !== "connect") throw new Error("endpoint B did not receive connect command");
-  const state = createHandlers("tunnel");
-  const session = await connectArtifact(ready.endpoint_b_artifact_json, relay, state.rpcHandlers);
-  state.executed.record("admission");
-  if (process.env.FLOWERSEC_PARITY_CLIENT_PROFILE !== undefined) {
-    await externalServer(session, state);
   } else {
-    await exerciseServer(session, state, "tunnel", false, carrier);
+    if (current.client_tls_certificate_pem !== undefined || current.client_tls_private_key_pem !== undefined) requireCurrentListenerTLS(current.client_tls_certificate_pem, current.client_tls_private_key_pem);
+    if (current.server_tls_certificate_pem !== undefined || current.server_tls_private_key_pem !== undefined) requireCurrentListenerTLS(current.server_tls_certificate_pem, current.server_tls_private_key_pem);
   }
-  await session.close().catch(() => undefined);
-  state.executed.record("close");
-  if (state.activeStreams.value !== 0) throw new Error(`endpoint B cleanup left ${state.activeStreams.value} streams`);
-  state.executed.record("cleanup");
-  writeJSON(result("endpoint-b-result", "tunnel", state.executed.snapshot(), carrier));
+  if (typeof current.route_digest !== "string" || Buffer.from(current.route_digest, "base64").length !== 32 || Buffer.from(current.route_digest, "base64").toString("base64") !== current.route_digest) throw new Error("invalid current relay route digest");
 }
+export function requireCurrentListenerTLS(certificatePEM: unknown, privateKeyPEM: unknown): asserts certificatePEM is string {
+  if (typeof certificatePEM !== "string" || certificatePEM.length === 0 || Buffer.byteLength(certificatePEM) > 262144 || typeof privateKeyPEM !== "string" || privateKeyPEM.length === 0 || Buffer.byteLength(privateKeyPEM) > 65536) throw new Error("current server listener requires its complete original TLS deployment");
+  const certificate = new X509Certificate(certificatePEM), key = createPublicKey(createPrivateKey(privateKeyPEM)).export({ type: "spki", format: "der" });
+  if (!certificate.publicKey.export({ type: "spki", format: "der" }).equals(key) || certificate.checkIP("127.0.0.1") !== "127.0.0.1") throw new Error("current listener TLS identity disagrees with its original local deployment");
+}
+function boundedMaterial(value: unknown): value is string { return typeof value === "string" && value.length > 0 && Buffer.byteLength(value) <= 1048576; }
 
-async function externalServer(session: Session, state: HandlerState): Promise<void> {
-  const cancellation = new AbortController();
-  cancellation.abort();
+/** Detached publication equality precedes any Environment or carrier ingress.
+ * It neither authorizes a Grant nor synthesizes an original durable record. */
+export function requireCurrentTunnelPublication(publication: CurrentParityMaterialPublication, relay: CurrentRelayReady, endpointRole?: 0 | 1): void {
+  if (relay.source === "live_authority" && endpointRole !== undefined) {
+    if (publication === null || typeof publication !== "object" || publication.wire_revision !== 4) throw new Error("invalid current live local publication");
+    const own = endpointRole === 0 ? publication.endpoint_a_artifact_json : publication.endpoint_b_artifact_json;
+    const opposite = endpointRole === 0 ? publication.endpoint_b_artifact_json : publication.endpoint_a_artifact_json;
+    if (!boundedMaterial(own) || opposite !== "") throw new Error("current live endpoint requires only its original local material");
+    const local = inspectCurrentTunnelMaterial(own, endpointRole);
+    if (local.clientLeg.carrier !== relay.carrier || local.serverLeg.carrier !== (relay.server_carrier ?? relay.carrier) || local.material.profile !== relay.profile || local.material.source !== relay.source || local.material.route_digest !== relay.route_digest) throw new Error("current publication differs from the fixed relay deployment");
+    if (relay.endpoint_a_artifact_json !== publication.endpoint_a_artifact_json || relay.endpoint_b_artifact_json !== publication.endpoint_b_artifact_json) throw new Error("current endpoint altered original relay material");
+    if (relay.authorizations !== undefined && (!Array.isArray(relay.authorizations) || relay.authorizations.length !== 0) || relay.verification_records !== undefined && !isDeepStrictEqual(relay.verification_records, local.material.namespaces)) throw new Error("current live relay projection differs from its original local publication");
+    return;
+  }
+  if (publication === null || typeof publication !== "object" || publication.wire_revision !== 4 || !boundedMaterial(publication.endpoint_a_artifact_json) || !boundedMaterial(publication.endpoint_b_artifact_json)) throw new Error("invalid current paired publication");
+  const client = inspectCurrentTunnelMaterial(publication.endpoint_a_artifact_json, 0), server = inspectCurrentTunnelMaterial(publication.endpoint_b_artifact_json, 1);
+  if (client.clientLeg.listenerRole !== server.clientLeg.listenerRole || client.serverLeg.listenerRole !== server.serverLeg.listenerRole) throw new Error("current endpoints changed their signed physical direction");
+  if (client.clientLeg.carrier !== relay.carrier || client.serverLeg.carrier !== (relay.server_carrier ?? relay.carrier) || client.material.profile !== relay.profile || client.material.source !== relay.source || client.material.route_digest !== relay.route_digest) throw new Error("current publication differs from the fixed relay deployment");
+  for (const key of ["artifact", "activation", "client_certificate", "server_certificate", "route", "route_digest", "profile", "source", "generation", "namespaces", "tunnels", "activation_signing_key_id", "relay_deployment"] as const) {
+    if (!isDeepStrictEqual(client.material[key], server.material[key])) throw new Error("current endpoints did not receive the same original paired publication");
+  }
+  if (client.material.source === "live_authority" && (server.material.source !== "live_authority" || client.material.live_control_base_url !== server.material.live_control_base_url)) throw new Error("current live registry changed its original control binding");
+  if (relay.endpoint_a_artifact_json !== undefined && publication.endpoint_a_artifact_json !== relay.endpoint_a_artifact_json || relay.endpoint_b_artifact_json !== undefined && publication.endpoint_b_artifact_json !== relay.endpoint_b_artifact_json) throw new Error("current endpoint altered original relay material");
+  if (relay.authorizations !== undefined && !isDeepStrictEqual(relay.authorizations, currentTunnelAuthorizations(publication.endpoint_a_artifact_json)) ||
+    relay.verification_records !== undefined && !isDeepStrictEqual(relay.verification_records, client.material.namespaces)) throw new Error("current relay projection differs from its original publication");
+}
+export interface CurrentRelayAcknowledgment {
+  readonly type: "configure"; readonly wire_revision: 4; readonly route_digest: string;
+  readonly authorizations?: readonly unknown[]; readonly verification_records?: unknown;
+}
+export function requireCurrentRelayAcknowledgment(command: CurrentRelayAcknowledgment, relay: CurrentRelayReady): void {
+  if (command === null || typeof command !== "object" || command.type !== "configure" ||
+    command.wire_revision !== 4 || command.route_digest !== relay.route_digest ||
+    !isDeepStrictEqual(command.authorizations, relay.authorizations) ||
+    !isDeepStrictEqual(command.verification_records, relay.verification_records)) throw new Error("configuration differs from original committed publication");
+}
+function materialPublicationPath(value: string | undefined): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 4096 || !isAbsolute(value)) throw new Error("current tunnel requires an independently configured absolute material publication path"); return value;
+}
+export async function readCurrentParityMaterialPublication(path: string, digest: string): Promise<CurrentParityMaterialPublication> {
+  materialPublicationPath(path);
+  if (!/^[a-f0-9]{64}$/u.test(digest)) throw new Error("invalid current material digest");
+  const file = await openFile(path, "r"), storage = Buffer.alloc(4194305); let length = 0;
   try {
-    await session.waitTermination({ signal: cancellation.signal });
-  } catch (error) {
-    if (!(error instanceof SessionError) || error.code !== "canceled") throw error;
+    for (;;) {
+      if (length === storage.length) throw new Error("current material publication exceeds its input bound");
+      const read = await file.read(storage, length, storage.length - length, null); if (read.bytesRead === 0) break; length += read.bytesRead;
+    }
+    if (length > 4194304 || createHash("sha256").update(storage.subarray(0, length)).digest("hex") !== digest) throw new Error("current material publication binding failed");
+    const material = JSON.parse(storage.subarray(0, length).toString("utf8")) as CurrentParityMaterialPublication;
+    if (material === null || typeof material !== "object" || material.wire_revision !== 4 ||
+      typeof material.endpoint_a_artifact_json !== "string" || material.endpoint_a_artifact_json.length === 0 || material.endpoint_a_artifact_json.length > 1048576 ||
+      typeof material.endpoint_b_artifact_json !== "string" || material.endpoint_b_artifact_json.length === 0 || material.endpoint_b_artifact_json.length > 1048576) throw new Error("invalid current material publication");
+    return Object.freeze(material);
+  } finally { storage.fill(0); await file.close(); }
+}
+export async function publishCurrentParityMaterial(path: string, material: CurrentParityMaterialPublication): Promise<Readonly<{ digest: string; close(): Promise<void> }>> {
+  materialPublicationPath(path);
+  const encoded = Buffer.from(JSON.stringify(material));
+  if (encoded.length > 4194304) { encoded.fill(0); throw new Error("current material publication exceeds its output bound"); }
+  let owner: Awaited<ReturnType<typeof openFile>> | undefined, identity: Awaited<ReturnType<typeof lstat>> | undefined;
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => closing ??= (async () => {
+    await owner?.close(); owner = undefined;
+    if (identity !== undefined) {
+      let current: Awaited<ReturnType<typeof lstat>>;
+      try { current = await lstat(path); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+      if (current.ino !== identity.ino || current.dev !== identity.dev) throw new Error("current material publication ownership changed");
+      await unlink(path);
+    }
+  })();
+  try {
+    owner = await openFile(path, "wx", 0o600); identity = await owner.stat(); await owner.writeFile(encoded); await owner.sync();
+    return Object.freeze({ digest: createHash("sha256").update(encoded).digest("hex"), close });
+  } catch (error) { await close(); throw error; } finally { encoded.fill(0); }
+}
+function currentV4Ready(material: string, relay: CurrentRelayReady, carrier: ParityCarrier): CurrentParityReady {
+  return Object.freeze({ type: "ready", runtime: RUNTIME, carrier, path: "tunnel", wire_revision: 4, artifact_json: material, trust_pem: relay.trust_pem,
+    origin: relay.origin, profile: relay.profile, source: relay.source, datagram: relay.carrier !== "websocket" && (relay.server_carrier ?? relay.carrier) !== "websocket" });
+}
+export async function runCurrentV4Relay(deployment: CurrentRelayPeerDeployment, input: ParityPeerInput, carrier: ParityCarrier, serverCarrier: ParityCarrier = carrier, clientListener?: ParityListener, serverListener?: ParityListener): Promise<void> {
+  const registration = readCurrentPeerMaterial(deployment.registration_json), installed = deployment.live_control;
+  const tls = deployment.native_tls, origin = deployment.origin;
+  if (tls === undefined || typeof origin !== "string" || origin.length === 0 || typeof tls.trustPEM !== "string" || tls.trustPEM.length === 0 ||
+      [tls.relay, tls.client, tls.server].some(identity => identity === undefined || typeof identity.certificatePEM !== "string" || identity.certificatePEM.length === 0 || typeof identity.privateKeyPEM !== "string" || identity.privateKeyPEM.length === 0)) throw new Error("current relay requires its independent native TLS and Origin installation");
+  const roots = [...tls.trustPEM.matchAll(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/gu)].map(match => new X509Certificate(match[0]).raw.toString("base64"));
+  if (roots.length === 0 || roots.length > 64) throw new Error("current relay trust installation is invalid");
+  const owned: Uint8Array[] = [];
+  let relay: Awaited<ReturnType<typeof createCurrentRelayPeer>>;
+  try {
+    const physical = { carrier, serverCarrier, origin, certificatePEM: tls.relay.certificatePEM, privateKeyPEM: tls.relay.privateKeyPEM, trustPEM: tls.trustPEM, serverListenerTLS: tls.relay };
+    if (registration.source === "live_authority") {
+      if (installed === undefined || deployment.server_control !== undefined || installed.applicationPolicy !== "allow") throw new Error("current live relay requires its independently installed application policy and control");
+      const clientCertificate = peerBytes(installed.clientControlCertificateDER, 65536), serverCertificate = peerBytes(installed.serverControlCertificateDER, 65536), activationSeed = peerBytes(installed.activationSeed, 32, 32); owned.push(clientCertificate, serverCertificate, activationSeed);
+      const quantity = (value: string): bigint => { if (typeof value !== "string" || !/^[1-9][0-9]{0,19}$/u.test(value) || BigInt(value) > 0xffffffffffffffffn) throw new Error("invalid live control duration"); return BigInt(value); };
+      relay = await createCurrentRelayPeer(deployment, { ...physical,
+        onControlPrepared: address => writeJSON({ type: "relay-prepared", runtime: RUNTIME, wire_revision: 4, profile: registration.profile, path: "tunnel", source: "live_authority", carrier, server_carrier: serverCarrier, address, control_endpoint: registration.live_control_base_url }),
+        liveControl: { host: installed.host, port: installed.port, tls: installed.tls, clientControlCertificateDER: clientCertificate, serverControlCertificateDER: serverCertificate,
+          live: { authority: deployment.authority, signingKeyID: installed.signingKeyID, activationSeed, maxActivationMS: quantity(installed.maxActivationMS), maxSessionMS: quantity(installed.maxSessionMS), workMS: quantity(installed.workMS), authorize: async (_request, operation) => { operation.check(); return true; } } } });
+    } else {
+      const control = deployment.server_control;
+      if (control === undefined || installed !== undefined || typeof control.workMS !== "string" || !/^[1-9][0-9]{0,4}$/u.test(control.workMS) || BigInt(control.workMS) > 60000n) throw new Error("current relay requires its original registered B control installation");
+      const controlCertificate = peerBytes(control.serverControlCertificateDER, 65536); owned.push(controlCertificate);
+      relay = await createCurrentRelayPeer(deployment, { ...physical, onControlPrepared: address => writeJSON({ type: "relay-prepared", runtime: RUNTIME, wire_revision: 4, profile: registration.profile, path: "tunnel", source: "preauthorized_pool", carrier, server_carrier: serverCarrier, control_endpoint: `https://${address.host}:${address.port}/flowersec/control/tunnel` }), serverControl: { ...control, workMS: BigInt(control.workMS), serverControlCertificateDER: controlCertificate } });
+    }
+  } finally { for (const value of owned) value.fill(0); }
+  let publication: Awaited<ReturnType<typeof publishCurrentParityMaterial>> | undefined;
+  try {
+    const material = readCurrentPeerMaterial(relay.endpointAArtifactJSON); requireListenerSelection(relay.endpointAArtifactJSON, clientListener, serverListener);
+    const originalPublication = { wire_revision: 4 as const, endpoint_a_artifact_json: relay.endpointAArtifactJSON, endpoint_b_artifact_json: relay.endpointBArtifactJSON, client_tls_certificate_pem: tls.client.certificatePEM, client_tls_private_key_pem: tls.client.privateKeyPEM, server_tls_certificate_pem: tls.server.certificatePEM, server_tls_private_key_pem: tls.server.privateKeyPEM };
+    if (deployment.material_publication_path !== undefined) publication = await publishCurrentParityMaterial(deployment.material_publication_path, originalPublication);
+    const ready: CurrentRelayReady = { type: "relay-ready", runtime: RUNTIME, carrier, path: "tunnel", profile: material.profile, source: material.source,
+      endpoint_url: relay.endpointURL, trust_pem: tls.trustPEM, trust_roots_der: roots, server_certificate_der: new X509Certificate(tls.relay.certificatePEM).raw.toString("base64"), origin,
+      ...originalPublication, ...(publication === undefined ? {} : { material_digest: publication.digest }), server_carrier: serverCarrier, route_digest: material.route_digest,
+      authorizations: currentTunnelAuthorizations(relay.endpointAArtifactJSON), verification_records: material.namespaces };
+    requireCurrentTunnelPublication(originalPublication, ready);
+    writeJSON(ready);
+    let acknowledged = false;
+    let command = await input.next<CurrentRelayAcknowledgment | { type: "close" }>();
+    while (command.type === "configure") {
+      requireCurrentRelayAcknowledgment(command, ready); relay.start(); acknowledged = true;
+      command = await input.next<CurrentRelayAcknowledgment | { type: "close" }>();
+    }
+    if (command.type !== "close" || !acknowledged) throw new Error("current relay did not receive close");
+    // Runtime Close cancels its original ingress waiters and pair carriers,
+    // then joins their physical termination before reporting these milestones.
+    await relay.close(); const observed = relay.runtime.status();
+    if (observed.listening || observed.authenticatedPairs !== 1n || observed.forwardedBytes === 0n || observed.activePairs !== 0 || observed.lastFailure !== undefined) throw new Error("current relay did not finish an authenticated forwarding pair");
+    if (carrier === "raw-quic" && serverCarrier === "raw-quic" && observed.forwardedDatagrams === 0n) throw new Error("current relay did not forward the parity datagram");
+    writeJSON({ type: "relay-result", runtime: RUNTIME, carrier, server_carrier: serverCarrier, path: "tunnel", wire_revision: 4, profile: material.profile, source: material.source,
+      cases: ["admission", "pairing", "opaque-forwarding", ...(observed.forwardedDatagrams > 0n ? ["datagram-forwarding"] : []), "close", "cancel", "cleanup"], observed_plaintext: false,
+      authenticated_pairs: observed.authenticatedPairs.toString(), forwarded_bytes: observed.forwardedBytes.toString(), forwarded_datagrams: observed.forwardedDatagrams.toString() });
+  } finally { await relay.close(); await publication?.close(); }
+}
+export async function runCurrentV4EndpointB(input: ParityPeerInput, carrier: ParityCarrier, publicationPath?: string, clientListener?: ParityListener, serverListener?: ParityListener, deploymentPath?: string): Promise<void> {
+  const deployment = await readRegisteredBDeployment(deploymentPath ?? process.env.FLOWERSEC_PARITY_SERVER_CONTROL_DEPLOYMENT), state = new CurrentParityState("tunnel");
+  const endpoint = await createCurrentRegisteredTunnelPeerServer(deployment, environment => state.plan(environment), { carrier, origin: deployment.origin, trustPEM: deployment.trustPEM });
+  let session: Session | undefined, binding: Awaited<ReturnType<typeof bindParity>> | undefined;
+  try {
+    const envelope = await input.next<TunnelInput>(), { relay } = envelope;
+    validateTunnelDimensions(envelope.topology, relay, "endpoint_b", carrier); requireCurrentRelay(relay, 1);
+  const material: CurrentParityMaterialPublication = relay.endpoint_a_artifact_json !== undefined && relay.endpoint_b_artifact_json !== undefined ? { wire_revision: 4, endpoint_a_artifact_json: relay.endpoint_a_artifact_json, endpoint_b_artifact_json: relay.endpoint_b_artifact_json }
+    : await readCurrentParityMaterialPublication(materialPublicationPath(publicationPath), relay.material_digest!);
+  requireCurrentTunnelPublication(material, relay, 1); requireListenerSelection(material.endpoint_b_artifact_json, clientListener, serverListener);
+  const publishedB = readCurrentPeerMaterial(material.endpoint_b_artifact_json);
+  for (const field of ["artifact", "activation", "client_certificate", "server_certificate", "route", "route_digest", "profile", "source", "generation", "namespaces", "activation_signing_key_id"] as const) {
+    if (!isDeepStrictEqual(publishedB[field], endpoint.material[field])) throw new Error("paired publication differs from B original independent registration");
   }
-  state.executed.record("cancel");
-  await session.probeLiveness();
-  await session.waitTermination();
-  state.executed.record("close");
+  if (publishedB.source === "live_authority" && (endpoint.material.source !== "live_authority" || publishedB.identity_seed !== endpoint.material.identity_seed || publishedB.dh_seed !== endpoint.material.dh_seed || publishedB.live_control_base_url !== endpoint.material.live_control_base_url || !isDeepStrictEqual(publishedB.tunnels, endpoint.material.tunnels))) throw new Error("paired publication changed B pending live scope");
+  const signal = AbortSignal.timeout(30000);
+  const serverCertificate = material.server_tls_certificate_pem ?? relay.server_tls_certificate_pem, serverKey = material.server_tls_private_key_pem ?? relay.server_tls_private_key_pem;
+  requireCurrentListenerTLS(serverCertificate, serverKey);
+  if (relay.origin !== deployment.origin || relay.trust_pem !== deployment.trustPEM || endpoint.listenerRole === 1n && (serverCertificate !== deployment.certificatePEM || serverKey !== deployment.privateKeyPEM)) throw new Error("detached parity publication differs from B trusted installation");
+    const accepting = endpoint.acceptor.accept({ signal }); void accepting.catch(() => undefined);
+    const clientCertificate = material.client_tls_certificate_pem ?? relay.client_tls_certificate_pem;
+    const clientKey = relay.source === "live_authority" ? "" : material.client_tls_private_key_pem ?? relay.client_tls_private_key_pem;
+    const ready: CurrentEndpointBReady = { type: "endpoint-b-ready", runtime: RUNTIME, carrier, path: "tunnel", wire_revision: 4, profile: relay.profile, source: relay.source,
+      ...(endpoint.serverAllow === undefined ? {} : { server_allow: endpoint.serverAllow }),
+      endpoint_a_artifact_json: material.endpoint_a_artifact_json, endpoint_b_artifact_json: material.endpoint_b_artifact_json, relay,
+      ...(clientCertificate === undefined ? {} : { client_tls_certificate_pem: clientCertificate }),
+      ...(clientKey === undefined ? {} : { client_tls_private_key_pem: clientKey }),
+      ...(relay.authorizations === undefined ? {} : { authorizations: relay.authorizations }), ...(relay.verification_records === undefined ? {} : { verification_records: relay.verification_records }) };
+    writeJSON(ready);
+    const command = await input.next<{ type: string }>(); if (command.type !== "connect") throw new Error("current endpoint B did not receive connect");
+    session = (await accepting).session; state.session = session; state.record("admission");
+    binding = await bindParity(endpoint.environment, session, { authority: endpoint.policy.authorities[0]!, tenant: endpoint.policy.tenant, audience: endpoint.policy.audience,
+      localSubject: endpoint.policy.serverSubject, peers: [{ subject: endpoint.policy.clientSubject, identityDigest: endpoint.clientIdentity }] }, signal);
+    const datagramCarrier = relay.carrier === "websocket" || (relay.server_carrier ?? relay.carrier) === "websocket" ? "websocket" : carrier;
+    await exerciseCurrentParityServer(session, state, binding, datagramCarrier, signal);
+    await session.close(); state.record("close"); binding.service.close(); binding.contracts.close(); await endpoint.close();
+    if (state.active !== 0 || session.cleanupStatus().status !== "complete") throw new Error("current endpoint B did not finish cleanup"); state.record("cleanup");
+    writeJSON({ type: "endpoint-b-result", runtime: RUNTIME, carrier, path: "tunnel", cases: [...state.executed], wire_revision: 4, profile: relay.profile, source: relay.source });
+  } finally { binding?.service.close(); binding?.contracts.close(); await session?.close(); await endpoint.close(); }
 }
-
-async function runTunnelEndpointA(input: PeerInput, carrier: ParityCarrier): Promise<void> {
-  const envelope = await input.next<TunnelInput>();
-  validateTunnelDimensions(
-    envelope.topology,
-    envelope.endpoint_b.relay,
-    "endpoint_a",
-    carrier,
-  );
-  const ready = envelope.endpoint_b;
-  if (
-    ready.type !== "endpoint-b-ready" ||
-    ready.carrier !== carrier ||
-    ready.path !== "tunnel" ||
-    ready.endpoint_a_artifact_json === ""
-  )
-    throw new Error("invalid endpoint B ready message");
-  const state = createHandlers("tunnel");
-  const session = await connectArtifact(
-    ready.endpoint_a_artifact_json,
-    ready.relay,
-    state.rpcHandlers,
-  );
-  state.executed.record("admission");
-  await exerciseClient(session, state, "tunnel", carrier);
-  await session.close().catch(() => undefined);
-  state.executed.record("close");
-  if (state.activeStreams.value !== 0)
-    throw new Error(`endpoint A cleanup left ${state.activeStreams.value} streams`);
-  state.executed.record("cleanup");
-  writeJSON(result("endpoint-a-result", "tunnel", state.executed.snapshot(), carrier));
+export async function runCurrentV4EndpointA(input: ParityPeerInput, carrier: ParityCarrier, clientListener?: ParityListener, serverListener?: ParityListener): Promise<void> {
+  const envelope = await input.next<TunnelInput>(), ready = envelope.endpoint_b;
+  if (ready === undefined || ready === null || typeof ready !== "object" || ready.relay === undefined || ready.relay === null || ready.type !== "endpoint-b-ready" || ready.carrier !== (ready.relay.server_carrier ?? ready.relay.carrier) || ready.path !== "tunnel") throw new Error("invalid current endpoint B envelope");
+  validateTunnelDimensions(envelope.topology, ready.relay, "endpoint_a", carrier); requireCurrentRelay(ready.relay, 0);
+  const current = ready as CurrentEndpointBReady;
+  if (current.wire_revision !== 4 || current.profile !== undefined && current.profile !== current.relay.profile || current.source !== undefined && current.source !== current.relay.source ||
+    typeof current.endpoint_a_artifact_json !== "string" || current.endpoint_a_artifact_json.length === 0 || current.endpoint_a_artifact_json.length > 1048576 ||
+    current.relay.endpoint_a_artifact_json !== undefined && current.endpoint_a_artifact_json !== current.relay.endpoint_a_artifact_json ||
+    current.relay.endpoint_b_artifact_json !== undefined && current.endpoint_b_artifact_json !== current.relay.endpoint_b_artifact_json) throw new Error("current endpoint B altered original relay material");
+  if (current.authorizations !== undefined && !isDeepStrictEqual(current.authorizations, current.relay.authorizations) || current.verification_records !== undefined && !isDeepStrictEqual(current.verification_records, current.relay.verification_records)) throw new Error("current endpoint B changed original acknowledgement projections");
+  if (current.relay.source === "live_authority" && (current.endpoint_b_artifact_json !== "" || "server_tls_private_key_pem" in current && current.server_tls_private_key_pem !== "")) throw new Error("current live A received the opposite private installation");
+  requireCurrentTunnelPublication(current, current.relay, 0); requireListenerSelection(current.endpoint_a_artifact_json, clientListener, serverListener);
+  const live = current.relay.source === "live_authority" ? await readLiveControlDeployment() : undefined;
+  const pool = current.relay.source === "preauthorized_pool" ? await readPoolControlDeployment() : undefined;
+  const clientCertificate = current.client_tls_certificate_pem ?? current.relay.client_tls_certificate_pem;
+  const clientKey = current.client_tls_private_key_pem ?? current.relay.client_tls_private_key_pem;
+  try { await runCurrentParityClient({ ...currentV4Ready(current.endpoint_a_artifact_json, current.relay, carrier),
+    ...(current.server_allow === undefined ? {} : { server_allow: current.server_allow }),
+    ...(clientCertificate === undefined ? {} : { client_tls_certificate_pem: clientCertificate }),
+    ...(clientKey === undefined ? {} : { client_tls_private_key_pem: clientKey }) }, carrier, live, "endpoint-a-result", pool); }
+  finally { if (live !== undefined && "clientPrivateKey" in live) live.clientPrivateKey.fill(0); }
 }
-
-function validateTunnelDimensions(
-  topology: Topology,
-  relay: RelayReady,
-  endpoint: "endpoint_a" | "endpoint_b",
-  carrier: ParityCarrier,
-): void {
-  if (
-    topology[endpoint] !== RUNTIME ||
-    topology.tunnel_runtime !== relay.runtime ||
-    topology.ingress_carrier_a !== carrier ||
-    topology.ingress_carrier_b !== carrier ||
-    relay.type !== "relay-ready" ||
-    relay.carrier !== carrier ||
-    relay.path !== "tunnel"
-  ) {
-    throw new Error("invalid tunnel topology dimensions");
+async function readRegisteredBDeployment(path: string | undefined): Promise<CurrentRegisteredTunnelPeerDeployment> {
+  if (typeof path !== "string" || path.length === 0 || path.length > 4096) throw new Error("current B requires --deployment or FLOWERSEC_PARITY_SERVER_CONTROL_DEPLOYMENT");
+  const file = await openFile(path, "r"), storage = Buffer.alloc(4194305); let length = 0;
+  try {
+    for (;;) { if (length === storage.length) throw new Error("current B deployment exceeds its input bound"); const read = await file.read(storage, length, storage.length - length, null); if (read.bytesRead === 0) break; length += read.bytesRead; }
+    const deployment = JSON.parse(storage.subarray(0, length).toString("utf8")) as CurrentRegisteredTunnelPeerDeployment;
+    if (deployment === null || typeof deployment !== "object" || deployment.wire_revision !== 4 || !boundedMaterial(deployment.registration_json) || typeof deployment.trustPEM !== "string" || Buffer.byteLength(deployment.trustPEM) > 1048576 || typeof deployment.origin !== "string" || deployment.origin.length === 0 || deployment.origin.length > 2048 || deployment.control === undefined) throw new Error("invalid original registered B installation");
+    return deployment;
+  } finally { storage.fill(0); await file.close(); }
+}
+async function readPoolControlDeployment(): Promise<CurrentPoolClientInstallation> {
+  const path = process.env.FLOWERSEC_PARITY_POOL_DEPLOYMENT;
+  if (typeof path !== "string" || path.length === 0 || path.length > 4096) throw new Error("pool A requires FLOWERSEC_PARITY_POOL_DEPLOYMENT");
+  const file = await openFile(path, "r"), storage = Buffer.alloc(1048577); let length = 0;
+  try {
+    for (;;) { if (length === storage.length) throw new Error("pool client deployment exceeds its input bound"); const read = await file.read(storage, length, storage.length - length, null); if (read.bytesRead === 0) break; length += read.bytesRead; }
+    const parsed = JSON.parse(storage.subarray(0, length).toString("utf8")) as CurrentPoolClientInstallation;
+    if (parsed === null || typeof parsed !== "object" || parsed.wire_revision !== 4 || typeof parsed.tenant !== "string" || typeof parsed.audience !== "string" || parsed.server_allow === null || typeof parsed.server_allow !== "object") throw new Error("invalid pool client deployment");
+    return parsed;
+  } finally { storage.fill(0); await file.close(); }
+}
+function requireListenerSelection(raw: string, client?: ParityListener, server?: ParityListener): void {
+  const route = inspectCurrentTunnelMaterial(raw, readCurrentPeerMaterial(raw).role);
+  if (client !== undefined && (route.clientLeg.listenerRole === 0 ? "endpoint" : "relay") !== client || server !== undefined && (route.serverLeg.listenerRole === 1 ? "endpoint" : "relay") !== server) throw new Error("physical listener arguments disagree with the original signed route");
+}
+export function parseArguments(arguments_: readonly string[]): Readonly<{ role: Role; carrier: ParityCarrier; serverCarrier?: ParityCarrier; clientListener?: ParityListener; serverListener?: ParityListener; wireRevision: 4; deploymentPath?: string; materialPublicationPath?: string }> {
+  const role = arguments_[0];
+  if (role !== "server" && role !== "client" && role !== "relay" && role !== "tunnel-endpoint-a" && role !== "tunnel-endpoint-b" || arguments_[1] !== "--carrier") throw new Error("usage: server-parity-peer server|client|relay|tunnel-endpoint-a|tunnel-endpoint-b --carrier websocket|raw-quic [--wire-revision 4] [--server-carrier websocket|raw-quic] [--client-listener endpoint|relay] [--server-listener endpoint|relay] [--deployment path] [--material-publication absolute_path]");
+  const carrier = arguments_[2]; if (carrier !== "websocket" && carrier !== "raw-quic") throw new Error("unsupported parity carrier");
+  const wireRevision = 4; let serverCarrier: ParityCarrier | undefined, clientListener: ParityListener | undefined, serverListener: ParityListener | undefined, deploymentPath: string | undefined, publicationPath: string | undefined; const seen = new Set<string>();
+  for (let offset = 3; offset < arguments_.length; offset += 2) {
+    const name = arguments_[offset]!, value = arguments_[offset + 1];
+    if (seen.has(name) || value === undefined) throw new Error("invalid parity option"); seen.add(name);
+    if (name === "--wire-revision" && value === "4") { /* Current engine only. */ }
+    else if (name === "--server-carrier" && (value === "websocket" || value === "raw-quic")) serverCarrier = value;
+    else if (name === "--client-listener" && (value === "endpoint" || value === "relay")) clientListener = value;
+    else if (name === "--server-listener" && (value === "endpoint" || value === "relay")) serverListener = value;
+    else if (name === "--deployment" && value.length > 0 && value.length <= 4096) deploymentPath = value;
+    else if (name === "--material-publication" && value.length > 0 && value.length <= 4096) publicationPath = materialPublicationPath(value);
+    else throw new Error("invalid parity option");
   }
+  if ((clientListener !== undefined || serverListener !== undefined) && !["relay", "tunnel-endpoint-a", "tunnel-endpoint-b"].includes(role)) throw new Error("listener selection belongs to a tunnel peer");
+  if (serverCarrier !== undefined && (role !== "relay" || wireRevision !== 4)) throw new Error("--server-carrier belongs to the current relay role");
+  if (deploymentPath !== undefined && (role !== "relay" && role !== "tunnel-endpoint-b" || wireRevision !== 4)) throw new Error("--deployment belongs to a current relay or registered B role");
+  if (publicationPath !== undefined && (role !== "tunnel-endpoint-b" || wireRevision !== 4)) throw new Error("--material-publication belongs to the current accepted endpoint role");
+  return Object.freeze({ role, carrier, wireRevision, ...(clientListener === undefined ? {} : { clientListener }), ...(serverListener === undefined ? {} : { serverListener }), ...(serverCarrier === undefined ? {} : { serverCarrier }), ...(publicationPath === undefined ? {} : { materialPublicationPath: publicationPath }), ...(deploymentPath === undefined ? {} : { deploymentPath }) });
 }
 
-function result(
-  type: string,
-  path: "direct" | "tunnel",
-  cases: readonly string[],
-  carrier: ParityCarrier,
-): Record<string, unknown> {
-  return {
-    type,
-    runtime: RUNTIME,
-    carrier,
-    path,
-    cases,
-  };
+/** Explicit engineering deployment input. The control origin, CA and client
+ * TLS identity come from this independently configured file, never material. */
+async function readLiveControlDeployment(): Promise<NodeLiveHTTPSOptions | CurrentRegisteredLiveClientInstallation | undefined> {
+  const path = process.env.FLOWERSEC_PARITY_LIVE_DEPLOYMENT;
+  if (path === undefined) return undefined;
+  if (path.length === 0 || path.length > 4096) throw new Error("invalid live parity deployment path");
+  const file = await openFile(path, "r"), storage = Buffer.alloc(1048577);
+  let length = 0;
+  try {
+    for (;;) {
+      if (length === storage.length) throw new Error("live parity deployment exceeds its input bound");
+      const read = await file.read(storage, length, storage.length - length, null);
+      if (read.bytesRead === 0) break; length += read.bytesRead;
+    }
+    let input: { control?: unknown; relay_control?: unknown; baseURL?: unknown; remoteAddress?: unknown; authority?: unknown; tenant?: unknown; audience?: unknown;
+      caPEM?: unknown; clientCertificatePEM?: unknown; clientPrivateKeyPEM?: unknown };
+    try { input = JSON.parse(storage.subarray(0, length).toString("utf8")) as typeof input; }
+    catch { throw new Error("invalid live parity deployment JSON"); }
+    if (input === null || typeof input !== "object") throw new Error("invalid live parity deployment JSON");
+    if (input.control !== undefined) {
+      const original = input as unknown as Omit<CurrentRegisteredLiveClientInstallation, "control"> & { control: CurrentRegisteredTunnelPeerDeployment["control"] };
+      if (typeof original.tenant !== "string" || typeof original.audience !== "string" || typeof original.control !== "object" || original.control === null ||
+          typeof original.control.endpoint !== "string" || typeof original.control.authority !== "string" || typeof original.control.workMS !== "string" || !/^[1-9][0-9]{0,4}$/u.test(original.control.workMS) || BigInt(original.control.workMS) > 60000n) throw new Error("invalid registered live client binding");
+      const control = original.control, tls = control.tls;
+      if (tls === null || typeof tls !== "object" || [tls.certificatePEM, tls.privateKeyPEM, tls.trustPEM].some(value => typeof value !== "string" || value.length === 0 || Buffer.byteLength(value) > 262144)) throw new Error("invalid registered live client TLS installation");
+      let relayControl: CurrentRegisteredLiveClientInstallation["relayControl"];
+      if (input.relay_control !== undefined) {
+        const relay = input.relay_control as CurrentRegisteredTunnelPeerDeployment["relay_control"];
+        if (relay === undefined || relay === null || typeof relay !== "object" || typeof relay.endpoint !== "string" || typeof relay.authority !== "string" || typeof relay.workMS !== "string" || !/^[1-9][0-9]{0,4}$/u.test(relay.workMS) || BigInt(relay.workMS) > 60000n) throw new Error("invalid registered live client relay control installation");
+        const relayURL = new URL(relay.endpoint), relayTLS = relay.tls;
+        if (relayURL.protocol !== "https:" || relayURL.pathname !== "/" || relayURL.search !== "" || relayURL.hash !== "" || relayURL.username !== "" || relayURL.password !== "" ||
+            relayTLS === null || typeof relayTLS !== "object" || [relayTLS.certificatePEM, relayTLS.privateKeyPEM, relayTLS.trustPEM].some(value => typeof value !== "string" || value.length === 0 || Buffer.byteLength(value) > 262144)) throw new Error("invalid registered live client relay TLS installation");
+        relayControl = { endpoint: relayURL.href, authority: relay.authority, tls: { ...relayTLS }, workMS: BigInt(relay.workMS) };
+      }
+      return { tenant: original.tenant, audience: original.audience, ...(relayControl === undefined ? {} : { relayControl }), control: { endpoint: control.endpoint, authority: control.authority, tls: { ...tls }, workMS: BigInt(control.workMS) } };
+    }
+    for (const value of [input.baseURL, input.remoteAddress, input.authority, input.tenant, input.audience])
+      if (typeof value !== "string" || value.length === 0 || value.length > 2048) throw new Error("invalid live parity deployment binding");
+    if (!Array.isArray(input.caPEM) || input.caPEM.length < 1 || input.caPEM.length > 64 ||
+        input.caPEM.some(value => typeof value !== "string" || value.length === 0 || value.length > 262144) ||
+        typeof input.clientCertificatePEM !== "string" || input.clientCertificatePEM.length === 0 || input.clientCertificatePEM.length > 262144 ||
+        typeof input.clientPrivateKeyPEM !== "string" || input.clientPrivateKeyPEM.length === 0 || input.clientPrivateKeyPEM.length > 65536)
+      throw new Error("invalid live parity mutual TLS identity");
+    return { baseURL: input.baseURL as string, remoteAddress: input.remoteAddress as string,
+      authority: input.authority as string, tenant: input.tenant as string, audience: input.audience as string,
+      ca: input.caPEM as string[], clientCertificate: input.clientCertificatePEM, clientPrivateKey: new TextEncoder().encode(input.clientPrivateKeyPEM),
+      maxConcurrentRequests: 1, timeoutMS: 10000n, headerBytes: 4096, handshakeBytes: 262144, runtimeBytes: 1024n, providerBytes: 4n << 20n };
+  } finally { storage.fill(0); await file.close(); }
+}
+export async function runParityPeer(arguments_: readonly string[] = process.argv.slice(2)): Promise<void> {
+  const { role, carrier, serverCarrier, clientListener, serverListener, deploymentPath, materialPublicationPath: publicationPath } = parseArguments(arguments_);
+  const input = new PeerInput();
+  try {
+    switch (role) {
+      case "server": await runCurrentParityServer(carrier, ORIGIN); break;
+      case "client": {
+        const ready = await input.next<CurrentParityReady>(), live = ready.source === "live_authority" ? await readLiveControlDeployment() : undefined;
+        const pool = ready.source === "preauthorized_pool" && ready.path === "tunnel" ? await readPoolControlDeployment() : undefined;
+        try { await runCurrentParityClient(ready, carrier, live, "client-result", pool); } finally { if (live !== undefined && "clientPrivateKey" in live) live.clientPrivateKey.fill(0); }
+        break;
+      }
+      case "relay": await runCurrentV4Relay(await currentV4Deployment(deploymentPath ?? process.env.FLOWERSEC_PARITY_CURRENT_V4_DEPLOYMENT), input, carrier, serverCarrier ?? carrier, clientListener, serverListener); break;
+      case "tunnel-endpoint-a": await runCurrentV4EndpointA(input, carrier, clientListener, serverListener); break;
+      case "tunnel-endpoint-b": await runCurrentV4EndpointB(input, carrier, publicationPath ?? process.env.FLOWERSEC_PARITY_CURRENT_V4_MATERIAL_PUBLICATION, clientListener, serverListener, deploymentPath); break;
+    }
+  } finally { input.close(); }
 }
 
-function writeJSON(value: unknown): void {
-  process.stdout.write(`${JSON.stringify(value)}\n`);
-}
-
-function parseArguments(
-  arguments_: readonly string[],
-): Readonly<{ role: Role; carrier: ParityCarrier }> {
-  const roles = new Set<Role>([
-    "server",
-    "client",
-    "relay",
-    "tunnel-endpoint-a",
-    "tunnel-endpoint-b",
-  ]);
-  const role = arguments_[0] as Role;
-  if (process.env.FLOWERSEC_SERVER_PARITY_PEER !== "1")
-    throw new Error("server parity peer is test-only");
-  if (
-    arguments_.length !== 3 ||
-    !roles.has(role) ||
-    arguments_[1] !== "--carrier"
-  )
-    throw new Error("invalid server parity peer arguments");
-  if (arguments_[2] !== "websocket" && arguments_[2] !== "raw-quic")
-    throw new Error(
-      `Node.js production carrier is unsupported by this peer: ${arguments_[2] ?? "missing"}`,
-    );
-  return { role, carrier: arguments_[2] };
-}
-
-function endpointURL(carrier: ParityCarrier, path: "direct" | "tunnel", port: number): string {
-  return carrier === "websocket"
-    ? `wss://localhost:${port}/flowersec/v3/${path}`
-    : `quic://127.0.0.1:${port}`;
-}
-
-function directListenerOptions(
-  carrier: ParityCarrier,
-  tls: TLSFixture,
-): AcceptorListenerV3 {
-  const material = { certificate: tls.tls.certificate_chain_pem, privateKey: tls.tls.private_key_pem };
-  return carrier === "websocket"
-    ? { carrier, path: "direct", host: "127.0.0.1", port: 0, tls: material, allowedOrigins: [ORIGIN] }
-    : { carrier: "raw_quic", path: "direct", host: "127.0.0.1", port: 0, tls: material };
-}
-
-function tunnelListenerOptions(
-  carrier: ParityCarrier,
-  tls: TLSFixture,
-): TunnelRuntimeListenerV3 {
-  const material = { certificate: tls.tls.certificate_chain_pem, privateKey: tls.tls.private_key_pem };
-  return carrier === "websocket"
-    ? { carrier, host: "127.0.0.1", port: 0, tls: material, allowedOrigins: [ORIGIN] }
-    : { carrier: "raw_quic", host: "127.0.0.1", port: 0, tls: material };
-}
-
-async function main(): Promise<void> {
-  const { role, carrier } = parseArguments(process.argv.slice(2));
-  switch (role) {
-    case "server":
-      await runServer(fixture(), carrier);
-      break;
-    case "client":
-      await runClient(new PeerInput(), carrier);
-      break;
-    case "relay":
-      await runRelay(fixture(), new PeerInput(), carrier);
-      break;
-    case "tunnel-endpoint-a":
-      await runTunnelEndpointA(new PeerInput(), carrier);
-      break;
-    case "tunnel-endpoint-b":
-      await runTunnelEndpointB(new PeerInput(), carrier);
-      break;
-  }
-}
-
-await main().catch((error: unknown) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
+if (process.argv[1] !== undefined && resolvePath(process.argv[1]) === fileURLToPath(import.meta.url)) await runParityPeer().catch((error: unknown) => {
+  process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exitCode = 1;
 });

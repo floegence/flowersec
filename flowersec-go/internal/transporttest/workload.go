@@ -15,7 +15,6 @@ import (
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
 )
 
 // Operation records one real workload operation without pre-aggregating its
@@ -196,9 +195,9 @@ func RunRPC(ctx context.Context, pair *ProductDirectPair, operations, workers, p
 			defer group.Done()
 			defer func() { <-semaphore }()
 			started := time.Now()
-			var response json.RawMessage
+			var response []byte
 			operationCtx, cancel := context.WithTimeout(ctx, operationDeadline)
-			err := pair.Client.RPC().Call(operationCtx, 1, payload, &response)
+			response, err := pair.CallEcho(operationCtx, payload)
 			cancel()
 			if err != nil {
 				workErrors <- fmt.Errorf("RPC operation %d: %w", ordinal, err)
@@ -297,6 +296,7 @@ type releaseByteStream interface {
 	io.Closer
 	CloseWrite() error
 	Reset() error
+	Finish(context.Context) error
 }
 
 type acceptedReleaseStream struct {
@@ -327,7 +327,12 @@ func runBulkPhase(ctx context.Context, pair *ProductDirectPair, bytesPerDirectio
 	if err != nil {
 		return nil, 0, err
 	}
-	serverOpened, err := pair.Server.OpenStream(phaseCtx, "release-bulk", flowersession.Metadata{"direction": "server-to-client"})
+	serverMetadata, err := flowersec.NewStreamMetadata(map[string]any{"direction": "server-to-client"})
+	if err != nil {
+		_ = clientOpened.Reset()
+		return nil, 0, err
+	}
+	serverOpened, err := pair.Server.OpenStream(phaseCtx, "release-bulk", serverMetadata)
 	if err != nil {
 		_ = clientOpened.Reset()
 		return nil, 0, err
@@ -404,16 +409,16 @@ func runBulkPhase(ctx context.Context, pair *ProductDirectPair, bytesPerDirectio
 	return measurements, activeStreams, err
 }
 
-func normalizePublicIncoming(incoming flowersec.IncomingStream, err error) acceptedReleaseStream {
+func normalizePublicIncoming(incoming flowersec.AcceptedStream, err error) acceptedReleaseStream {
 	metadata := incoming.Metadata.Values()
 	return acceptedReleaseStream{
 		kind: incoming.Kind, direction: fmt.Sprint(metadata["direction"]), stream: incoming.Stream, err: err,
 	}
 }
 
-func normalizeInternalIncoming(incoming flowersession.IncomingStream, err error) acceptedReleaseStream {
+func normalizeInternalIncoming(incoming flowersec.AcceptedStream, err error) acceptedReleaseStream {
 	return acceptedReleaseStream{
-		kind: incoming.Kind, direction: fmt.Sprint(incoming.Metadata["direction"]), stream: incoming.Stream, err: err,
+		kind: incoming.Kind, direction: fmt.Sprint(incoming.Metadata.Values()["direction"]), stream: incoming.Stream, err: err,
 	}
 }
 
@@ -486,6 +491,22 @@ func transferExactMeasured(ctx context.Context, writer, reader releaseByteStream
 			joined = errors.Join(joined, context.Cause(ctx))
 			reset()
 			ctxDone = nil
+		}
+	}
+	if joined == nil {
+		joined = reader.CloseWrite()
+		if joined == nil {
+			var trailing [1]byte
+			count, err := writer.Read(trailing[:])
+			if count != 0 || !errors.Is(err, io.EOF) {
+				joined = errors.Join(errors.New("bulk sender did not observe exact peer FIN"), err)
+			}
+		}
+		if joined == nil {
+			joined = writer.Finish(ctx)
+		}
+		if joined == nil {
+			joined = reader.Finish(ctx)
 		}
 	}
 	measurement := BulkPhaseDirection{StartedAt: started, Duration: time.Since(started), Bytes: total}

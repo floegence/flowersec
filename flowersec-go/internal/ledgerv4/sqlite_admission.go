@@ -25,6 +25,8 @@ type SQLiteAdmissionAuthority interface {
 // may call the supplied trusted Acceptor continuation; queries cannot do so.
 type SQLiteAdmission struct{ *sqliteAdmission }
 type sqliteAdmission struct {
+	winnerContinuation                SQLiteOriginalParentWinnerContinuation
+	environment                       resourcev4.Reference
 	mu                                sync.Mutex
 	store                             *sqliteStore
 	parent                            *sqliteStore
@@ -176,6 +178,8 @@ func NewSQLiteAdmission(ctx context.Context, store *SQLiteStore, authority SQLit
 	}
 	a := &sqliteAdmission{store: store.sqliteStore, invocation: i, guard: guard, reservation: held, storeReference: ref, reserved: make([]byte, limit), target: make([]byte, limit), scratch: make([]byte, limit), record: admissionRecord{fields: fields, owner: owner, authority: strings.Clone(identity.Authority), storeID: identity.StoreID, storeGeneration: identity.Generation, fence: epoch, deadline: deadline.Cap(), reservedAt: sample.UpperMS}}
 	if parent != nil {
+		a.winnerContinuation, _ = authority.(SQLiteOriginalParentWinnerContinuation)
+		a.environment = environment
 		a.parent, a.parentReference = parent.sqliteStore, parentRef
 		if _, err = a.record.encodeParentWinner(a.target); err != nil {
 			return nil, err
@@ -223,7 +227,17 @@ func (a *SQLiteAdmission) Admit(action func(context.Context, protocolv4.Admissio
 		if encodeErr != nil {
 			return encodeErr
 		}
-		if err = a.parent.matchParentWinner(a.invocation.ctx, a.key[:a.keySize], a.target[:n], a.scratch, a.check); err != nil {
+		if a.winnerContinuation != nil {
+			// The registered owner matches the original relay winner. A local
+			// empty winner store cannot establish this remote authority fact.
+			n, err = protocolv4.EncodePoolWinnerControlProjection(a.target, a.record.fields)
+			if err != nil {
+				return err
+			}
+			if err = a.winnerContinuation.ContinueOriginalParentWinner(a.invocation.ctx, a.key[:a.keySize], a.target[:n], a.environment, a.check); err != nil {
+				return err
+			}
+		} else if err = a.parent.matchParentWinner(a.invocation.ctx, a.key[:a.keySize], a.target[:n], a.scratch, a.check); err != nil {
 			return err
 		}
 	}
@@ -303,6 +317,8 @@ func (a *SQLiteAdmission) Cleanup() error {
 	clear(a.key[:])
 	a.reserved, a.target, a.scratch = nil, nil, nil
 	a.guard = nil
+	a.winnerContinuation = nil
+	a.environment = resourcev4.Reference{}
 	a.record = admissionRecord{}
 	a.store = nil
 	a.storeReference.Release()

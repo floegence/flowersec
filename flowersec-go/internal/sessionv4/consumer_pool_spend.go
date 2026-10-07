@@ -11,7 +11,7 @@ import (
 // winner, verifies current activation trust before the write, and performs one
 // TxA-P. Only its definite original commit may activate that same carrier. The
 // complete graph and store workspace must have been admitted before this call.
-func (a *SessionAdmissionReservation) ConsumePoolSQLite(store *ledgerv4.SQLiteStore, authority ledgerv4.SQLitePoolAuthority, activation *protocolv4.ActivationAuthority, proof []byte, reservation resourcev4.Reference) (x *InitialExchange, err error) {
+func (a *SessionAdmissionReservation) ConsumePoolSQLite(store *ledgerv4.SQLiteStore, authority ledgerv4.SQLitePoolAuthority, activation *protocolv4.ActivationAuthority, proof []byte, reservation resourcev4.Reference, observations ...*ledgerv4.PoolSpendObservation) (x *InitialExchange, err error) {
 	if a == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -58,7 +58,7 @@ func (a *SessionAdmissionReservation) ConsumePoolSQLite(store *ledgerv4.SQLiteSt
 		}
 	}()
 	guard := func() error { a.mu.Lock(); defer a.mu.Unlock(); return a.checkLocked() }
-	durable, err := ledgerv4.NewSQLitePoolSpend(a.ctx, store, authority, facts, proof, a.poolOwner, a.config.Core.Clock, a.config.Initial.Deadline, guard, reservation, a.environment)
+	durable, err := ledgerv4.NewSQLitePoolSpend(a.ctx, store, authority, facts, proof, a.poolOwner, a.config.Core.Clock, a.config.Initial.Deadline, guard, reservation, a.environment, observations...)
 	if err != nil {
 		return nil, err
 	}

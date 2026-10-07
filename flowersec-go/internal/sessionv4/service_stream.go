@@ -183,6 +183,11 @@ func (d *ServiceDispatch) dispatchStreamOpen(transport *sessionStreamDispatcher,
 		d.mu.Unlock()
 		return true, err
 	}
+	if err := d.streamMethods[methodIndex].registration.services.retainRegistration(); err != nil {
+		hold.Release()
+		d.mu.Unlock()
+		return true, err
+	}
 	ctx, cancel := context.WithCancel(transport.context)
 	job := &serviceStreamCall{dispatcher: d, transport: transport, registration: d.streamMethods[methodIndex].registration, methodIndex: methodIndex, index: index, handle: h, context: ctx, cancel: cancel, dispatcherHold: hold}
 	d.streamSlots[index] = job
@@ -448,6 +453,7 @@ func (j *serviceStreamCall) release() {
 		j.transport.core.plan.finishStream(j.allocation)
 		j.allocation = nil
 	}
+	j.registration.services.releaseInvocation()
 	j.registration = StreamRegistration{}
 	for _, ref := range j.refs {
 		ref.Release()

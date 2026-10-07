@@ -13,6 +13,7 @@ import {
 
 import {
   acquireArtifactBatch,
+  cancelArtifactPeer,
   chromiumExecutablePath,
   chromiumLaunchOptions,
   commitArtifactSpend,
@@ -20,6 +21,7 @@ import {
   firefoxLaunchOptions,
   normalizeRunnerPlan,
   runOpenLoop,
+  retireArtifactPeer,
   startArtifactPeer,
   verifyChromiumWebTransportCapability,
 } from "./browser-test-runner-core.mjs";
@@ -67,6 +69,8 @@ const forcedPlan = {
   diagnostics_enabled: true,
   policy: "require_quic_family",
   artifact_source_url: "http://127.0.0.1:9000/artifacts",
+  installation_manifest_path: path.resolve("browser-installation.json"),
+  history_directory: path.resolve("browser-history"),
   certificate_hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   client_netns: "flowersec-client-01",
   module_bind_address: "192.0.2.1",
@@ -149,7 +153,7 @@ test("cold diagnostic preserves the frozen cold workload and excludes post-conne
   assert.match(runnerSource, /if \(!plan\.cold_diagnostic\) \{[\s\S]*runSessionWorkload/);
 });
 
-test("binds held-session establishment to the cold phase deadline", async () => {
+test("binds held-session establishment to the original peer operation deadline", async () => {
   const plan = normalizeRunnerPlan({
     ...forcedPlan,
     cold: { ...forcedPlan.cold, operation_deadline_ms: 6_000 },
@@ -166,11 +170,11 @@ test("binds held-session establishment to the cold phase deadline", async () => 
   };
 
   await runSessionWorkload(page, {}, plan);
-  assert.equal(payload.connectDeadlineMs, 30_000);
+  assert.equal(payload.connectDeadlineMs, 6_000);
   assert.equal("policy" in payload, false);
   assert.match(
     evaluatorSource,
-    /connect\(lease, \{ signal \}\)/,
+    /owner\.connect\(signal\)/,
   );
 });
 
@@ -197,19 +201,30 @@ test("binds every cold connection to its operation deadline", async () => {
   assert.ok(payload.connectDeadlineMs > 0 && payload.connectDeadlineMs <= 53_000);
   assert.equal("policy" in payload, false);
   const timerIndex = evaluatorSource.indexOf("const timer = setTimeout");
-  const peerReadyIndex = evaluatorSource.indexOf("await Promise.race([peerStart, peerStartDeadline])");
-  const connectIndex = evaluatorSource.indexOf("sdk.connect");
+  const peerReadyIndex = evaluatorSource.indexOf("await globalThis.__flowersecStartArtifact(item.spend_token, remainingConnectTime())");
+  const connectIndex = evaluatorSource.indexOf("owner.connect");
   assert.ok(timerIndex >= 0 && timerIndex < peerReadyIndex, "peer start must consume the operation deadline");
   assert.ok(peerReadyIndex < connectIndex, "the paired leg must be ready before the browser candidate connects");
   assert.match(
     evaluatorSource,
-    /connect\(lease, \{ signal: controller\.signal \}\)/,
+    /owner\.connect\(controller\.signal\)/,
   );
 });
 
 test("bounds peer startup before importing or dialing the browser candidate", async () => {
   const previousStart = globalThis.__flowersecStartArtifact;
-  globalThis.__flowersecStartArtifact = () => new Promise(() => {});
+  const previousCancel = globalThis.__flowersecCancelArtifact;
+  let rejectStart;
+  let startBudget;
+  let canceledToken;
+  globalThis.__flowersecStartArtifact = (_token, deadlineMs) => {
+    startBudget = deadlineMs;
+    return new Promise((_, reject) => { rejectStart = reject; });
+  };
+  globalThis.__flowersecCancelArtifact = async (token) => {
+    canceledToken = token;
+    rejectStart(new Error("cold operation deadline exceeded"));
+  };
   const page = {
     evaluate: async (operation, payload) => await operation(payload),
     close: async () => {},
@@ -224,9 +239,13 @@ test("bounds peer startup before importing or dialing the browser candidate", as
       ),
       /cold operation deadline exceeded/,
     );
+    assert.ok(startBudget > 0 && startBudget <= 20);
+    assert.equal(canceledToken, "spend-1");
   } finally {
     if (previousStart === undefined) delete globalThis.__flowersecStartArtifact;
     else globalThis.__flowersecStartArtifact = previousStart;
+    if (previousCancel === undefined) delete globalThis.__flowersecCancelArtifact;
+    else globalThis.__flowersecCancelArtifact = previousCancel;
   }
 });
 
@@ -301,7 +320,7 @@ test("cold phase drains post-connect work after every connection meets the phase
   assert.ok(connectBudgets.every((budget) => budget > 0 && budget <= cold.operation_deadline_ms));
 });
 
-test("records only the public v3 connect classification before preserving the failure", async () => {
+test("records the public current connect classification before preserving the failure", async () => {
   let evaluatorSource = "";
   const page = {
     evaluate: async (operation) => {
@@ -316,9 +335,9 @@ test("records only the public v3 connect classification before preserving the fa
     { ...forcedPlan.cold, operations: 1, max_inflight: 1 },
     5_000,
   );
-  assert.match(evaluatorSource, /error instanceof sdk\.ConnectError/);
+  assert.match(evaluatorSource, /typeof error\?\.code === "string"/);
   assert.match(evaluatorSource, /__flowersecRecordDiagnostic/);
-  assert.match(evaluatorSource, /error\.disposition\.kind/);
+  assert.match(evaluatorSource, /public_code/);
   assert.match(evaluatorSource, /throw error/);
   assert.doesNotMatch(evaluatorSource, /connectErrorDetailsInternal|internal_code|candidates|candidateId|normalized_url/);
   const runnerSource = readFileSync(new URL("./browser-test-runner.mjs", import.meta.url), "utf8");
@@ -328,8 +347,8 @@ test("records only the public v3 connect classification before preserving the fa
 test("production browser runners leave WebTransport certificate options to the SDK", () => {
   const runnerSource = readFileSync(new URL("./browser-test-runner.mjs", import.meta.url), "utf8");
   const capacitySource = readFileSync(new URL("./browser-capacity-controller.mjs", import.meta.url), "utf8");
-  const v3PlaywrightSource = readFileSync(new URL("../browser-e2e/transport-v3.spec.ts", import.meta.url), "utf8");
-  for (const source of [runnerSource, capacitySource, v3PlaywrightSource]) {
+  const currentDriverSource = readFileSync(new URL("../browser-e2e/go-webtransport-peer.ts", import.meta.url), "utf8");
+  for (const source of [runnerSource, capacitySource, currentDriverSource]) {
     assert.doesNotMatch(source, /serverCertificateHashes/);
     assert.doesNotMatch(source, /globalThis\.WebTransport\s*=/);
   }
@@ -519,6 +538,7 @@ test("freezes Chromium tunnel capacity at exactly 1000 live sessions", () => {
     module_advertise_host: forcedPlan.module_advertise_host,
     control_bind_address: forcedPlan.module_bind_address,
     event_sink_url: "http://192.0.2.1:32123/events",
+    installation_manifest_path: forcedPlan.installation_manifest_path, history_directory: forcedPlan.history_directory,
     output_directory: outputDirectory,
     operation_deadline_ms: 30_000,
   };
@@ -707,6 +727,7 @@ test("freezes Chromium stream capacity at 100 sessions and 128 streams each", ()
     certificate_hash: forcedPlan.certificate_hash, client_netns: forcedPlan.client_netns,
     module_bind_address: forcedPlan.module_bind_address, module_advertise_host: forcedPlan.module_advertise_host,
     control_bind_address: forcedPlan.module_bind_address, event_sink_url: "http://192.0.2.1:32123/events",
+    installation_manifest_path: forcedPlan.installation_manifest_path, history_directory: forcedPlan.history_directory,
     output_directory: path.resolve("stream-capacity-output"), operation_deadline_ms: 60_000,
   };
   const normalized = normalizeBrowserCapacityPlan(plan);
@@ -884,8 +905,8 @@ test("acquires an exact fresh artifact batch from the runner-owned endpoint", as
     return new Response(JSON.stringify({
       schema_version: 1,
       artifacts: [
-        { artifact_json: "{\"version\":2}", spend_token: "spend-1" },
-        { artifact_json: "{\"version\":2}", spend_token: "spend-2" },
+        { artifact_json: "{\"wire_revision\":4,\"role\":0,\"source\":\"preauthorized_pool\"}", spend_token: "spend-1" },
+        { artifact_json: "{\"wire_revision\":4,\"role\":0,\"source\":\"preauthorized_pool\"}", spend_token: "spend-2" },
       ],
     }), { status: 200, headers: { "content-type": "application/json" } });
   });
@@ -910,8 +931,8 @@ test("acquires an exact fresh artifact batch from the runner-owned endpoint", as
     }, async () => new Response(JSON.stringify({
       schema_version: 1,
       artifacts: [
-        { artifact_json: "{}", spend_token: "duplicate" },
-        { artifact_json: "{}", spend_token: "duplicate" },
+        { artifact_json: "{\"wire_revision\":4,\"role\":0,\"source\":\"preauthorized_pool\"}", spend_token: "duplicate" },
+        { artifact_json: "{\"wire_revision\":4,\"role\":0,\"source\":\"preauthorized_pool\"}", spend_token: "duplicate" },
       ],
     }), { status: 200 })),
     /duplicate spend token/,
@@ -952,4 +973,38 @@ test("starts the paired artifact leg through the runner-owned endpoint", async (
     startArtifactPeer(forcedPlan, "spend-1", async () => new Response(null, { status: 409 })),
     /HTTP 409/,
   );
+});
+
+
+test("original source operations forward cancellation and never redeliver an aborted request", async () => {
+  const controller = new AbortController();
+  const failure = new Error("original run canceled");
+  let requests = 0;
+  const fetchImpl = async (_url, options) => {
+    requests++;
+    assert.equal(options.signal, controller.signal);
+    return await new Promise((_, reject) => {
+      options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+    });
+  };
+  const pending = startArtifactPeer(forcedPlan, "original-token", fetchImpl, { signal: controller.signal });
+  controller.abort(failure);
+  await assert.rejects(pending, (error) => error === failure);
+  await assert.rejects(commitArtifactSpend(forcedPlan, "original-token", fetchImpl, { signal: controller.signal }), (error) => error === failure);
+  await assert.rejects(acquireArtifactBatch(forcedPlan, { profile_id: "clean-v1", phase: "cold", count: 1 }, fetchImpl, { signal: controller.signal }), (error) => error === failure);
+  assert.equal(requests, 1);
+});
+
+test("original cleanup requires the exact source completion and refuses unknown cleanup", async () => {
+  const cleanup = new AbortController();
+  for (const [action, operation] of [["cancel", cancelArtifactPeer], ["retire", retireArtifactPeer]]) {
+    await operation(forcedPlan, "original-token", async (_url, options) => {
+      assert.equal(options.signal, cleanup.signal);
+      assert.deepEqual(JSON.parse(options.body), { schema_version: 1, action, spend_token: "original-token" });
+      return new Response(JSON.stringify({ schema_version: 1, status: "complete" }), { status: 200 });
+    }, { signal: cleanup.signal });
+    await assert.rejects(operation(forcedPlan, "original-token", async () => new Response(null, { status: 409 })), /HTTP 409/);
+    await assert.rejects(operation(forcedPlan, "original-token", async () => new Response(JSON.stringify({ schema_version: 1, status: "pending" }), { status: 200 })), /did not confirm original cleanup/);
+    await assert.rejects(operation(forcedPlan, "original-token", async () => new Response(null, { status: 204 })), /JSON|Unexpected/);
+  }
 });

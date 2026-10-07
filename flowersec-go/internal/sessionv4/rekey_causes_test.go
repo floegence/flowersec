@@ -198,6 +198,12 @@ func TestRekeyCausesPeerResponsibilitySurvivesManualExit(t *testing.T) {
 	if !i.completed || !si.completed || client.causes.current != nil || server.causes.current != nil || client.causes.epoch != 1 || server.causes.epoch != 1 {
 		t.Fatal("original cause owner not completed")
 	}
+	if _, err := client.causes.safety(0, rekeyTestDeadline(t, client.engine)); !errors.Is(err, cryptov4.ErrTransition) {
+		t.Fatal("stale safety cause attached to successor epoch", err)
+	}
+	if client.causes.current != nil {
+		t.Fatal("stale safety created a successor intent")
+	}
 }
 
 func TestRekeyCausesLateCancelledExitPreservesNewPeerFreeze(t *testing.T) {

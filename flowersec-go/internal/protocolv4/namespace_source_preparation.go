@@ -14,7 +14,7 @@ func (t *NamespaceTrustStore) NamespaceForPreparation(clock *timev4.Clock, envir
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.closed || t.retired || t.namespace == nil || t.count == 0 {
+	if t.closed || t.retired || t.retirementOnly || t.namespace == nil || t.count == 0 {
 		return nil, resourcev4.ErrClosed
 	}
 	if clock != t.clock {

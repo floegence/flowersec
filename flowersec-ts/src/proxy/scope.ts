@@ -51,9 +51,9 @@ function positiveInt(name: string, value: unknown): number {
 function optionalLimits(value: unknown): ProxyRuntimeScopeLimits | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) reject("limits");
-  exactFields(value, ["timeoutMs", "maxJsonFrameBytes", "maxChunkBytes", "maxBodyBytes", "maxWsFrameBytes"], "limits");
+  exactFields(value, ["timeoutMs", "maxMetadataBytes", "maxChunkBytes", "maxBodyBytes", "maxWsFrameBytes"], "limits");
   const result: Record<string, number> = {};
-  for (const key of ["timeoutMs", "maxJsonFrameBytes", "maxChunkBytes", "maxBodyBytes", "maxWsFrameBytes"] as const) {
+  for (const key of ["timeoutMs", "maxMetadataBytes", "maxChunkBytes", "maxBodyBytes", "maxWsFrameBytes"] as const) {
     if (value[key] !== undefined) result[key] = positiveInt(`limits.${key}`, value[key]);
   }
   return Object.freeze(result) as ProxyRuntimeScopeLimits;

@@ -59,7 +59,7 @@ func (c *SessionCore) OpenMessageStream(ctx context.Context, config TypedMessage
 		return nil, err
 	}
 	allocation.candidate.typed = m
-	h, _, err := a.OpenLocal(ctx, BusinessStream, config.Definition.Kind(), wire, &CarrierAssociation{shared: a.sharedIngress}, allocation.reservation, deadline)
+	h, _, err := p.openBusinessStream(ctx, allocation, config.Definition.Kind(), wire, deadline)
 	if err != nil {
 		return nil, err
 	}

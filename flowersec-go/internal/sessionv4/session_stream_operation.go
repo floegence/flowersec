@@ -123,7 +123,8 @@ func (s *StreamOperation) Start(ctx context.Context, sessions ...*SessionCore) S
 		return StreamStartResult{NotAdmitted: true, Error: err}
 	}
 	var stream *StreamMessages
-	err := o.request.WithStart(ctx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, _, payload []byte) error {
+	operationCtx := withOwnedDiagnosticOperation(ctx, o.diagnosticOperation)
+	err := o.request.WithStart(operationCtx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, _, payload []byte) error {
 		if x.resume != nil {
 			if err := x.resume.check(x.core); err != nil {
 				return err
@@ -133,7 +134,7 @@ func (s *StreamOperation) Start(ctx context.Context, sessions ...*SessionCore) S
 		if err != nil {
 			return err
 		}
-		stream, err = o.services.beginPreparedStream(ctx, x, route, h, payload, deadline, o.resultPlan, &o.dependencies)
+		stream, err = o.services.beginPreparedStream(operationCtx, x, route, h, payload, deadline, o.resultPlan, &o.dependencies)
 		return err
 	})
 	if err != nil {

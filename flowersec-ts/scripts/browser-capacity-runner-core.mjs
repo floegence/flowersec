@@ -37,6 +37,8 @@ export function normalizeBrowserCapacityPlan(input) {
     module_advertise_host: ipAddress(plan.module_advertise_host, "module_advertise_host"),
     control_bind_address: ipAddress(plan.control_bind_address, "control_bind_address"),
     event_sink_url: httpURL(plan.event_sink_url, "event_sink_url"),
+    installation_manifest_path: absolutePath(plan.installation_manifest_path, "installation_manifest_path"),
+    history_directory: absolutePath(plan.history_directory, "history_directory"),
     output_directory: absolutePath(plan.output_directory, "output_directory"),
     operation_deadline_ms: exactInteger(plan.operation_deadline_ms, "operation_deadline_ms", operationDeadlineMs, operationDeadlineMs),
   });

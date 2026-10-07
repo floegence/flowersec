@@ -82,12 +82,28 @@ func (t *NamespaceTrustStore) StateHistory(state *NamespaceState) error {
 }
 
 func (t *NamespaceTrustStore) stateHistoryAt(state *NamespaceState, sample timev4.Sample) error {
+	_, err := t.stateHistoryAtMode(state, sample, false)
+	return err
+}
+
+func (t *NamespaceTrustStore) stateHistoryAtPending(state *NamespaceState, sample timev4.Sample) (uint64, error) {
+	return t.stateHistoryAtMode(state, sample, true)
+}
+
+func (t *NamespaceTrustStore) stateHistoryAtMode(state *NamespaceState, sample timev4.Sample, allowPending bool) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	pending := uint64(0)
 	if err := t.checkCurrentLockedAt(sample); err != nil {
-		return err
+		if !allowPending || err != timev4.ErrPending {
+			return 0, err
+		}
+		pending = t.configurations[t.count-1].issued
 	}
-	return t.stateHistoryLocked(state)
+	if err := t.stateHistoryLocked(state); err != nil {
+		return 0, err
+	}
+	return pending, nil
 }
 
 func (t *NamespaceTrustStore) stateHistoryLocked(state *NamespaceState) error {

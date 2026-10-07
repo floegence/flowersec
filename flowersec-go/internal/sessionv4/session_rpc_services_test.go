@@ -16,9 +16,10 @@ import (
 
 func rpcServicesPlanFixture(t *testing.T, scoped ...bool) (*executorFixture, *SessionPlan, RPCServicesConfig) {
 	t.Helper()
-	// Component capacity covers all original future channel owners. This is
-	// synthetic geometry, not qualification of a supported deployment preset.
-	limit := resourcev4.Vector{resourcev4.SDKBytes: 16 << 20, resourcev4.Items: 4096, resourcev4.Tasks: 128, resourcev4.WorkSlots: 128, resourcev4.Timers: 64}
+	// Component capacity covers all original future channel owners and two
+	// concurrent public Bind callers. This is synthetic geometry, not
+	// qualification of a supported deployment preset.
+	limit := resourcev4.Vector{resourcev4.SDKBytes: 16 << 20, resourcev4.Items: 4096, resourcev4.Tasks: 256, resourcev4.WorkSlots: 512, resourcev4.Timers: 64}
 	root, err := resourcev4.NewRoot(resourcev4.Config{ProfileRevision: [32]byte{1}, Limit: limit, AccountSlots: 8, ReservationSlots: 160, ReferenceSlots: 320})
 	if err != nil {
 		t.Fatal(err)

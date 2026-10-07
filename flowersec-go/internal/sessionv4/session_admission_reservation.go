@@ -592,7 +592,7 @@ func (a *SessionAdmissionReservation) Authenticate(config cryptov4.HandshakeConf
 		return nil, cryptov4.ErrTransition
 	}
 	a.busy = true
-	x, plan, host := a.initial, a.core, a.host
+	x, plan, host, application := a.initial, a.core, a.host, a.application
 	a.mu.Unlock()
 	defer func() {
 		if err != nil {
@@ -618,7 +618,30 @@ func (a *SessionAdmissionReservation) Authenticate(config cryptov4.HandshakeConf
 	if err = a.config.Features.MatchHello(h, a.binding.Role); err != nil {
 		return nil, err
 	}
+	if host != nil && application != nil {
+		host.mu.Lock()
+		controller := host.notificationController
+		host.notificationController = nil
+		host.mu.Unlock()
+		application.mu.Lock()
+		rpc := application.rpc
+		application.mu.Unlock()
+		controller.preinstallNotifications(host, rpc)
+	}
 	core, err = x.AuthenticateCore(config, plan)
+	if host != nil {
+		// ready is also a failure wake, so diagnostics use the original
+		// authenticated flight facts. Later bootstrap or guarantee failures
+		// cannot erase a dual READY already completed on this carrier.
+		x.mu.Lock()
+		ready := x.readySent && x.readyReceived
+		x.mu.Unlock()
+		if ready {
+			host.mu.Lock()
+			host.diagnosticNetworkReady = true
+			host.mu.Unlock()
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

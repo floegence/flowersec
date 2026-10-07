@@ -15,7 +15,7 @@ struct V4NamespaceConfiguration: Sendable {
   let bootstrapMS: UInt64
 }
 
-// A pinned in-process namespace owner. Only the original Environment can
+// A pinned in-process namespace owner. Only the original TransportEnvironment can
 // construct it, and every admission checks the original reservation and clock.
 // Trust replacement/durable continuity and credential minting are unavailable;
 // this owner verifies one immutable TrustConfig and complete Head/State updates.
@@ -26,6 +26,38 @@ final class V4NamespaceVerifier: @unchecked Sendable {
     let sequence: UInt64
     let floors: [UInt64]
   }
+  private struct TimeCheck {
+    let now: V4TimeInterval
+    var lowerBound: UInt64 = 0
+    var cap: UInt64 = .max
+
+    mutating func issuance(_ start: UInt64, _ end: UInt64) throws {
+      guard start < end else { throw V4NamespaceFailure.untrusted }
+      guard now.upperMS < end else { throw V4TimeFailure.expired }
+      guard start <= now.upperMS else { throw V4NamespaceFailure.futureTimestamp }
+      lowerBound = max(lowerBound, start)
+      cap = min(cap, end)
+    }
+    mutating func requireLower(_ bound: UInt64) { lowerBound = max(lowerBound, bound) }
+    var pending: Bool { now.lowerMS < lowerBound }
+  }
+  private struct BootstrapInput {
+    let response: Data
+    let state: Data
+    let head: Head
+    let trustDeadline: V4SecurityDeadline
+  }
+  private var bootstrapInput: BootstrapInput?
+  private var bootstrapLowerBound: UInt64 = 0
+  private var bootstrapMaterialDeadline: V4SecurityDeadline?
+  private var bootstrapWasPending = false
+  private var bootstrapFailure: (any Error)?
+  private var pendingRefresh: (head: Head, state: Data)?
+  private var retiredRefreshThrough: UInt64?
+  private var bootstrapWaiting = false
+  #if os(macOS) || os(iOS)
+    private let bootstrapEvents = V4SessionEvents(maximum: 1)
+  #endif
   private static let trustBytes = 262_144
   private static let responseBytes = 270_336
   private static let trustNodes = 32_768
@@ -45,6 +77,14 @@ final class V4NamespaceVerifier: @unchecked Sendable {
   private var state: V4NamespaceValue?
   private var closed = false
   private var limits: [String: UInt64] = [:]
+  // Complete States that are authenticated before their Head can be installed
+  // still carry security denials. Keep the identities independently of the
+  // active State so a retained pending candidate cannot erase them. The
+  // limits and the byte ceiling are checked before each commit.
+  private var denialIssuers: [Data] = []
+  private var denialCertificates: [Data] = []
+  private var denialLeases: [(issuer: Data, lease: Data)] = []
+  private var denialBytes: UInt64 = 0
   private var capacityDigest = Data()
 
   static func charge(_ configuration: V4NamespaceConfiguration) throws -> V4ResourceVector {
@@ -59,12 +99,16 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       * UInt64(MemoryLayout<V4NamespaceDocument.Node>.stride)
     let bytes =
       V4NamespaceRegistry.backingBytes + 8
-      * (UInt64(trustBytes + responseBytes + configuration.stateBytes) + nodeBytes) + 8192
-    return V4ResourceVector(sdkBytes: bytes, items: 1, work: 1)
+      * (UInt64(trustBytes + responseBytes + configuration.stateBytes) + nodeBytes)
+      // Denial identities are retained independently of the active State while
+      // a complete newer Head waits for an older candidate. Reserve one bounded
+      // identity arena so the retention path cannot grow outside the charge.
+      + UInt64(configuration.stateBytes) + 8192
+    return V4ResourceVector(sdkBytes: bytes, items: 1, work: 1, tasks: 2, timers: 1)
   }
 
   // The factory is internal and proves this reference belongs to the original
-  // Environment. No caller-authenticated flag or key learned from wire input.
+  // TransportEnvironment. No caller-authenticated flag or key learned from wire input.
   init(_ admission: V4NamespaceAdmission) throws {
     let environment = admission.environment
     let pinnedRoot = admission.pinnedRoot
@@ -137,20 +181,110 @@ final class V4NamespaceVerifier: @unchecked Sendable {
 
   func bootstrapNonce() throws -> Data {
     try environment.gate.withLock {
-      _ = try sample()
+      let now = try sample()
       guard trust == nil else { throw V4NamespaceFailure.closed }
-      try bootstrapDeadline.check()
-      try bootstrapWindow.check()
+      try checkBootstrapBounds(now)
       return Data(nonce)
     }
   }
 
-  func bootstrap(response: Data, state bytes: Data) throws {
-    try environment.gate.withLock {
-      let now = try sample()
-      guard trust == nil else { throw V4NamespaceFailure.closed }
+  private func checkBootstrapBounds(_ now: V4TimeInterval) throws {
+    if let bootstrapFailure { throw bootstrapFailure }
+    // A signed material's original monotonic projection remains a hard
+    // expiry even if a later anchor narrows the current trusted interval.
+    do { try bootstrapMaterialDeadline?.check() } catch V4TimeFailure.expired {
+      bootstrapFailure = V4TimeFailure.expired
+      throw V4TimeFailure.expired
+    }
+    do {
       try bootstrapDeadline.check()
       try bootstrapWindow.check()
+    } catch V4TimeFailure.expired {
+      let failure: V4NamespaceFailure = bootstrapWasPending ? .timeNotProven : .bootstrapDeadline
+      bootstrapFailure = failure
+      throw failure
+    }
+  }
+
+  func bootstrap(response: Data, state bytes: Data) throws {
+    try bootstrap(response: response, state: bytes, waiting: false)
+  }
+
+  #if os(macOS) || os(iOS)
+    // The original reservation prepays one timer and its structured close waiter.
+    // The snapshot, provider tail and namespace execution tail survive until both
+    // child tasks have physically exited, including cancellation and owner close.
+    func bootstrapWhenReady(response: Data, state: Data) async throws {
+      let tail = try environment.gate.withLock {
+        _ = try sample()
+        guard !bootstrapWaiting else { throw V4NamespaceFailure.closed }
+        let tail = try reservation.borrow(executionTail: true)
+        bootstrapWaiting = true
+        return tail
+      }
+      defer {
+        environment.gate.withLock {
+          // The cancellation handler can race task unwinding. Seal under the
+          // same gate before making this owner available to another caller.
+          if Task.isCancelled { cancelBootstrapWait() }
+          bootstrapWaiting = false
+        }
+        tail.release()
+      }
+      try await withTaskCancellationHandler {
+        while true {
+          try Task.checkCancellation()
+          do {
+            try bootstrap(response: response, state: state, waiting: true)
+            return
+          } catch V4TimeFailure.pending {
+            let revision = bootstrapEvents.revision
+            let delay = try environment.gate.withLock {
+              let now = try sample()
+              try checkBootstrapBounds(now)
+              return try min(
+                environment.clock.profile.proveDelta(
+                  lower: now.lowerMS, bound: bootstrapLowerBound),
+                bootstrapDeadline.remainingTicks(),
+                bootstrapMaterialDeadline?.remainingTicks() ?? .max)
+            }
+            try await withThrowingTaskGroup(of: Void.self) { group in
+              group.addTask { try await Task.sleep(for: .milliseconds(delay)) }
+              group.addTask { [bootstrapEvents] in try await bootstrapEvents.wait(after: revision) }
+              defer { group.cancelAll() }
+              _ = try await group.next()
+            }
+          }
+        }
+      } onCancel: {
+        self.cancelBootstrapWait()
+      }
+    }
+
+    private func cancelBootstrapWait() {
+      environment.gate.withLock {
+        guard trust == nil else { return }
+        // Cancellation terminates the original bootstrap gate without replacing
+        // its nonce, pending bytes or earliest deadlines, or closing the Environment.
+        if bootstrapFailure == nil { bootstrapFailure = V4TimeFailure.canceled }
+        bootstrapDeadline.cancel()
+        bootstrapWindow.cancel()
+        bootstrapEvents.signal()
+      }
+    }
+  #endif
+
+  private func bootstrap(response: Data, state bytes: Data, waiting: Bool) throws {
+    try environment.gate.withLock {
+      let now = try sample()
+      guard trust == nil, !bootstrapWaiting || waiting else { throw V4NamespaceFailure.closed }
+      if let bootstrapInput {
+        guard bootstrapInput.response == response, bootstrapInput.state == bytes else {
+          throw V4NamespaceFailure.untrusted
+        }
+      }
+      var timing = TimeCheck(now: now)
+      try checkBootstrapBounds(now)
       let reply = try V4NamespaceDocument(
         response, schema: "TrustBootstrapResponse", bytes: Self.responseBytes,
         nodes: Self.trustNodes, registry: registry
@@ -158,25 +292,45 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       try root(reply)
       try reply.verify("trust_bootstrap_signature", publicKey: pinnedRoot.publicKey)
       guard try reply.b("request_nonce") == nonce else { throw V4NamespaceFailure.untrusted }
-      try time(reply.u("issued_at_ms"), reply.u("not_after_ms"), now: now)
+      try timing.issuance(reply.u("issued_at_ms"), reply.u("not_after_ms"))
       let candidate = try V4NamespaceDocument(
         reply.b("trust_config"), schema: "TrustConfig", bytes: Self.trustBytes,
         nodes: Self.trustNodes, registry: registry
       ).root
-      let (digest, constraints) = try validateTrust(candidate, now: now)
-      let head = try verifyHead(
-        reply.b("freshness_head"), trust: candidate, digest: digest, now: now)
+      let (digest, constraints) = try validateTrust(candidate, timing: &timing)
+      let verifiedHead = try verifyHead(
+        reply.b("freshness_head"), trust: candidate, digest: digest, timing: &timing,
+        allowPendingCandidate: false)
+      let head = bootstrapInput?.head ?? verifiedHead
       let state = try verifyState(
         bytes, head: head, trust: candidate, digest: digest,
-        limits: constraints, now: now)
-      let deadline = try V4SecurityDeadline(
-        clock: environment.clock, capMS: candidate.u("not_after_ms"))
+        limits: constraints)
+      let deadline =
+        try bootstrapInput?.trustDeadline
+        ?? V4SecurityDeadline(
+          clock: environment.clock, capMS: candidate.u("not_after_ms"))
+      // Only a completely verified pair can pin pending input. Every retry keeps
+      // its original nonce, bytes and earliest local/security deadlines.
+      if let materialDeadline = bootstrapMaterialDeadline {
+        try materialDeadline.tighten(to: timing.cap)
+      } else {
+        bootstrapMaterialDeadline = try V4SecurityDeadline(
+          clock: environment.clock, capMS: timing.cap)
+      }
+      bootstrapWasPending = bootstrapWasPending || timing.pending
+      bootstrapLowerBound = max(bootstrapLowerBound, timing.lowerBound)
       // No partially authenticated bootstrap state escapes this commit gate.
-      _ = try sample()
-      try bootstrapDeadline.check()
-      try bootstrapWindow.check()
+      try checkBootstrapBounds(sample())
       try head.deadline.check()
       try deadline.check()
+      if timing.pending {
+        if bootstrapInput == nil {
+          bootstrapInput = BootstrapInput(
+            response: Data(response), state: Data(bytes), head: head, trustDeadline: deadline)
+        }
+        throw V4TimeFailure.pending
+      }
+      if waiting { try Task.checkCancellation() }
       trust = candidate
       trustDeadline = deadline
       capacityDigest = digest
@@ -184,18 +338,19 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       observed = head
       active = head
       self.state = state
+      bootstrapInput = nil
       nonce.resetBytes(in: nonce.indices)
     }
   }
 
-  private func validateTrust(_ trust: V4NamespaceValue, now: V4TimeInterval) throws
+  private func validateTrust(_ trust: V4NamespaceValue, timing: inout TimeCheck) throws
     -> (Data, [String: UInt64])
   {
     try root(trust)
     try trust.verify("trust_config_signature", publicKey: pinnedRoot.publicKey)
     let start = try trust.u("issued_at_ms")
     let end = try trust.u("not_after_ms")
-    try time(start, end, now: now)
+    try timing.issuance(start, end)
     guard end - start <= pinnedRoot.maximumTrustLifetimeMS,
       try trust.u("authority_generation") > 0
     else { throw V4NamespaceFailure.untrusted }
@@ -286,7 +441,7 @@ final class V4NamespaceVerifier: @unchecked Sendable {
 
   private func verifyHead(
     _ bytes: Data, trust: V4NamespaceValue, digest: Data,
-    now: V4TimeInterval
+    timing: inout TimeCheck, allowPendingCandidate: Bool = false
   ) throws -> Head {
     let head = try V4NamespaceDocument(
       bytes, schema: "FreshnessHead", bytes: 795, nodes: Self.headNodes, registry: registry
@@ -307,13 +462,23 @@ final class V4NamespaceVerifier: @unchecked Sendable {
     let start = try head.u("this_update_ms")
     let end = try head.u("next_update_ms")
     let cap = try min(end, signer.u("not_after_ms"), trust.u("not_after_ms"))
-    try time(max(start, signer.u("issued_at_ms"), trust.u("issued_at_ms")), cap, now: now)
+    try timing.issuance(max(start, signer.u("issued_at_ms"), trust.u("issued_at_ms")), cap)
     guard try start >= signer.u("issued_at_ms"), try end <= signer.u("not_after_ms"),
       try end - start <= publication.u("max_head_validity_ms")
     else { throw V4NamespaceFailure.untrusted }
     let sequence = try head.u("head_sequence")
     let floors = try head.field("credential_revocation_floors").children.map { try $0.uint() }
-    if let observed {
+    let capacity = try trust.field("capacity")
+    guard try UInt64(bytes.count) <= capacity.u("max_head_encoded_bytes"),
+      try head.u("state_encoded_bytes") <= capacity.u("max_state_encoded_bytes")
+    else { throw V4NamespaceFailure.untrusted }
+    let impacts = try [
+      capacity.u("max_certificate_impact_ms"), capacity.u("max_connection_impact_ms"),
+    ]
+    for kind in 0..<2 where floors[kind] > 0 {
+      timing.requireLower(try Self.add(cohortEnd(floors[kind] - 1, capacity), impacts[kind]))
+    }
+    if let observed, !allowPendingCandidate {
       if sequence < observed.sequence { throw V4NamespaceFailure.rollback }
       if sequence == observed.sequence {
         guard head.raw.elementsEqual(observed.value.raw) else {
@@ -337,31 +502,95 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       let now = try sample()
       guard let trust, let trustDeadline else { throw V4NamespaceFailure.notBootstrapped }
       try trustDeadline.check()
-      let head = try verifyHead(bytes, trust: trust, digest: capacityDigest, now: now)
-      // An authenticated newer Head fences the old State immediately. Failure
-      // to retrieve/validate its complete State cannot restore an older Head.
-      observed = head
-      let next = try verifyState(
-        state, head: head, trust: trust, digest: capacityDigest,
-        limits: limits, now: now)
-      try preserveHistory(next)
+      var timing = TimeCheck(now: now)
+      if let pendingRefresh {
+        do { try pendingRefresh.head.deadline.check() } catch V4TimeFailure.expired {
+          // Retire the original candidate before comparing incoming bytes. Its
+          // earliest deadline cannot be renewed, and it cannot block a newer
+          // complete candidate while the original active pair keeps serving.
+          retiredRefreshThrough = max(retiredRefreshThrough ?? 0, pendingRefresh.head.sequence)
+          self.pendingRefresh = nil
+        }
+      }
+      let samePending =
+        pendingRefresh.map {
+          $0.head.value.raw.elementsEqual(bytes) && $0.state == state
+        } ?? false
+      let verifiedHead = try verifyHead(
+        bytes, trust: trust, digest: capacityDigest, timing: &timing,
+        allowPendingCandidate: samePending)
+      if let pendingRefresh, !samePending,
+        verifiedHead.sequence <= pendingRefresh.head.sequence
+      {
+        // A retained H2 remains the candidate floor. Equal or lower network
+        // updates are stale; only a strictly newer independently authenticated
+        // Head may advance the high-water mark while H2 is pending.
+        throw V4NamespaceFailure.untrusted
+      }
+      if let retiredRefreshThrough, verifiedHead.sequence <= retiredRefreshThrough {
+        throw V4TimeFailure.expired
+      }
+      // A retained pending candidate is immutable, but it must not prevent an
+      // independently authenticated newer Head from advancing the observed
+      // high-water mark. Only retries of the original bytes reuse its object
+      // and earliest deadline.
+      let head = samePending ? pendingRefresh!.head : verifiedHead
       _ = try sample()
       try trustDeadline.check()
       try head.deadline.check()
+      // A mature, independently authenticated Head advances per-class denial
+      // evidence before State installation. Its complete State is still
+      // required before it can become active, and the retained H2 candidate
+      // remains intact if this State is invalid.
+      if !timing.pending && !samePending { observed = head }
+      let next = try verifyState(
+        state, head: head, trust: trust, digest: capacityDigest,
+        limits: limits)
+      try preserveHistory(next)
+      // A complete, time-mature State may contribute denial evidence even
+      // when an older pending candidate remains the only installable pair.
+      // Pending or malformed States never reach this commit gate.
+      if !timing.pending { try recordDenials(next) }
+      if !samePending, pendingRefresh != nil {
+        // A retained H2 owns the only completion pin. A newer authenticated
+        // Head has already advanced observed denial evidence above, and its
+        // State has been checked for rejection, but it must wait until H2 is
+        // completed or retired before becoming active.
+        throw V4TimeFailure.pending
+      }
+      _ = try sample()
+      try trustDeadline.check()
+      try head.deadline.check()
+      if timing.pending {
+        if pendingRefresh == nil {
+          pendingRefresh = (head: head, state: Data(state))
+        }
+        throw V4TimeFailure.pending
+      }
+      // A retained candidate may finish after a newer complete pair is active.
+      // Preserve that active pair and retire the authenticated older candidate.
+      if samePending, let active, active.sequence >= head.sequence {
+        self.pendingRefresh = nil
+        throw V4NamespaceFailure.rollback
+      }
+      if observed == nil || head.sequence >= observed!.sequence { observed = head }
       self.state = next
       active = head
+      // Keep an earlier pending candidate alive while an independently newer
+      // Head completes. Its original bytes and deadline remain the only path
+      // allowed to install that candidate after the observed high-water mark.
+      if samePending || pendingRefresh == nil { pendingRefresh = nil }
     }
   }
 
   func checkCurrent() throws {
     try environment.gate.withLock {
       _ = try sample()
-      guard let trustDeadline, let active, let observed, state != nil else {
+      guard let trustDeadline, let active, observed != nil, state != nil else {
         throw V4NamespaceFailure.notBootstrapped
       }
       try trustDeadline.check()
       try active.deadline.check()
-      guard active.sequence == observed.sequence else { throw V4NamespaceFailure.pendingState }
     }
   }
   var currentSequence: UInt64? {
@@ -376,7 +605,7 @@ final class V4NamespaceVerifier: @unchecked Sendable {
 
   private func verifyState(
     _ bytes: Data, head: Head, trust: V4NamespaceValue, digest: Data,
-    limits: [String: UInt64], now: V4TimeInterval
+    limits: [String: UInt64]
   ) throws -> V4NamespaceValue {
     let state = try V4NamespaceDocument(
       bytes, schema: "RevocationState", bytes: configuration.stateBytes,
@@ -399,12 +628,6 @@ final class V4NamespaceVerifier: @unchecked Sendable {
     let impacts = try [
       capacity.u("max_certificate_impact_ms"), capacity.u("max_connection_impact_ms"),
     ]
-    for kind in 0..<2 where head.floors[kind] > 0 {
-      guard now.lowerMS >= (try Self.add(cohortEnd(head.floors[kind] - 1, capacity), impacts[kind]))
-      else {
-        throw V4TimeFailure.pending
-      }
-    }
     let segments = try state.field("cohort_policy_segments")
     for segment in segments.children {
       let first = try segment.u("first_cohort")
@@ -504,13 +727,106 @@ final class V4NamespaceVerifier: @unchecked Sendable {
     }
   }
 
+  private func recordDenials(_ next: V4NamespaceValue) throws {
+    guard let trust else { throw V4NamespaceFailure.notBootstrapped }
+    let capacity = try trust.field("capacity")
+    var issuers = denialIssuers
+    var certificates = denialCertificates
+    var leases = denialLeases
+    var bytes = denialBytes
+
+    func add(_ value: Data, to target: inout [Data], limitName: String) throws {
+      if target.contains(where: { $0.elementsEqual(value) }) { return }
+      guard UInt64(target.count) < (try capacity.u(limitName)) else {
+        throw V4NamespaceFailure.capacity
+      }
+      let (nextBytes, overflow) = bytes.addingReportingOverflow(UInt64(value.count))
+      guard !overflow, nextBytes <= UInt64(configuration.stateBytes) else {
+        throw V4NamespaceFailure.capacity
+      }
+      target.append(value)
+      bytes = nextBytes
+    }
+
+    do {
+      for issuer in try next.field("revoked_issuers").children {
+        try add(
+          issuer.b("issuer_key_id"), to: &issuers, limitName: "max_revoked_issuers")
+      }
+      for certificate in try next.field("revoked_certificates").children {
+        try add(
+          certificate.b("certificate_digest"), to: &certificates,
+          limitName: "max_revoked_certificates")
+      }
+      for lease in try next.field("revoked_leases").children {
+        let issuer = try lease.b("issuer_key_id")
+        let value = try lease.b("lease_id")
+        if leases.contains(where: { $0.issuer.elementsEqual(issuer) && $0.lease.elementsEqual(value) }) {
+          continue
+        }
+        guard UInt64(leases.count) < (try capacity.u("max_revoked_leases")) else {
+          throw V4NamespaceFailure.capacity
+        }
+        let (afterIssuer, issuerOverflow) = bytes.addingReportingOverflow(UInt64(issuer.count))
+        let (nextBytes, leaseOverflow) = afterIssuer.addingReportingOverflow(UInt64(value.count))
+        guard !issuerOverflow, !leaseOverflow, nextBytes <= UInt64(configuration.stateBytes) else {
+          throw V4NamespaceFailure.capacity
+        }
+        leases.append((issuer: issuer, lease: value))
+        bytes = nextBytes
+      }
+    } catch V4NamespaceFailure.capacity {
+      // Denial retention is part of the authorization invariant. If the
+      // bounded arena cannot commit the complete set, fence the namespace
+      // immediately so the old active pair cannot authorize another use.
+      // close() preserves pending owner tails and subscriber reservations.
+      close()
+      throw V4NamespaceFailure.capacity
+    }
+
+    denialIssuers = issuers
+    denialCertificates = certificates
+    denialLeases = leases
+    denialBytes = bytes
+    #if os(macOS) || os(iOS)
+      bootstrapEvents.signal()
+    #endif
+  }
+
+  private func clearDenials() {
+    func clear(_ value: inout Data) { value.resetBytes(in: value.indices) }
+    for index in denialIssuers.indices {
+      clear(&denialIssuers[index])
+    }
+    for index in denialCertificates.indices {
+      clear(&denialCertificates[index])
+    }
+    for index in denialLeases.indices {
+      clear(&denialLeases[index].issuer)
+      clear(&denialLeases[index].lease)
+    }
+    denialIssuers.removeAll(keepingCapacity: false)
+    denialCertificates.removeAll(keepingCapacity: false)
+    denialLeases.removeAll(keepingCapacity: false)
+    denialBytes = 0
+  }
+
   func close() {
     environment.gate.withLock {
       if closed { return }
       closed = true
+      #if os(macOS) || os(iOS)
+        bootstrapEvents.signal()
+      #endif
       nonce.resetBytes(in: nonce.indices)
       bootstrapDeadline.cancel()
       bootstrapWindow.cancel()
+      bootstrapMaterialDeadline?.cancel()
+      bootstrapInput?.head.deadline.cancel()
+      bootstrapInput?.trustDeadline.cancel()
+      bootstrapInput = nil
+      pendingRefresh?.head.deadline.cancel()
+      pendingRefresh = nil
       trustDeadline?.cancel()
       active?.deadline.cancel()
       observed?.deadline.cancel()
@@ -519,6 +835,7 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       observed = nil
       state = nil
       limits = [:]
+      clearDenials()
       capacityDigest = Data()
       // The compact owner and pinned root stay charged until the final alias
       // exits. Closing cannot refund the caller's still-retained handle.
@@ -533,7 +850,7 @@ struct V4CredentialPolicy: Sendable {
 }
 
 // Evidence has no public/memberwise constructor. Only the current namespace
-// signature/issuance checks below can mint it for the original Environment.
+// signature/issuance checks below can mint it for the original TransportEnvironment.
 struct V4CredentialEvidence {
   let namespace: V4NamespaceVerifier
   let kind: Int
@@ -574,12 +891,20 @@ extension V4NamespaceVerifier {
       && value.t("revocation_authority_id") == pinnedRoot.authority
   }
 
-  func checkCredentialReference(_ value: V4NamespaceValue) throws {
+  func matchesGrantScope(_ scope: V4LiveGrantScope) -> Bool {
+    scope.tenant == pinnedRoot.tenant && scope.authority == pinnedRoot.authority
+  }
+  func checkCredentialReference(
+    _ value: V4NamespaceValue, requiredRoles: UInt64 = 3,
+    allowAdditionalRoles: Bool = false
+  ) throws {
     try checkCurrent()
     try namespace(value)
+    let roleMask = try value.u("role_mask")
     guard let trust, try value.u("generation") == trust.u("authority_generation"),
       try value.b("namespace_capacity_digest") == capacityDigest,
-      try value.u("role_mask") == 3
+      roleMask & requiredRoles == requiredRoles,
+      allowAdditionalRoles || roleMask == requiredRoles
     else { throw V4NamespaceFailure.untrusted }
   }
 
@@ -688,6 +1013,40 @@ extension V4NamespaceVerifier {
     }
   }
 
+  // A future proof's deployment dependency is checked without minting a
+  // CredentialEvidence. Only verifyActivation can authenticate TxB bytes.
+  func checkLiveActivationDependency(
+    parent: V4CredentialEvidence, signingKeyID: String,
+    initiation: UInt64, sessionEnd: UInt64
+  ) throws {
+    try environment.gate.withLock {
+      try checkEvidence(parent)
+      guard parent.namespace === self, parent.kind == 1, let trust,
+        V4NamespaceRegistry.securityID(signingKeyID.utf8),
+        let delegation = try trust.field("activation_delegations").children.first(where: {
+          try $0.t("signing_key_id") == signingKeyID
+        })
+      else { throw V4NamespaceFailure.untrusted }
+      let once = try onceAuthority(parent)
+      let now = try sample()
+      // A live authority may issue a shorter proof than its parent permits.
+      // Require a usable intersection here; verifyActivation checks the actual
+      // signed proof against every original delegation and parent ceiling.
+      guard try delegation.u("purpose") == 1,
+        try delegation.b("artifact_issuer_key_id") == parent.issuer,
+        try delegation.t("authority_id") == once.t("spend_authority_id"),
+        try parent.cohort >= delegation.u("first_parent_cohort"),
+        try parent.cohort <= delegation.u("last_parent_cohort"),
+        try now.lowerMS >= delegation.u("signing_not_before_ms"),
+        try now.upperMS < delegation.u("signing_not_after_ms"),
+        try now.upperMS
+          < min(
+            initiation, sessionEnd,
+            delegation.u("max_activation_not_after_ms"), delegation.u("max_session_not_after_ms"))
+      else { throw V4NamespaceFailure.untrusted }
+    }
+  }
+
   func verifyActivation(_ value: V4NamespaceValue, parent: V4CredentialEvidence) throws
     -> V4CredentialEvidence
   {
@@ -755,11 +1114,12 @@ extension V4NamespaceVerifier {
     try environment.gate.withLock {
       guard evidence.namespace === self else { throw V4NamespaceFailure.untrusted }
       try checkCurrent()
-      guard let trust, let state else { throw V4NamespaceFailure.notBootstrapped }
+      guard let trust, let state, let observed else { throw V4NamespaceFailure.notBootstrapped }
       _ = try credentialFreshness(evidence.policy)
       try time(evidence.issuedMS, evidence.expiresMS, now: sample())
-      let floors = try state.field("credential_revocation_floors").children.map { try $0.uint() }
-      guard evidence.cohort >= floors[evidence.kind] else { throw V4NamespaceFailure.untrusted }
+      guard evidence.cohort >= observed.floors[evidence.kind] else {
+        throw V4NamespaceFailure.untrusted
+      }
       for retired in try trust.field("retired_issuers").children {
         guard try retired.bytes() != evidence.issuer else { throw V4NamespaceFailure.untrusted }
       }
@@ -768,9 +1128,19 @@ extension V4NamespaceVerifier {
           throw V4NamespaceFailure.untrusted
         }
       }
+      for issuer in denialIssuers {
+        guard !issuer.elementsEqual(evidence.issuer) else {
+          throw V4NamespaceFailure.untrusted
+        }
+      }
       if evidence.kind == 0 {
         for certificate in try state.field("revoked_certificates").children {
           guard try certificate.b("certificate_digest") != evidence.digest else {
+            throw V4NamespaceFailure.untrusted
+          }
+        }
+        for certificate in denialCertificates {
+          guard !certificate.elementsEqual(evidence.digest) else {
             throw V4NamespaceFailure.untrusted
           }
         }
@@ -782,7 +1152,133 @@ extension V4NamespaceVerifier {
             throw V4NamespaceFailure.untrusted
           }
         }
+        for entry in denialLeases {
+          guard !(entry.issuer.elementsEqual(evidence.issuer) && entry.lease.elementsEqual(lease))
+          else {
+            throw V4NamespaceFailure.untrusted
+          }
+        }
       }
+    }
+  }
+}
+
+extension V4NamespaceVerifier {
+  // Future Grant scope is checked against independently installed own trust,
+  // original signed parent and publication policy. No unsigned evidence is
+  // constructed, and no hop or replay owner exists at this boundary.
+  func checkLiveGrantDependency(
+    _ scope: V4LiveGrantScope, parent: V4NamespaceValue,
+    evidence: V4CredentialEvidence
+  ) throws {
+    _ = try liveGrantPermission(scope, parent: parent, evidence: evidence)
+  }
+  private func liveGrantPermission(
+    _ scope: V4LiveGrantScope, parent: V4NamespaceValue,
+    evidence: V4CredentialEvidence
+  ) throws -> (V4NamespaceValue, V4CredentialPolicy) {
+    try environment.gate.withLock {
+      try scope.checkShape()
+      try checkCurrent()
+      try evidence.namespace.checkOwner(environment)
+      try evidence.namespace.checkEvidence(evidence)
+      guard evidence.kind == 1, parent.schema == "Artifact",
+        evidence.digest == (try parent.digest("artifact_digest")),
+        scope.tenant == pinnedRoot.tenant, scope.authority == pinnedRoot.authority, let trust,
+        let state,
+        let observed,
+        scope.capacityDigest == capacityDigest,
+        scope.generation == (try trust.u("authority_generation")),
+        scope.parentIssuer == evidence.issuer, scope.parentCohort == evidence.cohort,
+        scope.parentAuthority == (try parent.t("revocation_authority_id")),
+        scope.parentCapacity == (try parent.b("namespace_capacity_digest")),
+        scope.parentGeneration == (try parent.u("revocation_authority_generation")),
+        scope.tenant == (try parent.t("tenant_id")), scope.expiresMS <= evidence.expiresMS,
+        scope.cohort >= observed.floors[1],
+        scope.expiresMS <= (try credentialImpact(scope.cohort, kind: 1))
+      else { throw V4NamespaceFailure.untrusted }
+      for retired in try trust.field("retired_issuers").children {
+        guard try retired.bytes() != scope.issuer else { throw V4NamespaceFailure.untrusted }
+      }
+      for issuer in try state.field("revoked_issuers").children {
+        guard try issuer.b("issuer_key_id") != scope.issuer else {
+          throw V4NamespaceFailure.untrusted
+        }
+      }
+      for issuer in denialIssuers {
+        guard !issuer.elementsEqual(scope.issuer) else { throw V4NamespaceFailure.untrusted }
+      }
+      guard
+        let permission = try trust.field("issuer_authorizations").children.first(where: { entry in
+          try entry.u("credential_kind") == 2 && entry.b("issuer_key_id") == scope.issuer
+            && entry.t("audience") == scope.audience && entry.t("service") == scope.service
+            && entry.t("parent_authority_id") == scope.parentAuthority
+            && entry.b("parent_capacity_digest") == scope.parentCapacity
+            && entry.u("parent_generation") == scope.parentGeneration
+            && entry.b("parent_artifact_issuer_key_id") == scope.parentIssuer
+            && scope.parentCohort >= entry.u("first_parent_cohort")
+            && scope.parentCohort <= entry.u("last_parent_cohort")
+            && scope.cohort >= entry.u("first_cohort") && scope.cohort <= entry.u("last_cohort")
+            && scope.issuedMS >= entry.u("signing_not_before_ms")
+            && scope.issuedMS < entry.u("signing_not_after_ms")
+            && scope.expiresMS <= entry.u("max_credential_not_after_ms")
+        }),
+        let policy = try trust.field("credential_policies").children.first(where: {
+          try $0.t("revocation_policy_id") == scope.policyID
+            && $0.u("revocation_policy_revision") == scope.policyRevision
+        })
+      else { throw V4NamespaceFailure.untrusted }
+      let requirements = try V4CredentialPolicy(
+        stalenessMS: policy.u("max_staleness_ms"),
+        signerLifetimeMS: policy.u("max_head_signer_lifetime_ms"))
+      _ = try credentialFreshness(requirements)
+      try time(scope.issuedMS, scope.expiresMS, now: sample())
+      return (permission, requirements)
+    }
+  }
+  func verifyLiveGrant(
+    _ grant: V4NamespaceValue, scope: V4LiveGrantScope,
+    parent: V4NamespaceValue, evidence: V4CredentialEvidence
+  ) throws -> V4CredentialEvidence {
+    try environment.gate.withLock {
+      let (permission, policy) = try liveGrantPermission(scope, parent: parent, evidence: evidence)
+      let own = try grant.field("namespace")
+      guard grant.schema == "Grant", try grant.t("tenant_id") == scope.tenant,
+        try own.t("tenant_id") == scope.tenant,
+        try own.t("revocation_authority_id") == scope.authority,
+        try own.b("namespace_capacity_digest") == scope.capacityDigest,
+        try own.u("generation") == scope.generation,
+        try own.u("role_mask") == scope.roleMask, try own.u("revocation_epoch") == scope.cohort,
+        try own.t("revocation_policy_id") == scope.policyID,
+        try own.u("revocation_policy_revision") == scope.policyRevision,
+        try grant.b("issuer_key_id") == scope.issuer, try grant.t("audience") == scope.audience,
+        try grant.t("service") == scope.service, try grant.u("issued_at_ms") == scope.issuedMS,
+        try grant.u("not_after_ms") == scope.expiresMS
+      else { throw V4NamespaceFailure.untrusted }
+      let parentRef = try grant.field("parent_ref")
+      guard try parentRef.t("tenant_id") == scope.tenant,
+        try parentRef.t("revocation_authority_id") == scope.parentAuthority,
+        try parentRef.b("namespace_capacity_digest") == scope.parentCapacity,
+        try parentRef.u("authority_generation") == scope.parentGeneration,
+        try parentRef.b("artifact_issuer_key_id") == evidence.issuer,
+        try parentRef.b("lease_id") == evidence.lease,
+        try parentRef.b("artifact_digest") == evidence.digest,
+        try parentRef.u("revocation_epoch") == evidence.cohort,
+        try parentRef.u("issued_at_ms") == parent.u("issued_at_ms"),
+        try parentRef.u("initiation_not_after_ms") == parent.u("initiation_not_after_ms"),
+        try parentRef.u("session_not_after_ms") == parent.u("session_not_after_ms"),
+        try parentRef.t("revocation_policy_id") == parent.t("revocation_policy_id"),
+        try parentRef.u("revocation_policy_revision") == parent.u("revocation_policy_revision")
+      else { throw V4NamespaceFailure.untrusted }
+      try grant.verify("grant_signature", publicKey: permission.b("issuer_public_key"))
+      let verified = try V4CredentialEvidence(
+        namespace: self, kind: 1, cohort: scope.cohort,
+        issuer: scope.issuer, digest: grant.digest("grant_digest"), lease: nil,
+        permissionDigest: permission.digest("credential_issuer_authorization_digest"),
+        policy: policy,
+        issuedMS: scope.issuedMS, expiresMS: scope.expiresMS)
+      try checkEvidence(verified)
+      return verified
     }
   }
 }

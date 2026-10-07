@@ -17,6 +17,7 @@ type applicationReadySlot struct {
 	previous, next int
 	class          ApplicationWorkClass
 	task, backing  resourcev4.Reference
+	service        resourcev4.Reference
 	work           func()
 	prepared       bool
 	cleanup        bool
@@ -64,6 +65,26 @@ func (e *ApplicationExecutor) newApplicationGroup() (*applicationGroup, error) {
 		return nil, resourcev4.ErrClosed
 	}
 	return &applicationGroup{executor: e, head: [2]int{-1, -1}, tail: [2]int{-1, -1}, done: make(chan struct{})}, nil
+}
+
+// attachApplicationGroup keeps enabled service backing charged to its real
+// borrower even while the ordinary queue is idle. Closing one group returns
+// only its scoped alias after its actual admitted tasks exit.
+func (e *ApplicationExecutor) attachApplicationGroup(group *applicationGroup, backing resourcev4.Reference) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if group == nil || group.executor != e || group.closed || e.closed || group.service != (resourcev4.Reference{}) {
+		return resourcev4.ErrClosed
+	}
+	if e.config.Profile == ApplicationProfileCustom {
+		return nil
+	}
+	ref, err := e.reservation.BorrowApplicationService(backing)
+	if err != nil {
+		return err
+	}
+	group.service = ref
+	return nil
 }
 
 // queueApplication is the explicit SDK queue admission, not an implicit retry
@@ -137,8 +158,17 @@ func (e *ApplicationExecutor) prepareApplicationBorrowLocked(group *applicationG
 	if err != nil {
 		return nil, err
 	}
+	var service resourcev4.Reference
+	if e.config.Profile != ApplicationProfileCustom {
+		service, err = e.reservation.BorrowApplicationService(backing)
+		if err != nil {
+			borrow.Release()
+			return nil, err
+		}
+	}
 	task, err := taskReservation.Take(e.TaskCharge())
 	if err != nil {
+		service.Release()
 		borrow.Release()
 		return nil, err
 	}
@@ -147,7 +177,7 @@ func (e *ApplicationExecutor) prepareApplicationBorrowLocked(group *applicationG
 		index++
 	}
 	q := &QueuedApplicationTask{index: index, result: &ApplicationTask{done: make(chan struct{})}}
-	e.ready[index] = applicationReadySlot{handle: q, group: group, previous: -1, next: -1, class: class, task: task, backing: borrow, prepared: true}
+	e.ready[index] = applicationReadySlot{handle: q, group: group, previous: -1, next: -1, class: class, task: task, backing: borrow, service: service, prepared: true}
 	group.active++
 	e.readyCount++
 	if class == ApplicationResident {
@@ -215,6 +245,7 @@ func (e *ApplicationExecutor) startPreparedLocked(q *QueuedApplicationTask, work
 		return err
 	}
 	s.prepared, s.work = false, work
+	s.group.activeWork.Add(1)
 	s.previous = s.group.tail[s.class]
 	if s.previous >= 0 {
 		e.ready[s.previous].next = q.index
@@ -298,6 +329,10 @@ func (e *ApplicationExecutor) cancelReadyLocked(index int) {
 	s.work = nil
 	s.backing.Release()
 	s.task.Release()
+	s.service.Release()
+	if !s.prepared {
+		s.group.activeWork.Add(^uint64(0))
+	}
 	e.releaseApplicationGroupLocked(s.group)
 	close(s.handle.result.done)
 }
@@ -333,7 +368,7 @@ func (e *ApplicationExecutor) dispatchQueuedLocked() {
 		original.handle.started.Store(true)
 		e.rotateReadyGroupLocked(original.group, original.class)
 		e.queueClass = 1 - original.class
-		e.slots[slot] = applicationTaskSlot{active: true, started: true, committed: true, class: original.class, group: original.group, result: original.handle.result, backing: original.backing, task: original.task}
+		e.slots[slot] = applicationTaskSlot{active: true, started: true, committed: true, class: original.class, group: original.group, result: original.handle.result, backing: original.backing, task: original.task, service: original.service}
 		e.running++
 		if original.class == ApplicationResident {
 			e.resident++
@@ -365,8 +400,10 @@ type applicationGroup struct {
 	previous, next [2]*applicationGroup
 	executor       *ApplicationExecutor
 	active         uint64
+	activeWork     atomic.Uint64
 	closed         bool
 	done           chan struct{}
+	service        resourcev4.Reference
 }
 
 func (e *ApplicationExecutor) releaseApplicationGroupLocked(g *applicationGroup) {
@@ -378,6 +415,8 @@ func (e *ApplicationExecutor) releaseApplicationGroupLocked(g *applicationGroup)
 func (e *ApplicationExecutor) finishApplicationGroupLocked(g *applicationGroup) {
 	if g.closed && g.active == 0 && g.executor != nil {
 		g.executor = nil
+		g.service.Release()
+		g.service = resourcev4.Reference{}
 		close(g.done)
 	}
 }

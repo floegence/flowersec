@@ -234,10 +234,14 @@ func (n *LiveNamespace) persistContinuity() (err error) {
 		d.dirty = false
 		var version NamespaceContinuityVersion
 		err = CBORFailure("revocation_continuity_provider")
+		commitContext := n.ctx
+		if n.initialContinuityContext != nil {
+			commitContext = n.initialContinuityContext
+		}
 		func() {
 			n.mu.Unlock()
 			defer n.mu.Lock()
-			version, e = d.commit(n.ctx, r)
+			version, e = d.commit(commitContext, r)
 		}()
 		err = e
 		if e != nil {
@@ -288,7 +292,10 @@ func (d *namespaceDurability) commit(ctx context.Context, r NamespaceContinuityR
 		err = d.reservation.Check()
 	}
 	if err == nil {
-		err = ctx.Err()
+		err = context.Cause(ctx)
+		if err == nil {
+			err = ctx.Err()
+		}
 	}
 	returned = true
 	return

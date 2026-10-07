@@ -1,3 +1,4 @@
+import { DiagnosticActivity, type DiagnosticObserver } from "./diagnosticObservation.js";
 import { operationReference, type V4OperationReference } from "../operationReference.js";
 import { beginReferenceSave, referenceStoreRetention, referenceSaveFailure, referenceSaveReport, type V4OperationReferenceStore, type ReferenceSaveReport } from "../operationReferenceStore.js";
 import { hex } from "./executionManagementCodec.js";
@@ -77,6 +78,7 @@ export class NotifyPreparation {
   #saveEntered = false;
   #timer: ReturnType<typeof setTimeout> | undefined;
   readonly #abort = new AbortController();
+  #diagnostic: DiagnosticActivity | undefined;
   #state: NotifyProgress["state"] = "encoding";
   #submission: NotifyProgress["submission"] = "not_submitted";
   #reason: NotifyProgress["reason"];
@@ -95,7 +97,7 @@ export class NotifyPreparation {
     source: RPCPublicationGuard, target: NotifyStartTarget, clock: TrustedClock, parent: TrustedDeadline,
     group: ApplicationGroup, authentication: V4AuthenticatedContext, delivery: ReceiveDeliveryGate, cleanup: SessionCleanup,
     readonly workClass: ApplicationWorkClass, readonly inputBytes: number, runtimeBytes: bigint, references: readonly ResourceReference[],
-    offer?: AdmissionOffer, random?: RandomFill, localAuthority?: string, destination?: ServiceBindingTarget) {
+    offer?: AdmissionOffer, random?: RandomFill, localAuthority?: string, destination?: ServiceBindingTarget, diagnostics?: DiagnosticObserver) {
     const costs = notifyPreparationCharges(method, contract, inputBytes, runtimeBytes), captured = captureNotifyOptions(options);
     if (method.shape !== "notify" || (method.semantics === "execution") !== (offer !== undefined) || references.length !== costs.length ||
         !references.every(reference => references[0]!.sameEnvironment(reference)) || !contract.sameEnvironment(references[0]!)) throw new RPCProtocolError("notify_binding");
@@ -105,6 +107,7 @@ export class NotifyPreparation {
     contract.checkMethod(namespace, method); this.#reference = references[0]!.take(costs[0]!); this.#busy = true;
     this.#method = method; this.#source = source; this.#target = target; this.#group = group; this.#authentication = authentication; this.#cleanup = cleanup;
     try {
+      this.#diagnostic = new DiagnosticActivity(diagnostics, "application");
       cleanup.startJob(); this.#job = true; group.retain(); this.#groupHeld = true;
       this.#payload = new RPCPayload(contract.requestMaxBytes, runtimeBytes, references[1]!);
       this.#codec = new ApplicationHeaderCodec(runtimeBytes, references[2]!, references[3]!); this.#contract = contract.retain();
@@ -238,7 +241,7 @@ export class NotifyPreparation {
   admit(cancel: () => void): void { if (this.#state !== "prepared" || !this.current()) throw new RPCProtocolError("notify_owner"); this.#state = "started"; this.#publishing = true; this.#canceledPublication = cancel; }
   header(): ApplicationHeader { if (this.#header === undefined) throw new RPCProtocolError("notify_not_prepared"); return this.#header; }
   borrow(): RPCPayloadBorrow { return this.#payload!.borrow(this.header().payloadBytes); }
-  begun(): void { this.#begun = true; this.#submission = "unknown"; }
+  begun(): void { this.#begun = true; this.#submission = "unknown"; this.#source?.admitted?.(); }
   publicationFinished(submitted: boolean): void {
     if (submitted) this.#submission = "submitted"; else this.#reason ??= "channel_closed";
     this.#state = "terminal"; this.#publishing = false; this.#canceledPublication = undefined; this.#abort.abort(); this.#waiter?.(); this.#collect();
@@ -273,6 +276,9 @@ export class NotifyPreparation {
       this.#source = undefined; this.#target = undefined; this.#deadline = undefined; this.#preparationDeadline = undefined; this.#authentication = undefined; this.#header = undefined;
       if (this.#groupHeld) this.#group!.release(); this.#groupHeld = false; this.#group = undefined;
       if (this.#job) this.#cleanup!.finishJob(); this.#job = false; this.#cleanup = undefined;
+      if (this.#reason === undefined) this.#diagnostic?.event({ state: "ready", code: "ok" });
+      else this.#diagnostic?.failure(new Error(this.#reason));
+      this.#diagnostic?.close(); this.#diagnostic = undefined;
       this.#reference?.release(); this.#reference = undefined; const detach = this.#detached; this.#detached = undefined; detach?.();
     } finally { this.#busy = false; }
   }

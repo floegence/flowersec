@@ -17,7 +17,7 @@
     {
       "id": "opaque_artifact",
       "layer": "portable_core",
-      "description": "Strict Flowersec v3 artifact and TLS-policy parsing behind an opaque application-facing value",
+      "description": "Verified signed connection material, independent namespace trust and original opaque source ownership",
       "implementations": {
         "go": {
           "status": "supported",
@@ -65,7 +65,7 @@
         "swift": {
           "status": "supported",
           "test_ids": [
-            "connector/swift-v3"
+            "connector/swift-v4"
           ]
         },
         "typescript": {
@@ -79,7 +79,7 @@
     {
       "id": "secure_session",
       "layer": "portable_core",
-      "description": "Authenticated v3 sessions, bounded streams, rekey, cancellation, and close",
+      "description": "Authenticated v4 sessions, bounded streams, rekey, cancellation, and close",
       "implementations": {
         "go": {
           "status": "supported",
@@ -110,7 +110,7 @@
     {
       "id": "rpc_call_notify",
       "layer": "portable_core",
-      "description": "Typed RPC calls, outbound notifications, and peer notification subscriptions over the reserved encrypted v3 stream kind",
+      "description": "Typed service calls, outbound notifications and independent peer notification subscriptions over authenticated current service channels",
       "implementations": {
         "go": {
           "status": "supported",
@@ -280,14 +280,19 @@
           ]
         },
         "swift": {
-          "status": "unsupported",
-          "reason": "The Apple client runtime does not expose inbound request serving."
+          "status": "supported",
+          "entrypoint": "ServiceRegistry.registerUnary/registerNotify with TransportEnvironment.connect and ConnectionController on macOS/iOS WebSocket Sessions",
+          "test_ids": [
+            "interop/swift-rust-go/wss/live-tunnel",
+            "controller/swift-client-handlers",
+            "controller/swift-client-handlers/ios-simulator"
+          ]
         },
         "typescript": {
           "status": "supported",
           "entrypoint": "@floegence/flowersec-core/node RPCHandlers/SessionOptions.rpcHandlers/ConnectionControllerOptions.rpcHandlers",
           "test_ids": [
-            "controller/typescript-rpc-handlers-v3"
+            "controller/typescript-rpc-handlers-current"
           ]
         }
       }
@@ -312,8 +317,12 @@
           ]
         },
         "swift": {
-          "status": "unsupported",
-          "reason": "Apple application processes do not provide the deployable listener profile required by this boundary."
+          "status": "supported",
+          "entrypoint": "TransportEnvironment.accept/serve with original server Sources on macOS/iOS WebSocket listeners",
+          "test_ids": [
+            "server/swift-acceptor",
+            "server/swift-acceptor/ios-simulator"
+          ]
         },
         "typescript": {
           "status": "supported",
@@ -344,8 +353,12 @@
           ]
         },
         "swift": {
-          "status": "unsupported",
-          "reason": "The Apple listener profile cannot own pre-establishment inbound handlers."
+          "status": "supported",
+          "entrypoint": "ServeOptions.resolveHandlers/HandlerPlan/ServiceRegistry/StreamHandlers.serve(session:) on macOS/iOS",
+          "test_ids": [
+            "server/swift-session-handlers",
+            "server/swift-session-handlers/ios-simulator"
+          ]
         },
         "typescript": {
           "status": "supported",
@@ -359,7 +372,7 @@
     {
       "id": "controlplane_issue_authorize",
       "layer": "control_plane",
-      "description": "Go-owned v3 artifact issuance with structured TLS endpoints, durable authorization records, and runtime admission authorization.",
+      "description": "Go-owned v4 artifact issuance with structured TLS endpoints, durable authorization records, and runtime admission authorization.",
       "implementations": {
         "go": {
           "status": "supported",
@@ -370,7 +383,7 @@
         },
         "rust": {
           "status": "unsupported",
-          "reason": "The Rust v3 SDK consumes issued artifacts and does not provide an issuer API."
+          "reason": "The Rust current SDK consumes issued artifacts and does not provide an issuer API."
         },
         "swift": {
           "status": "unsupported",
@@ -378,7 +391,7 @@
         },
         "typescript": {
           "status": "unsupported",
-          "reason": "The TypeScript v3 SDK consumes issued artifacts and does not provide an issuer API."
+          "reason": "The TypeScript current SDK consumes issued artifacts and does not provide an issuer API."
         }
       }
     },
@@ -402,8 +415,12 @@
           ]
         },
         "swift": {
-          "status": "unsupported",
-          "reason": "Apple platforms do not provide the deployable listener profile used by Flowersec servers."
+          "status": "supported",
+          "entrypoint": "TransportEnvironment.accept/serve: macOS/iOS WebSocket direct and original preauthorized-pool/live-authority tunnel server Sources",
+          "test_ids": [
+            "server/swift-acceptor",
+            "server/swift-acceptor/ios-simulator"
+          ]
         },
         "typescript": {
           "status": "supported",
@@ -435,7 +452,7 @@
         },
         "swift": {
           "status": "unsupported",
-          "reason": "The browser Service Worker and MessagePort APIs do not exist on the Apple SDK profile."
+          "reason": "The Apple SDK exposes native ProxyServer HTTP and WebSocket adapters, but browser-to-Swift HTTP/WebSocket interoperability is not qualified by the executable proxy matrix."
         },
         "typescript": {
           "status": "supported",
@@ -480,7 +497,7 @@
     {
       "id": "wire_security",
       "layer": "portable_core",
-      "description": "Canonical v3 handshake, record protection, admission and TLS-policy binding, and Unicode validation",
+      "description": "Canonical v4 handshake, record protection, admission and TLS-policy binding, and Unicode validation",
       "implementations": {
         "go": {
           "status": "supported",
@@ -541,260 +558,231 @@
       "id": "swift_apple_websocket",
       "layer": "sdk_profile",
       "owner": "swift",
-      "reason": "The Swift production connector supports WSS direct and tunnel dialing on macOS.",
+      "reason": "The Swift WebSocket profile supports WSS direct and tunnel connectors, native server admission and session handlers on macOS.",
       "test_ids": [
-        "connector/swift-v3/interop/swift-go/wss/direct"
+        "connector/swift-v4/interop/swift-go/wss/direct",
+        "server/swift-acceptor",
+        "server/swift-session-handlers"
       ]
     },
     {
       "id": "swift_ios_apple_websocket",
       "layer": "sdk_profile",
       "owner": "swift",
-      "reason": "The Swift production connector supports WSS direct and tunnel dialing on iOS.",
+      "reason": "The Swift WebSocket profile supports WSS direct and tunnel connectors, native server admission and session handlers on iOS.",
       "test_ids": [
-        "connector/swift-v3/ios-simulator"
+        "connector/swift-v4/ios-simulator",
+        "server/swift-acceptor/ios-simulator",
+        "server/swift-session-handlers/ios-simulator"
       ]
     }
   ],
   "shared_fixtures": [
     {
-      "id": "artifact_admission_v3",
-      "path": "testdata/transport_v3/artifact_vectors.json",
+      "id": "transport_v4_corpus",
+      "path": "testdata/transport_v4/corpus.json",
       "consumers": {
         "go": [
           "protocol/go"
         ],
-        "rust": [
-          "protocol/rust"
+        "typescript": [
+          "protocol/typescript"
         ],
         "swift": [
           "protocol/swift"
         ],
+        "rust": [
+          "protocol/rust"
+        ]
+      }
+    },
+    {
+      "id": "transport_v4_signatures",
+      "path": "testdata/transport_v4/signatures.json",
+      "consumers": {
+        "go": [
+          "protocol/go"
+        ],
+        "typescript": [
+          "protocol/typescript"
+        ],
+        "swift": [
+          "protocol/swift"
+        ],
+        "rust": [
+          "protocol/rust"
+        ]
+      }
+    },
+    {
+      "id": "transport_v4_profile_dh",
+      "path": "testdata/transport_v4/profile_dh.json",
+      "consumers": {
+        "go": [
+          "protocol/go"
+        ],
+        "typescript": [
+          "protocol/typescript"
+        ],
+        "swift": [
+          "protocol/swift"
+        ],
+        "rust": [
+          "protocol/rust"
+        ]
+      }
+    },
+    {
+      "id": "transport_v4_noise",
+      "path": "testdata/transport_v4/noise.json",
+      "consumers": {
+        "go": [
+          "protocol/go"
+        ],
+        "typescript": [
+          "protocol/typescript"
+        ],
+        "swift": [
+          "protocol/swift"
+        ],
+        "rust": [
+          "protocol/rust"
+        ]
+      }
+    },
+    {
+      "id": "transport_v4_ready",
+      "path": "testdata/transport_v4/ready.json",
+      "consumers": {
+        "go": [
+          "protocol/go"
+        ],
+        "typescript": [
+          "protocol/typescript"
+        ],
+        "swift": [
+          "protocol/swift"
+        ],
+        "rust": [
+          "protocol/rust"
+        ]
+      }
+    },
+    {
+      "id": "transport_v4_records",
+      "path": "testdata/transport_v4/records.json",
+      "consumers": {
+        "go": [
+          "protocol/go"
+        ],
+        "typescript": [
+          "protocol/typescript"
+        ],
+        "swift": [
+          "protocol/swift"
+        ],
+        "rust": [
+          "protocol/rust"
+        ]
+      }
+    },
+    {
+      "id": "transport_v4_rekey",
+      "path": "testdata/transport_v4/rekey.json",
+      "consumers": {
+        "go": [
+          "protocol/go"
+        ],
+        "typescript": [
+          "protocol/typescript"
+        ],
+        "swift": [
+          "protocol/swift"
+        ],
+        "rust": [
+          "protocol/rust"
+        ]
+      }
+    },
+    {
+      "id": "transport_v4_resources",
+      "path": "testdata/transport_v4/resources.json",
+      "consumers": {
+        "go": [
+          "protocol/go"
+        ],
+        "typescript": [
+          "protocol/typescript"
+        ],
+        "swift": [
+          "protocol/swift"
+        ],
+        "rust": [
+          "protocol/rust"
+        ]
+      }
+    },
+    {
+      "id": "transport_v4_api_results",
+      "path": "testdata/transport_v4/api_results.json",
+      "consumers": {
+        "go": [
+          "protocol/go"
+        ],
+        "typescript": [
+          "protocol/typescript"
+        ],
+        "swift": [
+          "protocol/swift"
+        ],
+        "rust": [
+          "protocol/rust"
+        ]
+      }
+    },
+    {
+      "id": "idna",
+      "path": "testdata/idna/idna_vectors.json",
+      "consumers": {
+        "go": [
+          "protocol/go"
+        ],
+        "swift": [
+          "protocol/swift"
+        ]
+      }
+    },
+    {
+      "id": "rpc_error",
+      "path": "testdata/rpc/rpc_error_vectors.json",
+      "consumers": {
         "typescript": [
           "protocol/typescript"
         ]
       }
     },
     {
-      "id": "capability_v3",
-      "path": "testdata/transport_v3/capability_vectors.json",
+      "id": "rpc_malformed_envelopes",
+      "path": "testdata/rpc/rpc_malformed_envelopes.json",
       "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
         "typescript": [
           "protocol/typescript"
         ]
       }
     },
     {
-      "id": "controller_v3",
-      "path": "testdata/transport_v3/controller_vectors.json",
+      "id": "rpc_notifications",
+      "path": "testdata/rpc/rpc_notification_vectors.json",
       "consumers": {
-        "go": [
-          "controller/go"
-        ],
-        "rust": [
-          "controller/rust"
-        ],
-        "swift": [
-          "controller/swift"
-        ],
-        "typescript": [
-          "controller/typescript"
-        ]
-      }
-    },
-    {
-      "id": "crypto_v3",
-      "path": "testdata/transport_v3/crypto_vectors.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
         "rust": [
           "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
-        ]
-      }
-    },
-    {
-      "id": "datagram_v3",
-      "path": "testdata/transport_v3/datagram_vectors.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
-        ]
-      }
-    },
-    {
-      "id": "handshake_v3",
-      "path": "testdata/transport_v3/handshake_vectors.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
-        ]
-      }
-    },
-    {
-      "id": "idna_v3",
-      "path": "testdata/transport_v3/idna_vectors.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
-        ]
-      }
-    },
-    {
-      "id": "open_unicode_v3",
-      "path": "testdata/transport_v3/open_unicode_vectors.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
-        ]
-      }
-    },
-    {
-      "id": "rpc_error_v3",
-      "path": "testdata/transport_v3/rpc_error_vectors.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
-        ]
-      }
-    },
-    {
-      "id": "rpc_malformed_envelopes_v3",
-      "path": "testdata/transport_v3/rpc_malformed_envelopes.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
-        ]
-      }
-    },
-    {
-      "id": "rpc_notifications_v3",
-      "path": "testdata/transport_v3/rpc_notification_vectors.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
-        ]
-      }
-    },
-    {
-      "id": "session_handlers_v3",
-      "path": "testdata/transport_v3/session_handler_vectors.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
-        ]
-      }
-    },
-    {
-      "id": "session_wire_v3",
-      "path": "testdata/transport_v3/session_wire_vectors.json",
-      "consumers": {
-        "go": [
-          "protocol/go"
-        ],
-        "rust": [
-          "protocol/rust"
-        ],
-        "swift": [
-          "protocol/swift"
-        ],
-        "typescript": [
-          "protocol/typescript"
         ]
       }
     }
   ],
   "deployment_profiles": {
     "version": 3,
-    "application_wire": "flowersec/3",
+    "application_wire": "flowersec/4",
     "profiles": [
       {
         "id": "native-server-core",
@@ -1169,7 +1157,7 @@
         "status": "supported",
         "entrypoint": "@floegence/flowersec-core/node createTunnelRuntime",
         "test_ids": [
-          "carrier/typescript-websocket-tunnel"
+          "interop/v4/native/tunnel/go-baseline"
         ]
       },
       {
@@ -1263,7 +1251,7 @@
         "path": "carrier-neutral",
         "feature": "issue-authorize",
         "status": "unsupported",
-        "reason": "The TypeScript v3 SDK consumes issued artifacts and does not provide an issuer API."
+        "reason": "The TypeScript SDK consumes issued artifacts and does not provide an issuer API."
       },
       {
         "runtime": "node-typescript",
@@ -1416,7 +1404,7 @@
         "path": "carrier-neutral",
         "feature": "issue-authorize",
         "status": "unsupported",
-        "reason": "The Rust v3 SDK consumes issued artifacts and does not provide an issuer API."
+        "reason": "The Rust SDK consumes issued artifacts and does not provide an issuer API."
       },
       {
         "runtime": "rust",

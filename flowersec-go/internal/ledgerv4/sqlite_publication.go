@@ -32,6 +32,7 @@ type SQLitePublicationConfig struct {
 	// Unchanged State content reuses its position across freshness publications.
 	HistorySlots           uint32
 	MaxAuthenticationBytes uint32
+	stateReservations      [2]resourcev4.Reference
 }
 
 // SQLitePublicationStore is one fixed namespace authority and publication
@@ -102,12 +103,17 @@ func SQLitePublicationStoreCharges(l SQLiteLimits, c SQLitePublicationConfig) (o
 	return
 }
 
-func newSQLitePublicationStore(s *sqliteStore, c SQLitePublicationConfig) (*SQLitePublicationStore, error) {
+func newSQLitePublicationStore(s *sqliteStore, c SQLitePublicationConfig) (_ *SQLitePublicationStore, err error) {
 	r, err := c.Trust.Rules()
 	if err != nil {
 		return nil, err
 	}
 	p := &SQLitePublicationStore{store: &SQLiteStore{s}, config: c, rules: r}
+	defer func() {
+		if err != nil {
+			p.clear()
+		}
+	}()
 	p.maximum, p.headMaximum = r.PublicationCapacity()
 	w := admissionWriter{dst: p.configuration[:]}
 	w.text(c.Scope.Tenant)
@@ -119,7 +125,35 @@ func newSQLitePublicationStore(s *sqliteStore, c SQLitePublicationConfig) (*SQLi
 	w.uint(p.maximum)
 	w.uint(p.headMaximum)
 	p.configurationBytes = w.n
-	return p, w.err
+	if w.err != nil {
+		return nil, w.err
+	}
+	// These same bounded arenas inspect both open snapshots and subsequently
+	// serve mutations. No second maximum State decoder is created for reopen.
+	for i, reference := range c.stateReservations {
+		p.workspaces[i], err = protocolv4.NewRevocationWorkspace(r, reference)
+		if err != nil {
+			return nil, err
+		}
+	}
+	p.config.stateReservations = [2]resourcev4.Reference{}
+	h, err := protocolv4.SchemaByteLimit("FreshnessHead")
+	if err != nil {
+		return nil, err
+	}
+	p.codec, err = protocolv4.NewSignedMapCodec("FreshnessHead", h, h)
+	if err != nil {
+		return nil, err
+	}
+	p.decoder, err = protocolv4.NewDecoder(h, h)
+	if err != nil {
+		return nil, err
+	}
+	p.current = make([]byte, int(p.maximum))
+	p.snapshot = make([]byte, int(p.maximum))
+	p.candidate = make([]byte, int(p.maximum))
+	p.head = make([]byte, int(p.headMaximum))
+	return p, nil
 }
 
 func CreateSQLitePublicationStore(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, c SQLitePublicationConfig, owner, first, second, dependencies resourcev4.Reference) (*SQLitePublicationStore, error) {
@@ -129,12 +163,28 @@ func OpenSQLitePublicationStore(ctx context.Context, backing *SQLiteBacking, ide
 	return openSQLitePublicationStore(ctx, backing, identity, continuity, c, owner, first, second, dependencies, false)
 }
 func openSQLitePublicationStore(ctx context.Context, backing *SQLiteBacking, identity SQLiteIdentity, continuity SQLiteContinuity, c SQLitePublicationConfig, owner, first, second, dependencies resourcev4.Reference, create bool) (_ *SQLitePublicationStore, err error) {
+	if backing == nil || backing.sqliteBacking == nil {
+		return nil, ErrConfiguration
+	}
+	ownerCharge, firstCharge, secondCharge, err := SQLitePublicationStoreCharges(backing.limits, c)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range []struct {
+		reference resourcev4.Reference
+		minimum   resourcev4.Vector
+	}{{owner, ownerCharge}, {first, firstCharge}, {second, secondCharge}} {
+		if err = entry.reference.CheckMinimum(entry.minimum); err != nil {
+			return nil, err
+		}
+	}
 	if err = owner.CheckSameEnvironment(first); err != nil {
 		return nil, err
 	}
 	if err = owner.CheckSameEnvironment(second); err != nil {
 		return nil, err
 	}
+	c.stateReservations = [2]resourcev4.Reference{first, second}
 	s, err := openSQLitePurpose(ctx, backing, identity, continuity, owner, dependencies, create, nil, nil, nil, nil, nil, nil, &c)
 	if s == nil {
 		return nil, err
@@ -155,30 +205,6 @@ func openSQLitePublicationStore(ctx context.Context, backing *SQLiteBacking, ide
 	if err != nil {
 		return p, err
 	}
-	p.workspaces[0], err = protocolv4.NewRevocationWorkspace(p.rules, first)
-	if err != nil {
-		return p, err
-	}
-	p.workspaces[1], err = protocolv4.NewRevocationWorkspace(p.rules, second)
-	if err != nil {
-		return p, err
-	}
-	h, err := protocolv4.SchemaByteLimit("FreshnessHead")
-	if err != nil {
-		return p, err
-	}
-	p.codec, err = protocolv4.NewSignedMapCodec("FreshnessHead", h, h)
-	if err != nil {
-		return p, err
-	}
-	p.decoder, err = protocolv4.NewDecoder(h, h)
-	if err != nil {
-		return p, err
-	}
-	p.current = make([]byte, int(p.maximum))
-	p.snapshot = make([]byte, int(p.maximum))
-	p.candidate = make([]byte, int(p.maximum))
-	p.head = make([]byte, int(p.headMaximum))
 	return p, nil
 }
 

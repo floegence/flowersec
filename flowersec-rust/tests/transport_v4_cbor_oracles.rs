@@ -164,7 +164,7 @@ fn complete_corpus_with_external_composition() {
         pools += usize::from(vector.get("pool_derivation").is_some());
         opens += usize::from(vector["schema"] == "OPEN_STREAM");
     }
-    assert_eq!((positive, negative), (348, 833));
+    assert_eq!((positive, negative), (349, 833));
     assert!(pools > 0 && opens > 0);
 }
 

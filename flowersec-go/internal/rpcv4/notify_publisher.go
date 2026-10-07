@@ -20,6 +20,14 @@ type NotifySink interface {
 	Wake() <-chan struct{}
 }
 
+// AuthorizedNotifySink is the original SDK writer's finite copy attachment.
+// Its Engine check precedes the original publication guard, which remains held
+// across the copy and the exact notification submission facts.
+type AuthorizedNotifySink interface {
+	CheckRequestAcceptance(context.Context) error
+	TryAcceptAuthorizedNotify(context.Context, []byte) (uint64, error)
+}
+
 // NotifyPublicationGuard belongs to the original trusted Session/method
 // owner. It orders finite byte acceptance with current authority, registration
 // and close gates. It must not call application code or reenter this publisher.
@@ -130,6 +138,17 @@ func NewNotifyPublisher(sink NotifySink, c NotifyPublisherConfig, ref resourcev4
 	return &NotifyPublisher{sink: sink, codec: codec, reservation: owned, slots: make([]notifyPublisherSlot, c.Pending), wake: make(chan struct{}, 1)}, nil
 }
 func (p *NotifyPublisher) Wake() <-chan struct{} { return p.wake }
+
+// DrainIfIdle seals the original sender only after every accepted message and
+// physical send tail has finished. seal is the SDK's local queue transition.
+func (p *NotifyPublisher) DrainIfIdle(seal func() bool) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.closed && !p.retired && !p.stepping && p.count == 0 {
+		return seal()
+	}
+	return false
+}
 func (p *NotifyPublisher) notifyLocked() {
 	select {
 	case p.wake <- struct{}{}:
@@ -284,20 +303,19 @@ func (s *NotifySubmission) Release() error {
 }
 
 func (p *NotifyPublisher) retireSourceLocked(s *notifySource, reason string, flushed bool) {
-	s.submission.mu.Lock()
-	s.submission.progress.HeaderAccepted = s.begun
-	s.submission.progress.MessageAccepted = s.accepted
-	s.submission.progress.Flushed = flushed
-	s.submission.progress.Terminal = true
-	s.submission.progress.Reason = reason
-	s.submission.cleaned = true
-	s.submission.wake = nil
-	if !s.submission.submissionDone {
-		s.submission.submissionDone = true
-		close(s.submission.submitted)
+	submission := s.submission
+	submission.mu.Lock()
+	submission.progress.HeaderAccepted = s.begun
+	submission.progress.MessageAccepted = s.accepted
+	submission.progress.Flushed = flushed
+	submission.progress.Terminal = true
+	submission.progress.Reason = reason
+	submission.wake = nil
+	if !submission.submissionDone {
+		submission.submissionDone = true
+		close(submission.submitted)
 	}
-	close(s.submission.done)
-	s.submission.mu.Unlock()
+	submission.mu.Unlock()
 	clear(s.payload)
 	s.payload = nil
 	clear(s.header[:])
@@ -318,6 +336,12 @@ func (p *NotifyPublisher) retireSourceLocked(s *notifySource, reason string, flu
 		p.count--
 		break
 	}
+	// Local submission facts are observable while the original source retires.
+	// Cleanup joins every source reference, byte buffer and publisher position.
+	submission.mu.Lock()
+	submission.cleaned = true
+	close(submission.done)
+	submission.mu.Unlock()
 }
 
 // Step admits one bounded chunk, preserving a single physical message until
@@ -378,6 +402,12 @@ func (p *NotifyPublisher) Step(ctx context.Context) (progress bool, err error) {
 	guard := s.guard
 	p.mu.Unlock()
 	defer func() { p.mu.Lock(); p.stepping = false; p.mu.Unlock() }()
+	if sink, ok := p.sink.(AuthorizedNotifySink); ok {
+		if err := sink.CheckRequestAcceptance(ctx); err != nil {
+			return false, err
+		}
+	}
+	sample, sampleErr := s.deadline.Sample()
 	entered := false
 	err = withNotifyPublication(guard, s.decoded, s.begun, func(resourcev4.Reference) error {
 		entered = true
@@ -400,7 +430,11 @@ func (p *NotifyPublisher) Step(ctx context.Context) (progress bool, err error) {
 			progress = true
 			return nil
 		}
-		if err := s.deadline.Check(); err != nil {
+		deadlineErr := sampleErr
+		if deadlineErr == nil {
+			deadlineErr = s.deadline.CheckUsingSample(sample)
+		}
+		if err := deadlineErr; err != nil {
 			if !s.begun {
 				p.retireSourceLocked(s, "deadline_exceeded", false)
 				progress = true
@@ -434,7 +468,13 @@ func (p *NotifyPublisher) Step(ctx context.Context) (progress bool, err error) {
 			progress = true
 			return nil
 		}
-		tail, err := p.sink.TryAcceptNotify(ctx, chunk)
+		var tail uint64
+		var err error
+		if sink, ok := p.sink.(AuthorizedNotifySink); ok {
+			tail, err = sink.TryAcceptAuthorizedNotify(ctx, chunk)
+		} else {
+			tail, err = p.sink.TryAcceptNotify(ctx, chunk)
+		}
 		if err != nil {
 			s.submission.mu.Unlock()
 			return err

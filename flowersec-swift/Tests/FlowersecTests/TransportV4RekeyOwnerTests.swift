@@ -5,7 +5,7 @@ import XCTest
 @testable import Flowersec
 
 @MainActor
-final class TransportV4RekeyOwnerTests: XCTestCase {
+final class TransportRekeyOwnerTests: XCTestCase {
   func testRetirementPublishesAfterFrozenBarrierWithoutWaitingForRekeyCompletion() throws {
     for profile in V4CryptoProfile.allCases {
       let fixture = try CryptoOwnerFixture(profile)

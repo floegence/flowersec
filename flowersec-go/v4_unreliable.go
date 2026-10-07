@@ -11,13 +11,13 @@ import (
 // UnreliableMessages is available only after the original READY selected the
 // signed feature on a complete native datagram route. Accepted means local
 // provider submission, and never delivery or remote application consumption.
-func (s *V4Session) UnreliableMessages() (UnreliableMessageChannel, error) {
+func (s *Session) UnreliableMessages() (UnreliableMessageChannel, error) {
 	if s == nil || s.unreliable == nil {
 		return nil, &UnreliableMessageError{code: UnreliableMessageUnavailable}
 	}
 	channel, err := s.unreliable()
 	if err != nil {
-		return nil, redactV4UnreliableError(err)
+		return nil, redactUnreliableError(err)
 	}
 	return &v4UnreliableChannel{inner: channel}, nil
 }
@@ -28,14 +28,14 @@ func (c *v4UnreliableChannel) MaxMessageBytes() int { return c.inner.MaxMessageB
 func (c *v4UnreliableChannel) Send(ctx context.Context, payload []byte, options UnreliableSendOptions) (UnreliableSendStatus, error) {
 	status, err := c.inner.Send(ctx, payload, options.ExpiresAt)
 	if err != nil {
-		return UnreliableSendStatus(status), redactV4UnreliableError(err)
+		return UnreliableSendStatus(status), redactUnreliableError(err)
 	}
 	return UnreliableSendStatus(status), nil
 }
 func (c *v4UnreliableChannel) Receive(ctx context.Context) ([]byte, error) {
 	payload, err := c.inner.Receive(ctx)
 	if err != nil {
-		return nil, redactV4UnreliableError(err)
+		return nil, redactUnreliableError(err)
 	}
 	return payload, nil
 }
@@ -45,7 +45,7 @@ const (
 	UnreliableMessageReceiveDisabled    UnreliableMessageErrorCode = "receive_disabled"
 )
 
-func redactV4UnreliableError(err error) *UnreliableMessageError {
+func redactUnreliableError(err error) *UnreliableMessageError {
 	code := UnreliableMessageOperationFailed
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):

@@ -3,7 +3,7 @@ import XCTest
 @testable import Flowersec
 
 @MainActor
-final class TransportV4CursorTests: XCTestCase {
+final class TransportCursorTests: XCTestCase {
   func testExactAndDelimiterLeaveSuffixAtOriginalSource() async throws {
     let source = CursorSourceProbe(data: Data("hello\nbody".utf8), start: 41)
     let line = try ReaderCursor(source: source,
@@ -186,9 +186,9 @@ final class TransportV4CursorTests: XCTestCase {
     let environment = TransportEnvironment()
     let source = UnavailableMaterialSource()
     do {
-      _ = try await environment.connect(source: source)
+      _ = try await environment.connect(source: ConnectionMaterialSource(owner: source))
       XCTFail("A v4 environment cannot publish an unverified previous-engine session")
-    } catch TransportV4AvailabilityError.runtimeUnavailable {}
+    } catch TransportAvailabilityError.runtimeUnavailable {}
     let calls = await source.calls
     XCTAssertEqual(calls, 0)
     try await environment.close()
@@ -196,9 +196,14 @@ final class TransportV4CursorTests: XCTestCase {
     let cleanup = await environment.cleanupStatus()
     XCTAssertTrue(cleanup.complete)
     do {
-      _ = try await environment.connect(source: source)
+      _ = try await environment.connect(source: ConnectionMaterialSource(owner: source))
       XCTFail("Closing must fence subsequent preparation")
-    } catch SessionError.closed {}
+    } catch {
+      let failure = try XCTUnwrap(error as? ConnectError)
+      XCTAssertEqual(failure.retryDisposition, .terminal)
+      XCTAssertEqual(failure.connection, .notStarted)
+      XCTAssertTrue(failure.cleanup.complete)
+    }
   }
 }
 
@@ -287,7 +292,7 @@ private final class CursorSourceProbe: ReaderCursorSource, @unchecked Sendable {
   func waitForReleases(_ count: Int) async { await releaseEvents.wait(count) }
 }
 
-private actor UnavailableMaterialSource: ConnectionMaterialSource {
+private actor UnavailableMaterialSource: ConnectionMaterialSourceOwner {
   private(set) var calls = 0
   func acquire(_ requirements: ConnectionRequirements) async throws -> ConnectionMaterial {
     calls += 1

@@ -138,7 +138,7 @@ export class ContractSnapshotWriter {
     this.#check(); if (this.#phase !== "done" || this.#borrowed) throw new RPCProtocolError("query_response_incomplete");
     const borrow = this.#payload!.borrow(this.#offset); this.#borrowed = true;
     let released = false;
-    return Object.freeze({ bytes: borrow.bytes, release: () => {
+    return Object.freeze({ bytes: borrow.bytes, retainSend: borrow.retainSend, release: () => {
       if (released) return; released = true; borrow.release(); this.#borrowed = false; this.#collect();
     } });
   }

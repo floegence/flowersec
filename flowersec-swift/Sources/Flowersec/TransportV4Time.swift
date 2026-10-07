@@ -249,20 +249,21 @@ final class V4TrustedClock: @unchecked Sendable {
   }
 }
 
-// A deadline fixes one absolute cap and the earliest projection in its clock
+// A deadline retains an absolute cap and the earliest projection in its clock
 // era. This foundation conservatively ends an owner on lost continuity; no
 // Session/key restoration exists until a real verification-continuity owner
 // can prove that the original protocol state has not rolled back.
 final class V4SecurityDeadline: @unchecked Sendable {
   let clock: V4TrustedClock
-  let capMS: UInt64
+  private var cap: UInt64
+  var capMS: UInt64 { clock.gate.withLock { cap } }
   private var projection: V4ClockMark?
   private var monotonicEnd: UInt64 = 0
   private var terminal: V4TimeFailure?
 
   init(clock: V4TrustedClock, capMS: UInt64) throws {
     self.clock = clock
-    self.capMS = capMS
+    self.cap = capMS
     try clock.gate.withLock { _ = try sampleLocked() }
   }
 
@@ -303,6 +304,12 @@ final class V4SecurityDeadline: @unchecked Sendable {
 
   func sample() throws -> V4ClockSample { try clock.gate.withLock { try sampleLocked() } }
   func check() throws { _ = try sample() }
+  func tighten(to capMS: UInt64) throws {
+    try clock.gate.withLock {
+      cap = min(cap, capMS)
+      _ = try sampleLocked()
+    }
+  }
   func cancel() { clock.gate.withLock { if terminal == nil { terminal = .canceled } } }
 
   func remainingTicks() throws -> UInt64 {

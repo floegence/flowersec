@@ -53,6 +53,9 @@ type RelayHop struct {
 	claimReservation, invocationReservation                             resourcev4.Reference
 	guard                                                               relayHopAuthorization
 	wake                                                                chan struct{}
+	settled                                                             chan struct{}
+	settledClosed                                                       bool
+	closing                                                             uint32
 	started, running, authenticated, closed, cleaning, cleaned, retired bool
 	terminal                                                            error
 }
@@ -152,9 +155,9 @@ func NewRelayHop(ctx context.Context, c RelayHopConfig, prepared *PreparedCarrie
 	if err != nil {
 		return nil, err
 	}
-	r := &RelayHop{building: true, c: c, reservation: owned, prepared: prepared, wake: make(chan struct{}, 1)}
+	r := &RelayHop{building: true, c: c, reservation: owned, prepared: prepared, wake: make(chan struct{}, 1), settled: make(chan struct{})}
 	r.guard.owner = r
-	defer func() { r.mu.Lock(); r.building = false; r.mu.Unlock(); c.Pair.notify() }()
+	defer func() { r.mu.Lock(); r.building = false; r.settleLocked(); r.mu.Unlock(); c.Pair.notify() }()
 	adopted := false
 	defer func() {
 		if !adopted {
@@ -390,6 +393,7 @@ func (g *relayHopAuthorization) Close(cause error) { g.owner.seal(cause) }
 
 func (r *RelayHop) seal(cause error) {
 	r.mu.Lock()
+	r.closing++
 	if cause == nil {
 		cause = cryptov4.ErrClosed
 	}
@@ -402,14 +406,29 @@ func (r *RelayHop) seal(cause error) {
 		r.forwardDeadline.Cancel()
 	}
 	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.closing--
+		r.settleLocked()
+		r.mu.Unlock()
+		pair.notify()
+	}()
 	_ = p.Close()
-	pair.notify()
 }
 
 func (r *RelayHop) Close() {
 	if r == nil {
 		return
 	}
+	r.mu.Lock()
+	r.closing++
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.closing--
+		r.settleLocked()
+		r.mu.Unlock()
+	}()
 	r.seal(cryptov4.ErrClosed)
 	r.mu.Lock()
 	x, ledger := r.initial, r.ledger
@@ -431,12 +450,27 @@ func (r *RelayHop) WaitCleanup(ctx context.Context) error {
 		r.mu.Unlock()
 		return nil
 	}
-	if !r.closed || r.running || r.forwarding || r.building || r.cleaning {
+	if !r.closed || r.cleaning {
 		r.mu.Unlock()
 		return cryptov4.ErrCapacity
 	}
 	r.cleaning = true
-	x, ledger := r.initial, r.ledger
+	settled := r.settled
+	r.mu.Unlock()
+	completed := false
+	defer func() {
+		r.mu.Lock()
+		r.cleaning = false
+		r.cleaned = completed
+		r.mu.Unlock()
+	}()
+	select {
+	case <-settled:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	r.mu.Lock()
+	x, ledger, prepared := r.initial, r.ledger, r.prepared
 	r.mu.Unlock()
 	err := error(nil)
 	if x != nil {
@@ -446,13 +480,21 @@ func (r *RelayHop) WaitCleanup(ctx context.Context) error {
 		err = ledger.Cleanup()
 	}
 	if err == nil {
-		err = r.prepared.WaitCleanup(ctx)
+		err = prepared.WaitCleanup(ctx)
 	}
-	r.mu.Lock()
-	r.cleaning = false
-	r.cleaned = err == nil
-	r.mu.Unlock()
+	completed = err == nil
 	return err
+}
+
+// The original constructor, authentication, forwarding and Close calls all
+// retain their hop ownership until their actual method tails have returned.
+func (r *RelayHop) settleLocked() {
+	if r.closed && !r.running && !r.forwarding && !r.building && r.closing == 0 && !r.settledClosed {
+		r.settledClosed = true
+		if r.settled != nil {
+			close(r.settled)
+		}
+	}
 }
 
 func (r *RelayHop) Retire() error {
@@ -464,7 +506,7 @@ func (r *RelayHop) Retire() error {
 		r.mu.Unlock()
 		return nil
 	}
-	if !r.cleaned || r.running || r.forwarding || r.building || r.cleaning {
+	if !r.cleaned || r.running || r.forwarding || r.building || r.cleaning || r.closing != 0 {
 		r.mu.Unlock()
 		return cryptov4.ErrCapacity
 	}

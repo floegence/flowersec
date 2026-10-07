@@ -4,6 +4,8 @@ import type { V4WriteRequestOwner } from "../public.js";
 import { byteLength, byteSlice } from "./cbor.js";
 import { timerChunk, type TrustedDeadline } from "./deadline.js";
 import { ResourceVector, type ResourceReference } from "./resources.js";
+import type { DiagnosticActivity } from "./diagnosticObservation.js";
+import { diagnosticFailure } from "./diagnosticCounters.js";
 
 const NativePromise = Promise;
 const empty = new Uint8Array();
@@ -41,11 +43,12 @@ export class ReliableWriteRequest implements V4WriteRequestOwner {
   #operation: Promise<void> | undefined;
   #released = false;
   #protocolAdmitted = false;
+  #firstNativeAdmission: (() => void) | undefined;
   #handoff: (() => void) | undefined;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #waiter: Waiter | undefined;
   constructor(private readonly target: WriteRequestTarget, payload: Uint8Array, private readonly deadline: TrustedDeadline,
-    runtimeBytes: bigint, reservation: ResourceReference) {
+    runtimeBytes: bigint, reservation: ResourceReference, private readonly diagnostic?: DiagnosticActivity) {
     const size = byteLength(payload); this.#requested = BigInt(size);
     this.#reservation = reservation.take(writeRequestCharge(size, runtimeBytes));
     try {
@@ -84,6 +87,11 @@ export class ReliableWriteRequest implements V4WriteRequestOwner {
     if (this.#phase !== "prepared" || this.#protocolAdmitted || this.#abort.signal.aborted) return false;
     this.#protocolAdmitted = true; return true;
   }
+  /** Fixed M framing commits its serial at the first accepted native record. */
+  observeFirstNativeAdmission(callback: () => void): void {
+    if (this.#phase !== "prepared" || this.#protocolAdmitted || this.#firstNativeAdmission !== undefined) throw new Error("write_owner");
+    this.#firstNativeAdmission = callback;
+  }
   /** Original SDK observer; no application callback is accepted here. */
   observeProtocolHandoff(callback: () => void): void {
     if (this.#phase !== "prepared" || !this.#protocolAdmitted || this.#handoff !== undefined) throw new Error("write_owner");
@@ -98,6 +106,11 @@ export class ReliableWriteRequest implements V4WriteRequestOwner {
         const at = Number(this.#accepted), n = Math.min(ready, this.target.maxChunk, this.#payload.length - at);
         await this.target.send(byteSlice(this.#payload, at, at + n), count => {
           if (count !== n || this.#accepted !== BigInt(at)) throw new Error("write_owner");
+          if (this.#firstNativeAdmission !== undefined) {
+            const first = this.#firstNativeAdmission; this.#firstNativeAdmission = undefined;
+            this.#protocolAdmitted = true;
+            first();
+          }
           this.#accepted += BigInt(count);
           if (this.#accepted === this.#requested) { const handoff = this.#handoff; this.#handoff = undefined; handoff?.(); }
           this.#wake();
@@ -120,13 +133,17 @@ export class ReliableWriteRequest implements V4WriteRequestOwner {
   #finish(reason: V4WriteTerminalReason): void {
     if (this.#phase === "terminal") return;
     this.#reason = reason; this.#phase = "terminal"; this.#abort.abort();
+    this.diagnostic?.event(reason === "complete" ? { state: "ready", code: "ok" } : {
+      state: "failed", code: diagnosticFailure(new Error(reason)).code, retry_disposition: "preserve_facts",
+    });
     if (this.#timer !== undefined) clearTimeout(this.#timer); this.#timer = undefined;
     this.#cleanup(); this.#wake();
   }
   #cleanup(): void {
     if (this.#phase !== "terminal" || this.#running || this.#released) return;
-    this.#released = true; this.#handoff = undefined; this.#payload.fill(0); this.#payload = empty;
+    this.#released = true; this.#handoff = undefined; this.#firstNativeAdmission = undefined; this.#payload.fill(0); this.#payload = empty;
     this.#reservation?.release(); this.#reservation = undefined; this.target.release(this);
+    this.diagnostic?.close();
   }
   progress(): V4WriteProgress {
     const result = { requested_bytes: this.#requested, accepted_bytes: this.#accepted, phase: this.#phase,

@@ -77,7 +77,7 @@ func HTTPStreamCharge(options HTTPStreamOptions) (resourcev4.Vector, error) {
 // HTTPStream owns one native server, a single accepted connection, all handler
 // entry and the upgrade endpoint's original cancellation responsibility. Its
 // cleanup is a child of the same StreamConn close owner, not another close
-// state machine. It never listens on a network port or wraps v3 ByteStream.
+// state machine. The original Stream supplies its only connection.
 type HTTPStream struct {
 	controlled                *controlledHTTPExecution
 	response                  *controlledHTTPResponse

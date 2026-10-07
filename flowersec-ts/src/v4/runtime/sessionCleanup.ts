@@ -1,6 +1,7 @@
 import type { V4CleanupStatus, V4LifecycleResult } from "../../generated/transportV4APIResults.js";
 import type { OperationOptions } from "../../public/contract.js";
 import type { SessionDrain } from "../drain.js";
+import type { DiagnosticCounters } from "./diagnosticCounters.js";
 import type { TrustedClock } from "./clock.js";
 import { TrustedWindow, timerChunk } from "./deadline.js";
 import { cleanupResult, lifecycleResult } from "./lifecycle.js";
@@ -47,12 +48,15 @@ export class SessionCleanup {
   #controllerCleaned: (() => void) | undefined;
   #coreCleaned: (() => void) | undefined;
   #drain: SessionDrain | undefined;
-  constructor(root: ResourceRoot, accounts: readonly ResourceAccount[], owner: ResourceOwner, clock: TrustedClock, runtimeBytes: bigint) {
-    this.#host = { root, accounts, owner, clock, runtimeBytes };
+  #diagnosticTimeout = false;
+  readonly #cleanupMS: number;
+  constructor(root: ResourceRoot, accounts: readonly ResourceAccount[], owner: ResourceOwner, clock: TrustedClock, runtimeBytes: bigint, cleanupMS = 5000, private readonly counters?: DiagnosticCounters) {
+    if (!Number.isSafeInteger(cleanupMS) || cleanupMS < 1) throw new Error("configuration_capacity");
+    this.#cleanupMS = cleanupMS; this.#host = { root, accounts, owner, clock, runtimeBytes };
   }
   startClose(drain?: SessionDrain): void {
     if (this.#closed) return; this.#closed = true; this.#starting = true; this.#drain = drain;
-    try { this.#window = new TrustedWindow(this.#host!.clock, 5000n); this.#tick(); }
+    try { this.#window = new TrustedWindow(this.#host!.clock, BigInt(this.#cleanupMS)); this.#tick(); }
     catch { this.#incomplete = true; }
     this.#notify();
   }
@@ -65,6 +69,9 @@ export class SessionCleanup {
   startApplicationCallback(): SessionApplicationTail { return new SessionApplicationTail(this); }
   enterCallback(): void { this.#callbacks++; }
   exitCallback(): void { this.#callbacks--; }
+  /** Only ordinary callbacks and original send encoders enter this counter.
+   * Dormant results and protected Completion work have independent owners. */
+  businessPending(): boolean { return this.#callbacks !== 0; }
   markIncomplete(): void { this.#incomplete = true; this.#notify(); }
   finishJob(): void { this.#jobs--; this.#notify(); }
   updateCore(pending: number, fault = false): void {
@@ -116,6 +123,9 @@ export class SessionCleanup {
   }
   #notify(): void {
     if (this.#starting) return;
+    if (this.#incomplete && !this.#diagnosticTimeout) {
+      this.#diagnosticTimeout = true; this.counters?.observe("cleanup_timeout", { phase: "cleanup", code: "cleanup_incomplete" });
+    }
     const status = this.#projection(); this.#drain?.cleanup(status);
     if (status.status === "complete") {
       if (this.#timer !== undefined) clearTimeout(this.#timer); this.#timer = undefined; this.#window = undefined;

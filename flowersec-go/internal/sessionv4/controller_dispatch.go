@@ -121,7 +121,7 @@ func (c *ConnectionController) PrepareUnary(ctx context.Context, method UnaryMet
 // A ServiceClient supplies its original authority identity and the Session
 // selected before encoding. Never recapture a different target behind it.
 func (c *ConnectionController) prepareUnaryOn(ctx context.Context, s *EnvironmentSession, routing controllerRoutingIdentity, method UnaryMethodDefinition, input []byte, options rpcv4.UnaryPreparation) (*UnaryOperation, error) {
-	_, identity, err := s.controllerRPCIdentity()
+	_, identity, err := s.controllerRPCIdentity(routing.peers)
 	if err != nil {
 		return nil, err
 	}

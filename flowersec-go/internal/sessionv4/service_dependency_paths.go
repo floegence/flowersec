@@ -215,7 +215,14 @@ func (r *RPCServices) prepareDependencyChannel(ctx context.Context, notify bool,
 				return nil
 			}
 		}
-		job, err := r.reserveNotifyChannelLocked(nil, r.bootstrap.admission.direction)
+		a := r.bootstrap.admission
+		r.mu.Unlock()
+		readyErr := a.engine.ApplicationReady()
+		r.mu.Lock()
+		if readyErr != nil {
+			return readyErr
+		}
+		job, err := r.reserveNotifyChannelLocked(nil, a.direction)
 		if err != nil {
 			return err
 		}
@@ -230,7 +237,14 @@ func (r *RPCServices) prepareDependencyChannel(ctx context.Context, notify bool,
 			return nil
 		}
 	}
-	job, err := r.reserveChannelLocked(nil, r.bootstrap.admission.direction, RPCInteractive, true)
+	a := r.bootstrap.admission
+	r.mu.Unlock()
+	readyErr := a.engine.ApplicationReady()
+	r.mu.Lock()
+	if readyErr != nil {
+		return readyErr
+	}
+	job, err := r.reserveChannelLocked(nil, a.direction, RPCInteractive, true)
 	if err != nil {
 		return err
 	}
@@ -255,11 +269,15 @@ func (job *notifyChannelOpening) prepareDependency(deadline *timev4.Deadline) {
 	defer job.run()
 	r := job.services
 	spec, err := protocolv4.Notify()
+	defer func() { job.settleReady(err) }()
 	if err != nil {
 		return
 	}
 	job.handle, _, err = r.openInternal(job.context, InternalStream, spec.Kind, job.allocation, deadline)
-	if err == nil && job.handle.owner.WaitOutcome(job.context, job.handle) == nil {
-		_, _ = job.bind()
+	if err == nil {
+		err = job.handle.owner.WaitOutcome(job.context, job.handle)
+	}
+	if err == nil {
+		_, err = job.bind()
 	}
 }

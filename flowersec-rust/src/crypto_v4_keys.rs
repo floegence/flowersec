@@ -129,6 +129,18 @@ impl LocalKeys {
             Ed25519KeyPair::from_seed_unchecked(seed.as_ref()).map_err(|_| CryptoError::Key)?;
         Ok(Arc::new(Self { dh, signer }))
     }
+    /// Import application-provisioned static identity secrets. Ephemeral Noise
+    /// keys still use fresh entropy from the production DH adapter.
+    pub(crate) fn from_provisioning(
+        profile: Profile,
+        signing_seed: Zeroizing<[u8; 32]>,
+        noise_private: Zeroizing<[u8; 32]>,
+    ) -> Result<Arc<Self>> {
+        let dh = Arc::new(SoftwareDh::from_material(profile, noise_private)?);
+        let signer = Ed25519KeyPair::from_seed_unchecked(signing_seed.as_ref())
+            .map_err(|_| CryptoError::Key)?;
+        Ok(Arc::new(Self { dh, signer }))
+    }
     pub(super) fn dh_public(&self) -> &[u8] {
         self.dh.public()
     }

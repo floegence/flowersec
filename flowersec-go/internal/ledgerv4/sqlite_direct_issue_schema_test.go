@@ -39,7 +39,11 @@ func TestSQLiteIssuanceAggregateQuotaCoversOtherPurposeTables(t *testing.T) {
 		t.Fatal("retirement fabricated a free physical history slot")
 	}
 	closeSQLite(t, s)
-	if _, err := f.open(false); err != nil {
-		t.Fatal("consistent issuance responsibility did not reopen", err)
+	// Quota consistency alone cannot admit the intentionally opaque x'01'
+	// configuration and obligation used by this physical-capacity fixture.
+	opened, err := f.open(false)
+	if opened != nil {
+		t.Fatal("synthetic issuance bytes restored an authority")
 	}
+	storageFormatProjection(t, err)
 }

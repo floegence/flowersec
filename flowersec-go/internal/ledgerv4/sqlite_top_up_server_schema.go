@@ -70,22 +70,8 @@ func (j *SQLiteTopUpServer) createSchema() (err error) {
 	s.epoch = 1
 	return s.checkpoint()
 }
-func (j *SQLiteTopUpServer) openSchema() (err error) {
+func (j *SQLiteTopUpServer) openSchema(readOnly bool) (err error) {
 	s := j.store.sqliteStore
-	if err = j.audit.configure(); err != nil {
-		return err
-	}
-	permit, err := j.config.Authority.AcquireTopUpCommit(s.identity, j.config.Tenant, j.config.Source)
-	if err != nil {
-		return err
-	}
-	if permit == nil {
-		return ErrConfiguration
-	}
-	defer permit.Release()
-	if err = permit.Check(); err != nil {
-		return err
-	}
 	version, err := s.scalar("PRAGMA user_version")
 	if err != nil || version != int64(2) {
 		return ErrStorageFormat
@@ -151,6 +137,23 @@ func (j *SQLiteTopUpServer) openSchema() (err error) {
 	// repaired by trusting the local file or replacing its source identifier.
 	if fence.Generation < state.BindingGeneration || state.Permanent && !fence.Permanent {
 		return ErrFenced
+	}
+	if readOnly {
+		return nil
+	}
+	if err = j.audit.configure(); err != nil {
+		return err
+	}
+	permit, err := j.config.Authority.AcquireTopUpCommit(s.identity, j.config.Tenant, j.config.Source)
+	if err != nil {
+		return err
+	}
+	if permit == nil {
+		return ErrConfiguration
+	}
+	defer permit.Release()
+	if err = permit.Check(); err != nil {
+		return err
 	}
 	if err = s.continuity.Check(s.identity, epoch, false); err != nil {
 		return err

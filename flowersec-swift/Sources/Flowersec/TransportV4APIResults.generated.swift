@@ -1,5 +1,5 @@
 // Generated draft native API types; DO NOT EDIT. Not a qualified SDK runtime.
-enum TransportV4APIResults { static let schemaSHA256 = "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af" }
+enum TransportV4APIResults { static let schemaSHA256 = "9d2322a4755f74a1744e9ff5688b2ef95c3e22bf511d12c4083c96f2fe16813f" }
 
 enum V4ApplicationProfile: String {
     case transport = "transport"

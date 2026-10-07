@@ -15,7 +15,7 @@ func TestMetadataPreservesApplicationEnvelope(t *testing.T) {
 	}
 	wire := metadata.Bytes()
 	input["token"][0] = 0
-	accepted, err := streamMetadataFromV4Bytes(wire)
+	accepted, err := streamMetadataFromBytes(wire)
 	if err != nil || accepted.Namespace() != "example/binary" || accepted.Version() != 7 || !bytes.Equal(accepted.ByteValues()["token"], []byte{0xff, 0, 0xfe}) {
 		t.Fatal("application bytes or envelope changed", err)
 	}
@@ -40,7 +40,7 @@ func TestMetadataJSONUsesValidCurrentShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted, err := streamMetadataFromV4Bytes(metadata.Bytes())
+	accepted, err := streamMetadataFromBytes(metadata.Bytes())
 	if err != nil || accepted.Namespace() != "application/json" || accepted.Version() != 1 {
 		t.Fatal("ordinary OPEN rejected emitted metadata", err)
 	}

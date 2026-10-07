@@ -15,16 +15,17 @@ import (
 type RekeyPhaseBudgets struct{ LocalPrepareMS, ProtocolPrepareMS, ConfirmationMS uint64 }
 
 type rekeyTiming struct {
-	diagnostics     *diagnosticv4.Counters
-	timeoutObserved bool
-	mu              sync.Mutex
-	credit          *RekeyCredit
-	budgets         RekeyPhaseBudgets
-	anchor          timev4.Sample
-	local           *timev4.Window
-	phase           *timev4.Deadline
-	stage           uint8
-	wake            chan struct{}
+	diagnostics         *diagnosticv4.Counters
+	diagnosticOperation *DiagnosticOperation
+	timeoutObserved     bool
+	mu                  sync.Mutex
+	credit              *RekeyCredit
+	budgets             RekeyPhaseBudgets
+	anchor              timev4.Sample
+	local               *timev4.Window
+	phase               *timev4.Deadline
+	stage               uint8
+	wake                chan struct{}
 }
 
 func newRekeyTiming(c *RekeyCredit, b RekeyPhaseBudgets) (*rekeyTiming, error) {

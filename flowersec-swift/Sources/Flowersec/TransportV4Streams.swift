@@ -11,6 +11,8 @@ private final class V4StreamView: @unchecked Sendable {
   var end: UInt8 = 0
   var sendEnd: UInt8 = 0
   var finSubmitted = false
+  var applicationUsed = false
+  var bridge: V4DuplexBridgeToken?
 }
 enum V4StreamRejection: UInt64, Sendable {
   case resource = 1
@@ -180,6 +182,10 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   private var lastInDigest = Data()
   private var repeatACK = false
   private var draining = false
+  private var acceptedPeerCeiling: UInt64 = 0
+  private var localGoAway: UInt64?
+  private var goAwaySent = false
+  var observationDraining: Bool { access.environment.gate.withLock { draining } }
   private var busy = false
   private var closed = false
   private var rekey: V4RekeyCoordinator?
@@ -226,6 +232,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       s.directions[me].limit = 16_384
       s.directions[me].committed = 16_384
       slots.append(s)
+      if admission.role == .server { acceptedPeerCeiling = 1 }
       lifetime[0][1] = 1
       if admission.role == .client { ordinal = 2 }
     }
@@ -279,6 +286,59 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   private func handle(_ s: Slot) -> V4StreamHandle {
     V4StreamHandle(owner: self, view: s.view, number: s.scope.number)
   }
+  func internalCleanupComplete(_ stream: V4StreamHandle) -> Bool {
+    access.environment.gate.withLock {
+      guard stream.owner === self else { return false }
+      return find(stream.number) == nil || closed
+    }
+  }
+  func sameEndpoint(_ a: V4StreamHandle, _ b: V4StreamHandle) -> Bool {
+    a.owner === b.owner && a.number == b.number && a.view === b.view
+  }
+  func checkBridgeCandidate(_ stream: V4StreamHandle) throws {
+    try run {
+      let slot = try resolve(stream)
+      guard slot.phase == .accepted, slot.streamClass == .business,
+        !slot.canceled, !slot.bootstrap, !slot.view.applicationUsed, slot.view.bridge == nil,
+        slot.directions.allSatisfy({ !$0.stop && $0.terminal == nil })
+      else { throw DuplexBridgeFailure.streamOwned }
+    }
+  }
+  func claimBridge(_ stream: V4StreamHandle, token: V4DuplexBridgeToken) throws {
+    try checkBridgeCandidate(stream)
+    stream.view.bridge = token
+  }
+  func rollbackBridge(_ stream: V4StreamHandle, token: V4DuplexBridgeToken) {
+    access.environment.gate.withLock {
+      if stream.owner === self, stream.view.bridge === token { stream.view.bridge = nil }
+    }
+  }
+  func checkApplicationOwner(_ stream: V4StreamHandle, bridge: V4DuplexBridgeToken? = nil) throws {
+    try access.environment.gate.withLock {
+      guard stream.owner === self else { throw SessionError.closed }
+      if let bridge {
+        guard stream.view.bridge === bridge else { throw SessionError.closed }
+      } else {
+        guard stream.view.bridge == nil else { throw SessionError.closed }
+        stream.view.applicationUsed = true
+      }
+    }
+  }
+  func canDispose(_ stream: V4StreamHandle, bridge: V4DuplexBridgeToken?) -> Bool {
+    access.environment.gate.withLock {
+      guard stream.owner === self else { return false }
+      if let bridge { return stream.view.bridge === bridge }
+      return stream.view.bridge == nil
+    }
+  }
+  func bridgeCleanupComplete(_ stream: V4StreamHandle, token: V4DuplexBridgeToken) -> Bool {
+    access.environment.gate.withLock {
+      guard stream.owner === self, stream.view.bridge === token else { return false }
+      // Stream retirement remains owned by the original Session. The bridge
+      // cannot report its physical backing released before that owner does.
+      return find(stream.number) == nil || closed
+    }
+  }
   static func valid(_ number: UInt64) -> Bool {
     number > 0 && number <= 4_194_335 && (number & 1 != 0 || number / 2 <= 2_097_152)
   }
@@ -287,7 +347,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     switch kind {
     case "flowersec.rpc.v4": return .rpc
     case "flowersec.notify.v4": return .notify
-    case "flowersec.management.v4":
+    case "flowersec.execution-management.v4":
       guard opener == .client else { throw V4CryptoFailure.configuration }
       return .management
     default:
@@ -300,7 +360,10 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   private func room(_ kind: Kind, opener: V4CryptoRole) -> Bool {
     let active = slots.filter { [.opening, .accepted].contains($0.phase) }
     guard active.count < access.maxStreams else { return false }
-    let count = active.filter {
+    // Retired RPC scopes retain the opener quota through quarantine and
+    // actual native cleanup. Logical close cannot manufacture a free carrier.
+    let counted = kind == .rpc ? slots : active
+    let count = counted.filter {
       $0.streamClass == kind && (kind == .business || $0.opener == opener)
     }.count
     return count < (kind == .business ? 1024 : kind == .rpc ? 4 : 1)
@@ -359,11 +422,15 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   }
   private func validateMetadata(_ bytes: Data) throws {
     guard bytes.count <= 4096 else { throw V4CryptoFailure.capacity }
-    if !bytes.isEmpty { _ = try decode(bytes, "StreamMetadata") }
+    if !bytes.isEmpty {
+      do { _ = try decode(bytes, "TypedMessageMetadata") }
+      catch { _ = try decode(bytes, "StreamMetadata") }
+    }
   }
   private func send(
     _ scope: V4RecordScope, type: UInt8, body: Data,
-    to publisher: any V4RecordPublisher, publication: (any V4RecordPublication)? = nil
+    to publisher: any V4RecordPublisher, publication: (any V4RecordPublication)? = nil,
+    accepted: (@Sendable () -> Void)? = nil
   ) throws {
     do {
       if type != 14 { liveness.localStall() }
@@ -373,7 +440,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
         critical: type == 9
           && (body.first == 0xa8 || body.first == 0xac
             || (body.count > 2 && (2...6).contains(body[body.startIndex + 2]))),
-        publication: publication
+        publication: publication, accepted: accepted
       )
       try check()
     } catch {
@@ -405,12 +472,17 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   }
   func open(
     kind: String, metadata: Data = Data(), receiveWindow: UInt64,
-    to publisher: any V4RecordPublisher
+    to publisher: any V4RecordPublisher, service: Bool = false
   ) throws -> V4StreamHandle {
     try run {
+      let streamClass = try classify(kind, opener: access.role)
+      guard streamClass == .business || service && access.applicationProfile != 0
+        && (streamClass != .management || access.applicationProfile == 2),
+        streamClass == .business || metadata.isEmpty,
+        streamClass == .business || receiveWindow == 16_384 else { throw V4CryptoFailure.configuration }
       guard !draining else { throw SessionError.goingAway }
-      guard !draining, rekey?.frozen != true, try classify(kind, opener: access.role) == .business,
-        room(.business, opener: access.role), slots.count < maxSlots,
+      guard !draining, rekey?.frozen != true,
+        room(streamClass, opener: access.role), slots.count < maxSlots,
         slots.filter({ $0.phase == .opening }).count < 128
       else { throw V4CryptoFailure.capacity }
       try validateMetadata(metadata)
@@ -424,25 +496,35 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       let id = ordinal * 2 - (access.role == .client ? 1 : 0)
       guard peerCeiling == nil || id <= peerCeiling! else { throw SessionError.goingAway }
       guard Self.valid(id) else { throw V4CryptoFailure.capacity }
+      // The original session allocator owns the management lifetime quota and
+      // burns the client ordinal before ticket/scope admission. Refused,
+      // pre-ticket, and failed OPEN attempts therefore consume the same finite
+      // 16-entry lifetime as successful channels.
+      if streamClass == .management {
+        try countLifetime(streamClass, opener: access.role)
+        ordinal += 1
+      }
       let token = try takeToken(reject: false)
       guard receiveWindow <= access.maxCredit - promised else { throw V4CryptoFailure.capacity }
       // All fallible local validation precedes irreversible scope admission.
       let scope = try access.channel.admitReliableScope(id, access: access)
       do {
         let s = Slot(
-          scope: scope, opener: access.role, kind: kind, streamClass: .business,
+          scope: scope, opener: access.role, kind: kind, streamClass: streamClass,
           metadata: metadata, phase: .opening, opened: try clock.mark())
         s.token = token
         try growWindow(s, limit: receiveWindow)
         let body = try openBody(s, window: receiveWindow)
         guard body.count + 36 <= access.maxFrame else { throw V4CryptoFailure.capacity }
-        try countLifetime(.business, opener: access.role)
-        ordinal += 1
         s.prefix = true
         s.directions[peer].current = V4StreamTuple(epoch: s.openEpoch)
         s.directions[peer].last = s.directions[peer].current
         s.directions[me].current = V4StreamTuple(epoch: s.openEpoch, next: 1)
         s.directions[me].last = s.directions[me].current
+        if streamClass != .management {
+          try countLifetime(streamClass, opener: access.role)
+          ordinal += 1
+        }
         slots.append(s)
         try send(scope, type: 7, body: body, to: publisher)
         s.directions[peer].committed = receiveWindow
@@ -466,15 +548,32 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       return handle(s)
     }
   }
+  var bootstrapMaterialized: Bool { find(1)?.prefix == true }
   func bootstrapStream() throws -> V4StreamHandle? {
     try run { find(1).flatMap { $0.bootstrap ? handle($0) : nil } }
   }
-  func pendingOpen() throws -> V4StreamHandle? {
+  func checkResumeIssuance() throws {
+    try run {
+      guard access.features & 2 != 0, access.applicationProfile == 2 else { throw V4CryptoFailure.phase }
+    }
+  }
+  func resumeStreamFacts(_ stream: V4StreamHandle, capture: Bool = true) throws -> (Data, UInt64) {
+    try run {
+      let slot = try resolve(stream)
+      guard access.features & 2 != 0, access.applicationProfile == 2, slot.streamClass == .business,
+        slot.phase == .accepted, !slot.canceled, !slot.bootstrap, slot.view.bridge == nil,
+        !capture || (slot.ring.count == 0 && slot.directions.allSatisfy({ $0.current.offset == 0 && $0.terminal == nil && !$0.stop })) else { throw V4CryptoFailure.phase }
+      return (access.context, slot.scope.number)
+    }
+  }
+  func pendingOpen(service: Bool = false, kinds: Set<String>? = nil, excluding: Set<String> = []) throws -> V4StreamHandle? {
     try run {
       let epoch = try access.channel.rekeyState(access).epoch
       guard
         let s = slots.first(where: {
           $0.phase == .pending && !$0.claimed && $0.forced == nil && $0.openEpoch <= epoch
+            && (service ? $0.streamClass != .business : $0.streamClass == .business)
+            && (kinds == nil || kinds!.contains($0.kind)) && !excluding.contains($0.kind)
         })
       else {
         return nil
@@ -484,6 +583,37 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       return handle(s)
     }
   }
+  func typedClaimRole(_ stream: V4StreamHandle, kind: String) throws -> Bool {
+    try run {
+      let slot = try resolve(stream)
+      // Already authenticated DATA may be buffered under the original credit.
+      // Native raw-use guards prove application consumption has not occurred;
+      // a wire receive frontier is not an application-read frontier.
+      guard slot.phase == .accepted, !slot.canceled, slot.kind == kind, slot.view.bridge == nil else {
+        throw ServiceFailure.contractMismatch
+      }
+      return slot.opener == access.role
+    }
+  }
+
+  func applicationInputAvailable(_ stream: V4StreamHandle) throws -> Bool {
+    try run {
+      let slot = try resolve(stream)
+      guard slot.phase == .accepted, !slot.canceled else { throw ServiceFailure.closed }
+      return slot.ring.count > 0 || slot.directions[peer].fin || slot.directions[peer].stop || slot.directions[peer].terminal != nil
+    }
+  }
+
+  func pendingOpenDeadline(_ stream: V4StreamHandle) throws -> ContinuousClock.Instant {
+    try run {
+      let slot = try resolve(stream)
+      guard slot.phase == .pending else { throw V4CryptoFailure.phase }
+      let elapsed = try elapsed(slot.opened)
+      guard elapsed < 10_000, slot.forced == nil else { throw SessionError.timeout }
+      return ContinuousClock.now.advanced(by: .milliseconds(Int64(10_000 - elapsed)))
+    }
+  }
+
   func pendingMetadata(_ stream: V4StreamHandle) throws -> (kind: String, metadata: V4CryptoBuffer)
   {
     try run {
@@ -578,6 +708,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     s.forced = nil
     if case .accept(let window) = decision {
       s.phase = .accepted
+      acceptedPeerCeiling = max(acceptedPeerCeiling, s.scope.number)
       s.directions[peer].committed = window
     } else {
       try reject(s)
@@ -597,11 +728,17 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   }
   @discardableResult func write(
     _ stream: V4StreamHandle, data: Data, fin: Bool = false,
-    to publisher: any V4RecordPublisher
+    to publisher: any V4RecordPublisher,
+    accepted: (@Sendable (Int) -> Void)? = nil,
+    publication: (any V4RecordPublication)? = nil
   ) throws -> Int {
-    try run { try write(resolve(stream), data: data, fin: fin, to: publisher) }
+    try run { try write(resolve(stream), data: data, fin: fin, to: publisher, accepted: accepted, publication: publication) }
   }
-  private func write(_ s: Slot, data: Data, fin: Bool, to publisher: any V4RecordPublisher) throws
+  private func write(
+    _ s: Slot, data: Data, fin: Bool, to publisher: any V4RecordPublisher,
+    accepted: (@Sendable (Int) -> Void)? = nil,
+    publication: (any V4RecordPublication)? = nil
+  ) throws
     -> Int
   {
     let d = s.directions[me]
@@ -621,7 +758,9 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       (2, u(UInt64(frontier.epoch))), (3, u(frontier.next)), (4, u(d.current.offset)),
       (5, Data([fin ? 0xf5 : 0xf4])), (6, V4Crypto.bytes(data)),
     ])
-    try send(s.scope, type: 8, body: body, to: publisher)
+    try send(s.scope, type: 8, body: body, to: publisher, publication: publication, accepted: {
+      accepted?(data.count)
+    })
     if frontier.epoch != d.current.epoch { d.last = d.current }
     d.current = V4StreamTuple(epoch: frontier.epoch, next: frontier.next + 1, offset: end)
     if fin {
@@ -648,7 +787,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       return stream.view.finSubmitted
     }
   }
-  func read(_ stream: V4StreamHandle, maximum: Int) throws -> V4StreamRead {
+  func read(_ stream: V4StreamHandle, maximum: Int, delivered: (@Sendable (Data) -> Void)? = nil) throws -> V4StreamRead {
     try run {
       guard stream.owner === self, maximum > 0, maximum <= 1_048_576 else {
         throw V4CryptoFailure.configuration
@@ -656,6 +795,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       guard let s = find(stream.number) else {
         return stream.view.end == 1 ? .eof : .aborted
       }
+      guard s.view === stream.view else { throw V4CryptoFailure.phase }
       let d = s.directions[peer]
       if d.stop && !d.fin { return .aborted }
       guard [.accepted, .recent, .stable].contains(s.phase),
@@ -670,6 +810,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       try output.store(bytes)
       try check()
       s.ring.consume(count)
+      delivered?(bytes)
       d.released += UInt64(count)
       promised -= UInt64(count)
       if d.complete {
@@ -692,6 +833,14 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     if d.begun == nil { d.begun = try clock.mark() }
   }
   private func reset(_ s: Slot) throws {
+    if s.phase == .recent || s.phase == .stable {
+      // Completed directions have already retired their keys. Closing their
+      // application view only releases unread data; it emits no new reset.
+      releaseQueue(s)
+      discardBacking(s)
+      try collect()
+      return
+    }
     s.canceled = true
     if s.phase == .opening { return }
     guard s.phase == .accepted else { throw V4CryptoFailure.phase }
@@ -707,8 +856,28 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     s.view.end = 2
     releaseQueue(s)
   }
-  func reset(_ stream: V4StreamHandle) throws { try run { try reset(resolve(stream)) } }
-  func beginDrain() throws { try run { draining = true } }
+  func reset(_ stream: V4StreamHandle) throws {
+    try run {
+      guard stream.owner === self else { throw V4CryptoFailure.phase }
+      guard let slot = find(stream.number) else {
+        guard stream.view.end != 0 else { throw V4CryptoFailure.phase }
+        return
+      }
+      guard slot.view === stream.view else { throw V4CryptoFailure.phase }
+      try reset(slot)
+    }
+  }
+  func beginDrain() throws {
+    try run {
+      guard localGoAway == nil else { return }
+      localGoAway = acceptedPeerCeiling
+      draining = true
+      for slot in slots where slot.phase == .pending { slot.forced = .draining }
+    }
+  }
+  func drainBusinessComplete() throws -> Bool {
+    try run { localGoAway != nil && goAwaySent && slots.allSatisfy { $0.streamClass != .business || [.recent, .stable].contains($0.phase) } }
+  }
   func writeCapacity(_ stream: V4StreamHandle) throws -> Int {
     try run {
       let s = try resolve(stream)
@@ -775,10 +944,10 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   func submitProbe(_ probe: V4LivenessProbe, to publisher: any V4RecordPublisher) throws {
     try run { try publishProbe(probe, to: publisher) }
   }
-  func probeResult(_ probe: V4LivenessProbe) throws -> TransportV4LivenessProgress? {
+  func probeResult(_ probe: V4LivenessProbe) throws -> TransportLivenessProgress? {
     try access.environment.gate.withLock { try liveness.snapshot(probe) }
   }
-  func endProbe(_ probe: V4LivenessProbe, reason: TransportV4LivenessFailure) {
+  func endProbe(_ probe: V4LivenessProbe, reason: TransportLivenessFailure) {
     access.environment.gate.withLock { liveness.end(probe, reason: reason) }
   }
   func releaseProbe(_ probe: V4LivenessProbe) {
@@ -940,7 +1109,8 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       s.directions[peer].current = V4StreamTuple(epoch: record.epoch, next: 1)
       return
     }
-    let kindClass = (try? classify(kind, opener: access.role.peer)) ?? .business
+    let classified = try? classify(kind, opener: access.role.peer)
+    let kindClass = classified ?? .business
     try countLifetime(kindClass, opener: access.role.peer)
     let full =
       slots.filter({ $0.phase == .pending && $0.forced == nil }).count >= 128
@@ -952,9 +1122,12 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       s.token = try takeToken(reject: true)
       s.forced = .resource
     }
-    // Reserved service streams require a service dispatcher; the implicit READY
-    // bootstrap is the only reserved stream this reliable-only entry admits.
-    if kindClass != .business { s.forced = .kind }
+    if classified == nil { s.forced = .kind }
+    // Reserved channels remain under the SDK's original dispatch owners.
+    // Management is opened only by the client in the execution profile.
+    if kindClass != .business && !(kindClass == .notify && access.applicationProfile >= 1 && metadata.isEmpty)
+      && !(kindClass == .rpc && access.applicationProfile >= 1 && metadata.isEmpty)
+      && !(kindClass == .management && access.applicationProfile == 2 && metadata.isEmpty) { s.forced = .kind }
     s.prefix = true
     s.openEpoch = record.epoch
     s.digest = digest
@@ -1396,6 +1569,12 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
           return true
         }
         if try rekey!.poll(owner: self, to: publisher) { return true }
+        if !rekey!.frozen, let ceiling = localGoAway, !goAwaySent {
+          try send(access.channel.maintenance, type: 13, body: V4Crypto.map([
+            (0, V4NamespaceValue.head(0, ceiling)), (1, V4NamespaceValue.head(0, 0))]), to: publisher)
+          goAwaySent = true
+          return true
+        }
         if !rekey!.frozen, try pollCredit(to: publisher) { return true }
         // Retirement has its own original barrier publication fence. It can
         // progress while the same rekey waits for its next authenticated phase.

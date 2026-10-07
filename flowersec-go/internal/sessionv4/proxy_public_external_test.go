@@ -25,7 +25,8 @@ func TestPublicProxyRunsOnV4OriginalStreamOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = server.Close() })
-	registrations, err := server.V4StreamHandlers(func(_ context.Context, binding any, metadata []byte) error {
+	plan := fs.StreamHandlerPlanConfig{}
+	err = server.RegisterStreamHandlers(&plan, func(_ context.Context, binding any, metadata []byte) error {
 		if binding != 1 || string(metadata) != "proxy-test" {
 			t.Error("unauthenticated application projection")
 		}
@@ -34,7 +35,7 @@ func TestPublicProxyRunsOnV4OriginalStreamOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner, ctx := sessionv4.PublicProxyTestStream(t, registrations[0])
+	owner, ctx := sessionv4.PublicProxyTestStream(t, plan.Handlers[0])
 	write := func(value any) {
 		t.Helper()
 		bytes, err := protocolv4.EncodeProxyMetadata(value)

@@ -4,7 +4,7 @@ import Foundation
 import XCTest
 @testable import Flowersec
 
-final class TransportV4StrictSignatureTests: XCTestCase {
+final class TransportStrictSignatureTests: XCTestCase {
   private struct Vector: Decodable {
     let id: String
     let message_hex: String

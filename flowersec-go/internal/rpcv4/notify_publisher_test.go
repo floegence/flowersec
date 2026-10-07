@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
@@ -51,7 +53,7 @@ type notifyPublisherFixture struct {
 
 func newNotifyPublisherFixture(t *testing.T, pending uint32) *notifyPublisherFixture {
 	t.Helper()
-	root, err := resourcev4.NewRoot(resourcev4.Config{ProfileRevision: [32]byte{1}, AccountSlots: 4, ReservationSlots: 64, ReferenceSlots: 128, Limit: resourcev4.Vector{resourcev4.SDKBytes: 8 << 20, resourcev4.Items: 1024}})
+	root, err := resourcev4.NewRoot(resourcev4.Config{ProfileRevision: [32]byte{1}, AccountSlots: 4, ReservationSlots: 64, ReferenceSlots: 128, Limit: resourcev4.Vector{resourcev4.SDKBytes: 8 << 20, resourcev4.Items: 1024, resourcev4.WorkSlots: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,5 +256,102 @@ func TestNotifyPublisherRetainsPhysicalTailAndTruthfulAcceptance(t *testing.T) {
 				t.Fatal("close changed accepted facts", status)
 			}
 		})
+	}
+}
+
+type notifyCleanupGateContext struct {
+	context.Context
+	entered, release chan struct{}
+}
+
+func (c *notifyCleanupGateContext) Err() error {
+	close(c.entered)
+	<-c.release
+	return c.Context.Err()
+}
+
+func TestNotifyPublisherDoneJoinsOriginalSourceRetirement(t *testing.T) {
+	f := newNotifyPublisherFixture(t, 1)
+	baseline := f.f.root.Snapshot()
+	submission, err := f.submit(context.Background(), []byte("owned source bytes"), 10000, &notifyTestGuard{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := f.p.slots[0].source
+	submission.Close()
+	charge, err := resourcev4.ReservationWaiterCharge(4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiter, err := resourcev4.NewReservationWaiter(f.f.root, f.f.reserve(charge), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	gate := &notifyCleanupGateContext{Context: ctx, entered: make(chan struct{}), release: make(chan struct{})}
+	waiterDone := make(chan error, 1)
+	// A canceled reservation pauses inside the real resource admission gate.
+	// The notification's original Reference.Release must wait for that gate.
+	go func() {
+		waiterDone <- waiter.Reserve(gate, []resourcev4.Request{{}}, make([]resourcev4.Reference, 1))
+	}()
+	releaseRoot := sync.OnceFunc(func() {
+		close(gate.release)
+		if err := <-waiterDone; !errors.Is(err, context.Canceled) {
+			t.Error("resource gate changed canceled reservation", err)
+		}
+		waiter.Close()
+	})
+	t.Cleanup(releaseRoot)
+	receive := func(ch <-chan struct{}) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-time.After(5 * time.Second):
+			t.Fatal("notification cleanup did not reach its gate")
+		}
+	}
+	receive(gate.entered)
+	stepDone := make(chan struct{})
+	var stepErr error
+	go func() {
+		_, stepErr = f.p.Step(context.Background())
+		close(stepDone)
+	}()
+	t.Cleanup(func() { releaseRoot(); receive(stepDone) })
+	receive(submission.SubmissionDone())
+	want := PublicationProgress{Terminal: true, Reason: "not_submitted"}
+	if progress := submission.Progress(); progress != want {
+		t.Fatal("local refusal waited for source cleanup", progress)
+	}
+	select {
+	case <-submission.Done():
+		t.Fatal("cleanup completed before the original source reference released")
+	default:
+	}
+	if err := submission.Release(); !errors.Is(err, ErrCapacity) {
+		t.Fatal("status ownership retired while source cleanup was blocked", err)
+	}
+	if f.p.slots[0].source != source || f.p.count != 1 || source.reservation == (resourcev4.Reference{}) || source.authority == (resourcev4.Reference{}) {
+		t.Fatal("blocked source cleanup returned its references or publisher position")
+	}
+	releaseRoot()
+	receive(stepDone)
+	if stepErr != nil {
+		t.Fatal(stepErr)
+	}
+	receive(submission.Done())
+	if source.payload != nil || source.header != ([514]byte{}) || source.reservation != (resourcev4.Reference{}) || source.authority != (resourcev4.Reference{}) || source.ctx != nil || source.guard != nil || source.deadline != nil || source.submission != nil || f.p.slots[0].source != nil || f.p.count != 0 {
+		t.Fatal("cleanup completed with original source ownership still attached")
+	}
+	if err := submission.Release(); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.f.root.Snapshot(); got != baseline || submission.Progress() != want {
+		t.Fatal("source cleanup retained charges or changed local refusal", got, baseline, submission.Progress())
+	}
+	if _, err := f.submit(context.Background(), []byte("reused position"), 10000, &notifyTestGuard{}); err != nil {
+		t.Fatal("source cleanup did not return the original publisher position", err)
 	}
 }

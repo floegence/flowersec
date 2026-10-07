@@ -3,7 +3,7 @@ package performance
 import (
 	"time"
 
-	carrierwt "github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/webtransportv3"
+	carrierwt "github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/webtransport"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 )
 

@@ -66,6 +66,9 @@ type LiveAuthorizationHTTPSConfig struct {
 	RequestsPerMinute, Burst uint16
 	WorkMS, RuntimeBytes     uint64
 	Tunnel                   bool
+	// OnOriginalTunnel runs only inside the newly committed TxB publication.
+	// Reads and duplicate requests never dispatch a relay route.
+	OnOriginalTunnel func(context.Context, sessionv4.LiveAuthorizationRequest, [3][]byte, func() error) error
 }
 
 // LiveAuthorizationHTTPSService mounts POST /live/authorize on a separately
@@ -388,7 +391,16 @@ func (p *LiveAuthorizationHTTPSService) ServeHTTP(w http.ResponseWriter, r *http
 		if err == nil && n != len(proof) {
 			err = io.ErrShortWrite
 		}
-		return err
+		if err != nil {
+			return err
+		}
+		// Write may still hold a short response in the HTTP buffer. Retain the
+		// original authorization owner through its actual local flush; this
+		// completion is not a statement of remote receipt.
+		if err = http.NewResponseController(w).Flush(); err != nil {
+			return err
+		}
+		return guard()
 	})
 	if err != nil && !written {
 		status = http.StatusServiceUnavailable
@@ -633,7 +645,15 @@ func (p *LiveAuthorizationHTTPSService) authorize(ctx context.Context, q session
 	}
 	if fields.Tunnel {
 		err = original.AuthorizeMaterial(access.Authorize, func(call context.Context, bytes [3][]byte) error {
-			if err := publishLiveServerAllow(call, p.c.Clock, material.ServerAllow, allow, bytes[2], check); err != nil {
+			if p.c.OnOriginalTunnel != nil {
+				if err := check(); err != nil {
+					return err
+				}
+				if err := p.c.OnOriginalTunnel(call, q, bytes, check); err != nil {
+					return err
+				}
+			}
+			if err := publishLiveServerAllow(call, p.c.Clock, material.ServerAllow, allow, [2][]byte{bytes[0], bytes[2]}, check); err != nil {
 				return err
 			}
 			return p.publishInitialClient(call, func(body context.Context) error { return publishTunnel(body, [2][]byte{bytes[0], bytes[1]}) })
@@ -714,4 +734,44 @@ func (p *LiveAuthorizationHTTPSService) publishInitialClient(ctx context.Context
 		return err
 	}
 	return call.cause()
+}
+
+// ServeRegisteredAuthorization shares the original service admission, fixed
+// mTLS identity, rate share and TxA/TxB owner with the registered JSON adapter.
+// The adapter has already verified the nonce signature and canonical request;
+// this method rechecks the actual native TLS peer and encodes the request itself.
+func (p *LiveAuthorizationHTTPSService) ServeRegisteredAuthorization(w http.ResponseWriter, r *http.Request, q sessionv4.LiveAuthorizationRequest, deliver func(context.Context, []byte, func() error) error) (err error) {
+	if deliver == nil || r == nil {
+		return resourcev4.ErrConfiguration
+	}
+	call, status := p.begin()
+	if status != http.StatusOK {
+		return ErrBusy
+	}
+	defer p.finish()
+	defer call.finish()
+	if status = p.authenticate(r); status != http.StatusOK {
+		return ledgerv4.ErrDenied
+	}
+	if err = call.start(r.Context()); err != nil {
+		return err
+	}
+	size, err := EncodeLiveAuthorizationRequest(p.request[:], q)
+	if err != nil {
+		return err
+	}
+	guard := func() error {
+		if err := call.cause(); err != nil {
+			return err
+		}
+		now, err := p.c.Clock.Sample()
+		if err != nil {
+			return err
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return p.currentLocked(now)
+	}
+	_, err = p.authorize(call, q, p.request[:size:size], guard, func(ctx context.Context, material []byte) error { return deliver(ctx, material, guard) })
+	return err
 }

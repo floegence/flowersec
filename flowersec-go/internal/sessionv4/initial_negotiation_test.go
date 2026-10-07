@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"encoding/json"
 	"net"
 	"testing"
 
@@ -16,89 +15,6 @@ import (
 // Test material is signed from the shared canonical templates, with real
 // matching endpoint DH/signature keys. These local test keys are not an issuer
 // trust store, time/revocation source or durable deployment qualification.
-func initialSignTemplate(t *testing.T, schema string, wire []byte, changes map[string]protocolv4.Field, seed [32]byte, sources ...string) *protocolv4.SignedMap {
-	t.Helper()
-	d, err := protocolv4.NewDecoder(65536, 4096)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := "live_authority"
-	if len(sources) > 0 {
-		source = sources[0]
-	}
-	context := protocolv4.DecodeContext{Selectors: map[string]string{"activation_source_profile": source}}
-	doc, err := d.DecodeShape(wire, schema, context)
-	if err != nil {
-		t.Fatal(schema, err)
-	}
-	defer doc.Release()
-	var registry struct {
-		Maps map[string]struct {
-			Signature int `json:"signature_field"`
-			Fields    map[string]struct{ Name, Type string }
-		} `json:"frame_maps"`
-	}
-	if err = json.Unmarshal([]byte(protocolv4.CBORSyntaxRegistryJSON), &registry); err != nil {
-		t.Fatal(err)
-	}
-	var fields []protocolv4.Field
-	for _, spec := range registry.Maps[schema].Fields {
-		if spec.Name == "signature" || spec.Name == "client_signature" || spec.Name == "server_signature" {
-			continue
-		}
-		if replacement, ok := changes[spec.Name]; ok {
-			replacement.Name = spec.Name
-			fields = append(fields, replacement)
-			continue
-		}
-		v := doc.Root().Named(schema, spec.Name)
-		if v.Encoded() == nil {
-			continue
-		}
-		f := protocolv4.Field{Name: spec.Name}
-		switch spec.Type {
-		case "bytes":
-			f.Kind = protocolv4.ByteString
-			f.Bytes, _ = v.ByteString()
-		case "text":
-			f.Kind = protocolv4.TextString
-			f.Text, _ = v.Text()
-		case "map":
-			f.Kind = protocolv4.EncodedMap
-			f.Bytes = v.Encoded()
-		case "array":
-			f.Kind = protocolv4.EncodedArray
-			f.Bytes = v.Encoded()
-		case "bool":
-			f.Kind = protocolv4.Boolean
-			b, _ := v.Bool()
-			if b {
-				f.Number = 1
-			}
-		default:
-			if b, ok := v.ByteString(); ok {
-				f.Kind = protocolv4.ByteString
-				f.Bytes = b
-			} else if encoded := v.Encoded(); len(encoded) > 0 && encoded[0]>>5 == 5 {
-				f.Kind, f.Bytes = protocolv4.EncodedMap, encoded
-			} else {
-				f.Number, _ = v.Uint()
-			}
-		}
-		fields = append(fields, f)
-	}
-	codec, err := protocolv4.NewSignedMapCodec(schema, 65536, 4096)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signed, err := codec.Sign(fields, seed, context)
-	if err != nil {
-		t.Fatal(schema, err)
-	}
-	t.Cleanup(signed.Release)
-	return signed
-}
-
 func initialChild(t *testing.T, wire []byte, schema, field string) []byte {
 	t.Helper()
 	d, _ := protocolv4.NewDecoder(65536, 4096)

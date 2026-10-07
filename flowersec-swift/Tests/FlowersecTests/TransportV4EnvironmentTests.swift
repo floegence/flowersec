@@ -4,7 +4,7 @@ import XCTest
 @testable import Flowersec
 
 @MainActor
-final class TransportV4EnvironmentTests: XCTestCase {
+final class TransportEnvironmentTests: XCTestCase {
   private let identity = V4ResourceIdentity(high: 1, low: 1)
   private let profile = V4TimeProfile(
     rateNumerator: 0, rateDenominator: 1,
@@ -270,6 +270,41 @@ final class TransportV4EnvironmentTests: XCTestCase {
     XCTAssertThrowsError(try deadline.check())
   }
 
+  func testTighteningPreservesOriginalDeadlineAfterClockRefinement() throws {
+    for cap: UInt64 in [1100, 1090, 1200] {
+      let source = FoundationTickSource()
+      let clock = try V4TrustedClock(profile: profile, source: source, gate: NSRecursiveLock())
+      try install(clock, lower: 900, upper: 1000)
+      let deadline = try V4SecurityDeadline(clock: clock, capMS: 1100)
+      source.advance(40)
+      try install(clock, lower: 950, upper: 960)
+      try deadline.tighten(to: cap)
+      XCTAssertEqual(deadline.capMS, min(cap, 1100))
+      XCTAssertEqual(try deadline.remainingTicks(), 60)
+      source.advance(60)
+      // The refined upper bound is still below each cap. The original
+      // monotonic end must nevertheless reject further authorization.
+      XCTAssertThrowsError(try deadline.tighten(to: cap)) { error in
+        XCTAssertEqual(error as? V4TimeFailure, .expired)
+      }
+      XCTAssertThrowsError(try deadline.check())
+    }
+  }
+
+  func testTighteningCanShortenButCannotReviveDeadline() throws {
+    let source = FoundationTickSource()
+    let clock = try V4TrustedClock(profile: profile, source: source, gate: NSRecursiveLock())
+    try install(clock, lower: 900, upper: 1000)
+    let deadline = try V4SecurityDeadline(clock: clock, capMS: 1100)
+    try deadline.tighten(to: 1050)
+    XCTAssertEqual(try deadline.remainingTicks(), 50)
+    source.advance(50)
+    XCTAssertThrowsError(try deadline.tighten(to: 1200)) { error in
+      XCTAssertEqual(error as? V4TimeFailure, .expired)
+    }
+    XCTAssertEqual(deadline.capMS, 1050)
+  }
+
   func testContinuityFailureCannotBeHiddenByReturningOldIncarnation() throws {
     let source = FoundationTickSource()
     let clock = try V4TrustedClock(profile: profile, source: source, gate: NSRecursiveLock())
@@ -361,7 +396,7 @@ final class TransportV4EnvironmentTests: XCTestCase {
     authorization!.revoke()
     do {
       _ = try await reading.value
-      XCTFail("The original Environment gate must fence cursor delivery")
+      XCTFail("The original TransportEnvironment gate must fence cursor delivery")
     } catch let failure as ReadMethodFailure {
       XCTAssertEqual(failure.reason, .authorizationDenied)
     }

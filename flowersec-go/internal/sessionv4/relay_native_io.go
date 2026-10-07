@@ -174,6 +174,16 @@ func (n *relayNativePair) enqueueMessage(side int, frame protocolv4.FrameType, b
 	}
 	created := false
 	if s == nil {
+		// Provider input can retain DATA after both original directions have
+		// joined and the mapping slot has been reused. Its signed ingress
+		// meter was already charged; only a known retired direction may drop it.
+		if frame == protocolv4.FrameStreamData {
+			index, known := n.usedIndex(header.Scope)
+			if known && index >= 0 && n.retired[index]&(1<<side) != 0 {
+				n.mu.Unlock()
+				return nil
+			}
+		}
 		if frame != protocolv4.FrameOpenStream {
 			n.mu.Unlock()
 			return ErrOpenAssociation

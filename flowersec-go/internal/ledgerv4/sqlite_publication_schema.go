@@ -59,8 +59,9 @@ func (p *SQLitePublicationStore) createSchema() (err error) {
 	return s.checkpoint()
 }
 
-func (p *SQLitePublicationStore) openSchema() (err error) {
+func (p *SQLitePublicationStore) openSchema(readOnly bool) (err error) {
 	s := p.store.sqliteStore
+	defer clear(p.head)
 	n, err := s.scalar("SELECT count(*) FROM sqlite_schema")
 	if err != nil || n != int64(len(publicationTables)) {
 		return ErrStorageFormat
@@ -75,16 +76,18 @@ func (p *SQLitePublicationStore) openSchema() (err error) {
 			return ErrStorageFormat
 		}
 	}
-	if err = s.boundPages(); err != nil {
-		return
+	if !readOnly {
+		if err = s.boundPages(); err != nil {
+			return
+		}
+		if err = s.checkpoint(); err != nil {
+			return
+		}
+		if err = s.exec("BEGIN IMMEDIATE"); err != nil {
+			return
+		}
+		defer namespaceRollback(s, &err)
 	}
-	if err = s.checkpoint(); err != nil {
-		return
-	}
-	if err = s.exec("BEGIN IMMEDIATE"); err != nil {
-		return
-	}
-	defer namespaceRollback(s, &err)
 	var epoch uint64
 	err = s.readOne("SELECT CASE WHEN length(epoch)=8 THEN epoch ELSE NULL END,max_pages,max_records,max_record_bytes,CASE WHEN length(configuration)<=512 THEN configuration ELSE NULL END FROM manifest WHERE id=1", 5, func(v []driver.Value) error {
 		var e error
@@ -99,31 +102,37 @@ func (p *SQLitePublicationStore) openSchema() (err error) {
 	if err != nil {
 		return
 	}
-	version, _, size, err := p.readCurrent()
+	count, err := s.scalar("SELECT count(*) FROM current_state")
+	if err != nil || count != int64(1) {
+		return ErrStorageFormat
+	}
+	version, currentDigest, size, err := p.readCurrent()
 	if err != nil {
 		return err
 	}
-	if err = p.checkChunks(0, size); err != nil {
+	if err = p.inspectStoredPublication(0, size, nil, protocolv4.NamespacePublicationVersion{Snapshot: version, StateDigest: currentDigest}); err != nil {
 		return err
 	}
 	var maxSequence uint64
 	for slot := uint32(1); slot <= p.config.HistorySlots; slot++ {
 		var pair protocolv4.NamespacePublicationVersion
 		var stateBytes uint64
-		err = s.readOne("SELECT slot,snapshot,sequence,state_digest,head_digest,this_update,next_update,encoded_bytes,length(head) FROM publications WHERE slot=?1", 9, func(v []driver.Value) error {
+		var headBytes int
+		err = s.readOne("SELECT slot,snapshot,sequence,state_digest,head_digest,this_update,next_update,encoded_bytes,CASE WHEN length(head) BETWEEN 1 AND ?2 THEN head ELSE NULL END FROM publications WHERE slot=?1", 9, func(v []driver.Value) error {
 			var e error
 			_, pair, e = publicationRow(v[:7])
 			if e != nil {
 				return e
 			}
 			n, ok := v[7].(int64)
-			h, hok := v[8].(int64)
-			if !ok || n <= 0 || uint64(n) > p.maximum || !hok || h <= 0 || uint64(h) > p.headMaximum || pair.Snapshot > version {
+			h, hok := v[8].([]byte)
+			if !ok || n <= 0 || uint64(n) > p.maximum || !hok || len(h) == 0 || uint64(len(h)) > p.headMaximum || pair.Snapshot > version || pair.Snapshot == version && pair.StateDigest != currentDigest {
 				return ErrStorageFormat
 			}
 			stateBytes = uint64(n)
+			headBytes = copy(p.head, h)
 			return nil
-		}, named(1, int64(slot)))
+		}, named(1, int64(slot)), named(2, int64(p.headMaximum)))
 		if isNoPublicationRow(err) {
 			err = nil
 		} else if err != nil {
@@ -132,11 +141,12 @@ func (p *SQLitePublicationStore) openSchema() (err error) {
 		if pair.Sequence > maxSequence {
 			maxSequence = pair.Sequence
 		}
-		if err = p.checkChunks(slot, stateBytes); err != nil {
+		if err = p.inspectStoredPublication(slot, stateBytes, p.head[:headBytes], pair); err != nil {
 			return err
 		}
+		clear(p.head[:headBytes])
 	}
-	count, err := s.scalar("SELECT count(*) FROM publications WHERE slot>?1", named(1, int64(p.config.HistorySlots)))
+	count, err = s.scalar("SELECT count(*) FROM publications WHERE slot>?1", named(1, int64(p.config.HistorySlots)))
 	if err != nil || count != int64(0) {
 		return ErrStorageFormat
 	}
@@ -150,6 +160,13 @@ func (p *SQLitePublicationStore) openSchema() (err error) {
 	}
 	if maxSequence > 0 && version == 0 {
 		return ErrStorageFormat
+	}
+	count, err = s.scalar("SELECT count(*) FROM publications a JOIN publications b ON a.sequence<b.sequence WHERE a.snapshot>b.snapshot OR a.this_update>b.this_update OR (a.snapshot=b.snapshot AND a.state_digest<>b.state_digest) OR (a.state_digest=b.state_digest AND a.next_update>b.next_update)")
+	if err != nil || count != int64(0) {
+		return ErrStorageFormat
+	}
+	if readOnly {
+		return nil
 	}
 	if err = s.continuity.Check(s.identity, epoch, false); err != nil {
 		return err
@@ -165,6 +182,21 @@ func (p *SQLitePublicationStore) openSchema() (err error) {
 		return err
 	}
 	return s.checkpoint()
+}
+
+func (p *SQLitePublicationStore) inspectStoredPublication(slot uint32, size uint64, head []byte, version protocolv4.NamespacePublicationVersion) error {
+	if size == 0 {
+		return p.checkChunks(slot, 0)
+	}
+	if size > uint64(len(p.current)) {
+		return ErrStorageFormat
+	}
+	wire := p.current[:size]
+	defer clear(wire)
+	if err := p.readChunks(slot, wire); err != nil {
+		return err
+	}
+	return storageFactsError(p.workspaces[0].InspectStoredPublication(wire, head, p.decoder, p.config.Scope, version))
 }
 
 func (p *SQLitePublicationStore) readCurrent() (version uint64, digest [32]byte, size uint64, err error) {

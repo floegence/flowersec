@@ -45,6 +45,7 @@ type datagramSendSlot struct {
 // cancellation, dropped result or rekey retries a consumed message.
 type UnreliableMessages struct {
 	mu                                                    sync.Mutex
+	admission                                             *OpenAdmission
 	engine                                                *cryptov4.Engine
 	connection                                            native.Connection
 	reservation                                           resourcev4.Reference
@@ -81,10 +82,11 @@ func unreliableCharge(c SessionCoreConfig) (resourcev4.Vector, error) {
 	return (resourcev4.Vector{resourcev4.SDKBytes: bytes, resourcev4.Items: uint64(2*pending + 8), resourcev4.Tasks: uint64(pending + 3), resourcev4.WorkSlots: uint64(pending + 3), resourcev4.Timers: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
 }
 
-func newUnreliableMessages(engine *cryptov4.Engine, connection native.Connection, c SessionCoreConfig, reservation resourcev4.Reference) (_ *UnreliableMessages, err error) {
-	if engine == nil || connection == nil || !engine.DatagramSelected() {
+func newUnreliableMessages(admission *OpenAdmission, connection native.Connection, c SessionCoreConfig, reservation resourcev4.Reference) (_ *UnreliableMessages, err error) {
+	if admission == nil || admission.engine == nil || connection == nil || !admission.engine.DatagramSelected() {
 		return nil, ErrUnreliableUnavailable
 	}
+	engine := admission.engine
 	charge, err := unreliableCharge(c)
 	if err != nil {
 		return nil, err
@@ -108,7 +110,7 @@ func newUnreliableMessages(engine *cryptov4.Engine, connection native.Connection
 			owned.Release()
 		}
 	}()
-	d := &UnreliableMessages{engine: engine, connection: connection, reservation: owned, envelope: envelope, maximum: maximum,
+	d := &UnreliableMessages{admission: admission, engine: engine, connection: connection, reservation: owned, envelope: envelope, maximum: maximum,
 		input: make([]byte, carrier.MaxUnreliableWireBytes), sends: make([]byte, maximum*pending), slots: make([]datagramSendSlot, pending), jobs: make(chan int, pending), stop: make(chan struct{}), cleanup: make(chan struct{})}
 	d.decoder, err = protocolv4.NewRecordDecoder(envelope, 32)
 	if err != nil {
@@ -362,6 +364,11 @@ func (d *UnreliableMessages) Run(ctx context.Context) error {
 			if errors.Is(err, carrier.ErrUnreliableTooLarge) {
 				continue
 			}
+			// The original datagram receive may observe connection loss before
+			// either reliable reader. Preserve its native source before cleanup.
+			if controllerNetworkRetry(err) {
+				d.admission.closeWithTransportCause(err)
+			}
 			return err
 		}
 		var decoded *protocolv4.Frame
@@ -483,6 +490,7 @@ func (d *UnreliableMessages) Retire() error {
 	if !d.retired {
 		d.retired = true
 		d.reservation.Release()
+		d.admission = nil
 		d.connection = nil
 		d.decoder = nil
 	}

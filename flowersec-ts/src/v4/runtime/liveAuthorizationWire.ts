@@ -21,3 +21,10 @@ export function encodeLiveAuthorizationRequest(request: V4LiveAuthorizationReque
   writer.array(3).uint(request.candidateIndex).data(request.candidateID).data(request.routeDigest).uint(request.activationNotAfterMS).uint(1);
   return writer.result();
 }
+
+/** Fixed response of the authority's original durable TxB. This encoder does
+ * not issue a Grant and cannot turn a query receipt into authorization. */
+export function encodeLiveTunnelMaterial(activation: Uint8Array, localGrant: Uint8Array, output: Uint8Array): Uint8Array {
+  if (!(activation instanceof Uint8Array) || activation.length < 1 || activation.length > 4096 || !(localGrant instanceof Uint8Array) || localGrant.length < 1 || localGrant.length > 65536 || output.length < activation.length + localGrant.length + 64 || output.length > 73728) throw new Error("control_response_capacity");
+  return new FixedCBORWriter(output).array(3).data(new TextEncoder().encode("live-tunnel-material-1"), true).data(activation).data(localGrant).result();
+}

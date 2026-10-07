@@ -62,6 +62,8 @@ type notificationMethod struct {
 // Advance is driven by the existing Environment coordinator, never a polling
 // goroutine or timer for each subscription. Readers only enqueue SDK work.
 type NotificationDispatch struct {
+	controllerVisits                                      uint32
+	declarationPreparing                                  bool
 	closingSamples                                        uint32
 	durableProvider                                       *ServiceDispatch
 	durableCursor                                         int
@@ -110,6 +112,8 @@ type NotificationStatus struct {
 // waiting. Release is used by the language binding when the caller relinquishes
 // this compact handle; retaining status continues to retain its real charge.
 type NotificationSubscription struct {
+	controller                         *controllerNotificationRoot
+	observation                        NotificationObservationStatus
 	mu                                 sync.Mutex
 	token                              *notificationToken
 	status                             NotificationStatus
@@ -128,22 +132,26 @@ type NotificationSubscription struct {
 }
 
 type notificationToken struct {
-	closingSamples uint32
-	services       *invocationServices
-	dispatch       *NotificationDispatch
-	subscription   *NotificationSubscription
-	method         notificationMethod
-	observer       NotificationObserver
-	policy         NotificationPendingPolicy
-	jobs           [17]*notificationDelivery
-	active         *notificationDelivery
-	serial         uint64
-	closed         bool
-	preparing      bool
-	reservation    resourcev4.Reference
-	dependencies   resourcev4.Reference
+	controllerSource     *controllerNotificationSource
+	identity             uint64
+	closingSamples       uint32
+	services             *invocationServices
+	dispatch             *NotificationDispatch
+	subscription         *NotificationSubscription
+	method               notificationMethod
+	observer             NotificationObserver
+	policy               NotificationPendingPolicy
+	jobs                 [17]*notificationDelivery
+	active               *notificationDelivery
+	serial               uint64
+	closed               bool
+	preparing            bool
+	declarationPreparing bool
+	reservation          resourcev4.Reference
+	dependencies         resourcev4.Reference
 }
 type notificationDelivery struct {
+	services                     *invocationServices
 	token                        *notificationToken
 	serial                       uint64
 	payload                      []byte
@@ -156,6 +164,7 @@ type notificationDelivery struct {
 }
 type notificationInvocationKey struct{}
 type notificationInvocation struct {
+	root   *controllerNotificationRoot
 	token  *notificationToken
 	parent *notificationInvocation
 }
@@ -461,7 +470,8 @@ func (d *NotificationDispatch) Subscribe(method uint32, policy NotificationPendi
 		}
 		s := &NotificationSubscription{reservation: refs[1], root: d.root, owner: d.owner, accountCount: d.accountCount, clock: d.clock, waitMS: d.waitMS, runtimeBytes: d.runtimeBytes, identity: d.serial, done: make(chan struct{}), closing: make(chan struct{})}
 		copy(s.accounts[:], d.accounts[:])
-		t := &notificationToken{dispatch: d, subscription: s, method: m, policy: policy, reservation: refs[0], preparing: true}
+		m.method = NotificationMethod{Method: m.method.Method, WorkClass: m.method.WorkClass}
+		t := &notificationToken{dispatch: d, subscription: s, method: m, policy: policy, reservation: refs[0], preparing: true, identity: d.serial}
 		s.token = t
 		d.tokens[index] = t
 		subscription, token = s, t
@@ -523,6 +533,13 @@ func (d *NotificationDispatch) Subscribe(method uint32, policy NotificationPendi
 }
 
 func (t *notificationToken) gapLocked(reason string) {
+	if source := t.controllerSource; source != nil {
+		n := source.root
+		n.mu.Lock()
+		n.recordGapLocked(source.generation, source.generation, notificationReason(reason), 1, false)
+		n.mu.Unlock()
+		return
+	}
 	s := t.subscription
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -532,7 +549,14 @@ func (t *notificationToken) gapLocked(reason string) {
 	s.status.LastGap = reason
 }
 
-func (t *notificationToken) enqueueLocked(deadline *timev4.Deadline, payload []byte, sample timev4.Sample) error {
+func (t *notificationToken) enqueueLocked(deadline *timev4.Deadline, payload []byte, sample timev4.Sample, contracts ...[32]byte) error {
+	if source := t.controllerSource; source != nil {
+		digest := source.digest
+		if len(contracts) == 1 {
+			digest = contracts[0]
+		}
+		return source.enqueueLocked(deadline, payload, sample, digest)
+	}
 	d := t.dispatch
 	if t.closed || t.serial == math.MaxUint64 {
 		return rpcv4.ErrClosed
@@ -654,7 +678,7 @@ func (d *NotificationDispatch) Admit(receiver *rpcv4.NotifyReceiver) (err error)
 			}
 			for _, t := range d.tokens {
 				if t != nil && !t.closed && !t.preparing && t.method.method.Method == method {
-					if err := t.enqueueLocked(deadline, payload, sample); err != nil {
+					if err := t.enqueueLocked(deadline, payload, sample, policy.Digest); err != nil {
 						t.gapLocked("dropped_budget")
 					}
 				}
@@ -665,6 +689,10 @@ func (d *NotificationDispatch) Admit(receiver *rpcv4.NotifyReceiver) (err error)
 }
 
 func (t *notificationToken) advanceLocked(sample timev4.Sample) {
+	if source := t.controllerSource; source != nil {
+		source.advanceTokenLocked()
+		return
+	}
 	if t.preparing {
 		return
 	}
@@ -702,6 +730,8 @@ func (t *notificationToken) advanceLocked(sample timev4.Sample) {
 		j.payload = nil
 		j.reservation.Release()
 		j.taskReservation.Release()
+		j.services.releaseInvocation()
+		j.services = nil
 		j.reservation, j.taskReservation = resourcev4.Reference{}, resourcev4.Reference{}
 		j.ctx, j.cancel, j.deadline, j.queued, j.token = nil, nil, nil, nil, nil
 		t.jobs[index] = nil
@@ -722,7 +752,7 @@ func (t *notificationToken) advanceLocked(sample timev4.Sample) {
 			}
 		}
 	}
-	if t.closed && t.closingSamples == 0 && s.status.Pending == 0 && s.status.Running == 0 {
+	if t.closed && t.closingSamples == 0 && !t.declarationPreparing && s.status.Pending == 0 && s.status.Running == 0 {
 		s.status.CleanupComplete = true
 		s.token = nil
 		for i, current := range d.tokens {
@@ -746,6 +776,9 @@ func (t *notificationToken) advanceLocked(sample timev4.Sample) {
 }
 
 func (t *notificationToken) queueNextLocked() {
+	if t.controllerSource != nil {
+		return
+	}
 	d := t.dispatch
 	if !t.closed && !t.preparing && t.active == nil {
 		var next *notificationDelivery
@@ -755,6 +788,10 @@ func (t *notificationToken) queueNextLocked() {
 			}
 		}
 		if next != nil {
+			if err := t.services.retainRegistration(); err != nil {
+				return
+			}
+			next.services = t.services
 			q, err := d.plan.executor.queueApplication(d.plan.applicationGroup, t.method.method.WorkClass, next.taskReservation, next.reservation, next.run)
 			if err != nil {
 				next.canceled = true
@@ -811,7 +848,7 @@ func (j *notificationDelivery) run() {
 		return
 	}
 	defer exit()
-	if err := attachInvocationServices(callCtx, t.services); err != nil {
+	if err := attachInvocationServices(callCtx, j.services); err != nil {
 		reason, returned = "dependency_unavailable", true
 		return
 	}
@@ -916,12 +953,29 @@ func (d *NotificationDispatch) Advance() {
 	for index := range d.tokens {
 		d.mu.Lock()
 		t := d.tokens[index]
+		controllerSource := t != nil && t.controllerSource != nil
+		preReady := controllerSource && !d.activated && !d.closed
 		var method uint32
 		if t != nil {
 			method = t.method.method.Method
 		}
 		d.mu.Unlock()
 		if t == nil {
+			continue
+		}
+		if preReady {
+			continue
+		}
+		if controllerSource {
+			err := d.withAuthority(method, func(notificationMethod) error { return nil })
+			d.mu.Lock()
+			if d.tokens[index] == t {
+				if err != nil {
+					t.closed = true
+				}
+				t.advanceLocked(timev4.Sample{})
+			}
+			d.mu.Unlock()
 			continue
 		}
 		var sample timev4.Sample
@@ -931,9 +985,11 @@ func (d *NotificationDispatch) Advance() {
 		var services *invocationServices
 		if d.tokens[index] == t {
 			services = t.services
+			dependencyErr = services.retainRegistration()
 		}
 		d.mu.Unlock()
-		if services != nil && err == nil {
+		retained := dependencyErr == nil
+		if retained && services != nil && err == nil {
 			dependencyErr = services.requiredReady(context.Background())
 		}
 		d.mu.Lock()
@@ -950,11 +1006,14 @@ func (d *NotificationDispatch) Advance() {
 				}
 			}
 			t.advanceLocked(sample)
-			if d.tokens[index] == t && dependencyErr == nil {
+			if d.tokens[index] == t && t.services == services && dependencyErr == nil {
 				t.queueNextLocked()
 			}
 		}
 		d.mu.Unlock()
+		if retained {
+			services.releaseInvocation()
+		}
 	}
 	d.mu.Lock()
 	d.advancing = false
@@ -965,6 +1024,11 @@ func (d *NotificationDispatch) Advance() {
 // The original close sample precedes this finite gate. It may conservatively
 // precede the winning close, but is never replaced by a later wait or Close.
 func (t *notificationToken) closeLocked(mark timev4.Mark, sampleErr error) {
+	if t.controllerSource != nil {
+		t.closed = true
+		t.advanceLocked(timev4.Sample{})
+		return
+	}
 	if !t.closed {
 		t.closed = true
 		t.services.close()
@@ -986,12 +1050,17 @@ func (s *NotificationSubscription) Close() {
 		return
 	}
 	s.mu.Lock()
+	controller := s.controller
 	t := s.token
 	var d *NotificationDispatch
 	if t != nil {
 		d = t.dispatch
 	}
 	s.mu.Unlock()
+	if controller != nil {
+		controller.Close()
+		return
+	}
 	if d != nil {
 		d.closeSelected(t)
 	}
@@ -1077,7 +1146,7 @@ func (d *NotificationDispatch) closeSelectedLocked(token *notificationToken, mar
 	}
 }
 func (d *NotificationDispatch) cleanupLocked() {
-	if !d.closed || d.cleaned || d.advancing || d.admitting || d.closingSamples != 0 {
+	if !d.closed || d.cleaned || d.advancing || d.admitting || d.closingSamples != 0 || d.controllerVisits != 0 || d.declarationPreparing {
 		return
 	}
 	for _, t := range d.tokens {
@@ -1183,7 +1252,7 @@ func (s *NotificationSubscription) WaitClosed(ctx context.Context) error {
 		return nil
 	}
 	for current := invocation; current != nil; current = current.parent {
-		if current.token == s.token {
+		if s.token != nil && current.token == s.token || s.controller != nil && current.root == s.controller {
 			s.mu.Unlock()
 			return ErrNotificationCleanupIncomplete
 		}

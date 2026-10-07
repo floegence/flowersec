@@ -12,8 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv3"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
+	fs "github.com/floegence/flowersec/flowersec-go/v6"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 )
 
@@ -290,9 +289,8 @@ func RunRPC(ctx context.Context, pair *Pair, operations, workers, payloadBytes i
 					return
 				}
 				started := time.Now()
-				var response json.RawMessage
 				operationCtx, cancel := context.WithTimeout(ctx, operationDeadline)
-				err := pair.Client.RPC().Call(operationCtx, 1, payload, &response)
+				response, err := pair.CallEcho(operationCtx, payload)
 				cancel()
 				if err != nil {
 					workErrors <- fmt.Errorf("tunnel RPC operation %d: %w", ordinal, err)
@@ -344,7 +342,12 @@ func RunBulk(ctx context.Context, pair *Pair, warmupBytesPerDirection, scoreByte
 	if err != nil {
 		return transporttest.BulkResult{}, wrapBulkPhaseFailure("warmup", err, 0, bulkRemaining, bulkPhaseTiming{setup: setup})
 	}
-	defer streams.close()
+	finished := false
+	defer func() {
+		if !finished {
+			streams.close()
+		}
+	}()
 	directions := []bulkDirection{{
 		name: "client-to-server", writer: streams.clientOpened, reader: streams.fromClient, fill: 0xa5,
 	}, {
@@ -382,13 +385,17 @@ func RunBulk(ctx context.Context, pair *Pair, warmupBytesPerDirection, scoreByte
 			"directional", joined, time.Since(bulkStarted), deadlineRemaining(ctx), bulkPhaseTiming{setup: setup},
 		)
 	}
+	if err := streams.finish(ctx); err != nil {
+		return transporttest.BulkResult{}, err
+	}
+	finished = true
 	return transporttest.BulkResult{StartedAt: scoreStarted, Duration: scoreDuration, BytesPerDirection: scoreBytesPerDirection}, nil
 }
 
 type bulkDirection struct {
 	name   string
-	writer flowersession.ByteStream
-	reader flowersession.ByteStream
+	writer bulkStream
+	reader bulkStream
 	fill   byte
 }
 
@@ -440,25 +447,25 @@ func deadlineRemaining(ctx context.Context) time.Duration {
 type acceptedStream struct {
 	kind      string
 	direction string
-	stream    flowersession.ByteStream
+	stream    bulkStream
 	err       error
 }
 
 type bulkStreams struct {
-	clientOpened flowersession.ByteStream
-	serverOpened flowersession.ByteStream
-	fromClient   flowersession.ByteStream
-	fromServer   flowersession.ByteStream
+	clientOpened bulkStream
+	serverOpened bulkStream
+	fromClient   bulkStream
+	fromServer   bulkStream
 }
 
-func (streams bulkStreams) all() []flowersession.ByteStream {
-	return []flowersession.ByteStream{streams.clientOpened, streams.serverOpened, streams.fromClient, streams.fromServer}
+func (streams bulkStreams) all() []bulkStream {
+	return []bulkStream{streams.clientOpened, streams.serverOpened, streams.fromClient, streams.fromServer}
 }
 
 func (streams bulkStreams) close() {
 	for _, stream := range streams.all() {
 		if stream != nil {
-			_ = stream.Close()
+			_ = stream.Reset()
 		}
 	}
 }
@@ -469,11 +476,20 @@ func openBulkStreams(ctx context.Context, pair *Pair) (bulkStreams, time.Duratio
 	serverAccepted := make(chan acceptedStream, 1)
 	go acceptReleaseStream(ctx, pair.Client, clientAccepted)
 	go acceptReleaseStream(ctx, pair.Server, serverAccepted)
-	clientOpened, err := pair.Client.OpenStream(ctx, "release-tunnel-bulk", flowersession.Metadata{"direction": "client-to-server"})
+	clientMetadata, err := fs.NewStreamMetadata(map[string]any{"direction": "client-to-server"})
 	if err != nil {
 		return bulkStreams{}, time.Since(started), err
 	}
-	serverOpened, err := pair.Server.OpenStream(ctx, "release-tunnel-bulk", flowersession.Metadata{"direction": "server-to-client"})
+	clientOpened, err := pair.Client.OpenStream(ctx, "release-tunnel-bulk", clientMetadata)
+	if err != nil {
+		return bulkStreams{}, time.Since(started), err
+	}
+	serverMetadata, err := fs.NewStreamMetadata(map[string]any{"direction": "server-to-client"})
+	if err != nil {
+		_ = clientOpened.Reset()
+		return bulkStreams{}, time.Since(started), err
+	}
+	serverOpened, err := pair.Server.OpenStream(ctx, "release-tunnel-bulk", serverMetadata)
 	if err != nil {
 		_ = clientOpened.Reset()
 		return bulkStreams{}, time.Since(started), err
@@ -494,18 +510,18 @@ func openBulkStreams(ctx context.Context, pair *Pair) (bulkStreams, time.Duratio
 	return streams, time.Since(started), nil
 }
 
-func acceptReleaseStream(ctx context.Context, session flowersession.Session, result chan<- acceptedStream) {
+func acceptReleaseStream(ctx context.Context, session tunnelSession, result chan<- acceptedStream) {
 	incoming, err := session.AcceptStream(ctx)
 	result <- acceptedStream{
-		kind: incoming.Kind, direction: fmt.Sprint(incoming.Metadata["direction"]), stream: incoming.Stream, err: err,
+		kind: incoming.Kind, direction: fmt.Sprint(incoming.Metadata.Values()["direction"]), stream: incoming.Stream, err: err,
 	}
 }
 
-func transferExact(ctx context.Context, writer, reader flowersession.ByteStream, total int64, fill byte) error {
+func transferExact(ctx context.Context, writer, reader bulkStream, total int64, fill byte) error {
 	return transferExactPhase(ctx, writer, reader, total, fill, true)
 }
 
-func transferExactPhase(ctx context.Context, writer, reader flowersession.ByteStream, total int64, fill byte, final bool) error {
+func transferExactPhase(ctx context.Context, writer, reader bulkStream, total int64, fill byte, final bool) error {
 	results := make(chan error, 2)
 	var writtenBytes, readBytes atomic.Int64
 	var writeDone, readDone atomic.Bool
@@ -519,7 +535,7 @@ func transferExactPhase(ctx context.Context, writer, reader flowersession.ByteSt
 	stopCancellation := context.AfterFunc(ctx, reset)
 	defer stopCancellation()
 	go func() {
-		chunk := bytes.Repeat([]byte{fill}, protocolv3.MaxDataBytes)
+		chunk := bytes.Repeat([]byte{fill}, currentBulkChunkBytes)
 		remaining := total
 		var writeErr error
 		for remaining > 0 {
@@ -624,4 +640,36 @@ func waitUntil(ctx context.Context, deadline time.Time) error {
 	case <-ctx.Done():
 		return context.Cause(ctx)
 	}
+}
+
+const currentBulkChunkBytes = 64 * 1024
+
+type bulkStream interface {
+	io.Reader
+	io.Writer
+	CloseWrite() error
+	Finish(context.Context) error
+	Close() error
+	Reset() error
+}
+
+func (streams bulkStreams) finish(ctx context.Context) error {
+	for _, pair := range [][2]bulkStream{{streams.clientOpened, streams.fromClient}, {streams.serverOpened, streams.fromServer}} {
+		if err := pair[1].CloseWrite(); err != nil {
+			return err
+		}
+		if err := pair[0].Finish(ctx); err != nil {
+			return err
+		}
+		if err := pair[1].Finish(ctx); err != nil {
+			return err
+		}
+		if err := pair[0].Close(); err != nil {
+			return err
+		}
+		if err := pair[1].Close(); err != nil {
+			return err
+		}
+	}
+	return nil
 }

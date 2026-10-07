@@ -141,3 +141,78 @@ func (i *Idle) Refresh() error {
 	_, _, err := i.remaining(true)
 	return err
 }
+
+// CheckAt checks the original idle owner against an already sampled clock.
+// Refreshing its local frontier invokes no host adapter and cannot revive an
+// expired owner or a retired clock era.
+func (i *Idle) CheckAt(sample Sample) error {
+	current, err := i.clock.RefreshSample(sample)
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.terminal != nil {
+		return i.terminal
+	}
+	if !i.enabled || !i.started {
+		return nil
+	}
+	if err != nil || !current.Mark.SameEra(i.last) {
+		i.terminal = ErrContinuity
+		return i.terminal
+	}
+	if current.Milliseconds >= i.last.Milliseconds && current.Milliseconds-i.last.Milliseconds >= i.delta {
+		i.terminal = ErrExpired
+	}
+	return i.terminal
+}
+
+// RefreshAt recognizes qualifying activity at an existing continuous sample.
+// It checks the previous idle limit before advancing it and calls no host code.
+func (i *Idle) RefreshAt(sample Sample) error {
+	current, err := i.clock.RefreshSample(sample)
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.terminal != nil {
+		return i.terminal
+	}
+	if !i.enabled || !i.started {
+		return nil
+	}
+	if err != nil || !current.Mark.SameEra(i.last) {
+		i.terminal = ErrContinuity
+		return i.terminal
+	}
+	if current.Milliseconds >= i.last.Milliseconds {
+		if current.Milliseconds-i.last.Milliseconds >= i.delta {
+			i.terminal = ErrExpired
+			return i.terminal
+		}
+		i.last = current.Mark
+	}
+	return nil
+}
+
+// RemainingMSAt projects the original idle limit at the caller's local gate.
+func (i *Idle) RemainingMSAt(sample Sample) (uint64, bool, error) {
+	current, err := i.clock.RefreshSample(sample)
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.terminal != nil {
+		return 0, i.enabled && i.started, i.terminal
+	}
+	if !i.enabled || !i.started {
+		return 0, false, nil
+	}
+	if err != nil || !current.Mark.SameEra(i.last) {
+		i.terminal = ErrContinuity
+		return 0, true, i.terminal
+	}
+	elapsed := uint64(0)
+	if current.Milliseconds >= i.last.Milliseconds {
+		elapsed = current.Milliseconds - i.last.Milliseconds
+	}
+	if elapsed >= i.delta {
+		i.terminal = ErrExpired
+		return 0, true, i.terminal
+	}
+	return i.delta - elapsed, true, nil
+}

@@ -66,9 +66,10 @@ export class FixedQueryProtection {
  * Original trusted deadlines still authorize/refuse every real query action. */
 export class FixedQueryExecutor {
   #reference: ResourceServiceReference | undefined;
-  // Eight incoming positions and four original Environment acquisition owners.
-  // The four outgoing positions are never general Completion reservations.
-  readonly #slots: Slot[] = Array.from({ length: 12 }, slot);
+  // Presets protect eight/four or four/two incoming/acquisition positions.
+  // Outgoing query positions are never general Completion reservations.
+  readonly #slots: Slot[];
+  readonly #incoming: number;
   readonly #ready: number[] = [];
   #lastGroup: ApplicationGroup | undefined;
   #cursor = 0;
@@ -78,7 +79,13 @@ export class FixedQueryExecutor {
   #timer: ReturnType<typeof setTimeout> | undefined;
   #timerGeneration = 0n;
   constructor(root: ResourceRoot) {
-    this.#reference = root.reserveService(new ResourceVector([256n * 1024n, 0n, 0n, 13n, 1n, 1n, 1n, 0n, 0n, 0n, 0n]));
+    const owners = root.applicationResources.queryOwners;
+    // A Session requires two original incoming owners. Round the protected
+    // partition to complete pairs; all remaining descriptors serve individual
+    // acquisitions, including explicitly configured non-preset capacities.
+    this.#incoming = 2 * Math.floor(owners / 3);
+    this.#slots = Array.from({ length: owners }, slot);
+    this.#reference = root.reserveService(new ResourceVector([256n * 1024n, 0n, 0n, BigInt(owners + 1), 1n, 1n, 1n, 0n, 0n, 0n, 0n]));
   }
   get reference(): ResourceServiceReference { this.#check(); return this.#reference!; }
   #check(): void { if (this.#closed || this.#reference === undefined) throw new RPCProtocolError("rpc_query_executor_closed"); this.#reference.check(); }
@@ -86,7 +93,7 @@ export class FixedQueryExecutor {
     this.#check(); group.check();
     if (!group.sameEnvironment(original) || direction === 0 && this.#slots.some(slot => slot.owner?.group === group && slot.owner.direction === 0)) throw new RPCProtocolError("rpc_query_consumer");
     const indices: number[] = [], count = direction === 0 ? 2 : 1;
-    for (let i = direction === 0 ? 0 : 8; i < (direction === 0 ? 8 : 12) && indices.length < count; i++) if (this.#slots[i]!.owner === undefined) indices.push(i);
+    for (let i = direction === 0 ? 0 : this.#incoming; i < (direction === 0 ? this.#incoming : this.#slots.length) && indices.length < count; i++) if (this.#slots[i]!.owner === undefined) indices.push(i);
     if (indices.length !== count) throw new ResourceError("resource_exhausted");
     const references: ResourceReference[] = [];
     let retained = false;

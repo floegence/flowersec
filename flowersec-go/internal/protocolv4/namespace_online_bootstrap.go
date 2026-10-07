@@ -64,7 +64,10 @@ type NamespaceOnlineBootstrap struct {
 	ctx               context.Context
 	cancel            context.CancelCauseFunc
 	done              chan struct{}
+	wake, poke        chan struct{}
 	started, finished bool
+	waiting           bool
+	pendingIssued     uint64
 	closed, retired   bool
 	terminal          error
 	durable           *namespaceDurability
@@ -144,7 +147,7 @@ func newNamespaceBootstrap(environment context.Context, trust *NamespaceTrustSto
 			owned.Release()
 		}
 	}()
-	b := &NamespaceOnlineBootstrap{trust: trust, clock: trust.clock, environment: environment, limits: limits, allocation: allocation, reservation: owned, done: make(chan struct{})}
+	b := &NamespaceOnlineBootstrap{trust: trust, clock: trust.clock, environment: environment, limits: limits, allocation: allocation, reservation: owned, done: make(chan struct{}), wake: make(chan struct{}, 1), poke: make(chan struct{}, 1)}
 	copy(b.accounts[:], allocation.Accounts)
 	b.allocation.Accounts = b.accounts[:len(allocation.Accounts):len(allocation.Accounts)]
 	b.response, b.state = make([]byte, limits.ResponseBytes), make([]byte, limits.StateBytes)
@@ -252,13 +255,22 @@ func (b *NamespaceOnlineBootstrap) checkLockedAt(sample timev4.Sample, sampleErr
 	if err != nil {
 		return err
 	}
-	if err := b.window.CheckAt(sample.Mark); err != nil {
-		return err
-	}
 	if b.deadline != nil {
 		err := b.deadline.CheckAt(sample)
 		if sampleErr != nil && err != timev4.ErrExpired {
 			return sampleErr
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if err := b.window.CheckAt(sample.Mark); err != nil {
+		// Only the original local work window can exhaust a pending proof.
+		// A signed material deadline above keeps its independent expiry cause.
+		if err == timev4.ErrExpired && b.waiting {
+			b.terminal = timev4.ErrNotProven
+			b.cancel(b.terminal)
+			return b.terminal
 		}
 		return err
 	}
@@ -272,6 +284,71 @@ func (b *NamespaceOnlineBootstrap) check() error {
 	defer b.mu.Unlock()
 	sample, sampleErr, inputErr := b.sampleLocked()
 	return b.checkLockedAt(sample, sampleErr, inputErr)
+}
+
+// waitForIssued retains the original response and nonce while a trusted wall
+// interval proves that its issuance time is still pending. Every pass checks
+// the original local window, caller/operation cancellation, trust dependencies,
+// and the response's own not-after cap. It never creates a new query or owner.
+func (b *NamespaceOnlineBootstrap) waitForIssued(target, end uint64, revalidate func() error) error {
+	b.mu.Lock()
+	b.waiting = true
+	b.pendingIssued = target
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.waiting = false
+		b.pendingIssued = 0
+		b.mu.Unlock()
+		select {
+		case b.poke <- struct{}{}:
+		default:
+		}
+	}()
+	select {
+	case b.poke <- struct{}{}:
+	default:
+	}
+	for {
+		var revalidationErr error
+		if revalidate != nil {
+			revalidationErr = revalidate()
+			if revalidationErr != nil && revalidationErr != timev4.ErrPending {
+				return revalidationErr
+			}
+		}
+		b.mu.Lock()
+		sample, sampleErr, inputErr := b.sampleLocked()
+		err := b.checkLockedAt(sample, sampleErr, inputErr)
+		if err == nil && sampleErr != nil {
+			err = sampleErr
+		}
+		if err == nil && !sample.Interval.ValidBefore(end) {
+			err = timev4.ErrExpired
+		}
+		if err == nil {
+			err = sample.Interval.LowerBound(target, true)
+		}
+		if err == nil && revalidationErr == timev4.ErrPending {
+			err = timev4.ErrPending
+		}
+		b.mu.Unlock()
+		if err != timev4.ErrPending {
+			return err
+		}
+		select {
+		case <-b.wake:
+		case <-b.ctx.Done():
+			if cause := context.Cause(b.ctx); cause != nil {
+				return cause
+			}
+			return context.Canceled
+		case <-b.environment.Done():
+			return b.environment.Err()
+		case <-b.runInput.Done():
+			return b.runInput.Err()
+		}
+	}
 }
 
 func (b *NamespaceOnlineBootstrap) watch(stop <-chan struct{}, exited chan<- struct{}) {
@@ -316,6 +393,10 @@ func (b *NamespaceOnlineBootstrap) watch(stop <-chan struct{}, exited chan<- str
 					n, err = b.deadline.RemainingMSAt(sample)
 					remaining = min(remaining, n)
 				}
+				if err == nil && b.waiting {
+					n, err = b.clock.Profile().Rate.ProveDelta(sample.Interval.LowerMS, b.pendingIssued)
+					remaining = min(remaining, n)
+				}
 			}
 			if err != nil {
 				b.terminal = err
@@ -335,7 +416,12 @@ func (b *NamespaceOnlineBootstrap) watch(stop <-chan struct{}, exited chan<- str
 		case <-b.ctx.Done():
 		case <-b.environment.Done():
 		case <-b.runInput.Done():
+		case <-b.poke:
 		case <-timer.C:
+			select {
+			case b.wake <- struct{}{}:
+			default:
+			}
 		}
 	}
 }
@@ -398,6 +484,27 @@ func (b *NamespaceOnlineBootstrap) Run(ctx context.Context, provider NamespaceBo
 	return result, err
 }
 
+// responseBytesInInput maps a validated byte-string field back to the fixed
+// provider response backing. The decoder copies the original wire into its own
+// arena, so retaining the decoder view after Release would be invalid. The
+// node offsets are wire offsets and therefore identify the same bytes in the
+// still-owned response buffer without creating an uncharged clone.
+func responseBytesInInput(response *SignedMap, name string, input []byte) ([]byte, error) {
+	if response == nil || response.document == nil || response.document.decoder == nil {
+		return nil, CBORFailure("revocation_bootstrap_binding")
+	}
+	value := response.Field(name)
+	bytesValue, ok := value.ByteString()
+	if !ok {
+		return nil, CBORFailure("revocation_bootstrap_binding")
+	}
+	node := value.document.decoder.nodes[value.index]
+	if node.dataStart < 0 || node.end < node.dataStart || node.end > len(input) || len(bytesValue) != node.end-node.dataStart {
+		return nil, CBORFailure("revocation_bootstrap_binding")
+	}
+	return input[node.dataStart:node.end:node.end], nil
+}
+
 func (b *NamespaceOnlineBootstrap) run(provider NamespaceBootstrapProvider) (_ *LiveNamespace, candidate *LiveNamespace, refs [3]resourcev4.Reference, err error) {
 	delivered := false
 	defer func() {
@@ -434,11 +541,17 @@ func (b *NamespaceOnlineBootstrap) run(provider NamespaceBootstrapProvider) (_ *
 	if n < 1 || n > len(b.response) {
 		return nil, nil, refs, CBORFailure("map_size")
 	}
-	response, err := b.codec.Verify(b.response[:n:n], b.trust.root.PublicKey, DecodeContext{})
+	responseBytes := n
+	response, err := b.codec.Verify(b.response[:responseBytes:responseBytes], b.trust.root.PublicKey, DecodeContext{})
 	if err != nil {
 		return nil, nil, refs, err
 	}
-	defer response.Release()
+	responseReleased := false
+	defer func() {
+		if !responseReleased {
+			response.Release()
+		}
+	}()
 	if err = response.document.ValidateRules(DecodeContext{}); err != nil {
 		return nil, nil, refs, err
 	}
@@ -447,8 +560,18 @@ func (b *NamespaceOnlineBootstrap) run(provider NamespaceBootstrapProvider) (_ *
 	if text("tenant_id") != request.Tenant || text("revocation_authority_id") != request.Authority || !bytes.Equal(data("request_nonce"), request.Nonce[:]) || !bytes.Equal(data("signing_key_id"), b.trust.root.KeyID[:]) {
 		return nil, nil, refs, CBORFailure("revocation_bootstrap_binding")
 	}
+	config, err := responseBytesInInput(response, "trust_config", b.response[:responseBytes])
+	if err != nil {
+		return nil, nil, refs, err
+	}
+	headWire, err := responseBytesInInput(response, "freshness_head", b.response[:responseBytes])
+	if err != nil {
+		return nil, nil, refs, err
+	}
 	issued, _ := response.Field("issued_at_ms").Uint()
 	end, _ := response.Field("not_after_ms").Uint()
+	response.Release()
+	responseReleased = true
 	now, err := b.clock.Sample()
 	if err == nil && end-issued > b.trust.root.MaxLifetimeMS {
 		err = CBORFailure("revocation_trust_lifetime")
@@ -459,17 +582,24 @@ func (b *NamespaceOnlineBootstrap) run(provider NamespaceBootstrapProvider) (_ *
 	if err == nil {
 		err = now.Interval.LowerBound(issued, true)
 	}
+	pendingTarget := uint64(0)
+	if err == timev4.ErrPending {
+		pendingTarget = issued
+		err = nil
+	}
 	if err != nil {
 		return nil, nil, refs, err
 	}
-	config := data("trust_config")
-	if err = b.trust.Update(config); err != nil {
-		return nil, nil, refs, err
-	}
-	head, err := b.bindHead(config, data("freshness_head"))
+	configPending, err := b.trust.updateBootstrap(config)
 	if err != nil {
 		return nil, nil, refs, err
 	}
+	pendingTarget = max(pendingTarget, configPending)
+	head, headPending, err := b.bindHeadBootstrap(config, headWire)
+	if err != nil {
+		return nil, nil, refs, err
+	}
+	pendingTarget = max(pendingTarget, headPending)
 	if head.rules.stateBytes > uint64(b.limits.StateBytes) {
 		return nil, nil, refs, CBORFailure("configuration_capacity")
 	}
@@ -502,24 +632,116 @@ func (b *NamespaceOnlineBootstrap) run(provider NamespaceBootstrapProvider) (_ *
 	if n < 0 || uint64(n) != head.stateBytes {
 		return nil, nil, refs, CBORFailure("revocation_state_length")
 	}
-	candidate, err = newBootstrappedNamespace(b.environment, b.clock, b.trust, NamespaceBootstrap{Rules: head.rules, Head: head, State: b.state[:n:n]}, b.limits.FetchDurationMS, b.limits.FetchAttempts, b.limits.Subscribers, refs, true)
+	candidate, err = newBootstrappedNamespace(b.environment, b.clock, b.trust, NamespaceBootstrap{Rules: head.rules, Head: head, State: b.state[:n:n]}, b.limits.FetchDurationMS, b.limits.FetchAttempts, b.limits.Subscribers, refs, true, pendingTarget != 0)
 	if err != nil {
 		return nil, nil, refs, err
 	}
-	// Retain even an unpublished complete history through original Environment
-	// destruction. A failed final gate must not turn it into an empty cache.
+	// Start the candidate watchdog before any wait so every candidate has a
+	// real cleanup tail joined by run's defer. Attach it before the coverage
+	// check because coverage validates the exact installed owner relationship;
+	// no continuity commit is made until the final gate below.
+	go candidate.watch()
 	candidate.mu.Lock()
+	// The candidate remains Environment-owned after delivery, but its first
+	// continuity commit is still part of this bootstrap operation. Keep the
+	// bootstrap task context only until that commit and final gate complete.
+	candidate.initialContinuityContext = b.ctx
 	b.trust.mu.Lock()
 	b.trust.namespace = candidate
 	candidate.durable, b.durable = b.durable, nil
 	b.trust.mu.Unlock()
-	// The original watcher owns cancellation cleanup, while all authorization
-	// and mutations remain fenced through coverage, predecessor read and commit.
-	go candidate.watch()
 	candidate.mu.Unlock()
-	if err = b.trust.checkReplacementCoverage(candidate); err != nil {
-		return nil, candidate, refs, err
+	coverageErr := b.trust.checkReplacementCoverage(candidate)
+	if coverageErr != nil && (coverageErr != timev4.ErrPending || pendingTarget == 0) {
+		return nil, candidate, refs, coverageErr
 	}
+	setPendingTarget := func(target uint64) {
+		if target == 0 || target <= pendingTarget {
+			return
+		}
+		pendingTarget = target
+		b.mu.Lock()
+		if target > b.pendingIssued {
+			b.pendingIssued = target
+		}
+		b.mu.Unlock()
+	}
+	revalidate := func() error {
+		verified, err := b.codec.Verify(b.response[:responseBytes:responseBytes], b.trust.root.PublicKey, DecodeContext{})
+		if err != nil {
+			return err
+		}
+		if err = verified.document.ValidateRules(DecodeContext{}); err == nil {
+			textAgain := func(name string) string { value, _ := verified.Field(name).Text(); return value }
+			dataAgain := func(name string) []byte { value, _ := verified.Field(name).ByteString(); return value }
+			if textAgain("tenant_id") != request.Tenant || textAgain("revocation_authority_id") != request.Authority || !bytes.Equal(dataAgain("request_nonce"), request.Nonce[:]) || !bytes.Equal(dataAgain("signing_key_id"), b.trust.root.KeyID[:]) || !bytes.Equal(dataAgain("trust_config"), config) || !bytes.Equal(dataAgain("freshness_head"), headWire) {
+				err = CBORFailure("revocation_bootstrap_binding")
+			}
+		}
+		verified.Release()
+		if err != nil {
+			return err
+		}
+		if err = b.check(); err != nil {
+			return err
+		}
+		pending := false
+		_, headPending, err := b.bindHeadBootstrap(config, headWire)
+		if err != nil {
+			return err
+		}
+		if headPending != 0 {
+			setPendingTarget(headPending)
+			pending = true
+		}
+		sample, err := b.clock.Sample()
+		if err != nil {
+			return err
+		}
+		candidate.mu.Lock()
+		err = candidate.checkAvailable()
+		if err == nil {
+			var candidateHeadPending uint64
+			candidateHeadPending, err = candidate.checkHeadAtPending(head, sample)
+			if candidateHeadPending != 0 {
+				setPendingTarget(candidateHeadPending)
+				pending = true
+			}
+		}
+		if err == nil {
+			var historyPending uint64
+			historyPending, err = candidate.checkStateHistoryAtPending(candidate.active, sample)
+			if historyPending != 0 {
+				setPendingTarget(historyPending)
+				pending = true
+			}
+		}
+		candidate.mu.Unlock()
+		if err != nil && err != timev4.ErrPending {
+			return err
+		}
+		if err == timev4.ErrPending {
+			pending = true
+		}
+		coverageErr := b.trust.checkReplacementCoverage(candidate)
+		if coverageErr != nil && coverageErr != timev4.ErrPending {
+			return coverageErr
+		}
+		if coverageErr == timev4.ErrPending {
+			pending = true
+		}
+		if pending {
+			return timev4.ErrPending
+		}
+		return nil
+	}
+	if pendingTarget != 0 {
+		if err = b.waitForIssued(pendingTarget, end, revalidate); err != nil {
+			return nil, candidate, refs, err
+		}
+	}
+	// The candidate is already attached for coverage, but continuity remains
+	// uncommitted until the strict original pair gate completes below.
 	if err = b.trust.prepareReplacementCommit(b.ctx, candidate); err != nil {
 		return nil, candidate, refs, err
 	}
@@ -551,6 +773,7 @@ func (b *NamespaceOnlineBootstrap) run(provider NamespaceBootstrapProvider) (_ *
 		}
 		b.trust.mu.Lock()
 		candidate.initializing = false
+		candidate.initialContinuityContext = nil
 		b.trust.continuityReady = true
 		b.trust.mu.Unlock()
 		candidate.signal()
@@ -565,15 +788,32 @@ func (b *NamespaceOnlineBootstrap) run(provider NamespaceBootstrapProvider) (_ *
 }
 
 func (b *NamespaceOnlineBootstrap) bindHead(config, wire []byte) (*NamespaceHead, error) {
-	head, err := b.trust.bindHead(b.headDecoder, b.headCodec, config, wire)
-	if err != nil {
-		return nil, err
-	}
-	now, err := b.clock.Sample()
+	head, _, err := b.bindHeadBootstrap(config, wire)
 	if err == nil {
-		err = head.CheckTime(now.Interval)
+		now, sampleErr := b.clock.Sample()
+		if sampleErr != nil {
+			err = sampleErr
+		} else {
+			err = head.CheckTime(now.Interval)
+		}
 	}
 	return head, err
+}
+
+func (b *NamespaceOnlineBootstrap) bindHeadBootstrap(config, wire []byte) (*NamespaceHead, uint64, error) {
+	head, pending, err := b.trust.bindHeadBootstrap(b.headDecoder, b.headCodec, config, wire)
+	if err != nil {
+		return nil, 0, err
+	}
+	now, err := b.clock.Sample()
+	if err != nil {
+		return nil, 0, err
+	}
+	headPending, err := head.CheckTimePending(now.Interval)
+	if err != nil {
+		return nil, 0, err
+	}
+	return head, max(pending, headPending), nil
 }
 
 func (b *NamespaceOnlineBootstrap) Close() {
@@ -635,7 +875,11 @@ func (b *NamespaceOnlineBootstrap) Retire() error {
 	clear(b.accounts[:])
 	b.trust.mu.Lock()
 	b.trust.bootstrap = false
+	registry := b.trust.registry
 	b.trust.mu.Unlock()
+	if registry != nil {
+		registry.signalPressure()
+	}
 	b.trust, b.clock = nil, nil
 	b.reservation.Release()
 	b.reservation = resourcev4.Reference{}

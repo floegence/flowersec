@@ -1,5 +1,26 @@
 package resourcev4
 
+// CopyAllocationScope reads an original live owner's exact allocation domain.
+// It grants no reservation or transfer right and never removes a scope.
+func (ref Reference) CopyAllocationScope(root *Root, dst []Account) (OwnerKey, int, error) {
+	if root == nil || ref.root != root {
+		return OwnerKey{}, 0, ErrOwner
+	}
+	root.mu.Lock()
+	defer root.mu.Unlock()
+	s, c := ref.slotsLocked()
+	if s == nil || !s.primary {
+		return OwnerKey{}, 0, ErrOwner
+	}
+	if err := root.checkCharge(s, c); err != nil {
+		return OwnerKey{}, 0, err
+	}
+	if len(dst) < s.count {
+		return OwnerKey{}, 0, ErrCapacity
+	}
+	return s.owner, copy(dst, s.accounts[:s.count]), nil
+}
+
 // CopyResultAccounts projects the exact remaining scope generations of an
 // original completed result. It does not infer an Environment from labels or
 // permit a caller to omit a surviving tenant/account from its next vector.

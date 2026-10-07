@@ -17,6 +17,7 @@ import (
 // recipients use their original registration incarnation and separately fix the
 // physical carrier identity. Neither value comes from a remote instruction.
 type TunnelServerAllowRecipient struct {
+	entrancePlan          *TunnelAcceptedEntrancePlan
 	mu                    sync.Mutex
 	prepared              *PreparedCarrier
 	carrierIncarnation    [16]byte
@@ -37,6 +38,7 @@ type TunnelServerAllowRecipient struct {
 	done                  chan struct{}
 	busy, allowed, closed bool
 	cleaned               bool
+	aborting              bool
 	controlRegistered     bool
 }
 
@@ -148,7 +150,7 @@ func newUnattachedTunnelServerRecipient(pin artifactLeaseUse, identity identityU
 	if err != nil {
 		return nil, err
 	}
-	if pin.lease == nil || identity.identity == nil || recipient == ([16]byte{}) || binding.Role != protocolv4.ServerToClient || binding.Attempt == ([16]byte{}) {
+	if pin.lease == nil || identity.identity == nil || recipient == ([16]byte{}) || binding.Role != protocolv4.ServerToClient || !r.live && binding.Attempt == ([16]byte{}) {
 		return nil, cryptov4.ErrConfiguration
 	}
 	if err = reservation.CheckSameEnvironment(environment); err != nil {
@@ -247,18 +249,27 @@ func (r *TunnelServerAllowRecipient) preflightAllow(ctx context.Context, request
 		return resourcev4.ErrConfiguration
 	}
 	r.mu.Lock()
-	if r.closed || r.busy || r.prepared != nil || r.allowed {
+	if r.closed || r.busy || r.allowed {
 		r.mu.Unlock()
 		return resourcev4.ErrOwner
 	}
 	expected := r.expected
+	pending := r.live && r.grantMap == nil
+	if !pending && r.prepared != nil {
+		r.mu.Unlock()
+		return resourcev4.ErrOwner
+	}
 	if request.NotAfterMS > expected.NotAfterMS {
 		r.mu.Unlock()
 		return protocolv4.ErrHopAuthContext
 	}
 	expected.NotAfterMS = request.NotAfterMS
-	pending := r.live && r.grantMap == nil
 	if pending {
+		if expected.Attempt != ([16]byte{}) && expected.Attempt != request.Attempt {
+			r.mu.Unlock()
+			return protocolv4.ErrHopAuthContext
+		}
+		expected.Attempt = request.Attempt
 		expected.Grant, expected.Pairing = request.Grant, request.Pairing
 	}
 	if request != expected || !pending && !bytes.Equal(wire, r.grant) {
@@ -276,7 +287,7 @@ func (r *TunnelServerAllowRecipient) preflightAllow(ctx context.Context, request
 			return err
 		}
 		r.mu.Lock()
-		r.expected.Grant, r.expected.Pairing = request.Grant, request.Pairing
+		r.expected = expected
 		r.mu.Unlock()
 	}
 	if _, err = r.subscriptions.CheckPreparation(); err != nil {
@@ -462,7 +473,7 @@ func (r *TunnelServerAllowRecipient) Close() {
 }
 
 func (r *TunnelServerAllowRecipient) cleanupLocked() {
-	if !r.closed || r.busy || r.entranceActive || r.cleaned {
+	if !r.closed || r.busy || r.entranceActive || r.aborting || r.cleaned {
 		return
 	}
 	if r.prepareCancel != nil {
@@ -484,6 +495,10 @@ func (r *TunnelServerAllowRecipient) cleanupLocked() {
 	r.reservation.Release()
 	r.carrier, r.reservation, r.registrationHold = resourcev4.Reference{}, resourcev4.Reference{}, resourcev4.Reference{}
 	r.prepared, r.grant = nil, nil
+	if r.entrancePlan != nil {
+		r.entrancePlan.Close()
+		r.entrancePlan = nil
+	}
 	r.cleaned = true
 	close(r.done)
 }

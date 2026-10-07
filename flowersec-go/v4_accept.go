@@ -13,24 +13,24 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-type V4AcceptedEntranceConfig = sessionv4.AcceptedEntranceConfig
-type V4AcceptedSessionInput = sessionv4.AcceptedSessionInput
-type V4AdmissionOwner = ledgerv4.AdmissionOwner
-type V4SQLiteAdmissionAuthority = ledgerv4.SQLiteAdmissionAuthority
-type V4WebSocketUpgradeConfig = websocket.UpgradeConfig
-type V4AcceptedWebSocketEndpoint = protocolv4.AcceptedWebSocketEndpoint
+type AcceptedEntranceConfig = sessionv4.AcceptedEntranceConfig
+type AcceptedSessionInput = sessionv4.AcceptedSessionInput
+type AdmissionOwner = ledgerv4.AdmissionOwner
+type SQLiteAdmissionAuthority = ledgerv4.SQLiteAdmissionAuthority
+type WebSocketUpgradeConfig = websocket.UpgradeConfig
+type AcceptedWebSocketEndpoint = protocolv4.AcceptedWebSocketEndpoint
 
-// V4AcceptedMaterialSource is a trusted bounded resolver. Hello is borrowed,
+// AcceptedMaterialSource is a trusted bounded resolver. Hello is borrowed,
 // unauthenticated routing input, never application authorization. A nonnil
 // material transfers its original cleanup ownership, including on error.
-type V4AcceptedMaterialSource interface {
-	ResolveAcceptedMaterial(context.Context, []byte) (*ConnectionMaterial, V4InitialHello, error)
+type AcceptedMaterialSource interface {
+	ResolveAcceptedMaterial(context.Context, []byte) (*ConnectionMaterial, InitialHello, error)
 }
 
-type v4AcceptedMaterialSource struct{ source V4AcceptedMaterialSource }
+type v4AcceptedMaterialSource struct{ source AcceptedMaterialSource }
 
 func (s v4AcceptedMaterialSource) ResolveAcceptedMaterial(ctx context.Context, hello []byte) (*sessionv4.ConnectionMaterial, sessionv4.InitialHello, error) {
-	if ctx == nil || s.source == nil || isNilV4Interface(s.source) {
+	if ctx == nil || s.source == nil || isNilInterface(s.source) {
 		return nil, sessionv4.InitialHello{}, cryptov4.ErrConfiguration
 	}
 	material, selected, err := s.source.ResolveAcceptedMaterial(ctx, hello)
@@ -40,18 +40,18 @@ func (s v4AcceptedMaterialSource) ResolveAcceptedMaterial(ctx context.Context, h
 	return material.inner, selected, err
 }
 
-type V4ServeOptions struct {
-	Config      V4ServeConfig
-	Reservation V4ResourceReference
+type ServeOptions struct {
+	Config      ServeConfig
+	Reservation ResourceReference
 }
 
-func V4ServeCharge(c V4ServeConfig) (V4ResourceVector, error) { return sessionv4.ServeCharge(c) }
+func ServeCharge(c ServeConfig) (ResourceVector, error) { return sessionv4.ServeCharge(c) }
 
-// Serve registers one aggregate under the original Environment. The host
+// Serve registers one aggregate under the original TransportEnvironment. The host
 // attaches its ingress to this handle exclusively and retains the native HTTP
 // listener/parsing budget separately. Drain fences new ingress and aggregates
-// the original Sessions; closing the handle never closes the shared Environment.
-func (e *V4Environment) Serve(ctx context.Context, options V4ServeOptions) (*ServeHandle, error) {
+// the original Sessions; closing the handle never closes the shared TransportEnvironment.
+func (e *TransportEnvironment) Serve(ctx context.Context, options ServeOptions) (*ServeHandle, error) {
 	if e == nil || e.inner == nil || ctx == nil {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -62,21 +62,21 @@ func (e *V4Environment) Serve(ctx context.Context, options V4ServeOptions) (*Ser
 	return newServeHandle(group), nil
 }
 
-// V4WebSocketAcceptOptions contains one fresh application plan and exact local
+// WebSocketAcceptOptions contains one fresh application plan and exact local
 // resource scope. Input's owner, entrance, establishment, subscriptions, buffers and
 // invocation must be empty: this boundary admits their workspaces together.
 // Upgrade checks the host's original deployment policy before hijacking; its
 // signed-route check is mandatory before durable admission and FSA/Noise.
-type V4WebSocketAcceptOptions struct {
-	Input                   V4AcceptedSessionInput
-	Source                  V4AcceptedMaterialSource
-	Limits                  V4EstablishmentLimits
-	Entrance                V4AcceptedEntranceConfig
-	Server                  *V4WebSocketServer
-	Upgrade                 V4WebSocketUpgradeConfig
-	Provider                V4WebSocketProviderOptions
-	Dependencies            V4ResourceReference
-	Accounts                []V4ResourceAccount
+type WebSocketAcceptOptions struct {
+	Input                   AcceptedSessionInput
+	Source                  AcceptedMaterialSource
+	Limits                  EstablishmentLimits
+	Entrance                AcceptedEntranceConfig
+	Server                  *WebSocketServer
+	Upgrade                 WebSocketUpgradeConfig
+	Provider                WebSocketProviderOptions
+	Dependencies            ResourceReference
+	Accounts                []ResourceAccount
 	LocalCapabilities       uint64
 	RuntimeBytes            uint64
 	IngressRuntimeBytes     uint64
@@ -89,14 +89,14 @@ type V4WebSocketAcceptOptions struct {
 // It returns only an authenticated Session. The boolean reports actual HTTP
 // hijack, even on error; when true the caller must not write an HTTP response.
 // The original writer/request borrow always ends before this method returns.
-func (h *ServeHandle) AcceptWebSocket(ctx context.Context, writer http.ResponseWriter, request *http.Request, options V4WebSocketAcceptOptions) (*V4Session, bool, error) {
-	if h == nil || h.inner == nil || ctx == nil || writer == nil || request == nil || options.Source == nil || isNilV4Interface(options.Source) {
+func (h *ServeHandle) AcceptWebSocket(ctx context.Context, writer http.ResponseWriter, request *http.Request, options WebSocketAcceptOptions) (*Session, bool, error) {
+	if h == nil || h.inner == nil || ctx == nil || writer == nil || request == nil || options.Source == nil || isNilInterface(options.Source) {
 		return nil, false, cryptov4.ErrConfiguration
 	}
 	i := options.Input
 	if i.Root == nil || i.Store == nil || i.Authority == nil || i.Entrance != nil || i.Establishment != nil || i.Subscriptions != nil ||
-		i.Owner != (V4AdmissionOwner{}) ||
-		i.Buffers != (V4ResourceReference{}) || i.Invocation != (V4ResourceReference{}) || i.Config.Application == nil ||
+		i.Owner != (AdmissionOwner{}) ||
+		i.Buffers != (ResourceReference{}) || i.Invocation != (ResourceReference{}) || i.Config.Application == nil ||
 		i.Config.Core.Native || !i.Config.Core.MessageCarrier || i.Config.Initial.Role != protocolv4.ServerToClient ||
 		i.Config.Initial.Deadline != options.Entrance.Initial.Deadline || i.Config.Initial.Profile != options.Entrance.Initial.Profile ||
 		i.Config.Initial.ActivationSourceProfile != options.Entrance.Initial.ActivationSourceProfile ||
@@ -164,5 +164,5 @@ func (h *ServeHandle) AcceptWebSocket(ctx context.Context, writer http.ResponseW
 	if err != nil {
 		return nil, factory.Hijacked(), err
 	}
-	return newV4SessionFromEnvironment(result), factory.Hijacked(), nil
+	return newSessionFromEnvironment(result), factory.Hijacked(), nil
 }

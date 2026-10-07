@@ -55,6 +55,14 @@ func TestSQLiteStorageFormatRefusalFactsAndRedaction(t *testing.T) {
 	}{
 		{"older_header", func(t *testing.T, s *SQLiteStore) { replaceStorageHeaderRevision(t, s, 2) }, StorageRevision{true, 2}, StorageFormatOlder},
 		{"newer_header", func(t *testing.T, s *SQLiteStore) { replaceStorageHeaderRevision(t, s, sqliteStorageRevision+1) }, StorageRevision{true, sqliteStorageRevision + 1}, StorageFormatNewer},
+		{"newer_before_current_tables", func(t *testing.T, s *SQLiteStore) {
+			replaceStorageHeaderRevision(t, s, sqliteStorageRevision+1)
+			formatMutation("DROP TABLE admission", "CREATE TABLE future_admission(private_value TEXT)")(t, s)
+		}, StorageRevision{true, sqliteStorageRevision + 1}, StorageFormatNewer},
+		{"newer_before_backend_configuration", func(t *testing.T, s *SQLiteStore) {
+			replaceStorageHeaderRevision(t, s, sqliteStorageRevision+1)
+			formatMutation("PRAGMA journal_mode=DELETE")(t, s)
+		}, StorageRevision{true, sqliteStorageRevision + 1}, StorageFormatNewer},
 		{"hint_only", formatMutation("PRAGMA user_version=2"), StorageRevision{}, StorageFormatRevisionConflict},
 		{"row_only", formatMutation("PRAGMA ignore_check_constraints=ON", "UPDATE manifest SET revision=2", "PRAGMA user_version=2"), StorageRevision{}, StorageFormatRevisionConflict},
 		{"identity", formatMutation("UPDATE manifest SET authority='private.authority.marker'"), StorageRevision{}, StorageFormatIdentity},

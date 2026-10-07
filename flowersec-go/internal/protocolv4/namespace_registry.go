@@ -29,10 +29,12 @@ type namespaceRegistryHistory struct {
 }
 
 type namespaceRegistryEntry struct {
-	history      [16]namespaceRegistryHistory
-	historyCount int
-	trust        *NamespaceTrustStore
-	pin          resourcev4.Reference
+	history          [16]namespaceRegistryHistory
+	historyCount     int
+	trust            *NamespaceTrustStore
+	pin              resourcev4.Reference
+	retirement       *NamespaceOnlineRetirement
+	retirementFailed bool
 }
 
 // NamespaceRegistry keeps the exact original authority owners in one bounded
@@ -52,6 +54,10 @@ type NamespaceRegistry struct {
 	reservation              resourcev4.Reference
 	closed, closing, retired bool
 	fenced                   atomic.Bool
+	pressureService          *NamespaceRetirementService
+	pressureSignal           atomic.Pointer[NamespaceRetirementService]
+	historyPressure          bool
+	referenceFactory         *NamespaceReferenceFactory
 }
 
 func NamespaceRegistryCharge(c NamespaceRegistryConfig) (resourcev4.Vector, error) {
@@ -100,6 +106,9 @@ func (r *NamespaceRegistry) Register(t *NamespaceTrustStore) error {
 	}
 	for _, entry := range r.entries[:r.used] {
 		if entry.trust == t {
+			if entry.retirement != nil {
+				return CBORFailure("revocation_namespace_retiring")
+			}
 			return nil
 		}
 		// Registered roots are immutable, including during owner destruction.
@@ -111,6 +120,7 @@ func (r *NamespaceRegistry) Register(t *NamespaceTrustStore) error {
 		return CBORFailure("revocation_namespace_owner")
 	}
 	if int(r.used) == len(r.entries) {
+		r.requestPressureLocked()
 		return CBORFailure("configuration_capacity")
 	}
 	pin, err := t.reservation.Borrow()
@@ -155,8 +165,14 @@ func (r *NamespaceRegistry) Lookup(tenant, authority string) (*NamespaceTrustSto
 	}
 	for _, entry := range r.entries[:r.used] {
 		if t := entry.trust; t.root.Tenant == tenant && t.root.Authority == authority {
+			if entry.retirement != nil {
+				return nil, CBORFailure("revocation_namespace_retiring")
+			}
 			return t, nil
 		}
+	}
+	if r.used >= r.capacity {
+		r.requestPressureLocked()
 	}
 	return nil, CBORFailure("revocation_namespace_binding")
 }
@@ -191,7 +207,7 @@ func (r *NamespaceRegistry) CheckNamespace(n *LiveNamespace) error {
 	}
 	current := false
 	for _, entry := range r.entries[:r.used] {
-		if entry.trust == t {
+		if entry.trust == t && entry.retirement == nil {
 			current = true
 			break
 		}
@@ -223,8 +239,19 @@ func (r *NamespaceRegistry) Close() {
 	r.fenced.Store(true)
 	r.reservation.Seal()
 	entries := r.entries[:r.used]
+	service := r.pressureService
+	factory := r.referenceFactory
 	r.mu.Unlock()
+	if service != nil {
+		service.Close()
+	}
+	if factory != nil {
+		factory.Close()
+	}
 	for _, entry := range entries {
+		if entry.retirement != nil {
+			entry.retirement.Close()
+		}
 		entry.trust.Close()
 		for _, history := range entry.history[:entry.historyCount] {
 			history.trust.Close()
@@ -251,7 +278,20 @@ func (r *NamespaceRegistry) DestroyEnvironment() error {
 	if !r.closed || r.closing || r.sampling != 0 || !r.reservation.EnvironmentClosed() {
 		return CBORFailure("revocation_namespace_owner")
 	}
+	if service := r.pressureService; service != nil {
+		service.mu.Lock()
+		finished := service.closed && service.finished && !service.running
+		service.mu.Unlock()
+		if !finished {
+			return CBORFailure("revocation_namespace_owner")
+		}
+	}
 	for _, entry := range r.entries[:r.used] {
+		if entry.retirement != nil {
+			if err := entry.retirement.destroyEnvironment(); err != nil {
+				return err
+			}
+		}
 		for _, history := range entry.history[:entry.historyCount] {
 			if err := history.trust.DestroyEnvironment(); err != nil {
 				return err
@@ -259,9 +299,28 @@ func (r *NamespaceRegistry) DestroyEnvironment() error {
 		}
 		entry.trust.mu.Lock()
 		retired := entry.trust.retired
+		referenceOwned := entry.trust.referenceFactory == r.referenceFactory && r.referenceFactory != nil
 		entry.trust.mu.Unlock()
+		if !retired && referenceOwned {
+			if err := entry.trust.DestroyEnvironment(); err != nil {
+				return err
+			}
+			retired = true
+		}
 		if !retired {
 			return CBORFailure("revocation_namespace_owner")
+		}
+	}
+	// A failed service keeps its original job pointer until that job's actual
+	// bootstrap/candidate cleanup and Environment destruction have completed.
+	if r.pressureService != nil {
+		if err := r.pressureService.retireLocked(r); err != nil {
+			return err
+		}
+	}
+	if r.referenceFactory != nil {
+		if err := r.referenceFactory.retireLocked(r); err != nil {
+			return err
 		}
 	}
 	for _, entry := range r.entries[:r.used] {

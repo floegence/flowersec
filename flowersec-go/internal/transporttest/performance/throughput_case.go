@@ -11,7 +11,6 @@ import (
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
-	flowersession "github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv3"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 )
 
@@ -314,6 +313,15 @@ func (owner *payloadThroughputStreamOwner) Finish(clean bool) error {
 			owner.finishErr = owner.resetErr
 			return
 		}
+		if err := owner.stream.Finish(owner.ctx); err != nil {
+			owner.reset()
+			owner.finishErr = errors.Join(err, owner.resetErr)
+			return
+		}
+		if err := owner.stream.Close(); err != nil {
+			owner.finishErr = err
+			return
+		}
 		if owner.lifecycle != nil {
 			owner.lifecycle.cleanFINs.Add(1)
 		}
@@ -421,9 +429,11 @@ func runPayloadThroughputStream(ctx context.Context, pair *transporttest.Product
 	establishMu.Unlock()
 	locked = false
 	ack := make([]byte, 1)
-	for time.Now().Before(deadline) {
-		if remaining := time.Until(deadline); remaining <= contractPayloadOperationGuard() {
-			break
+	for operations := 0; operations == 0 || time.Now().Before(deadline); operations++ {
+		if operations > 0 {
+			if remaining := time.Until(deadline); remaining <= contractPayloadOperationGuard() {
+				break
+			}
 		}
 		operationStarted := time.Now()
 		written, err := stream.Write(payload)
@@ -460,6 +470,7 @@ type throughputByteStream interface {
 	io.Closer
 	CloseWrite() error
 	Reset() error
+	Finish(context.Context) error
 }
 
 func runPayloadThroughputStreamDirection(ctx context.Context, pair *transporttest.ProductDirectPair, payload []byte, deadline time.Time, direction payloadDirection, establishMu *sync.Mutex, lifecycle *payloadThroughputLifecycleCounters) (uint64, []time.Duration, error) {
@@ -504,7 +515,11 @@ func runReversePayloadThroughputStream(ctx context.Context, pair *transporttest.
 			resultErr = joinPayloadThroughputAttemptError(resultErr, receiver.Wait())
 		}
 	}()
-	stream, err := pair.Server.OpenStream(attemptCtx, "performance-throughput", flowersession.Metadata{"direction": string(payloadServerToClient)})
+	metadata, err := flowersec.NewStreamMetadata(map[string]any{"direction": string(payloadServerToClient)})
+	if err != nil {
+		return 0, nil, err
+	}
+	stream, err := pair.Server.OpenStream(attemptCtx, "performance-throughput", metadata)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -517,8 +532,8 @@ func runReversePayloadThroughputStream(ctx context.Context, pair *transporttest.
 	establishMu.Unlock()
 	locked = false
 	ack := make([]byte, 1)
-	for time.Now().Before(deadline) {
-		if time.Until(deadline) <= contractPayloadOperationGuard() {
+	for operations := 0; operations == 0 || time.Now().Before(deadline); operations++ {
+		if operations > 0 && time.Until(deadline) <= contractPayloadOperationGuard() {
 			break
 		}
 		operationStarted := time.Now()
@@ -592,8 +607,8 @@ func runFullDuplexPayloadThroughputStream(ctx context.Context, pair *transportte
 	}
 	establishMu.Unlock()
 	locked = false
-	for time.Now().Before(deadline) {
-		if time.Until(deadline) <= contractPayloadOperationGuard() {
+	for operations := 0; operations == 0 || time.Now().Before(deadline); operations++ {
+		if operations > 0 && time.Until(deadline) <= contractPayloadOperationGuard() {
 			break
 		}
 		started := time.Now()

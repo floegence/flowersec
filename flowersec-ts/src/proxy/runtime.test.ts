@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { u32be } from "../utils/bin.js";
-import type { ByteStream, Session, StreamOpenOptions } from "../public/contract.js";
+import type { OperationOptions } from "../public/contract.js";
+import type { StreamMetadata } from "../public/streamMetadata.js";
+import type { ProxyStream } from "./stream.js";
 import { createProxyRuntimeWithStreams as createProxyRuntime } from "./runtime.js";
 import {encodeProxyMetadata,decodeProxyMetadata} from "./wire.js";
 import { matchesPathPrefix, normalizeSubtreePath } from "./policy.js";
@@ -22,7 +24,7 @@ function metadataFrame(value: unknown): Uint8Array {
   return concat([u32be(payload.length), payload]);
 }
 
-class FakeStream implements ByteStream {
+class FakeStream implements ProxyStream {
   readonly kind = "fake";
   terminalError = undefined;
   readonly writes: Uint8Array[] = [];
@@ -31,13 +33,13 @@ class FakeStream implements ByteStream {
   readCalls = 0;
   closed = false;
   resetCalled = false;
-  private readonly reads: Array<Uint8Array | Error | null>;
+  protected readonly reads: unknown[];
 
-  constructor(reads: Array<Uint8Array | Error | null>, private readonly partialWrite = 3) { this.reads = reads; }
+  constructor(reads: unknown[], private readonly partialWrite = 3) { this.reads = reads; }
   async read(): Promise<Uint8Array | null> {
     this.readCalls++;
     if(this.wsResponseProtocol !== undefined && this.readCalls===1) return concat([metadataFrame({v:2,conn_id:firstWrittenMetadata(this).conn_id,ok:true,protocol:this.wsResponseProtocol}), this.wsFirstFrame]);
-    const value = this.reads.shift() ?? null;
+    const value = this.reads.shift() as Uint8Array | Error | null | undefined ?? null;
     if (value instanceof Error) throw value;
     return value;
   }
@@ -51,12 +53,14 @@ class FakeStream implements ByteStream {
   async close(): Promise<void> { this.closed = true; }
 }
 
-class FakeSession implements Session {
-  readonly rpc = {} as Session["rpc"];
+type TestStreamOpenOptions = OperationOptions & Readonly<{ metadata?: StreamMetadata }>;
+
+class FakeSession {
+  readonly rpc = {};
   readonly termination = new Promise<never>(() => undefined);
-  readonly opens: Array<Readonly<{ kind: string; options: StreamOpenOptions | undefined }>> = [];
+  readonly opens: Array<Readonly<{ kind: string; options: TestStreamOpenOptions | undefined }>> = [];
   constructor(private readonly streams: FakeStream[]) {}
-  async openStream(kind: string, options?: StreamOpenOptions): Promise<ByteStream> {
+  async openStream(kind: string, options?: TestStreamOpenOptions): Promise<ProxyStream> {
     this.opens.push({ kind, options });
     const stream = this.streams.shift();
     if (stream === undefined) throw new Error("missing fake stream");
@@ -278,7 +282,8 @@ describe("Session proxy runtime", () => {
       bodyEnd(),
     ]);
     const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxChunkBytes: 8, maxBodyBytes: 64 });
-    const serviceWorker = new EventTarget();
+    const serviceWorker = new EventTarget() as EventTarget & { controller: object };
+    serviceWorker.controller = {};
     const bridge = registerProxyRuntimeServiceWorkerBridge(
       runtime,
       serviceWorker as ServiceWorkerContainer,
@@ -286,7 +291,7 @@ describe("Session proxy runtime", () => {
     const channel = new MessageChannel();
     channel.port2.start();
     const metadata = nextPortMessage(channel.port2);
-    serviceWorker.dispatchEvent(new MessageEvent("message", {
+    const event = new MessageEvent("message", {
       data: {
         type: "flowersec-proxy:fetch",
         req: {
@@ -295,7 +300,9 @@ describe("Session proxy runtime", () => {
         },
       },
       ports: [channel.port1],
-    }));
+    });
+    Object.defineProperty(event, "source", { value: serviceWorker.controller });
+    serviceWorker.dispatchEvent(event);
     await expect(metadata).resolves.toMatchObject({ type: "flowersec-proxy:response_meta", status: 200 });
     await eventLoopTurn();
     expect(stream.readCalls).toBe(1);
@@ -416,7 +423,7 @@ it("preserves a WebSocket frame coalesced with the opening response", async () =
 
 it("resets a late WebSocket OPEN result after runtime disposal", async () => {
   const stream = new FakeStream([]);
-  let resolve!: (stream: ByteStream) => void;
+  let resolve!: (stream: ProxyStream) => void;
   let openingObserved!: () => void;
   const observed = new Promise<void>(yes => { openingObserved = yes; });
   const runtime = createProxyRuntime({ session: { openStream: () => new Promise(yes => { resolve = yes; openingObserved(); }) } });
@@ -449,6 +456,112 @@ it("retains request admission through authenticated Finish and actual cleanup", 
     clean(); expect(await (await runtime.fetch("/next")).text()).toBe("");
     expect(stream.resetCalled).toBe(false);
   } finally { runtime.dispose(); }
+});
+
+it("releases a public fetch permit when path policy rejects before execution", async () => {
+  const next = new FetchResponseStream("text/plain", [new TextEncoder().encode("next")]);
+  const session = new FakeSession([next]);
+  const runtime = createProxyRuntime({ session, maxConcurrentHttpStreams: 1, pathPolicy: { deniedPathPrefixes: ["/denied"] } });
+  try {
+    await expect(runtime.fetch("/denied")).rejects.toThrow("proxy path denied");
+    expect(await (await runtime.fetch("/next")).text()).toBe("next");
+    expect(session.opens).toHaveLength(1);
+  } finally { runtime.dispose(); }
+});
+
+it("keeps request admission through cancellation until physical cleanup", async () => {
+  const prefix = new TextEncoder().encode("prefix");
+  const held = new HeldCleanupStream([
+    HELD_METADATA,
+    concat([u32be(prefix.length), prefix]),
+    PENDING_READ,
+  ]);
+  const next = new FetchResponseStream("text/plain", [new TextEncoder().encode("next")]);
+  held.response = { status: 206, headers: [
+    { name: "content-type", value: "text/plain" },
+    { name: "content-range", value: "bytes 0-5/6" },
+  ] };
+  const runtime = createProxyRuntime({ session: new FakeSession([held, next]), maxConcurrentHttpStreams: 1 });
+  const cancellation = new AbortController();
+  try {
+    const response = await runtime.fetch("/held", { signal: cancellation.signal });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-type")).toBe("text/plain");
+    expect(response.headers.get("content-range")).toBe("bytes 0-5/6");
+    const reader = response.body!.getReader();
+    await expect(reader.read()).resolves.toEqual({ done: false, value: prefix });
+    const pending = reader.read();
+    expect(held.pendingRead).toBe(true);
+    cancellation.abort();
+    await expect(pending).rejects.toThrow();
+    expect(held.resetCalled).toBe(true);
+    await expect(runtime.fetch("/blocked")).rejects.toMatchObject({ code: "resource_exhausted" });
+    held.releaseCleanup();
+    expect(await (await runtime.fetch("/next")).text()).toBe("next");
+  } finally { runtime.dispose(); }
+});
+
+it("keeps request admission through response failure until physical cleanup", async () => {
+  const failed = new HeldCleanupStream([new Error("private endpoint detail")]);
+  const next = new FetchResponseStream("text/plain", [new TextEncoder().encode("next")]);
+  const runtime = createProxyRuntime({ session: new FakeSession([failed, next]), maxConcurrentHttpStreams: 1 });
+  try {
+    await expect(runtime.fetch("/failed")).rejects.toMatchObject({ code: "operation_failed" });
+    expect(failed.resetCalled).toBe(true);
+    await expect(runtime.fetch("/blocked")).rejects.toMatchObject({ code: "resource_exhausted" });
+    failed.releaseCleanup();
+    expect(await (await runtime.fetch("/next")).text()).toBe("next");
+  } finally { runtime.dispose(); }
+});
+
+it("keeps request admission through a stream reset until physical cleanup", async () => {
+  const held = new HeldCleanupStream([
+    HELD_METADATA,
+    concat([u32be(1), Uint8Array.of(7)]),
+    PENDING_READ,
+  ]);
+  const next = new FetchResponseStream("text/plain", [new TextEncoder().encode("next")]);
+  held.response = { status: 200, headers: [] };
+  const runtime = createProxyRuntime({ session: new FakeSession([held, next]), maxConcurrentHttpStreams: 1 });
+  try {
+    const response = await runtime.fetch("/held-reset");
+    const reader = response.body!.getReader();
+    await expect(reader.read()).resolves.toMatchObject({ done: false, value: Uint8Array.of(7) });
+    const pending = reader.read();
+    expect(held.pendingRead).toBe(true);
+    held.triggerReset();
+    await expect(pending).rejects.toThrow();
+    expect(held.resetCalled).toBe(true);
+    await expect(runtime.fetch("/blocked")).rejects.toMatchObject({ code: "resource_exhausted" });
+    held.releaseCleanup();
+    expect(await (await runtime.fetch("/next")).text()).toBe("next");
+  } finally { runtime.dispose(); }
+});
+
+it("keeps request admission through a response deadline until physical cleanup", async () => {
+  vi.useFakeTimers();
+  const held = new HeldCleanupStream([
+    HELD_METADATA,
+    concat([u32be(1), Uint8Array.of(8)]),
+    PENDING_READ,
+  ]);
+  const next = new FetchResponseStream("text/plain", [new TextEncoder().encode("next")]);
+  held.response = { status: 200, headers: [] };
+  const runtime = createProxyRuntime({ session: new FakeSession([held, next]), maxConcurrentHttpStreams: 1, timeoutMs: 25 });
+  try {
+    const response = await runtime.fetch("/held-deadline");
+    const reader = response.body!.getReader();
+    await expect(reader.read()).resolves.toMatchObject({ done: false, value: Uint8Array.of(8) });
+    const pending = reader.read();
+    expect(held.pendingRead).toBe(true);
+    const pendingFailure = expect(pending).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(25);
+    await pendingFailure;
+    expect(held.resetCalled).toBe(true);
+    await expect(runtime.fetch("/blocked")).rejects.toMatchObject({ code: "resource_exhausted" });
+    held.releaseCleanup();
+    expect(await (await runtime.fetch("/next")).text()).toBe("next");
+  } finally { runtime.dispose(); vi.useRealTimers(); }
 });
 
 class ControlledReadStream extends FakeStream {
@@ -494,6 +607,60 @@ async function nextPortMessage(port: MessagePort): Promise<Record<string, unknow
 
 async function eventLoopTurn(): Promise<void> {
   await new Promise<void>((resolve) => { setImmediate(resolve); });
+}
+
+const PENDING_READ = Symbol("pending read");
+const HELD_METADATA = Symbol("held metadata");
+type HeldRead = Uint8Array | Error | null | typeof PENDING_READ | typeof HELD_METADATA;
+type HeldResponse = Readonly<{ status: number; headers: ReadonlyArray<{ name: string; value: string }> }>;
+
+class HeldCleanupStream extends FakeStream {
+  readonly resetController = new AbortController();
+  pendingRead = false;
+  response: HeldResponse = { status: 200, headers: [] };
+  private pendingReject: ((error: unknown) => void) | undefined;
+  private cleanupCallback: (() => void) | undefined;
+
+  constructor(reads: HeldRead[]) { super(reads); }
+
+  get signal(): AbortSignal { return this.resetController.signal; }
+
+  override async read(): Promise<Uint8Array | null> {
+    this.readCalls++;
+    const value = this.reads.shift() as HeldRead | undefined;
+    if (value === HELD_METADATA) {
+      return metadataFrame({ v: 2, request_id: firstWrittenMetadata(this).request_id, ok: true,
+        status: this.response.status, headers: this.response.headers });
+    }
+    if (value === PENDING_READ) {
+      this.pendingRead = true;
+      return await new Promise<Uint8Array | null>((_resolve, reject) => {
+        this.pendingReject = reject;
+      });
+    }
+    if (value instanceof Error) throw value;
+    return value ?? null;
+  }
+
+  override async reset(): Promise<void> {
+    await super.reset();
+    this.pendingRead = false;
+    const reject = this.pendingReject;
+    this.pendingReject = undefined;
+    reject?.(new Error("stream reset"));
+  }
+
+  dispose(onCleanup?: () => void): void {
+    this.cleanupCallback = onCleanup;
+  }
+
+  releaseCleanup(): void {
+    const callback = this.cleanupCallback;
+    this.cleanupCallback = undefined;
+    callback?.();
+  }
+
+  triggerReset(): void { this.resetController.abort(); }
 }
 
 class FetchResponseStream extends FakeStream {

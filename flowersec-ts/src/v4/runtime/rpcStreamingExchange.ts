@@ -1,3 +1,4 @@
+import type { DiagnosticActivity } from "./diagnosticObservation.js";
 import type { V4CleanupStatus } from "../../generated/transportV4APIResults.js";
 import type { V4ApplicationContext, V4AuthenticatedContext } from "../streamHandlers.js";
 import type { ApplicationHeader } from "./applicationHeader.js";
@@ -127,12 +128,14 @@ export class RPCStreamingExchange {
   #deliveryWait: RPCStreamingStatus["deliveryWait"];
   #authorizationEnded = false;
   readonly #runtimeBytes: bigint;
+  #diagnostic: DiagnosticActivity | undefined;
   constructor(transfer: RPCUnaryTransfer, messages: RPCStreamMessages, runtimeBytes: bigint, errorReference: ResourceReference,
     delivery: ReceiveDeliveryGate, authentication: V4AuthenticatedContext, reserveResult: () => ResourceReference, claim: CompletionClaim | undefined,
     clock: TrustedClock, lease?: ReturnType<ReceiveDeliveryGate["retain"]>) {
     if (transfer.method.shape !== "server_streaming" || transfer.completionDeadline === undefined) throw new RPCProtocolError("rpc_request_binding");
     this.#runtimeBytes = runtimeBytes; this.#clock = clock;
-    const { guard, references, ...resultTransfer } = transfer;
+    const { guard, references, diagnostic, ...resultTransfer } = transfer;
+    this.#diagnostic = diagnostic;
     this.#transfer = resultTransfer; this.#guard = guard; this.#messages = messages; this.#claim = claim;
     this.#reference = references[0]!.take(rpcUnaryExchangeCharges(transfer.header.payloadBytes, Number(transfer.header.uint(8)), runtimeBytes, transfer.method)[0]!);
     this.#authentication = authentication; this.#reserveResult = reserveResult;
@@ -391,7 +394,7 @@ export class RPCStreamingExchange {
     if (this.#terminalDelivered || this.#abandonAfterDelivery) this.close(); this.#collect();
   }
   #stopTimer(): void { if (this.#timer !== undefined) clearTimeout(this.#timer); this.#timer = undefined; }
-  #fail(reason: string): void { this.#failure ??= reason; this.#state = "failed"; this.close(); }
+  #fail(reason: string): void { this.#diagnostic?.failure(new Error(reason)); this.#failure ??= reason; this.#state = "failed"; this.close(); }
   authorizationClosed(): void {
     if (this.#closed || this.#authorizationEnded) return; this.#authorizationEnded = true;
     this.#lease?.release(); this.#lease = undefined;
@@ -434,6 +437,8 @@ export class RPCStreamingExchange {
     this.#borrow?.release(); this.#borrow = undefined; this.#value = undefined; this.#response?.close(); this.#response = undefined;
     const transfer = this.#transfer; transfer?.request.close(); transfer?.call.close(); transfer?.completion.close();
     if (transfer?.call.cleanupComplete() === false || transfer?.completion.cleanupComplete() === false) return;
+    if (this.#failure === undefined) this.#diagnostic?.event({ state: "ready", code: "ok" });
+    this.#diagnostic?.close(); this.#diagnostic = undefined;
     transfer?.contract.release(); this.#transfer = undefined; this.#messages = undefined; this.#errors?.close(); this.#errors = undefined; this.#authentication = undefined;
     this.#reference?.release(); this.#reference = undefined; this.#clock = undefined; this.#cleanupWindow = undefined;
     const cleaned = this.#cleaned; this.#cleaned = undefined; cleaned?.();

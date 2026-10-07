@@ -5,7 +5,7 @@ import XCTest
 @testable import Flowersec
 
 @MainActor
-final class TransportV4CredentialTests: XCTestCase {
+final class TransportCredentialTests: XCTestCase {
   func testLiveAndPoolUseActualSignaturesAndOriginalOwner() throws {
     for source in [V4ActivationSource.liveAuthority, .preauthorizedPool] {
       let fixture = try CredentialFixture()
@@ -119,6 +119,84 @@ final class TransportV4CredentialTests: XCTestCase {
         ])))
   }
 
+  func testLivePreparationRequiresOriginalMatchingTxBAndCannotRedispatch() throws {
+    // The original parent allows 1500, while this authority may issue only
+    // through 1400. Preparation must accept the overlap and TxB must honor it.
+    let fixture = try CredentialFixture(activationEnd: 1400)
+    let issued = try fixture.input(source: .liveAuthority, activation: [14: .uint(1400)])
+    let pending = V4CredentialInput(
+      artifact: issued.artifact, clientCertificate: issued.clientCertificate,
+      serverCertificate: issued.serverCertificate, activation: Data(), source: .liveAuthority,
+      candidateIndex: 0)
+    let admission = try fixture.verify(pending)
+    defer { admission.close() }
+    XCTAssertTrue(admission.activationDigest.isEmpty)
+    XCTAssertThrowsError(try admission.claimHandshake(in: fixture.base.environment))
+    XCTAssertThrowsError(try admission.beginLiveAuthorization(signingKeyID: "untrusted"))
+    XCTAssertTrue(admission.attemptID.allSatisfy { $0 == 0 })
+    let request = try admission.beginLiveAuthorization(signingKeyID: "activate")
+    XCTAssertLessThanOrEqual(request.count, 1024)
+    XCTAssertTrue(admission.attemptID.contains { $0 != 0 })
+    XCTAssertThrowsError(try admission.beginLiveAuthorization(signingKeyID: "activate"))
+    let excessive = try fixture.input(
+      source: .liveAuthority, activation: [9: .bytes(admission.attemptID)])
+    XCTAssertThrowsError(
+      try admission.completeLiveAuthorization(
+        excessive.activation,
+        signingKeyID: "activate", configuration: fixture.configuration()))
+    XCTAssertTrue(admission.activationDigest.isEmpty)
+    // Only the independently trusted fixture authority signs this proof. The
+    // consumer never fills missing authorization with a locally signed map.
+    let original = try V4NamespaceDocument(
+      issued.activation, schema: "ActivationAuthorization",
+      bytes: 4096, nodes: 4096, registry: V4NamespaceRegistry(),
+      context: ["activation_source_profile": V4ActivationSource.liveAuthority.rawValue]
+    ).root
+    var fields = try (0..<16).map { (UInt64($0), Data(try original.fieldID($0).raw)) }
+    fields[9] = (9, V4Crypto.bytes(admission.attemptID))
+    let signature = try NamespaceFixture.key(13).signature(
+      for:
+        NamespaceFixture.input("activation_authorization/signature", V4Crypto.map(fields)))
+    fields.append((16, V4Crypto.bytes(signature)))
+    let proof = V4Crypto.map(fields)
+    let value = try admission.completeLiveAuthorization(
+      proof,
+      signingKeyID: "activate", configuration: fixture.configuration())
+    XCTAssertEqual(try value.b("attempt_id"), admission.attemptID)
+    XCTAssertFalse(admission.activationDigest.isEmpty)
+    try admission.checkLiveActivationComplete(in: fixture.base.environment)
+    XCTAssertThrowsError(
+      try admission.completeLiveAuthorization(
+        proof,
+        signingKeyID: "activate", configuration: fixture.configuration()))
+    try admission.claimHandshake(in: fixture.base.environment)
+    XCTAssertThrowsError(try admission.claimHandshake(in: fixture.base.environment))
+  }
+
+  func testLiveTxBRejectsChangedAttemptWinnerAndRouteWithoutMaterialRepair() throws {
+    for change in [9, 7, 8] {
+      let fixture = try CredentialFixture()
+      let issued = try fixture.input(source: .liveAuthority)
+      let admission = try fixture.verify(
+        V4CredentialInput(
+          artifact: issued.artifact,
+          clientCertificate: issued.clientCertificate, serverCertificate: issued.serverCertificate,
+          activation: Data(), source: .liveAuthority, candidateIndex: 0))
+      defer { admission.close() }
+      _ = try admission.beginLiveAuthorization(signingKeyID: "activate")
+      var fields: [UInt64: V4CBORValue] = [9: .bytes(admission.attemptID)]
+      fields[UInt64(change)] = .bytes(Data(repeating: 99, count: change == 8 ? 32 : 16))
+      let wrong = try fixture.input(source: .liveAuthority, activation: fields)
+      XCTAssertThrowsError(
+        try admission.completeLiveAuthorization(
+          wrong.activation,
+          signingKeyID: "activate", configuration: fixture.configuration()))
+      XCTAssertTrue(admission.activationDigest.isEmpty)
+      XCTAssertThrowsError(try admission.claimHandshake(in: fixture.base.environment))
+      XCTAssertThrowsError(try admission.beginLiveAuthorization(signingKeyID: "activate"))
+    }
+  }
+
   func testCompleteNamespaceClosureRequiresOriginalEnvironmentAndRoleMask() throws {
     let fixture = try CredentialFixture()
     let foreign = try CredentialFixture()
@@ -137,10 +215,9 @@ final class TransportV4CredentialTests: XCTestCase {
     let state = fixture.state()
     let head = try fixture.base.head(state: state, sequence: 2)
     XCTAssertThrowsError(try fixture.base.owner!.refresh(head: head, state: Data([0xa0])))
-    XCTAssertThrowsError(try admission.checkPreparation(in: fixture.base.environment)) { error in
-      XCTAssertEqual(error as? V4NamespaceFailure, .pendingState)
-    }
+    try admission.checkPreparation(in: fixture.base.environment)
     fixture.base.source.advance(100)
+    try admission.checkPreparation(in: fixture.base.environment)
     try fixture.base.owner!.refresh(head: head, state: state)
     try admission.checkPreparation(in: fixture.base.environment)
     fixture.base.source.advance(390)
@@ -272,14 +349,19 @@ final class CredentialFixture {
   let activationDelegation: V4CBORValue
   private let once: V4CBORValue
   var candidateLeg: V4CBORValue?
+  var candidateCount = 2
+  var tunnelLegs: (V4CBORValue, V4CBORValue)?
+  var directCandidateIndices: Set<Int> = []
   private(set) var bootstrapResponse = Data()
   private(set) var bootstrapState = Data()
 
   init(
     profile: String = x25519Profile, issuerEnd: UInt64 = 2500,
-    clientPermissionSubject: String = "client", activationEnd: UInt64 = 1500
+    clientPermissionSubject: String = "client", activationEnd: UInt64 = 1500,
+    allowTunnel: Bool = false,
+    nativeResources: Bool = false
   ) throws {
-    base = try NamespaceFixture()
+    base = try NamespaceFixture(nativeResources: nativeResources)
     self.profile = profile
     once = NamespaceFixture.map([
       0: .text("tenant"), 1: .bytes(Data(repeating: 5, count: 16)),
@@ -309,6 +391,29 @@ final class CredentialFixture {
         fields[16] = .uint(UInt64(role))
       }
       permissions.append(NamespaceFixture.map(fields))
+    }
+    if allowTunnel {
+      permissions.append(
+        NamespaceFixture.map([
+          0: .bytes(Data(repeating: 80, count: 16)), 1: .text("tenant"), 2: .text("authority"),
+          3: .bytes(base.capacityDigest), 4: .uint(1), 5: .uint(0),
+          6: .bytes(Data(repeating: 4, count: 16)),
+          7: .bytes(try NamespaceFixture.key(11).publicKey.rawRepresentation),
+          8: .text("service"), 9: .uint(1), 10: .uint(1500), 11: .uint(0), 12: .uint(20),
+          13: .uint(issuerEnd), 14: .text("relay"), 15: .text(profile), 16: .uint(2),
+          24: .array([.uint(20), .null]),
+        ]))
+      permissions.append(
+        NamespaceFixture.map([
+          0: .bytes(Data(repeating: 81, count: 16)), 1: .text("tenant"), 2: .text("authority"),
+          3: .bytes(base.capacityDigest), 4: .uint(1), 5: .uint(2),
+          6: .bytes(Data(repeating: 15, count: 16)),
+          7: .bytes(try NamespaceFixture.key(15).publicKey.rawRepresentation),
+          8: .text("relay-service"), 9: .uint(1), 10: .uint(1500), 11: .uint(0), 12: .uint(20),
+          13: .uint(issuerEnd), 16: .uint(3), 17: .text("relay-service"), 18: .text("authority"),
+          19: .bytes(base.capacityDigest), 20: .uint(1), 21: .bytes(Data(repeating: 5, count: 16)),
+          22: .uint(0), 23: .uint(20), 24: .array([.null, .uint(20)]),
+        ]))
     }
     let state = state()
     bootstrapState = state
@@ -359,13 +464,23 @@ final class CredentialFixture {
     ])
   }
   func routeDigest(_ index: Int) -> Data {
-    NamespaceFixture.digest(
+    if let (client, server) = tunnelLegs, !directCandidateIndices.contains(index) {
+      return NamespaceFixture.digest(
+        "route",
+        NamespaceFixture.map([
+          0: .uint(1), 1: .bytes(Data(repeating: UInt8(40 + index), count: 16)),
+          3: client, 4: server,
+        ]).encoded())
+    }
+    return NamespaceFixture.digest(
       "route",
       NamespaceFixture.map([
         0: .uint(0), 1: .bytes(Data(repeating: UInt8(40 + index), count: 16)), 2: leg(index),
       ]).encoded())
   }
-  private func certificate(_ role: Int, override: [UInt64: V4CBORValue], bad: Bool) throws -> Data {
+  func certificate(_ role: Int, override: [UInt64: V4CBORValue] = [:], bad: Bool = false) throws
+    -> Data
+  {
     let noise: V4CBORValue
     if profile == Self.x25519Profile {
       noise = NamespaceFixture.map([
@@ -385,7 +500,8 @@ final class CredentialFixture {
       ])
     }
     let fields: [UInt64: V4CBORValue] = [
-      0: .text("tenant"), 1: .text(role == 0 ? "client" : "server"), 2: .text(profile), 3: noise,
+      0: .text("tenant"), 1: .text(role == 0 ? "client" : (role == 1 ? "server" : "relay")),
+      2: .text(profile), 3: noise,
       4: .bytes(try NamespaceFixture.key(UInt8(21 + role)).publicKey.rawRepresentation),
       5: .uint(UInt64(role)), 6: .text("service"), 7: .bytes(Data(repeating: 4, count: 16)),
       8: .uint(900), 9: .uint(role == 0 ? 1800 : 1700), 10: .text("authority"),
@@ -408,12 +524,19 @@ final class CredentialFixture {
     let serverBytes = try certificate(1, override: server, bad: badSignature == "server")
     let clientDigest = NamespaceFixture.digest("certificate-digest", clientBytes)
     let serverDigest = NamespaceFixture.digest("certificate-digest", serverBytes)
-    let namespace = NamespaceFixture.map([
-      0: .text("tenant"), 1: .text("authority"), 2: .uint(namespaceGeneration),
-      3: .bytes(base.capacityDigest), 4: .uint(namespaceRole),
-    ])
-    let candidates: [V4CBORValue] = (0..<2).map { index in
-      NamespaceFixture.map([
+    let candidates: [V4CBORValue] = (0..<candidateCount).map { index in
+      let role = tunnelLegs != nil && directCandidateIndices.contains(index) ? 3 : namespaceRole
+      let namespace = NamespaceFixture.map([
+        0: .text("tenant"), 1: .text("authority"), 2: .uint(namespaceGeneration),
+        3: .bytes(base.capacityDigest), 4: .uint(role),
+      ])
+      if let (client, server) = tunnelLegs, !directCandidateIndices.contains(index) {
+        return NamespaceFixture.map([
+          0: .bytes(Data(repeating: UInt8(40 + index), count: 16)), 1: .uint(UInt64(index)),
+          2: .uint(1), 4: client, 5: server, 6: .array([namespace]),
+        ])
+      }
+      return NamespaceFixture.map([
         0: .bytes(Data(repeating: UInt8(40 + index), count: 16)), 1: .uint(UInt64(index)),
         2: .uint(0), 3: leg(index), 6: .array([namespace]),
       ])

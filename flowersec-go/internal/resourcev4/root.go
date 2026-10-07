@@ -64,6 +64,7 @@ type accountSlot struct {
 
 type chargeSlot struct {
 	verificationEnvironment [16]byte
+	applicationService      bool
 	resultOwner             bool
 	protected               *ProtectedReservation
 	protectedClosed         bool

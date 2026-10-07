@@ -36,14 +36,15 @@ func (r *RelayHop) Authenticate(store *ledgerv4.SQLiteStore, authority ledgerv4.
 		}
 		x.cleanupLocked()
 		x.mu.Unlock()
-		r.mu.Lock()
-		r.running = false
-		r.authenticated = err == nil && !r.closed
-		r.mu.Unlock()
-		pair.notify()
 		if err != nil {
 			r.Close()
 		}
+		r.mu.Lock()
+		r.running = false
+		r.authenticated = err == nil && !r.closed
+		r.settleLocked()
+		r.mu.Unlock()
+		pair.notify()
 	}()
 	err = func() error {
 		x.mu.Lock()
@@ -86,6 +87,18 @@ func (r *RelayHop) Authenticate(store *ledgerv4.SQLiteStore, authority ledgerv4.
 			return err
 		}
 		if err = r.budget.claim(need); err != nil {
+			return err
+		}
+		// Both fixed leg owners share one physical store work position. Keep
+		// their original claim and dispatch methods serialized within the pair;
+		// cancellation never releases a claim while its actual method is active.
+		select {
+		case <-pair.claimGate:
+		case <-x.ctx.Done():
+			return x.ctx.Err()
+		}
+		defer func() { pair.claimGate <- struct{}{} }()
+		if err := x.check(); err != nil {
 			return err
 		}
 		ledger, err := ledgerv4.NewSQLiteRelayActivation(x.ctx, store, authority, r.facts, r.owner, r.c.Clock, r.c.Initial.Deadline, r.guard.Check, r.claimReservation, r.invocationReservation, r.reservation)

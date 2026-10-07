@@ -133,33 +133,25 @@ test("non-published Rust roots remain licensed and version their local Flowersec
 
 test("Rust native runtime owns carrier trust policy", () => {
   const manifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/Cargo.toml"), "utf8");
-  const readme = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/README.md"), "utf8");
-  const connector = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/connector_v3.rs"), "utf8");
-  const tls = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/tls_v3.rs"), "utf8");
+  const native = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/native_v4.rs"), "utf8");
+  const tls = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/wss_v4.rs"), "utf8");
   const crateRoot = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/src/lib.rs"), "utf8");
   const fuzzManifest = fs.readFileSync(path.join(sourceRoot, "flowersec-rust/fuzz/Cargo.toml"), "utf8");
-
-  assert.match(
-    manifest,
-    /^\[features\]\ndefault = \[\]\n__flowersec_internal_fuzzing = \[\]$/m,
-  );
-  assert.match(crateRoot, /#\[cfg\(feature = "__flowersec_internal_fuzzing"\)\]\n#\[doc\(hidden\)\]\npub mod fuzzing/u);
+  assert.match(manifest, /^\[features\]\ndefault = \[\]\n__flowersec_internal_fuzzing = \[\]$/m);
+  assert.match(crateRoot, /pub mod fuzzing/u);
   assert.match(fuzzManifest, /features = \["__flowersec_internal_fuzzing"\]/u);
   assert.doesNotMatch(manifest, /rustls-(?:native|webpki)-roots/u);
-  assert.match(
-    manifest,
-    /^tokio-tungstenite = \{ version = "[^"]+", default-features = false, features = \["connect"\] \}$/m,
-  );
-  assert.match(readme, /CA candidates use platform or explicit DER trust roots/u);
-  assert.match(readme, /Pin candidates use only\s+the active artifact-bound leaf-certificate SHA-256 pins/u);
-  assert.match(readme, /never fall back to\s+CA verification/u);
-  assert.match(readme, /No system trust store is selected implicitly outside the\s+explicit CA policy/u);
-  assert.doesNotMatch(readme, /plaintext direct WebSocket/u);
-  assert.doesNotMatch(connector, /impl Default for ConnectorOptions/u);
-  assert.match(connector, /pub fn new\(\) -> Self/u);
-  assert.match(connector, /pub fn with_trust_roots_der\(/u);
-  assert.match(connector, /NativeTlsPolicyV3::ca_with_platform_roots\(\)/u);
-  assert.match(tls, /rustls_native_certs::load_native_certs\(\)/u);
+  assert.match(tls, /options\.ca_certificates_der\.is_empty\(\)/u);
+  assert.match(tls, /rustls::RootCertStore::empty\(\)/u);
+  assert.match(tls, /WebPkiServerVerifier::builder_with_provider/u);
+  assert.match(tls, /pin_profile\(leaf\.as_ref\(\)\)/u);
+  assert.match(tls, /pins\.is_empty\(\)/u);
+  assert.match(native, /match &policy\.pins/u);
+  assert.match(native, /RawQuicClientConfig::new_ca_with_time_provider/u);
+  assert.match(native, /RawQuicClientConfig::new_pin_with_time_provider/u);
+  for (const source of [tls, native]) {
+    assert.doesNotMatch(source, /load_native_certs|danger_accept_invalid/u);
+  }
 });
 
 test("serde_with is absent or patched for GHSA-7gcf-g7xr-8hxj without drifting the published MSRV", async () => {

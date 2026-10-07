@@ -21,16 +21,19 @@ import type { RPCReadyRequest } from "./rpcReceiver.js";
 import { ResourceVector, type ResourceReference, type ResourceRoot, type ProtectedResourceReservation } from "./resources.js";
 import { SchemaValidationError } from "./schema.js";
 import { TimeError } from "./timeArithmetic.js";
+import { DiagnosticActivity, type DiagnosticObserver } from "./diagnosticObservation.js";
 
 const maximum = (1n << 64n) - 1n, capability = Symbol("original fixed query publication");
 export type ContractQueryServiceStep = "progress" | "blocked" | "idle";
 interface Pending {
+  readonly diagnostic: DiagnosticActivity;
   readonly ticket: RPCNetworkTicket;
   readonly input: RPCRequestInput;
   readonly deadline: TrustedDeadline;
   channel: RPCChannelRuntime | undefined;
 }
 interface Output {
+  diagnostic?: DiagnosticActivity;
   generation: bigint;
   phase: "free" | "resolve" | "writer" | "encode" | "publish" | "tail";
   ticket: RPCNetworkTicket | undefined;
@@ -58,9 +61,37 @@ function refusal(error: unknown): RPCSDKError {
   return error instanceof TimeError && (error.code === "time_expired" || error.code === "time_cancelled") ? "deadline_exceeded" : "service_unavailable";
 }
 class QueryPublication implements RPCPublicationGuard {
-  constructor(readonly service: ContractQueryService, readonly index: number, readonly generation: bigint) { Object.freeze(this); }
+  #handedOff = false;
+  #complete = false;
+  #sourceComplete = false;
+  constructor(readonly service: ContractQueryService, readonly index: number, readonly generation: bigint, private readonly diagnostic?: DiagnosticActivity) {
+    diagnostic?.holdPublication(); Object.freeze(this);
+  }
   check(): void { this.service.checkPublication(capability, this.index, this.generation); }
   current(): boolean { return this.service.publicationCurrent(capability, this.index, this.generation); }
+  responseHandedOff(): void {
+    if (this.#complete || this.#handedOff) return;
+    this.#handedOff = true; this.diagnostic?.event({ state: "ready", code: "ok" });
+  }
+  publicationPhysicalComplete(): void {
+    if (this.#complete) return; this.#complete = true;
+    if (!this.#handedOff) this.diagnostic?.failure(new Error("rpc_publication_failed"));
+    this.#finish();
+  }
+  sourceComplete(): void { this.#sourceComplete = true; this.#finish(); }
+  #finish(): void {
+    if (!this.#complete || !this.#sourceComplete) return;
+    this.diagnostic?.finishPublication(); this.diagnostic?.close();
+  }
+}
+/** A local refusal still owns its original small response's physical tail. */
+class QueryRefusal implements RPCPublicationGuard {
+  constructor(private readonly diagnostic: DiagnosticActivity, code: RPCSDKError) {
+    diagnostic.holdPublication(); diagnostic.failure(new Error(code)); Object.freeze(this);
+  }
+  check(): void {}
+  current(): boolean { return true; }
+  publicationPhysicalComplete(): void { this.diagnostic.finishPublication(); this.diagnostic.close(); }
 }
 
 /** Two original complete response vectors plus two small pending requests,
@@ -92,7 +123,7 @@ export class ContractQueryService {
   #consumer: object | undefined;
   #unobserve: (() => void) | undefined;
   constructor(network: RPCNetwork, codecs: ContractQueryCodecs, routes: ContractRoutes, access: ContractQueryAccess, root: ResourceRoot,
-    deadline: TrustedDeadline, runtimeBytes: bigint, references: readonly ResourceReference[]) {
+    deadline: TrustedDeadline, runtimeBytes: bigint, references: readonly ResourceReference[], prepaidSendAliases?: readonly ResourceReference[], private readonly diagnostics?: DiagnosticObserver) {
     const costs = contractQueryServiceCharges(runtimeBytes);
     if (references.length !== costs.length || !references.every(ref => network.sameEnvironment(ref)) ||
         !routes.sameEnvironment(references[0]!) || !access.sameEnvironment(references[0]!)) throw new RPCProtocolError("rpc_query_owner");
@@ -104,7 +135,11 @@ export class ContractQueryService {
       for (let index = 1; index < 3; index++) this.#pendingPositions.push(root.protect(references[index]!, costs[index]!));
       for (let slot = 0; slot < 2; slot++) {
         const positions: ProtectedResourceReservation[] = []; this.#outputPositions.push(positions);
-        for (let item = 0; item < 3; item++) { const index = 3 + slot * 3 + item; positions.push(root.protect(references[index]!, costs[index]!)); }
+        for (let item = 0; item < 3; item++) {
+          const index = 3 + slot * 3 + item, reference = references[index]!, alias = item === 2 ? prepaidSendAliases?.[slot] ?? reference.borrow() : undefined;
+          try { positions.push(root.protect(reference, costs[index]!, alias === undefined ? [] : [alias])); }
+          finally { alias?.release(); }
+        }
       }
       this.#unobserve = access.observe(this.#reference, () => this.#notify());
       network.claimQueries(this); Object.freeze(this);
@@ -134,7 +169,7 @@ export class ContractQueryService {
       const reference = this.#pendingPositions[index]!.checkout();
       try {
         const input = new RPCRequestInput(header, { capture: true, fixedRequest: "query_contracts_request", deadline, runtimeBytes: this.#runtimeBytes }, reference);
-        this.#pending[index] = { ticket, input, deadline, channel: undefined }; return input;
+        this.#pending[index] = { diagnostic: new DiagnosticActivity(this.diagnostics, "application"), ticket, input, deadline, channel: undefined }; return input;
       } finally { reference.release(); }
     } finally { this.#leave(); }
   }
@@ -144,7 +179,13 @@ export class ContractQueryService {
     try {
       if (!this.#network.state(ready.ticket).query) return false;
       channel.checkIncoming(ready.ticket); this.#check();
-      if (ready.refusal !== undefined) { channel.replySDK(ready.ticket, ready.refusal); this.#collectPending(); return true; }
+      if (ready.refusal !== undefined) {
+        const pending = this.#pending.find(value => value?.ticket === ready.ticket);
+        const publication = pending === undefined ? undefined : new QueryRefusal(pending.diagnostic, ready.refusal);
+        try { channel.replySDK(ready.ticket, ready.refusal, publication); }
+        catch (error) { publication?.publicationPhysicalComplete(); throw error; }
+        this.#collectPending(); return true;
+      }
       const pending = this.#pending.find(value => value?.ticket === ready.ticket);
       if (pending === undefined || pending.input !== ready.input || pending.input.state !== "complete" || pending.channel !== undefined) throw new RPCProtocolError("rpc_query_input_owner");
       pending.channel = channel; this.#notify(); return true;
@@ -152,13 +193,17 @@ export class ContractQueryService {
   }
   #collectPending(): void {
     for (let i = 0; i < this.#pending.length; i++) {
-      const pending = this.#pending[i]; if (pending !== undefined && pending.input.cleanupComplete()) this.#pending[i] = undefined;
+      const pending = this.#pending[i]; if (pending !== undefined && pending.input.cleanupComplete()) { pending.diagnostic.close(); this.#pending[i] = undefined; }
     }
   }
   #refusePending(index: number, code: RPCSDKError): void {
     const pending = this.#pending[index]!;
-    try { if (this.#network.live(pending.ticket)) pending.channel!.replySDK(pending.ticket, code); }
-    catch { pending.channel?.close(); }
+    const publication = new QueryRefusal(pending.diagnostic, code);
+    try {
+      if (this.#network.live(pending.ticket)) pending.channel!.replySDK(pending.ticket, code, publication);
+      else publication.publicationPhysicalComplete();
+    }
+    catch { pending.channel?.close(); publication.publicationPhysicalComplete(); }
     finally { pending.input.close(); this.#pending[index] = undefined; }
   }
   #begin(index: number, available: number): void {
@@ -171,11 +216,12 @@ export class ContractQueryService {
       const targets = this.#targets!.decode(borrow.bytes, references[0]!);
       slot.generation++; slot.phase = "resolve"; slot.targets = targets; slot.references = references.slice(1);
       slot.ticket = pending.ticket; slot.channel = pending.channel; slot.header = pending.input.header; slot.deadline = pending.deadline;
+      slot.diagnostic = pending.diagnostic;
     } catch (error) {
       for (const reference of references) reference.release();
-      if (error instanceof CBORWireError || error instanceof SchemaValidationError) pending.channel!.close();
+      if (error instanceof CBORWireError || error instanceof SchemaValidationError) { pending.diagnostic.failure(error); pending.channel!.close(); }
       else if (!this.#closed) this.#refusePending(index, refusal(error));
-      if (this.#closed) throw error;
+      if (this.#closed) { pending.diagnostic.failure(error); throw error; }
     } finally { borrow?.release(); pending.input.close(); this.#pending[index] = undefined; }
   }
   #checkSlot(slot: Output): void {
@@ -184,13 +230,18 @@ export class ContractQueryService {
     if (this.#network.state(slot.ticket!).stopRequested) throw new RPCProtocolError("rpc_query_stopped");
   }
   #reject(slot: Output, code: RPCSDKError): void {
-    try { if (this.#network.live(slot.ticket!)) slot.channel!.replySDK(slot.ticket!, code); }
-    catch { slot.channel?.close(); }
+    const publication = slot.diagnostic === undefined ? undefined : new QueryRefusal(slot.diagnostic, code);
+    try {
+      if (this.#network.live(slot.ticket!)) slot.channel!.replySDK(slot.ticket!, code, publication);
+      else publication?.publicationPhysicalComplete();
+    }
+    catch { slot.channel?.close(); publication?.publicationPhysicalComplete(); }
     finally { this.#release(slot); }
   }
   #release(slot: Output): void {
     slot.writer?.close();
     if (slot.sourceHeld || slot.writer?.cleanupComplete() === false) return;
+    slot.diagnostic?.close(); delete slot.diagnostic;
     slot.writer = undefined; slot.targets?.release(); slot.targets = undefined;
     for (const ref of slot.references) ref.release(); slot.references.length = 0;
     for (const selection of slot.selections) selection.close(); slot.selections.length = slot.choices.length = 0;
@@ -223,14 +274,15 @@ export class ContractQueryService {
         if (!this.#access!.current(slot.epoch)) throw new RPCProtocolError("query_authorization_changed");
         const header = this.#headers!.response(slot.header!, "query_contracts_response", slot.writer!.encodedBytes), borrow = slot.writer!.borrow();
         const generation = slot.generation; slot.sourceHeld = true;
-        const source: RPCPayloadBorrow = Object.freeze({ bytes: borrow.bytes, release: () => {
+        const publication = new QueryPublication(this, index, generation, slot.diagnostic);
+        const source: RPCPayloadBorrow = Object.freeze({ bytes: borrow.bytes, retainSend: borrow.retainSend, release: () => {
           if (!slot.sourceHeld || slot.generation !== generation) return;
-          borrow.release(); slot.sourceHeld = false; this.#release(slot); this.#notify(); this.#collect();
+          borrow.release(); slot.sourceHeld = false; this.#release(slot); publication.sourceComplete(); this.#notify(); this.#collect();
         } });
         const channel = slot.channel!;
         try {
-          channel.queueResponse(slot.ticket!, header, source, new QueryPublication(this, index, generation)); slot.phase = "tail"; slot.writer!.close();
-        } catch (error) { source.release(); channel.close(); throw error; }
+          channel.queueResponse(slot.ticket!, header, source, publication); slot.phase = "tail"; slot.writer!.close();
+        } catch (error) { channel.close(); publication.publicationPhysicalComplete(); source.release(); throw error; }
       }
     } catch (error) {
       if (slot.phase === "free") return;

@@ -13,14 +13,9 @@ import (
 )
 
 type admissionIntegrationFixture struct {
-	root                 *resourcev4.Root
-	environment, preauth resourcev4.Reference
-	owner                resourcev4.OwnerKey
-	scope                SessionResourceScope
-	trust                *sessionAdmissionTrustFixture
-	config               SessionAdmissionConfig
-	prepared             *PreparedCarrier
-	provider             *preparedTestProvider
+	*authorityFixture
+	prepared *PreparedCarrier
+	provider *preparedTestProvider
 }
 
 func admissionIntegration(t *testing.T, ctx context.Context, sources ...string) *admissionIntegrationFixture {
@@ -34,7 +29,7 @@ func admissionIntegration(t *testing.T, ctx context.Context, sources ...string) 
 
 func admissionIntegrationProfile(t *testing.T, ctx context.Context, source, application string) *admissionIntegrationFixture {
 	t.Helper()
-	f := &admissionIntegrationFixture{}
+	f := &admissionIntegrationFixture{authorityFixture: &authorityFixture{}}
 	limit := resourcev4.Vector{}
 	for i := range limit {
 		limit[i] = 1 << 30

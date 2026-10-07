@@ -33,6 +33,7 @@ type TerminalTuple struct {
 // signed.max_credit or the actual reserved local backing pool.
 type ReceivePool struct {
 	diagnostics           *diagnosticv4.Counters
+	diagnosticOperation   *DiagnosticOperation
 	mu                    sync.Mutex
 	limit, used           uint64
 	capacity, backingUsed uint64
@@ -79,7 +80,7 @@ func (p *ReceivePool) Close() {
 	defer p.mu.Unlock()
 	if !p.closed {
 		p.closed = true
-		p.diagnostics = nil
+		p.diagnostics, p.diagnosticOperation = nil, nil
 		for g := p.protections; g != nil; {
 			next := g.next
 			g.closeLocked()

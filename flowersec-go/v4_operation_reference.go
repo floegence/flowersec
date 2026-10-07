@@ -10,11 +10,11 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-type V4ReferenceSaveOutcome = sessionv4.ReferenceSaveOutcome
+type ReferenceSaveOutcome = sessionv4.ReferenceSaveOutcome
 
 const (
-	V4ReferenceSaveUnknown   = sessionv4.ReferenceSaveUnknown
-	V4ReferenceSaveConfirmed = sessionv4.ReferenceSaveConfirmed
+	ReferenceSaveUnknown   = sessionv4.ReferenceSaveUnknown
+	ReferenceSaveConfirmed = sessionv4.ReferenceSaveConfirmed
 )
 
 var ErrReferenceSaveUnknown = sessionv4.ErrReferenceSaveUnknown
@@ -23,19 +23,19 @@ var ErrReferenceSaveUnknown = sessionv4.ErrReferenceSaveUnknown
 // and exact canonical value. Confirmed is a persistence fact, never delivery.
 // The declared backing covers the application's bounded provider state.
 type OperationReferenceStore interface {
-	SaveOperationReference(context.Context, OperationReference) (V4ReferenceSaveOutcome, error)
+	SaveOperationReference(context.Context, OperationReference) (ReferenceSaveOutcome, error)
 }
 
-type V4ReferenceStoreBinding struct {
+type ReferenceStoreBinding struct {
 	Domain  string
 	Store   OperationReferenceStore
-	Backing V4ResourceReference
+	Backing ResourceReference
 }
 
 type OperationReferenceSaveResult struct {
 	Reference OperationReference
 	Attempted bool
-	Outcome   V4ReferenceSaveOutcome
+	Outcome   ReferenceSaveOutcome
 }
 
 type referenceStoreAdapter struct{ store OperationReferenceStore }
@@ -43,9 +43,9 @@ type referenceStoreAdapter struct{ store OperationReferenceStore }
 func (s referenceStoreAdapter) SaveOperationReference(ctx context.Context, reference protocolv4.OperationReference) (sessionv4.ReferenceSaveOutcome, error) {
 	return s.store.SaveOperationReference(ctx, OperationReference{inner: reference})
 }
-func (s V4ReferenceStoreBinding) internal() sessionv4.ReferenceStoreBinding {
+func (s ReferenceStoreBinding) internal() sessionv4.ReferenceStoreBinding {
 	var store sessionv4.ReferenceStore
-	if s.Store != nil {
+	if s.Store != nil && !isNilInterface(s.Store) {
 		store = referenceStoreAdapter{store: s.Store}
 	}
 	return sessionv4.ReferenceStoreBinding{Domain: s.Domain, Store: store, Backing: s.Backing}
@@ -63,14 +63,14 @@ type OperationReferenceCodec struct {
 	reservation resourcev4.Reference
 }
 
-func OperationReferenceCodecCharge() (V4ResourceVector, error) {
+func OperationReferenceCodecCharge() (ResourceVector, error) {
 	bytes, err := protocolv4.OperationReferenceCodecBackingBytes()
 	if err != nil {
-		return V4ResourceVector{}, err
+		return ResourceVector{}, err
 	}
 	return resourcev4.Vector{resourcev4.SDKBytes: bytes + uint64(unsafe.Sizeof(OperationReferenceCodec{})), resourcev4.Items: 1}, nil
 }
-func NewOperationReferenceCodec(reservation V4ResourceReference) (*OperationReferenceCodec, error) {
+func NewOperationReferenceCodec(reservation ResourceReference) (*OperationReferenceCodec, error) {
 	charge, err := OperationReferenceCodecCharge()
 	if err != nil {
 		return nil, err
@@ -127,7 +127,7 @@ func (c *OperationReferenceCodec) Close() {
 }
 
 // validateSave checks the complete local store association before encoding.
-func (s *V4Session) validateSave(ctx context.Context, store V4ReferenceStoreBinding) error {
+func (s *Session) validateSave(ctx context.Context, store ReferenceStoreBinding) error {
 	if err := sessionv4.CheckReferenceStoreBinding(ctx, store.internal()); err != nil {
 		return err
 	}
@@ -143,7 +143,7 @@ func (s *V4Session) validateSave(ctx context.Context, store V4ReferenceStoreBind
 	return s.validateReferenceStore(ctx, store.internal())
 }
 
-func (s *V4Session) PrepareUnaryAndSave(ctx context.Context, method V4UnaryMethod, input []byte, options V4OperationOptions, store V4ReferenceStoreBinding) (*OperationHandle, OperationReferenceSaveResult, error) {
+func (s *Session) PrepareUnaryAndSave(ctx context.Context, method UnaryMethod, input []byte, options OperationOptions, store ReferenceStoreBinding) (*OperationHandle, OperationReferenceSaveResult, error) {
 	if err := s.validateSave(ctx, store); err != nil {
 		return nil, OperationReferenceSaveResult{}, err
 	}
@@ -171,7 +171,7 @@ func (s *V4Session) PrepareUnaryAndSave(ctx context.Context, method V4UnaryMetho
 	return op, referenceSaveResult(result), nil
 }
 
-func (s *V4Session) PrepareStreamingAndSave(ctx context.Context, method V4StreamingMethod, input []byte, options V4OperationOptions, store V4ReferenceStoreBinding) (*StreamingOperationHandle, OperationReferenceSaveResult, error) {
+func (s *Session) PrepareStreamingAndSave(ctx context.Context, method StreamingMethod, input []byte, options OperationOptions, store ReferenceStoreBinding) (*StreamingOperationHandle, OperationReferenceSaveResult, error) {
 	if err := s.validateSave(ctx, store); err != nil {
 		return nil, OperationReferenceSaveResult{}, err
 	}
@@ -199,7 +199,7 @@ func (s *V4Session) PrepareStreamingAndSave(ctx context.Context, method V4Stream
 	return op, referenceSaveResult(result), nil
 }
 
-func (s *V4Session) PrepareNotifyAndSave(ctx context.Context, method V4NotifyMethod, input []byte, options V4OperationOptions, store V4ReferenceStoreBinding) (*NotifyOperationHandle, OperationReferenceSaveResult, error) {
+func (s *Session) PrepareNotifyAndSave(ctx context.Context, method NotifyMethod, input []byte, options OperationOptions, store ReferenceStoreBinding) (*NotifyOperationHandle, OperationReferenceSaveResult, error) {
 	if err := s.validateSave(ctx, store); err != nil {
 		return nil, OperationReferenceSaveResult{}, err
 	}
@@ -207,7 +207,8 @@ func (s *V4Session) PrepareNotifyAndSave(ctx context.Context, method V4NotifyMet
 		return nil, OperationReferenceSaveResult{}, ErrTransportUnavailable
 	}
 	options.RequireExecution = true
-	inner, err := s.prepareNotify(ctx, V4UnaryMethod{Contract: method.Contract, WorkClass: method.WorkClass, Codec: method.Codec}, input, options.internal())
+	inner, err := s.prepareNotify(ctx, UnaryMethod{Contract: method.Contract, WorkClass: method.WorkClass, Codec: method.Codec,
+		RequireExecution: method.RequireExecution, RequireDurable: method.RequireDurable}, input, options.internal())
 	if err != nil {
 		return nil, OperationReferenceSaveResult{}, err
 	}
@@ -227,7 +228,7 @@ func (s *V4Session) PrepareNotifyAndSave(ctx context.Context, method V4NotifyMet
 	return op, referenceSaveResult(result), nil
 }
 
-func (c *V4ServiceClient) PrepareMethodAndSave(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions, store V4ReferenceStoreBinding) (*OperationHandle, OperationReferenceSaveResult, error) {
+func (c *ServiceClient) PrepareMethodAndSave(ctx context.Context, method MethodSelector, input []byte, options OperationOptions, store ReferenceStoreBinding) (*OperationHandle, OperationReferenceSaveResult, error) {
 	if c == nil || c.inner == nil {
 		return nil, OperationReferenceSaveResult{}, ErrOperationClosed
 	}
@@ -240,7 +241,7 @@ func (c *V4ServiceClient) PrepareMethodAndSave(ctx context.Context, method V4Met
 	}
 	return &OperationHandle{inner: op}, referenceSaveResult(result), nil
 }
-func (c *V4ServiceClient) PrepareStreamingMethodAndSave(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions, store V4ReferenceStoreBinding) (*StreamingOperationHandle, OperationReferenceSaveResult, error) {
+func (c *ServiceClient) PrepareStreamingMethodAndSave(ctx context.Context, method MethodSelector, input []byte, options OperationOptions, store ReferenceStoreBinding) (*StreamingOperationHandle, OperationReferenceSaveResult, error) {
 	if c == nil || c.inner == nil {
 		return nil, OperationReferenceSaveResult{}, ErrOperationClosed
 	}
@@ -253,7 +254,7 @@ func (c *V4ServiceClient) PrepareStreamingMethodAndSave(ctx context.Context, met
 	}
 	return &StreamingOperationHandle{inner: op}, referenceSaveResult(result), nil
 }
-func (c *V4ServiceClient) PrepareNotifyMethodAndSave(ctx context.Context, method V4MethodSelector, input []byte, options V4OperationOptions, store V4ReferenceStoreBinding) (*NotifyOperationHandle, OperationReferenceSaveResult, error) {
+func (c *ServiceClient) PrepareNotifyMethodAndSave(ctx context.Context, method MethodSelector, input []byte, options OperationOptions, store ReferenceStoreBinding) (*NotifyOperationHandle, OperationReferenceSaveResult, error) {
 	if c == nil || c.inner == nil {
 		return nil, OperationReferenceSaveResult{}, ErrOperationClosed
 	}

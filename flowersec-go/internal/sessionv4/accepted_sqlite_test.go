@@ -14,37 +14,6 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
-type acceptedSQLiteAuthority struct {
-	identity ledgerv4.SQLiteIdentity
-	facts    protocolv4.AdmissionFacts
-	parent   *ledgerv4.SQLiteStore
-}
-
-func (a acceptedSQLiteAuthority) Check(identity ledgerv4.SQLiteIdentity, epoch uint64, create bool) error {
-	if identity != a.identity || create && epoch != 0 {
-		return ledgerv4.ErrFenced
-	}
-	return nil
-}
-func (a acceptedSQLiteAuthority) CheckAdmission(identity ledgerv4.SQLiteIdentity, facts protocolv4.AdmissionFacts) error {
-	want, _ := a.facts.Fields()
-	actual, err := facts.Fields()
-	if err != nil || identity != a.identity || want.Tenant != actual.Tenant || want.Issuer != actual.Issuer || want.ServerIdentity != actual.ServerIdentity || want.Audience != actual.Audience {
-		return ledgerv4.ErrFenced
-	}
-	return nil
-}
-
-func (a acceptedSQLiteAuthority) ParentWinnerStore() *ledgerv4.SQLiteStore { return a.parent }
-func (a acceptedSQLiteAuthority) CheckParentWinner(identity ledgerv4.SQLiteIdentity, facts protocolv4.AdmissionFacts) error {
-	want, _ := a.facts.Fields()
-	actual, err := facts.Fields()
-	if err != nil || actual.WinnerAuthority == "" || actual.WinnerAuthority != want.WinnerAuthority {
-		return ledgerv4.ErrFenced
-	}
-	return a.CheckAdmission(identity, facts)
-}
-
 func admitAcceptedSQLite(t *testing.T, f *admissionIntegrationFixture, a *SessionAdmissionReservation) (*InitialExchange, protocolv4.AdmissionResponse) {
 	t.Helper()
 	limits := ledgerv4.SQLiteLimits{MaxPages: 64, MaxRecords: 16, MaxRecordBytes: 4096, RuntimeBytes: 65536, ProviderRuntimeBytes: 1 << 20, DiskOverheadBytes: 65536}

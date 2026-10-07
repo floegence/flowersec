@@ -97,10 +97,12 @@ export class V4ServiceClient<Methods extends V4ServiceMethods> {
     const { timeoutMS = 90000n, context, signal } = options;
     return this.#select(method).update(method, approvedDigest, this.#select(method).deadline(timeoutMS), context, signal);
   }
-  async call<Request, Value>(method: V4MethodDefinition<Request, Value> & Methods[keyof Methods], value: Request,
+  call<Request, Value>(method: V4MethodDefinition<Request, Value> & Methods[keyof Methods], value: Request,
     options?: V4UnaryOptions): Promise<V4UnaryResult<Value>> {
-    const captured = captureUnaryCallOptions(options);
-    return this.#select(method).callUnary(method, value, captured.preparation, captured.context, captured.signal) as Promise<V4UnaryResult<Value>>;
+    try {
+      const captured = captureUnaryCallOptions(options);
+      return this.#select(method).callUnary(method, value, captured.preparation, captured.context, captured.signal) as Promise<V4UnaryResult<Value>>;
+    } catch (error) { return Promise.reject(error); }
   }
   prepareResume(method: V4MethodDefinition<Uint8Array, Uint8Array, "unary", "execution"> & Methods[keyof Methods],
     targetStream: V4StreamOwner, checkpointToken: Uint8Array, options?: V4UnaryOptions): Promise<V4ExecutionUnaryOperation<V4ResumeResult>> {

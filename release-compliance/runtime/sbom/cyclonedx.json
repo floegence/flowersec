@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:4855256d-633c-5644-82bb-c6809d7958e2",
+  "serialNumber": "urn:uuid:e2b4f718-a466-5d0c-87b0-677cad9f3ca2",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,11 +14,67 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "ae824e5f729367026e2c0ce01e0b0c91b5ee3e35a9a28c8cb307d5943bda14ef"
+        "value": "1232618a035be3df441e87ab7a37162a01a4f844e6ce13aef4086d6b1e3dc6ed"
       }
     ]
   },
   "components": [
+    {
+      "type": "library",
+      "name": "Flowersec Noise public-length adapter",
+      "version": "1.1.0-flowersec.1",
+      "purl": "pkg:generic/flowersec-noise@1.1.0-flowersec.1",
+      "bom-ref": "pkg:generic/flowersec-noise@1.1.0-flowersec.1",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/flynn/noise/tree/4d9f71cd4ba1fe81415efac312664ccc4bc79b46"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "filippo.io/edwards25519",
+      "version": "v1.2.0",
+      "purl": "pkg:golang/filippo.io/edwards25519@v1.2.0",
+      "bom-ref": "pkg:golang/filippo.io/edwards25519@v1.2.0",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://filippo.io/edwards25519"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
     {
       "type": "library",
       "name": "github.com/dunglas/httpsfv",
@@ -34,6 +90,62 @@
         {
           "type": "distribution",
           "url": "https://github.com/dunglas/httpsfv"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/dustin/go-humanize",
+      "version": "v1.0.1",
+      "purl": "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+      "bom-ref": "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/dustin/go-humanize"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/google/uuid",
+      "version": "v1.6.0",
+      "purl": "pkg:golang/github.com/google/uuid@v1.6.0",
+      "bom-ref": "pkg:golang/github.com/google/uuid@v1.6.0",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/google/uuid"
         }
       ],
       "properties": [
@@ -72,62 +184,6 @@
         {
           "name": "flowersec:source-offer-required",
           "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/libp2p/go-buffer-pool",
-      "version": "v0.0.2",
-      "purl": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
-      "bom-ref": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/libp2p/go-buffer-pool"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "github.com/libp2p/go-yamux/v5",
-      "version": "v5.1.0",
-      "purl": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-      "bom-ref": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-      "licenses": [
-        {
-          "expression": "MPL-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/libp2p/go-yamux/v5"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MPL-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "true"
         }
       ]
     },
@@ -208,6 +264,34 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "github.com/remyoudompheng/bigfft",
+      "version": "v0.0.0-20230129092748-24d4a6f8daec",
+      "purl": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
+      "bom-ref": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/remyoudompheng/bigfft"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -326,38 +410,161 @@
           "value": "false"
         }
       ]
+    },
+    {
+      "type": "library",
+      "name": "modernc.org/libc",
+      "version": "v1.75.7",
+      "purl": "pkg:golang/modernc.org/libc@v1.75.7",
+      "bom-ref": "pkg:golang/modernc.org/libc@v1.75.7",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause AND MIT AND BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://modernc.org/libc"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause AND MIT AND BSD-2-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "modernc.org/mathutil",
+      "version": "v1.7.1",
+      "purl": "pkg:golang/modernc.org/mathutil@v1.7.1",
+      "bom-ref": "pkg:golang/modernc.org/mathutil@v1.7.1",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://modernc.org/mathutil"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "modernc.org/memory",
+      "version": "v1.12.1",
+      "purl": "pkg:golang/modernc.org/memory@v1.12.1",
+      "bom-ref": "pkg:golang/modernc.org/memory@v1.12.1",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://modernc.org/memory"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "modernc.org/sqlite",
+      "version": "v1.59.0",
+      "purl": "pkg:golang/modernc.org/sqlite@v1.59.0",
+      "bom-ref": "pkg:golang/modernc.org/sqlite@v1.59.0",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://modernc.org/sqlite"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "BSD-3-Clause AND LicenseRef-SQLite-Public-Domain"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
     }
   ],
   "dependencies": [
     {
       "ref": "pkg:generic/flowersec-runtime@6.0.0",
       "dependsOn": [
+        "pkg:generic/flowersec-noise@1.1.0-flowersec.1",
+        "pkg:golang/filippo.io/edwards25519@v1.2.0",
         "pkg:golang/github.com/gorilla/websocket@v1.5.3",
-        "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
         "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
         "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
         "pkg:golang/golang.org/x/crypto@v0.55.0",
         "pkg:golang/golang.org/x/net@v0.58.0",
-        "pkg:golang/golang.org/x/text@v0.41.0"
+        "pkg:golang/golang.org/x/sys@v0.47.0",
+        "pkg:golang/modernc.org/libc@v1.75.7",
+        "pkg:golang/modernc.org/sqlite@v1.59.0"
       ]
+    },
+    {
+      "ref": "pkg:generic/flowersec-noise@1.1.0-flowersec.1",
+      "dependsOn": [
+        "pkg:golang/golang.org/x/crypto@v0.55.0"
+      ]
+    },
+    {
+      "ref": "pkg:golang/filippo.io/edwards25519@v1.2.0",
+      "dependsOn": []
     },
     {
       "ref": "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
       "dependsOn": []
     },
     {
+      "ref": "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:golang/github.com/google/uuid@v1.6.0",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:golang/github.com/gorilla/websocket@v1.5.3",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:golang/github.com/libp2p/go-yamux/v5@v5.1.0",
-      "dependsOn": [
-        "pkg:golang/github.com/libp2p/go-buffer-pool@v0.0.2"
-      ]
     },
     {
       "ref": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
@@ -382,6 +589,10 @@
       ]
     },
     {
+      "ref": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
+      "dependsOn": []
+    },
+    {
       "ref": "pkg:golang/golang.org/x/crypto@v0.55.0",
       "dependsOn": [
         "pkg:golang/golang.org/x/sys@v0.47.0"
@@ -401,6 +612,34 @@
     {
       "ref": "pkg:golang/golang.org/x/text@v0.41.0",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:golang/modernc.org/libc@v1.75.7",
+      "dependsOn": [
+        "pkg:golang/github.com/dustin/go-humanize@v1.0.1",
+        "pkg:golang/github.com/google/uuid@v1.6.0",
+        "pkg:golang/golang.org/x/sys@v0.47.0",
+        "pkg:golang/modernc.org/mathutil@v1.7.1",
+        "pkg:golang/modernc.org/memory@v1.12.1"
+      ]
+    },
+    {
+      "ref": "pkg:golang/modernc.org/mathutil@v1.7.1",
+      "dependsOn": [
+        "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec"
+      ]
+    },
+    {
+      "ref": "pkg:golang/modernc.org/memory@v1.12.1",
+      "dependsOn": [
+        "pkg:golang/golang.org/x/sys@v0.47.0"
+      ]
+    },
+    {
+      "ref": "pkg:golang/modernc.org/sqlite@v1.59.0",
+      "dependsOn": [
+        "pkg:golang/modernc.org/libc@v1.75.7"
+      ]
     }
   ]
 }

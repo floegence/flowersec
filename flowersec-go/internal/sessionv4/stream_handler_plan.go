@@ -26,12 +26,14 @@ var (
 // Metadata is the authenticated preparation's borrowed immutable byte snapshot;
 // only Handler receives the original accepted Stream capability.
 type RawStreamHandlerConfig struct {
-	ControlledHTTP      *ControlledHTTPService
-	Delegated           *DelegatedStreamService
-	HTTP                *DelegatedHTTPService
-	Resume              *ResumeStreamBinding
-	Messages            *MessageStreamHandlerConfig
-	Kind                string
+	ControlledHTTP *ControlledHTTPService
+	Delegated      *DelegatedStreamService
+	HTTP           *DelegatedHTTPService
+	Resume         *ResumeStreamBinding
+	Messages       *MessageStreamHandlerConfig
+	Kind           string
+	// Manual delivers this authorized original stream through Session.AcceptStream.
+	Manual              bool
 	Slots               uint32
 	NormalTerminationMS uint64
 	WorkClass           ApplicationWorkClass
@@ -196,8 +198,11 @@ func StreamHandlerPlanCharge(config StreamHandlerPlanConfig) (resourcev4.Vector,
 				return resourcev4.Vector{}, cryptov4.ErrConfiguration
 			}
 		}
+		if handler.Manual && (handler.Handler != nil || handler.HandlerProjection != nil || handler.Messages != nil || handler.HTTP != nil || handler.Delegated != nil || handler.ControlledHTTP != nil || handler.Resume != nil || handler.WorkClass != ApplicationResident) {
+			return resourcev4.Vector{}, cryptov4.ErrConfiguration
+		}
 		if handler.Messages == nil {
-			if handler.Handler == nil && handler.HandlerProjection == nil && handler.HTTP == nil && handler.Delegated == nil && handler.ControlledHTTP == nil {
+			if !handler.Manual && handler.Handler == nil && handler.HandlerProjection == nil && handler.HTTP == nil && handler.Delegated == nil && handler.ControlledHTTP == nil {
 				return resourcev4.Vector{}, cryptov4.ErrConfiguration
 			}
 		} else {
@@ -549,7 +554,11 @@ func (c StreamHandlerCapture) Accept() error {
 
 // Handle runs once inline after real acceptance, on the same admitted ordinary
 // execution owner. The original Stream and invocation still gate user entry.
-func (c StreamHandlerCapture) Handle(ctx context.Context, metadata []byte, stream *StreamOwnership) (err error) {
+func (c StreamHandlerCapture) Handle(ctx context.Context, metadata []byte, stream *StreamOwnership) error {
+	return c.handle(ctx, metadata, stream, nil)
+}
+
+func (c StreamHandlerCapture) handle(ctx context.Context, metadata []byte, stream *StreamOwnership, manual func(context.Context) error) (err error) {
 	if stream == nil {
 		return cryptov4.ErrConfiguration
 	}
@@ -575,7 +584,12 @@ func (c StreamHandlerCapture) Handle(ctx context.Context, metadata []byte, strea
 	}
 	// Goexit runs the tail above without assigning a callback result.
 	err = ErrStreamHandlerCallbackExit
-	if registration.Messages != nil {
+	if registration.Manual {
+		if manual == nil {
+			return cryptov4.ErrConfiguration
+		}
+		err = manual(ctx)
+	} else if registration.Messages != nil {
 		stream.mu.Lock()
 		messages := stream.typed
 		stream.mu.Unlock()

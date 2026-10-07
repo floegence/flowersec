@@ -6,20 +6,20 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/webtransport"
 )
 
-type V4WebTransportLimits = quicbase.Limits
-type V4WebTransportProviderOptions = webtransport.OwnedOptions
-type V4WebTransportFactoryConfig = assemblyv4.WebTransportFactoryConfig
-type V4WebTransportCarrierFactory = assemblyv4.WebTransportCarrierFactory
+type WebTransportLimits = quicbase.Limits
+type WebTransportProviderOptions = webtransport.OwnedOptions
+type WebTransportFactoryConfig = assemblyv4.WebTransportFactoryConfig
+type WebTransportCarrierFactory = assemblyv4.WebTransportCarrierFactory
 
-func DefaultV4WebTransportLimits() V4WebTransportLimits { return quicbase.DefaultLimits() }
+func DefaultWebTransportLimits() WebTransportLimits { return quicbase.DefaultLimits() }
 
-func V4WebTransportCarrierFactoryCharge(c V4WebTransportFactoryConfig) (V4ResourceVector, error) {
+func WebTransportCarrierFactoryCharge(c WebTransportFactoryConfig) (ResourceVector, error) {
 	return assemblyv4.WebTransportCarrierFactoryCharge(c)
 }
 
-// NewV4WebTransportCarrierFactory fixes one direct signed route and numeric address.
+// NewWebTransportCarrierFactory fixes one direct signed route and numeric address.
 // It prepares TLS and the native maintenance stream without transmitting
-// Flowersec credentials. Environment.Connect owns admission and activation.
-func NewV4WebTransportCarrierFactory(c V4WebTransportFactoryConfig, reservation, environment V4ResourceReference) (*V4WebTransportCarrierFactory, error) {
+// Flowersec credentials. TransportEnvironment.Connect owns admission and activation.
+func NewWebTransportCarrierFactory(c WebTransportFactoryConfig, reservation, environment ResourceReference) (*WebTransportCarrierFactory, error) {
 	return assemblyv4.NewWebTransportCarrierFactory(c, reservation, environment)
 }

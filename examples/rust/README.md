@@ -1,72 +1,89 @@
-# Rust Example
+# Rust Client Integration Example
 
-This package exercises the maintained Rust public surface. It provides two
-workflows:
+This package demonstrates the current Rust client API. The deployment
+adapter constructs the trusted `TransportEnvironment` and
+`ConnectionMaterialSource` from its verified namespace bootstrap, identity,
+provider policy, credential issuer or preauthorized pool, and durable spend
+store. `connect_current` accepts those opaque owners. The runnable consumer also
+includes an explicitly selected local engineering adapter; it loads the
+acceptance host's installed roots and issuer material, bootstraps namespaces
+through their pinned endpoint, imports the provisioned identity, and creates a
+fresh SDK SQLite spend history. It does not discover production authority from
+peer bytes or reuse a previous process's history.
 
-- parse an application-acquired opaque artifact without exposing its contents;
-- establish a session through the one-shot `connect(...)` and `Session` API;
-- run the repository parity application contract: typed RPC type `7001` with
-  `{ "value": "ping" }`, notification type `7002` with
-  `{ "value": "notify" }`, and a `parity.echo` reliable stream that exchanges
-  `hello`/`world` and observes FIN in both directions.
+## Connect through the current API
 
-The examples keep connection details out of application code. Neither command
-prints credentials or protocol state.
+The package exposes `connect_current` as a small convenience wrapper around the
+SDK's normal `TransportEnvironment::connect` entry point:
 
-## Inspect an Opaque Artifact
+```rust,no_run
+use flowersec::{ConnectionMaterialSource, ConnectionRequirements, TransportEnvironment};
+use flowersec_rust_client_example::connect_current;
+use tokio_util::sync::CancellationToken;
 
-Acquire an artifact through the application control plane and save its JSON to
-a protected local file. Then run:
+# async fn run(
+#     environment: &TransportEnvironment,
+#     source: &ConnectionMaterialSource,
+# ) -> Result<(), Box<dyn std::error::Error>> {
+let session = connect_current(
+    environment,
+    source,
+    ConnectionRequirements {
+        application_profile: Some("services".to_owned()),
+        ..ConnectionRequirements::default()
+    },
+    CancellationToken::new(),
+).await?;
 
-```bash
-cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
-  artifact-v3 /secure/path/artifact.json
+// Bind the application's service and stream facades before publishing the
+// Session to application callers.
+session.probe_liveness(std::time::Duration::from_secs(5)).await?;
+session.close();
+session.wait_cleanup().await;
+# Ok(()) }
 ```
 
-The command validates the artifact, prints only `Artifact { <opaque> }`, and
-moves it into an unspent lease. It never reads the artifact back from the lease
-or prints or serializes artifact fields.
+The source captures one material generation, identity, provider, and spend
+owner. Each call makes one acquisition. Cancellation or an uncertain live
+authorization result is returned to the caller; the wrapper never acquires a
+second credential automatically. The application should build the Environment
+and source through its trusted deployment integration, then pass them to this
+function.
 
-## Establish a Session
+## Runnable public SDK consumer
 
-Provide a DER-encoded trust root accepted by the listener and a new durable
-receipt path:
+The shared acceptance runner invokes the executable with this contract:
 
 ```bash
-cargo run --locked --manifest-path examples/rust/Cargo.toml -- \
-  connect-v3 /secure/path/artifact.json /secure/path/root.der \
-  /durable/state/artifact.spent
+cargo run --locked --manifest-path examples/rust/Cargo.toml --   connect /absolute/path/material.json /absolute/path/trust.der   /absolute/path/artifact.spent
 ```
 
-The public `connect(...)` function consumes only the opaque artifact lease and its trust and
-deadline options. Before establishing the encrypted session, it invokes the
-`ArtifactLease` callback to synchronize the create-new receipt. A successful
-connection prints only `session=ready`, runs the typed RPC, notification, and
-reliable-stream workflow, probes liveness, then closes the session cleanly.
-The notification subscription is registered before application traffic and is
-explicitly canceled after receipt. The stream sends `hello`, closes only its
-write direction, reads `world` through peer FIN, and preserves the session for
-the final liveness probe. Reusing a receipt path fails closed.
-Connection and liveness failures print only their bounded public error code.
-Long-lived applications use `ConnectionController` with a refreshable artifact
-source; this one-shot example never reuses the committed path.
+`MATERIAL_JSON` is a trusted deployment manifest supplied by the acceptance
+host. It contains independently installed namespace root pins, endpoint policy,
+issuer credentials and provisioned identity seeds; peer messages do not install
+or replace these trust anchors. `TRUST_DER` supplies the installed TLS root.
 
-The receipt does not contain the artifact or cryptographic material. Keep both
-paths outside the repository and apply permissions suitable for deployment
-secrets and state.
+`FSEC_ORIGIN` supplies the installed WebSocket origin and
+`FSEC_EXAMPLE_STREAM_CELL` supplies the application Stream cell. The local
+engineering adapter uses `curl` for one bounded namespace bootstrap exchange;
+HTTPS uses the supplied DER root, TLS 1.3 and the explicitly selected loopback
+endpoint, with redirects, proxies and cookies disabled. HTTP is allowed only
+for the fixture's explicit loopback bootstrap address.
 
-## Verify
+The consumer calls the ordinary public `TransportEnvironment::connect` entry
+once, checks the original Source acquisition observation equals one and the
+original SQLite spend observation is `CommitKnown`, then records that detached
+fact after authenticated READY in an exclusive, file-and-directory-synchronized
+spend receipt. It exercises
+named typed RPC 7001, notification 7002, the `parity.echo` hello/world Stream,
+normal FIN and authenticated liveness. Errors retain connection facts and never
+trigger implicit material reacquisition or request replay. The SQLite database
+and its history marker remain beside the receipt for diagnosis.
+
+Run the example package's checks with:
 
 ```bash
 cargo test --locked --manifest-path examples/rust/Cargo.toml
 cargo clippy --locked --manifest-path examples/rust/Cargo.toml \
   --all-targets -- -D warnings
 ```
-
-The integration test verifies artifact redaction. The compiled `connect-v3`
-workflow uses trusted roots, durable single-use spend, the opaque connection
-boundary, typed RPC, notification subscription and delivery, reliable stream
-write/read/FIN, session liveness, and bounded close. The repository's maintained
-server-parity peers implement the same application contract for integration
-coverage; a deployed service must register those application handlers before
-running this client.

@@ -24,6 +24,8 @@ interface WireRegistry {
     readonly scope_id: { readonly min: number; readonly max: string };
     readonly datagram_scope: string;
     readonly max_datagram_envelope: number;
+    readonly max_datagram_payload: number;
+    readonly max_pending_datagrams: number;
     readonly record_replay_window_bits: number;
   };
 }

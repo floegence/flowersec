@@ -22,14 +22,11 @@ func TestProxyServerRejectsHiddenContentCoding(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	handlers, err := NewSessionHandlers(SessionHandlerOptions{})
-	if err != nil {
+	handlers := &StreamHandlerPlanConfig{}
+	if err := server.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.RegisterStreamHandlers(handlers); err != nil {
-		t.Fatal(err)
-	}
-	client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
+	client := serveProxyTestStream(t, server, handlers, proxyHTTPStreamKind)
 	if err := writeProxyMetadata(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "hidden-coding", Method: "GET", Path: "/"}); err != nil {
 		t.Fatal(err)
 	}
@@ -70,14 +67,11 @@ func TestProxyServerNativeTrailersAndOriginForm(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer proxy.Close()
-			handlers, err := NewSessionHandlers(SessionHandlerOptions{})
-			if err != nil {
+			handlers := &StreamHandlerPlanConfig{}
+			if err := proxy.RegisterStreamHandlers(handlers, allowProxyApplicationTestOpen); err != nil {
 				t.Fatal(err)
 			}
-			if err := proxy.RegisterStreamHandlers(handlers); err != nil {
-				t.Fatal(err)
-			}
-			client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
+			client := serveProxyTestStream(t, proxy, handlers, proxyHTTPStreamKind)
 			if err := writeProxyMetadata(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "trailers", Method: "POST", Path: "//other.example/a?", Headers: []proxyHeader{{Name: "content-length", Value: fmt.Sprint(len(body))}, {Name: "connection", Value: "content-length"}}}); err != nil {
 				t.Fatal(err)
 			}
@@ -120,17 +114,17 @@ func TestProxyServerNativeTrailersAndOriginForm(t *testing.T) {
 	}
 }
 
-func TestProxyV4RegistrationRequiresOriginalAuthorization(t *testing.T) {
+func TestProxyRegistrationRequiresOriginalAuthorization(t *testing.T) {
 	server, err := NewProxyServer(ProxyServerOptions{Upstream: "http://127.0.0.1:1", UpstreamOrigin: "http://127.0.0.1:1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	if _, err := server.V4StreamHandlers(nil); err == nil {
+	if _, err := server.StreamHandlers(nil); err == nil {
 		t.Fatal("missing authorization accepted")
 	}
 	var calls int
-	registrations, err := server.V4StreamHandlers(func(_ context.Context, binding any, metadata []byte) error {
+	registrations, err := server.StreamHandlers(func(_ context.Context, binding any, metadata []byte) error {
 		calls++
 		if binding != "identity" || string(metadata) != "frozen" {
 			t.Fatal("original binding lost")
@@ -144,7 +138,7 @@ func TestProxyV4RegistrationRequiresOriginalAuthorization(t *testing.T) {
 		if err := registration.AuthorizeOpen(context.Background(), "identity", []byte("frozen")); err != nil {
 			t.Fatal(err)
 		}
-		if registration.WorkClass != V4WorkResident {
+		if registration.WorkClass != WorkResident {
 			t.Fatal("proxy bypassed resident executor")
 		}
 	}

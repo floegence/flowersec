@@ -1589,7 +1589,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_torsion_0",
+      "id": "strict_a_torsion_0",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000000",
@@ -1599,7 +1599,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_torsion_0",
+      "id": "strict_r_torsion_0",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1609,7 +1609,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_torsion_1",
+      "id": "strict_a_torsion_1",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
@@ -1619,7 +1619,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_torsion_1",
+      "id": "strict_r_torsion_1",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1629,7 +1629,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_mixed_1",
+      "id": "strict_a_mixed_1",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "e9b2fe981587efae6478f48ba1fa60cec6126d0e26dde72a0a24f640dcd783e5",
@@ -1639,7 +1639,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_mixed_1",
+      "id": "strict_r_mixed_1",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1649,7 +1649,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_torsion_2",
+      "id": "strict_a_torsion_2",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000080",
@@ -1659,7 +1659,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_torsion_2",
+      "id": "strict_r_torsion_2",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1669,7 +1669,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_mixed_2",
+      "id": "strict_a_mixed_2",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "d7fcf1f00e29dd947529006e74d779973e3c1a1bad96b7807ab8644b5604ee50",
@@ -1679,7 +1679,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_mixed_2",
+      "id": "strict_r_mixed_2",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1689,7 +1689,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_torsion_3",
+      "id": "strict_a_torsion_3",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
@@ -1699,7 +1699,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_torsion_3",
+      "id": "strict_r_torsion_3",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1709,7 +1709,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_mixed_3",
+      "id": "strict_a_mixed_3",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "16b981d0b88cdf3ab9fa87190822fe4905b475efda3aec7c34abfa92c19320f4",
@@ -1719,7 +1719,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_mixed_3",
+      "id": "strict_r_mixed_3",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1729,7 +1729,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_torsion_4",
+      "id": "strict_a_torsion_4",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
@@ -1739,7 +1739,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_torsion_4",
+      "id": "strict_r_torsion_4",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1749,7 +1749,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_mixed_4",
+      "id": "strict_a_mixed_4",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "359dbf604a3b3bedc20d5408b9d4770fbe52c922979b3178d02ab8d41c9c3a4e",
@@ -1759,7 +1759,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_mixed_4",
+      "id": "strict_r_mixed_4",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1769,7 +1769,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_torsion_5",
+      "id": "strict_a_torsion_5",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
@@ -1779,7 +1779,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_torsion_5",
+      "id": "strict_r_torsion_5",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1789,7 +1789,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_mixed_5",
+      "id": "strict_a_mixed_5",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "044d0167ea7810519b870b745e059f3139ed92f1d92218d5f5db09bf23287c1a",
@@ -1799,7 +1799,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_mixed_5",
+      "id": "strict_r_mixed_5",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1809,7 +1809,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_torsion_6",
+      "id": "strict_a_torsion_6",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -1819,7 +1819,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_torsion_6",
+      "id": "strict_r_torsion_6",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1829,7 +1829,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_mixed_6",
+      "id": "strict_a_mixed_6",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "16030e0ff1d6226b8ad6ff918b288668c1c3e5e45269487f85479bb4a9fb11af",
@@ -1839,7 +1839,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_mixed_6",
+      "id": "strict_r_mixed_6",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1849,7 +1849,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_torsion_7",
+      "id": "strict_a_torsion_7",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
@@ -1859,7 +1859,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_torsion_7",
+      "id": "strict_r_torsion_7",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1869,7 +1869,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_mixed_7",
+      "id": "strict_a_mixed_7",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "d7467e2f477320c5460578e6f7dd01b6fa4b8a1025c51383cb54056d3e6cdf0b",
@@ -1879,7 +1879,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_R_mixed_7",
+      "id": "strict_r_mixed_7",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1889,7 +1889,7 @@
       "cofactored_valid": true
     },
     {
-      "id": "strict_A_y_eq_p",
+      "id": "strict_a_y_eq_p",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
@@ -1898,7 +1898,7 @@
       "reason": "A_y_eq_p"
     },
     {
-      "id": "strict_R_y_eq_p",
+      "id": "strict_r_y_eq_p",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1907,7 +1907,7 @@
       "reason": "R_y_eq_p"
     },
     {
-      "id": "strict_A_y_above_p",
+      "id": "strict_a_y_above_p",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
@@ -1916,7 +1916,7 @@
       "reason": "A_y_above_p"
     },
     {
-      "id": "strict_R_y_above_p",
+      "id": "strict_r_y_above_p",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1925,7 +1925,7 @@
       "reason": "R_y_above_p"
     },
     {
-      "id": "strict_A_negative_zero",
+      "id": "strict_a_negative_zero",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "0100000000000000000000000000000000000000000000000000000000000080",
@@ -1934,7 +1934,7 @@
       "reason": "A_negative_zero"
     },
     {
-      "id": "strict_R_negative_zero",
+      "id": "strict_r_negative_zero",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -1943,7 +1943,7 @@
       "reason": "R_negative_zero"
     },
     {
-      "id": "strict_A_nonpoint",
+      "id": "strict_a_nonpoint",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "0200000000000000000000000000000000000000000000000000000000000000",
@@ -1952,7 +1952,7 @@
       "reason": "A_nonpoint"
     },
     {
-      "id": "strict_R_nonpoint",
+      "id": "strict_r_nonpoint",
       "domain": null,
       "message_hex": "010203",
       "public_key_hex": "b862409fb5c4c4123df2abf7462b88f041ad36dd6864ce872fd5472be363c5b1",
@@ -2147,5 +2147,5 @@
       "reason": "domain_substitution"
     }
   ],
-  "schema_sha256": "e527c7fb74061784547406ef3e7f1c4997ef58e544e77141a5c62e6af79c11af"
+  "schema_sha256": "9d2322a4755f74a1744e9ff5688b2ef95c3e22bf511d12c4083c96f2fe16813f"
 }

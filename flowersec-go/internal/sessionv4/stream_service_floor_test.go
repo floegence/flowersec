@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
@@ -201,6 +202,16 @@ func TestStreamServiceFloorRunsAndReusesWithoutFreeRootReferences(t *testing.T) 
 				}, nil
 			}}}
 	}, func(_ int, c *SessionStreamHandlerConfig) { c.ServiceTarget = 1 }, func(cores [2]*SessionCore) {
+		// READY transfers the carrier before the original Initial watcher
+		// releases its backing. Join that tail before exhausting references
+		// and measuring the persistent service floor.
+		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		for _, core := range cores {
+			if err := core.plan.initial.WaitCleanup(cleanup); err != nil {
+				t.Fatal("initial handoff retained its original backing", err)
+			}
+		}
 		for {
 			ref, err := cores[1].plan.refs[corePlanOwner].Borrow()
 			if errors.Is(err, resourcev4.ErrCapacity) {

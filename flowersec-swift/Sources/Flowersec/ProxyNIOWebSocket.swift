@@ -28,6 +28,25 @@
     func make() throws -> NIOSSLClientHandler { try factory() }
   }
 
+  final class V4ProxyNativeDial: V4NativeConnectionLifecycle, @unchecked Sendable {
+    private let gate = NSLock()
+    private var channel: (any Channel)?
+    private var closed = false
+    func attach(_ channel: any Channel) throws {
+      try gate.withLock {
+        guard self.channel == nil else { throw ProxyClientFailure.closed }
+        self.channel = channel
+        if closed { channel.close(promise: nil); throw ProxyClientFailure.closed }
+      }
+    }
+    func close() {
+      gate.withLock { closed = true; channel?.close(promise: nil) }
+    }
+    func waitClosed() async {
+      if let channel = gate.withLock({ channel }) { try? await channel.closeFuture.get() }
+    }
+  }
+
   enum ProxyNIOWebSocketConnector {
     static func connect(
       url: URL,
@@ -35,7 +54,8 @@
       maxFrameBytes: Int,
       timeout: Duration?,
       trustRoots: [NIOSSLCertificate]? = nil,
-      tlsHandler: ProxyTLSClientHandler? = nil
+      tlsHandler: ProxyTLSClientHandler? = nil, numericAddress: String? = nil,
+      lifetime: V4ProxyNativeDial = V4ProxyNativeDial()
     ) async throws -> any ProxyUpstreamWebSocket {
       guard let scheme = url.scheme?.lowercased(), scheme == "ws" || scheme == "wss",
         let host = url.host
@@ -47,18 +67,25 @@
         group.any().makePromise(of: NIOProxyUpstreamWebSocket.self)
       )
       let authority = requestAuthority(url: url, host: host, port: port)
-      let path = url.path.isEmpty ? "/" : url.path
+      let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+      let path = components?.percentEncodedPath.isEmpty == false ? components!.percentEncodedPath : "/"
       let requestHeaders = HTTPHeaders(headers.map { ($0.name, $0.value) })
 
+      return try await withTaskCancellationHandler {
+        do {
       var bootstrap = ClientBootstrap(group: group)
+        .channelOption(ChannelOptions.maxMessagesPerRead, value: 1)
+        .channelOption(ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 16_384))
       if let timeout {
         bootstrap = bootstrap.connectTimeout(.milliseconds(try proxyDurationMilliseconds(timeout)))
       }
       bootstrap = bootstrap.channelInitializer { channel in
+        do { try lifetime.attach(channel) }
+        catch { connection.fail(error); return channel.eventLoop.makeFailedFuture(error) }
         let requestHandler = ProxyWebSocketUpgradeRequestHandler(
           authority: authority,
           path: path,
-          query: url.query,
+          query: components?.percentEncodedQuery,
           headers: requestHeaders,
           connection: connection
         )
@@ -86,8 +113,11 @@
                 )
               )
               try channel.pipeline.syncOperations.addHandler(handler)
-              connection.succeed(socket)
-              return channel.eventLoop.makeSucceededVoidFuture()
+              return try V4WebSocketDemandDecoder.install(on: channel, maximumFrame: maxFrameBytes, drainOnEOF: true,
+                acceptsInput: { state.acceptsInput },
+                fail: { error in state.finish(ProxyError.upstream(error.localizedDescription)); channel.close(promise: nil) },
+                closed: { state.finish(ProxyError.stream("Upstream WebSocket closed")) },
+                installWakeup: { state.setInputWakeup($0) }).map { connection.succeed(socket) }
             } catch {
               connection.fail(error)
               return channel.eventLoop.makeFailedFuture(error)
@@ -131,7 +161,8 @@
 
       let channel: any Channel
       do {
-        channel = try await bootstrap.connect(host: host, port: port).get()
+        if let numericAddress { channel = try await bootstrap.connect(to: SocketAddress(ipAddress: numericAddress, port: port)).get() }
+        else { channel = try await bootstrap.connect(host: host, port: port).get() }
       } catch let error as ChannelError {
         connection.fail(error)
         if case .connectTimeout = error {
@@ -155,6 +186,7 @@
       do {
         let socket = try await connection.promise.futureResult.get()
         scheduledTimeout?.cancel()
+        try Task.checkCancellation()
         return socket
       } catch {
         scheduledTimeout?.cancel()
@@ -162,6 +194,8 @@
         try? await channel.close().get()
         throw operation
       }
+        } catch { lifetime.close(); await lifetime.waitClosed(); throw error }
+      } onCancel: { lifetime.close() }
     }
 
     static func requestAuthority(url: URL, host: String, port: Int) -> String {
@@ -178,14 +212,7 @@
   }
 
   private func proxyWebSocketInboundBufferBytes(maxFrameBytes: Int) -> Int {
-    let (scaled, overflow) = maxFrameBytes.multipliedReportingOverflow(by: 64)
-    return max(
-      maxFrameBytes,
-      min(
-        overflow ? FlowersecSDKDefaults.Proxy.maxBodyBytes : scaled,
-        FlowersecSDKDefaults.Proxy.maxBodyBytes
-      )
-    )
+    maxFrameBytes * 2
   }
 
   private final class NIOPromiseBox<Value: Sendable>: @unchecked Sendable {
@@ -278,7 +305,6 @@
     func errorCaught(context: ChannelHandlerContext, error: any Error) {
       let tlsLocated =
         error is NIOSSLError || error is NIOSSLExtraError || error is BoringSSLError
-        || error is TransportSecurityFailureV3
       connection.fail(
         ProxyUpstreamFailure(.dial, error, tlsLocated: tlsLocated)
       )
@@ -363,11 +389,15 @@
     private var bufferedBytes = 0
     private var waiters: [Waiter] = []
     private var nextWaiterID: UInt64 = 1
+    private var inputWakeup: (@Sendable () -> Void)?
     private var failure: (any Error)?
 
     init(maxBufferedBytes: Int) {
       self.maxBufferedBytes = maxBufferedBytes
     }
+
+    var acceptsInput: Bool { lock.withLock { failure == nil && (!waiters.isEmpty || frames.count < 2) } }
+    func setInputWakeup(_ wakeup: @escaping @Sendable () -> Void) { lock.withLock { inputWakeup = wakeup } }
 
     func push(_ frame: ProxyWebSocketFrame) -> Bool {
       var waiter: CheckedContinuation<ProxyWebSocketFrame, any Error>?
@@ -378,7 +408,7 @@
           waiter = waiters.removeFirst().continuation
           return true
         }
-        guard frameBytes <= maxBufferedBytes - bufferedBytes else {
+        guard frames.count < 2, frameBytes <= maxBufferedBytes - bufferedBytes else {
           failure = ProxyError.stream("Upstream WebSocket receive buffer exceeded")
           return false
         }
@@ -414,6 +444,7 @@
               waiters.append(Waiter(id: waiterID, continuation: continuation))
             }
           }
+          lock.withLock { inputWakeup }?()
           if let frame {
             continuation.resume(returning: frame)
           } else if let terminalError {
@@ -437,7 +468,7 @@
     func finish(_ error: any Error) {
       let current = lock.withLock { () -> [CheckedContinuation<ProxyWebSocketFrame, any Error>] in
         guard failure == nil else { return [] }
-        failure = error
+        failure = error; inputWakeup = nil
         let current = waiters.map(\.continuation)
         waiters.removeAll()
         return current

@@ -78,6 +78,8 @@ type ownedConnection struct {
 	streamWake                       chan struct{}
 	listener                         *OwnedListener
 	listenerSlot                     uint16
+	maintenanceAccept                sync.Once
+	maintenanceAcceptErr             error
 }
 
 type ownedStreamSlot struct {
@@ -304,6 +306,15 @@ func (p *OwnedConnection) AcceptMaintenance(ctx context.Context) (*OwnedStream, 
 	return p.open(ctx, true, true)
 }
 
+// PrepareMaintenance reserves the original incoming maintenance position
+// without waiting for a remotely visible STREAM frame. The first I/O accepts
+// that same stream once; closing it before acceptance closes the connection.
+// This lets a physical listener finish native preparation before the original
+// authorization permits its peer to publish the first Flowersec byte.
+func (p *OwnedConnection) PrepareMaintenance(ctx context.Context) (*OwnedStream, error) {
+	return p.openOriginal(ctx, true, true, nil, true)
+}
+
 func (p *OwnedConnection) OpenStream(ctx context.Context) (*OwnedStream, error) {
 	return p.open(ctx, false, false)
 }
@@ -317,6 +328,10 @@ func (p *OwnedConnection) open(ctx context.Context, accept, maintenance bool) (*
 }
 
 func (p *OwnedConnection) openProtected(ctx context.Context, accept, maintenance bool, protection *nativeStreamProtection) (*OwnedStream, error) {
+	return p.openOriginal(ctx, accept, maintenance, protection, false)
+}
+
+func (p *OwnedConnection) openOriginal(ctx context.Context, accept, maintenance bool, protection *nativeStreamProtection, deferAccept bool) (*OwnedStream, error) {
 	if p == nil || p.ownedConnection == nil || ctx == nil {
 		return nil, resourcev4.ErrConfiguration
 	}
@@ -370,9 +385,16 @@ func (p *OwnedConnection) openProtected(ctx context.Context, accept, maintenance
 	}
 	p.serial++
 	generation := p.serial
-	p.slots[index] = ownedStreamSlot{protection: protection, used: true, opening: true, generation: generation, cleanup: make(chan struct{})}
+	p.slots[index] = ownedStreamSlot{protection: protection, used: true, opening: !deferAccept, generation: generation, cleanup: make(chan struct{})}
 	if maintenance {
 		p.maintenanceOpened = true
+	}
+	if deferAccept {
+		// Reserve native acceptance as well as the prepaid stream slot. A
+		// DATA accept cannot consume stream zero before maintenance I/O starts.
+		p.accepting = true
+		p.mu.Unlock()
+		return &OwnedStream{owner: p.ownedConnection, slot: uint16(index), generation: generation}, nil
 	}
 	if accept {
 		p.accepting = true
@@ -466,7 +488,7 @@ func (p *OwnedConnection) SendDatagram(src []byte) error {
 		p.mu.Unlock()
 		return carrier.ErrUnreliableTooLarge
 	}
-	return err
+	return quicfailure.Connection(err)
 }
 
 func (p *OwnedConnection) ReceiveDatagram(ctx context.Context, dst []byte) (int, error) {
@@ -480,7 +502,7 @@ func (p *OwnedConnection) ReceiveDatagram(ctx context.Context, dst []byte) (int,
 	defer p.endDatagram(true)
 	packet, err := session.receiveUnreliable(ctx)
 	if err != nil {
-		return 0, err
+		return 0, quicfailure.Connection(err)
 	}
 	if len(packet) == 0 || len(packet) > carrier.MaxUnreliableWireBytes {
 		return 0, carrier.ErrUnreliableTooLarge
@@ -652,24 +674,105 @@ func (s *OwnedStream) begin(op int) (carrier.Stream, error) {
 	}
 	p := s.owner
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if err := p.checkLocked(); err != nil {
+		p.mu.Unlock()
 		return nil, err
 	}
 	slot, err := s.slotLocked()
 	if err != nil {
+		p.mu.Unlock()
 		return nil, err
 	}
 	if slot.closed {
+		p.mu.Unlock()
 		return nil, resourcev4.ErrClosed
+	}
+	if slot.native == nil && op != ownedRead && op != ownedWrite {
+		p.mu.Unlock()
+		return nil, resourcev4.ErrOwner
 	}
 	busy := slotOperation(slot, op)
 	if *busy || op == ownedWrite && slot.halfClosing || op == ownedHalfClose && slot.writing {
+		p.mu.Unlock()
 		return nil, resourcev4.ErrCapacity
 	}
 	*busy = true
 	slot.calls++
 	p.calls++
+	native := slot.native
+	p.mu.Unlock()
+	if native != nil {
+		return native, nil
+	}
+	native, err = s.acceptMaintenance()
+	if err != nil {
+		s.end(op)
+	}
+	return native, err
+}
+
+func (s *OwnedStream) acceptMaintenance() (carrier.Stream, error) {
+	p := s.owner
+	// Concurrent read/write observers retain their existing method positions
+	// while the same original connection owns exactly one native acceptance.
+	p.maintenanceAccept.Do(func() {
+		p.mu.Lock()
+		slot, err := s.slotLocked()
+		if err == nil {
+			err = p.checkLocked()
+		}
+		if err == nil && (slot.closed || !p.accepting) {
+			err = resourcev4.ErrClosed
+		}
+		if err != nil {
+			p.accepting = false
+			p.maintenanceAcceptErr = err
+			p.mu.Unlock()
+			return
+		}
+		session := p.session
+		p.mu.Unlock()
+		native, err := session.acceptStream(session.conn.Context())
+		err = quicfailure.Connection(err)
+		if err == nil {
+			stream, ok := native.(*Stream)
+			if !ok || stream.NativeStreamID() != 0 {
+				err = resourcev4.ErrOwner
+			}
+		}
+		p.mu.Lock()
+		if err == nil {
+			err = p.checkLocked()
+		}
+		if err == nil && slot.closed {
+			err = resourcev4.ErrClosed
+		}
+		if err == nil {
+			slot.native = native
+		}
+		p.accepting = false
+		p.maintenanceAcceptErr = err
+		p.mu.Unlock()
+		if err != nil && native != nil {
+			_ = native.Close()
+		}
+	})
+	if err := p.maintenanceAcceptErr; err != nil {
+		_ = (&OwnedConnection{p}).Close()
+		return nil, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	slot, err := s.slotLocked()
+	if err != nil {
+		return nil, err
+	}
+	if err = p.checkLocked(); err != nil {
+		return nil, err
+	}
+	if slot.closed || slot.native == nil {
+		return nil, resourcev4.ErrClosed
+	}
 	return slot.native, nil
 }
 
@@ -785,7 +888,13 @@ func (s *OwnedStream) Close() error {
 	p.calls++
 	native := slot.native
 	p.mu.Unlock()
-	err = native.Close()
+	if native == nil {
+		// There is no stream handle to cancel yet. Closing the same connection
+		// interrupts its original accept and all observers join through calls.
+		err = (&OwnedConnection{p}).Close()
+	} else {
+		err = native.Close()
+	}
 	p.mu.Lock()
 	slot.closeReturned = true
 	slot.calls--
@@ -820,8 +929,11 @@ func (s *OwnedStream) Context() context.Context {
 	s.owner.mu.Lock()
 	defer s.owner.mu.Unlock()
 	slot, err := s.slotLocked()
-	if err != nil || slot.native == nil {
+	if err != nil || slot.closed || s.owner.closed {
 		return deadStreamContext
+	}
+	if slot.native == nil {
+		return s.owner.session.conn.Context()
 	}
 	return slot.native.Context()
 }

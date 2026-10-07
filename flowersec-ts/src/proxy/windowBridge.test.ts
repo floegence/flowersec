@@ -1,8 +1,9 @@
 import { usesServiceWorkerResponseFlowControl } from "./serviceWorkerRuntime.js";
 import { describe, expect, it } from "vitest";
 
-import { SessionError, type ByteStream, type OperationOptions } from "../public/contract.js";
+import { SessionError, type OperationOptions } from "../public/contract.js";
 import type { ProxyFetchRequest, ProxyRuntime } from "./types.js";
+import type { ProxyStream } from "./stream.js";
 import {
   MessagePortByteStream,
   registerProxyAppWindow,
@@ -15,7 +16,9 @@ class TestWindow extends EventTarget {
   parent: Window = this as unknown as Window;
 }
 
-class TestServiceWorkerContainer extends EventTarget {}
+class TestServiceWorkerContainer extends EventTarget {
+  readonly controller = { scriptURL: "https://app.example/sw.js" };
+}
 
 class BridgeTarget {
   constructor(
@@ -35,7 +38,7 @@ class BridgeTarget {
   }
 }
 
-class DuplexStream implements ByteStream {
+class DuplexStream implements ProxyStream {
   readonly kind = "proxy";
   terminalError = undefined;
   readonly written: Uint8Array[] = [];
@@ -123,7 +126,7 @@ describe("proxy controller/app window bridge", () => {
     let fetchRequest: ProxyFetchRequest | undefined;
     const runtime: ProxyRuntime = {
       limits: {
-        maxJsonFrameBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
+        maxMetadataBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
         maxWsFrameBytes: 1024, maxWsBufferedAmountBytes: 4096,
         maxConcurrentHttpStreams: 1, maxConcurrentEventStreams: 1, maxQueuedHttpRequests: 1, maxQueuedHttpBodyBytes: 1,
       },
@@ -209,6 +212,7 @@ describe("proxy controller/app window bridge", () => {
       },
       ports: [channel.port1],
     });
+    Object.defineProperty(event, "source", { value: serviceWorker.controller });
     serviceWorker.dispatchEvent(event);
     expect(forwarded).toHaveLength(1);
 
@@ -229,10 +233,10 @@ describe("proxy controller/app window bridge", () => {
       targetWindow: appWindow as unknown as Window,
     });
     const channel = new MessageChannel();
-    serviceWorker.dispatchEvent(new MessageEvent("message", {
-      data: { type: "flowersec-proxy:fetch", req: { id: 7 } },
-      ports: [channel.port1],
-    }));
+    // The bridge accepts only messages from its captured controller.
+    const malformedEvent = new MessageEvent("message", { data: { type: "flowersec-proxy:fetch", req: { id: 7 } }, ports: [channel.port1] });
+    Object.defineProperty(malformedEvent, "source", { value: serviceWorker.controller });
+    serviceWorker.dispatchEvent(malformedEvent);
     await expect(within(nextMessage(channel.port2))).resolves.toMatchObject({
       type: "flowersec-proxy:response_error",
       status: 400,
@@ -285,7 +289,7 @@ describe("proxy controller/app window bridge", () => {
   });
 });
 
-class FailingDuplexStream implements ByteStream {
+class FailingDuplexStream implements ProxyStream {
   readonly kind = "proxy";
   terminalError = undefined;
   resetCalled = false;
@@ -314,7 +318,7 @@ class FailingDuplexStream implements ByteStream {
   async close(): Promise<void> {}
 }
 
-function bridgeHarness(stream: ByteStream, dispatchFetch: ProxyRuntime["dispatchFetch"] = () => undefined): Readonly<{
+function bridgeHarness(stream: ProxyStream, dispatchFetch: ProxyRuntime["dispatchFetch"] = () => undefined): Readonly<{
   app: ReturnType<typeof registerProxyAppWindow>;
   controller: ReturnType<typeof registerProxyControllerWindow>;
 }> {
@@ -324,7 +328,7 @@ function bridgeHarness(stream: ByteStream, dispatchFetch: ProxyRuntime["dispatch
   const appOrigin = "https://app.example";
   const runtime = {
     limits: {
-      maxJsonFrameBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
+      maxMetadataBytes: 1, maxChunkBytes: 1, maxBodyBytes: 1,
       maxWsFrameBytes: 1024, maxWsBufferedAmountBytes: 4096,
       maxConcurrentHttpStreams: 1, maxConcurrentEventStreams: 1, maxQueuedHttpRequests: 1, maxQueuedHttpBodyBytes: 1,
     },

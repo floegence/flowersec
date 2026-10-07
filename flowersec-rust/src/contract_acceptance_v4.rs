@@ -40,6 +40,9 @@ impl ContractAcceptance {
     pub fn exact() -> Self {
         Self::default()
     }
+    pub(crate) fn locks_digest(self) -> bool {
+        self.count == 0
+    }
     pub fn bounded(ranges: &[ContractRange]) -> Result<Self> {
         if ranges.is_empty() || ranges.len() > 4 {
             return Err(ContractPolicyRejected);

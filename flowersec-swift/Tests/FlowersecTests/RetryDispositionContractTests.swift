@@ -4,10 +4,10 @@ import Testing
 
 struct RetryDispositionContractTests {
   @Test func currentFailuresExposeOneConsistentRetryContract() {
-    #expect(ConnectError.artifactInvalid.retryDisposition == .terminal)
-    #expect(ConnectError.expiredArtifact.retryDisposition == .retryable)
-    #expect(ConnectError.transportSecurityUnsupported.retryDisposition == .terminal)
-    #expect(ConnectError.transportSecurityFailed.retryDisposition == .terminal)
+    #expect(ConnectError.invalidMaterial.retryDisposition == .terminal)
+    #expect(ConnectError.expired.retryDisposition == .retryable)
+    #expect(ConnectError.unsupported.retryDisposition == .terminal)
+    #expect(ConnectError.securityFailed.retryDisposition == .terminal)
     #expect(ConnectError.connectionFailed.retryDisposition == .retryable)
 
     #expect(SessionError.canceled.retryDisposition == .terminal)
@@ -18,7 +18,7 @@ struct RetryDispositionContractTests {
 
   @Test func retryAfterPreservesTheAbsoluteNotBeforeDeadline() {
     let deadline: UInt64 = 2_000_000_000_000
-    let failure = ArtifactSourceFailure(disposition: .retryAfter(deadline))
+    let failure = ConnectionSourceFailure(code: .exhausted, disposition: .retryAfter(deadline))
     #expect(failure.disposition == .retryAfter(deadline))
   }
 }

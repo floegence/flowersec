@@ -3,7 +3,6 @@ package sessionv4
 import (
 	"context"
 	"errors"
-	"io"
 	"sync"
 	"time"
 	"unsafe"
@@ -39,6 +38,8 @@ type RPCChannel struct {
 	done                                        chan struct{}
 	closeDone                                   chan struct{}
 	writerDone                                  chan error
+	readerEnded                                 chan struct{}
+	inputEnded                                  bool
 	failure                                     error
 	started, running, closed, cleaned, cleaning bool
 }
@@ -70,7 +71,7 @@ func NewRPCChannel(owner *StreamOwnership, network *rpcv4.Network, channel [16]b
 	if err != nil {
 		return nil, err
 	}
-	c := &RPCChannel{owner: owner, identity: channel, reservation: owned, done: make(chan struct{}), closeDone: make(chan struct{}), writerDone: make(chan error, 1)}
+	c := &RPCChannel{owner: owner, identity: channel, reservation: owned, done: make(chan struct{}), closeDone: make(chan struct{}), writerDone: make(chan error, 1), readerEnded: make(chan struct{})}
 	defer func() {
 		if err != nil {
 			if c.receiver != nil {
@@ -119,7 +120,7 @@ func (c *RPCChannel) availablePublisher() *rpcv4.Publisher {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed || c.inputEnded {
 		return nil
 	}
 	return c.publisher
@@ -195,11 +196,20 @@ func (c *RPCChannel) Run(ctx context.Context) (err error) {
 			if err := receiver.End(); err != nil {
 				return err
 			}
-			return io.EOF
+			c.mu.Lock()
+			c.inputEnded = true
+			close(c.readerEnded)
+			c.mu.Unlock()
+			// Peer EOF ends only its input direction. The original publisher
+			// must finish accepted replies before this channel can close.
+			<-runCtx.Done()
+			return nil
 		}
 	}
 }
 func (c *RPCChannel) publish(ctx context.Context, p *rpcv4.Publisher, w *RPCBatchWriter) error {
+	readerEnded := c.readerEnded
+	inputEnded := false
 	for {
 		progressed, err := p.Step(ctx)
 		if err != nil && !errors.Is(err, cryptov4.ErrCapacity) {
@@ -208,9 +218,14 @@ func (c *RPCChannel) publish(ctx context.Context, p *rpcv4.Publisher, w *RPCBatc
 		if progressed {
 			continue
 		}
+		if inputEnded && p.DrainIfIdle(w.drainIdle) {
+			return c.owner.Finish(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case <-readerEnded:
+			inputEnded, readerEnded = true, nil
 		case <-p.Wake():
 		case <-w.Wake():
 		}
@@ -239,6 +254,14 @@ func (c *RPCChannel) Close() {
 	receiver.Close()
 	writer.Close()
 	_ = owner.Cancel()
+}
+
+func (c *RPCChannel) drainIdle() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.closed && c.publisher != nil {
+		c.publisher.DrainIfIdle(c.writer.drainIdle)
+	}
 }
 
 // WaitCleanup joins actual publisher/reader exit and the last queue/provider

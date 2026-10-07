@@ -18,47 +18,49 @@ func (p *Publisher) QueueResultRead(t Ticket, read *ExecutionResultRead, deadlin
 		return nil, ErrConfiguration
 	}
 	var publication *Publication
-	err := read.withAccess(func(authority resourcev4.Reference) error {
-		n := p.network
-		n.mu.Lock()
-		defer n.mu.Unlock()
-		if err := p.liveLocked(); err != nil {
-			return err
-		}
-		s, err := n.slotLocked(t)
-		if err != nil {
-			return err
-		}
-		if t.direction != incoming || s.path.Channel != p.channel || s.inputState != InputComplete || s.message.publisher != nil || !n.resultReadMatches(s.header) {
-			return ErrOwner
-		}
-		return read.withResult(authority, func(result *executionResult) error {
-			if read.publicationOwned || !deadline.BelongsTo(read.clock) || deadline.Cap() > s.header.Fields().DeadlineAtMS {
-				return ErrOwner
-			}
-			if err := deadline.Check(); err != nil {
+	err := read.withSample(func(sample timev4.Sample) error {
+		return read.withAccess(func(authority resourcev4.Reference) error {
+			n := p.network
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			if err := p.liveLocked(); err != nil {
 				return err
 			}
-			if err := read.reservation.CheckSameEnvironment(n.reservation); err != nil {
-				return err
-			}
-			values := s.header.Fields()
-			values.Kind, values.DeadlineAtMS = 0, 0
-			values.PayloadBytes = result.length
-			m := sendMessage{publisher: p, readSource: read, readDeadline: deadline, prev: -1, nextReady: -1}
-			length, header, err := p.codec.Encode(m.headerWire[:], "read_result_response", values)
+			s, err := n.slotLocked(t)
 			if err != nil {
 				return err
 			}
-			if err := s.header.MatchResponse(header); err != nil {
-				return err
+			if t.direction != incoming || s.path.Channel != p.channel || s.inputState != InputComplete || s.message.publisher != nil || !n.resultReadMatches(s.header) {
+				return ErrOwner
 			}
-			publication = &Publication{}
-			m.header, m.headerBytes, m.publication = header, uint16(length), publication
-			read.publicationOwned = true
-			s.message = m
-			p.enqueueLocked(t, p.lane(s, t.direction))
-			return nil
+			return read.withResultAt(sample, authority, func(result *executionResult) error {
+				if read.publicationOwned || !deadline.BelongsTo(read.clock) || deadline.Cap() > s.header.Fields().DeadlineAtMS {
+					return ErrOwner
+				}
+				if err := deadline.CheckUsingSample(sample); err != nil {
+					return err
+				}
+				if err := read.reservation.CheckSameEnvironment(n.reservation); err != nil {
+					return err
+				}
+				values := s.header.Fields()
+				values.Kind, values.DeadlineAtMS = 0, 0
+				values.PayloadBytes = result.length
+				m := sendMessage{publisher: p, readSource: read, readDeadline: deadline, prev: -1, nextReady: -1}
+				length, header, err := p.codec.Encode(m.headerWire[:], "read_result_response", values)
+				if err != nil {
+					return err
+				}
+				if err := s.header.MatchResponse(header); err != nil {
+					return err
+				}
+				publication = &Publication{}
+				m.header, m.headerBytes, m.publication = header, uint16(length), publication
+				read.publicationOwned = true
+				s.message = m
+				p.enqueueLocked(t, p.lane(s, t.direction))
+				return nil
+			})
 		})
 	})
 	return publication, err
@@ -69,48 +71,55 @@ func (p *Publisher) QueueResultRead(t Ticket, read *ExecutionResultRead, deadlin
 // while acquiring authority; cancellation and stale publisher turns can
 // neither deadlock this gate nor publish for a reused ReplySlot.
 func (p *Publisher) stepResultRead(ctx context.Context, t Ticket, read *ExecutionResultRead) (progressed bool, err error) {
+	if sink, ok := p.sink.(AuthorizedResultReadBatchSink); ok {
+		if err := sink.CheckRequestAcceptance(ctx); err != nil {
+			return false, err
+		}
+	}
 	checked := false
-	err = read.withAccess(func(authority resourcev4.Reference) error {
-		n := p.network
-		n.mu.Lock()
-		defer n.mu.Unlock()
-		if err := p.liveLocked(); err != nil {
-			checked = true
-			return err
-		}
-		s, e := n.slotLocked(t)
-		if e != nil || s.message.readSource != read || p.batchPending || !s.message.queued {
-			checked = true
-			return nil
-		}
-		m := &s.message
-		chunkLen := 0
-		if m.begun {
-			err = read.withResult(authority, func(result *executionResult) error {
-				if err := m.readDeadline.Check(); err != nil {
+	err = read.withSample(func(sample timev4.Sample) error {
+		return read.withAccess(func(authority resourcev4.Reference) error {
+			n := p.network
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			if err := p.liveLocked(); err != nil {
+				checked = true
+				return err
+			}
+			s, e := n.slotLocked(t)
+			if e != nil || s.message.readSource != read || p.batchPending || !s.message.queued {
+				checked = true
+				return nil
+			}
+			m := &s.message
+			chunkLen := 0
+			if m.begun {
+				err = read.withResultAt(sample, authority, func(result *executionResult) error {
+					if err := m.readDeadline.CheckUsingSample(sample); err != nil {
+						return err
+					}
+					if m.next >= result.length {
+						return ErrOwner
+					}
+					end := min(result.length, m.next+uint32(len(p.readBuffer)))
+					chunkLen = copy(p.readBuffer[:], result.payload[m.next:end])
+					return nil
+				})
+				if err != nil {
 					return err
 				}
-				if m.next >= result.length {
-					return ErrOwner
+			} else {
+				err = read.withResultAt(sample, authority, func(*executionResult) error {
+					return m.readDeadline.CheckUsingSample(sample)
+				})
+				if err != nil {
+					return err
 				}
-				end := min(result.length, m.next+uint32(len(p.readBuffer)))
-				chunkLen = copy(p.readBuffer[:], result.payload[m.next:end])
-				return nil
-			})
-			if err != nil {
-				return err
 			}
-		} else {
-			err = read.withResult(authority, func(*executionResult) error {
-				return m.readDeadline.Check()
-			})
-			if err != nil {
-				return err
-			}
-		}
-		progressed, err = p.stepLocked(ctx, t, s, int(m.lane), p.readBuffer[:chunkLen])
-		checked = true
-		return err
+			progressed, err = p.stepLocked(ctx, t, s, int(m.lane), p.readBuffer[:chunkLen])
+			checked = true
+			return err
+		})
 	})
 	if checked || err == nil {
 		return progressed, err

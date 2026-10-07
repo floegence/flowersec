@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 
-final class TransportV4TimeTests: XCTestCase {
+final class TransportTimeTests: XCTestCase {
   func testSharedCorpus() throws {
     let corpus = try JSONDecoder().decode(V4JSON.self, from: Data(contentsOf: packageRoot().appendingPathComponent("testdata/transport_v4/time_arithmetic.json")))
     let vectors = corpus["vectors"].array!, reference = try V4TimeReference()

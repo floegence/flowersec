@@ -462,7 +462,7 @@ func (p *OwnedConnection) SendDatagram(src []byte) error {
 		p.mu.Unlock()
 		return carrier.ErrUnreliableTooLarge
 	}
-	return err
+	return quicfailure.Connection(err)
 }
 
 func (p *OwnedConnection) ReceiveDatagram(ctx context.Context, dst []byte) (int, error) {
@@ -476,7 +476,7 @@ func (p *OwnedConnection) ReceiveDatagram(ctx context.Context, dst []byte) (int,
 	defer p.endDatagram(true)
 	packet, err := session.ReceiveUnreliable(ctx)
 	if err != nil {
-		return 0, err
+		return 0, quicfailure.Connection(err)
 	}
 	if len(packet) == 0 || len(packet) > carrier.MaxUnreliableWireBytes {
 		return 0, carrier.ErrUnreliableTooLarge

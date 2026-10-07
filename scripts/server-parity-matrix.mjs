@@ -41,19 +41,22 @@ export function generateDirectCellDimensions() {
 }
 
 export function generateTunnelTopologyDimensions() {
-  return SERVER_PARITY_CARRIERS.flatMap((carrier) =>
-    SERVER_PARITY_RUNTIMES.flatMap((endpointA, endpointAIndex) =>
-      SERVER_PARITY_RUNTIMES.map((tunnelRuntime, relayIndex) => {
-        const endpointB = SERVER_PARITY_RUNTIMES[(endpointAIndex + relayIndex) % SERVER_PARITY_RUNTIMES.length];
-        return Object.freeze({
-          id: `${runtimeID(endpointA)}_via_${runtimeID(tunnelRuntime)}_to_${runtimeID(endpointB)}_${carrierID(carrier)}_tunnel`,
-          endpoint_a: endpointA,
-          ingress_carrier_a: carrier,
-          tunnel_runtime: tunnelRuntime,
-          endpoint_b: endpointB,
-          ingress_carrier_b: carrier,
-        });
-      }),
+  return SERVER_PARITY_CARRIERS.flatMap((carrierA) =>
+    SERVER_PARITY_CARRIERS.flatMap((carrierB) =>
+      SERVER_PARITY_RUNTIMES.flatMap((endpointA, endpointAIndex) =>
+        SERVER_PARITY_RUNTIMES.map((tunnelRuntime, relayIndex) => {
+          const endpointB = SERVER_PARITY_RUNTIMES[(endpointAIndex + relayIndex) % SERVER_PARITY_RUNTIMES.length];
+          const carrierPair = carrierA === carrierB ? carrierID(carrierA) : `${carrierID(carrierA)}_to_${carrierID(carrierB)}`;
+          return Object.freeze({
+            id: `${runtimeID(endpointA)}_via_${runtimeID(tunnelRuntime)}_to_${runtimeID(endpointB)}_${carrierPair}_tunnel`,
+            endpoint_a: endpointA,
+            ingress_carrier_a: carrierA,
+            tunnel_runtime: tunnelRuntime,
+            endpoint_b: endpointB,
+            ingress_carrier_b: carrierB,
+          });
+        }),
+      ),
     ),
   );
 }
@@ -64,4 +67,28 @@ function runtimeID(runtime) {
 
 function carrierID(carrier) {
   return carrier === "raw-quic" ? "raw_quic" : carrier;
+}
+
+// The execution entrypoint expands independent legs using each original
+// persisted runtime/capability cell. A missing native side never becomes a
+// supported mixed topology merely because the other side is implemented.
+export function executableTunnelTopologies(declared) {
+  const byID = new Map(declared.map(topology => [topology.id, topology]));
+  const generated = generateTunnelTopologyDimensions();
+  return generated.map(dimensions => {
+    const original = byID.get(dimensions.id);
+    if (original !== undefined) return original;
+    const sameA = generated.find(item => item.endpoint_a === dimensions.endpoint_a && item.endpoint_b === dimensions.endpoint_b &&
+      item.tunnel_runtime === dimensions.tunnel_runtime && item.ingress_carrier_a === dimensions.ingress_carrier_a && item.ingress_carrier_b === dimensions.ingress_carrier_a);
+    const sameB = generated.find(item => item.endpoint_a === dimensions.endpoint_a && item.endpoint_b === dimensions.endpoint_b &&
+      item.tunnel_runtime === dimensions.tunnel_runtime && item.ingress_carrier_a === dimensions.ingress_carrier_b && item.ingress_carrier_b === dimensions.ingress_carrier_b);
+    const a = byID.get(sameA?.id), b = byID.get(sameB?.id);
+    if (a === undefined || b === undefined) throw new Error(`${dimensions.id}: independently installed native capability cells are missing`);
+    const supported = a.status === "supported" && b.status === "supported";
+    const cases = a.cases.filter(value => value !== "datagram" && value !== "datagram-forwarding");
+    return {
+      ...dimensions, cases, status: supported ? "supported" : "unsupported",
+      ...(supported ? { test_ids: [...a.test_ids] } : { test_ids: [], reason: a.reason ?? b.reason }),
+    };
+  });
 }

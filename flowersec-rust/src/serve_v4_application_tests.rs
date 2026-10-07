@@ -364,7 +364,7 @@ impl Running {
         let cancellation = CancellationToken::new();
         let handle = Arc::new(
             environment
-                .serve_pool_wss(
+                .serve_wss(
                     vec![namespace.clone()],
                     server_keys,
                     Arc::new(Source {
@@ -680,13 +680,16 @@ async fn application_unknown_release_never_retries_or_refunds_original_responsib
         .unwrap();
     assert!(!status.complete && status.cleanup_incomplete);
     assert!(server.core_cleanup_status().complete && !server.cleanup_status().complete);
+    // Both peers share this environment. Join the client's physical cleanup
+    // before measuring the server's unresolved application responsibility.
+    client.close();
+    assert!(client.wait_cleanup().await.complete);
     let held = running.environment.resource_usage();
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(running.callbacks.releases.lock().unwrap().len(), 1);
     assert_eq!(running.callbacks.lease.closes.load(Ordering::Acquire), 1);
     assert_eq!(running.environment.resource_usage(), held);
-    client.close();
-    assert!(client.wait_cleanup().await.complete);
+    assert!(!server.cleanup_status().complete && !running.handle.cleanup_status().complete);
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_registered_handler_plan_dispatches_real_io_and_drains_callbacks() {
@@ -771,6 +774,203 @@ async fn connect_uses_serve_handler_plan_for_authenticated_inbound_streams() {
     );
     assert!(stream.read().await.unwrap().is_none());
     stream.finish().await.unwrap();
+    client.close();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(5), client.wait_cleanup())
+            .await
+            .unwrap()
+            .complete
+    );
+    running.clean().await;
+    assert!(server.cleanup_status().complete);
+}
+
+#[derive(Debug)]
+struct TypedRegisteredHandler {
+    metadata: Metadata,
+    allowed: AtomicBool,
+    authorizations: AtomicUsize,
+    calls: AtomicUsize,
+    completed: Semaphore,
+    stream: Mutex<Option<crate::TypedMessageStream<Vec<u8>, String>>>,
+}
+#[async_trait]
+impl crate::MessageStreamHandler<Vec<u8>, String> for TypedRegisteredHandler {
+    fn application_bytes(&self) -> u64 {
+        1024
+    }
+    async fn authorize(
+        &self,
+        authentication: ApplicationBinding,
+        application: Metadata,
+        _: CancellationToken,
+        context: crate::ApplicationInvocationContext,
+    ) -> Result<StreamAuthorization, ServeError> {
+        assert_ne!(authentication.client_identity, [0; 32]);
+        assert_eq!(application.encoded(), self.metadata.encoded());
+        context.check_cancellation().unwrap();
+        self.authorizations.fetch_add(1, Ordering::AcqRel);
+        Ok(if self.allowed.load(Ordering::Acquire) {
+            StreamAuthorization::Accept {
+                receive_window: 256,
+            }
+        } else {
+            StreamAuthorization::Reject
+        })
+    }
+    async fn handle(
+        &self,
+        stream: crate::TypedMessageStream<Vec<u8>, String>,
+        cancellation: CancellationToken,
+        context: crate::ApplicationInvocationContext,
+    ) -> Result<(), ServeError> {
+        self.calls.fetch_add(1, Ordering::AcqRel);
+        assert_eq!(
+            stream.application_metadata().encoded(),
+            self.metadata.encoded()
+        );
+        *self.stream.lock().unwrap() = Some(stream.clone());
+        let message = stream
+            .receive(Some(context.clone()), &cancellation)
+            .await
+            .unwrap();
+        assert_eq!(message.value.as_deref(), Some([0, 255, 4].as_slice()));
+        assert_eq!(
+            stream
+                .receive(Some(context.clone()), &cancellation)
+                .await
+                .unwrap()
+                .terminal,
+            crate::MessageReceiveTerminal::Eof
+        );
+        assert_eq!(
+            stream
+                .send(
+                    Arc::new("typed reply".to_owned()),
+                    Some(context),
+                    &cancellation
+                )
+                .await
+                .unwrap(),
+            11
+        );
+        stream.close_write().await.unwrap();
+        self.completed.add_permits(1);
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn registered_typed_stream_dispatch_preserves_authorization_metadata_fin_and_cleanup() {
+    let mut running = Running::new(Mode::Normal).await;
+    let incoming = crate::MessageDefinition::new([81; 32], "bytes.v1".into(), 32).unwrap();
+    let outgoing = crate::MessageDefinition::new([82; 32], "text.v1".into(), 64).unwrap();
+    let definition = running
+        .environment
+        .define_message_stream(
+            "test.typed",
+            "messages.v1",
+            incoming.clone(),
+            outgoing.clone(),
+        )
+        .unwrap();
+    let metadata = Metadata::new(
+        "example/document",
+        7,
+        &std::collections::BTreeMap::from([("cursor".into(), Bytes::from_static(&[0, 255, 3]))]),
+    )
+    .unwrap();
+    let handler = Arc::new(TypedRegisteredHandler {
+        metadata: metadata.clone(),
+        allowed: AtomicBool::new(false),
+        authorizations: AtomicUsize::new(0),
+        calls: AtomicUsize::new(0),
+        completed: Semaphore::new(0),
+        stream: Mutex::new(None),
+    });
+    let registration = crate::register_message_stream(
+        definition.clone(),
+        Arc::new(crate::BytesMessageCodec::new(incoming.clone())),
+        Arc::new(crate::UTF8MessageCodec::new(outgoing.clone())),
+        crate::MessageStreamOptions::default(),
+        handler.clone(),
+    )
+    .unwrap();
+    let plan = running
+        .environment
+        .handler_plan(HandlerPlanOptions {
+            streams: StreamDispatch::Registered(vec![registration]),
+            application_bytes: 4096,
+        })
+        .unwrap();
+    let client = running.connect_with_plan(plan.clone()).await.unwrap();
+    let server = running.handle.accept().await.unwrap();
+    plan.close();
+    assert!(client.next_open().await.is_err());
+    assert!(
+        server
+            .open_message_stream(
+                definition.clone(),
+                metadata.clone(),
+                Arc::new(crate::UTF8MessageCodec::new(outgoing.clone())),
+                Arc::new(crate::BytesMessageCodec::new(incoming.clone())),
+                256,
+                crate::MessageStreamOptions::default()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(handler.authorizations.load(Ordering::Acquire), 1);
+    assert_eq!(handler.calls.load(Ordering::Acquire), 0);
+
+    handler.allowed.store(true, Ordering::Release);
+    let stream = server
+        .open_message_stream(
+            definition,
+            metadata.clone(),
+            Arc::new(crate::UTF8MessageCodec::new(outgoing.clone())),
+            Arc::new(crate::BytesMessageCodec::new(incoming)),
+            256,
+            crate::MessageStreamOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream.application_metadata().encoded(), metadata.encoded());
+    let cancellation = CancellationToken::new();
+    assert_eq!(
+        stream
+            .send(Arc::new(vec![0, 255, 4]), None, &cancellation)
+            .await
+            .unwrap(),
+        3
+    );
+    stream.close_write().await.unwrap();
+    let response = stream.receive(None, &cancellation).await.unwrap();
+    assert_eq!(response.definition, outgoing);
+    assert_eq!(response.value.as_deref(), Some("typed reply"));
+    assert_eq!(
+        stream.receive(None, &cancellation).await.unwrap().terminal,
+        crate::MessageReceiveTerminal::Eof
+    );
+    stream.finish().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(2), handler.completed.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    assert_eq!(handler.authorizations.load(Ordering::Acquire), 2);
+    assert_eq!(handler.calls.load(Ordering::Acquire), 1);
+    let original = handler.stream.lock().unwrap().take().unwrap();
+    original.finish().await.unwrap();
+    original.close();
+    stream.close();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), original.wait_cleanup())
+            .await
+            .unwrap()
+            .complete
+    );
+    assert!(stream.wait_cleanup().await.complete);
     client.close();
     assert!(
         tokio::time::timeout(Duration::from_secs(5), client.wait_cleanup())

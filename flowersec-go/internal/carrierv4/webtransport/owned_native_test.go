@@ -9,6 +9,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier/quicbase"
 	quic "github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/quic-go/quicvarint"
 )
 
 type nativeConnectStreamFixture struct{ *quic.Stream }
@@ -19,7 +20,7 @@ func (nativeConnectStreamFixture) ReceiveDatagram(ctx context.Context) ([]byte, 
 	return nil, ctx.Err()
 }
 
-func TestOwnedNativeBrowserRawAcceptsUnprefixedStream(t *testing.T) {
+func TestOwnedNativeStripsOriginalConnectAssociation(t *testing.T) {
 	serverTLS, clientTLS := tupleTLS(t)
 	serverTLS.NextProtos = []string{http3.NextProtoH3}
 	clientTLS.NextProtos = []string{http3.NextProtoH3}
@@ -64,7 +65,7 @@ func TestOwnedNativeBrowserRawAcceptsUnprefixedStream(t *testing.T) {
 	}
 	o := OwnedOptions{Limits: limits, StreamSlots: 8}
 	session := newOwnedNativeSession(server, o, false)
-	if err := session.install(nativeConnectStreamFixture{Stream: request}, true); err != nil {
+	if err := session.install(nativeConnectStreamFixture{Stream: request}); err != nil {
 		t.Fatal(err)
 	}
 	session.start(nil, nil)
@@ -73,7 +74,7 @@ func TestOwnedNativeBrowserRawAcceptsUnprefixedStream(t *testing.T) {
 		select {
 		case <-session.done:
 		case <-time.After(2 * time.Second):
-			t.Error("browser raw session did not stop")
+			t.Error("associated session did not stop")
 		}
 		_ = connect.Close()
 	})
@@ -82,14 +83,14 @@ func TestOwnedNativeBrowserRawAcceptsUnprefixedStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := raw.Write([]byte{'F'}); err != nil {
+	if _, err := raw.Write(append(quicvarint.Append(quicvarint.Append(nil, 0x41), uint64(connect.StreamID())), 'F')); err != nil {
 		t.Fatal(err)
 	}
 	acceptCtx, acceptCancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer acceptCancel()
 	stream, err := session.AcceptStream(acceptCtx)
 	if err != nil {
-		t.Fatalf("accepted browser raw stream before first byte: %v", err)
+		t.Fatalf("accepted associated stream before payload completion: %v", err)
 	}
 	if _, err := raw.Write([]byte("SB4")); err != nil {
 		t.Fatal(err)
@@ -99,6 +100,22 @@ func TestOwnedNativeBrowserRawAcceptsUnprefixedStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(first[:]) != "FSB4" {
-		t.Fatalf("browser raw stream received an unexpected prefix: %q", first[:])
+		t.Fatalf("associated stream exposed its transport prefix: %q", first[:])
+	}
+}
+
+func TestOriginPolicyDoesNotDowngradeCarrierTLS(t *testing.T) {
+	for _, origin := range []string{"http://127.0.0.1:8080", "http://[::1]:8080", "https://app.example"} {
+		if err := validateOrigin(origin); err != nil {
+			t.Fatalf("valid document origin %q: %v", origin, err)
+		}
+	}
+	for _, origin := range []string{"file://host", "https://user@app.example", "https://app.example/path", "https://app.example?query=1"} {
+		if validateOrigin(origin) == nil {
+			t.Fatalf("invalid document origin %q accepted", origin)
+		}
+	}
+	if ValidateURL("http://127.0.0.1:8080"+PathDirect) == nil {
+		t.Fatal("document origin policy allowed plaintext WebTransport")
 	}
 }

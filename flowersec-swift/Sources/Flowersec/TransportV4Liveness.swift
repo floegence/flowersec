@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TransportV4AutomaticLivenessPolicy: Sendable, Equatable {
+public struct TransportAutomaticLivenessPolicy: Sendable, Equatable {
   public let intervalMilliseconds: UInt64
   public let submissionMilliseconds: UInt64
   public let responseMilliseconds: UInt64
@@ -25,7 +25,7 @@ public struct TransportV4AutomaticLivenessPolicy: Sendable, Equatable {
   }
 }
 
-public enum TransportV4LivenessFailure: String, Error, Equatable, Sendable {
+public enum TransportLivenessFailure: String, Error, Equatable, Sendable {
   case canceled, closed, timeout
   case rekeyInProgress = "rekey_in_progress"
   case resourceExhausted = "resource_exhausted"
@@ -33,14 +33,14 @@ public enum TransportV4LivenessFailure: String, Error, Equatable, Sendable {
   case providerFailed = "provider_failed"
   case localStall = "local_stall"
 }
-public struct TransportV4LivenessProgress: Equatable, Sendable {
+public struct TransportLivenessProgress: Equatable, Sendable {
   public let submitted: Bool
   public let complete: Bool
   public let elapsedMilliseconds: UInt64?
 }
-public struct TransportV4LivenessError: Error, Equatable, Sendable {
-  public let reason: TransportV4LivenessFailure
-  public let progress: TransportV4LivenessProgress
+public struct TransportLivenessError: Error, Equatable, Sendable {
+  public let reason: TransportLivenessFailure
+  public let progress: TransportLivenessProgress
 }
 
 // The original record owner marks its irreversible sequence/crypto ticket.
@@ -48,7 +48,9 @@ public struct TransportV4LivenessError: Error, Equatable, Sendable {
 protocol V4RecordPublication: AnyObject, Sendable {
   func ticket(epoch: UInt32)
   func completed(_ success: Bool)
+  func transferred()
 }
+extension V4RecordPublication { func transferred() {} }
 
 final class V4LivenessProbe: V4RecordPublication, @unchecked Sendable {
   fileprivate weak var owner: V4LivenessState?
@@ -67,8 +69,8 @@ final class V4LivenessProbe: V4RecordPublication, @unchecked Sendable {
   fileprivate var completedAt: V4ClockMark?
   fileprivate var respondedAt: V4ClockMark?
   fileprivate var eligible = false
-  fileprivate var result: TransportV4LivenessProgress?
-  fileprivate var failure: TransportV4LivenessFailure?
+  fileprivate var result: TransportLivenessProgress?
+  fileprivate var failure: TransportLivenessFailure?
   private let cancellationGate = NSLock()
   private var cancellationRequested = false
 
@@ -124,7 +126,7 @@ final class V4LivenessProbe: V4RecordPublication, @unchecked Sendable {
 final class V4LivenessState: @unchecked Sendable {
   private let clock: V4TrustedClock
   private let storage: V4CryptoReservation
-  private let policy: TransportV4AutomaticLivenessPolicy?
+  private let policy: TransportAutomaticLivenessPolicy?
   private var probes: [V4LivenessProbe] = []
   private var counter: UInt128 = 0
   private var closed = false
@@ -136,7 +138,7 @@ final class V4LivenessState: @unchecked Sendable {
 
   init(
     clock: V4TrustedClock, storage: V4CryptoReservation,
-    policy: TransportV4AutomaticLivenessPolicy?
+    policy: TransportAutomaticLivenessPolicy?
   ) throws {
     try policy?.validate(clock.profile)
     guard 10_000 > (try clock.profile.elapsed(0)).upperMS,
@@ -154,10 +156,10 @@ final class V4LivenessState: @unchecked Sendable {
     }
     return now.milliseconds - start.milliseconds
   }
-  private func refusal(_ reason: TransportV4LivenessFailure) -> TransportV4LivenessError {
-    TransportV4LivenessError(
+  private func refusal(_ reason: TransportLivenessFailure) -> TransportLivenessError {
+    TransportLivenessError(
       reason: reason,
-      progress: TransportV4LivenessProgress(
+      progress: TransportLivenessProgress(
         submitted: false, complete: false, elapsedMilliseconds: nil))
   }
   func begin(automatic: Bool = false) throws -> V4LivenessProbe {
@@ -212,13 +214,13 @@ final class V4LivenessState: @unchecked Sendable {
     for probe in probes { check(probe) }
     if unresponsive { throw SessionError.livenessPathUnresponsive }
   }
-  func snapshot(_ probe: V4LivenessProbe) throws -> TransportV4LivenessProgress? {
+  func snapshot(_ probe: V4LivenessProbe) throws -> TransportLivenessProgress? {
     if probe.result == nil {
       guard probe.owner === self else { throw refusal(.closed) }
       check(probe)
     }
     if let failure = probe.failure, let result = probe.result {
-      throw TransportV4LivenessError(reason: failure, progress: result)
+      throw TransportLivenessError(reason: failure, progress: result)
     }
     return probe.result
   }
@@ -252,7 +254,7 @@ final class V4LivenessState: @unchecked Sendable {
     }
   }
   fileprivate func finish(
-    _ probe: V4LivenessProbe, _ cause: TransportV4LivenessFailure? = nil,
+    _ probe: V4LivenessProbe, _ cause: TransportLivenessFailure? = nil,
     at supplied: V4ClockMark? = nil
   ) {
     guard probe.result == nil else { return }
@@ -261,7 +263,7 @@ final class V4LivenessState: @unchecked Sendable {
     let cause =
       duration == nil && cause != .closed && cause != .providerFailed ? .timeUnavailable : cause
     probe.failure = cause
-    probe.result = TransportV4LivenessProgress(
+    probe.result = TransportLivenessProgress(
       submitted: probe.submitted,
       complete: probe.complete, elapsedMilliseconds: duration)
     if cause == nil { probe.respondedAt = now }
@@ -279,7 +281,7 @@ final class V4LivenessState: @unchecked Sendable {
     V4Crypto.wipe(&probe.nonce)
     collect(probe)
   }
-  func end(_ probe: V4LivenessProbe, reason: TransportV4LivenessFailure) { finish(probe, reason) }
+  func end(_ probe: V4LivenessProbe, reason: TransportLivenessFailure) { finish(probe, reason) }
   func release(_ probe: V4LivenessProbe) {
     if probe.result == nil { finish(probe, .canceled) }
     probe.waiterReleased = true
@@ -326,7 +328,7 @@ final class V4LivenessState: @unchecked Sendable {
     else {
       return nil
     }
-    do { return try begin(automatic: true) } catch let error as TransportV4LivenessError
+    do { return try begin(automatic: true) } catch let error as TransportLivenessError
       where error.reason == .resourceExhausted
     {
       self.next = now

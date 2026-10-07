@@ -54,12 +54,34 @@ func (r *RPCServices) PrepareEncodedShortUnaryResult(ctx context.Context, route 
 func (o *UnaryOperation) encodeSynchronous(ctx context.Context, executor *ApplicationExecutor, origin *applicationContext, input []byte, codec SynchronousUnaryCodec, backing, task resourcev4.Reference, prepared *rpcv4.PreparedRequest) error {
 	var permit *ApplicationPermit
 	var err error
+	o.services.mu.Lock()
+	plan := o.services.plan
+	o.services.mu.Unlock()
+	if plan == nil {
+		return cryptov4.ErrClosed
+	}
+	plan.mu.Lock()
+	group := plan.applicationGroup
+	plan.mu.Unlock()
+	if group == nil {
+		return cryptov4.ErrClosed
+	}
 	if origin == nil {
-		permit, err = executor.TryAcquire(o.class, task, backing)
+		permit, err = executor.tryAcquireInGroup(group, o.class, task, backing)
 		if err != nil {
 			return err
 		}
 		defer permit.Close()
+	} else {
+		if err := executor.retainSynchronousWork(group); err != nil {
+			return err
+		}
+		defer executor.releaseSynchronousWork(group)
+	}
+	// Retain the target group before repeating the new-work gate, so Drain
+	// either refuses this encoder or observes its real callback responsibility.
+	if o.services.draining.Load() {
+		return ErrSessionDraining
 	}
 	invoke := func() {
 		err = o.runSynchronousEncoder(ctx, executor, origin == nil, input, codec, backing, prepared)

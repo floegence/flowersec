@@ -29,6 +29,7 @@ import (
 // and preauth account generations before UDP/TLS admission. Private signing keys
 // and CA roots are independently admitted immutable host dependencies.
 type WebTransportServerConfig struct {
+	AcceptedRouteCapacity uint16
 	// Side names the tunnel endpoint; Relay selects the relay listener.
 	// Direct listeners keep the zero values and are logical servers.
 	Side                               protocolv4.Direction
@@ -50,6 +51,7 @@ type WebTransportServerConfig struct {
 }
 
 type WebTransportServer struct {
+	acceptedRoutes      acceptedRoutePolicies
 	mu                  sync.Mutex
 	c                   WebTransportServerConfig
 	reservation, shared resourcev4.Reference
@@ -105,11 +107,15 @@ func WebTransportServerCharge(c WebTransportServerConfig) (resourcev4.Vector, er
 	if certificateBytes > 262144 {
 		return resourcev4.Vector{}, resourcev4.ErrConfiguration
 	}
+	alternateBytes, err := acceptedRoutePoliciesBacking(c.AcceptedRouteCapacity, webTransportFactoryRouteBytes, webTransportFactoryRouteNodes)
+	if err != nil {
+		return resourcev4.Vector{}, err
+	}
 	decoder, err := protocolv4.DecoderBackingBytes(webTransportFactoryRouteBytes, webTransportFactoryRouteNodes)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	bytes := uint64(unsafe.Sizeof(WebTransportServer{})) + decoder + certificateBytes*16 + 8192 +
+	bytes := uint64(unsafe.Sizeof(WebTransportServer{})) + alternateBytes + decoder + certificateBytes*16 + 8192 +
 		uint64(c.Connections)*(uint64(unsafe.Sizeof(WebTransportIngress{}))+uint64(unsafe.Sizeof(acceptedWebTransport{}))+uint64(unsafe.Sizeof((*WebTransportIngress)(nil)))+4096)
 	return (resourcev4.Vector{resourcev4.SDKBytes: bytes, resourcev4.Items: 1 + 2*uint64(c.Connections),
 		resourcev4.WorkSlots: 1 + uint64(c.Connections), resourcev4.Tasks: 1 + uint64(c.Connections), resourcev4.Timers: uint64(c.Connections)}).
@@ -149,6 +155,10 @@ func NewWebTransportServer(c WebTransportServerConfig, reservation, environment 
 			_ = s.WaitCleanup(context.Background())
 		}
 	}()
+	s.acceptedRoutes, err = newAcceptedRoutePolicies(c.AcceptedRouteCapacity, webTransportFactoryRouteBytes, webTransportFactoryRouteNodes)
+	if err != nil {
+		return nil, err
+	}
 	decoder, err := protocolv4.NewDecoder(webTransportFactoryRouteBytes, webTransportFactoryRouteNodes)
 	if err != nil {
 		return nil, err
@@ -337,9 +347,9 @@ func (s *WebTransportServer) accept(ctx context.Context, c sessionv4.AcceptedEnt
 			_ = f.retireUnstarted()
 		}
 	}()
-	acceptCtx, cancel := context.WithCancelCause(ctx)
+	acceptCtx, cancel := newCarrierPreparationContext(ctx)
 	stop, stopped := make(chan struct{}), make(chan struct{})
-	go watchQUICPreparation(acceptCtx, cancel, c.Initial.Deadline, stop, stopped)
+	go watchCarrierPreparation(ctx, acceptCtx, cancel, c.Initial.Deadline, stop, stopped)
 	watching := true
 	finishWatch := func() {
 		if watching {
@@ -482,7 +492,11 @@ func (s *WebTransportServer) checkAcceptedRoute(connection *webtransport.OwnedCo
 		return err
 	}
 	if !bytes.Equal(route, s.document.Bytes()) {
-		return protocolv4.CBORFailure("accepted_listener_binding")
+		now, err := s.sampleLocked()
+		if err != nil {
+			return err
+		}
+		return s.acceptedRoutes.check(route, s.certificates, s.host, s.c.Roots, now.Interval)
 	}
 	return nil
 }
@@ -577,6 +591,7 @@ func (s *WebTransportServer) cleanupLocked() {
 	}
 	s.cleaned = true
 	if s.document != nil {
+		s.acceptedRoutes.release()
 		s.document.Release()
 		s.document = nil
 	}
@@ -729,7 +744,7 @@ func (f *WebTransportIngress) PrepareAccepted(ctx context.Context, deadline *tim
 			_ = provider.Retire()
 		}
 	}()
-	prepareCtx, cancel := context.WithCancelCause(ctx)
+	prepareCtx, cancel := newCarrierPreparationContext(ctx)
 	defer cancel(context.Canceled)
 	f.mu.Lock()
 	f.cancel = func() { cancel(context.Canceled) }
@@ -739,7 +754,7 @@ func (f *WebTransportIngress) PrepareAccepted(ctx context.Context, deadline *tim
 		return nil, resourcev4.ErrClosed
 	}
 	stop, stopped := make(chan struct{}), make(chan struct{})
-	go watchQUICPreparation(prepareCtx, cancel, deadline, stop, stopped)
+	go watchCarrierPreparation(ctx, prepareCtx, cancel, deadline, stop, stopped)
 	watching := true
 	finishWatch := func() {
 		if watching {

@@ -132,6 +132,9 @@ func nativeTransportCorePairPrepared(t *testing.T, profile string, clock *timev4
 				})
 			}
 		}
+		if handlers := fixtures[h.Role].plan.config.Handlers.Plan; handlers != nil && handlers.registrations[0].config.Messages != nil {
+			installCoreDeliveryAuthority(t, &fixtures[h.Role], h, initial)
+		}
 	})
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -260,6 +263,14 @@ func nativeTransportCorePairPrepared(t *testing.T, profile string, clock *timev4
 		}
 		cores[role] = result.core
 	}
+	// READY transfers the carrier before the initial watchdog releases its
+	// original backing. Complete that cleanup before callers compare resource
+	// snapshots of the established Session and its native provider.
+	for _, initial := range pair {
+		if err := initial.WaitCleanup(ctx); err != nil {
+			t.Fatal("initial handshake cleanup", err)
+		}
+	}
 	ended := make(chan error, 2)
 	for _, core := range cores {
 		go func() { ended <- core.Runtime().Run(ctx) }()
@@ -328,7 +339,27 @@ func nativeTestRPCServicesPlan(t *testing.T, fixture *initialCoreFixture, histor
 	if preparePlan != nil {
 		preparePlan(f, &planConfig)
 	}
+	// Provider regression fixtures install a trusted registry directly, as
+	// handlerCorePair does. They do not exercise application lease authorization.
+	// Keep it outside the independently installed RPC service SessionPlan so
+	// captures do not require an application lease that this fixture never grants.
+	handlers := planConfig.Handlers
+	planConfig.Handlers = nil
 	p := applicationTestPlan(t, f, planConfig, accounts...)
+	if handlers != nil {
+		fixture.plan.config.Handlers = SessionStreamHandlerConfig{Plan: handlers, Concurrency: 2, TimeoutMS: 10000, RuntimeBytes: 8192, RuntimeBytesPerInvocation: 32768, internal: true}
+		// Install the larger dispatcher with its actual original charge before
+		// this isolated fixture admits any Session or native I/O.
+		charge, err := sessionStreamDispatcherCharge(fixture.plan.config.Handlers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixture.plan.refs[coreHandlersOwner].Release()
+		fixture.plan.refs[coreHandlersOwner], err = fixture.root.Reserve(admissionResourceKey(fixture.plan.resourceOwner, 93), charge, accounts...)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	c := fixture.plan.config
 	rpcConfig := RPCServicesConfig{Native: true, NotifyReceivePending: 16, NotifyPublishPending: 16, NotificationWaitMS: 10000, NotificationCleanupMS: 10000, CompletionGraceMS: 5000,
 		ShortRequestBytes: 8192, ShortResponseBytes: 8192, ShortTaskCharge: f.executor.TaskCharge(), ShortCompletionCharge: f.executor.CompletionFloorCharge(), CryptoProfile: c.Session.Profile,
@@ -414,7 +445,7 @@ func TestNativeTransportBadDirectionResetsStreamAndPreservesHealthyStream(t *tes
 			break
 		}
 		if !errors.Is(err, cryptov4.ErrCapacity) {
-			t.Fatal(err)
+			t.Fatal("maintenance after isolated reset", err, "runtime causes", cores[0].plan.runtime.Err(), cores[1].plan.runtime.Err())
 		}
 		select {
 		case <-ctx.Done():

@@ -48,8 +48,16 @@ fn replace(raw: &[u8], schema: &str, changes: &[(u64, Vec<u8>)], seed: Option<u8
                 .map_or_else(|| child.raw().to_vec(), |v| v.1.clone()),
         ));
     }
-    if let Some(seed) = seed {
+    if seed.is_some() {
         fields.pop();
+    }
+    for (id, value) in changes {
+        if !fields.iter().any(|(existing, _)| existing == id) {
+            fields.push((*id, value.clone()));
+        }
+    }
+    fields.sort_by_key(|(id, _)| *id);
+    if let Some(seed) = seed {
         sign(schema, &fields, &signer(seed))
     } else {
         encode_map(&fields)
@@ -111,7 +119,19 @@ impl Fixture {
         profile: &str,
         identities: Option<[(&[u8], &[u8; 32]); 2]>,
     ) -> Self {
+        Self::with_identity_and_execution(source, profile, identities, false)
+    }
+    pub(crate) fn with_identity_and_execution(
+        source: ActivationSource,
+        profile: &str,
+        identities: Option<[(&[u8], &[u8; 32]); 2]>,
+        execution: bool,
+    ) -> Self {
         let environment = TransportEnvironment::with_options(TransportEnvironmentOptions {
+            application_executor: crate::ApplicationExecutorConfig {
+                execution,
+                ..crate::ApplicationExecutorConfig::default()
+            },
             clock: Some(TestClock::new(1000, 1010)),
             tenant_limits: crate::environment_v4::ResourceLimits {
                 sdk_bytes: 64 << 20,
@@ -122,12 +142,22 @@ impl Fixture {
                 ..TransportEnvironmentOptions::default().root_limits
             },
             session_limits: crate::environment_v4::ResourceLimits {
-                sdk_bytes: 8 << 20,
+                // Execution fixtures install the complete fixed RPC lane set
+                // alongside the authenticated engine and recovery owners.
+                sdk_bytes: if execution { 16 << 20 } else { 8 << 20 },
                 ..TransportEnvironmentOptions::default().session_limits
             },
             ..TransportEnvironmentOptions::default()
         })
         .unwrap();
+        Self::with_identity_and_environment(source, profile, identities, environment)
+    }
+    pub(crate) fn with_identity_and_environment(
+        source: ActivationSource,
+        profile: &str,
+        identities: Option<[(&[u8], &[u8; 32]); 2]>,
+        environment: TransportEnvironment,
+    ) -> Self {
         let mut verifier = environment
             .namespace_verifier(
                 NamespaceTrustRoot {
@@ -522,6 +552,34 @@ impl Fixture {
         );
         self.refresh_activation();
     }
+    /// Recovery fixtures carry issuer-signed policy and renegotiate their
+    /// original transcript; tests never switch an admitted engine's flags.
+    pub(crate) fn enable_execution_recovery(&mut self) {
+        let artifact = map(&self.artifact, "Artifact");
+        let contract = artifact.field("Artifact", "session_contract").unwrap();
+        // Execution Sessions reserve eleven original internal channels before
+        // admitting business streams; recovery tests also keep raw targets open.
+        let contract = replace(
+            contract.raw(),
+            "SessionContract",
+            &[(1, u(32)), (2, u(262_144)), (5, u(2)), (6, u(16))],
+            None,
+        );
+        let recovery = encode_map(&[
+            (0, vec![0xf5]),
+            (1, u(0)),
+            (2, u(0)),
+            (3, u(10_000)),
+            (4, u(4980)),
+        ]);
+        self.artifact = replace(
+            &self.artifact,
+            "Artifact",
+            &[(13, contract), (14, u(2)), (15, u(2)), (16, recovery)],
+            Some(12),
+        );
+        self.refresh_activation();
+    }
     pub(crate) fn set_max_credit(&mut self, maximum: u64) {
         let artifact = map(&self.artifact, "Artifact");
         let contract = artifact.field("Artifact", "session_contract").unwrap();
@@ -854,4 +912,129 @@ fn namespace_closure_and_material_source_are_exact() {
     );
     fixture.refresh_activation();
     fixture.reject();
+}
+
+#[test]
+fn live_configuration_resolves_original_certificates_and_signer_before_issuance() {
+    let fixture = Fixture::new(ActivationSource::LiveAuthority);
+    let before = fixture.environment.resource_usage();
+    let digests = verify_live_source_configuration(
+        fixture.environment.root(),
+        &[&fixture.verifier],
+        [&fixture.client, &fixture.server],
+        [5; 16],
+        "activate-1",
+    )
+    .unwrap();
+    assert_eq!(
+        digests[0],
+        digest("certificate_digest", &fixture.client, "IdentityCertificate")
+    );
+    assert_eq!(
+        digests[1],
+        digest("certificate_digest", &fixture.server, "IdentityCertificate")
+    );
+    assert_eq!(fixture.environment.resource_usage(), before);
+    assert!(
+        verify_live_source_configuration(
+            fixture.environment.root(),
+            &[&fixture.verifier],
+            [&fixture.client, &fixture.server],
+            [5; 16],
+            "unconfigured-signer"
+        )
+        .is_err()
+    );
+    assert_eq!(fixture.environment.resource_usage(), before);
+}
+#[test]
+fn prepared_live_direct_installs_proof_on_original_account_and_only_tightens_horizon() {
+    let fixture = Fixture::new(ActivationSource::LiveAuthority);
+    let pending = reserve_live_direct_preparation(
+        fixture.environment.root(),
+        &[&fixture.verifier],
+        DirectCredentialInput {
+            artifact: &fixture.artifact,
+            client_certificate: &fixture.client,
+            server_certificate: &fixture.server,
+            activation: &[],
+            source: ActivationSource::LiveAuthority,
+            candidate_index: 0,
+        },
+        [25; 16],
+        "activate-1",
+    )
+    .unwrap();
+    let original = pending.account.clone();
+    let original_usage = fixture.environment.resource_usage();
+    let admission = pending
+        .complete(
+            fixture.environment.root(),
+            &[&fixture.verifier],
+            &fixture.artifact,
+            &fixture.activation,
+        )
+        .unwrap();
+    assert!(admission.account.same_owner(&original));
+    assert_eq!(admission.source, ActivationSource::LiveAuthority);
+    assert!(admission.pool.is_none());
+    assert!(admission.pool_activation.is_none());
+    assert_eq!(admission.attempt_id, [25; 16]);
+    assert_eq!(
+        admission.activation_digest,
+        digest(
+            "activation_digest",
+            &fixture.activation,
+            "ActivationAuthorization"
+        )
+    );
+    assert_eq!(
+        fixture.environment.resource_usage().sessions,
+        original_usage.sessions
+    );
+    admission.account.check().unwrap();
+}
+#[test]
+fn live_proof_refuses_other_attempt_route_and_unconfigured_signer_without_new_account() {
+    let fixture = Fixture::new(ActivationSource::LiveAuthority);
+    for change in [
+        (9, b(&[26; 16])),
+        (8, b(&[27; 32])),
+        (2, t("another-signer")),
+    ] {
+        let before = fixture.environment.resource_usage();
+        let pending = reserve_live_direct_preparation(
+            fixture.environment.root(),
+            &[&fixture.verifier],
+            DirectCredentialInput {
+                artifact: &fixture.artifact,
+                client_certificate: &fixture.client,
+                server_certificate: &fixture.server,
+                activation: &[],
+                source: ActivationSource::LiveAuthority,
+                candidate_index: 0,
+            },
+            [25; 16],
+            "activate-1",
+        )
+        .unwrap();
+        let proof = replace(
+            &fixture.activation,
+            "ActivationAuthorization",
+            &[change],
+            Some(13),
+        );
+        assert_eq!(
+            pending
+                .complete(
+                    fixture.environment.root(),
+                    &[&fixture.verifier],
+                    &fixture.artifact,
+                    &proof
+                )
+                .unwrap_err(),
+            EnvironmentError::AuthorizationDenied
+        );
+        assert_eq!(fixture.environment.resource_usage(), before);
+    }
 }

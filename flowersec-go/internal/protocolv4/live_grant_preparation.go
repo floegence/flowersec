@@ -223,7 +223,14 @@ func (s *CredentialSubscriptions) completeLiveGrant(complete *EndpointCredential
 	if _, err = complete.checkCurrentAt(s.bindings[:], s.hardEnd, samples); err != nil {
 		return err
 	}
-	s.closure = complete
-	s.hardEnd = min(s.hardEnd, complete.hardEnd)
-	return s.hard.TightenAt(s.hardEnd, samples[0])
+	end := min(s.hardEnd, complete.hardEnd)
+	if err = s.hard.TightenAt(end, samples[0]); err != nil {
+		return err
+	}
+	// Result floors were reserved against this exact pending closure before
+	// TxA. Retain its identity only after verifying the original Grant above;
+	// delivery still checks the completed signed closure and original deadline.
+	s.deliveryOrigin = original
+	s.closure, s.hardEnd = complete, end
+	return nil
 }

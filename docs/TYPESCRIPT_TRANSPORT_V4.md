@@ -36,7 +36,9 @@ including after cancellation. Application callbacks receive authenticated
 identity facts only after original FSB verification.
 
 Provision admission storage using `createV4SQLitePoolBacking(...)` and
-`openSQLiteAdmissionStore(...)`. Its service binding fixes tenant, issuer,
+`await openSQLiteAdmissionStore(...)`. SQLite and filesystem work run in a
+bounded worker; the original invocation retains authorization, deadlines and
+resource ownership while each transaction awaits its actual result. Its service binding fixes tenant, issuer,
 audience and server identity. Pool activation additionally requires the
 separately configured shared `parentWinnerStore`; the consumer spend authority
 cannot replace it. Reopening requires independent continuity and advances the
@@ -181,7 +183,7 @@ their own admission checks.
 
 Actual carrier preparation and complete Session admission precede authority
 activation or pool TxA-P. The verified live authorization or successful durable
-pool consume receipt precedes the first HELLO byte. FSB/FSA,
+pool consume completion precedes the first HELLO byte. FSB/FSA,
 KKpsk0 Noise and both authenticated READY messages all complete before a public
 Session is returned. Every WebSocket message carries exactly one envelope.
 Streams support bounded reads and writes, reader cursors and write operations;
@@ -433,12 +435,22 @@ also uses its host clock; an incorrect host clock can conservatively reject a
 connection. Pin mode verifies the complete leaf DER against only the active
 signed pin set and enforces the pin certificate profile without CA fallback.
 
-`createV4SQLitePoolBacking(...)` and `openV4SQLitePoolStore(...)` own an actual
-SQLite database. Serialized durable transactions enforce the tenant/issuer/lease
-uniqueness key and current fencing epoch. The stored projection retains signed
+`createV4SQLitePoolBacking(...)` and asynchronous
+`await openV4SQLitePoolStore(...)` own an actual SQLite database. One bounded
+worker performs SQLite and filesystem operations, using the installed
+`@floegence/flowersec-node-native` admission extension on supported macOS and
+glibc Linux platforms; the original Environment
+authorizes each transaction stage. Each store permits one original transaction
+and refuses overlapping calls without a queue. Serialized durable transactions
+enforce the tenant/issuer/lease uniqueness key and current fencing epoch. The stored projection retains signed
 proof and owner bindings without persisting Artifact plaintext or PSK. SQLite
 commit success is the consume receipt; a callback cannot assert that a commit
-occurred.
+occurred. Cancellation or deadline expiry seals the worker and reports
+`spent_unknown` if COMMIT was already authorized. Request and worker allocations
+remain charged through actual exit. `store.close()` seals future calls;
+`await store.waitCleanup()` observes worker exit and request cleanup. Remove
+database files only after that observation, then call `backing.releaseRemoved()`
+to release the retained disk allocation.
 
 ## Browser carrier and optional IndexedDB store
 
@@ -611,15 +623,18 @@ success. Queued FIN is preserved during cleanup. An incoming native uni stream
 is unsupported by this reliable mapping and closes the carrier. One prepaid
 observer and its actual cancellation tail handle that input without body reads.
 
-This entrance currently publishes the conservative `shared_ordered` and
+This entrance publishes the conservative `shared_ordered` and
 `shared_failure_scope` guarantee values. It refuses required independent read
-progress, required bound-stream isolation and datagrams. Native association and
+progress and required bound-stream isolation. Native datagram capability is
+checked against the authenticated feature selection and actual provider MTU;
+it does not follow from the presence of a browser datagram API alone. The
+pre-Acquire graph reserves the carrier dependency, every configured native
+stream position, bounded datagram queues and policy work. Native association,
 directional handling, segmented promise-backed DATA assembly and shared
-authentication/decoding workspaces are implemented. The full resource admission
-model and actual browser/provider qualification remain incomplete. Depth-two
-assembly has implementation but still needs its final behavioral and resource
-qualification. Public API availability
-does not claim those additional guarantees or production qualification.
+authentication/decoding workspaces retain that original backing through actual
+provider cleanup. Browser/provider and depth-two behavioral and resource
+qualification remain separate acceptance requirements. Public API availability
+does not establish production qualification.
 
 `createV4IndexedDBPoolBacking(...)` and asynchronous
 `openV4IndexedDBPoolStore(...)` provide an optional explicit host integration;
@@ -695,16 +710,135 @@ history obligations; it performs no deletion. Both stores retain records for at
 least seven days after the later of initiation end and consumed trusted upper
 time, have finite record capacity and expose no automatic history deletion.
 
+## DuplexBridge
+
+`DuplexBridge(a, b, options)` in the core, browser and proxy entrypoints takes
+two different unused accepted Flowersec Streams. The Node entrypoint also
+accepts one SDK-created `DuplexTCPConnection` paired with one accepted
+Flowersec Stream. `connectDuplexTCP(environment, { host, port, readChunkBytes })`
+creates this opaque numeric-address TCP endpoint with real write half-close.
+Its socket remains private; arbitrary `net.Socket`, `tls.TLSSocket`, WebSocket,
+and application-defined byte endpoints cannot transfer complete ownership
+through this entrypoint.
+
+The TCP factory reserves its native dependency in the original Environment
+before creating a socket. Environment closure terminates the original socket
+and waits for its actual physical and callback custody. A bridge adds the
+same native backing to the paired Stream's original Session and direction
+account scopes without double charging the root. TCP user-space and OS memory
+remain provider allowance and observation boundaries; neither a Node
+high-water mark nor native close is a whole-process memory guarantee.
+
+The bridge claims each endpoint's original read, write, half-close, finish and
+reset gates as one bounded operation. The constructor does no application I/O
+before its owners and detached result budgets are secured. `readChunkBytes` is
+limited to 1 MiB for Stream pairs and 64 KiB for native TCP pairs; each direction
+owns one fixed chunk buffer. The TCP endpoint's creation chunk must be no
+larger than the bridge chunk. `timeoutMS`, `gracefulFinishTimeoutMS` and
+`cleanupTimeoutMS` are finite local bounds. Defaults are a 16 KiB bridge chunk,
+90 seconds overall, 30 seconds for graceful finish, and 5 seconds for cleanup
+observation. Timeout values are positive integer milliseconds, at most 90
+seconds.
+
+```ts
+const native = await connectDuplexTCP(environment, {
+  host: "127.0.0.1", port: upstreamPort, readChunkBytes: 16384,
+});
+const bridge = new DuplexBridge(stream, native, { readChunkBytes: 16384 });
+bridge.start();
+const result = await bridge.wait({ signal: waitSignal });
+try {
+  consumeTransferResult(result);
+} finally {
+  result.release();
+}
+```
+
+Call `start()` once or more; repeated calls join the same operation. Each
+direction reads one chunk, advances only the unaccepted suffix returned by the
+destination writer, and records source-read, destination-accepted and
+unaccepted-tail bytes at the same owner boundary. A native write waits for its
+original callback exit and any required drain before another chunk is read;
+its accepted count proves only local Node acceptance. EOF closes only the
+target send direction, so the reverse pump continues. After both EOFs and both
+`closeWrite` operations, the bridge concurrently waits for both original
+`finish()` operations. A Flowersec target reports `send_drained`; a TCP target
+reports `native_send_finished`. TCP shutdown never proves authenticated peer
+drain or business completion.
+
+`wait({ signal })` is a passive observation: canceling that signal rejects only
+that wait and leaves the bridge running. `AbortSignal` in the constructor
+options, `timeoutMS`, or `abort()` cancels the complete operation and resets both
+owned endpoints. `progress()` remains available through failures, explicit
+aborts and wait cancellation. `wait()` delivers the same immutable
+`DuplexResult` on repeated waits without copying its tail; its `release()`
+returns detached tail backing and is idempotent. A nonempty unaccepted tail
+remains charged until that result is released.
+
+`cleanupStatus()` reports physical bridge cleanup separately from result-tail
+ownership. `waitCleanup({ signal })` passively waits for actual endpoint
+cleanup and may return `cleanup_incomplete` when its finite observation bound
+expires; it never refunds a still referenced input, tail or native callback.
+Duplicate endpoint ownership, raw Stream I/O, unsupported endpoint kinds and
+resource exhaustion fail locally before copying. The native TCP factory
+supports numeric IPv4/IPv6 without DNS or TLS; browser-native byte endpoints
+remain unavailable to this helper.
+
+## Original pool tunnel server Allow
+
+Pool tunnel clients install `PoolServerAllowConfiguration` with the original
+server Grant and a fixed recipient/incarnation for each candidate. Supply it
+as `poolServerAllow` on the Node or browser client configuration for one fixed
+installation, or return it with each trusted credential provider's material
+for a source that supplies different Grants. The durable pool source's trusted
+`decodeMaterial` callback can return the same per-material field. Configuring
+both locations for the same material is refused before consumption.
+
+`createNodePoolServerAllow(environment, options, recipients)` captures the
+independently installed HTTPS endpoint, mutual-TLS credentials and a publication
+window of at most 2000 ms. `createBrowserPoolServerAllow` uses an authenticated
+HTTPS terminator with the explicit TLS 1.3/no-early-data deployment declaration
+and fixed bearer credential. Both adapters capture their configuration, admit
+the bounded sending resources, and reserve and encode the one-use request before
+the original Connect calls its pool store. Only that call's confirmed success
+continuation publishes the original server Grant, before HOP. Cancellation,
+refusal, unknown consumption, replay and later journal queries cannot publish.
+Close joins the actual transport work before returning its resources.
+
+`createRegisteredPoolTunnelServer` and `createRegisteredPoolTunnelAuthority`
+require `serverAllow: NodePoolServerAllowReceiverOptions`. The receiver pins A's
+installed client certificate and exposes its public endpoint, recipient and
+incarnation through `poolServerAllowBinding()`. Grant issuance and
+`prepared_ack` complete preparation only. B waits for the exact original Allow,
+verifies its Artifact, Grant, candidate, route, attempt, pairing and deadline,
+then releases that material to its single prepared server leg. This applies to
+both physical listener and dialer directions. Core HOP and server admission
+also require this delivery on the same material; a generic credential resolver
+cannot turn a locally installed pool Grant into a received Allow. The canonical CBOR `true` response
+acknowledges this delivery; it does not create another authorization.
+
+The engineering browser host keeps its mutual-TLS key and target endpoint in
+the independent installation. Browser code receives the fixed same-origin
+forwarding route, host capability and public recipient binding. The original
+Connect submits the request; host history and runner commands do not dispatch
+Allow. A production browser deployment supplies its own authenticated terminator
+through `createBrowserPoolServerAllow` or an explicitly trusted control adapter.
+
 ## Unsupported assembly and qualification
 
-The TypeScript v4 clients currently have no built-in remote pool-consume/top-up
-service or raw QUIC assembly. The direct Node WSS listener is described above;
-relay and datagram serving remain unavailable. The explicit v4 Session service,
-execution and Controller APIs are described below; their availability does not
-qualify every native provider or replace the default SDK entry points. Generated
-result types and internal protocol primitives alone do not establish a public path.
-WSS provides one ordered failure/progress domain and cannot satisfy independent
-stream progress or input-isolation requirements.
+Remote pool consumption and top-up require an explicitly configured authority.
+Node provides `configureNodeRawQUIC`, `createNodeRawQUICListener`,
+`configureNodeWebTransport` and `createNodeWebTransportListener` through the
+built-in native transport package. A missing native package fails locally with
+`NativeTransportUnavailableError`. `createTunnelRuntime` owns the independently
+configured relay listeners, authenticated hop claims and bounded reliable or
+datagram forwarding; it has no endpoint Session or application dispatcher.
+Native datagrams require the signed feature selection and actual MTU gate.
+
+The explicit Session, service, execution and Controller APIs use the same
+current core as the default SDK entry points. Provider availability does not
+qualify every deployment. WSS provides one ordered failure/progress domain and
+cannot satisfy independent stream progress or input-isolation requirements.
 
 Focused Node tests exercise the actual WSS/SQLite client. Chromium functional
 tests exercise both crypto profiles over real WebSocket and strict IndexedDB,
@@ -1042,10 +1176,29 @@ OPEN behavior.
 The public fixed-Session unary service client uses these original components.
 Explicit services client configuration admits the RPC application graph before
 consumption and preserves the signed profile and general-call limit. Complete
-application baseline, remaining ordinary channels, provider scheduling isolation
-and workload qualification remain incomplete. The execution profile connects
+application baseline, provider scheduling isolation and workload qualification
+remain incomplete. The execution profile connects
 notification/management and explicit Node SQLite execution history through the
 same application graph.
+
+Services and execution reserve eight ordinary channel positions before Acquire,
+four for each original opener. Local interactive and bulk demand each use at
+most two of that opener's positions; bootstrap occupies the first client
+interactive position. The private Session driver accepts the reserved ordinary
+kind through real OPEN/ACCEPT and the same RPC engine, with empty metadata and
+16 KiB initial credit. Raw AcceptStream and application registrations cannot
+take that kind. New operations prefer a ready channel for their trusted local
+work class with fewer queued publications; existing operations keep their
+original publisher and are never replayed. Prepared payloads pay the Session
+send budget, and publication retains their same backing in the selected
+channel's send account through the real tail. Protected initializer and query
+payloads prepay that alias reference; publication does not need a new reference
+slot. A retired generation retains
+its original stream, key, publication and native positions through physical
+cleanup and authenticated retirement. Replacement uses a new scope and real
+OPEN/ACCEPT. When no ordinary channel remains ready, the original Session driver
+can establish a charged replacement without acquiring connection material.
+This source implementation does not establish provider or workload qualification.
 
 ## Browser HTTPS live authority
 
@@ -1101,7 +1254,11 @@ and never performs remote query or stores application aliases. Bind retains the
 installed bodies before the source may be closed, so a transferred binding and
 its operations remain charged to their original method owners. Missing initial
 methods, extra, noncanonical, mismatched or expired static entries fail the whole
-bind; omitted noninitial methods remain `not_ready`.
+bind; omitted noninitial methods remain `not_ready`. `service.contract(method).offer`
+returns a detached frozen `AdmissionOffer` value containing only the installed
+contract digest and its UTC not-before/not-after bounds. It retains no binding,
+Session, decoder or execution capability; refresh produces a new snapshot and
+never mutates a value already returned.
 The original Environment reserves
 the RPC inputs, fixed queries, result positions and bootstrap channel before
 consuming authorization. Services require at least 16 KiB receive capacity and
@@ -1159,9 +1316,9 @@ plan, registered full contract and explicit per-method query permissions.
 Query visibility defaults to unavailable and does not bypass the handler's
 separate authorization. The handler and response codecs run in the original
 application executor. Server streaming and durable Node notification execution
-use that same executor and history owner. Controller integration, the complete
-multi-channel ready-minimum and workload qualification remain implementation
-work. Encrypted in-memory connectivity checks do not establish native-provider
+use that same executor and history owner. Complete application baseline and
+workload qualification remain implementation work. Encrypted in-memory
+connectivity checks do not establish native-provider
 or cross-language qualification.
 
 ### Volatile execution unary
@@ -1437,10 +1594,13 @@ reference format with notify shape, and does not grant Start or replay rights.
 
 ## Durable Node execution history
 
-`openV4SQLiteExecutionStore` uses the same live execution owner for unary,
+`await openV4SQLiteExecutionStore(...)` uses the same live execution owner for unary,
 notification and server-streaming execution. Install each full contract and
-its exact finite Offer windows through `installContract`; reopen assembly can
-read the original bytes and windows with `readRegistration`. The frozen
+its exact finite Offer windows through `await store.installContract(...)`;
+reopen assembly can read the original bytes and windows with
+`await store.readRegistration(...)`. Synchronous handler assembly checks verified
+registration snapshots; each original admission transaction rechecks the live
+registration, fence and deadline before granting execution work. The frozen
 `store.service` capability binds handler and management-only registrations to
 that storage authority. It cannot be reproduced by copying configuration.
 
@@ -1465,10 +1625,17 @@ current authoritative read returns `unavailable`. Volatile absence retains its
 separate continuous-owner requirements. A durable cancellation signal is
 issued only after the original cancel marker transaction is confirmed.
 
-The store's own close waits for live execution and publication tails. Disk
-charges survive connection and Environment close while database files remain.
-Qualified independent scheduling of synchronous SQLite I/O requires further
-integration.
+The store runs SQLite and filesystem operations in one bounded worker. A finite
+transaction scheduler serializes original calls, including registration reads,
+so SQL from separate invocations cannot interleave inside a transaction.
+Execution transitions retain their result buffers until committed receipts
+have been applied locally. Failure and exit persist the resulting current facts
+and preserve a known durable outcome when response delivery is canceled.
+
+`store.close()` seals new calls and retains live execution and publication
+tails. `await store.waitCleanup()` resolves after those tails, worker exit and
+resource release; repeated calls share the same promise. Disk charges survive
+connection and Environment close while database files remain.
 
 
 ## Response publication and maintenance
@@ -1511,8 +1678,10 @@ The application chooses its own maintenance policy for `unknown` and retains
 its own operation deduplication. Closing the maintenance owner ends observation
 waits without changing the publisher's outcome. `cleanupComplete()` waits for
 actual publication tails to leave before reporting completion. Transferred
-views retain their bounded observation positions until the maintenance owner
-closes; create its capacity for the actual maintenance workflow.
+views return their bounded observation positions after the outcome settles.
+The maintenance owner retains cleanup responsibility until the original handler
+and actual publication tail both retire; size its capacity for concurrent pending
+observations in the maintenance workflow.
 
 
 ## Explicit retained stream content
@@ -1531,7 +1700,7 @@ caps. The store reserves content workspace and combined content/checkpoint
 disk capacity before accepting work. Its persisted configuration must match on
 reopen; reopening never resets quotas or retention origins.
 
-Within the streaming handler, call `saveV4StreamContent(context, position,
+Within the streaming handler, call `await saveV4StreamContent(context, position,
 payload)` for explicitly selected bytes. Positions contain 1–256 bytes. Normal
 `writer.write` does not save content. A successful save returns committed and
 expiry timestamps, byte length and digest; saving the same position and bytes
@@ -1541,7 +1710,7 @@ operation admission or that position's first content commit, as declared in
 the exact contract. Saved content does not make the stream a unary retained
 result and does not replay the producer.
 
-The declared execution unary reader calls `readV4RetainedContent(context,
+The declared execution unary reader calls `await readV4RetainedContent(context,
 target, position, destination)` after its normal authentication and invocation
 admission. The target must belong to the current caller, tenant, audience and
 namespace. The store checks the original operation and request/contract
@@ -1584,7 +1753,7 @@ bytes response codec and enough response capacity for the complete token. In
 that method's authorized handler, select the result with:
 
 ```ts
-return issueV4Checkpoint(context, originalTarget,
+return await issueV4Checkpoint(context, originalTarget,
   { format: "position-v1", position: retainedPosition },
   { durationMS: 60_000n, applicationDurationLimitMS: 60_000n,
     historyNotAfterMS: actualCheckpointAvailabilityDeadline });
@@ -1614,9 +1783,11 @@ renewal. Closing and explicitly reopening the Environment restores those bytes
 and limits; an ambiguous commit remains unavailable until continuity is proved.
 Result payload expiry cannot erase an unexpired token's original history.
 
-Issuance and consumption use the store's single synchronous transaction
-workspace. Independent SQLite provider scheduling remains unavailable through
-this API.
+Issuance and consumption await the store's bounded worker through the same
+serialized transaction workspace. The original invocation retains its buffers
+and resource charges through cancellation and actual worker exit. A COMMIT
+that was published without a receipt remains unknown; queued or canceled
+work that was never published cannot be reported as committed.
 
 ## Recovering an accepted application Stream
 
@@ -1738,6 +1909,23 @@ const result = await prepared.takeResult();
 // Independent new interactions capture replacement.current.
 ```
 
+`controller.dispatch(operation, options)` starts a unary operation prepared
+through that Controller's service binding and returns its `UnaryStartResult`.
+`Dispatch` is the casing-compatible alias. The operation retains its original
+route and repeated dispatch calls join the same admission outcome; replacement
+does not replay or rebind it. Controller notification subscriptions are
+available as both `controller.notifications.subscribe(...)` and
+`controller.Notifications.Subscribe(...)`. When the original inbound plan already
+has the trusted method contract, subscriptions attach before own READY is
+submitted. Candidate inputs stay encoded until publication; decoding, projection,
+and delivery use the original application executor. Current, candidate, and
+retired sources share one bounded input queue and one callback, with
+`current_only` or `drain_aware` source policy selected explicitly. Late attachment
+and dropped inputs remain visible in `observationStatus()`. Gap callbacks share
+that serial executor and are not retried when they throw. A passive `waitClosed`
+timeout leaves the subscription active; Close retains callback resources until
+their actual cleanup completes.
+
 `createV4ServiceClient` constructs the same typed service with explicit source
 ownership. For an owned Controller, supply its configuration and the borrowed
 Environment:
@@ -1841,6 +2029,24 @@ waiter capacity. Cancellation removes only that wait. Calls made while an
 initializer holds publication wait for its result; a blocked initializer rejects
 new work. Calls with an application permit or `try_now` do not wait for a new
 Session.
+
+An ordinary Controller `call` with queued unary admission may move its pending
+route to another already published accepting current Session before BEGIN.
+The operation permits two reselections, including three choices in total. It
+keeps the original encoded bytes, contract, request identity, execution Offer,
+not-before/cutoff, response limit and all original deadlines. Selection checks
+the trusted peer mapping, stable caller/target identity and execution authority.
+It performs no material acquisition or connection attempt. The previous route
+loses publication authority before the new Session reserves its complete
+request, result, K and Completion resources. Old physical publication tails
+remain charged to their original Session until actual cleanup.
+
+BEGIN, route revocation and Close use the same scalar publication gate. After
+BEGIN, the original Session owns the submitted request and every send tail;
+transport failure cannot reselect or resend it. Fixed preparations, `try_now`,
+notifications, streaming, raw Streams, Resume and result reads retain their
+original owner. The final result recipient moves with a pre-BEGIN route without
+an intermediate Promise consuming or claiming the application result.
 
 The binding retains its original method snapshots, target, local defaults and
 acceptance policy. A new current Session does not approve a new exact contract.
@@ -2114,3 +2320,117 @@ Required notifications use the candidate's existing fixed notification vectors
 and wait for that original channel before initializer entry. A returned
 `submitted` notification status remains local submission, not remote handler
 completion.
+
+The ordinary `ConnectionController` exposes `diagnostic()` as a frozen value
+containing its local state, attempt count, an optional finite failure phase/code,
+and original connection facts when available. `waitForDiagnostic(previous, options)` waits in the controller's
+existing bounded wait slots and returns the latest differing snapshot; aborting
+the wait leaves the connection attempt and current Session running. The
+`ConnectionSnapshot.diagnostic` field uses the same projection. Host and source
+error messages outside the closed code vocabulary become `controller_failed`.
+Diagnostics carry no Session, transport, credential, identity or raw error, and
+`preserve_facts` does not authorize reacquisition or claim an admission outcome.
+
+`ConnectionError.connection` retains detached spend, admission, dual network
+READY and application publication facts independently. SQLite and IndexedDB
+write only their original commit observations; lost receipts remain unknown.
+The client marks admission in flight at FSB4 publication and admitted only after
+verifying FSA4. An initializer failure preserves authenticated network READY
+and records failed application publication. A registered live tunnel preserves
+a verified authority spend response before its later relay handoff. These
+facts do not install a credential or authorize replay. An original native
+preparation or Initial transport failure may obtain fresh material from the
+configured Source after the original cleanup completes, including when the
+previous spend is committed or unknown. Each attempt retains its original
+spend and admission facts; a consumed material is never reused. Source backoff
+and authoritative retry deadlines remain in force. Initializer entry fences
+automatic retry on failure, and submitted operations are never replayed. A
+published current Session may reconnect after its original connection failure
+or local Close; retired and failed candidate cleanup cannot start another cycle. `queryAvailability` is
+`unavailable` when this entrance has no bound receipt-query capability.
+
+`ConnectionError.localReport()` and `ConnectionController.localReport()` explain
+already recorded local outcomes without checking capacity, reserving resources
+or making a request. `LocalReport()` is the casing-compatible alias on both
+owners. The report returns
+a frozen `LocalReport` with a finite constraint class, the same connection and
+cleanup snapshots, and bounded local actions. Numeric required/available values
+are explicitly null when this result has no such evidence. This report grants
+no retry or activation authority and creates no observation owner.
+
+
+## Production diagnostics
+
+`EnvironmentConfig.diagnostics` enables detailed events explicitly. With that
+option absent, `environment.diagnosticSink()` returns `undefined`; finite
+aggregate counters remain available through
+`environment.diagnosticCounts(metric)`. Each snapshot contains a saturating
+uint64 total and fixed marginal histograms indexed by `diagnosticDimensions`.
+No identity, endpoint, operation ID, arbitrary error, or correlation ID becomes
+a counter label. Completed environments retain detached final counter values.
+
+The optional sink accepts `callback`, positive `runtimeBytes`, and optional
+`sampleBasisPoints`, `operationSlots`, and `queueEvents`. Sampling defaults to
+100 basis points (1%) and accepts 0 through 100. Callback runtime allowance is
+reserved for each of six delivery positions before enabling the sink. Capacity
+that cannot fit the bounded memory profile fails configuration before work
+starts. A root shares one separate diagnostic executor with two running and
+four ready positions; enabling it does not initialize ordinary application
+workers or consume their admission positions.
+
+Connection and application owners generate independent random 16-byte IDs.
+IDs rotate in UTC 15-minute buckets, including live operations. Each bucket
+permits at most 1024 IDs and 4096 accepted events. Events contain only `state`,
+`phase`, `code`, `duration_bucket`, `attempt_bucket`, `retry_disposition`, and
+`correlation_id`; their encoded size is at most 512 bytes and the sink memory
+profile is capped at 2 MiB. The default table and queue have 64 positions each.
+Overflow drops the event and increments `diagnostic_drop` without blocking the
+connection. Old bucket queues and SDK ID storage are cleared without emitting
+a mapping between buckets.
+
+Canceling a management wait or message send/receive wait does not retire its
+original diagnostic while a submitted request, encoder, decoder or native write
+is still active. A management slot retains its context until the matching late
+response or physical channel cleanup; message calls retain theirs through their
+actual callback and publication tails. Terminal events use that same context.
+
+Callbacks and their cancellation listeners run on the diagnostic executor,
+outside producer and transport close stacks. `sink.close()` seals delivery,
+purges queued events and requests cancellation, then returns the original
+bounded cleanup result. `cleanupStatus()` and `waitCleanup()` observe remaining
+callback work; a callback that ignores cancellation remains charged until it
+actually exits. Environment close includes this responsibility. Copies retained
+by a callback belong to the application, whose exporter must enforce its own
+retention and deletion policy.
+
+Operational triage starts with the unsampled `resource_rejection`,
+`store_failure`/`spend_unknown`, `tls_rejection`/`identity_rejection`,
+`rekey_timeout`, and `slow_consumer` counters. Rekey phase duration histograms
+separate local preparation, protocol preparation, and confirmation. Datagram
+current, old, and future epoch drops and cleanup timeouts have separate finite
+counters. Sampled details supplement those totals; they do not control recovery
+or authorize retries.
+
+## Durable format refusals
+
+Node pool, admission and execution stores and the browser IndexedDB pool inspect
+the fixed manifest header before opening records. A format refusal preserves `code: "storage_format"` and exposes
+an immutable `error.format` projection with `code: "storage_format_incompatible"`,
+the fixed transaction group and wire profile, observed and required revisions,
+a finite reason, and `exactConversionAvailable`. The current runtime supplies
+no exact offline converter, so that last field is always `false`.
+
+An observed revision is known only when the physical header, configured store
+identity, manifest revision and SQLite version hint agree. An unverified value
+is `{ known: false, value: 0 }`. The projection contains no path, stored identity,
+database contents, provider error or executable instructions. Opening accepts
+only the current format; it neither migrates records nor recreates a refused
+store. SQLite validates the complete current layout and stored records in a
+read transaction on its original READWRITE connection. Before reading the
+database, the SDK sets no-checkpoint-on-close, exclusive locking and query-only
+mode. Refusal closes that protected connection; successful inspection enables
+writes on the same connection before applying configuration or recovery.
+The SDK loads only its installed native extension and disables extension loading
+between its two fixed configuration calls. IndexedDB first inspects only the manifest in
+a read-only transaction; it never requests a version upgrade when reopening.
+Provisioning remains a separate explicit operation.

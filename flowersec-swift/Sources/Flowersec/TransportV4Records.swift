@@ -130,6 +130,7 @@ final class V4ReliableSessionAdmission {
   let maxStreams: Int
   let maxCredit: UInt64
   let applicationProfile: UInt64
+  let features: UInt64
   let rekeyEnvelope: Data
   let context: Data
   let serviceMS: UInt64
@@ -145,6 +146,7 @@ final class V4ReliableSessionAdmission {
     maxStreams = established.maxStreams
     maxCredit = established.maxCredit
     applicationProfile = established.applicationProfile
+    features = established.features
     rekeyEnvelope = established.rekeyEnvelope
     context = established.context
     serviceMS = established.serviceMS
@@ -408,7 +410,8 @@ final class V4ReliableChannel: @unchecked Sendable, CustomStringConvertible, Cus
   func publish(
     scope: V4RecordScope, frameType: UInt8, plaintext: Data, to publisher: any V4RecordPublisher,
     access: V4ReliableSessionAdmission? = nil, marker: Bool = false, critical: Bool = false,
-    publication: (any V4RecordPublication)? = nil
+    publication: (any V4RecordPublication)? = nil,
+    accepted: (@Sendable () -> Void)? = nil
   ) throws {
     var publicationTransferred = false
     do {
@@ -462,11 +465,14 @@ final class V4ReliableChannel: @unchecked Sendable, CustomStringConvertible, Cus
           try check()
           try output.store(envelope + header + cipher)
           if let publication {
-            publicationTransferred = true
+            publicationTransferred = true; publication.transferred()
             try publisher.publish(output) { success in publication.completed(success) }
           } else {
             try publisher.publish(output)
           }
+          // The provider owns this record now. A later authorization check
+          // can fail, but cannot retract the original local acceptance fact.
+          accepted?()
           try check()
         } catch {
           close()

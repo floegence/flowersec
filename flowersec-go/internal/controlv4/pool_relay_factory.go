@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"math"
 	"strings"
-	"sync"
 	"unsafe"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
@@ -47,91 +46,35 @@ type PoolRelayFactoryConfig struct {
 // for the destination relay table. Returned publications borrow that graph
 // independently and own their own reservations.
 type PoolRelayFactory struct {
-	mu                                sync.Mutex
-	config                            PoolRelayFactoryConfig
-	reservation, shared, dependencies resourcev4.Reference
-	trust                             [51]resourcev4.Reference
-	accounts                          [8]resourcev4.Account
-	codec                             *protocolv4.TopUpCodec
-	material                          *protocolv4.Decoder
-	maps                              [7]*protocolv4.SignedMapCodec
-	selection                         *protocolv4.PoolSelectionWorkspace
-	parents                           [64]ledgerv4.SQLitePoolRelayParent
-	delegation, once                  [8192]byte
-	serial                            uint64
-	done                              chan struct{}
-	busy, closed, cleaned             bool
+	*poolBatchVerifier
+	config PoolRelayFactoryConfig
 }
 
-var poolRelayMapSchemas = [7]string{"Artifact", "ActivationAuthorization", "IdentityCertificate", "IdentityCertificate", "Grant", "Grant", "IdentityCertificate"}
+func (c PoolRelayFactoryConfig) verification() PoolBatchVerificationConfig {
+	return PoolBatchVerificationConfig{
+		Clock: c.Clock, Tenant: c.Tenant, Audience: c.Audience, CryptoProfile: c.CryptoProfile,
+		SourceIncarnation: c.SourceIncarnation, ArtifactIssuer: c.ArtifactIssuer,
+		Pool: c.Pool, ClientIdentity: c.ClientIdentity, ServerIdentity: c.ServerIdentity,
+		ActivationSigningKeyID: c.ActivationSigningKeyID, Trust: c.Trust, Routes: c.Routes,
+		Root: c.Root, Owner: c.Owner, Accounts: c.Accounts, RuntimeBytes: c.RuntimeBytes,
+	}
+}
 
 func PoolRelayFactoryCharge(c PoolRelayFactoryConfig) (resourcev4.Vector, error) {
-	if c.Clock == nil || c.Source == nil || c.Table == nil || c.Root == nil || len(c.Accounts) > 8 || c.RuntimeBytes == 0 || c.SourceIncarnation == ([16]byte{}) || c.ArtifactIssuer == ([16]byte{}) || c.Pool == ([32]byte{}) || c.ClientIdentity == ([32]byte{}) || c.ServerIdentity == ([32]byte{}) || c.ClientIdentity == c.ServerIdentity {
+	if c.Source == nil || c.Table == nil {
 		return resourcev4.Vector{}, resourcev4.ErrConfiguration
 	}
-	for _, s := range []string{c.Tenant, c.Audience, c.CryptoProfile, c.ActivationSigningKeyID} {
-		if len(s) == 0 || len(s) > 128 {
-			return resourcev4.Vector{}, resourcev4.ErrConfiguration
-		}
-	}
-	for _, trust := range c.Trust {
-		if trust == nil {
-			return resourcev4.Vector{}, resourcev4.ErrConfiguration
-		}
-	}
-	for _, r := range c.Routes {
-		if r == nil {
-			continue
-		}
-		if r.Grants[0] == nil || r.Grants[1] == nil || r.RelayTrust == nil || r.Mapping.Parent.Tenant != c.Tenant || r.Mapping.ParentIssuer != c.ArtifactIssuer || r.Mapping.EndpointAudience != c.Audience || r.Mapping.Profile != c.CryptoProfile || r.Mapping.Activation.SigningKeyID != c.ActivationSigningKeyID {
-			return resourcev4.Vector{}, resourcev4.ErrConfiguration
-		}
-		for _, s := range poolRelayMappingStrings(&r.Mapping) {
-			if len(*s) == 0 || len(*s) > 128 {
-				return resourcev4.Vector{}, resourcev4.ErrConfiguration
-			}
-		}
-	}
-	// Validate the fixed publication destination independently of any batch.
 	if _, err := ledgerv4.SQLitePoolRelayPublicationCharge(ledgerv4.SQLitePoolRelayPublicationConfig{Table: c.Table, SourceIdentity: c.SourceIdentity, Parents: []ledgerv4.SQLitePoolRelayParent{{}}}); err != nil {
 		return resourcev4.Vector{}, err
 	}
-	n, err := protocolv4.TopUpCodecBackingBytes()
+	cost, err := poolBatchVerifierCharge(c.verification())
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	d, err := protocolv4.DecoderBackingBytes(65536, poolMaterialNodes)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	n += d
-	s, err := protocolv4.PoolSelectionBackingBytes(65536, 4096)
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	n += s
-	for _, schema := range poolRelayMapSchemas {
-		limit, e := protocolv4.SchemaByteLimit(schema)
-		if e != nil {
-			return resourcev4.Vector{}, e
-		}
-		cost, e := protocolv4.SignedMapBackingBytes(schema, limit, limit)
-		if e != nil {
-			return resourcev4.Vector{}, e
-		}
-		n += cost
-	}
-	p, err := protocolv4.RelayParentProjectionBackingBytes()
-	if err != nil {
-		return resourcev4.Vector{}, err
-	}
-	// One scratch pair of closures/activation bindings is covered by the extra
-	// projection. The 64 retained projections coexist until publication copies.
-	n += 65*p + uint64(unsafe.Sizeof(PoolRelayFactory{})) + 16*(uint64(unsafe.Sizeof(PoolRelayRouteConfig{}))+4096) + 4096
-	return (resourcev4.Vector{resourcev4.SDKBytes: n, resourcev4.Items: 1, resourcev4.WorkSlots: 1}).Add(resourcev4.Vector{resourcev4.SDKBytes: c.RuntimeBytes})
+	return cost.Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(unsafe.Sizeof(PoolRelayFactory{})) + 128})
 }
 
-func NewPoolRelayFactory(c PoolRelayFactoryConfig, reservation, dependencies resourcev4.Reference) (_ *PoolRelayFactory, err error) {
+func NewPoolRelayFactory(c PoolRelayFactoryConfig, reservation, dependencies resourcev4.Reference) (*PoolRelayFactory, error) {
 	cost, err := PoolRelayFactoryCharge(c)
 	if err != nil {
 		return nil, err
@@ -139,107 +82,19 @@ func NewPoolRelayFactory(c PoolRelayFactoryConfig, reservation, dependencies res
 	if err = c.Source.CheckSourceBinding(c.Tenant, c.SourceIncarnation); err != nil {
 		return nil, err
 	}
-	if err = reservation.CheckAllocationScope(c.Root, c.Owner, c.Accounts); err != nil {
-		return nil, err
-	}
-	if err = reservation.CheckSameEnvironment(dependencies); err != nil {
-		return nil, err
-	}
-	owned, err := reservation.Take(cost)
+	verifier, err := newPoolBatchVerifier(c.verification(), cost, reservation, dependencies)
 	if err != nil {
 		return nil, err
 	}
-	f := &PoolRelayFactory{config: c, reservation: owned, dependencies: dependencies, done: make(chan struct{})}
-	defer func() {
-		if err != nil {
-			f.Close()
-		}
-	}()
-	f.shared, err = dependencies.Borrow()
-	if err != nil {
-		return nil, err
-	}
-	f.config.Tenant = strings.Clone(c.Tenant)
-	f.config.Audience = strings.Clone(c.Audience)
-	f.config.CryptoProfile = strings.Clone(c.CryptoProfile)
-	f.config.ActivationSigningKeyID = strings.Clone(c.ActivationSigningKeyID)
-	f.config.SourceIdentity.Authority = strings.Clone(c.SourceIdentity.Authority)
-	n := copy(f.accounts[:], c.Accounts)
-	f.config.Accounts = f.accounts[:n:n]
-	f.config.Routes = [16]*PoolRelayRouteConfig{}
-	for i, t := range c.Trust {
-		f.trust[i], err = t.ReferenceFor(c.Clock, dependencies)
-		if err != nil {
-			return nil, err
-		}
-	}
-	for i, r := range c.Routes {
-		if r == nil {
-			continue
-		}
-		cloned := *r
-		f.config.Routes[i] = &cloned
-		for _, s := range poolRelayMappingStrings(&cloned.Mapping) {
-			*s = strings.Clone(*s)
-		}
-		for side, t := range [3]*protocolv4.NamespaceTrustStore{r.Grants[0], r.Grants[1], r.RelayTrust} {
-			f.trust[3+i*3+side], err = t.ReferenceFor(c.Clock, dependencies)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	f.codec, err = protocolv4.NewTopUpCodec()
-	if err != nil {
-		return nil, err
-	}
-	f.material, err = protocolv4.NewDecoder(65536, poolMaterialNodes)
-	if err != nil {
-		return nil, err
-	}
-	f.selection, err = protocolv4.NewPoolSelectionWorkspace(65536, 4096)
-	if err != nil {
-		return nil, err
-	}
-	for i, schema := range poolRelayMapSchemas {
-		limit, _ := protocolv4.SchemaByteLimit(schema)
-		f.maps[i], err = protocolv4.NewSignedMapCodec(schema, limit, limit)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return f, nil
+	c.SourceIdentity.Authority = strings.Clone(c.SourceIdentity.Authority)
+	c.Tenant, c.Audience, c.CryptoProfile = verifier.config.Tenant, verifier.config.Audience, verifier.config.CryptoProfile
+	c.ActivationSigningKeyID = verifier.config.ActivationSigningKeyID
+	c.Accounts, c.Routes = verifier.config.Accounts, verifier.config.Routes
+	return &PoolRelayFactory{poolBatchVerifier: verifier, config: c}, nil
 }
 
 func poolRelayMappingStrings(m *protocolv4.RelayIssuerMapping) []*string {
 	return []*string{&m.Parent.Tenant, &m.Parent.Authority, &m.Activation.Tenant, &m.Activation.AuthorityNamespace, &m.Activation.SigningKeyID, &m.Activation.SpendAuthority, &m.Activation.WinnerAuthority, &m.Service, &m.RelayAudience, &m.EndpointAudience, &m.Profile, &m.Grants[0].Namespace.Tenant, &m.Grants[0].Namespace.Authority, &m.Grants[1].Namespace.Tenant, &m.Grants[1].Namespace.Authority}
-}
-
-func (f *PoolRelayFactory) checkLocked(ctx context.Context) error {
-	if f.closed {
-		return resourcev4.ErrClosed
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	for _, r := range []resourcev4.Reference{f.reservation, f.shared} {
-		if err := r.Check(); err != nil {
-			return err
-		}
-	}
-	for _, r := range f.trust {
-		if r != (resourcev4.Reference{}) {
-			if err := r.Check(); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-func (f *PoolRelayFactory) check(ctx context.Context) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.checkLocked(ctx)
 }
 
 func (f *PoolRelayFactory) PreparePoolRelayPublication(ctx context.Context, original ledgerv4.TopUpServerSnapshot, response []byte) (publication *ledgerv4.SQLitePoolRelayPublication, err error) {
@@ -350,28 +205,10 @@ func (f *PoolRelayFactory) Close() {
 	f.cleanupLocked()
 }
 func (f *PoolRelayFactory) cleanupLocked() {
-	if !f.closed || f.busy || f.cleaned {
-		return
+	f.poolBatchVerifier.cleanupLocked()
+	if f.cleaned {
+		f.config = PoolRelayFactoryConfig{}
 	}
-	for _, r := range f.trust {
-		r.Release()
-	}
-	clear(f.trust[:])
-	clear(f.parents[:])
-	clear(f.accounts[:])
-	clear(f.delegation[:])
-	clear(f.once[:])
-	f.maps = [7]*protocolv4.SignedMapCodec{}
-	f.codec = nil
-	f.material = nil
-	f.selection = nil
-	f.config = PoolRelayFactoryConfig{}
-	f.dependencies = resourcev4.Reference{}
-	f.shared.Release()
-	f.reservation.Release()
-	f.shared, f.reservation = resourcev4.Reference{}, resourcev4.Reference{}
-	f.cleaned = true
-	close(f.done)
 }
 func (f *PoolRelayFactory) WaitCleanup(ctx context.Context) error {
 	if f == nil || ctx == nil {

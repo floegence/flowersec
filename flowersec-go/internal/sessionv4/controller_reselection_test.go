@@ -3,6 +3,7 @@ package sessionv4
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"runtime"
 	"sync/atomic"
@@ -293,6 +294,9 @@ func TestControllerQueuedUnaryReselectionLimitAndHeaderBoundary(t *testing.T) {
 				if !status.Complete || status.Submission.HeaderAccepted {
 					t.Fatal(status)
 				}
+				if status.Outcome.Reason != "not_submitted" || status.Submission.Reason != "not_submitted" {
+					t.Fatal("pre-BEGIN refusal lost its original submission fact", status)
+				}
 				if mode == "authority" && status.Outcome.Error != ErrApplicationAuthorization {
 					t.Fatal(status.Outcome)
 				}
@@ -326,5 +330,30 @@ func TestControllerPreparationUsesCurrentAtOriginalStart(t *testing.T) {
 	advanceControllerServices(services)
 	if got := c.Dispatch(context.Background(), o); got.Call != started.Call || got.Error != nil {
 		t.Fatal(got)
+	}
+}
+
+func TestControllerPeerMappingCapturesFiniteImmutableSubjects(t *testing.T) {
+	subjects := []string{"server-a", "server-b"}
+	mapping, err := captureControllerPeerMapping(subjects)
+	if err != nil || mapping.count != 2 {
+		t.Fatal(mapping, err)
+	}
+	subjects[0] = "unapproved"
+	a := sha256.Sum256([]byte("server-a"))
+	if mapping.subjects[0] != a && mapping.subjects[1] != a {
+		t.Fatal("mapping retained caller's mutable subject list")
+	}
+	reversed, err := captureControllerPeerMapping([]string{"server-b", "server-a"})
+	if err != nil || reversed != mapping {
+		t.Fatal("equivalent replica sets have different source groups", err)
+	}
+	for _, bad := range [][]string{{}, {"server", "server"}, {""}, {"UpperCase"}, make([]string, 17)} {
+		if _, err := captureControllerPeerMapping(bad); !errors.Is(err, cryptov4.ErrConfiguration) {
+			t.Fatal(bad, err)
+		}
+	}
+	if exact, err := captureControllerPeerMapping(nil); err != nil || exact.count != 0 {
+		t.Fatal(exact, err)
 	}
 }

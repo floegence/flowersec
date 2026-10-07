@@ -86,6 +86,8 @@ export function normalizeRunnerPlan(input) {
     diagnostics_enabled: optionalBoolean(plan.diagnostics_enabled, "diagnostics_enabled"),
     policy: connectionPolicy(plan.policy, adaptive ? "adaptive" : "require_quic_family"),
     artifact_source_url: artifactSourceURL,
+    installation_manifest_path: absolutePath(plan.installation_manifest_path, "installation_manifest_path"),
+    history_directory: absolutePath(plan.history_directory, "history_directory"),
     certificate_hash: certificateHash(plan.certificate_hash),
     client_netns: clientNetns,
     module_bind_address: moduleBindAddress,
@@ -272,9 +274,10 @@ async function raceOpenLoopAbort(promise, signal) {
   }
 }
 
-export async function acquireArtifactBatch(plan, request, fetchImpl = globalThis.fetch) {
+export async function acquireArtifactBatch(plan, request, fetchImpl = globalThis.fetch, options = {}) {
   const normalized = normalizeRunnerPlan(plan);
   const acquisition = normalizeAcquisitionRequest(request);
+  options.signal?.throwIfAborted();
   if (typeof fetchImpl !== "function") throw new TypeError("fetch implementation is required");
   const response = await fetchImpl(normalized.artifact_source_url, {
     method: "POST",
@@ -288,6 +291,7 @@ export async function acquireArtifactBatch(plan, request, fetchImpl = globalThis
       phase: acquisition.phase,
       count: acquisition.count,
     }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
   if (!response.ok) throw new Error(`artifact acquisition failed with HTTP ${response.status}`);
   const payload = object(await response.json(), "artifact acquisition response");
@@ -297,7 +301,7 @@ export async function acquireArtifactBatch(plan, request, fetchImpl = globalThis
   const tokens = new Set();
   return Object.freeze(payload.artifacts.map((entry, index) => {
     const item = object(entry, `artifact ${index + 1}`);
-    const artifactJSON = string(item.artifact_json, `artifact ${index + 1} artifact_json`);
+    const artifactJSON = currentMaterialJSON(item.artifact_json);
     JSON.parse(artifactJSON);
     const spendToken = string(item.spend_token, `artifact ${index + 1} spend_token`);
     if (tokens.has(spendToken)) throw new Error("artifact acquisition returned a duplicate spend token");
@@ -306,28 +310,41 @@ export async function acquireArtifactBatch(plan, request, fetchImpl = globalThis
   }));
 }
 
-export async function commitArtifactSpend(plan, spendToken, fetchImpl = globalThis.fetch) {
-  const normalized = normalizeRunnerPlan(plan);
-  const token = string(spendToken, "spend token");
-  if (typeof fetchImpl !== "function") throw new TypeError("fetch implementation is required");
-  const response = await fetchImpl(normalized.artifact_source_url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ schema_version: 1, action: "spend", spend_token: token }),
-  });
-  if (!response.ok) throw new Error(`artifact spend failed with HTTP ${response.status}`);
+export async function commitArtifactSpend(plan, spendToken, fetchImpl = globalThis.fetch, options = {}) {
+  await artifactSourceAction(plan, spendToken, "spend", fetchImpl, options);
 }
 
-export async function startArtifactPeer(plan, spendToken, fetchImpl = globalThis.fetch) {
+export async function startArtifactPeer(plan, spendToken, fetchImpl = globalThis.fetch, options = {}) {
+  await artifactSourceAction(plan, spendToken, "start", fetchImpl, options);
+}
+
+export async function cancelArtifactPeer(plan, spendToken, fetchImpl = globalThis.fetch, options = {}) {
+  await artifactSourceAction(plan, spendToken, "cancel", fetchImpl, options);
+}
+
+export async function retireArtifactPeer(plan, spendToken, fetchImpl = globalThis.fetch, options = {}) {
+  await artifactSourceAction(plan, spendToken, "retire", fetchImpl, options);
+}
+
+async function artifactSourceAction(plan, spendToken, action, fetchImpl, options) {
   const normalized = normalizeRunnerPlan(plan);
   const token = string(spendToken, "spend token");
   if (typeof fetchImpl !== "function") throw new TypeError("fetch implementation is required");
+  options.signal?.throwIfAborted();
   const response = await fetchImpl(normalized.artifact_source_url, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ schema_version: 1, action: "start", spend_token: token }),
+    body: JSON.stringify({ schema_version: 1, action, spend_token: token }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   });
-  if (!response.ok) throw new Error(`artifact peer start failed with HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`artifact ${action} failed with HTTP ${response.status}`);
+  if (action === "cancel" || action === "retire") {
+    const payload = object(await response.json(), `artifact ${action} response`);
+    if (payload.schema_version !== 1 || payload.status !== "complete" || Object.keys(payload).length !== 2) {
+      throw new Error(`artifact ${action} did not confirm original cleanup`);
+    }
+  }
+  options.signal?.throwIfAborted();
 }
 
 function normalizeAdaptiveStage(input, index) {
@@ -451,4 +468,13 @@ function finiteNumber(value, name, minimum) {
 async function defaultWaitUntil(target, now) {
   const remaining = target - now();
   if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining));
+}
+
+/** Structural material delivery validation only; independent host installation
+ * and original namespace verification still own every trust decision. */
+export function currentMaterialJSON(value) {
+  if (typeof value !== "string" || value.length === 0 || Buffer.byteLength(value) > 1048576) throw new TypeError("current material exceeds its delivery bound");
+  const material = JSON.parse(value);
+  if (material === null || material.wire_revision !== 4 || material.role !== 0 || material.source !== "preauthorized_pool") throw new Error("unsupported current browser material delivery");
+  return value;
 }

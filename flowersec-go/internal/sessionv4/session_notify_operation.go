@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/rpcv4"
@@ -100,7 +101,8 @@ func (n *NotifyOperation) Start(ctx context.Context) NotifyStartResult {
 		return NotifyStartResult{NotAdmitted: true, Error: err}
 	}
 	var submission *rpcv4.NotifySubmission
-	err := o.request.WithStart(ctx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte) error {
+	operationCtx := withOwnedDiagnosticOperation(ctx, o.diagnosticOperation)
+	err := o.request.WithStart(operationCtx, func(route rpcv4.ContractRoute, h protocolv4.ApplicationHeader, header, payload []byte) error {
 		r := o.services
 		r.mu.Lock()
 		if r.closed || r.retired || o.workload == nil && r.callSerial == math.MaxUint64 {
@@ -109,7 +111,12 @@ func (n *NotifyOperation) Start(ctx context.Context) NotifyStartResult {
 		}
 		var publisher *rpcv4.NotifyPublisher
 		var protection rpcv4.NotifyProtection
-		for position, job := range r.notifyChannels {
+		local := 0
+		if r.bootstrap != nil {
+			local = int(r.bootstrap.admission.direction)
+		}
+		for _, position := range [2]int{local, 1 - local} {
+			job := r.notifyChannels[position]
 			if job != nil && job.channel != nil {
 				publisher = job.channel.availablePublisher()
 				if publisher != nil {
@@ -220,11 +227,13 @@ func (s *notifyOperationState) WithNotifyPublicationProgress(h protocolv4.Applic
 	if s.request == nil || s.dispatch == nil || s.closed && !begun || action == nil {
 		return rpcv4.ErrClosed
 	}
-	return s.request.WithNotifyPublication(h, begun, func() error {
-		return s.dispatch.withAuthority(s.method, func(local notificationMethod) error {
-			if local.policy.Namespace != s.policy.Namespace || local.policy.Type != s.policy.Type || local.policy.Semantics != s.policy.Semantics {
-				return rpcv4.ErrAssociation
-			}
+	// Publication and inbound fanout enter current authority before the route
+	// registry. Both gates remain held through the original finite copy.
+	return s.dispatch.withAuthority(s.method, func(local notificationMethod) error {
+		if local.policy.Namespace != s.policy.Namespace || local.policy.Type != s.policy.Type || local.policy.Semantics != s.policy.Semantics {
+			return rpcv4.ErrAssociation
+		}
+		return s.request.WithNotifyPublication(h, begun, func() error {
 			if err := s.metadata.Check(); err != nil {
 				return err
 			}
@@ -250,6 +259,19 @@ func (o *UnaryOperation) advanceNotifyLocked(closed bool) {
 	case <-s.submission.Done():
 	default:
 		return
+	}
+	// Start only enqueues the original submission. Its finite terminal facts
+	// decide the diagnostic result after the real publisher tail retires;
+	// complete local acceptance remains successful even without a flush.
+	if progress := s.submission.Progress(); !progress.MessageAccepted {
+		code := diagnosticv4.CodeOther
+		switch progress.Reason {
+		case "deadline_exceeded":
+			code = diagnosticv4.CodeTimeout
+		case "not_submitted":
+			code = diagnosticv4.CodeCancelled
+		}
+		recordApplicationDiagnosticFailureCode(o.diagnosticOperation, code)
 	}
 	s.mu.Lock()
 	s.request.Close()

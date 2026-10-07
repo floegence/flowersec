@@ -11,54 +11,54 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
-type V4SessionInfo = protocolv4.V4SessionInfo
+type SessionInfo = protocolv4.V4SessionInfo
 
 const (
-	V4SessionRekeyInProgress SessionErrorCode = "rekey_in_progress"
-	V4SessionTimeUnavailable SessionErrorCode = "time_unavailable"
+	SessionRekeyInProgress SessionErrorCode = "rekey_in_progress"
+	SessionTimeUnavailable SessionErrorCode = "time_unavailable"
 )
 
 // Info is the detached snapshot produced by the original authenticated READY
 // transition. It remains available after Close and physical cleanup.
-func (s *V4Session) Info() V4SessionInfo {
+func (s *Session) Info() SessionInfo {
 	if s == nil || s.info == nil {
-		return V4SessionInfo{}
+		return SessionInfo{}
 	}
 	return s.info()
 }
 
-type V4DrainOutcome string
+type DrainOutcome string
 
 const (
-	V4DrainPending         V4DrainOutcome = "pending"
-	V4Drained              V4DrainOutcome = "drained"
-	V4DrainDeadlineAborted V4DrainOutcome = "deadline_aborted"
-	V4DrainFailed          V4DrainOutcome = "failed"
+	DrainPending         DrainOutcome = "pending"
+	Drained              DrainOutcome = "drained"
+	DrainDeadlineAborted DrainOutcome = "deadline_aborted"
+	DrainFailed          DrainOutcome = "failed"
 )
 
-// V4DrainResult reports communication completion independently of cleanup.
-type V4DrainResult struct {
-	Outcome V4DrainOutcome
+// DrainResult reports communication completion independently of cleanup.
+type DrainResult struct {
+	Outcome DrainOutcome
 	Cause   *SessionError
 }
 
-func publicV4DrainResult(result sessionv4.DrainResult) V4DrainResult {
-	outcome := V4DrainPending
+func publicDrainResult(result sessionv4.DrainResult) DrainResult {
+	outcome := DrainPending
 	switch result.Outcome {
 	case sessionv4.Drained:
-		outcome = V4Drained
+		outcome = Drained
 	case sessionv4.DrainDeadlineAborted:
-		outcome = V4DrainDeadlineAborted
+		outcome = DrainDeadlineAborted
 	case sessionv4.DrainFailed:
-		outcome = V4DrainFailed
+		outcome = DrainFailed
 	}
-	return V4DrainResult{Outcome: outcome, Cause: redactV4LifecycleError(result.Cause)}
+	return DrainResult{Outcome: outcome, Cause: redactLifecycleError(result.Cause)}
 }
 
 // Drain starts the original Session operation once. Zero selects the admitted
 // local policy; a positive timeout can only shorten that policy. Repeated calls
 // keep the original boundary/deadline, including after communication finishes.
-func (s *V4Session) Drain(timeoutMilliseconds uint64) error {
+func (s *Session) Drain(timeoutMilliseconds uint64) error {
 	if s == nil || s.drain == nil {
 		return ErrTransportUnavailable
 	}
@@ -69,7 +69,7 @@ func (s *V4Session) Drain(timeoutMilliseconds uint64) error {
 	}
 	operation, err := s.drain(timeoutMilliseconds, 0)
 	if err != nil {
-		return redactV4LifecycleError(err)
+		return redactLifecycleError(err)
 	}
 	s.drainOperation = operation
 	return nil
@@ -77,54 +77,54 @@ func (s *V4Session) Drain(timeoutMilliseconds uint64) error {
 
 // WaitDrain observes the existing Drain. Canceling this wait leaves the
 // original operation, accepted work, deadline, and physical tails untouched.
-func (s *V4Session) WaitDrain(ctx context.Context) (V4DrainResult, error) {
+func (s *Session) WaitDrain(ctx context.Context) (DrainResult, error) {
 	if s == nil || ctx == nil {
-		return V4DrainResult{}, ErrTransportUnavailable
+		return DrainResult{}, ErrTransportUnavailable
 	}
 	s.mu.Lock()
 	operation := s.drainOperation
 	s.mu.Unlock()
 	if operation == nil {
-		return V4DrainResult{}, ErrOperationClosed
+		return DrainResult{}, ErrOperationClosed
 	}
 	result, err := operation.Wait(ctx)
 	if err != nil {
-		return publicV4DrainResult(operation.Result()), redactV4LifecycleError(err)
+		return publicDrainResult(operation.Result()), redactLifecycleError(err)
 	}
-	return publicV4DrainResult(result), nil
+	return publicDrainResult(result), nil
 }
 
 // Rekey joins one bounded caller reference to the existing Session rekey
 // owner. Canceling the wait does not cancel another caller or a submitted,
 // peer-requested, or security-required round.
-func (s *V4Session) Rekey(ctx context.Context) error {
+func (s *Session) Rekey(ctx context.Context) error {
 	if s == nil || s.rekey == nil || ctx == nil {
 		return ErrTransportUnavailable
 	}
 	return lifecycleError(s.rekey(ctx))
 }
 
-// V4LivenessResult preserves the original sample's submission and elapsed
+// LivenessResult preserves the original sample's submission and elapsed
 // facts. ElapsedMilliseconds includes local queueing and is not a network RTT.
 // A false ElapsedAvailable means no continuous monotonic interval was proven.
-type V4LivenessResult struct {
+type LivenessResult struct {
 	Submitted, Complete, ElapsedAvailable bool
 	ElapsedMilliseconds                   uint64
 	Cause                                 *SessionError
 }
 
-func (s *V4Session) ProbeLiveness(ctx context.Context, timeoutMilliseconds uint64) (V4LivenessResult, error) {
+func (s *Session) ProbeLiveness(ctx context.Context, timeoutMilliseconds uint64) (LivenessResult, error) {
 	if s == nil || s.probeLiveness == nil || ctx == nil {
-		return V4LivenessResult{}, ErrTransportUnavailable
+		return LivenessResult{}, ErrTransportUnavailable
 	}
 	result, err := s.probeLiveness(ctx, timeoutMilliseconds)
-	return V4LivenessResult{Submitted: result.Submitted, Complete: result.Complete, ElapsedAvailable: result.ElapsedAvailable,
-		ElapsedMilliseconds: result.ElapsedMS, Cause: redactV4LifecycleError(result.Cause)}, lifecycleError(err)
+	return LivenessResult{Submitted: result.Submitted, Complete: result.Complete, ElapsedAvailable: result.ElapsedAvailable,
+		ElapsedMilliseconds: result.ElapsedMS, Cause: redactLifecycleError(result.Cause)}, lifecycleError(err)
 }
 
 // WaitTermination waits on the original Session's terminal notification. It
 // does not start Close, Drain, replacement connection, or cleanup work.
-func (s *V4Session) WaitTermination(ctx context.Context) error {
+func (s *Session) WaitTermination(ctx context.Context) error {
 	if s == nil || s.waitTermination == nil || ctx == nil {
 		return ErrTransportUnavailable
 	}
@@ -135,10 +135,10 @@ func lifecycleError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return redactV4LifecycleError(err)
+	return redactLifecycleError(err)
 }
 
-func redactV4LifecycleError(err error) *SessionError {
+func redactLifecycleError(err error) *SessionError {
 	if err == nil {
 		return nil
 	}
@@ -155,9 +155,9 @@ func redactV4LifecycleError(err error) *SessionError {
 	case errors.Is(err, cryptov4.ErrCapacity), errors.Is(err, resourcev4.ErrCapacity):
 		code = SessionResourceExhausted
 	case errors.Is(err, sessionv4.ErrProbeRekey):
-		code = V4SessionRekeyInProgress
+		code = SessionRekeyInProgress
 	case errors.Is(err, timev4.ErrUnavailable), errors.Is(err, timev4.ErrContinuity):
-		code = V4SessionTimeUnavailable
+		code = SessionTimeUnavailable
 	case errors.Is(err, cryptov4.ErrRekey):
 		code = SessionRekeyFailed
 	case errors.Is(err, sessionv4.ErrLivenessPathUnresponsive), errors.Is(err, sessionv4.ErrProbeLocalStall):

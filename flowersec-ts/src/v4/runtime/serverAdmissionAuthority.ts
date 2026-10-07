@@ -13,7 +13,7 @@ export interface AdmissionResponse {
 export interface ServerAdmissionAuthority {
   charge(): ResourceVector;
   admit(closure: VerifiedCredentialClosure, fsb: Uint8Array, context: Uint8Array, owner: ServerAdmissionOwner, deadline: TrustedDeadline,
-    work: ResourceReference, guard: () => void, dispatch: (response: AdmissionResponse) => void): void;
+    work: ResourceReference, guard: () => void, dispatch: (response: AdmissionResponse) => void): void | Promise<void>;
 }
 const authorities = new WeakSet<object>();
 export function registerServerAdmissionAuthority(authority: ServerAdmissionAuthority): void { authorities.add(authority); }

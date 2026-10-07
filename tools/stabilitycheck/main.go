@@ -82,7 +82,7 @@ func run(args []string) error {
 func verifySource(repoRoot string, m *manifest) error {
 	checks := []func() error{
 		func() error { return verifyManifest(m) },
-		func() error { _, err := loadTransportV3Registry(repoRoot); return err },
+		func() error { _, err := loadTransportV4Registry(repoRoot); return err },
 		func() error { return verifyDefaults(repoRoot) },
 		func() error { return verifyParity(repoRoot) },
 		func() error { return verifyPublicAPIDesign(repoRoot) },
@@ -106,7 +106,7 @@ func verifyManifest(m *manifest) error {
 }
 
 func report(repoRoot string, m *manifest) error {
-	transportV3, err := loadTransportV3Registry(repoRoot)
+	transportV4, err := loadTransportV4Registry(repoRoot)
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func report(repoRoot string, m *manifest) error {
 	if capabilities, err := loadCapabilityManifest(repoRoot); err == nil {
 		fmt.Printf("portable_capabilities=%d\n", len(capabilities.PortableCapabilities))
 	}
-	fmt.Printf("transport_v3_fixtures=%d\n", len(transportV3.WireFixtures))
+	fmt.Printf("transport_v4_files=%d\n", len(transportV4.Files))
 	return nil
 }
 
@@ -134,12 +134,12 @@ func verifyDocs(repoRoot string, m *manifest) error {
 	required := append([]string{}, m.Docs.CLITokens...)
 	required = append(required, "`docs/API_CHANGE_POLICY.md`", "`stability/api_contract_manifest.json`")
 	for _, target := range m.Go.CompileTargets {
-		if target.StabilityGroup == "transport_v3" {
+		if target.StabilityGroup == "transport_v4" {
 			continue
 		}
 		required = append(required, target.DocPackageToken)
 		for _, entry := range target.Entries {
-			if entry.StabilityGroup == "transport_v3" {
+			if entry.StabilityGroup == "transport_v4" {
 				continue
 			}
 			required = append(required, entry.DocToken)
@@ -155,18 +155,18 @@ func verifyDocs(repoRoot string, m *manifest) error {
 			return fmt.Errorf("%s missing token %s", m.Docs.APIContract, token)
 		}
 	}
-	v3Data, err := os.ReadFile(filepath.Join(repoRoot, m.Docs.TransportV3API))
+	v4Data, err := os.ReadFile(filepath.Join(repoRoot, m.Docs.TransportV4Binding))
 	if err != nil {
 		return err
 	}
-	for _, token := range m.Docs.TransportV3Tokens {
-		if !strings.Contains(string(v3Data), token) {
-			return fmt.Errorf("%s missing token %s", m.Docs.TransportV3API, token)
+	for _, token := range m.Docs.TransportV4Tokens {
+		if !strings.Contains(string(v4Data), token) {
+			return fmt.Errorf("%s missing token %s", m.Docs.TransportV4Binding, token)
 		}
 	}
 	fmt.Printf(
-		"docs OK: %d API tokens verified in %s and %d Transport v3 tokens verified in %s\n",
-		len(required), m.Docs.APIContract, len(m.Docs.TransportV3Tokens), m.Docs.TransportV3API,
+		"docs OK: %d API tokens verified in %s and %d Transport v4 binding tokens verified in %s\n",
+		len(required), m.Docs.APIContract, len(m.Docs.TransportV4Tokens), m.Docs.TransportV4Binding,
 	)
 	return nil
 }
@@ -305,6 +305,16 @@ func verifyNativeABI(repoRoot string, m *manifest) error {
 		return err
 	}
 	source := string(declaration)
+	declaredExports := make([]string, 0)
+	for _, match := range regexp.MustCompile(`(?m)^export function ([A-Za-z_$][A-Za-z0-9_$]*)\(`).FindAllStringSubmatch(source, -1) {
+		declaredExports = append(declaredExports, match[1])
+	}
+	registeredExports := slices.Clone(m.NativeABI.RuntimeExports)
+	slices.Sort(declaredExports)
+	slices.Sort(registeredExports)
+	if !slices.Equal(declaredExports, registeredExports) {
+		return fmt.Errorf("native ABI runtime exports differ: declared %v, registered %v", declaredExports, registeredExports)
+	}
 	for _, exportName := range m.NativeABI.RuntimeExports {
 		if !strings.Contains(source, "export function "+exportName+"(") {
 			return fmt.Errorf("native ABI declaration missing export %s", exportName)
@@ -320,7 +330,8 @@ func verifyNativeABI(repoRoot string, m *manifest) error {
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(string(implementation), fmt.Sprintf("%d", m.NativeABI.ContractVersion)) {
+	versionFunction := regexp.MustCompile(fmt.Sprintf(`(?s)pub fn contract_version\(\)\s*->\s*u32\s*\{\s*%d\s*\}`, m.NativeABI.ContractVersion))
+	if !versionFunction.Match(implementation) {
 		return fmt.Errorf("native ABI implementation must expose contract version %d", m.NativeABI.ContractVersion)
 	}
 	fmt.Printf("native ABI OK: contract=%d wire=%d exports=%d\n", m.NativeABI.ContractVersion, m.NativeABI.WireVersion, len(m.NativeABI.RuntimeExports))
@@ -455,10 +466,7 @@ func verifySwift(repoRoot string, m *manifest) error {
 	if err != nil {
 		return err
 	}
-	actual := make([]swiftSymbol, 0, len(symbols))
-	for _, symbol := range symbols {
-		actual = append(actual, swiftSymbol{Kind: symbol.Kind, Name: symbol.Name})
-	}
+	actual := swiftManifestSymbols(symbols)
 	if diff := diffSwiftSymbols(m.Swift.Symbols, actual); diff != "" {
 		return errors.New(diff)
 	}
@@ -478,10 +486,7 @@ func updateSwiftManifest(repoRoot string, m *manifest) error {
 	if err != nil {
 		return err
 	}
-	m.Swift.Symbols = make([]swiftSymbol, 0, len(symbols))
-	for _, symbol := range symbols {
-		m.Swift.Symbols = append(m.Swift.Symbols, swiftSymbol{Kind: symbol.Kind, Name: symbol.Name})
-	}
+	m.Swift.Symbols = swiftManifestSymbols(symbols)
 	m.Swift.SignatureSHA256 = swiftSignatureSHA256(symbols)
 	var encoded bytes.Buffer
 	encoder := json.NewEncoder(&encoded)
@@ -535,9 +540,9 @@ func prepareCurrentManifest(m *manifest) error {
 	}
 	m.NativeABI = nativeABIManifest{
 		Package:         "@floegence/flowersec-node-native",
-		ContractVersion: 3,
-		WireVersion:     3,
-		RuntimeExports:  []string{"bindRawQuic", "connectRawQuic", "contractVersion"},
+		ContractVersion: 4,
+		WireVersion:     4,
+		RuntimeExports:  []string{"bindRawQuic", "bindWebTransport", "connectRawQuic", "connectWebTransport", "contractVersion", "createPreparationBudget", "sqliteExtensionPath"},
 	}
 	return nil
 }
@@ -649,27 +654,46 @@ func dumpSwiftPublicSymbols(repoRoot, module string) ([]dumpedSwiftSymbol, error
 }
 
 func normalizeSwiftSymbols(symbols []dumpedSwiftSymbol) ([]dumpedSwiftSymbol, error) {
-	// A protocol requirement and its default implementation can have the same
-	// public path and declaration. Register that contract once, while refusing
-	// incompatible declarations that this manifest key cannot distinguish.
-	seen := make(map[string]string, len(symbols))
+	// Symbol-graph pathComponents identify the source path, not a complete
+	// overload signature. Keep distinct declarations that share a path (for
+	// example DuplexBridge.init(_:_:options:) for its four endpoint pairs),
+	// while coalescing duplicate protocol-requirement/default pairs. The
+	// manifest stores each path once; the signature digest below covers every
+	// retained declaration.
+	seen := make(map[string]struct{}, len(symbols))
 	unique := make([]dumpedSwiftSymbol, 0, len(symbols))
 	for _, symbol := range symbols {
-		key := symbol.Kind + "\x00" + symbol.Name
-		if declaration, ok := seen[key]; ok {
-			if declaration != symbol.Declaration {
-				return nil, fmt.Errorf("Swift public path %s has distinct declarations", symbol.Name)
-			}
+		key := symbol.Kind + "\x00" + symbol.Name + "\x00" + symbol.Declaration
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[key] = symbol.Declaration
+		seen[key] = struct{}{}
 		unique = append(unique, symbol)
 	}
-	symbols = unique
-	slices.SortFunc(symbols, func(a, b dumpedSwiftSymbol) int {
+	slices.SortFunc(unique, func(a, b dumpedSwiftSymbol) int {
+		if order := strings.Compare(a.Kind+"\x00"+a.Name, b.Kind+"\x00"+b.Name); order != 0 {
+			return order
+		}
+		return strings.Compare(a.Declaration, b.Declaration)
+	})
+	return unique, nil
+}
+
+func swiftManifestSymbols(symbols []dumpedSwiftSymbol) []swiftSymbol {
+	seen := make(map[string]struct{}, len(symbols))
+	unique := make([]swiftSymbol, 0, len(symbols))
+	for _, symbol := range symbols {
+		key := symbol.Kind + "\x00" + symbol.Name
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, swiftSymbol{Kind: symbol.Kind, Name: symbol.Name})
+	}
+	slices.SortFunc(unique, func(a, b swiftSymbol) int {
 		return strings.Compare(a.Kind+"\x00"+a.Name, b.Kind+"\x00"+b.Name)
 	})
-	return symbols, nil
+	return unique
 }
 
 func normalizeSwiftDeclaration(fragments []struct {

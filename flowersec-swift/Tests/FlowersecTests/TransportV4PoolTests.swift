@@ -7,7 +7,7 @@
   @testable import Flowersec
 
   @MainActor
-  final class TransportV4PoolTests: XCTestCase {
+  final class TransportPoolTests: XCTestCase {
     private func route(
       _ fixture: CredentialFixture, port: Int, lease: UInt8 = 30,
       attempt: UInt8 = 33
@@ -98,6 +98,7 @@
       consumed.close()
       await consumed.waitClosed()
       store.close()
+      await store.waitPhysicalCleanup()
       XCTAssertEqual(fixture.base.root.snapshot().used.diskBytes, 3 << 20)
       XCTAssertThrowsError(try backing.retireRemovedFiles())
       let reopened = try backing.open(create: false)
@@ -108,6 +109,8 @@
       let bytes = try Data(contentsOf: directory.appendingPathComponent("spend.sqlite3"))
       XCTAssertNil(bytes.range(of: Data(repeating: 32, count: 32)), "PSK persisted")
       XCTAssertNotNil(bytes.range(of: Data("flowersec/swift/pool-consume/1".utf8)))
+      reopened.close()
+      await reopened.waitPhysicalCleanup()
       try FileManager.default.removeItem(at: directory)
       try backing.retireRemovedFiles()
       XCTAssertEqual(fixture.base.root.snapshot().used.diskBytes, 0)
@@ -129,6 +132,7 @@
       await consumed.waitClosed()
       XCTAssertEqual(try rows(directory), 1)
       store.close()
+      await store.waitPhysicalCleanup()
       try FileManager.default.removeItem(at: directory)
       try backing.retireRemovedFiles()
     }
@@ -158,6 +162,7 @@
         }
         await prepared.waitClosed()
         store.close()
+        await store.waitPhysicalCleanup()
         try FileManager.default.removeItem(at: directory)
         try backing.retireRemovedFiles()
       }
@@ -183,27 +188,31 @@
       XCTAssertEqual(try rows(directory), 1)
       await prepared.waitClosed()
       XCTAssertThrowsError(try prepared.consumePool(using: store))
+      await store.waitPhysicalCleanup()
       try FileManager.default.removeItem(at: directory)
       try backing.retireRemovedFiles()
     }
-    func testRestoreRequiresExactIndependentStoreIdentityAndOriginalFormat() throws {
+    func testRestoreRequiresExactIndependentStoreIdentityAndOriginalFormat() async throws {
       let directory = try directory()
       defer { try? FileManager.default.removeItem(at: directory) }
       let fixture = try CredentialFixture()
       let backing = try backing(fixture, directory: directory)
       let store = try backing.open(create: true)
       store.close()
+      await store.waitPhysicalCleanup()
       let wrong = try self.backing(fixture, directory: directory, spend: "other")
       XCTAssertThrowsError(try wrong.open(create: false))
+      await wrong.waitPhysicalCleanup()
       let restored = try backing.open(create: false)
       fixture.base.environment.beginClose()
+      await restored.waitPhysicalCleanup()
       XCTAssertEqual(fixture.base.root.snapshot().used.diskBytes, 6 << 20)
       XCTAssertEqual(try fixture.base.environment.account.snapshot().used.diskBytes, 0)
       let lock = Darwin.open(directory.appendingPathComponent("spend.sqlite3.lock").path, O_RDWR)
       XCTAssertGreaterThanOrEqual(lock, 0)
       if lock >= 0 {
         XCTAssertEqual(
-          flock(lock, LOCK_EX | LOCK_NB), 0, "Environment kept the physical store lock")
+          flock(lock, LOCK_EX | LOCK_NB), 0, "TransportEnvironment kept the physical store lock")
         Darwin.close(lock)
       }
       restored.close()

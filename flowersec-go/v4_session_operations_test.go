@@ -10,14 +10,14 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-func TestV4OperationPreparationKeepsFixedSessionAndOwner(t *testing.T) {
+func TestOperationPreparationKeepsFixedSessionAndOwner(t *testing.T) {
 	ctx := context.Background()
 	owner := &sessionv4.UnaryOperation{}
 	digest := [32]byte{1}
-	method := V4UnaryMethod{Contract: digest, WorkClass: V4WorkShort, Decode: func(context.Context, []byte) (any, error) { return nil, nil }}
-	options := V4OperationOptions{DeadlineAtMS: 1<<53 + 123, ResponseLimitBytes: 64, AdmissionMode: 1, ExplicitAdmissionMode: true, RequireExecution: true}
+	method := UnaryMethod{Contract: digest, WorkClass: WorkShort, Decode: func(context.Context, []byte) (any, error) { return nil, nil }}
+	options := OperationOptions{DeadlineAtMS: 1<<53 + 123, ResponseLimitBytes: 64, AdmissionMode: 1, ExplicitAdmissionMode: true, RequireExecution: true}
 	calls := 0
-	session := &V4Session{prepareUnary: func(gotCtx context.Context, gotMethod sessionv4.UnaryMethodDefinition, input []byte, gotOptions rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error) {
+	session := &Session{prepareUnary: func(gotCtx context.Context, gotMethod sessionv4.UnaryMethodDefinition, input []byte, gotOptions rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error) {
 		calls++
 		if gotCtx != ctx || gotMethod.Contract != digest || string(input) != "request" || gotOptions.DeadlineAtMS != options.DeadlineAtMS || gotOptions.AdmissionMode != 1 || !gotOptions.RequireExecution {
 			t.Error("changed fixed preparation")
@@ -45,7 +45,7 @@ func TestV4OperationPreparationKeepsFixedSessionAndOwner(t *testing.T) {
 	}
 }
 
-func TestV4OperationProgressDoesNotInventRemoteExecution(t *testing.T) {
+func TestOperationProgressDoesNotInventRemoteExecution(t *testing.T) {
 	if got := operationStatus(sessionv4.UnaryOperationSnapshot{Started: true}); got != OperationAccepted {
 		t.Fatal(got)
 	}
@@ -56,14 +56,14 @@ func TestV4OperationProgressDoesNotInventRemoteExecution(t *testing.T) {
 	if result.Status != OperationCompleted || !errors.Is(result.Err, context.Canceled) {
 		t.Fatal(result)
 	}
-	if status := (&V4UnaryRequest{}).ResponsePublication().State(); status.State != PublicationNotApplicable {
+	if status := (&UnaryRequest{}).ResponsePublication().State(); status.State != PublicationNotApplicable {
 		t.Fatal(status)
 	}
 }
 
-func TestV4ServiceBindingValidatesImmutableDefault(t *testing.T) {
-	method := V4UnaryMethod{Contract: [32]byte{1}, DefaultResponseLimitBytes: 65536, Decode: synchronousResultForAPI}
-	session := &V4Session{prepareUnary: func(context.Context, sessionv4.UnaryMethodDefinition, []byte, rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error) {
+func TestServiceBindingValidatesImmutableDefault(t *testing.T) {
+	method := UnaryMethod{Contract: [32]byte{1}, DefaultResponseLimitBytes: 65536, Decode: synchronousResultForAPI}
+	session := &Session{prepareUnary: func(context.Context, sessionv4.UnaryMethodDefinition, []byte, rpcv4.UnaryPreparation) (*sessionv4.UnaryOperation, error) {
 		t.Fatal("binding encoded or prepared a request")
 		return nil, nil
 	}, bindUnaryService: func(got sessionv4.UnaryMethodDefinition) (*sessionv4.UnaryServiceClient, error) {
@@ -75,16 +75,16 @@ func TestV4ServiceBindingValidatesImmutableDefault(t *testing.T) {
 	if client, err := session.BindService(method); err != ErrResponseLimitUnsupported || client != nil {
 		t.Fatal(client, err)
 	}
-	if options := (V4OperationOptions{ExplicitResponseLimit: true}).internal(); !options.ExplicitResponseLimit || options.ResponseLimitBytes != 0 {
+	if options := (OperationOptions{ExplicitResponseLimit: true}).internal(); !options.ExplicitResponseLimit || options.ResponseLimitBytes != 0 {
 		t.Fatal("explicit zero became omitted", options)
 	}
 }
 
 func synchronousResultForAPI(_ context.Context, value []byte) (any, error) { return value, nil }
 
-func TestV4OperationManagementUsesCapturedOpaqueReference(t *testing.T) {
+func TestOperationManagementUsesCapturedOpaqueReference(t *testing.T) {
 	calls := 0
-	session := &V4Session{referenceManagement: func(ctx context.Context, ref protocolv4.OperationReference, cancel bool, timeout uint64) (rpcv4.ManagementResponse, error) {
+	session := &Session{referenceManagement: func(ctx context.Context, ref protocolv4.OperationReference, cancel bool, timeout uint64) (rpcv4.ManagementResponse, error) {
 		calls++
 		if ctx == nil || !cancel || timeout != 30000 {
 			t.Error("changed management intent")

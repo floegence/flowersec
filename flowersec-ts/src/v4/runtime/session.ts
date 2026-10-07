@@ -1,3 +1,13 @@
+import type { RPCPublicationGuard } from "./rpcPublisher.js";
+import type { NotificationScheduler, NotificationRegistration } from "./notifyDispatch.js";
+import type { DiagnosticFields, DiagnosticMetric } from "../diagnostics.js";
+import { DiagnosticActivity, type DiagnosticObserver } from "./diagnosticObservation.js";
+import { diagnosticDuration, diagnosticFailure } from "./diagnosticCounters.js";
+import type { VerifiedRelayCredentials } from "./relayCredentials.js";
+import type { CredentialResources } from "./credentialSupport.js";
+import type { HopAuthenticationPreparation } from "./hopAuthentication.js";
+import { UnreliableRuntime, type UnreliablePreparation, type NativeDatagrams } from "./unreliable.js";
+import { V4UnreliableMessageError, type V4UnreliableMessages } from "../unreliable.js";
 import type * as StreamHandlersTypes from "../streamHandlers.js";
 import type * as ResumeCodecTypes from "./resumeCodec.js";
 import type * as ServiceDefinitionTypes from "../serviceDefinition.js";
@@ -20,7 +30,7 @@ import { captureSendQueueBytes, captureStreamSendQueueBytes, checkSendQueueCapac
 import { SessionCleanup, sessionCleanupCharge } from "./sessionCleanup.js";
 import { cleanupResult } from "./lifecycle.js";
 import { NativeIngressScheduler } from "./nativeIngress.js";
-import { NativeDirectionFailure } from "./nativeFailure.js";
+import { NativeDirectionFailure, nativeConnectionEnded, observeNativeConnectionFailure, originalNativeConnectionFailure } from "./nativeFailure.js";
 import { observeTask } from "./taskObservation.js";
 import { encodeStreamData, StreamDataBounds } from "./streamData.js";
 import { NativeFrameReader, type NativeFramePromise, type NativeFramePrefetch } from "./nativeFrame.js";
@@ -52,7 +62,7 @@ import { registerRPCStream, type RPCStreamOwner } from "./rpcStream.js";
 import type { RPCApplicationAdmission } from "./rpcApplication.js";
 import { ReliableWriteRequest, writeRequestCharge } from "./writeRequest.js";
 import { binaryWidth, envelopePrefixBytes, recordHeaderBytes, maxStreamScope, ownProfile, wire } from "./wireRegistry.js";
-import { registerStreamAdapter, registerMessageStreamAdapter, type MessageStreamAdapterOwner, type StreamAdapterProfile, type StreamAdapterOwner } from "./streamAdapter.js";
+import { registerStreamAdapter, registerMessageStreamAdapter, registerBridgeStreamAdapter, type BridgeStreamAdapterOwner, type MessageStreamAdapterOwner, type StreamAdapterProfile, type StreamAdapterOwner } from "./streamAdapter.js";
 import { TimeError } from "./timeArithmetic.js";
 import { SessionLiveness } from "./liveness.js";
 import { SessionIdleWatchdog, captureAutomaticLiveness, selectedIdleDuration, qualifySessionActivity } from "./sessionActivity.js";
@@ -77,15 +87,21 @@ export interface V4AuthenticatedTransport {
   readonly role: NoiseRole;
   readonly mode: "message" | "stream";
   readonly nativeStreams?: V4NativeStreamProvider;
+  readonly nativeDatagrams?: NativeDatagrams;
+  /** Current Tunnel hop authentication over this carrier's original
+   * maintenance stream, before end-to-end negotiation. */
+  authenticateHop?(credentials: VerifiedRelayCredentials, signer: ReadyIdentitySigner, random: RandomFill, resources: CredentialResources, reference: ResourceReference, options?: OperationOptions, acceptedHello?: Uint8Array, prepared?: HopAuthenticationPreparation, originalDeadline?: TrustedDeadline): Promise<void>;
   /** Native production preparation rechecks original TLS/provider evidence. */
   checkPreparation?(): void;
+  /** Original authenticated handoff ends admission-only TLS window checks. */
+  completePreparation?(): void;
   /** Original admission opens a prepared carrier's send gate after spend. */
   activate?(): void;
   /** Private native-provider operation over this original completed TLS owner. */
   exportBinding?(artifactDigest: Uint8Array): Uint8Array;
   read(maxBytes: number, options?: OperationOptions): Promise<Uint8Array | null>;
   write(data: Uint8Array, options?: OperationOptions): Promise<number>;
-  submit(data: Uint8Array, admitted: () => void): Readonly<{ completion: Promise<void> }> | undefined;
+  submit(data: Uint8Array, admitted: () => void, beforeSubmit?: () => void): Readonly<{ completion: Promise<void> }> | undefined;
   close(): Promise<void>;
   waitTermination(): Promise<void>;
 }
@@ -130,10 +146,17 @@ export interface V4SessionAssemblyReservations {
  * absent from package entry points; applications cannot provide private keys,
  * assert READY/OPEN acceptance, or replace original authorization owners. */
 export interface V4AuthenticatedSessionConfig {
+  readonly diagnostics?: DiagnosticObserver | undefined;
+  readonly diagnosticActivity?: DiagnosticActivity | undefined;
+  readonly unreliablePreparation?: UnreliablePreparation | undefined;
   readonly preparedRawStreams?: RawStreamPreparation | undefined;
   /** Original Serve publication claim, after dual READY and before readers or
    * application dispatch start. This internal callback performs no I/O. */
   readonly claimReadySession?: (session: V4AuthenticatedSessionRuntime) => void;
+  /** Install only original local inbound observers before committing own READY. */
+  readonly prepareInbound?: (session: V4AuthenticatedSessionRuntime) => void;
+  /** Evidence projection only; invoked after both authenticated READY directions. */
+  readonly observeNetworkReady?: () => void;
   readonly transport: V4AuthenticatedTransport;
   readonly noise: NoiseHandshakeConfig;
   readonly signer: ReadyIdentitySigner;
@@ -144,6 +167,8 @@ export interface V4AuthenticatedSessionConfig {
   readonly maxFrame: number;
   readonly maxReceiveDirections: number;
   readonly idleDurationMS?: bigint;
+  /** Bounded actual cleanup observation inherited from the owning Environment. */
+  readonly cleanupMS?: number;
   readonly localIdleDurationMS?: bigint;
   readonly automaticLiveness?: V4AutomaticLivenessPolicy;
   readonly runtimeBytes: bigint;
@@ -168,6 +193,9 @@ export interface V4SessionStreamAssembly {
   readonly rpcMaxGeneralOutstanding?: number;
   /** Original Environment admission, assembled before authorization spend. */
   readonly rpcAdmission?: RPCApplicationAdmission;
+  readonly rpcReservations?: readonly (readonly ResourceReference[])[];
+  readonly rpcSendAccounts?: readonly ResourceAccount[];
+  readonly rpcNativePositions?: readonly (NativeProtocolPosition | undefined)[];
   readonly notifyReservations?: readonly (readonly ResourceReference[])[];
   readonly notifySendAccounts?: readonly ResourceAccount[];
   readonly notifyNativePosition?: NativeProtocolPosition;
@@ -281,6 +309,12 @@ class TransportReader {
       this.#decoder = new EnvelopeDecoder({ maxFrame, mode: transport.mode, runtimeBytes }, decoderReservation, checkPrefix);
     } catch (error) { this.#input.fill(0); this.#reservation.release(); this.#reservation = undefined; throw error; }
   }
+  async #read(limit: number, options?: OperationOptions): Promise<Uint8Array | null> {
+    try { return await this.#transport.read(limit, options); }
+    catch (error) {
+      if (!this.#closed && !options?.signal?.aborted) observeNativeConnectionFailure(error); throw error;
+    }
+  }
   async next(options?: OperationOptions): Promise<EnvelopeFrame | null> {
     if (this.#closed) fail("closed");
     if (this.#busy) fail("busy");
@@ -291,7 +325,7 @@ class TransportReader {
         if (this.#closed || options?.signal?.aborted) fail("closed");
         if (this.#at === this.#used) {
           const allowance = this.#transport.mode === "stream" ? this.#decoder.readAllowance(Math.min(16384, this.#input.length)) : this.#input.length;
-          const input = await this.#transport.read(allowance, options);
+          const input = await this.#read(allowance, options);
           if (this.#closed || options?.signal?.aborted) fail("closed");
           if (input === null) { this.#decoder.end(); return null; }
           const size = byteLength(input);
@@ -309,7 +343,7 @@ class TransportReader {
   }
   async plain(expected: number, size: number, options?: OperationOptions): Promise<Uint8Array> {
     const frame = await this.next(options);
-    if (frame === null) fail("authentication_failed");
+    if (frame === null) throw nativeConnectionEnded(new V4SessionAssemblyError("authentication_failed"));
     try {
       if (frame.frameType() !== expected || frame.payloadBytes() !== size) fail("authentication_failed");
       const payload = new Uint8Array(size); frame.copyPayload(payload); return payload;
@@ -333,6 +367,8 @@ class TransportOutput {
   #body: ResourceReference | undefined;
   #allocate: ((bytes: number) => ResourceReference) | undefined;
   readonly #dynamic: boolean;
+  #failed: ((error: unknown) => void) | undefined;
+  observeFailure(failed: (error: unknown) => void): void { this.#failed = failed; }
   observeRecords(activity: () => void, starting: () => void): void { this.#activity = activity; this.#starting = starting; }
   constructor(private readonly transport: V4AuthenticatedTransport, private readonly maxFrame: number, runtimeBytes: bigint, reservation: ResourceReference,
     allocate?: (bytes: number) => ResourceReference) {
@@ -340,6 +376,22 @@ class TransportOutput {
     this.#reservation = reservation.take(this.#dynamic ? nativeOutputCharge(runtimeBytes) : sessionOutputCharge(maxFrame, runtimeBytes));
     try { if (!this.#dynamic) this.#bytes = new Uint8Array(capacity(maxFrame, runtimeBytes)); }
     catch (error) { this.#reservation.release(); this.#reservation = undefined; throw error; }
+  }
+  #submit(bytes: Uint8Array, admitted: () => void, beforeSubmit?: () => void): ReturnType<V4AuthenticatedTransport["submit"]> {
+    let callbackFailed = false;
+    try { return this.transport.submit(bytes, () => {
+      try { admitted(); } catch (error) { callbackFailed = true; throw error; }
+    }, () => {
+      try { beforeSubmit?.(); } catch (error) { callbackFailed = true; throw error; }
+    }); } catch (error) {
+      if (!callbackFailed && !this.#closed) observeNativeConnectionFailure(error); throw error;
+    }
+  }
+  async #write(bytes: Uint8Array, options?: OperationOptions): Promise<number> {
+    try { return await this.transport.write(bytes, options); }
+    catch (error) {
+      if (!this.#closed && !options?.signal?.aborted) observeNativeConnectionFailure(error); throw error;
+    }
   }
   #begin(bytes: number): void {
     if (this.#closed) fail("closed"); if (this.#busy) fail("busy"); this.#reservation!.check();
@@ -366,7 +418,7 @@ class TransportOutput {
       let at = 0;
       do {
         if (this.#closed || options?.signal?.aborted) fail("closed");
-        const accepted = await this.transport.write(byteSlice(this.#bytes, at, count), options);
+        const accepted = await this.#write(byteSlice(this.#bytes, at, count), options);
         if (!Number.isSafeInteger(accepted) || accepted < 1 || accepted > count - at ||
             this.transport.mode === "message" && accepted !== count) fail("carrier_failed");
         at += accepted;
@@ -378,21 +430,25 @@ class TransportOutput {
     let submitted = false;
     try {
       const count = encodePlainEnvelope(frameType("READY"), payload, this.#bytes, this.maxFrame);
-      const result = this.transport.submit(byteSlice(this.#bytes, 0, count), () => undefined);
+      const result = this.#submit(byteSlice(this.#bytes, 0, count), () => undefined);
       if (result === undefined) return false;
       submitted = true;
-      this.#tail = result.completion.then(() => { this.#finish(); }, error => { this.#finish(); throw error; });
+      this.#tail = result.completion.then(() => { this.#finish(); }, error => {
+        if (!this.#closed) { observeNativeConnectionFailure(error); this.#failed?.(error); } this.#finish(); throw error;
+      });
       // The original establishment owner awaits this same tail. Marking a
       // rejection observed here does not replace its later failed outcome.
       void this.#tail.catch(() => undefined);
       return true;
+    } catch (error) {
+      if (!this.#closed) this.#failed?.(error); throw error;
     } finally { if (!submitted) this.#finish(); }
   }
   available(): boolean { return !this.#closed && !this.#busy; }
   pending(): boolean { return this.#busy; }
   /** Sealing consumes a reliable sequence. Any failure after this call starts
    * the crypto ticket is fatal to that original Session, never a retry. */
-  record(cipher: RecordCipher, type: number, plaintext: Uint8Array, submitted: () => void, ticket?: () => void): Promise<void> {
+  record(cipher: RecordCipher, type: number, plaintext: Uint8Array, submitted: () => void, ticket?: () => void, beforeSubmit?: () => void): Promise<void> {
     this.#begin(byteLength(plaintext) + envelopePrefixBytes + recordHeaderBytes + 16);
     let packet: RecordPacket | undefined, admitted = false;
     try {
@@ -403,18 +459,21 @@ class TransportOutput {
       // The synchronous cipher position/key borrow has actually ended here.
       packet.release(); packet = undefined;
       let accepted = false;
-      const result = this.transport.submit(byteSlice(this.#bytes, 0, size), () => {
+      beforeSubmit?.();
+      const result = this.#submit(byteSlice(this.#bytes, 0, size), () => {
         if (accepted) fail("carrier_failed");
         submitted(); accepted = true;
-      });
+      }, beforeSubmit);
       if (result === undefined || !accepted) fail("carrier_failed");
       admitted = true;
       this.#tail = result.completion.then(
         () => { try { this.#activity?.(); } finally { this.#finish(); } },
-        error => { this.#finish(); throw error; },
+        error => { if (!this.#closed) { observeNativeConnectionFailure(error); this.#failed?.(error); } this.#finish(); throw error; },
       );
       void this.#tail.catch(() => undefined);
       return this.#tail;
+    } catch (error) {
+      if (!this.#closed) this.#failed?.(error); throw error;
     } finally { if (!admitted) { packet?.release(); this.#finish(); } }
   }
   waitSubmitted(): Promise<void> { return this.#tail; }
@@ -505,7 +564,12 @@ class NativeAssociation {
       this.#closed = true; this.abort.abort(); this.outcome(); this.reader.close(); this.output.close(); this.#closing = true;
       let tail: Promise<void>;
       try { tail = this.transport.close(); } catch { tail = Promise.reject(new Error("carrier_failed")); }
-      void tail.then(() => { this.#closing = false; this.cleanup(); this.changed(); }, () => { this.#closing = false; this.cleanup(); this.changed(); });
+      // A native stream can finish before the submitted output's JavaScript
+      // continuation releases its original encoder position. Join both tails
+      // before notifying the Session, so its association set observes release.
+      void Promise.allSettled([tail, this.output.waitSubmitted()]).then(() => {
+        this.#closing = false; this.cleanup(); this.changed();
+      });
     }
     this.cleanup();
   }
@@ -515,6 +579,7 @@ class NativeAssociation {
     this.#reference?.release(); this.#reference = undefined;
   }
   cleanupComplete(): boolean { this.cleanup(); return this.#reference === undefined; }
+
 }
 
 /** Internal handshake/receive composition only. The original admission and
@@ -575,6 +640,7 @@ async function establishSession(config: V4AuthenticatedSessionConfig, options?: 
     rekeyMaxScopes: source.rekeyMaxScopes ?? 1035,
     rpcMaxGeneralOutstanding: source.rpcMaxGeneralOutstanding ?? 0,
     ...(source.rpcAdmission === undefined ? {} : { rpcAdmission: source.rpcAdmission }),
+    ...(source.rpcReservations === undefined ? {} : { rpcReservations: source.rpcReservations, rpcSendAccounts: source.rpcSendAccounts!, rpcNativePositions: source.rpcNativePositions! }),
     ...(source.notifyReservations === undefined ? {} : { notifyReservations: source.notifyReservations, notifySendAccounts: source.notifySendAccounts!,
       ...(source.notifyNativePosition === undefined ? {} : { notifyNativePosition: source.notifyNativePosition }) }),
     ...(source.managementReservations === undefined ? {} : { managementReservations: source.managementReservations, managementSendAccount: source.managementSendAccount!,
@@ -588,7 +654,7 @@ async function establishSession(config: V4AuthenticatedSessionConfig, options?: 
   const idleDurationMS = selectedIdleDuration(config.idleDurationMS ?? 0n, config.localIdleDurationMS);
   const automaticLiveness = captureAutomaticLiveness(config.automaticLiveness);
   qualifySessionActivity(noise.clock, idleDurationMS, streams.operationDeadlineMS, automaticLiveness);
-  const captured = Object.freeze({ transportContextDigest: Array.from(ready.transportContextDigest, n => n.toString(16).padStart(2, "0")).join(""), idleDurationMS, automaticLiveness, transport, ledger, maxFrame, runtimeBytes, streams, credentials, maxReceiveDirections: config.maxReceiveDirections,
+  const captured = Object.freeze({ diagnostics: config.diagnostics, diagnosticActivity: config.diagnosticActivity, cleanupMS: config.cleanupMS, unreliablePreparation: config.unreliablePreparation, transportContextDigest: Array.from(ready.transportContextDigest, n => n.toString(16).padStart(2, "0")).join(""), idleDurationMS, automaticLiveness, transport, ledger, maxFrame, runtimeBytes, streams, credentials, maxReceiveDirections: config.maxReceiveDirections,
     deadline: noise.authorizationDeadline, clock: noise.clock,
     nativeIngress: config.reservations.nativeIngress,
     nativeRecord: config.reservations.nativeRecord,
@@ -626,7 +692,7 @@ async function establishSession(config: V4AuthenticatedSessionConfig, options?: 
   const signal = options?.signal === undefined ? abort.signal : AbortSignal.any([options.signal, abort.signal]);
   const tick = (): void => {
     try {
-      noise.preparationDeadline.check(); noise.authorizationDeadline.check(); credentials?.check();
+      noise.preparationDeadline.check(); noise.authorizationDeadline.check(); credentials?.check(); transport.checkPreparation?.();
       const remaining = noise.preparationDeadline.remainingMS() < noise.authorizationDeadline.remainingMS()
         ? noise.preparationDeadline.remainingMS() : noise.authorizationDeadline.remainingMS();
       timer = setTimeout(tick, timerChunk(credentials === undefined || remaining < credentials.remainingMS() ? remaining : credentials.remainingMS()));
@@ -657,6 +723,7 @@ async function establishSession(config: V4AuthenticatedSessionConfig, options?: 
     if (captured.info.application_profile !== "transport") {
       epoch = handshake.prepareEpoch({ runtimeBytes }, ledger, epochReservation);
       runtime = new V4AuthenticatedSessionRuntime(captured, epoch, reader, output, sessionReservation);
+      config.prepareInbound?.(runtime);
     }
     handshake.submitReady(output);
     const peerReady = await reader.plain(frameType("READY"), 103, { signal });
@@ -665,17 +732,24 @@ async function establishSession(config: V4AuthenticatedSessionConfig, options?: 
     if (signal.aborted) fail("closed");
     credentials?.check(); epoch = handshake.finish({ runtimeBytes }, ledger, epochReservation);
     runtime ??= new V4AuthenticatedSessionRuntime(captured, epoch, reader, output, sessionReservation);
+    config.observeNetworkReady?.();
+    transport.checkPreparation?.();
     config.claimReadySession?.(runtime);
     if (signal.aborted) fail("closed");
+    transport.completePreparation?.();
     runtime.start(readyActivation, epoch, config.preparedRawStreams);
     return runtime;
   } catch (error) {
+    config.diagnosticActivity?.failure(error, true);
     abort.abort(); handshake?.close(); if (runtime !== undefined) void runtime.close().catch(() => undefined);
     epoch?.close(); reader?.close(); output?.close();
     // Cancellation never releases a native output tail early. These actual
     // dependencies retain their charge even when the close operation fails.
     void Promise.allSettled([transport.close(), transport.waitTermination(), output?.waitSubmitted()]);
     streams.internalKeys?.close(); streams.peerOpenPreparation?.close(); streams.rpcAdmission?.close(); ledger.close();
+    for (const refs of streams.rpcReservations ?? []) for (const ref of refs) ref.release();
+    for (const account of streams.rpcSendAccounts ?? []) account.close();
+    for (const position of streams.rpcNativePositions ?? []) for (const ref of position?.references ?? []) ref.release();
     for (const ref of streams.managementReservations ?? []) ref.release(); streams.managementSendAccount?.close();
     for (const ref of streams.managementNativePosition?.references ?? []) ref.release();
     for (const ref of [streams.open, streams.openDecoder, streams.control, streams.controlDecoder, streams.controlSendCipher, streams.controlReceiveCipher]) ref.release();
@@ -693,6 +767,10 @@ async function establishSession(config: V4AuthenticatedSessionConfig, options?: 
 
 
 interface RuntimeConfig {
+  readonly diagnostics?: DiagnosticObserver | undefined;
+  readonly diagnosticActivity?: DiagnosticActivity | undefined;
+  readonly cleanupMS?: number | undefined;
+  readonly unreliablePreparation: UnreliablePreparation | undefined;
   readonly nativeIngress: ResourceReference | undefined;
   readonly nativeRecord: ResourceReference | undefined;
   readonly nativeEnvelope: ResourceReference | undefined;
@@ -713,6 +791,7 @@ interface RuntimeConfig {
 interface TerminalTuple { readonly epoch: number; readonly next: bigint; readonly offset: bigint }
 interface DirectionTermination { readonly normal: TrustedDeadline; readonly hard: TrustedDeadline; quarantined: boolean }
 interface ReceiveBinding {
+  rpcPosition?: number;
   retired?: boolean;
   retirementReferences?: number;
   sendAccount?: ResourceAccount;
@@ -811,6 +890,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #drainDeadline: TrustedDeadline | undefined;
   #drainTimer: ReturnType<typeof setTimeout> | undefined;
   #drainWork: Promise<void> | undefined;
+  #businessDrained = false;
   #localGoaway: { ceiling: bigint; sent: boolean } | undefined;
   #cleanupFault = false;
   readonly #terminationWaiters = new Set<() => void>();
@@ -818,6 +898,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #rekeyRound: RekeyRound | undefined;
   #rekeyStage: "idle" | "init" | "reply" | "commit" | "ack" = "idle";
   #rekeyDeadline: TrustedDeadline | undefined;
+  #rekeySafetyDeadline: TrustedDeadline | undefined;
   #rekeyPhaseDeadline: TrustedDeadline | undefined;
   #rekeyTimer: ReturnType<typeof setTimeout> | undefined;
   #rekeyWorking = false;
@@ -833,6 +914,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #rekeyPost = 0n;
   #rekeyCharged = false;
   #rekeyRequest: Promise<void> | undefined;
+  #autoRekeyQueued = false;
+  #rekeySafetyTimer: ReturnType<typeof setTimeout> | undefined;
   #rekeyRetired: RecordEpoch[] = [];
   #transportClosed = false;
   #supervisor: Promise<void> | undefined;
@@ -842,7 +925,13 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #idle: SessionIdleWatchdog | undefined;
   #liveness: SessionLiveness | undefined;
   #failure: V4SessionAssemblyError | undefined;
+  #controllerTerminalObserved = false;
+  #controllerTransportFailure = false;
   #rekeyIntent = false;
+  #diagnosticRekeyStarted: number | undefined;
+  #diagnosticRekeyTimedOut = false;
+  #diagnosticPhaseStarted = 0;
+  #diagnosticRekeyPhase: DiagnosticFields["phase"] = "rekey_local_prepare";
   #readBlocked = false;
   readonly #waiters = new Set<() => void>();
   #authenticationWaiters = 0;
@@ -854,6 +943,15 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #rejecting = false;
   #application: ApplicationGroup | undefined;
   #rpc: RPCApplicationAdmission | undefined;
+  readonly #rpcPositions: ProtectedResourceReservation[][] = Array.from({ length: 8 }, () => []);
+  readonly #rpcRefs: ResourceReference[][] = Array.from({ length: 8 }, () => []);
+  readonly #rpcOutputs: (ResourceReference | undefined)[] = Array.from({ length: 8 });
+  readonly #rpcHandles: (OpenHandle | undefined)[] = Array.from({ length: 8 });
+  readonly #rpcTasks: (Promise<void> | undefined)[] = Array.from({ length: 8 });
+  readonly #rpcNative: (NativeProtocolPosition | undefined)[] = Array.from({ length: 8 });
+  readonly #rpcNativeRenewal: NativeProtocolPosition["renewal"][] = Array.from({ length: 8 });
+  readonly #rpcStopped = Array.from({ length: 8 }, () => false);
+  #rpcDriving = false;
   readonly #dedicatedRPCStreams = new WeakSet<OpenHandle>();
   readonly #notifyRefs: ResourceReference[][] = [[], []];
   readonly #notifyPositions: ProtectedResourceReservation[][] = [[], []];
@@ -884,6 +982,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #nativePositions: NativeProtocolPositions | undefined;
   #maintenancePositions: MaintenancePositions | undefined;
   #internalKeys: SessionKeyPreparation | undefined;
+  #unreliable: UnreliableRuntime | undefined;
   #ready = false;
   #bootstrap: OpenHandle | undefined;
   #bootstrapTask: Promise<void> | undefined;
@@ -892,6 +991,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #bootstrapPosition: NativeProtocolPosition | undefined;
   #bootstrapDeadline: TrustedDeadline | undefined;
   #bootstrapTimer: ReturnType<typeof setTimeout> | undefined;
+  #bootstrapBinding = false;
   readonly #bootstrapAbort = new AbortController();
   #core: { config: RuntimeConfig; epoch: RecordEpoch; reader: TransportReader; output: TransportOutput } | undefined;
   private get config(): RuntimeConfig { return this.#core?.config ?? fail("closed"); }
@@ -902,7 +1002,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   constructor(config: RuntimeConfig, epoch: RecordEpoch, reader: TransportReader, output: TransportOutput, reservation: ResourceReference) {
     this.#core = { config, epoch, reader, output };
     this.#reservation = reservation.take(authenticatedSessionCharge(config.maxReceiveDirections, config.runtimeBytes));
-    this.cleanupOwner = new SessionCleanup(config.streams.root, config.streams.accounts, config.streams.owner, config.clock, config.runtimeBytes);
+    this.cleanupOwner = new SessionCleanup(config.streams.root, config.streams.accounts, config.streams.owner, config.clock, config.runtimeBytes, config.cleanupMS, config.diagnostics?.counters);
     this.#sendDirection = config.ledger.sendDirection;
     this.#receiveDirection = this.#sendDirection === 0 ? 1 : 0;
     this.#info = config.info;
@@ -915,10 +1015,19 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       } else {
         if (streams.rpcAdmission === undefined) fail("configuration_capacity");
         streams.rpcAdmission.claim(this.#reservation, config.info.application_profile, streams.rpcMaxGeneralOutstanding ?? 0, config.deadline, this.cleanupOwner,
-          config.credentials?.applicationContext(this.#sendDirection === 0 ? "client" : "server"), config.credentials?.checkpointPolicy(config.info.selected_features), this);
+          config.credentials?.applicationContext(this.#sendDirection === 0 ? "client" : "server"), config.credentials?.checkpointPolicy(config.info.selected_features), this,
+          () => !this.#closed && !this.#sealBusinessDrain());
         this.#rpc = streams.rpcAdmission;
         this.#rpc.setStreamOpener((kind, metadata, deadline, signal, prepare, prepaid) => this.#openRPCStream(kind, metadata, deadline, signal, prepare, prepaid));
         const notifyCosts = sessionBootstrapCharges(config.info.application_profile, config.maxFrame, config.runtimeBytes, streams.receive);
+        if (streams.rpcReservations?.length !== 7 || streams.rpcSendAccounts?.length !== 8 || streams.rpcNativePositions?.length !== 8) fail("configuration_capacity");
+        for (let position = 0; position < 8; position++) {
+          const refs = position === 0 ? streams.bootstrapReservations : streams.rpcReservations[position - 1];
+          if (refs?.length !== notifyCosts.length) fail("configuration_capacity");
+          for (const [index, ref] of refs.entries()) this.#rpcPositions[position]!.push(streams.root.protect(ref, notifyCosts[index]!));
+          this.#rpcNative[position] = streams.rpcNativePositions[position]; this.#rpcNativeRenewal[position] = this.#rpcNative[position]?.renewal;
+        }
+        this.#rpc.onChannelsChange(() => this.#wake());
         if (streams.notifyReservations?.length !== 2 || streams.notifySendAccounts?.length !== 2) fail("configuration_capacity");
         for (let position = 0; position < 2; position++) {
           const refs = streams.notifyReservations[position]!; if (refs.length !== notifyCosts.length) fail("configuration_capacity");
@@ -1012,16 +1121,45 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         } finally { this.#encode.fill(0); }
       },
     });
+    this.output.observeFailure(error => this.#observeControllerFailure(error));
     this.output.observeRecords(() => this.#idle!.activity(), () => this.#liveness!.localStall());
     Object.defineProperty(this, "then", { value: undefined });
   }
+  #observeControllerFailure(error: unknown): void {
+    if (this.#closed || this.#controllerTerminalObserved) return;
+    this.#controllerTerminalObserved = true;
+    this.#controllerTransportFailure = originalNativeConnectionFailure(error);
+  }
+  #diagnostic(fields: Partial<DiagnosticFields>, metric?: DiagnosticMetric): void {
+    if (this.config.diagnosticActivity !== undefined) this.config.diagnosticActivity.event(fields, metric);
+    else if (metric !== undefined) this.config.diagnostics?.counters.observe(metric, fields);
+  }
+  #beginDiagnosticRekey(): void {
+    if (this.#diagnosticRekeyStarted !== undefined) return;
+    this.#diagnosticRekeyTimedOut = false;
+    this.#diagnosticRekeyStarted = this.#diagnosticPhaseStarted = performance.now(); this.#diagnosticRekeyPhase = "rekey_local_prepare";
+    this.#diagnostic({ state: "ready", phase: this.#diagnosticRekeyPhase }, "rekey_started");
+  }
+  #diagnosticRekeyFailure(error: unknown): void {
+    if (this.#diagnosticRekeyStarted === undefined || this.#diagnosticRekeyTimedOut || diagnosticFailure(error).code !== "timeout") return;
+    this.#diagnosticRekeyTimedOut = true;
+    this.#diagnostic({ phase: this.#diagnosticRekeyPhase, code: "timeout", duration_bucket: diagnosticDuration(this.#diagnosticPhaseStarted) }, "rekey_timeout");
+  }
+  #checkRekeyDeadlines(): void {
+    try { this.#rekeyDeadline!.check(); this.#rekeyPhaseDeadline!.check(); }
+    catch (error) { this.#diagnosticRekeyFailure(error); throw error; }
+  }
   #failSession(code: V4SessionAssemblyError["code"]): void {
     if (this.#closed) return;
+    this.#observeControllerFailure(undefined);
     this.#failure ??= new V4SessionAssemblyError(code);
+    const failure = diagnosticFailure(new Error(code));
+    this.#diagnostic({ state: "failed", code: failure.code }, failure.metric === "identity_rejection" ? failure.metric : undefined);
     void this.close().catch(() => undefined);
   }
-  #resourceFailure(): void {
+  #resourceFailure(alreadyObserved = false): void {
     if (this.#closed) return;
+    this.#diagnostic({ code: "resource_exhausted" }, alreadyObserved ? undefined : "resource_rejection");
     this.#draining = true;
     // Best-effort publication uses only the already-admitted maintenance
     // position. There is no new waiter, codec or reserve in the failure path.
@@ -1038,18 +1176,25 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #check(): void {
     if (this.#closed) throw this.#failure ?? new V4SessionAssemblyError("closed");
     if (!this.#ready) fail("authentication_failed");
-    if (this.#drainDeadline !== undefined) {
-      try { this.#drainDeadline!.check(); }
-      catch (error) {
-        this.#drain!.finish(error instanceof TimeError && error.code === "time_expired" ? "deadline_aborted" : "failed");
-        this.#failSession(error instanceof TimeError && error.code === "time_expired" ? "drain_deadline" : "time_unavailable");
-        throw this.#failure!;
-      }
-    }
+    if (this.#drainDeadline !== undefined) this.#drainRemainingMS();
     this.#idle?.check();
     this.#reservation!.check(); this.config.deadline.check(); this.config.credentials?.check();
     if (this.#closed) fail("closed");
   }
+  #drainRemainingMS(): bigint {
+    // Every observation of the original Drain deadline, including timer
+    // rearming, records its outcome before Session Close can settle it.
+    try { return this.#drainDeadline!.remainingMS(); }
+    catch (error) {
+      const expired = error instanceof TimeError && error.code === "time_expired";
+      this.#drain!.finish(expired ? "deadline_aborted" : "failed");
+      this.#failSession(expired ? "drain_deadline" : "time_unavailable");
+      throw this.#failure!;
+    }
+  }
+  /** A local Close or original connection failure can obtain fresh material. */
+  controllerReconnectAllowed(): boolean { return !this.#controllerTerminalObserved || this.#controllerTransportFailure; }
+  controllerNotificationDraining(): boolean { return this.#draining; }
   /** Original Controller publication gate; this does not allocate or OPEN. */
   controllerGate(reference: ResourceReference): bigint {
     this.#check();
@@ -1061,6 +1206,18 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     this.controllerGate(reference);
     if (this.config.credentials === undefined) fail("authentication_failed");
     return this.config.credentials!.applicationContext(this.#sendDirection === 0 ? "client" : "server");
+  }
+  controllerNotificationAuthentication(reference: ResourceReference): StreamHandlersTypes.V4AuthenticatedContext {
+    if (this.#closed || this.#draining || this.#rpc === undefined || !this.#reservation!.sameEnvironment(reference)) throw new Error("owner_unavailable");
+    this.#reservation!.check(); this.config.deadline.check(); this.config.credentials?.check();
+    if (this.config.credentials === undefined) fail("authentication_failed");
+    return this.config.credentials.applicationContext(this.#sendDirection === 0 ? "client" : "server");
+  }
+  subscribeControllerNotification<Input, Value>(reference: ResourceReference, method: ServiceDefinitionTypes.V4MethodDefinition<Input, any, "notify">,
+    handler: ServiceHandlersTypes.V4NotificationHandler<Value>, options: NotificationSubscriptionTypes.V4NotificationSubscriptionOptions<Input, Value>,
+    scheduler: NotificationScheduler): NotificationRegistration {
+    this.controllerNotificationAuthentication(reference);
+    return this.#rpc!.subscribeNotificationOwner(method, handler, options, scheduler);
   }
   info(): V4SessionInfo { return this.#info; }
   drain(options?: V4DrainOptions): V4DrainOperation {
@@ -1076,23 +1233,30 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     }, pending);
     // Admission and the accepted frontier are captured in the same local turn.
     this.#drain = operation; this.#drainDeadline = deadline; this.#draining = true;
-    this.#rpc?.drain();
+    this.#rpc?.drain(deadline);
     this.#localGoaway = { ceiling: this.#open!.highestAccepted(false), sent: false };
     const tick = (): void => {
       this.#drainTimer = undefined;
       if (this.#closed) return;
-      try { this.#check(); this.#driveDrain(); this.#drainTimer = setTimeout(tick, Math.min(10, timerChunk(deadline.remainingMS()))); }
+      try { this.#check(); this.#driveDrain(); this.#drainTimer = setTimeout(tick, Math.min(10, timerChunk(this.#drainRemainingMS()))); }
       catch { operation.finish("failed"); void this.close().catch(() => undefined); }
     };
     tick(); this.#wake(); return operation.operation;
   }
-  #communicationDrained(): boolean {
+  #communicationDrained(businessOnly = false): boolean {
+    if (this.cleanupOwner.businessPending() || this.#application?.businessPending() === true ||
+        this.#rpc?.businessPending() === true || this.#dispatching.size !== 0) return false;
     const counts = this.#open!.counts();
     if (counts.opening !== 0 || counts.ingress !== 0 || this.#readBlocked || this.#rekeyRound !== undefined || this.#rekeyIntent) return false;
     for (const binding of this.#bindings.values()) {
+      if (businessOnly && binding.handle === this.#managementHandle) continue;
       if (binding.rejectionPending !== undefined) return false;
       const phase = this.#open!.phase(binding.handle);
       if (phase === "local_prepared" || phase === "local_opening" || phase === "peer_verifying" || phase === "peer_pending") return false;
+      // The RPC owner accounts for real requests, partial input and publisher
+      // tails. Idle internal FIN/EOF handshakes cannot prolong management
+      // admission after those business obligations have ended.
+      if (businessOnly && (this.#rpcHandles.includes(binding.handle) || this.#notifyHandles.includes(binding.handle))) continue;
       if (phase === "live" && (!binding.sendDrained || !binding.receiveDrained ||
           !binding.receiveAbandon && binding.direction?.state().stream_status !== "eof")) return false;
     }
@@ -1115,6 +1279,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         if (!this.#open!.canReject(handle)) break;
         if (this.#open!.phase(handle) === "peer_pending") await this.rejectOpen(handle, table<Record<string, number>>("open_rejection_codes")!.draining!);
       }
+      this.#rpc?.drainChannels();
+      this.#sealBusinessDrain();
       if (this.#communicationDrained() && this.output.available()) {
         // Existing communication proof is distinct from CLOSE I/O/cleanup.
         this.#drain!.finish("drained");
@@ -1127,11 +1293,36 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       this.#drainWork = undefined; this.#drain?.finish("failed"); void this.close().catch(() => undefined); this.#cleanup();
     });
   }
+  #sealBusinessDrain(): boolean {
+    if (!this.#draining) return false;
+    if (!this.#businessDrained && this.#communicationDrained(true)) {
+      // Management entry and its store/publication guards repeat this same
+      // synchronous gate, so polling cannot leave a new control admission
+      // window after the original business frontier has ended.
+      this.#businessDrained = true; this.#managementStopped = true;
+      this.#rpc?.finishBusinessDrain();
+      const management = this.#managementHandle === undefined ? undefined :
+        this.#bindings.get(this.#open!.snapshot(this.#managementHandle).scope);
+      if (management !== undefined && this.#open!.phase(management.handle) === "live" && !management.resetRequested)
+        this.#beginTermination(management, true);
+    }
+    return this.#businessDrained;
+  }
   start(capability: symbol, epoch: RecordEpoch, raw?: RawStreamPreparation): void {
     if (capability !== readyActivation || epoch !== this.epoch) fail("authentication_failed");
     if (this.#supervisor !== undefined || this.#closed) return;
     if (this.#bootstrap !== undefined) this.#open!.completeBootstrap(this.#bootstrap);
     this.#ready = true;
+    if ((this.#info.selected_features & 1n) !== 0n) {
+      if (this.config.transport.nativeDatagrams === undefined || this.config.unreliablePreparation === undefined) fail("configuration_capacity");
+      this.#unreliable = new UnreliableRuntime(this.config.unreliablePreparation, this.config.transport.nativeDatagrams, {
+        clock: this.config.clock, runtimeBytes: this.config.runtimeBytes, ledger: this.config.ledger, profile: this.config.ledger.profile,
+        check: () => this.#check(), available: () => this.#ready && !this.#closed && !this.#draining && !this.#rekeyIntent && this.#rekeyRound === undefined,
+        recordCheck: (frame, header, direction) => this.config.streams.authorization.check(frame, header, direction),
+        dropped: epoch => this.#diagnostic({ code: epoch === "old" ? "old_datagram_dropped" : epoch === "future" ? "future_datagram_dropped" : "current_datagram_dropped" }, epoch === "old" ? "old_datagram_drop" : epoch === "future" ? "future_datagram_drop" : "current_datagram_drop"),
+        changed: () => this.#wake(), failed: () => { void this.close().catch(() => undefined); },
+      }, epoch, this.#epochNumber, this.#reservation!);
+    } else this.config.unreliablePreparation?.close();
     if (raw !== undefined) this.installPreparedRawStreams(raw);
     this.#idle!.start();
     this.#check();
@@ -1146,10 +1337,11 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     if (this.config.transport.nativeStreams !== undefined) {
       this.config.transport.nativeStreams.enable();
       this.#nativeAcceptor = this.#acceptNative();
-      void this.#nativeAcceptor.then(() => { this.#nativeAcceptor = undefined; this.#cleanup(); }, () => {
-        this.#nativeAcceptor = undefined; void this.close().catch(() => undefined); this.#cleanup();
+      void this.#nativeAcceptor.then(() => { this.#nativeAcceptor = undefined; this.#cleanup(); }, error => {
+        this.#nativeAcceptor = undefined; this.#observeControllerFailure(error); void this.close().catch(() => undefined); this.#cleanup();
       });
     }
+    this.#unreliable?.start();
     this.#supervisor = (async () => {
       try { while (!this.#closed) {
         await this.receiveNext(); this.#wake();
@@ -1173,7 +1365,140 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       };
       tick(); this.#driveBootstrap();
     }
-    this.#driveManagement(); this.#driveNotify();
+    this.#driveRPCChannels(); this.#driveManagement(); this.#driveNotify(); this.#wake();
+  }
+  #rpcKey(position: number): "bootstrap" | `rpc_${number}` { return position === 0 ? "bootstrap" : `rpc_${position}`; }
+  #receiveFloor(channel: Parameters<SessionKeyPreparation["exchangeReceive"]>[0]): ProtectedResourceReservation[] {
+    if (channel === "management") return this.#managementPositions;
+    if (channel === "notify_0" || channel === "notify_1") return this.#notifyPositions[channel === "notify_0" ? 0 : 1]!;
+    return this.#rpcPositions[channel === "bootstrap" ? 0 : Number(channel.slice(4))]!;
+  }
+  #assignInternalReceive(binding: ReceiveBinding, from: Parameters<SessionKeyPreparation["exchangeReceive"]>[0]): boolean {
+    const kind = this.#open!.kind(binding.handle);
+    let to: Parameters<SessionKeyPreparation["exchangeReceive"]>[0], rpc = -1;
+    if (kind === managementSpec.kind && this.#info.application_profile === "execution" && this.#sendDirection === 1) to = "management";
+    else if (kind === notifySpec.kind && this.#rpc !== undefined) to = `notify_${this.#receiveDirection}`;
+    else if (kind === bootstrapSpec.kind && this.#rpc !== undefined) {
+      const start = this.#receiveDirection * 4;
+      for (let position = start; position < start + 4; position++) if (this.#rpcHandles[position] === undefined && this.#rpcTasks[position] === undefined &&
+          (this.#rpcKey(position) === from || this.#rpcPositions[position]!.slice(0, 2).every(slot => slot.available()) &&
+            this.#internalKeys!.available(this.#rpcKey(position), "receive"))) { rpc = position; break; }
+      if (rpc < 0) return false; to = this.#rpcKey(rpc);
+    } else return false;
+    if (from !== to) {
+      const original = this.#receiveFloor(from), replacement = this.#receiveFloor(to);
+      if (original?.length !== 10 || replacement?.length !== 10 || !replacement.slice(0, 2).every(slot => slot.available()) || !this.#internalKeys!.available(to, "receive")) return false;
+      this.#internalKeys!.exchangeReceive(from, to);
+      for (let index = 0; index < 2; index++) { const previous = original[index]!; original[index] = replacement[index]!; replacement[index] = previous; }
+      if (from === "management" || to === "management") this.#managementReceivePositions.splice(0, 2, ...this.#managementPositions.slice(0, 2));
+    }
+    if (rpc >= 0) binding.rpcPosition = rpc;
+    return true;
+  }
+  #rpcResourcesAvailable(position: number, incoming = false): boolean {
+    const slots = this.#rpcPositions[position]!, key = this.#rpcKey(position);
+    return slots.length === 10 && this.#internalKeys!.available(key, "send") &&
+      (incoming || this.#internalKeys!.available(key, "receive")) &&
+      slots.every((slot, index) => incoming && index < 2 || slot.available()) &&
+      (incoming || this.#rpcNative[position] !== undefined || this.#rpcNativeRenewal[position] === undefined || this.#rpcNativeRenewal[position]!.available());
+  }
+  #releaseRPCInitialization(position: number): void {
+    for (const ref of this.#rpcRefs[position]!) ref?.release(); this.#rpcRefs[position]!.length = 0;
+    this.#rpcOutputs[position]?.release(); this.#rpcOutputs[position] = undefined;
+    if (this.#closed) {
+      for (const slot of this.#rpcPositions[position]!) slot.closeAfterUse();
+      for (const ref of this.#rpcNative[position]?.references ?? []) ref.release(); this.#rpcNative[position] = undefined;
+    }
+  }
+  #startRPCChannel(position: number, deadline: TrustedDeadline, incoming?: OpenHandle, signal?: AbortSignal): Promise<void> {
+    this.#check();
+    if (this.#rpc === undefined || this.#rpcTasks[position] !== undefined || !this.#rpc.channelReusable(position) ||
+        !this.#rpcResourcesAvailable(position, incoming !== undefined)) throw new ResourceError("resource_exhausted");
+    if (incoming !== undefined) this.#rpcHandles[position] = incoming;
+    const cancellation = signal === undefined ? this.#abort.signal : AbortSignal.any([signal, this.#abort.signal]);
+    const slots = this.#rpcPositions[position]!;
+    const task = Promise.resolve().then(async () => {
+      deadline.check(); this.#check();
+      if (cancellation.aborted || this.#draining || this.#goaway !== undefined) throw new Error("session_draining");
+      for (let index = 0; index < slots.length; index++) if (index !== 8 && !(incoming !== undefined && index < 2))
+        this.#rpcRefs[position]![index] = slots[index]!.checkout();
+      if (incoming === undefined && this.#rpcNative[position] === undefined && this.#rpcNativeRenewal[position] !== undefined)
+        this.#rpcNative[position] = this.#rpcNativeRenewal[position]!.checkout();
+      while (this.#rekeyRound !== undefined || !this.#applicationOutputAvailable() || !this.output.available()) await this.#wait(deadline, cancellation, slots[8]);
+      if (incoming === undefined) {
+        this.#rpcHandles[position] = await this.submitOpen(bootstrapSpec.kind, empty, { signal: cancellation }, undefined, false, undefined, undefined, position);
+        while (this.#open!.phase(this.#rpcHandles[position]!) === "local_opening") await this.#wait(deadline, cancellation, slots[8]);
+        if (this.#open!.phase(this.#rpcHandles[position]!) !== "live") throw new Error("rpc_channel_unavailable");
+      } else {
+        const kind = new Uint8Array(128), metadata = new Uint8Array(4096), offer = this.#open!.copyOffer(incoming, kind, metadata);
+        if (offer.metadataBytes !== 0 || this.#open!.peerLimit(incoming) < 16384n) throw new Error("rpc_channel_binding");
+        await this.acceptOpen(incoming, { signal: cancellation }, undefined, undefined, undefined, false, undefined, undefined, position);
+      }
+      deadline.check(); this.#check(); if (cancellation.aborted) throw new Error("canceled");
+      this.#rpc!.bindChannel(this.#stream(this.#rpcHandles[position]!), position);
+    }).catch(error => {
+      this.#rpcStopped[position] = true;
+      if (!this.#closed) {
+        const handle = this.#rpcHandles[position], binding = handle === undefined ? undefined : this.#bindings.get(this.#open!.snapshot(handle).scope);
+        if (binding !== undefined) {
+          if (this.#open!.phase(handle!) === "peer_pending") binding.rejectionPending = 2;
+          else if (this.#open!.phase(handle!) === "live") this.#beginTermination(binding, true);
+        }
+      }
+      throw error;
+    }).finally(() => { this.#releaseRPCInitialization(position); this.#rpcTasks[position] = undefined; this.#wake(); });
+    this.#rpcTasks[position] = task; return task;
+  }
+  /** Trusted SDK demand creates one shared channel; no application request or
+   * retry is sent. The caller bounds establishment, while the Session owns the
+   * accepted reader/publisher and their eventual physical cleanup. */
+  openRPCChannel(channelClass: "interactive" | "bulk", options?: OperationOptions): Promise<void> {
+    this.#check();
+    if (!this.#ready || this.#rpc === undefined || !this.#rpc.bound || this.#draining || this.#goaway !== undefined ||
+        channelClass !== "interactive" && channelClass !== "bulk") throw new Error("rpc_channel_unavailable");
+    const start = this.#sendDirection * 4 + (channelClass === "bulk" ? 2 : 0);
+    for (let position = start; position < start + 2; position++) if (this.#rpcHandles[position] === undefined &&
+        this.#rpcTasks[position] === undefined && this.#rpc.channelReusable(position) && this.#rpcResourcesAvailable(position)) {
+      this.#rpcStopped[position] = false; return this.#startRPCChannel(position, this.#deadline(), undefined, options?.signal);
+    }
+    throw new ResourceError("resource_exhausted");
+  }
+  #driveRPCChannels(): void {
+    if (!this.#ready || this.#closed || this.#rpc === undefined || this.#rpcDriving) return;
+    this.#rpcDriving = true;
+    try {
+      for (let position = 0; position < 8; position++) {
+        if (this.#rpcTasks[position] !== undefined || this.#rpc.channelReady(position)) continue;
+        const handle = this.#rpcHandles[position]; if (handle === undefined) continue;
+        // Scope one remains the original initializer until its real prefix is
+        // bound. A transient lack of writability cannot create a second path.
+        if (position === 0 && handle === this.#bootstrap && (this.#bootstrapBinding || !this.#rpc.bound && !this.#bootstrapAbort.signal.aborted)) continue;
+        const state = this.#open!.snapshot(handle), binding = this.#bindings.get(state.scope);
+        if (state.phase === "live" && binding !== undefined && !binding.resetRequested && !this.#rpc.channelGracefullyEnded(position)) this.#beginTermination(binding, true);
+        if (state.phase !== "stable" || binding !== undefined || !this.#rpc.channelReusable(position)) continue;
+        this.#rpcHandles[position] = undefined;
+      }
+      if (this.#draining || this.#goaway !== undefined) return;
+      for (const handle of this.#open!.pendingPeers()) {
+        if (this.#open!.kind(handle) !== bootstrapSpec.kind || this.#rpcHandles.includes(handle)) continue;
+        const binding = this.#bindings.get(this.#open!.snapshot(handle).scope); if (binding?.rejectionPending !== undefined) continue;
+        const start = this.#receiveDirection * 4;
+        let selected = -1;
+        for (let position = start; position < start + 4; position++) if ((binding?.rpcPosition === undefined || binding.rpcPosition === position) && this.#rpcHandles[position] === undefined && this.#rpcTasks[position] === undefined &&
+            this.#rpc.channelReusable(position) && this.#rpcResourcesAvailable(position, true)) { selected = position; break; }
+        if (selected < 0) { if (binding !== undefined) binding.rejectionPending = 2; continue; }
+        void this.#startRPCChannel(selected, this.#deadline(), handle).catch(() => undefined);
+      }
+      // Repair belongs to the original Session initializer. Existing messages
+      // remain terminated on their original channel and are never replayed.
+      if (this.#rpc.bound && !this.#rpc.channelsReady() && !this.#rpcTasks.some(Boolean)) {
+        const start = this.#sendDirection * 4;
+        for (let position = start; position < start + 2; position++) if (this.#rpcHandles[position] === undefined && !this.#rpcStopped[position] &&
+            this.#rpc.channelReusable(position) && this.#rpcResourcesAvailable(position)) {
+          void this.#startRPCChannel(position, this.#deadline()).catch(() => undefined); break;
+        }
+      }
+    } finally { this.#rpcDriving = false; }
   }
   #releaseNotifyInitialization(position: 0 | 1): void {
     for (const ref of this.#notifyRefs[position]!) ref?.release(); this.#notifyRefs[position]!.length = 0;
@@ -1307,20 +1632,23 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #prepareBootstrap(): void {
     const streams = this.config.streams, profile = this.#info.application_profile;
     if (profile === "transport") fail("configuration_capacity");
-    const refs = streams.bootstrapReservations, costs = sessionBootstrapCharges(profile, this.config.maxFrame, this.config.runtimeBytes, streams.receive);
-    if (refs?.length !== costs.length || streams.bootstrapSendAccount === undefined ||
+    const costs = sessionBootstrapCharges(profile, this.config.maxFrame, this.config.runtimeBytes, streams.receive);
+    if (streams.bootstrapReservations?.length !== costs.length || streams.bootstrapSendAccount === undefined ||
         this.#nativeScheduler !== undefined && this.#sendDirection === 0 && streams.bootstrapNativePosition === undefined) fail("configuration_capacity");
+    const refs: ResourceReference[] = [];
+    try { for (const position of this.#rpcPositions[0]!) refs.push(position.checkout()); }
+    catch (error) { for (const ref of refs) ref.release(); throw error; }
     for (const ref of refs) if (!ref.sameEnvironment(this.#reservation!)) fail("configuration_capacity");
-    this.#bootstrapPosition = streams.bootstrapNativePosition;
+    this.#bootstrapPosition = this.#rpcNative[0]; this.#rpcNative[0] = undefined;
     const handle = this.#open!.prepareBootstrap(profile), scope = this.#open!.snapshot(handle).scope;
-    this.#bootstrap = handle;
+    this.#bootstrap = this.#rpcHandles[0] = handle;
     let receiveKeys: DirectionKeyPositions | undefined, sendKeys: DirectionKeyPositions | undefined, cipher: RecordCipher | undefined;
     let installed = false;
     try {
       this.#bootstrapReservation = refs[8]!.take(costs[8]!);
       this.#bootstrapOutput = refs[9]!.take(costs[9]!);
-      receiveKeys = new DirectionKeyPositions(streams.root, this.#cipherConfig(this.#receiveDirection), refs.slice(0, 2), this.config.ledger, scope, this.#receiveDirection, undefined, this.#internalKeys!.checkout("bootstrap", "receive"));
-      sendKeys = new DirectionKeyPositions(streams.root, this.#cipherConfig(this.#sendDirection), refs.slice(2, 4), this.config.ledger, scope, this.#sendDirection, undefined, this.#internalKeys!.checkout("bootstrap", "send"));
+      receiveKeys = new DirectionKeyPositions(streams.root, this.#cipherConfig(this.#receiveDirection), refs.slice(0, 2), this.config.ledger, scope, this.#receiveDirection, this.#rpcPositions[0]!.slice(0, 2), this.#internalKeys!.checkout("bootstrap", "receive"));
+      sendKeys = new DirectionKeyPositions(streams.root, this.#cipherConfig(this.#sendDirection), refs.slice(2, 4), this.config.ledger, scope, this.#sendDirection, this.#rpcPositions[0]!.slice(2, 4), this.#internalKeys!.checkout("bootstrap", "send"));
       cipher = this.#cipher(handle, this.#receiveDirection, receiveKeys);
       const binding: ReceiveBinding = { handle, receiveKeys, sendKeys, cipher, sendAccount: streams.bootstrapSendAccount,
         nextReceive: 0n, nextSend: 0n, sentOffset: 0n, acknowledged: 0n, sendLimit: BigInt(bootstrapSpec.initial_receive_limit),
@@ -1339,6 +1667,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     if (this.#bootstrapTimer !== undefined) clearTimeout(this.#bootstrapTimer);
     this.#bootstrapTimer = undefined; this.#bootstrapDeadline = undefined;
     this.#bootstrapOutput?.release(); this.#bootstrapOutput = undefined;
+    this.#bootstrapReservation?.release(); this.#bootstrapReservation = undefined;
     for (const reference of this.#bootstrapPosition?.references ?? []) reference.release();
     this.#bootstrapPosition = undefined;
   }
@@ -1352,7 +1681,11 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     if (binding === undefined || this.#open!.phase(binding.handle) !== "live") return;
     if (this.#open!.bootstrapBound(binding.handle)) {
       this.#finishBootstrapInitialization();
-      if (this.#rpc !== undefined && !this.#rpc.bound && !this.#draining) this.#rpc.bindBootstrap(this.#stream(binding.handle));
+      if (this.#rpc !== undefined && !this.#rpc.bound && !this.#draining) {
+        this.#bootstrapBinding = true;
+        try { this.#rpc.bindBootstrap(this.#stream(binding.handle)); }
+        finally { this.#bootstrapBinding = false; }
+      }
       return;
     }
     if (this.#bootstrapDeadline === undefined) return;
@@ -1392,7 +1725,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       } catch (error) {
         // A prefix crypto ticket is irrevocable even if the provider fails.
         if (ticket || !(error instanceof ResourceError) || error.code !== "resource_exhausted") throw error;
-        this.#resourceFailure(); throw error;
+        this.#resourceFailure(true); throw error;
       }
     });
     this.#bootstrapTask = task;
@@ -1421,6 +1754,11 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     this.#check();
     const binding = association.scope === undefined ? undefined : this.#bindings.get(association.scope);
     if (binding === undefined || binding.native !== association) fail("protocol_violation");
+    const rpc = this.#rpcHandles.indexOf(binding.handle);
+    if (rpc >= 0 && this.#rpcOutputs[rpc] !== undefined) {
+      if (bytes > 4480 + envelopePrefixBytes + recordHeaderBytes + 16) fail("configuration_capacity");
+      const reference = this.#rpcOutputs[rpc]!; this.#rpcOutputs[rpc] = undefined; return reference;
+    }
     const notify = this.#notifyHandles.indexOf(binding.handle);
     if (notify >= 0 && this.#notifyOutputs[notify] !== undefined) {
       if (bytes > 4480 + envelopePrefixBytes + recordHeaderBytes + 16) fail("configuration_capacity");
@@ -1436,7 +1774,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     }
     try {
       return position.output.checkoutBytes(BigInt(bytes), [...this.config.streams.accounts, this.#sendAccount!, this.#directionSendAccount(binding)]);
-    } catch (error) { this.#liveness?.localStall(); throw error; }
+    } catch (error) { this.#diagnostic({ code: "resource_exhausted" }, "resource_rejection"); this.#liveness?.localStall(); throw error; }
   }
   #attachNative(transport: V4NativeApplicationStream, position: NativeProtocolPosition): NativeAssociation {
     this.#check();
@@ -1457,6 +1795,9 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       this.#wake(); this.#cleanup();
     }, (type, payload) => this.#nativePrefix(association, type, payload), bytes => this.#allocateNativeOutput(association, position, bytes), this.#nativeScheduler!.candidates.enabled
       ? { pool: this.#nativeScheduler!.candidates, preview: () => this.#nativePrefetch(association) } : undefined);
+    association.output.observeFailure(error => {
+      if (originalNativeConnectionFailure(error)) this.#observeControllerFailure(error);
+    });
     association.output.observeRecords(() => this.#idle!.activity(), () => undefined);
     this.#nativeAssociations.add(association); return association;
   }
@@ -1520,7 +1861,10 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       let transport: V4NativeApplicationStream | undefined;
       try {
         this.#nativeScheduler!.capacityAttempt();
-        transport = await this.config.transport.nativeStreams!.accept({ signal: this.#abort.signal });
+        try { transport = await this.config.transport.nativeStreams!.accept({ signal: this.#abort.signal }); }
+        catch (error) {
+          if (!this.#closed && !this.#abort.signal.aborted) observeNativeConnectionFailure(error); throw error;
+        }
         this.#check(); if (transport.origin !== "peer") fail("protocol_violation");
         const association = this.#attachNative(transport, position);
         association.watchOpen(this.#deadline(), () => { void this.close().catch(() => undefined); });
@@ -1546,7 +1890,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       if (!this.#closed) void this.#retirement().catch(() => { void this.close().catch(() => undefined); });
       this.#wake(); this.#cleanup();
     };
-    void association.readTask.then(finished, () => { finished(); if (!this.#closed) void this.close().catch(() => undefined); });
+    void association.readTask.then(finished, error => { this.#observeControllerFailure(error); finished(); if (!this.#closed) void this.close().catch(() => undefined); });
   }
   async #readNative(association: NativeAssociation): Promise<void> {
     const signal = AbortSignal.any([this.#abort.signal, association.abort.signal]);
@@ -1612,6 +1956,15 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         binding.native !== association || this.#open!.isBootstrap(binding.handle) && !this.#open!.bootstrapBound(binding.handle)) return false;
     if (binding.receiveDrained) { association.readFailed = true; return true; }
     association.readFailed = true; binding.quarantined = true; binding.receiveAbandon = true;
+    // A provider may retire both physical halves before the authenticated
+    // termination record can be published. Preserve the logical send
+    // termination: STOPPED and the eventual DRAINED proof still travel on
+    // the maintenance channel, while no FIN is attempted on the retired
+    // native stream.
+    if (association.transport.cleanupComplete()) {
+      binding.stopPending = true; binding.sendSealed = true; binding.write?.terminate();
+      binding.sendTermination ??= this.#newTermination(binding);
+    }
     binding.direction?.abandonDelivery(); binding.cipher.close();
     association.reader.close(); void association.transport.stopSending().catch(() => undefined);
     this.#beginTermination(binding, false, true, true); return true;
@@ -1628,17 +1981,66 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #deadline(duration = this.config.streams.operationDeadlineMS): TrustedDeadline {
     return this.config.deadline.forkAgeAt(this.config.deadline.sample(), duration);
   }
+  #armSafetyRekey(): void {
+    if (this.#rekeySafetyTimer !== undefined) { clearTimeout(this.#rekeySafetyTimer); this.#rekeySafetyTimer = undefined; }
+    if (this.#closed || !this.#ready) return;
+    try {
+      const original = this.epoch, age = original.rekeySafetySnapshot(), window = age.rootMaxAgeMS / 5n;
+      if (this.#rekeySafetyDeadline === undefined && !age.rootAgeLimited) return;
+      const remaining = this.#rekeySafetyDeadline?.remainingMS() ?? age.remainingMS - (window === 0n ? 1n : window);
+      if (remaining <= 0n) { this.#scheduleSafetyRekey(); return; }
+      this.#rekeySafetyTimer = setTimeout(() => {
+        if (this.epoch !== original || this.#closed) return;
+        this.#rekeySafetyTimer = undefined; this.#wake();
+      }, timerChunk(remaining));
+    } catch { this.#failSession("time_unavailable"); }
+  }
+  #scheduleSafetyRekey(): void {
+    if (this.#closed || !this.#ready) return;
+    const original = this.epoch;
+    try {
+      const age = original.rekeySafetySnapshot(), rootWindow = age.rootMaxAgeMS / 5n;
+      if (this.#rekeySafetyDeadline === undefined && !age.triggered &&
+          (!age.rootAgeLimited || age.remainingMS > (rootWindow === 0n ? 1n : rootWindow))) return;
+      // A safety cause belongs to this exact root and survives a canceled
+      // manual waiter. Joining can only tighten the shared round's deadline.
+      this.#rekeySafetyDeadline ??= original.safetyDeadline();
+      this.#rekeySafetyDeadline.check();
+      this.#rekeyDeadline?.tightenFrom(this.#rekeySafetyDeadline);
+      this.#rekeyPhaseDeadline?.tightenFrom(this.#rekeySafetyDeadline);
+      if (this.#rekeyDeadline !== undefined) this.#armRekey();
+    } catch (error) { this.#diagnosticRekeyFailure(error); this.#failSession("time_unavailable"); return; }
+    if (this.#rekeyIntent || this.#rekeyRound !== undefined || this.#autoRekeyQueued) return;
+    this.#autoRekeyQueued = true;
+    queueMicrotask(() => {
+      this.#autoRekeyQueued = false;
+      if (this.#closed || this.epoch !== original || this.#rekeyIntent || this.#rekeyRound !== undefined) return;
+      void this.rekey().catch(() => { if (!this.#closed && this.epoch === original) void this.close().catch(() => undefined); });
+    });
+  }
   #wake(): void {
     for (const wake of this.#waiters) wake();
     for (const association of this.#nativeAssociations) association.wake();
     if (this.#closed) { this.#cleanup(); return; }
     if (!this.#ready) return;
-    this.#driveBootstrap();
-    this.#driveManagement();
-    this.#driveNotify();
-    this.#driveDrain();
-    this.#driveRejections();
+    try {
+      this.#driveBootstrap();
+      this.#driveRPCChannels();
+      this.#driveManagement();
+      this.#driveNotify();
+      this.#driveDrain();
+      this.#driveRejections();
+    } catch {
+      // Authorization revocation can race a queued dispatch wake. The binding
+      // callback already closed delivery; retire the Session without allowing
+      // a stale credential error to escape the scheduler task.
+      this.config.streams.delivery.close("authorization_denied");
+      void this.close().catch(() => undefined);
+      return;
+    }
     this.#scheduleDispatch();
+    this.#scheduleSafetyRekey();
+    this.#armSafetyRekey();
     this.#liveness?.wake();
     if (!this.#closed && this.#rekeyRound !== undefined && !this.#rekeyWorking && this.output.available()) {
       void this.#progressRekey().catch(() => undefined);
@@ -1701,7 +2103,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       try {
         for (const handle of this.#open!.pendingPeers()) {
           const binding = this.#bindings.get(this.#open!.snapshot(handle).scope);
-          if ([managementSpec.kind as string, notifySpec.kind].includes(this.#open!.kind(handle)) || this.#dispatching.has(handle) || binding?.rejectionPending !== undefined) continue;
+          if ([managementSpec.kind as string, bootstrapSpec.kind, notifySpec.kind].includes(this.#open!.kind(handle)) || this.#dispatching.has(handle) || binding?.rejectionPending !== undefined) continue;
           if (this.#rpc?.hasStreamingKind(this.#open!.kind(handle))) {
             this.#dispatching.add(handle); void this.#dispatchRPCStream(handle); continue;
           }
@@ -2016,11 +2418,11 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     if (phase !== "live" && !(profile.preaccepted === true && (phase === "peer_pending" || phase === "local_prepared") && binding.direction !== undefined) ||
         binding.write !== undefined || binding.sendSealed || binding.sendTermination !== undefined || binding.receiveTermination !== undefined) fail("busy");
     binding.direction!.checkAdapterClaim();
-    const message = profile.kind === "message";
+    const message = profile.kind === "message", sdkBacking = profile.kind === "web" || profile.kind === "bridge";
     if (message && (binding.sentOffset !== 0n || binding.direction!.progress().released_offset !== 0n)) fail("busy");
     const charge = new ResourceVector([
-      BigInt(2 * profile.readBytes) + this.config.runtimeBytes + (message ? 17408n : 2048n) + BigInt(profile.inputEntries) * 128n + (profile.kind === "web" ? BigInt(profile.inputBackingBytes) : 0n),
-      message || profile.kind === "web" ? 0n : BigInt(profile.inputBackingBytes), 0n, BigInt(profile.inputEntries + 4), 6n, 6n, message ? 4n : 2n, 0n, 0n, 1n, message ? 0n : profile.kind === "web" ? 2n : 1n,
+      BigInt(2 * profile.readBytes) + this.config.runtimeBytes + (message ? 17408n : 2048n) + BigInt(profile.inputEntries) * 128n + (sdkBacking ? BigInt(profile.inputBackingBytes) : 0n),
+      message || sdkBacking ? 0n : BigInt(profile.inputBackingBytes), 0n, BigInt(profile.inputEntries + 4), 6n, 6n, message ? 4n : 2n, 0n, 0n, 1n, message ? 0n : profile.kind === "web" ? 2n : 1n,
     ]);
     if (profile.prepaid !== undefined && !profile.prepaid.sameEnvironment(this.#reservation!)) fail("configuration_capacity");
     const reservation = profile.prepaid?.take(charge) ?? this.#reserve(this.#open!.snapshot(handle).scope, ["v4_stream_adapter"], [charge], message ? undefined : this.#directionSendAccount(binding))[0]!;
@@ -2030,6 +2432,15 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       binding.gracefulFinishMS = BigInt(profile.gracefulFinishMS);
       return { reservation, delivery, readBytes: Math.min(profile.readBytes, this.config.streams.receive.maxCursorBytes) };
     } catch (error) { reservation.release(); throw error; }
+  }
+  bridgeResultBacking(handle: OpenHandle, bytes: number, endpoint: "flowersec_stream" | "native_duplex"): ResourceReference {
+    const scope = this.#open!.snapshot(handle).scope;
+    // Each endpoint needs distinct original backing and a distinct resource
+    // owner. ResourceReference.take() transfers an entire owner rather than
+    // splitting its byte allowance; the two bridge directions coexist.
+    return this.#reserve(scope, [endpoint === "native_duplex" ? "v4_native_bridge_result" : "v4_bridge_result"], [new ResourceVector([
+      BigInt(bytes) + this.config.runtimeBytes + 512n, 0n, 0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n,
+    ])])[0]!;
   }
   messageAdapterContext(handle: OpenHandle, reservation: ResourceReference, prepaidApplication?: ApplicationGroup) {
     const snapshot = this.#open!.snapshot(handle), kind = new Uint8Array(128), metadata = new Uint8Array(4096);
@@ -2043,7 +2454,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     if (prepaidApplication !== undefined && !prepaidApplication.sameEnvironment(reservation)) fail("configuration_capacity");
     const application = prepaidApplication ?? applicationGroup(root, accounts, { ...owner, kind: `v4_message_app_${snapshot.scope.toString(16)}` }, runtimeBytes, true);
     return {
-      application, authentication, sessionCleanup: this.cleanupOwner,
+      application, authentication, sessionCleanup: this.cleanupOwner, diagnostics: this.config.diagnostics,
       direction: this.#sendDirection === 0 ? "c2s" as const : "s2c" as const,
       localOpener: snapshot.local, kind: new TextDecoder("utf-8", { fatal: true }).decode(byteSlice(kind, 0, sizes.kindBytes)),
       metadata: byteSlice(metadata, 0, sizes.metadataBytes), maxWriteBytes,
@@ -2080,6 +2491,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     delete binding.stream; delete binding.adapterActive;
     this.#terminal(binding);
   }
+  unreliableMessages(): V4UnreliableMessages { this.#check(); if (!this.#ready || this.#unreliable === undefined) throw new V4UnreliableMessageError("unavailable"); return this.#unreliable; }
   async rekey(options?: OperationOptions): Promise<void> {
     this.#check(); const original = this.#epochNumber, deadline = this.#deadline();
     if (options?.signal?.aborted) throw new Error("canceled");
@@ -2089,8 +2501,11 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     }
     // Acquire the local intent before waiting for output, so no queued probe
     // can publish between client preparation/server REQUEST and peer INIT.
-    this.#rekeyIntent = true; this.#liveness!.beginRekey();
+    this.#unreliable?.freeze(); this.#rekeyIntent = true; this.#beginDiagnosticRekey();
+    if (this.#rekeySafetyTimer !== undefined) clearTimeout(this.#rekeySafetyTimer); this.#rekeySafetyTimer = undefined;
+    this.#liveness!.beginRekey();
     if (this.#sendDirection === 1) {
+      if (this.#rekeySafetyDeadline !== undefined) deadline.tightenFrom(this.#rekeySafetyDeadline);
       this.#rekeyDeadline = this.#rekeyPhaseDeadline = deadline; this.#armRekey();
       this.#rekeyRequest = this.#control(frameType("REKEY"), writer => writer.map(1).uint(0).uint(0).result());
       void this.#rekeyRequest.catch(() => { this.#failSession("carrier_failed"); });
@@ -2103,7 +2518,11 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       if (options?.signal?.aborted) throw new Error("canceled");
       this.#beginRekey();
     } catch (error) {
-      if (this.#rekeyRound === undefined) { this.#rekeyIntent = false; this.#liveness!.endRekey(false); }
+      if (this.#rekeyRound === undefined) {
+        this.#diagnosticRekeyFailure(error);
+        this.#rekeyIntent = false; this.#diagnosticRekeyStarted = undefined; this.#liveness!.endRekey(false);
+        if (this.#rekeySafetyDeadline !== undefined) this.#scheduleSafetyRekey();
+      }
       throw error;
     }
     try {
@@ -2184,7 +2603,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #prepareDirection(binding: ReceiveBinding, prepaid?: readonly ResourceReference[]): ReliableReceiveDirection {
     const { root, delivery } = this.config.streams, scope = this.#open!.snapshot(binding.handle).scope;
     binding.sendAccount ??= this.#sendAccounts!.checkout();
-    const original = this.#open!.isBootstrap(binding.handle) || binding.handle === this.#managementHandle || this.#notifyHandles.includes(binding.handle) ? { ...this.config.streams.receive, receiveLimit: BigInt(bootstrapSpec.initial_receive_limit) } : this.config.streams.receive;
+    const rpc = this.#rpcHandles.indexOf(binding.handle);
+    const original = this.#open!.isBootstrap(binding.handle) || rpc >= 0 || binding.handle === this.#managementHandle || this.#notifyHandles.includes(binding.handle) ? { ...this.config.streams.receive, receiveLimit: BigInt(bootstrapSpec.initial_receive_limit) } : this.config.streams.receive;
     const receive = this.#nativeScheduler === undefined ? original : { ...original, workspace: this.#nativeScheduler.receiveWorkspace };
     const references = prepaid ?? this.#reserve(scope, ["v4_receive", "v4_receive_decoder", "v4_cursor"],
       [receiveDirectionCharge(receive), receiveDecoderCharge(receive), receiveCursorCharge(receive)]);
@@ -2193,6 +2613,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         root, direction: references[0]!, decoder: references[1]!, cursor: references[2]!,
         ...(binding.handle === this.#managementHandle ? { cursorPosition: this.#managementPositions[7]! } : {}),
         ...(this.#notifyHandles.includes(binding.handle) ? { cursorPosition: this.#notifyPositions[this.#notifyHandles.indexOf(binding.handle)]![7]! } : {}),
+        ...(rpc < 0 ? {} : { cursorPosition: this.#rpcPositions[rpc]![7]! }),
       }, () => {
         if (!this.#closed) {
           this.#terminal(binding);
@@ -2203,17 +2624,23 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   }
   /** The local OPEN ticket owns the active/pending position and receive promise
    * before publication. The returned handle conveys submission, not acceptance. */
-  async submitOpen(kind: string, metadata: Uint8Array, options?: OperationOptions, prepare?: (stream: V4StreamOwner, handle: OpenHandle) => void, management = false, notify?: 0 | 1, prepaid?: StreamOpenPreparation): Promise<OpenHandle> {
+  async submitOpen(kind: string, metadata: Uint8Array, options?: OperationOptions, prepare?: (stream: V4StreamOwner, handle: OpenHandle) => void, management = false, notify?: 0 | 1, prepaid?: StreamOpenPreparation, rpc?: number): Promise<OpenHandle> {
     this.#check(); if (this.#draining || this.#goaway !== undefined) fail("session_draining"); if (this.#rekeyRound !== undefined || options?.signal?.aborted) fail("closed");
     if (this.#nativeSend === undefined ? !this.output.available() : !this.#nativeSend.available()) fail("busy");
     if (management && (kind !== managementSpec.kind || metadata.length !== 0 || this.#info.application_profile !== "execution" || this.#sendDirection !== 0 || this.#managementRefs.length === 0)) fail("configuration_capacity");
     const notifying = notify !== undefined, notificationRefs = notifying ? this.#notifyRefs[notify]! : undefined;
+    const ordinary = rpc !== undefined, rpcRefs = ordinary ? this.#rpcRefs[rpc] : undefined;
+    if (ordinary && (management || notifying || !Number.isSafeInteger(rpc) || Math.floor(rpc / 4) !== this.#sendDirection ||
+        kind !== bootstrapSpec.kind || metadata.length !== 0 || this.#rpc === undefined || rpcRefs?.length !== 10)) fail("configuration_capacity");
     if (notifying && (management || notify !== this.#sendDirection || kind !== notifySpec.kind || metadata.length !== 0 || this.#info.application_profile === "transport" || notificationRefs?.length !== 10)) fail("configuration_capacity");
-    if (!management && !notifying && [managementSpec.kind, "flowersec.rpc.v4", notifySpec.kind].includes(kind)) fail("configuration_capacity");
-    const owner = this.#open!, initialLimit = management || notifying ? 16384n : this.config.streams.receive.receiveLimit;
-    const handle = owner.prepareLocal(this.#epochNumber, management ? 2 : notifying ? 1 : 0, kind, metadata, initialLimit);
+    if (!management && !notifying && !ordinary && (kind === managementSpec.kind || kind === bootstrapSpec.kind || kind === notifySpec.kind)) fail("configuration_capacity");
+    const owner = this.#open!, initialLimit = management || notifying || ordinary ? 16384n : this.config.streams.receive.receiveLimit;
+    const streamClass = management ? 2 : notifying || ordinary ? 1 : 0;
+    const internalKind = management ? managementSpec.kind : notifying ? notifySpec.kind : ordinary ? bootstrapSpec.kind : kind;
+    const handle = owner.prepareLocal(this.#epochNumber, streamClass, internalKind, metadata, initialLimit);
     if (notifying) this.#notifyHandles[notify] = handle;
     if (management) this.#managementHandle = handle;
+    if (ordinary) this.#rpcHandles[rpc] = handle;
     const scope = owner.snapshot(handle).scope;
     let binding: ReceiveBinding | undefined, submitted = false, ticket = false;
     let receiveKeys: DirectionKeyPositions | undefined, sendKeys: DirectionKeyPositions | undefined;
@@ -2223,21 +2650,21 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     let preparedAccount: ResourceAccount | undefined, nativePrepared = false;
     try {
       prepared = prepaid?.take(this.#reservation!); preparedAccount = prepared?.account;
-      if (prepared !== undefined && (management || notifying || (prepared.native !== undefined) !== (this.#nativeScheduler !== undefined))) fail("configuration_capacity");
+      if (prepared !== undefined && (management || notifying || ordinary || (prepared.native !== undefined) !== (this.#nativeScheduler !== undefined))) fail("configuration_capacity");
       if (this.#nativeScheduler !== undefined) {
-        const position = management ? this.#managementNative : notifying ? this.#notifyNative : prepared?.native; if (management) this.#managementNative = undefined; if (notifying) this.#notifyNative = undefined;
+        const position = management ? this.#managementNative : notifying ? this.#notifyNative : ordinary ? this.#rpcNative[rpc] : prepared?.native; if (management) this.#managementNative = undefined; if (notifying) this.#notifyNative = undefined; if (ordinary) this.#rpcNative[rpc] = undefined;
         nativePrepared = prepared?.native !== undefined; native = await this.#openNative(options, position);
         this.#check(); if (this.#rekeyRound !== undefined || owner.snapshot(handle).epoch !== this.#epochNumber) fail("busy");
       }
       const rxConfig = this.#cipherConfig(this.#receiveDirection), txConfig = this.#cipherConfig(this.#sendDirection);
-      references.push(...(management ? this.#managementRefs.slice(0, 5) : notifying ? notificationRefs!.slice(0, 5) : prepared?.references.slice(0, 5) ?? this.#reserve(scope, ["v4_receive_key_0", "v4_receive_key_1", "v4_send_key_0", "v4_send_key_1", "v4_stream_termination"],
+      references.push(...(management ? this.#managementRefs.slice(0, 5) : notifying ? notificationRefs!.slice(0, 5) : ordinary ? rpcRefs!.slice(0, 5) : prepared?.references.slice(0, 5) ?? this.#reserve(scope, ["v4_receive_key_0", "v4_receive_key_1", "v4_send_key_0", "v4_send_key_1", "v4_stream_termination"],
         [directionKeyCharge(rxConfig), directionKeyCharge(rxConfig), directionKeyCharge(txConfig), directionKeyCharge(txConfig), streamTerminationCharge(this.config.runtimeBytes)])));
       receiveKeys = new DirectionKeyPositions(this.config.streams.root, rxConfig, references.slice(0, 2), this.config.ledger, scope, this.#receiveDirection,
-        management ? this.#managementPositions.slice(0, 2) : notifying ? this.#notifyPositions[notify]!.slice(0, 2) : undefined,
-        management ? this.#internalKeys!.checkout("management", "receive") : notifying ? this.#internalKeys!.checkout(`notify_${notify}`, "receive") : prepared?.receiveKeys);
+        management ? this.#managementPositions.slice(0, 2) : notifying ? this.#notifyPositions[notify]!.slice(0, 2) : ordinary ? this.#rpcPositions[rpc]!.slice(0, 2) : undefined,
+        management ? this.#internalKeys!.checkout("management", "receive") : notifying ? this.#internalKeys!.checkout(`notify_${notify}`, "receive") : ordinary ? this.#internalKeys!.checkout(this.#rpcKey(rpc), "receive") : prepared?.receiveKeys);
       sendKeys = new DirectionKeyPositions(this.config.streams.root, txConfig, references.slice(2, 4), this.config.ledger, scope, this.#sendDirection,
-        management ? this.#managementPositions.slice(2, 4) : notifying ? this.#notifyPositions[notify]!.slice(2, 4) : undefined,
-        management ? this.#internalKeys!.checkout("management", "send") : notifying ? this.#internalKeys!.checkout(`notify_${notify}`, "send") : prepared?.sendKeys);
+        management ? this.#managementPositions.slice(2, 4) : notifying ? this.#notifyPositions[notify]!.slice(2, 4) : ordinary ? this.#rpcPositions[rpc]!.slice(2, 4) : undefined,
+        management ? this.#internalKeys!.checkout("management", "send") : notifying ? this.#internalKeys!.checkout(`notify_${notify}`, "send") : ordinary ? this.#internalKeys!.checkout(this.#rpcKey(rpc), "send") : prepared?.sendKeys);
       binding = { handle, receiveKeys, sendKeys, cipher: this.#cipher(handle, this.#receiveDirection, receiveKeys), nextReceive: 0n, sendDrained: false, receiveDrained: false, stopPending: false, receiveAbandon: false, retiring: false, quarantined: false, nextSend: 0n, sentOffset: 0n, acknowledged: 0n, sendLimit: 0n, sendFIN: false };
       if (native !== undefined) {
         binding.native = native; native.scope = scope;
@@ -2248,8 +2675,9 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       binding.send = this.#cipher(handle, this.#sendDirection, sendKeys);
       if (management) { binding.sendAccount = this.config.streams.managementSendAccount!; this.#managementOutput = this.#managementRefs[9]!.take(bootstrapOutputCharge()); }
       if (notifying) { binding.sendAccount = this.config.streams.notifySendAccounts![notify]!; this.#notifyOutputs[notify] = notificationRefs![9]!.take(bootstrapOutputCharge()); }
+      if (ordinary) { binding.sendAccount = this.config.streams.rpcSendAccounts![rpc]!; this.#rpcOutputs[rpc] = rpcRefs![9]!.take(bootstrapOutputCharge()); }
       if (preparedAccount !== undefined) { binding.sendAccount = preparedAccount; preparedAccount = undefined; }
-      binding.direction = this.#prepareDirection(binding, management ? this.#managementRefs.slice(5, 8) : notifying ? notificationRefs!.slice(5, 8) : prepared?.references.slice(5, 8));
+      binding.direction = this.#prepareDirection(binding, management ? this.#managementRefs.slice(5, 8) : notifying ? notificationRefs!.slice(5, 8) : ordinary ? rpcRefs!.slice(5, 8) : prepared?.references.slice(5, 8));
       binding.ackCommittedOffset = 0n; binding.ackCommittedLimit = initialLimit;
       this.#bindings.set(scope, binding);
       if (prepare !== undefined) { binding.stream = new RuntimeStream(this, handle, binding.direction); prepare(binding.stream, handle); }
@@ -2273,9 +2701,10 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       else {
         native?.close();
         binding?.stream?.rollbackUnpublishedAdapter();
-        binding?.direction?.close(); binding?.cipher.close(); binding?.send?.close(); binding?.terminationReservation?.release(); if (!management && !notifying) binding?.sendAccount?.close(); this.#bindings.delete(scope);
+        binding?.direction?.close(); binding?.cipher.close(); binding?.send?.close(); binding?.terminationReservation?.release(); if (!management && !notifying && !ordinary) binding?.sendAccount?.close(); this.#bindings.delete(scope);
         receiveKeys?.close(); sendKeys?.close();
         owner.cancelUnsubmitted(handle);
+        if (ordinary) this.#rpcHandles[rpc] = undefined;
       }
       throw error;
     } finally {
@@ -2287,7 +2716,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       preparedAccount?.close(); if (receiveKeys === undefined) prepared?.receiveKeys?.close(); if (sendKeys === undefined) prepared?.sendKeys?.close();
     }
   }
-  pendingOpen(): OpenHandle | undefined { this.#check(); return this.#open!.pendingPeers().find(handle => ![managementSpec.kind as string, notifySpec.kind].includes(this.#open!.kind(handle)) && !this.#rpc?.hasStreamingKind(this.#open!.kind(handle))); }
+  pendingOpen(): OpenHandle | undefined { this.#check(); return this.#open!.pendingPeers().find(handle => ![managementSpec.kind as string, bootstrapSpec.kind, notifySpec.kind].includes(this.#open!.kind(handle)) && !this.#rpc?.hasStreamingKind(this.#open!.kind(handle))); }
   copyOpenOffer(handle: OpenHandle, kind: Uint8Array, metadata: Uint8Array): Readonly<{ kindBytes: number; metadataBytes: number }> {
     this.#check(); return this.#open!.copyOffer(handle, kind, metadata);
   }
@@ -2316,12 +2745,15 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
    * after both key directions and the original receive promise are installed. */
   async acceptOpen(handle: OpenHandle, options?: OperationOptions, committing?: () => void,
     committed?: () => void, prepare?: (stream: V4StreamOwner, handle: OpenHandle) => void, management = false, notify?: 0 | 1,
-    prepaid?: StreamOpenPreparation): Promise<ReliableReceiveDirection> {
+    prepaid?: StreamOpenPreparation, rpc?: number): Promise<ReliableReceiveDirection> {
     this.#check(); if (this.#draining) fail("session_draining"); if (options?.signal?.aborted) fail("closed");
     if (!this.output.available()) fail("busy");
     const notifying = notify !== undefined, notificationRefs = notifying ? this.#notifyRefs[notify]! : undefined;
+    const ordinary = rpc !== undefined, rpcRefs = ordinary ? this.#rpcRefs[rpc] : undefined;
+    if (ordinary && (management || notifying || !Number.isSafeInteger(rpc) || Math.floor(rpc / 4) !== this.#receiveDirection ||
+        handle !== this.#rpcHandles[rpc] || this.#rpc === undefined || rpcRefs?.length !== 10)) fail("configuration_capacity");
     if (notifying && (management || notify === this.#sendDirection || handle !== this.#notifyHandles[notify] || this.#info.application_profile === "transport")) fail("configuration_capacity");
-    const classification = management ? 2 : notifying ? 1 : 0, initialLimit = management || notifying ? 16384n : this.config.streams.receive.receiveLimit;
+    const classification = management ? 2 : notifying || ordinary ? 1 : 0, initialLimit = management || notifying || ordinary ? 16384n : this.config.streams.receive.receiveLimit;
     if (management && (handle !== this.#managementHandle || this.#info.application_profile !== "execution" || this.#sendDirection !== 1)) fail("configuration_capacity");
     const owner = this.#open!; owner.checkAccept(handle, classification);
     const scope = owner.snapshot(handle).scope, binding = this.#bindings.get(scope);
@@ -2333,20 +2765,21 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       prepared = prepaid?.take(this.#reservation!);
       preparedAccount = prepared?.account;
     } catch (error) { prepaid?.close(); throw error; }
-    const refs = management ? this.#managementRefs.slice(2, 5) : notifying ? notificationRefs!.slice(2, 5) : prepared?.references.slice(2, 5) ??
+    const refs = management ? this.#managementRefs.slice(2, 5) : notifying ? notificationRefs!.slice(2, 5) : ordinary ? rpcRefs!.slice(2, 5) : prepared?.references.slice(2, 5) ??
       this.#reserve(scope, ["v4_send_key_0", "v4_send_key_1", "v4_stream_termination"],
         [directionKeyCharge(keyConfig), directionKeyCharge(keyConfig), streamTerminationCharge(this.config.runtimeBytes)]);
     let ticket = false;
     try {
       binding.sendKeys = new DirectionKeyPositions(this.config.streams.root, keyConfig, refs.slice(0, 2), this.config.ledger, scope, this.#sendDirection,
-        management ? this.#managementPositions.slice(2, 4) : notifying ? this.#notifyPositions[notify]!.slice(2, 4) : undefined,
-        management ? this.#internalKeys!.checkout("management", "send") : notifying ? this.#internalKeys!.checkout(`notify_${notify}`, "send") : prepared?.sendKeys);
+        management ? this.#managementPositions.slice(2, 4) : notifying ? this.#notifyPositions[notify]!.slice(2, 4) : ordinary ? this.#rpcPositions[rpc]!.slice(2, 4) : undefined,
+        management ? this.#internalKeys!.checkout("management", "send") : notifying ? this.#internalKeys!.checkout(`notify_${notify}`, "send") : ordinary ? this.#internalKeys!.checkout(this.#rpcKey(rpc), "send") : prepared?.sendKeys);
       binding.send = this.#cipher(handle, this.#sendDirection, binding.sendKeys);
       binding.terminationReservation = refs[2]!.take(streamTerminationCharge(this.config.runtimeBytes));
       if (management) binding.sendAccount = this.config.streams.managementSendAccount!;
       if (notifying) binding.sendAccount = this.config.streams.notifySendAccounts![notify]!;
+      if (ordinary) binding.sendAccount = this.config.streams.rpcSendAccounts![rpc]!;
       if (preparedAccount !== undefined) { binding.sendAccount = preparedAccount; preparedAccount = undefined; }
-      binding.direction = this.#prepareDirection(binding, management ? this.#managementRefs.slice(5, 8) : notifying ? notificationRefs!.slice(5, 8) : prepared?.references.slice(5, 8));
+      binding.direction = this.#prepareDirection(binding, management ? this.#managementRefs.slice(5, 8) : notifying ? notificationRefs!.slice(5, 8) : ordinary ? rpcRefs!.slice(5, 8) : prepared?.references.slice(5, 8));
       if (prepare !== undefined) { binding.stream = new RuntimeStream(this, handle, binding.direction); prepare(binding.stream, handle); }
       const body = owner.encodeResult(handle, initialLimit, this.#encode, classification);
       this.#check(); owner.checkAccept(handle, classification); if (options?.signal?.aborted) fail("closed");
@@ -2406,7 +2839,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   /** Internal one-record send, used by the original bounded WriteRequest owner.
    * Native admission is the accepted-prefix boundary; completion retains all
    * packet/output backing. This is not a public write-request replacement. */
-  async sendData(handle: OpenHandle, data: Uint8Array, fin: boolean, options?: OperationOptions, admitted?: (bytes: number) => void): Promise<bigint> {
+  async sendData(handle: OpenHandle, data: Uint8Array, fin: boolean, options?: OperationOptions, admitted?: (bytes: number) => void, checkDeadline?: () => void): Promise<bigint> {
     this.#check(); if (this.#rekeyRound !== undefined) fail("busy");
     if (options?.signal?.aborted) fail("closed");
     const snapshot = this.#open!.snapshot(handle), binding = this.#bindings.get(snapshot.scope), size = byteLength(data);
@@ -2420,6 +2853,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     try {
       const completion = this.#encodeApplication(binding.native, encode => {
         const body = encodeStreamData(new FixedCBORWriter(encode), snapshot.scope, this.#sendDirection, snapshot.epoch, binding.nextSend, binding.sentOffset, fin, data);
+        const beforeSubmit = (): void => { checkDeadline?.(); if (options?.signal?.aborted) throw new Error("canceled"); };
+        beforeSubmit();
         return output.record(binding.send!, frameType("STREAM_DATA"), body, () => {
           binding.sendFIN = fin;
           admitted?.(size);
@@ -2429,7 +2864,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
           // publication fails. The public accepted prefix is recorded separately.
           ticket = true; binding.nextSend++; binding.sentOffset += BigInt(size);
           if (fin) binding.terminalSend = { epoch: snapshot.epoch, next: binding.nextSend, offset: binding.sentOffset };
-        });
+        }, beforeSubmit);
       });
       await completion;
       if (fin && binding.native !== undefined) {
@@ -2551,36 +2986,41 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   rpcApplication(): RPCApplicationAdmission {
     this.#check(); if (this.#rpc === undefined) fail("configuration_capacity"); return this.#rpc;
   }
-  prepareWrite(handle: OpenHandle, payload: Uint8Array, duration?: bigint, prepaid?: ResourceReference): ReliableWriteRequest {
+  beginApplicationDiagnostic(): DiagnosticActivity { return new DiagnosticActivity(this.#core?.config.diagnostics, "application"); }
+  prepareWrite(handle: OpenHandle, payload: Uint8Array, duration?: bigint, prepaid?: ResourceReference, diagnostic?: DiagnosticActivity, originalDeadline?: TrustedDeadline, publication?: RPCPublicationGuard): ReliableWriteRequest {
     this.#check(); const snapshot = this.#open!.snapshot(handle), binding = this.#bindings.get(snapshot.scope);
     const size = byteLength(payload), timeout = duration ?? this.config.streams.writeDeadlineMS;
     if (snapshot.phase !== "live" || binding?.handle !== handle || binding.write !== undefined || binding.terminalSend !== undefined || binding.sendSealed || binding.stopPending) fail("busy");
     if (this.#open!.isBootstrap(handle) && !this.#open!.bootstrapBound(handle)) fail("busy");
     if (size > this.config.streams.maxWriteBytes || timeout < 1n || timeout > this.config.streams.writeDeadlineMS) fail("configuration_capacity");
     if (prepaid !== undefined && !prepaid.sameEnvironment(this.#reservation!)) fail("configuration_capacity");
-    const deadline = this.#deadline(timeout), refs = prepaid === undefined
+    const deadline = this.#deadline(timeout);
+    if (originalDeadline !== undefined) deadline.tightenFrom(originalDeadline);
+    const refs = prepaid === undefined
       ? this.#reserve(snapshot.scope, ["v4_write_request"], [writeRequestCharge(size, this.config.runtimeBytes)], this.#directionSendAccount(binding))
       : [prepaid.take(writeRequestCharge(size, this.config.runtimeBytes))];
     try {
       const request = new ReliableWriteRequest({
         maxChunk: this.config.streams.receive.maxDataBytes,
         readyBytes: () => {
-          this.#check();
+          this.#check(); publication?.check();
           if (binding.terminalSend !== undefined || binding.stopPending) throw new Error("stream_terminated");
           return this.#applicationOutputAvailable(binding.native) && this.#rekeyRound === undefined ? Number(binding.sendLimit - binding.sentOffset > BigInt(this.config.streams.receive.maxDataBytes)
             ? BigInt(this.config.streams.receive.maxDataBytes) : binding.sendLimit - binding.sentOffset) : 0;
         },
         waitReady: signal => this.#wait(deadline, signal),
-        send: async (bytes, admitted, signal) => { await this.sendData(handle, bytes, false, { signal }, admitted); },
+        send: async (bytes, admitted, signal) => {
+          await this.sendData(handle, bytes, false, { signal }, admitted, () => { deadline.check(); originalDeadline?.check(); publication?.check(); });
+        },
         release: request => { if (binding.write === request) delete binding.write; this.#wake(); },
-      }, payload, deadline, this.config.runtimeBytes, refs[0]!);
+      }, payload, deadline, this.config.runtimeBytes, refs[0]!, diagnostic);
       binding.write = request; return request;
     } finally { for (const ref of refs) ref.release(); }
   }
-  prepareOrdinaryWrite(handle: OpenHandle, payload: Uint8Array): V4WriteRequestOwner {
+  prepareOrdinaryWrite(handle: OpenHandle, payload: Uint8Array, diagnostic?: DiagnosticActivity): V4WriteRequestOwner {
     // The optional stable operation's staging cap does not limit ordinary
     // Write input. Return a stable accepted prefix through the same owner.
-    return this.prepareWrite(handle, byteSlice(payload, 0, Math.min(byteLength(payload), this.config.streams.maxWriteBytes)));
+    return this.prepareWrite(handle, byteSlice(payload, 0, Math.min(byteLength(payload), this.config.streams.maxWriteBytes)), undefined, undefined, diagnostic);
   }
   async #control(type: number, build: (writer: FixedCBORWriter) => Uint8Array | undefined, submitted: () => void = () => undefined, deadline = this.#deadline()): Promise<void> {
     deadline.check();
@@ -2661,6 +3101,9 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       tuple(writer, terminal); writer.uint(4).uint(aborted ? 1 : 0).uint(5); tuple(writer, observed); return writer.result();
     }, () => {
       binding.receiveDrained = true; binding.ackDirty = false; this.#clearAckTimer(binding);
+      // Irrevocable publication changes the protocol deadline even while the
+      // original native completion still owns its physical cleanup tail.
+      this.#wake();
       if (binding.native !== undefined) void binding.native.transport.stopSending(aborted ? undefined : "normal_drained").catch(() => undefined);
     });
     if (aborted) binding.direction?.close();
@@ -2679,7 +3122,10 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     // Keep the receive owner until its actual reader/cursor has relinquished it.
     if (binding.receiveAbandon || binding.direction?.state().stream_status === "eof") binding.direction?.close();
     binding.send?.close(); binding.cipher.close();
-    binding.native?.close();
+    // Authenticated DRAINED can arrive before the original FIN publisher's
+    // continuation calls native closeWrite. Keep that publisher's stream open
+    // until it exits; its completion revisits this same terminal owner.
+    if (binding.write === undefined && binding.termination === undefined) binding.native?.close();
     if (this.#physicalComplete(binding, false)) binding.stream?.notifyAdapterCleanup();
     // Adapter cleanup can synchronously detach its I/O, re-enter this owner,
     // and publish retirement. Recheck the original binding after that callback
@@ -2711,9 +3157,13 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     }
     if (reset || receiveOnly) {
       if (reset) binding.resetRequested = true;
-      binding.receiveAbandon = true;
+      // A consumed authenticated FIN remains graceful even when Close races
+      // the queued DRAINED publication. Only unread/open input is abandoned.
+      if (binding.direction?.state().stream_status !== "eof") {
+        binding.receiveAbandon = true;
+        binding.direction?.abandonDelivery();
+      }
       this.#clearAckTimer(binding); binding.ackDirty = false;
-      binding.direction?.abandonDelivery();
       if (!binding.receiveDrained) binding.receiveTermination ??= this.#newTermination(binding);
       else binding.direction?.close();
     }
@@ -2800,6 +3250,13 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   }
   async #terminationStep(binding: ReceiveBinding, deadline: TrustedDeadline): Promise<boolean> {
       const send = binding.sendTermination !== undefined && !binding.sendDrained;
+      // Native input retirement can finish between #isolateNativeInput and this
+      // wake. Once the physical stream is gone, preserve the original logical
+      // termination owner and publish STOPPED on the maintenance channel instead
+      // of attempting a FIN through the retired native output.
+      if (send && binding.terminalSend === undefined && !binding.stopPending && !binding.resetRequested && binding.native?.transport.cleanupComplete()) {
+        binding.stopPending = true; binding.sendSealed = true; binding.write?.terminate();
+      }
       if (!this.output.available() || send && (binding.write !== undefined || binding.native?.output.pending() ||
           !binding.stopPending && !binding.resetRequested && (this.#rekeyRound !== undefined || !this.#applicationOutputAvailable(binding.native)))) {
         await this.#wait(deadline); return false;
@@ -2815,7 +3272,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
           await this.#control(frameType("STREAM_ACK"), writer => writer.map(3).uint(0).uint(2)
             .uint(1).uint(scope).uint(2).uint(this.#receiveDirection).result(), () => { binding.stopSent = true; });
         }
-        if (binding.terminalReceive !== undefined) await this.#drained(binding, true);
+        if (binding.terminalReceive !== undefined) await this.#drained(binding, binding.receiveAbandon);
       }
       const next = this.#terminationDeadline(binding);
       if (next === undefined) return true;
@@ -2857,12 +3314,16 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     const binding = this.#streamBinding(handle);
     if (!this.#physicalComplete(binding)) {
       this.#beginTermination(binding, true);
+      // Once the protocol proofs settle, observing the original publication
+      // tail keeps this call's deadline instead of renewing it on every wake.
+      const observationDeadline = this.#deadline();
       while (!binding.sendDrained || !binding.receiveDrained || binding.termination !== undefined ||
           binding.draining !== undefined || binding.acknowledging !== undefined) {
-        const deadline = this.#terminationDeadline(binding) ?? this.#deadline();
+        const deadline = this.#terminationDeadline(binding) ?? observationDeadline;
         try { await this.#wait(deadline, options?.signal); }
         catch (error) {
-          if (!(error instanceof TimeError) || error.code !== "time_expired" || this.#terminationDeadline(binding) === deadline) throw error;
+          if (!(error instanceof TimeError) || error.code !== "time_expired" ||
+              (this.#terminationDeadline(binding) ?? observationDeadline) === deadline) throw error;
         }
       }
       this.#terminal(binding);
@@ -2903,7 +3364,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #releaseStream(binding: ReceiveBinding): void {
     binding.receiveKeys.close(); binding.sendKeys?.close();
     this.#leaveQuarantine(binding.sendTermination); this.#leaveQuarantine(binding.receiveTermination);
-    if (binding.sendAccount !== this.config.streams.managementSendAccount) binding.sendAccount?.close(); delete binding.sendAccount;
+    if (binding.sendAccount !== this.config.streams.managementSendAccount &&
+        !this.config.streams.rpcSendAccounts?.includes(binding.sendAccount!) && !this.config.streams.notifySendAccounts?.includes(binding.sendAccount!)) binding.sendAccount?.close(); delete binding.sendAccount;
     binding.stream?.detach(this.#closeResult(binding), binding.sendFIN, binding.sentOffset, binding.acknowledged,
       binding.direction?.progress().released_offset ?? 0n);
     delete binding.stream;
@@ -2959,30 +3421,42 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     this.#peerBarrier = entries.slice();
     this.#barrierSatisfied();
   }
-  #phaseDeadline(duration: bigint): void {
+  #phaseDeadline(duration: bigint, phase: DiagnosticFields["phase"] = "rekey_protocol_prepare"): void {
+    if (phase !== this.#diagnosticRekeyPhase) {
+      this.#diagnostic({ phase: this.#diagnosticRekeyPhase, code: "ok", duration_bucket: diagnosticDuration(this.#diagnosticPhaseStarted) }, "rekey_phase_completed");
+      this.#diagnosticRekeyPhase = phase; this.#diagnosticPhaseStarted = performance.now();
+    }
     this.#rekeyPhaseDeadline = this.config.deadline.forkAgeAt(this.config.deadline.sample(), duration);
     this.#armRekey();
   }
   #armRekey(): void {
     if (this.#rekeyTimer !== undefined) clearTimeout(this.#rekeyTimer);
     try {
-      this.#rekeyDeadline!.check(); this.#rekeyPhaseDeadline!.check();
+      this.#checkRekeyDeadlines();
       const a = this.#rekeyDeadline!.remainingMS(), b = this.#rekeyPhaseDeadline!.remainingMS();
-      this.#rekeyTimer = setTimeout(() => { this.#rekeyTimer = undefined; this.#armRekey(); }, timerChunk(a < b ? a : b));
-    } catch { void this.close().catch(() => undefined); }
+      const original = this.epoch, roundDeadline = this.#rekeyDeadline;
+      this.#rekeyTimer = setTimeout(() => {
+        if (this.#closed || this.epoch !== original || this.#rekeyDeadline !== roundDeadline) return;
+        this.#rekeyTimer = undefined; this.#armRekey();
+      }, timerChunk(a < b ? a : b));
+    } catch (error) {
+      this.#diagnosticRekeyFailure(error);
+      void this.close().catch(() => undefined);
+    }
   }
   #beginRekey(): void {
     this.#check();
     if (this.#rekeyRound !== undefined || this.#epochNumber === 0xffffffff) fail("busy");
     this.#localFrozen = this.#localBarrier();
-    this.#rekeyIntent = true; this.#liveness!.beginRekey();
+    this.#unreliable?.freeze(); this.#rekeyIntent = true; this.#beginDiagnosticRekey(); this.#liveness!.beginRekey();
     const streams = this.config.streams, deadline = this.#deadline(streams.rekeyPrepareMS + streams.rekeyProtocolMS + streams.rekeyConfirmationMS);
+    if (this.#rekeySafetyDeadline !== undefined) deadline.tightenFrom(this.#rekeySafetyDeadline);
     const config: RekeyConfig = { ...(this.config.streams.random === undefined ? {} : { random: this.config.streams.random }), profile: this.config.ledger.profile, epoch: this.#epochNumber, clock: this.config.clock,
       deadline, authorizationDeadline: this.config.deadline, maxFrame: this.config.maxFrame, maxScopes: this.config.streams.rekeyMaxScopes ?? 1035, runtimeBytes: this.config.runtimeBytes, direction: this.#sendDirection };
     const refs = this.#maintenancePositions!.round();
     try { this.#rekeyRound = new RekeyRound(config, this.epoch, refs[0]!, refs[1]!); }
     finally { for (const ref of refs) ref.release(); }
-    this.#rekeyDeadline = deadline; this.#phaseDeadline(streams.rekeyPrepareMS);
+    this.#rekeyDeadline = deadline; this.#phaseDeadline(streams.rekeyPrepareMS, "rekey_local_prepare");
   }
   #chargeRekey(): void {
     if (this.#rekeyCharged) fail("protocol_violation");
@@ -3024,7 +3498,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       this.#chargeRekey(); packet.commitValidated(); this.#phaseDeadline(this.config.streams.rekeyProtocolMS); this.#rekeyStage = "init"; return;
     }
     if (this.#rekeyRound === undefined) fail("protocol_violation");
-    this.#rekeyDeadline!.check(); this.#rekeyPhaseDeadline!.check();
+    this.#checkRekeyDeadlines();
     if (schema === "REKEY_REPLY") {
       if (this.#sendDirection !== 0 || epoch !== this.#epochNumber || this.#rekeyStage !== "init") fail("protocol_violation");
       const entries = this.#rekeyRound.acceptReply(body); this.#registerBarrier(entries); this.#installCandidate();
@@ -3033,7 +3507,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     if (epoch !== this.#epochNumber + 1 || schema === "REKEY_COMMIT" && this.#sendDirection !== 1 || schema === "REKEY_ACK" && this.#sendDirection !== 0) fail("protocol_violation");
     this.#rekeyRound.acceptMarker(body, this.#controlReceive!.frontier().next);
     packet.commitValidated(); this.#receiveSwitched = true;
-    if (schema === "REKEY_COMMIT") { this.#rekeyStage = "commit"; this.#phaseDeadline(this.config.streams.rekeyConfirmationMS); }
+    if (schema === "REKEY_COMMIT") { this.#rekeyStage = "commit"; this.#phaseDeadline(this.config.streams.rekeyConfirmationMS, "rekey_confirmation"); }
     else { this.#rekeyStage = "ack"; this.#rekeyAnchor = this.config.clock.monotonic(); }
   }
   async #progressRekey(): Promise<void> {
@@ -3047,8 +3521,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       // retaining this single progress owner; the receive wake cannot start a
       // second owner while it is working.
       while (this.#rekeyRound !== undefined && this.output.available()) {
-        this.#rekeyDeadline!.check(); this.#rekeyPhaseDeadline!.check();
-        if (!this.#barrierSatisfied()) return;
+        this.#checkRekeyDeadlines();
+        if (!this.#barrierSatisfied() || this.#unreliable?.pendingOutput() === true) return;
         if ([...this.#nativeAssociations].some(association => association.output.pending())) return;
         if (this.#sendDirection === 1 && this.#rekeyStage === "init") {
           const body = this.#rekeyRound.buildReply(this.#localFrozen); this.#installCandidate();
@@ -3057,7 +3531,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
           const server = this.#sendDirection === 1, body = this.#rekeyRound.buildMarker(this.#controlSend!.frontier().next);
           await this.output.record(this.#candidateSend!, frameType("REKEY"), body, () => {
             this.#sendSwitched = true; this.#rekeyStage = server ? "ack" : "commit";
-            if (server) this.#rekeyAnchor = this.config.clock.monotonic(); else this.#phaseDeadline(this.config.streams.rekeyConfirmationMS);
+            if (server) this.#rekeyAnchor = this.config.clock.monotonic(); else this.#phaseDeadline(this.config.streams.rekeyConfirmationMS, "rekey_confirmation");
           });
           if (server) this.#completeRekey();
         } else if (this.#sendDirection === 0 && this.#rekeyStage === "ack") this.#completeRekey();
@@ -3101,12 +3575,16 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     this.epoch = next; this.#epochNumber++; this.#open!.completeRekey(this.#epochNumber);
     this.#controlSend = this.#candidateSend; this.#controlReceive = this.#candidateReceive;
     this.#candidate = undefined; this.#candidateSend = undefined; this.#candidateReceive = undefined;
+    this.#unreliable?.replaceEpoch(next, this.#epochNumber);
     old.close(); this.#rekeyRetired = this.#rekeyRetired.filter(epoch => !epoch.cleanupComplete()); this.#rekeyRetired.push(old);
     this.#rekeyBase = this.#rekeyPost; this.#rekeyRound!.close(); this.#rekeyRound = undefined; this.#rekeyStage = "idle";
     this.#rekeyCharged = false; this.#sendSwitched = this.#receiveSwitched = false; this.#peerBarrier = []; this.#localFrozen = []; this.#rekeyRequest = undefined;
+    this.#diagnostic({ state: "ready", phase: this.#diagnosticRekeyPhase, code: "ok", duration_bucket: diagnosticDuration(this.#diagnosticPhaseStarted) }, "rekey_phase_completed");
+    this.#diagnostic({ state: "ready", phase: "rekey_switch", code: "ok", duration_bucket: diagnosticDuration(this.#diagnosticRekeyStarted ?? performance.now()) }, "rekey_succeeded");
+    this.#diagnosticRekeyStarted = undefined;
     this.#collectRetiredProofs();
     if (this.#rekeyTimer !== undefined) clearTimeout(this.#rekeyTimer); this.#rekeyTimer = undefined;
-    this.#rekeyDeadline = this.#rekeyPhaseDeadline = undefined; this.#rekeyIntent = false; this.#liveness!.endRekey(true); this.#wake();
+    this.#rekeyDeadline = this.#rekeyPhaseDeadline = this.#rekeySafetyDeadline = undefined; this.#rekeyIntent = false; this.#liveness!.endRekey(true); this.#wake();
   }
   #batchDigest(body: Uint8Array, proposer: RecordDirection, destination: Uint8Array): void {
     const spec = wireDomains.find(item => item.name === "retirement_batch_digest");
@@ -3285,9 +3763,12 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     let frame: EnvelopeFrame | undefined;
     try {
       frame = await this.reader.next({ signal }) ?? undefined;
-      if (frame === undefined) fail("carrier_failed");
+      if (frame === undefined) throw nativeConnectionEnded(new V4SessionAssemblyError("carrier_failed"));
       await this.#receiveFrame(frame);
-    } catch (error) { void this.close().catch(() => undefined); throw error; }
+    } catch (error) {
+      this.#observeControllerFailure(error);
+      void this.close().catch(() => undefined); throw error;
+    }
     finally { frame?.release(); this.#wake(); }
   }
   async #receiveFrame(frame: EnvelopeFrame, native?: NativeAssociation): Promise<void> {
@@ -3309,6 +3790,19 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         packet.observeValidation(() => this.#idle!.activity());
         await this.#maintenance(header.frameType, packet, candidate ? this.#candidateReceive! : this.#controlReceive!);
         return;
+      }
+      if (header.epoch === this.#epochNumber + 1 && this.#sendSwitched && this.#receiveSwitched) {
+        // Both markers authorize the peer's new epoch before our COMMIT/ACK
+        // provider releases its output borrow. Keep this bounded input with
+        // its original reader until the rekey owner installs the new keys.
+        const awaitSwitch = async (): Promise<void> => {
+          while (header.epoch === this.#epochNumber + 1) {
+            this.#checkRekeyDeadlines();
+            await this.#wait(this.#rekeyDeadline!, this.#abort.signal);
+          }
+        };
+        if (native === undefined) await this.#readerWait(awaitSwitch);
+        else await awaitSwitch();
       }
       let binding = this.#bindings.get(header.scope);
       if (header.frameType === frameType("OPEN_STREAM")) {
@@ -3332,7 +3826,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         const handle = this.#open!.reservePeer(header.scope, header.epoch);
         const keyConfig = this.#cipherConfig(this.#receiveDirection);
         const initial = this.config.streams.peerOpenPreparation?.take(this.#reservation!);
-        let fallbackKind: string | undefined, protectedSlots: readonly ProtectedResourceReservation[] | undefined;
+        let fallbackKind: string | undefined, fallbackChannel: Parameters<SessionKeyPreparation["exchangeReceive"]>[0] | undefined;
+        let protectedSlots: readonly ProtectedResourceReservation[] | undefined;
         let refs: readonly ResourceReference[] = [], usage: CryptoKeyPositions | undefined = initial?.usage;
         try {
           refs = initial?.references ?? this.#reserve(header.scope, ["v4_receive_key_0", "v4_receive_key_1"], [directionKeyCharge(keyConfig), directionKeyCharge(keyConfig)]);
@@ -3346,12 +3841,22 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
           if (this.#managementReceivePositions.length === 2 && this.#managementReceivePositions.every(position => position.available()) &&
               this.#internalKeys!.available("management", "receive")) {
             protectedSlots = this.#managementReceivePositions; fallbackKind = managementSpec.kind;
+            fallbackChannel = "management";
             usage = this.#internalKeys!.checkout("management", "receive");
           } else if (this.#notifyPositions[notify]!.length !== 0 && this.#notifyPositions[notify]!.slice(0, 2).every(position => position.available()) &&
               this.#internalKeys!.available(`notify_${notify}`, "receive")) {
             protectedSlots = this.#notifyPositions[notify]!.slice(0, 2); fallbackKind = notifySpec.kind;
+            fallbackChannel = `notify_${notify}`;
             usage = this.#internalKeys!.checkout(`notify_${notify}`, "receive");
-          } else throw error;
+          } else {
+            const start = this.#receiveDirection * 4;
+            const position = this.#rpcPositions.findIndex((slots, index) => index >= start && index < start + 4 &&
+              this.#rpcHandles[index] === undefined && this.#rpcTasks[index] === undefined && slots.length === 10 &&
+              slots.slice(0, 2).every(slot => slot.available()) && this.#internalKeys!.available(this.#rpcKey(index), "receive"));
+            if (position < 0) throw error;
+            protectedSlots = this.#rpcPositions[position]!.slice(0, 2); fallbackKind = bootstrapSpec.kind; fallbackChannel = this.#rpcKey(position);
+            usage = this.#internalKeys!.checkout(fallbackChannel, "receive");
+          }
           const checked: ResourceReference[] = [];
           try { for (const position of protectedSlots) checked.push(position.checkout()); refs = checked; }
           catch (error) { for (const reference of checked) reference.release(); usage.close(); throw error; }
@@ -3366,7 +3871,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         packet = binding.cipher.open(frame);
         packet.observeValidation(() => this.#idle!.activity());
         const outcome = this.#open!.receivePeer(handle, binding.cipher, packet); binding.nextReceive = 1n;
-        if (outcome === "rejected" || fallbackKind !== undefined && this.#open!.kind(handle) !== fallbackKind) binding.rejectionPending = 1;
+        if (outcome === "rejected" || fallbackKind !== undefined && !this.#assignInternalReceive(binding, fallbackChannel!)) binding.rejectionPending = 1;
+        if (outcome === "pending" && this.#open!.kind(handle) === bootstrapSpec.kind && this.#rpc === undefined) binding.rejectionPending = 2;
         if (outcome === "pending" && this.#open!.kind(handle) === managementSpec.kind &&
             (this.#info.application_profile !== "execution" || this.#sendDirection !== 1 || this.#managementHandle !== undefined || this.#managementStopped)) binding.rejectionPending = 2;
         if (native !== undefined) {
@@ -3410,9 +3916,10 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       }
     } catch (error) {
       if (error instanceof OpenAdmissionError && error.code === "open_capacity" || error instanceof ResourceError && error.code === "resource_exhausted") {
-        this.#resourceFailure(); throw error;
+        this.#resourceFailure(error instanceof ResourceError); throw error;
       }
       if (!fixedPrefix && native !== undefined && this.#isolateNativeInput(native)) return;
+      this.#observeControllerFailure(error);
       void this.close().catch(() => undefined); throw error;
     }
     finally { packet?.release(); frame?.release(); this.#wake(); }
@@ -3514,6 +4021,10 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
             this.#goaway !== undefined && (this.#goaway.ceiling !== ceiling || this.#goaway.reason !== reason)) fail("protocol_violation");
         if (ceiling < this.#open!.highestAccepted(true)) fail("protocol_violation");
         this.#goaway = { ceiling, reason };
+        // A peer GOAWAY is an application drain boundary too. Reuse the
+        // original RPC/Notify owners so accepted tails can finish while the
+        // Management lane retains its existing owner and deadline.
+        this.#rpc?.peerGoaway();
       } else if (schema === "ERROR") {
         const code = Number(document.uint(document.field(0, 0))), scope = document.uint(document.field(0, 1));
         const codes = table<Record<string, number>>("error_codes")!, metadata = table<Record<string, { action: string; scope: string }>>("error_code_metadata")!;
@@ -3592,10 +4103,12 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   close(): Promise<V4LifecycleResult> {
     if (this.#closed) return this.cleanupOwner.closed;
     this.#closeInitializing = true; this.#closed = true;
+    this.config.diagnosticActivity?.close();
     this.#cancelBootstrapInitialization();
     this.#drain?.finish("failed");
     if (this.#drainTimer !== undefined) clearTimeout(this.#drainTimer); this.#drainTimer = undefined;
     this.cleanupOwner.startClose(this.#drain);
+    this.#unreliable?.close(); if (this.#unreliable === undefined) this.config.unreliablePreparation?.close();
     this.#idle?.close(); this.#liveness?.close(); this.#abort.abort(); this.#wake();
     this.#internalKeys?.close(); this.config.streams.peerOpenPreparation?.close();
     this.#nativeScheduler?.close(); this.#nativeSend?.close(); this.#nativePositions?.close(); this.#maintenancePositions?.close(); this.#sendAccounts?.close(); this.#sendAccount?.close();
@@ -3603,6 +4116,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     for (const registration of this.#registrationOwners) { registration.host?.detach(); registration.close(); }
     this.#registrationOwners.clear(); this.#streamRegistrations.clear();
     this.#rpc?.close();
+    for (let position = 0; position < 8; position++) if (this.#rpcTasks[position] === undefined) this.#releaseRPCInitialization(position);
+    for (const account of this.config.streams.rpcSendAccounts ?? []) account.close();
     for (const position of [0, 1] as const) { if (this.#notifyTasks[position] === undefined) this.#releaseNotifyInitialization(position); this.config.streams.notifySendAccounts?.[position]?.close(); }
     for (const ref of this.#notifyNative?.references ?? []) ref.release(); this.#notifyNative = undefined;
     if (this.#managementTask === undefined) this.#releaseManagementInitialization(); this.config.streams.managementSendAccount?.close(); this.#application?.close();
@@ -3638,12 +4153,12 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     try { this.#collect(); } finally { this.#cleaning = false; }
     this.cleanupOwner.updateCore(this.#reservation === undefined ? 0 :
       Number(this.#receiving !== undefined) + Number(this.#drainWork !== undefined) + Number(!this.output.cleanupComplete()) + Number(!this.#transportClosed) +
-      Number(this.#nativeAcceptor !== undefined) + Number(this.#managementTask !== undefined) + Number(this.#bootstrapTask !== undefined) + Number(this.#supervisor !== undefined) + Number(this.#dispatchQueued) +
-      Number(this.#rpc !== undefined) + Number(this.#retireWorking) + Number(this.#rekeyWorking) + this.#notifyTasks.filter(Boolean).length + this.#nativeAssociations.size + this.#dispatching.size, this.#cleanupFault);
+      Number(this.#unreliable?.cleanupComplete() === false) + Number(this.#nativeAcceptor !== undefined) + Number(this.#managementTask !== undefined) + Number(this.#bootstrapTask !== undefined) + Number(this.#supervisor !== undefined) + Number(this.#dispatchQueued) +
+      Number(this.#rpc !== undefined) + Number(this.#retireWorking) + Number(this.#rekeyWorking) + this.#rpcTasks.filter(Boolean).length + this.#notifyTasks.filter(Boolean).length + this.#nativeAssociations.size + this.#dispatching.size, this.#cleanupFault);
   }
   #collect(): void {
-    if (this.#reservation === undefined || !this.#closed || !this.#transportClosed || this.#notifyTasks.some(Boolean) || this.#managementTask !== undefined || this.#bootstrapTask !== undefined || this.#supervisor !== undefined || this.#dispatchQueued || this.#nativeAcceptor !== undefined || this.#nativeAssociations.size !== 0 ||
-        this.#nativeScheduler?.cleanupComplete() === false || this.#nativeSend?.cleanupComplete() === false || this.#nativePositions?.cleanupComplete() === false || this.#maintenancePositions?.cleanupComplete() === false || this.#drainWork !== undefined || this.#liveness?.cleanupComplete() === false || this.#receiving !== undefined || !this.reader.cleanupComplete() ||
+    if (this.#reservation === undefined || !this.#closed || !this.#transportClosed || this.#rpcTasks.some(Boolean) || this.#notifyTasks.some(Boolean) || this.#managementTask !== undefined || this.#bootstrapTask !== undefined || this.#supervisor !== undefined || this.#dispatchQueued || this.#nativeAcceptor !== undefined || this.#nativeAssociations.size !== 0 ||
+        this.#unreliable?.cleanupComplete() === false || this.config.unreliablePreparation?.cleanupComplete() === false && this.#unreliable === undefined || this.#nativeScheduler?.cleanupComplete() === false || this.#nativeSend?.cleanupComplete() === false || this.#nativePositions?.cleanupComplete() === false || this.#maintenancePositions?.cleanupComplete() === false || this.#drainWork !== undefined || this.#liveness?.cleanupComplete() === false || this.#receiving !== undefined || !this.reader.cleanupComplete() ||
         !this.output.cleanupComplete() || !this.epoch.cleanupComplete() || !this.config.ledger.cleanupComplete() ||
         this.#controlSend?.cleanupComplete() === false || this.#controlReceive?.cleanupComplete() === false || this.#controlDecoder?.cleanupComplete() === false || this.#waiters.size !== 0 || this.#rejecting || this.#retireWorking || this.#rekeyWorking || this.#candidate?.cleanupComplete() === false || this.#rekeyRetired.some(epoch => !epoch.cleanupComplete())) return;
     for (const binding of this.#bindings.values()) {
@@ -3661,6 +4176,9 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     this.#handshakeHash = this.#retireScratch = this.#retireDigest = this.#lastRetireSentDigest = this.#lastRetireReceivedDigest = empty;
     this.#controlReservation?.release(); this.#controlReservation = undefined;
     this.#bootstrapReservation?.release(); this.#bootstrapReservation = undefined; this.#bootstrap = undefined;
+    if (this.#rpcPositions.some(entries => entries.some(position => !position.cleanupComplete()))) return;
+    for (const positions of this.#rpcPositions) positions.length = 0;
+    this.#rpcHandles.length = this.#rpcNative.length = this.#rpcNativeRenewal.length = this.#rpcOutputs.length = 0;
     if (this.#notifyPositions.some(entries => entries.some(position => !position.cleanupComplete()))) return;
     for (const entries of this.#notifyPositions) entries.length = 0; this.#notifyHandles.length = 0;
     if (this.#managementPositions.some(position => !position.cleanupComplete())) return;
@@ -3672,7 +4190,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     this.#core = undefined; this.#nativeScheduler = undefined; this.#nativeSend = undefined; this.#nativePositions = undefined; this.#maintenancePositions = undefined; this.#internalKeys = undefined; this.#sendAccount = undefined; this.#sendAccounts = undefined; this.#idle = undefined; this.#liveness = undefined;
     this.#controlSend = this.#controlReceive = this.#candidateSend = this.#candidateReceive = undefined;
     this.#controlDecoder = undefined; this.#rekeyRound = undefined; this.#candidate = undefined; this.#rekeyRetired.length = 0;
-    this.#rekeyDeadline = this.#rekeyPhaseDeadline = undefined; this.#rekeyAnchor = undefined; this.#rekeyRequest = undefined;
+    this.#rekeyDeadline = this.#rekeyPhaseDeadline = this.#rekeySafetyDeadline = undefined; this.#rekeyAnchor = undefined; this.#rekeyRequest = undefined; this.#autoRekeyQueued = false;
+    if (this.#rekeySafetyTimer !== undefined) clearTimeout(this.#rekeySafetyTimer); this.#rekeySafetyTimer = undefined;
     this.#peerBarrier = this.#localFrozen = []; this.#drain = undefined;
     this.cleanupOwner.finishCore(reference);
   }
@@ -3711,6 +4230,7 @@ class RuntimeStream implements V4StreamOwner {
     this.#session = session; this.#handle = handle; this.#receive = receive;
     Object.defineProperty(this, "then", { value: undefined });
     registerStreamAdapter(this, profile => this.#claimAdapter(profile));
+    registerBridgeStreamAdapter(this, profile => this.#claimBridgeAdapter(profile));
     registerMessageStreamAdapter(this, profile => this.#claimMessageAdapter(profile));
     registerRPCStream(this, profile => this.#claimRPCAdapter(profile));
     registerResumeStream(this, (session, kind, profile) => this.#claimResumeAdapter(session, kind, profile), () => this.#session);
@@ -3742,10 +4262,10 @@ class RuntimeStream implements V4StreamOwner {
     if (!dedicated && ((owner.kind !== "flowersec.rpc.v4" && owner.kind !== managementSpec.kind && owner.kind !== notifySpec.kind) || owner.metadata.length !== 0 || this.#session?.info().application_profile === "transport")) {
       owner.rollback(); throw new Error("rpc_stream_kind");
     }
-    return Object.freeze({ ...owner, unused: () => this.#session !== undefined && this.#session.unusedRPCStream(this.#handle!), prepareFragment: (bytes: Uint8Array, reference: ResourceReference) => {
+    return Object.freeze({ ...owner, unused: () => this.#session !== undefined && this.#session.unusedRPCStream(this.#handle!), prepareFragment: (bytes: Uint8Array, reference: ResourceReference, originalDeadline?: TrustedDeadline, publication?: RPCPublicationGuard) => {
       owner.check();
       if (this.#session === undefined || byteLength(bytes) < (dedicated || owner.kind === notifySpec.kind ? 1 : owner.kind === managementSpec.kind ? 3 : 13) || byteLength(bytes) > 16384) throw new Error("rpc_fragment_capacity");
-      return this.#session.prepareWrite(this.#handle!, bytes, undefined, reference);
+      return this.#session.prepareWrite(this.#handle!, bytes, undefined, reference, undefined, originalDeadline, publication);
     } });
   }
   #claimMessageAdapter(profile: StreamAdapterProfile): MessageStreamAdapterOwner & { returnAtBoundary(): void } {
@@ -3755,9 +4275,10 @@ class RuntimeStream implements V4StreamOwner {
     try {
       const context = this.#session.messageAdapterContext(this.#handle!, this.#adapterReservation!, profile.application);
       const releaseReader = (): void => { cursor?.release(); cursor = undefined; };
+      const releaseApplication = (): void => { if (profile.reusableApplication !== true) context.application.close(); };
       const rollback = (): void => {
         if (released) return; released = true;
-        releaseReader(); context.releaseIO(); context.metadata.fill(0); context.application.close(); owner.rollback();
+        releaseReader(); context.releaseIO(); context.metadata.fill(0); releaseApplication(); owner.rollback();
       };
       this.#adapterRollback = rollback;
       return Object.freeze({ ...owner, ...context,
@@ -3788,13 +4309,36 @@ class RuntimeStream implements V4StreamOwner {
           owner.check(); releaseReader();
           if (this.#session === undefined) throw new Error("closed");
           this.#session.checkMessageBoundary(this.#handle!);
-          released = true; context.releaseIO(); context.metadata.fill(0); context.application.close();
+          released = true; context.releaseIO(); context.metadata.fill(0); releaseApplication();
           this.#adapterClaimed = false; this.#session.rollbackAdapter(this.#handle!); owner.release();
         },
         rollback,
-        release: () => { if (!released) { released = true; releaseReader(); context.releaseIO(); context.metadata.fill(0); context.application.close(); owner.release(); } },
+        release: () => { if (!released) { released = true; releaseReader(); context.releaseIO(); context.metadata.fill(0); releaseApplication(); owner.release(); } },
       });
     } catch (error) { cursor?.release(); owner.rollback(); throw error; }
+  }
+  #claimBridgeAdapter(profile: StreamAdapterProfile): BridgeStreamAdapterOwner {
+    if (this.#rawUsed || this.#session === undefined) throw new Error("stream_owned");
+    const session = this.#session, owner = this.#claimAdapter(profile);
+    try {
+      // Prepay this detached tail before publication or either pump. Its
+      // reservation is independent of original adapter I/O cleanup.
+      let resultBacking: ResourceReference | undefined, nativeResultBacking: ResourceReference | undefined, nativeIOBacking: ResourceReference | undefined;
+      try {
+        resultBacking = session.bridgeResultBacking(this.#handle!, profile.readBytes, "flowersec_stream");
+        nativeResultBacking = profile.nativeEndpoint === true ? session.bridgeResultBacking(this.#handle!, profile.readBytes, "native_duplex") : undefined;
+        nativeIOBacking = profile.nativeEndpoint === true ? this.#adapterReservation!.borrow() : undefined;
+        return Object.freeze({ ...owner, endpointKind: "flowersec_stream" as const, resultBacking,
+          ...(nativeResultBacking === undefined ? {} : { nativeResultBacking }),
+          ...(nativeIOBacking === undefined ? {} : { nativeIOBacking }),
+          release: () => owner.release(), rollback: () => { nativeIOBacking?.release(); nativeResultBacking?.release(); owner.rollback(); },
+          readState: () => this.#receive?.state() ?? {
+            stream_status: this.#final?.first_error !== undefined ? "error" as const : this.#final?.read_terminal === "eof" ? "eof" as const : "aborted" as const,
+            ...(this.#final?.first_error === undefined ? {} : { error: this.#final.first_error }),
+          },
+        });
+      } catch (error) { nativeIOBacking?.release(); nativeResultBacking?.release(); resultBacking?.release(); throw error; }
+    } catch (error) { owner.rollback(); throw error; }
   }
   #claimAdapter(profile: StreamAdapterProfile): StreamAdapterOwner & { releaseDelivery(): void } {
     if (this.#adapterClaimed || this.#session === undefined) throw new Error("stream_owned");
@@ -3881,17 +4425,22 @@ class RuntimeStream implements V4StreamOwner {
     Object.defineProperty(result, "then", { value: undefined }); return Promise.resolve(Object.freeze(result));
   }
   prepareWrite(payload: Uint8Array, options?: Readonly<{ deadlineMilliseconds?: bigint }>): V4WriteRequestOwner {
-    this.#checkRaw();
-    if (this.#session === undefined) throw new Error("closed");
-    return this.#session.prepareWrite(this.#handle!, payload, options?.deadlineMilliseconds);
+    const diagnostic = this.#session?.beginApplicationDiagnostic() ?? new DiagnosticActivity(undefined, "application");
+    try {
+      this.#checkRaw();
+      if (this.#session === undefined) throw new Error("closed");
+      return this.#session.prepareWrite(this.#handle!, payload, options?.deadlineMilliseconds, undefined, diagnostic);
+    } catch (error) { diagnostic.failure(error); throw error; }
   }
   async write(payload: Uint8Array, options?: OperationOptions): Promise<V4WriteProgress> {
-    this.#checkRaw(); return this.#write(payload, options);
+    const diagnostic = this.#session?.beginApplicationDiagnostic() ?? new DiagnosticActivity(undefined, "application");
+    try { this.#checkRaw(); return await this.#write(payload, options, diagnostic); }
+    catch (error) { diagnostic.failure(error); throw error; }
   }
-  async #write(payload: Uint8Array, options?: OperationOptions): Promise<V4WriteProgress> {
+  async #write(payload: Uint8Array, options?: OperationOptions, diagnostic?: DiagnosticActivity): Promise<V4WriteProgress> {
     if (this.#session === undefined) throw new Error("closed");
     const requested = BigInt(byteLength(payload));
-    const request = this.#session.prepareOrdinaryWrite(this.#handle!, payload), cancel = (): void => request.cancel();
+    const request = this.#session.prepareOrdinaryWrite(this.#handle!, payload, diagnostic), cancel = (): void => request.cancel();
     options?.signal?.addEventListener("abort", cancel, { once: true });
     try {
       if (options?.signal?.aborted) request.cancel(); request.start();

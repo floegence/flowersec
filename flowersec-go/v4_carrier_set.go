@@ -2,14 +2,14 @@ package flowersec
 
 import "github.com/floegence/flowersec/flowersec-go/v6/internal/assemblyv4"
 
-type V4CarrierEndpoint = assemblyv4.CarrierEndpoint
-type V4CarrierSetConfig = assemblyv4.CarrierSetConfig
-type V4CarrierSet = assemblyv4.CarrierSet
+type CarrierEndpoint = assemblyv4.CarrierEndpoint
+type CarrierSetConfig = assemblyv4.CarrierSetConfig
+type CarrierSet = assemblyv4.CarrierSet
 
-func V4CarrierSetCharge(c V4CarrierSetConfig) (V4ResourceVector, error) {
+func CarrierSetCharge(c CarrierSetConfig) (ResourceVector, error) {
 	return assemblyv4.CarrierSetCharge(c)
 }
 
-func NewV4CarrierSet(c V4CarrierSetConfig, reservation, environment V4ResourceReference, accounts ...V4ResourceAccount) (*V4CarrierSet, error) {
+func NewCarrierSet(c CarrierSetConfig, reservation, environment ResourceReference, accounts ...ResourceAccount) (*CarrierSet, error) {
 	return assemblyv4.NewCarrierSet(c, reservation, environment, accounts...)
 }

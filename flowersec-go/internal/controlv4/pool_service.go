@@ -42,9 +42,13 @@ type PoolRelayPublicationFactory interface {
 }
 
 type PoolServiceConfig struct {
-	Store                      *ledgerv4.SQLiteTopUpServer
-	Issuer                     PoolBatchIssuer
-	RelayPublications          PoolRelayPublicationFactory
+	Store             *ledgerv4.SQLiteTopUpServer
+	Issuer            PoolBatchIssuer
+	RelayPublications PoolRelayPublicationFactory
+	// OriginalCommitted runs only after this invocation's complete first COMMIT
+	// and relay publication. Replays and recovery reads never call it. The
+	// callback must retain any continuation before the publication closes.
+	OriginalCommitted          func(context.Context, protocolv4.TopUpRequestFacts, []byte, *ledgerv4.SQLitePoolRelayPublication) error
 	Tenant                     string
 	Source                     [16]byte
 	TopUpContract, AckContract [32]byte
@@ -72,6 +76,9 @@ type PoolService struct {
 }
 
 func PoolServiceCharge(c PoolServiceConfig) (resourcev4.Vector, error) {
+	if c.OriginalCommitted != nil && c.RelayPublications == nil {
+		return resourcev4.Vector{}, resourcev4.ErrConfiguration
+	}
 	if c.Store == nil || c.Issuer == nil || c.Tenant == "" || len(c.Tenant) > 128 || c.Source == ([16]byte{}) || c.TopUpContract == ([32]byte{}) || c.AckContract == ([32]byte{}) || c.TopUpContract == c.AckContract || c.CallMS == 0 || c.CallMS > 90000 || c.RuntimeBytes == 0 || c.ApplicationErrorCode == 0 {
 		return resourcev4.Vector{}, resourcev4.ErrConfiguration
 	}
@@ -425,6 +432,14 @@ func (p *PoolService) topUp(ctx context.Context, access ledgerv4.TopUpAccess, wi
 	}
 	if s.State != ledgerv4.TopUpServerCommitted {
 		return PoolControlReply{}, ErrResponse
+	}
+	if p.config.OriginalCommitted != nil {
+		if err = publication.CheckOriginalMaterial(s.Request, p.response[:issued.ResponseBytes]); err != nil {
+			return PoolControlReply{}, err
+		}
+		if err = p.config.OriginalCommitted(ctx, s.Request, p.response[:issued.ResponseBytes], publication); err != nil {
+			return PoolControlReply{}, err
+		}
 	}
 	return PoolControlReply{Code: "success", Response: p.response[:issued.ResponseBytes]}, nil
 }

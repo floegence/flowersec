@@ -21,9 +21,8 @@ function stableJson(value) {
 }
 
 function goSourceArchiveVersion(modulePath) {
-  if (modulePath.endsWith("/v5")) return "v5.0.0-securityinventory";
-  if (modulePath.endsWith("/v3")) return "v3.0.0-securityinventory";
-  return "v0.0.0-securityinventory";
+  const major = /\/v([2-9]|[1-9]\d+)$/.exec(modulePath)?.[1] ?? "0";
+  return `v${major}.0.0-securityinventory`;
 }
 
 async function loadGenerator() {
@@ -182,6 +181,8 @@ test("source inventory output closure is explicit and package-local", async () =
 test("Go source archive pseudo-versions match module path majors", () => {
   assert.equal(goSourceArchiveVersion("example.com/flowersec/v3"), "v3.0.0-securityinventory");
   assert.equal(goSourceArchiveVersion("example.com/flowersec/v5"), "v5.0.0-securityinventory");
+  assert.equal(goSourceArchiveVersion("example.com/flowersec/v6"), "v6.0.0-securityinventory");
+  assert.equal(goSourceArchiveVersion("example.com/flowersec/v10"), "v10.0.0-securityinventory");
   assert.equal(goSourceArchiveVersion("example.com/flowersec"), "v0.0.0-securityinventory");
 });
 
@@ -1034,7 +1035,7 @@ test("source inventory includes the shared native transport and Node addon Cargo
   assert.equal(contextIDs.has("rust:flowersec-native-transport"), true);
   assert.equal(contextIDs.has("rust:flowersec-node-native"), true);
   const componentNames = new Set(inventory.components.map((component) => component.name));
-  for (const name of ["quinn", "rustls", "napi", "napi-derive", "napi-build"]) {
+  for (const name of ["quinn-udp", "rustls", "napi", "napi-derive", "napi-build"]) {
     assert.equal(componentNames.has(name), true, `native dependency ${name} is missing from source inventory`);
   }
 });

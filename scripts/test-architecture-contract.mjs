@@ -5,55 +5,24 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import "./test-transport-v3-contract.mjs";
 import { verifyBinding } from "./check-transport-v4-binding.mjs";
 import "./check-transport-v4-schema.mjs";
-import "./transport-v4-tooling.test.mjs";
-import "./transport-v4-metadata.test.mjs";
-import "./transport-v4-services.test.mjs";
-import "./transport-v4-contract-query.test.mjs";
-import "./transport-v4-fragments.test.mjs";
-import "./transport-v4-fragment-state.test.mjs";
-import "./transport-v4-stream-state.test.mjs";
-import "./transport-v4-api-results.test.mjs";
-import "./transport-v4-resources.test.mjs";
-import "./transport-v4-resource-costs.test.mjs";
-import "./transport-v4-time.test.mjs";
-import "./transport-v4-crypto-usage.test.mjs";
-import "./transport-v4-rekey-credit.test.mjs";
-import "./transport-v4-rekey-capacity.test.mjs";
-import "./transport-v4-resume.test.mjs";
-import "./transport-v4-activation-delegation.test.mjs";
-import "./transport-v4-application-headers.test.mjs";
-import "./transport-v4-application-errors.test.mjs";
-import "./transport-v4-application-sdk-errors.test.mjs";
-import "./transport-v4-revocation.test.mjs";
-import "./transport-v4-namespace-closure.test.mjs";
-import "./transport-v4-credential-policies.test.mjs";
-import "./transport-v4-hello-context.test.mjs";
-import "./transport-v4-admission-context.test.mjs";
-import "./transport-v4-revocation-records.test.mjs";
-import "./transport-v4-capacity.test.mjs";
-import "./transport-v4-revocation-state.test.mjs";
-import "./transport-v4-signatures.test.mjs";
-import "./transport-v4-strict-ed25519.test.mjs";
-import "./transport-v4-dh.test.mjs";
-import "./transport-v4-noise.test.mjs";
-import "./transport-v4-noise-vendor.test.mjs";
-import "./transport-v4-records.test.mjs";
-import "./transport-v4-ready.test.mjs";
-import "./transport-v4-rekey.test.mjs";
-import "./transport-v4-write-state.test.mjs";
-import "./transport-v4-binding-dependencies.test.mjs";
-import "./transport-v4-unicode.test.mjs";
-import "./transport-v4-idna.test.mjs";
-import "./transport-v4-host.test.mjs";
-import { checkV4Inventory } from "./transport-v4-inventory.mjs";
+import { checkV4Inventory, v3SourceTokens } from "./transport-v4-inventory.mjs";
 import { readToolchains } from "./toolchains.mjs";
 
 const root = path.resolve(import.meta.dirname, "..");
 console.log(`Transport v4 reference status: ${JSON.stringify(verifyBinding())}`);
-checkV4Inventory(root);
+checkV4Inventory(root, true);
+assert.deepEqual(v3SourceTokens("X509Version::V3 x509v3 X.509v3 rsv3"), []);
+const wasmHeader = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
+// An encoded current module may contain these Base64 characters by chance.
+const encodedCurrent = Buffer.concat([wasmHeader, Buffer.from([0, 0xbf, 0x70, 0])]).toString("base64");
+assert.match(encodedCurrent, /v3/u);
+assert.deepEqual(v3SourceTokens(`const current = "${encodedCurrent}";`), []);
+assert.deepEqual(v3SourceTokens(`const SessionV3 = "${encodedCurrent}";`), ["SessionV3"]);
+const encodedRetired = Buffer.concat([wasmHeader, Buffer.from("flowersec-tunnel/3")]).toString("base64");
+assert.deepEqual(v3SourceTokens(`const payload = "${encodedRetired}";`), ["flowersec-tunnel/3"]);
+assert.deepEqual(v3SourceTokens('const protocol = "flowersec-direct/3";'), ["flowersec-direct/3"]);
 const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
 const exists = (relative) => fs.existsSync(path.join(root, relative));
 const run = (command, args) => spawnSync(command, args, {
@@ -83,6 +52,15 @@ assert.equal(rustlsFeatures.status, 0, rustlsFeatures.stderr);
 assert.doesNotMatch(rustlsFeatures.stdout, /feature "tls12"/u);
 
 const retiredPaths = [
+  "docs/TRANSPORT_V3_DESIGN.md",
+  "docs/TRANSPORT_V3_ARCHITECTURE.md",
+  "docs/TRANSPORT_V3_WIRE.md",
+  "stability/transport_v3_contract.json",
+  "testdata/transport_v3",
+  "flowersec-go/internal/protocolv3",
+  "flowersec-go/internal/sessionv3",
+  "flowersec-ts/src/v3",
+  "flowersec-rust/src/connector_v3.rs",
   "docs/TRANSPORT_V2_ARCHITECTURE.md",
   "docs/TRANSPORT_V2_WIRE.md",
   "stability/transport_v2_contract.json",
@@ -111,7 +89,7 @@ for (const relative of markdown.stdout.split("\0").filter((item) => item !== "" 
 }
 
 assert.equal(capabilities.version, 3);
-assert.equal(capabilities.deployment_profiles.application_wire, "flowersec/3");
+assert.equal(capabilities.deployment_profiles.application_wire, "flowersec/4");
 assert.equal(capabilities.portable_capabilities.length, 16);
 assert.equal(capabilities.portable_capabilities.some(({ id }) => id.includes("v2")), false);
 const controlPlane = capabilities.portable_capabilities.find(({ id }) => id === "controlplane_issue_authorize");
@@ -147,34 +125,52 @@ assert.deepEqual(apiManifest.ts.bins, [{
   source: "flowersec-ts/src/cli.ts",
   requires_shebang: true,
 }]);
-assert.deepEqual(apiManifest.native_abi, {
-  package: "@floegence/flowersec-node-native",
-  contract_version: 3,
-  wire_version: 3,
-  runtime_exports: ["bindRawQuic", "connectRawQuic", "contractVersion"],
-});
-assert.equal(apiManifest.rust.compile_entries.some((entry) => /flowersec::v[23]::/u.test(entry)), false);
-assert.equal(apiManifest.swift.symbols.some(({ name }) => /V2|V3/u.test(name)), false);
+assert.equal(apiManifest.native_abi.package, "@floegence/flowersec-node-native");
+assert.equal(apiManifest.native_abi.contract_version, 4);
+assert.equal(apiManifest.native_abi.wire_version, 4);
+for (const entry of ["bindRawQuic", "connectRawQuic", "contractVersion", "createPreparationBudget", "bindWebTransport", "connectWebTransport"]) {
+  assert.ok(apiManifest.native_abi.runtime_exports.includes(entry));
+}
+assert.equal(apiManifest.rust.compile_entries.some((entry) => /flowersec::(?:v[23]::|V[234]\w*|StreamV4Ext)/u.test(entry)), false);
+for (const entry of [
+  "let _ = flowersec::PreauthorizedPoolSource::top_up",
+  "let _ = flowersec::PreauthorizedPoolSource::recover_pending_top_ups",
+  "let _ = flowersec::ResponsePublication::transfer_to",
+  "let _ = flowersec::TransportEnvironment::maintenance_owner",
+  "let _ = flowersec::UnaryRequestContext::response_publication",
+  "let _ = flowersec::SQLitePoolStore::spend_observation",
+]) {
+  assert.ok(apiManifest.rust.compile_entries.includes(entry), `missing Rust owner contract: ${entry}`);
+}
+assert.equal(apiManifest.swift.symbols.some(({ name }) => /V2|V3|TransportV4|transportv4|transport_v4|encodedV4|v4Namespace|v4Version|v4Values/u.test(name)), false);
 
 const cli = read("flowersec-ts/src/cli.ts");
 assert.equal(cli.startsWith("#!/usr/bin/env node\n"), true);
-assert.match(cli, /required\(values, "certificate"\)/u);
-assert.match(cli, /required\(values, "private-key"\)/u);
-assert.match(cli, /createArtifactLease/u);
+assert.match(cli, /missing_option:config/u);
+assert.match(cli, /setup\.environment\.connect/u);
 assert.match(cli, /createAcceptor/u);
 assert.doesNotMatch(cli, /connectV3|createAcceptorV3|node\.v2/u);
 
 const nodeEntrypoint = read("flowersec-ts/src/node/index.ts");
 assert.match(nodeEntrypoint, /export \{ ProxyServer, ProxyServerError \}/u);
-assert.match(nodeEntrypoint, /export type \{ ProxyServerOptions \}/u);
+assert.match(nodeEntrypoint, /export type \{[^}]*\bProxyServerOptions\b/u);
 const nativeDeclaration = read("flowersec-node-native/index.d.ts");
-assert.match(nativeDeclaration, /readonly wireVersion: 3;/u);
+assert.match(nativeDeclaration, /readonly wireVersion: 4;/u);
 assert.match(nativeDeclaration, /connectRawQuic\(/u);
 assert.match(nativeDeclaration, /bindRawQuic\(/u);
 assert.doesNotMatch(nativeDeclaration, /RawQuicV2|RawQuicV3/u);
 
 assert.match(makefile, /^precommit:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\t\$\(MAKE\) precommit-source$/m);
 assert.match(makefile, /^test:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\tgo -C flowersec-go run \.\/internal\/cmd\/flowersec-test run --suite acceptance$/m);
+const capacityContract = /^flowersec-test-contract:\n((?:\t.*\n)*)/m.exec(makefile)?.[1];
+assert.ok(capacityContract, "capacity contract gate must exist");
+const selectedCapacityTests = /-run '\^\(([^']+)\)\$\$' \.\/internal\/transporttest\/tunnelworkload/m.exec(capacityContract)?.[1].split("|");
+assert.ok(selectedCapacityTests, "capacity contract gate must select explicit tests");
+const currentCapacityTests = [...read("flowersec-go/internal/transporttest/tunnelworkload/capacity_test.go")
+  .matchAll(/^func (Test\w+)\(t \*testing\.T\)/gm)].map((match) => match[1]);
+assert.ok(currentCapacityTests.length > 0, "capacity contracts must contain executable tests");
+assert.deepEqual(selectedCapacityTests.sort(), currentCapacityTests.sort(),
+  "capacity contract gate must execute every current capacity test without stale selectors");
 assert.doesNotMatch(makefile, /transport-v2|reference\/presets/u);
 const pushMain = read("scripts/push-main.sh");
 assert.equal((pushMain.match(/^make test$/gm) ?? []).length, 1);
@@ -209,9 +205,9 @@ for (const relative of productionFiles.stdout.split("\0").filter((item) => item 
 }
 
 assert.doesNotMatch(read("flowersec-go/proxy_server.go"), /func \(server \*ProxyServer\) Register\(/u);
-assert.doesNotMatch(read("flowersec-go/connector.go"), /func \(err \*UnreliableMessageError\) Unwrap\(/u);
+
 assert.doesNotMatch(read("docs/API_CONTRACT.md"), /UnreliableMessageError[^\n]*unwrap/iu);
-assert.doesNotMatch(read("flowersec-ts/src/v3/security.ts"), /get disposition\(|absoluteUnixMilliseconds/u);
+
 assert.doesNotMatch(read("flowersec-rust/src/proxy_server.rs"), /pub fn register\(/u);
 assert.doesNotMatch(read("flowersec-rust/src/transport.rs"),
   /UnreliableMessageError::(?:InvalidInput|Expired|DroppedBudget|Failed)/u);
@@ -220,4 +216,4 @@ assert.match(proxyPublicEntrypoint, /registerProxyAppWindowWithServiceWorkerRunt
 assert.doesNotMatch(proxyPublicEntrypoint,
   /RuntimeFetchMessage|parseRuntimeRequest|flowersec-proxy:fetch|response_flow_control|external_origin/u);
 
-process.stdout.write("Flowersec 5 architecture contract is internally consistent\n");
+process.stdout.write("Flowersec 6 architecture contract is internally consistent\n");
