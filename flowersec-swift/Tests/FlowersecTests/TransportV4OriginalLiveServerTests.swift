@@ -1232,11 +1232,12 @@ private final class V4OriginalServerFixture: @unchecked Sendable {
             let waiting = await proxyServer.cleanupStatus()
             XCTAssertEqual(waiting.pendingCallbacks, 1, "The opposite Close still belongs to the original relay")
           }
-          phase = "slow downstream data and Close"
-          for expected in [first, second] {
+          for (index, expected) in [first, second].enumerated() {
+            phase = "slow downstream data frame \(index + 1)"
             guard case .binary(let bytes) = try await socket.receive() else { throw ProxyClientFailure.protocolFailure }
             XCTAssertEqual(bytes, expected)
           }
+          phase = "slow downstream Close"
           guard case .close(let bytes) = try await socket.receive() else { throw ProxyClientFailure.protocolFailure }
           XCTAssertEqual(bytes, close)
           if scenario == "upstream-close-slow-reader" {

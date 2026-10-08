@@ -17,8 +17,16 @@ final class V4NamespaceRegistry: @unchecked Sendable {
       TransportV4Registry.cborRegistryJSON.utf8.count
         + TransportV4Registry.domainRegistryJSON.utf8.count) * 64
   private let maps: [String: [String: Any]]
+  private let namedFields: [String: [String: (Int, [String: Any])]]
   private let rules: [String: [[String: Any]]]
+  private struct Domain {
+    let schema: String
+    let operation: String
+    let label: Data
+    let projection: String
+  }
   private let domains: [[String: Any]]
+  private let mapDomains: [String: Domain]
   let fieldRegistries: [String: Any]
   private static let schemas: Set<String> = [
     "TrustBootstrapResponse", "TrustConfig", "NamespaceCapacity", "PublicationPolicy",
@@ -54,23 +62,57 @@ final class V4NamespaceRegistry: @unchecked Sendable {
       try JSONSerialization.jsonObject(
         with: Data(TransportV4Registry.cborRegistryJSON.utf8)) as! [String: Any]
     let frameMaps = registry["frame_maps"] as! [String: [String: Any]]
-    // Materialize the immutable field dictionaries in the prepaid registry
-    // once. Keeping their Swift type inside Any avoids rebuilding Foundation
-    // bridges during every live authorization check under the environment gate.
+    // Index the immutable generated fields once inside the prepaid registry.
+    // Live authorization checks still inspect the current documents, without
+    // scanning or bridging every descriptor to resolve each field name.
+    var namedFields: [String: [String: (Int, [String: Any])]] = [:]
     maps = frameMaps.mapValues { descriptor in
       var native = descriptor
       native["fields"] = descriptor["fields"] as! [String: [String: Any]]
       return native
     }
+    for (schema, descriptor) in frameMaps {
+      var fields: [String: (Int, [String: Any])] = [:]
+      for (encodedKey, field) in descriptor["fields"] as! [String: [String: Any]] {
+        guard let key = Int(encodedKey), let name = field["name"] as? String,
+          fields[name] == nil else { throw V4NamespaceFailure.schema }
+        fields[name] = (key, field)
+      }
+      namedFields[schema] = fields
+    }
+    self.namedFields = namedFields
     let variants = registry["variant_rules"] as! [String: [[String: Any]]]
     let relations = registry["relation_rules"] as! [String: [[String: Any]]]
     let text = registry["text_rules"] as! [String: [[String: Any]]]
     rules = variants.merging(relations) { $0 + $1 }.merging(text) { $0 + $1 }
     let fields = registry["field_registries"] as! [String: Any]
     fieldRegistries = fields
-    domains =
+    let domainDescriptors =
       try JSONSerialization.jsonObject(
         with: Data(TransportV4Registry.domainRegistryJSON.utf8)) as! [[String: Any]]
+    self.domains = domainDescriptors
+    var domains: [String: Domain] = [:]
+    for descriptor in domainDescriptors {
+      guard let name = descriptor["name"] as? String,
+        let operation = descriptor["operation"] as? String,
+        let input = descriptor["input_schema"] as? [String: Any],
+        let parts = input["parts"] as? [[String: Any]], parts.count == 1,
+        parts[0]["encoding"] as? String == "lp-map",
+        let schema = parts[0]["schema_ref"] as? String,
+        let projection = parts[0]["projection"] as? String else { continue }
+      guard domains[name] == nil, let hex = descriptor["label_bytes"] as? String,
+        hex.count.isMultiple(of: 2) else { throw V4NamespaceFailure.schema }
+      var bytes = Data()
+      bytes.reserveCapacity(hex.count / 2)
+      var index = hex.startIndex
+      while index < hex.endIndex {
+        let end = hex.index(index, offsetBy: 2)
+        guard let byte = UInt8(hex[index..<end], radix: 16) else { throw V4NamespaceFailure.schema }
+        bytes.append(byte); index = end
+      }
+      domains[name] = Domain(schema: schema, operation: operation, label: bytes, projection: projection)
+    }
+    self.mapDomains = domains
   }
 
   static func number(_ value: Any?) -> UInt64? {
@@ -87,11 +129,9 @@ final class V4NamespaceRegistry: @unchecked Sendable {
   }
 
   func field(_ schema: String, _ name: String) throws -> (Int, [String: Any]) {
-    let fields = try map(schema)["fields"] as! [String: [String: Any]]
-    guard let entry = fields.first(where: { $0.value["name"] as? String == name }),
-      let key = Int(entry.key)
+    guard Self.schemas.contains(schema), let field = namedFields[schema]?[name]
     else { throw V4NamespaceFailure.schema }
-    return (key, entry.value)
+    return field
   }
 
   func signatureField(_ schema: String) throws -> Int {
@@ -185,25 +225,9 @@ final class V4NamespaceRegistry: @unchecked Sendable {
   }
 
   func domain(_ name: String, schema: String, operation: String) throws -> (Data, String) {
-    guard let domain = domains.first(where: { $0["name"] as? String == name }),
-      domain["operation"] as? String == operation,
-      let input = domain["input_schema"] as? [String: Any],
-      let parts = input["parts"] as? [[String: Any]], parts.count == 1,
-      parts[0]["encoding"] as? String == "lp-map",
-      parts[0]["schema_ref"] as? String == schema,
-      let projection = parts[0]["projection"] as? String,
-      let hex = domain["label_bytes"] as? String, hex.count.isMultiple(of: 2)
+    guard let domain = mapDomains[name], domain.operation == operation, domain.schema == schema
     else { throw V4NamespaceFailure.schema }
-    var bytes = Data()
-    bytes.reserveCapacity(hex.count / 2)
-    var index = hex.startIndex
-    while index < hex.endIndex {
-      let end = hex.index(index, offsetBy: 2)
-      guard let byte = UInt8(hex[index..<end], radix: 16) else { throw V4NamespaceFailure.schema }
-      bytes.append(byte)
-      index = end
-    }
-    return (bytes, projection)
+    return (domain.label, domain.projection)
   }
 
   private func clause(_ rule: [String: Any], _ value: V4NamespaceValue) throws {

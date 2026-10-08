@@ -175,7 +175,7 @@ func registryForOS(goos string) []registeredTest {
 			commandEntry("server/swift-acceptor/ios-simulator", "acceptance", 5*time.Minute, "node", "scripts/run-ios-simulator-test.mjs", "--suite", "server-acceptor"),
 			commandEntry("server/swift-session-handlers/ios-simulator", "acceptance", 5*time.Minute, "node", "scripts/run-ios-simulator-test.mjs", "--suite", "server-session-handlers"),
 			commandEntry("controller/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "ControllerServiceGenerationTests|ServiceApplicationOwnershipV4Tests/testController"),
-			commandEntry("protocol/swift", "acceptance", 5*time.Minute, "swift", "test", "--filter", "Transport|IDNAHost|ServiceApplication"),
+			commandEntry("protocol/swift", "acceptance", 5*time.Minute, "swift", "test", "--parallel", "--num-workers", "4", "--filter", "Transport|IDNAHost|ServiceApplication"),
 		)
 	}
 	for _, id := range []string{
