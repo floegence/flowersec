@@ -348,6 +348,338 @@ final class TransportNamespaceTests: XCTestCase {
     }
   }
 
+  func testRetainedTrustRevocationMaturesOnOriginalHeadRetryWithoutTrustBytes() throws {
+    let fixture = try NamespaceFixture()
+    let owner = fixture.owner!
+    let state = fixture.state()
+    let b = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, delegationID: 6, signerID: 4, seed: 11)
+    let signers = [fixture.delegation, b]
+    try owner.bootstrap(
+      response: fixture.response(state: state, headDelegations: signers), state: state)
+    let h2 = try fixture.head(
+      state: state, sequence: 2, seed: 11, issued: 1005, signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    let t2 = try fixture.trustRevision(
+      revision: 2, rejected: [Data(repeating: 4, count: 16)], issued: 1005,
+      delegations: signers)
+    XCTAssertThrowsError(try owner.refresh(trust: t2, head: Data([0xa0]), state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .schema)
+    }
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    XCTAssertEqual(owner.currentSequence, 1)
+    fixture.source.advance(6)
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .untrusted)
+    }
+    try owner.checkCurrent()
+    try owner.refresh(head: fixture.head(state: state, sequence: 3), state: state)
+    XCTAssertEqual(owner.currentSequence, 3)
+  }
+
+  func testServingTrustAdvancesH3WhileFutureT2WaitsWithoutReplacingH2() throws {
+    let fixture = try NamespaceFixture()
+    let owner = fixture.owner!
+    let initial = fixture.state()
+    let authorization = fixture.authorization()
+    let originalAuthorization = NamespaceFixture.map([
+      0: .bytes(
+        NamespaceFixture.digest("credential-issuer-authorization", authorization.encoded())),
+      1: .array([.uint(20), .null]), 2: .uint(1), 3: .uint(1500),
+    ])
+    let revokedIssuer = NamespaceFixture.map([
+      0: .bytes(Data(repeating: 4, count: 16)), 1: .array([originalAuthorization]),
+    ])
+    try owner.bootstrap(
+      response: fixture.response(
+        state: initial, authorizations: [authorization], headDelegations: [fixture.delegation]),
+      state: initial)
+    let b = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, delegationID: 6, signerID: 4, seed: 11)
+    let t2 = try fixture.trustRevision(
+      revision: 2, rejected: [Data(repeating: 4, count: 16)], issued: 1005,
+      delegations: [fixture.delegation, b])
+    let h2 = try fixture.head(
+      state: initial, sequence: 2, seed: 11, issued: 1005, signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(trust: t2, head: h2, state: initial)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+
+    let revokedState = fixture.state(issuers: [revokedIssuer])
+    let h3 = try fixture.head(state: revokedState, sequence: 3, issued: 900)
+    XCTAssertThrowsError(try owner.refresh(head: h3, state: Data([0xa0]))) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .schema)
+    }
+    XCTAssertEqual(owner.currentSequence, 1)
+    XCTAssertThrowsError(try owner.refresh(head: h3, state: revokedState)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    XCTAssertEqual(owner.currentSequence, 1)
+
+    // The future T2 signer remains unproved. H3 only advanced observations;
+    // H2 keeps its completion pin and original pending authorization.
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: initial)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    let h4 = try fixture.head(
+      state: initial, sequence: 4, seed: 11, issued: 1005, signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(head: h4, state: initial)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    XCTAssertEqual(owner.currentSequence, 1)
+  }
+
+  func testServingTrustRetainsMatureH3FloorsBeforeBadStateWithPendingTrust() throws {
+    let fixture = try NamespaceFixture()
+    let owner = fixture.owner!
+    let initial = fixture.state()
+    try owner.bootstrap(response: fixture.response(state: initial), state: initial)
+    fixture.source.advance(100)
+    let b = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, delegationID: 6, signerID: 4, seed: 11)
+    let t2 = try fixture.trustRevision(
+      revision: 2, issued: 1105, delegations: [fixture.delegation, b])
+    let h2 = try fixture.head(
+      state: initial, sequence: 2, seed: 11, issued: 1105, signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(trust: t2, head: h2, state: initial)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+
+    let next = fixture.state(floors: [1, 0])
+    let h3 = try fixture.head(state: next, sequence: 3, floors: [1, 0])
+    XCTAssertThrowsError(try owner.refresh(head: h3, state: Data([0xa0]))) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .schema)
+    }
+    // A later authenticated Head cannot lower the mature floor even though
+    // H3's State failed validation and H2 still owns the only completion pin.
+    let lowered = try fixture.head(state: initial, sequence: 4)
+    XCTAssertThrowsError(try owner.refresh(head: lowered, state: initial)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .rollback)
+    }
+    XCTAssertEqual(owner.currentSequence, 1)
+    XCTAssertThrowsError(try owner.refresh(head: h3, state: next)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    fixture.source.advance(6)
+    try owner.refresh(head: h2, state: initial)
+    XCTAssertEqual(owner.currentSequence, 2)
+    XCTAssertThrowsError(try owner.refresh(head: lowered, state: initial)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .rollback)
+    }
+    try owner.refresh(head: h3, state: next)
+    XCTAssertEqual(owner.currentSequence, 3)
+  }
+
+  func testForwardTrustRevisionSupersedesPendingTrustAndRetiresItsHeadBeforeBadReplacement()
+    throws
+  {
+    let fixture = try NamespaceFixture()
+    let owner = fixture.owner!
+    let state = fixture.state()
+    try owner.bootstrap(response: fixture.response(state: state), state: state)
+    let b = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, delegationID: 6, signerID: 4, seed: 11)
+    let signers = [fixture.delegation, b]
+    let t2 = try fixture.trustRevision(revision: 2, issued: 1005, delegations: signers)
+    let h2 = try fixture.head(
+      state: state, sequence: 2, seed: 11, issued: 1009, signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(trust: t2, head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    let sibling = try fixture.trustRevision(
+      revision: 2, rejected: [Data(repeating: 4, count: 16)], issued: 1007,
+      delegations: signers)
+    XCTAssertThrowsError(try owner.refresh(trust: sibling, head: Data([0xa0]), state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .rollback)
+    }
+    let t3 = try fixture.trustRevision(
+      revision: 3, rejected: [Data(repeating: 4, count: 16)], issued: 1007,
+      delegations: signers)
+    XCTAssertThrowsError(try owner.refresh(trust: t3, head: Data([0xa0]), state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .schema)
+    }
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    fixture.source.advance(6)
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    XCTAssertEqual(owner.currentSequence, 1)
+    fixture.source.advance(2)
+    XCTAssertThrowsError(try owner.refresh(trust: t3, head: Data([0xa0]), state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .schema)
+    }
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .untrusted)
+    }
+    try owner.checkCurrent()
+    try owner.refresh(head: fixture.head(state: state, sequence: 3), state: state)
+    XCTAssertEqual(owner.currentSequence, 3)
+  }
+
+  func testOriginalPendingTrustPublishesWithoutDiscardingNewerPendingRevocation() throws {
+    let fixture = try NamespaceFixture()
+    let owner = fixture.owner!
+    let state = fixture.state()
+    try owner.bootstrap(response: fixture.response(state: state), state: state)
+    let b = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, delegationID: 6, signerID: 4, seed: 11)
+    let signers = [fixture.delegation, b]
+    let t2 = try fixture.trustRevision(revision: 2, issued: 1005, delegations: signers)
+    let h2 = try fixture.head(
+      state: state, sequence: 2, seed: 11, issued: 1005, signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(trust: t2, head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    let t3 = try fixture.trustRevision(
+      revision: 3, rejected: [Data(repeating: 4, count: 16)], issued: 1007,
+      delegations: signers)
+    XCTAssertThrowsError(try owner.refresh(trust: t3, head: Data([0xa0]), state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .schema)
+    }
+    fixture.source.advance(6)
+    try owner.refresh(head: h2, state: state)
+    try owner.checkCurrent()
+    XCTAssertEqual(owner.currentSequence, 2)
+    fixture.source.advance(2)
+    XCTAssertThrowsError(try owner.refresh(head: Data([0xa0]), state: state)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .schema)
+    }
+    XCTAssertThrowsError(try owner.checkCurrent())
+    XCTAssertNil(owner.currentSequence)
+    try owner.refresh(head: fixture.head(state: state, sequence: 3, issued: 1005), state: state)
+    XCTAssertEqual(owner.currentSequence, 3)
+  }
+
+  func testPublishedTrustRevisionDoesNotTreatOriginalPendingTrustAsRollback() throws {
+    let fixture = try NamespaceFixture()
+    let owner = fixture.owner!
+    let state = fixture.state()
+    let b = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, delegationID: 6, signerID: 4, seed: 11)
+    let signers = [fixture.delegation, b]
+    try owner.bootstrap(
+      response: fixture.response(state: state, headDelegations: signers), state: state)
+    let h2 = try fixture.head(
+      state: state, sequence: 2, seed: 11, issued: 1005, signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    let t2 = try fixture.trustRevision(revision: 2, delegations: signers)
+    let h3 = try fixture.head(state: state, sequence: 3)
+    XCTAssertThrowsError(try owner.refresh(trust: t2, head: h3, state: state)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    XCTAssertEqual(owner.currentSequence, 1)
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: state)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    fixture.source.advance(6)
+    try owner.refresh(head: h2, state: state)
+    XCTAssertEqual(owner.currentSequence, 2)
+    try owner.refresh(head: h3, state: state)
+    XCTAssertEqual(owner.currentSequence, 3)
+  }
+
+  func testPendingNewGenerationTrustCanAuthenticateNewSignerWithoutRetiringOriginalHead() throws {
+    let fixture = try NamespaceFixture()
+    let owner = fixture.owner!
+    let initial = fixture.state()
+    try owner.bootstrap(response: fixture.response(state: initial), state: initial)
+    let b = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, generation: 2, delegationID: 6,
+      signerID: 4, seed: 11)
+    let next = fixture.state(generation: 2)
+    let t2 = try fixture.trustRevision(
+      revision: 2, rejected: [Data(repeating: 3, count: 16)], generation: 2,
+      issued: 1005, delegations: [b])
+    let h2 = try fixture.head(
+      state: next, sequence: 1, seed: 11, issued: 1005, generation: 2,
+      signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(trust: t2, head: h2, state: next)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: next)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    try owner.checkCurrent()
+    XCTAssertEqual(owner.currentSequence, 1)
+    fixture.source.advance(6)
+    try owner.refresh(head: h2, state: next)
+    try owner.checkCurrent()
+    XCTAssertEqual(owner.currentSequence, 1)
+  }
+
+  func testPublishedGenerationRetiresOldPendingHeadWithoutBlockingNewGenerationSequence() throws {
+    let fixture = try NamespaceFixture()
+    let owner = fixture.owner!
+    let initial = fixture.state()
+    let b = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, delegationID: 6, signerID: 4, seed: 11)
+    try owner.bootstrap(
+      response: fixture.response(state: initial, headDelegations: [fixture.delegation, b]),
+      state: initial)
+    let h2 = try fixture.head(
+      state: initial, sequence: 2, seed: 11, issued: 1005, signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: initial)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    let c = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, generation: 2, delegationID: 7,
+      signerID: 5, seed: 13)
+    let t2 = try fixture.trustRevision(
+      revision: 2, rejected: [Data(repeating: 3, count: 16), Data(repeating: 4, count: 16)],
+      generation: 2, delegations: [c])
+    XCTAssertThrowsError(try owner.refresh(trust: t2, head: Data([0xa0]), state: initial)) {
+      XCTAssertEqual($0 as? V4NamespaceFailure, .schema)
+    }
+    XCTAssertThrowsError(try owner.checkCurrent())
+    let next = fixture.state(generation: 2)
+    let h3 = try fixture.head(
+      state: next, sequence: 1, seed: 13, generation: 2, signerID: 5, delegation: c)
+    try owner.refresh(head: h3, state: next)
+    try owner.checkCurrent()
+    XCTAssertEqual(owner.currentSequence, 1)
+  }
+
+  func testPendingTrustHeadKeepsOriginalDeadlineAcrossTrustPublicationAndNarrowerAnchor() throws {
+    let fixture = try NamespaceFixture()
+    let owner = fixture.owner!
+    let initial = fixture.state()
+    try owner.bootstrap(response: fixture.response(state: initial), state: initial)
+    let b = try NamespaceFixture.headDelegation(
+      capacityDigest: fixture.capacityDigest, delegationID: 6, signerID: 4, seed: 11)
+    let t2 = try fixture.trustRevision(
+      revision: 2, issued: 1005, delegations: [fixture.delegation, b])
+    let next = fixture.state(floors: [1, 0])
+    let h2 = try fixture.head(
+      state: next, sequence: 2, until: 1060, floors: [1, 0], seed: 11, issued: 1005,
+      signerID: 4, delegation: b)
+    XCTAssertThrowsError(try owner.refresh(trust: t2, head: h2, state: next)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    fixture.source.advance(10)
+    try fixture.environment.clock.installTrusted(
+      at: fixture.environment.clock.mark(), interval: V4TimeInterval(lowerMS: 1010, upperMS: 1011))
+    XCTAssertThrowsError(try owner.refresh(head: h2, state: next)) {
+      XCTAssertEqual($0 as? V4TimeFailure, .pending)
+    }
+    fixture.source.advance(40)
+    for _ in 0..<2 {
+      XCTAssertThrowsError(try owner.refresh(head: h2, state: next)) {
+        XCTAssertEqual($0 as? V4TimeFailure, .expired)
+      }
+    }
+    XCTAssertEqual(owner.currentSequence, 1)
+    try owner.refresh(head: fixture.head(state: initial, sequence: 3), state: initial)
+    XCTAssertEqual(owner.currentSequence, 3)
+  }
+
   #if os(macOS) || os(iOS)
     private func awaitBootstrapTail(_ fixture: NamespaceFixture) async throws {
       let deadline = ContinuousClock.now.advanced(by: .seconds(2))
@@ -467,8 +799,8 @@ final class TransportNamespaceTests: XCTestCase {
           authority: "authority", head: replacement, state: state)
         XCTFail("revoked signer was accepted after trust publication")
       } catch { XCTAssertEqual(error as? TransportConnectError, .securityFailed) }
-      try owner.checkCurrent()
-      XCTAssertEqual(owner.currentSequence, 1)
+      XCTAssertThrowsError(try owner.checkCurrent())
+      XCTAssertNil(owner.currentSequence)
       try await environment.close()
     }
 
@@ -643,14 +975,7 @@ final class NamespaceFixture {
       14: .uint(1000),
     ])
     capacityDigest = Self.digest("namespace-capacity", capacity.encoded())
-    delegation = Self.map([
-      0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
-      3: .bytes(capacityDigest), 4: .uint(1), 5: .bytes(Data(repeating: 2, count: 16)),
-      6: .bytes(Data(repeating: 3, count: 16)),
-      7: .bytes(try Self.key(9).publicKey.rawRepresentation),
-      8: .uint(0), 9: .text("publication"), 10: .uint(1), 11: .uint(1), 12: .uint(1),
-      13: .uint(5000),
-    ])
+    delegation = try Self.headDelegation(capacityDigest: capacityDigest)
     if createOwner {
       owner = try environment.namespace(pinnedRoot: pin, configuration: configuration)
     }
@@ -665,6 +990,20 @@ final class NamespaceFixture {
   }
   static func key(_ seed: UInt8) throws -> Curve25519.Signing.PrivateKey {
     try Curve25519.Signing.PrivateKey(rawRepresentation: Data(repeating: seed, count: 32))
+  }
+  static func headDelegation(
+    capacityDigest: Data, generation: UInt64 = 1, delegationID: UInt8 = 2,
+    signerID: UInt8 = 3, seed: UInt8 = 9
+  ) throws -> V4CBORValue {
+    Self.map([
+      0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
+      3: .bytes(capacityDigest), 4: .uint(generation),
+      5: .bytes(Data(repeating: delegationID, count: 16)),
+      6: .bytes(Data(repeating: signerID, count: 16)),
+      7: .bytes(try Self.key(seed).publicKey.rawRepresentation),
+      8: .uint(0), 9: .text("publication"), 10: .uint(1), 11: .uint(1), 12: .uint(1),
+      13: .uint(5000),
+    ])
   }
   static func input(_ label: String, _ bytes: Data) -> Data {
     var length = UInt32(bytes.count).bigEndian
@@ -711,27 +1050,32 @@ final class NamespaceFixture {
   }
   func state(
     issuers: [V4CBORValue] = [], certificates: [V4CBORValue] = [],
-    leases: [V4CBORValue] = [], segments: [V4CBORValue] = [], floors: [UInt64] = [0, 0]
+    leases: [V4CBORValue] = [], segments: [V4CBORValue] = [], floors: [UInt64] = [0, 0],
+    generation: UInt64 = 1
   ) -> Data {
     Self.map([
       0: .text("4"), 1: .text("tenant"), 2: .text("authority"), 3: .bytes(capacityDigest),
-      4: .uint(1), 5: .array(floors.map(V4CBORValue.uint)), 6: .text("publication"), 7: .uint(1),
+      4: .uint(generation), 5: .array(floors.map(V4CBORValue.uint)), 6: .text("publication"),
+      7: .uint(1),
       8: .array(issuers), 9: .array(certificates), 10: .array(leases),
       11: .array(segments.sorted { $0.encoded().lexicographicallyPrecedes($1.encoded()) }),
     ]).encoded()
   }
   func head(
     state: Data, sequence: UInt64 = 1, until: UInt64 = 4000,
-    floors: [UInt64] = [0, 0], seed: UInt8 = 9, issued: UInt64 = 900
+    floors: [UInt64] = [0, 0], seed: UInt8 = 9, issued: UInt64 = 900,
+    generation: UInt64 = 1, signerID: UInt8 = 3, delegation: V4CBORValue? = nil
   ) throws -> Data {
     try Self.signed(
       [
         0: .text("4"), 1: .text("tenant"), 2: .text("authority"), 3: .bytes(capacityDigest),
-        4: .uint(1), 5: .array(floors.map(V4CBORValue.uint)), 6: .text("publication"), 7: .uint(1),
+        4: .uint(generation), 5: .array(floors.map(V4CBORValue.uint)),
+        6: .text("publication"), 7: .uint(1),
         8: .uint(sequence), 9: .uint(issued), 10: .uint(until),
         11: .bytes(Self.digest("revocation-state", state)),
-        12: .uint(UInt64(state.count)), 13: .bytes(Data(repeating: 3, count: 16)),
-        14: .bytes(Self.digest("head-signer-delegation", delegation.encoded())),
+        12: .uint(UInt64(state.count)), 13: .bytes(Data(repeating: signerID, count: 16)),
+        14: .bytes(
+          Self.digest("head-signer-delegation", (delegation ?? self.delegation).encoded())),
       ], signature: 15,
       label: "freshness-head-signature", seed: seed)
   }
@@ -740,14 +1084,15 @@ final class NamespaceFixture {
     headSeed: UInt8 = 9, authorizations: [V4CBORValue] = [],
     policies: [V4CBORValue] = [], activationDelegations: [V4CBORValue] = [],
     onceAuthorities: [V4CBORValue] = [], issued: UInt64 = 900,
-    until: UInt64 = 2000, floors: [UInt64] = [0, 0]
+    until: UInt64 = 2000, floors: [UInt64] = [0, 0], headDelegations: [V4CBORValue]? = nil
   ) throws -> Data {
     let trust = try Self.signed(
       [
         0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
         3: .uint(1), 4: .uint(1), 5: .uint(1), 6: .uint(5000), 7: capacity,
         8: Self.map([0: .text("publication"), 1: .uint(1), 2: .uint(4000), 3: .uint(5000)]),
-        9: .array(policies), 10: .array(authorizations), 11: .array([delegation]),
+        9: .array(policies), 10: .array(authorizations),
+        11: .array(headDelegations ?? [delegation]),
         12: .array(activationDelegations),
         13: .array(onceAuthorities), 14: .array([]), 15: .array([]), 16: .bytes(pin.keyID),
       ], signature: 17,
@@ -761,15 +1106,19 @@ final class NamespaceFixture {
       ],
       signature: 9, label: "trust-bootstrap/signature", seed: responseSeed)
   }
-  func trustRevision(revision: UInt64, rejected: [Data]) throws -> Data {
-    try Self.signed([
-      0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
-      3: .uint(1), 4: .uint(revision), 5: .uint(900), 6: .uint(5000), 7: capacity,
-      8: Self.map([0: .text("publication"), 1: .uint(1), 2: .uint(4000), 3: .uint(5000)]),
-      9: .array([]), 10: .array([]), 11: .array([delegation]), 12: .array([]),
-      13: .array([]), 14: .array([]), 15: .array(rejected.map(V4CBORValue.bytes)),
-      16: .bytes(pin.keyID),
-    ], signature: 17, label: "trust-config/signature", seed: 7)
+  func trustRevision(
+    revision: UInt64, rejected: [Data] = [], generation: UInt64 = 1,
+    issued: UInt64 = 900, until: UInt64 = 5000, delegations: [V4CBORValue]? = nil
+  ) throws -> Data {
+    try Self.signed(
+      [
+        0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
+        3: .uint(generation), 4: .uint(revision), 5: .uint(issued), 6: .uint(until), 7: capacity,
+        8: Self.map([0: .text("publication"), 1: .uint(1), 2: .uint(4000), 3: .uint(5000)]),
+        9: .array([]), 10: .array([]), 11: .array(delegations ?? [delegation]), 12: .array([]),
+        13: .array([]), 14: .array([]), 15: .array(rejected.map(V4CBORValue.bytes)),
+        16: .bytes(pin.keyID),
+      ], signature: 17, label: "trust-config/signature", seed: 7)
   }
 }
 

@@ -163,6 +163,11 @@ func (prepared *preparedTunnel) close(cleanup context.Context) error {
 		if prepared.relayReporter != nil {
 			reporterErr = errors.Join(reporterErr, prepared.relayReporter.Close())
 		}
+	} else if waitErr == nil {
+		// The final physical waiter may have returned just as the bounded
+		// cleanup context expired. Reporter finalization was not entered, so
+		// retain the prepared position for a later retry.
+		waitErr = cleanup.Err()
 	}
 	prepared.mu.Lock()
 	prepared.closeErr = errors.Join(prepared.closeErr, reporterErr)

@@ -547,12 +547,19 @@ impl NamespaceVerifier {
             self.retire_pending_refresh();
         }
         let mut timing = NamespaceTimeCheck::new(now);
-        let pending_candidate = self
+        // Capture the candidate identity and registry proof before any trust
+        // publication can retire the retained refresh.  The same immutable
+        // proof must be passed to the install gate for an H2 retry, while an
+        // independent H3 call may release that candidate and continue in this
+        // invocation.
+        let pending_proof = self
             .pending_refresh
             .as_ref()
-            .is_some_and(|(original, _, _)| {
-                original.head_bytes.as_ref() == head && original.state_bytes.as_ref() == state
+            .and_then(|(original, deadline, _)| {
+                (original.head_bytes.as_ref() == head && original.state_bytes.as_ref() == state)
+                    .then(|| PendingNamespaceCandidate::from_update(original, *deadline))
             });
+        let pending_candidate = pending_proof.is_some();
         let pending_trust = pending_candidate
             .then(|| self.pending_trust.clone())
             .flatten();
@@ -588,6 +595,21 @@ impl NamespaceVerifier {
                 return Err(error);
             }
         }
+        // Only mature TrustConfig bytes enter serving history. Apply their
+        // independent signer rejection before verifying either an H2 retry or
+        // replacement Head/State, even when no trust bytes are retransmitted.
+        // H2's own pending time cannot defer an already effective rejection.
+        if let Some(current) = self.history.last()
+            && let Some((original, _, _)) = &self.pending_refresh
+            && let Err(error) = self.check_current_trust(current, original.head)
+        {
+            self.retire_pending_refresh();
+            if pending_candidate {
+                // The cached H2 proof must never reach the install gate after
+                // its retained candidate has been independently rejected.
+                return Err(error);
+            }
+        }
         let pair_trust = if pending_candidate {
             pending_trust
         } else if let Some(trust) = trust {
@@ -599,13 +621,6 @@ impl NamespaceVerifier {
             self.retire_pending_refresh();
             return Err(EnvironmentError::AuthorizationDenied);
         }
-        let pending_proof = self
-            .pending_refresh
-            .as_ref()
-            .and_then(|(original, deadline, _)| {
-                (original.head_bytes.as_ref() == head && original.state_bytes.as_ref() == state)
-                    .then(|| PendingNamespaceCandidate::from_update(original, *deadline))
-            });
         let (update, deadline) = match self.verify_pair(
             pair_trust.as_deref(),
             head,
@@ -628,21 +643,6 @@ impl NamespaceVerifier {
                 return Err(error);
             }
         };
-        // H2 is verified against the exact TrustConfig that authenticated its
-        // original bytes, while any independently supplied mature TrustConfig
-        // still governs whether that candidate may complete.
-        if pending_candidate
-            && !timing.pending()
-            && let Some(current) = self.history.last().map(|value| value.as_ref())
-            && let Err(error) = self.check_current_trust(current, update.head)
-        {
-            // The candidate's own signer may be revoked while the active Head
-            // remains valid.  Retire this candidate immediately so its pin
-            // cannot block future progress; the active pair and all denial
-            // evidence already published in the registry are preserved.
-            self.retire_pending_refresh();
-            return Err(error);
-        }
         if Instant::now() >= deadline {
             return Err(EnvironmentError::MaterialExpired);
         }
@@ -2308,6 +2308,298 @@ mod tests {
         let head3 = revise(&head, "FreshnessHead", &[(8, u(3)), (9, u(1_400))], Some(9));
         namespace.refresh(None, &head3, &state).unwrap();
         account.check().unwrap();
+    }
+
+    #[test]
+    fn mature_new_trust_retires_revoked_pending_candidate_before_installing_new_head() {
+        use crate::environment_v4::tests::bounds;
+
+        let clock = crate::environment_v4::tests::TestClock::new(1_000, 1_500);
+        let environment =
+            crate::TransportEnvironment::with_options(crate::TransportEnvironmentOptions {
+                clock: Some(clock.clone()),
+                time_profile: crate::environment_v4::TrustedTimeProfile {
+                    rate_numerator: 0,
+                    quantization_ms: 0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .unwrap();
+        let (root, _, _, _) = fixture([0; 32], 1, false);
+        let namespace = environment.namespace(root, 4096, 16384).unwrap();
+        let (_, response, head, state) = fixture(namespace.bootstrap_nonce(), 1, false);
+        namespace.bootstrap(&response, &state).unwrap();
+
+        let account = environment.root().admit(key("tenant"), bounds()).unwrap();
+        account
+            .bind_namespaces(&[super::super::NamespaceBinding {
+                namespace: super::super::NamespaceKey {
+                    tenant: key("tenant"),
+                    authority: key("authority"),
+                },
+                generation: 1,
+                kind: CredentialKind::Certificate,
+                cohort: 8,
+                issuer: [4; 16],
+                credential: [8; 32],
+                lease: None,
+                max_staleness_ms: 10_000,
+                max_head_signer_lifetime_ms: 20_000,
+            }])
+            .unwrap();
+        account.check().unwrap();
+
+        let trust = decode(
+            &response,
+            "TrustBootstrapResponse",
+            RESPONSE_BYTES,
+            16384,
+            None,
+        )
+        .unwrap()
+        .field("TrustBootstrapResponse", "trust_config")
+        .unwrap()
+        .bytes()
+        .unwrap()
+        .to_vec();
+        let trust_value = decode(&trust, "TrustConfig", TRUST_BYTES, 16384, None).unwrap();
+        let delegation_a = trust_value
+            .field("TrustConfig", "head_delegations")
+            .unwrap()
+            .at(0)
+            .unwrap()
+            .raw()
+            .to_vec();
+        let signer_b = Ed25519KeyPair::from_seed_unchecked(&[10; 32]).unwrap();
+        let delegation_b = revise(
+            &delegation_a,
+            "HeadSignerDelegation",
+            &[
+                (5, b(&[4; 16])),
+                (6, b(&[4; 16])),
+                (7, b(signer_b.public_key().as_ref())),
+            ],
+            None,
+        );
+        let trust2 = revise(
+            &trust,
+            "TrustConfig",
+            &[
+                (4, u(2)),
+                (5, u(1_300)),
+                (11, array(&[delegation_a, delegation_b.clone()])),
+            ],
+            Some(7),
+        );
+        let head2 = revise(
+            &head,
+            "FreshnessHead",
+            &[
+                (8, u(2)),
+                (9, u(1_300)),
+                (13, b(&[4; 16])),
+                (
+                    14,
+                    b(&digest(
+                        "head_signer_delegation_digest",
+                        &delegation_b,
+                        "HeadSignerDelegation",
+                    )),
+                ),
+            ],
+            Some(10),
+        );
+        assert_eq!(
+            namespace.refresh(Some(&trust2), &head2, &state),
+            Err(EnvironmentError::TimePending)
+        );
+
+        // T3 is already mature and independently revokes B. H3/A is sent in
+        // this same call; it must release the now-invalid H2 pin and install
+        // the new active pair without an H2 retransmission.
+        let trust3 = revise(
+            &trust,
+            "TrustConfig",
+            &[(4, u(3)), (5, u(1_300)), (15, array(&[b(&[4; 16])]))],
+            Some(7),
+        );
+        let head3 = revise(&head, "FreshnessHead", &[(8, u(3)), (9, u(1_300))], Some(9));
+        let state3 = state.clone();
+        {
+            let mut sample = clock.value.lock().unwrap();
+            sample.lower_ms = 1_400;
+            sample.upper_ms = 1_500;
+            sample.monotonic_sample = tokio::time::Instant::now();
+        }
+        // H3/S3 authentication fails after T3 is published. The mature
+        // rejection still retires B's H2 pin before this early return.
+        let mut malformed_head3 = head3.clone();
+        let last = malformed_head3.len() - 1;
+        malformed_head3[last] ^= 1;
+        assert_eq!(
+            namespace.refresh(Some(&trust3), &malformed_head3, &state3),
+            Err(EnvironmentError::AuthorizationDenied)
+        );
+        account.check().unwrap();
+        // A valid A-signed H3 can then advance without retransmitting H2.
+        namespace.refresh(None, &head3, &state3).unwrap();
+        account.check().unwrap();
+    }
+
+    #[test]
+    fn serving_trust_rejects_pending_head_before_its_time_proof_and_future_trust_does_not() {
+        use crate::environment_v4::tests::bounds;
+
+        for (mature_trust, retransmit_trust) in [(true, true), (true, false), (false, true)] {
+            let clock = crate::environment_v4::tests::TestClock::new(1_000, 1_500);
+            let environment =
+                crate::TransportEnvironment::with_options(crate::TransportEnvironmentOptions {
+                    clock: Some(clock.clone()),
+                    time_profile: crate::environment_v4::TrustedTimeProfile {
+                        rate_numerator: 0,
+                        quantization_ms: 0,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .unwrap();
+            let (root, _, _, _) = fixture([0; 32], 1, false);
+            let mut verifier =
+                NamespaceVerifier::new(environment.root().clone(), root, 4096, 16384).unwrap();
+            let (_, response, head, state) = fixture(verifier.bootstrap_nonce(), 1, false);
+            verifier.bootstrap(&response, &state).unwrap();
+            let account = environment.root().admit(key("tenant"), bounds()).unwrap();
+            account
+                .bind_namespaces(&[super::super::NamespaceBinding {
+                    namespace: verifier.key,
+                    generation: 1,
+                    kind: CredentialKind::Certificate,
+                    cohort: 8,
+                    issuer: [4; 16],
+                    credential: [8; 32],
+                    lease: None,
+                    max_staleness_ms: 10_000,
+                    max_head_signer_lifetime_ms: 20_000,
+                }])
+                .unwrap();
+
+            let trust = decode(
+                &response,
+                "TrustBootstrapResponse",
+                RESPONSE_BYTES,
+                16384,
+                None,
+            )
+            .unwrap()
+            .field("TrustBootstrapResponse", "trust_config")
+            .unwrap()
+            .bytes()
+            .unwrap()
+            .to_vec();
+            let delegation_a = decode(&trust, "TrustConfig", TRUST_BYTES, 16384, None)
+                .unwrap()
+                .field("TrustConfig", "head_delegations")
+                .unwrap()
+                .at(0)
+                .unwrap()
+                .raw()
+                .to_vec();
+            let signer_b = Ed25519KeyPair::from_seed_unchecked(&[10; 32]).unwrap();
+            let delegation_b = revise(
+                &delegation_a,
+                "HeadSignerDelegation",
+                &[
+                    (5, b(&[4; 16])),
+                    (6, b(&[4; 16])),
+                    (7, b(signer_b.public_key().as_ref())),
+                ],
+                None,
+            );
+            let trust2 = revise(
+                &trust,
+                "TrustConfig",
+                &[
+                    (4, u(2)),
+                    (5, u(1_000)),
+                    (11, array(&[delegation_a, delegation_b.clone()])),
+                ],
+                Some(7),
+            );
+            let head2 = revise(
+                &head,
+                "FreshnessHead",
+                &[
+                    (8, u(2)),
+                    (9, u(1_450)),
+                    (13, b(&[4; 16])),
+                    (
+                        14,
+                        b(&digest(
+                            "head_signer_delegation_digest",
+                            &delegation_b,
+                            "HeadSignerDelegation",
+                        )),
+                    ),
+                ],
+                Some(10),
+            );
+            assert_eq!(
+                verifier.refresh(Some(&trust2), &head2, &state),
+                Err(EnvironmentError::TimePending)
+            );
+            let original_deadline = verifier.pending_refresh.as_ref().unwrap().1;
+            let original_cap = verifier.pending_refresh.as_ref().unwrap().2;
+            let trust3 = revise(
+                &trust,
+                "TrustConfig",
+                &[
+                    (4, u(3)),
+                    (5, u(if mature_trust { 1_300 } else { 1_400 })),
+                    (15, array(&[b(&[4; 16])])),
+                ],
+                Some(7),
+            );
+            {
+                let mut sample = clock.value.lock().unwrap();
+                sample.lower_ms = 1_300;
+                sample.upper_ms = 1_500;
+                sample.monotonic_sample = tokio::time::Instant::now();
+            }
+            if !retransmit_trust {
+                // Previously published mature trust must also reject H2 when
+                // the retry does not include any TrustConfig bytes.
+                let now = verifier.check_mut().unwrap();
+                verifier
+                    .update_trust(&trust3, &mut NamespaceTimeCheck::new(now))
+                    .unwrap();
+            }
+            let retry_trust = retransmit_trust.then_some(trust3.as_slice());
+            if mature_trust {
+                assert_eq!(
+                    verifier.refresh(retry_trust, &head2, &state),
+                    Err(EnvironmentError::AuthorizationDenied)
+                );
+                assert!(verifier.pending_refresh.is_none());
+                assert!(verifier.pending_trust.is_none());
+                assert_eq!(verifier.retired_refresh_through, Some(2));
+                let head3 = revise(&head, "FreshnessHead", &[(8, u(3)), (9, u(1_300))], Some(9));
+                verifier.refresh(None, &head3, &state).unwrap();
+            } else {
+                assert_eq!(
+                    verifier.refresh(retry_trust, &head2, &state),
+                    Err(EnvironmentError::TimePending)
+                );
+                let (original, deadline, cap) = verifier.pending_refresh.as_ref().unwrap();
+                assert_eq!(original.head_bytes.as_ref(), head2.as_slice());
+                assert_eq!(*deadline, original_deadline);
+                assert_eq!(*cap, original_cap);
+                assert_eq!(verifier.pending_trust.as_deref(), Some(trust2.as_slice()));
+                assert_eq!(verifier.history.last().unwrap().as_ref(), trust2.as_slice());
+                assert_eq!(verifier.retired_refresh_through, None);
+            }
+            account.check().unwrap();
+        }
     }
 
     #[test]

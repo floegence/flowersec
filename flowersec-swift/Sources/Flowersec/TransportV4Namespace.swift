@@ -49,17 +49,24 @@ final class V4NamespaceVerifier: @unchecked Sendable {
     let head: Head
     let trustDeadline: V4SecurityDeadline
   }
+  private struct TrustUpdate {
+    let value: V4NamespaceValue
+    let raw: Data
+    let digest: Data
+    let limits: [String: UInt64]
+    let deadline: V4SecurityDeadline
+  }
   private var bootstrapInput: BootstrapInput?
   private var bootstrapLowerBound: UInt64 = 0
   private var bootstrapMaterialDeadline: V4SecurityDeadline?
   private var bootstrapWasPending = false
   private var bootstrapFailure: (any Error)?
-  private var pendingRefresh: (head: Head, state: Data, trust: Data?)?
+  private var pendingRefresh: (head: Head, state: Data, trust: TrustUpdate)?
   // A TrustConfig supplied while an older Head is already pending has its own
   // proof timeline. Keep it separate from the candidate's original trust so a
   // pending signer revocation cannot be lost on a later Head retry.
-  private var pendingTrustUpdate: Data?
-  private var retiredRefreshThrough: UInt64?
+  private var pendingTrustUpdate: TrustUpdate?
+  private var retiredRefreshThrough: (generation: UInt64, sequence: UInt64)?
   private var bootstrapWaiting = false
   #if os(macOS) || os(iOS)
     private let bootstrapEvents = V4SessionEvents(maximum: 1)
@@ -445,9 +452,10 @@ final class V4NamespaceVerifier: @unchecked Sendable {
   // signers are never removed.  A generation change is allowed only after all
   // permissions from the previous generation have been explicitly retired.
   private func validateTrustTransition(
-    _ candidate: V4NamespaceValue, state currentState: V4NamespaceValue?
+    _ candidate: V4NamespaceValue, state currentState: V4NamespaceValue?,
+    previous: V4NamespaceValue? = nil
   ) throws {
-    guard let current = trust else { return }
+    guard let current = previous ?? trust else { return }
     guard trustHistory.count < 8 else { throw V4NamespaceFailure.capacity }
     guard try candidate.u("revision") > current.u("revision"),
       try candidate.u("issued_at_ms") >= current.u("issued_at_ms"),
@@ -462,10 +470,13 @@ final class V4NamespaceVerifier: @unchecked Sendable {
     func containsRaw(_ value: V4NamespaceValue, _ raw: ArraySlice<UInt8>) -> Bool {
       value.children.contains { $0.raw.elementsEqual(raw) }
     }
-    for originalBytes in trustHistory {
+    var history = trustHistory
+    if let previous { history.append(Data(previous.raw)) }
+    for originalBytes in history {
       let original = try V4NamespaceDocument(
         originalBytes, schema: "TrustConfig", bytes: Self.trustBytes,
-        nodes: Self.trustNodes, registry: registry).root
+        nodes: Self.trustNodes, registry: registry
+      ).root
       for field in ["retired_issuers", "rejected_head_signers"] {
         for item in try original.field(field).children {
           guard containsRaw(try candidate.field(field), item.raw) else {
@@ -506,9 +517,11 @@ final class V4NamespaceVerifier: @unchecked Sendable {
           for nextField in ["issuer_authorizations", "activation_delegations"] {
             for nextEntry in try candidate.field(nextField).children
             where try nextEntry.b("issuer_key_id") == oldID {
-              guard try nextEntry.b(
-                nextField == "issuer_authorizations" ? "issuer_public_key" : "signer_public_key"
-              ) == oldKey else { throw V4NamespaceFailure.untrusted }
+              guard
+                try nextEntry.b(
+                  nextField == "issuer_authorizations" ? "issuer_public_key" : "signer_public_key"
+                ) == oldKey
+              else { throw V4NamespaceFailure.untrusted }
             }
           }
         }
@@ -516,14 +529,16 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       if try candidate.u("authority_generation") > original.u("authority_generation") {
         for field in ["issuer_authorizations", "activation_delegations"] {
           for entry in try original.field(field).children {
-            guard containsRaw(
-              try candidate.field("retired_issuers"), try entry.field("issuer_key_id").raw)
+            guard
+              containsRaw(
+                try candidate.field("retired_issuers"), try entry.field("issuer_key_id").raw)
             else { throw V4NamespaceFailure.untrusted }
           }
         }
         for entry in try original.field("head_delegations").children {
-          guard containsRaw(
-            try candidate.field("rejected_head_signers"), try entry.field("signer_key_id").raw)
+          guard
+            containsRaw(
+              try candidate.field("rejected_head_signers"), try entry.field("signer_key_id").raw)
           else { throw V4NamespaceFailure.untrusted }
         }
       }
@@ -535,26 +550,67 @@ final class V4NamespaceVerifier: @unchecked Sendable {
     for field in groups {
       for entry in try candidate.field(field).children {
         let issuer = try entry.b("issuer_key_id")
-        let known = try trustHistory.contains { originalBytes in
+        let known = try history.contains { originalBytes in
           let original = try V4NamespaceDocument(
             originalBytes, schema: "TrustConfig", bytes: Self.trustBytes,
-            nodes: Self.trustNodes, registry: registry).root
+            nodes: Self.trustNodes, registry: registry
+          ).root
           return try original.field(field).children.contains { old in
             old.raw.elementsEqual(entry.raw)
           }
         }
         if !known {
-          if try candidate.field("retired_issuers").children.contains(where: { try $0.bytes() == issuer }) {
+          if try candidate.field("retired_issuers").children.contains(where: {
+            try $0.bytes() == issuer
+          }) {
             throw V4NamespaceFailure.untrusted
           }
           if let currentState,
-            try currentState.field("revoked_issuers").children.contains(where: { try $0.b("issuer_key_id") == issuer })
+            try currentState.field("revoked_issuers").children.contains(where: {
+              try $0.b("issuer_key_id") == issuer
+            })
           {
             throw V4NamespaceFailure.untrusted
           }
         }
       }
     }
+  }
+
+  private func publishTrust(_ update: TrustUpdate) throws {
+    trust = update.value
+    trustBytes = update.raw
+    trustHistory.append(update.raw)
+    capacityDigest = update.digest
+    limits = update.limits
+    trustDeadline = update.deadline
+    if pendingTrustUpdate?.raw == update.raw { pendingTrustUpdate = nil }
+    try retireUntrustedPendingRefresh()
+  }
+
+  private func retireUntrustedPendingRefresh() throws {
+    guard let pendingRefresh, let trust else { return }
+    let signer = try pendingRefresh.head.value.b("signing_key_id")
+    let rejected = try trust.field("rejected_head_signers").children.contains {
+      try $0.bytes() == signer
+    }
+    let generation = try trust.u("authority_generation")
+    if rejected || pendingRefresh.head.generation < generation {
+      retirePendingRefresh()
+    }
+  }
+
+  private func retirePendingRefresh() {
+    guard let pendingRefresh else { return }
+    let head = pendingRefresh.head
+    if retiredRefreshThrough == nil || head.generation > retiredRefreshThrough!.generation
+      || (head.generation == retiredRefreshThrough!.generation
+        && head.sequence > retiredRefreshThrough!.sequence)
+    {
+      retiredRefreshThrough = (head.generation, head.sequence)
+    }
+    head.deadline.cancel()
+    self.pendingRefresh = nil
   }
 
   private func publicationBinding(_ value: V4NamespaceValue, _ publication: V4NamespaceValue) throws
@@ -577,7 +633,7 @@ final class V4NamespaceVerifier: @unchecked Sendable {
     let signerID = try head.b("signing_key_id")
     for rejected in try trust.field("rejected_head_signers").children {
       if try rejected.bytes() == signerID {
-        if allowPendingCandidate && timing.pending { break }
+        if try trust.u("issued_at_ms") > timing.now.lowerMS { break }
         throw V4NamespaceFailure.untrusted
       }
     }
@@ -636,128 +692,194 @@ final class V4NamespaceVerifier: @unchecked Sendable {
   func refresh(trust trustBytes: Data? = nil, head bytes: Data, state: Data) throws {
     try environment.gate.withLock {
       let now = try sample()
-      guard let installedTrust = trust, let installedDeadline = trustDeadline,
-        let installedTrustBytes = self.trustBytes
-      else { throw V4NamespaceFailure.notBootstrapped }
-      try installedDeadline.check()
-      var timing = TimeCheck(now: now)
+      guard trust != nil, let currentDeadline = trustDeadline, self.trustBytes != nil else {
+        throw V4NamespaceFailure.notBootstrapped
+      }
+      try currentDeadline.check()
       if let pendingRefresh {
-        do { try pendingRefresh.head.deadline.check() } catch V4TimeFailure.expired {
-          retiredRefreshThrough = max(retiredRefreshThrough ?? 0, pendingRefresh.head.sequence)
-          self.pendingRefresh = nil
+        do {
+          try pendingRefresh.trust.deadline.check()
+          try pendingRefresh.head.deadline.check()
+        } catch V4TimeFailure.expired {
+          retirePendingRefresh()
         }
       }
-      let samePending = pendingRefresh.map {
-        $0.head.value.raw.elementsEqual(bytes) && $0.state == state
-      } ?? false
+      let samePending =
+        pendingRefresh.map {
+          $0.head.value.raw.elementsEqual(bytes) && $0.state == state
+        } ?? false
 
-      // A retry of a pending candidate must use the exact TrustConfig that
-      // authenticated its original Head. Otherwise a newly published trust
-      // revision could silently rewrite the candidate's authorization context.
-      // An explicitly supplied revision is an independent publication even
-      // while the Head retry is pending. With no revision, retain the exact
-      // original candidate authorization context.
-      let requestedTrustBytes = trustBytes ?? pendingTrustUpdate
-      let suppliedTrustBytes = requestedTrustBytes ?? (samePending ? pendingRefresh?.trust : nil)
-      let pairTrust: V4NamespaceValue
-      let pairTrustRaw: Data
-      let pairDigest: Data
-      let pairLimits: [String: UInt64]
-      var trustChanged = false
-      if let suppliedTrustBytes {
-        pairTrust = try V4NamespaceDocument(
-          suppliedTrustBytes, schema: "TrustConfig", bytes: Self.trustBytes,
-          nodes: Self.trustNodes, registry: registry).root
-        let (digest, constraints) = try validateTrust(pairTrust, timing: &timing)
-        pairTrustRaw = Data(suppliedTrustBytes)
-        pairDigest = digest
-        pairLimits = constraints
-        trustChanged = !pairTrustRaw.elementsEqual(installedTrustBytes)
-        if trustChanged { try validateTrustTransition(pairTrust, state: self.state) }
+      // H2's original trust can mature before a newer retained revision. Publish
+      // it with its first deadline, retaining the newer proof independently.
+      if let original = pendingRefresh?.trust,
+        try original.value.u("revision") > trust!.u("revision")
+      {
+        try original.deadline.check()
+        var trustTiming = TimeCheck(now: now)
+        _ = try validateTrust(original.value, timing: &trustTiming)
+        try validateTrustTransition(original.value, state: self.state)
+        if !trustTiming.pending { try publishTrust(original) }
+      }
+
+      // Trust proof and Head proof have separate lower bounds. Retained trust
+      // is always reconsidered before replacement validation, including an H2
+      // retry with no trust bytes, while its original deadline stays fixed.
+      if let retained = pendingTrustUpdate {
+        var expired = false
+        do { try retained.deadline.check() } catch V4TimeFailure.expired {
+          // A different forward revision may replace expired pending trust,
+          // but repeating its bytes cannot create a later deadline.
+          guard let incomingRaw = trustBytes, incomingRaw != retained.raw,
+            incomingRaw != self.trustBytes!
+          else { throw V4TimeFailure.expired }
+          expired = true
+        }
+        if !expired {
+          var trustTiming = TimeCheck(now: now)
+          _ = try validateTrust(retained.value, timing: &trustTiming)
+          try validateTrustTransition(retained.value, state: self.state)
+          if !trustTiming.pending {
+            try publishTrust(retained)
+          }
+        }
+      }
+
+      if let incomingRaw = trustBytes, incomingRaw != self.trustBytes! {
+        let candidate: TrustUpdate
+        if let retained = pendingTrustUpdate, retained.raw == incomingRaw {
+          candidate = retained
+        } else {
+          let value = try V4NamespaceDocument(
+            incomingRaw, schema: "TrustConfig", bytes: Self.trustBytes,
+            nodes: Self.trustNodes, registry: registry
+          ).root
+          var trustTiming = TimeCheck(now: now)
+          let (digest, constraints) = try validateTrust(value, timing: &trustTiming)
+          try validateTrustTransition(value, state: self.state)
+          if let retained = pendingTrustUpdate {
+            try validateTrustTransition(value, state: self.state, previous: retained.value)
+          }
+          candidate = try TrustUpdate(
+            value: value, raw: Data(incomingRaw), digest: digest, limits: constraints,
+            deadline: V4SecurityDeadline(clock: environment.clock, capMS: value.u("not_after_ms")))
+        }
+        try candidate.deadline.check()
+        var trustTiming = TimeCheck(now: now)
+        _ = try validateTrust(candidate.value, timing: &trustTiming)
+        if trustTiming.pending {
+          pendingTrustUpdate = candidate
+        } else {
+          if let retained = pendingTrustUpdate, retained.raw != candidate.raw {
+            pendingTrustUpdate = nil
+          }
+          try publishTrust(candidate)
+        }
+      }
+
+      // Only published, time-mature trust can retire H2. Apply its independent
+      // denial before parsing replacement bytes so an invalid replacement
+      // cannot retain a revoked candidate's completion pin.
+      try retireUntrustedPendingRefresh()
+      if samePending, pendingRefresh == nil { throw V4NamespaceFailure.untrusted }
+
+      // A retained H2 always uses the exact TrustConfig that authenticated its
+      // original bytes. A new H2 may instead be authenticated by an initial
+      // pending TrustConfig, but cannot become active until its proof matures.
+      let servingTrust = TrustUpdate(
+        value: self.trust!, raw: self.trustBytes!, digest: capacityDigest, limits: limits,
+        deadline: trustDeadline!)
+      var timing = TimeCheck(now: now)
+      let pairTrust: TrustUpdate
+      let verifiedHead: Head
+      func authenticateHead(_ candidate: TrustUpdate, allowPendingCandidate: Bool)
+        throws -> (Head, TimeCheck)
+      {
+        var candidateTiming = TimeCheck(now: now)
+        _ = try validateTrust(candidate.value, timing: &candidateTiming)
+        try candidate.deadline.check()
+        let candidateHead = try verifyHead(
+          bytes, trust: candidate.value, digest: candidate.digest, timing: &candidateTiming,
+          allowPendingCandidate: allowPendingCandidate)
+        try candidateHead.deadline.check()
+        return (candidateHead, candidateTiming)
+      }
+      if samePending, let original = pendingRefresh?.trust {
+        pairTrust = original
+        let result = try authenticateHead(original, allowPendingCandidate: true)
+        verifiedHead = result.0
+        timing = result.1
+      } else if let candidate = pendingTrustUpdate {
+        // A pending trust update must not become the serving authorization
+        // context merely because it exists. First try the published trust
+        // against the Head; only a trust-specific failure may fall through to
+        // the independent future context.
+        do {
+          let result = try authenticateHead(servingTrust, allowPendingCandidate: false)
+          pairTrust = servingTrust
+          verifiedHead = result.0
+          timing = result.1
+        } catch V4NamespaceFailure.untrusted {
+          let servingHead = try V4NamespaceDocument(
+            bytes, schema: "FreshnessHead", bytes: 795, nodes: Self.headNodes, registry: registry
+          ).root
+          let servingSigner = try servingHead.b("signing_key_id")
+          let servingSignerRejected = try servingTrust.value.field("rejected_head_signers").children
+            .contains {
+              try $0.bytes() == servingSigner
+            }
+          if servingSignerRejected { throw V4NamespaceFailure.untrusted }
+          pairTrust = candidate
+          let result = try authenticateHead(candidate, allowPendingCandidate: false)
+          verifiedHead = result.0
+          timing = result.1
+        }
       } else {
-        pairTrust = installedTrust
-        pairTrustRaw = installedTrustBytes
-        pairDigest = capacityDigest
-        pairLimits = limits
+        pairTrust = servingTrust
+        try pairTrust.deadline.check()
+        verifiedHead = try verifyHead(
+          bytes, trust: pairTrust.value, digest: pairTrust.digest, timing: &timing,
+          allowPendingCandidate: samePending)
       }
-
-      // Trust authorization is an independent publication stream. Once its
-      // own issuance lower bound is proven, publish it before validating the
-      // replacement Head/State so a bad pair cannot roll back signer or issuer
-      // revocations. A pending trust remains private until its original pair
-      // reaches the same commit gate.
-      var trustPublished = false
-      if trustChanged && !timing.pending {
-        self.trust = pairTrust
-        self.trustBytes = pairTrustRaw
-        trustHistory.append(pairTrustRaw)
-        capacityDigest = pairDigest
-        limits = pairLimits
-        trustDeadline = try V4SecurityDeadline(
-          clock: environment.clock, capMS: pairTrust.u("not_after_ms"))
-        pendingTrustUpdate = nil
-        trustPublished = true
-      }
-
-      // If a newly authenticated trust revision rejects a retained signer's
-      // identity, release that candidate immediately while keeping the valid
-      // active pair and the rejection evidence.
-      if !samePending, trustChanged, let pendingRefresh {
-        let signer = try pendingRefresh.head.value.b("signing_key_id")
-        if try pairTrust.field("rejected_head_signers").children.contains(where: { try $0.bytes() == signer }) {
-          retiredRefreshThrough = max(retiredRefreshThrough ?? 0, pendingRefresh.head.sequence)
-          self.pendingRefresh = nil
-        }
-      }
-      if samePending {
-        let signer = try pendingRefresh!.head.value.b("signing_key_id")
-        let revokedByCurrent = try self.trust!.field("rejected_head_signers").children.contains(where: { try $0.bytes() == signer })
-        let revokedByCandidate = try pairTrust.field("rejected_head_signers").children.contains(where: { try $0.bytes() == signer })
-        if revokedByCurrent || (!timing.pending && revokedByCandidate) {
-          retiredRefreshThrough = max(retiredRefreshThrough ?? 0, pendingRefresh!.head.sequence)
-          self.pendingRefresh = nil
-          throw V4NamespaceFailure.untrusted
-        }
-      }
-      let verifiedHead = try verifyHead(
-        bytes, trust: pairTrust, digest: pairDigest, timing: &timing,
-        allowPendingCandidate: samePending)
+      let signer = try verifiedHead.value.b("signing_key_id")
+      guard
+        try !trust!.field("rejected_head_signers").children.contains(where: {
+          try $0.bytes() == signer
+        })
+      else { throw V4NamespaceFailure.untrusted }
       if let pendingRefresh, !samePending,
-        (verifiedHead.generation < pendingRefresh.head.generation
+        verifiedHead.generation < pendingRefresh.head.generation
           || (verifiedHead.generation == pendingRefresh.head.generation
-            && verifiedHead.sequence <= pendingRefresh.head.sequence))
+            && verifiedHead.sequence <= pendingRefresh.head.sequence)
       {
         throw V4NamespaceFailure.untrusted
       }
-      if let retiredRefreshThrough, verifiedHead.sequence <= retiredRefreshThrough,
-        verifiedHead.generation == (observed?.generation ?? verifiedHead.generation)
+      if let retiredRefreshThrough, verifiedHead.generation == retiredRefreshThrough.generation,
+        verifiedHead.sequence <= retiredRefreshThrough.sequence
       {
         throw V4TimeFailure.expired
       }
       let head = samePending ? pendingRefresh!.head : verifiedHead
       _ = try sample()
-      if trustPublished { try trustDeadline!.check() } else { try installedDeadline.check() }
+      try trustDeadline!.check()
       try head.deadline.check()
       if !timing.pending && !samePending { observed = head }
       let next = try verifyState(
-        state, head: head, trust: pairTrust, digest: pairDigest, limits: pairLimits)
+        state, head: head, trust: pairTrust.value, digest: pairTrust.digest,
+        limits: pairTrust.limits)
       try preserveHistory(next)
       if !timing.pending { try recordDenials(next) }
       if !samePending, pendingRefresh != nil {
         throw V4TimeFailure.pending
       }
       _ = try sample()
-      if trustPublished { try trustDeadline!.check() } else { try installedDeadline.check() }
+      try trustDeadline!.check()
       try head.deadline.check()
       if timing.pending {
-        if samePending, requestedTrustBytes != nil, trustChanged {
-          pendingTrustUpdate = pairTrustRaw
-        }
         if pendingRefresh == nil {
           // Keep the exact TrustConfig that authenticated this Head. Even if
           // another revision is published while it waits, retrying H2 must
           // never silently switch authorization context.
-          pendingRefresh = (head: head, state: Data(state), trust: pairTrustRaw)
+          pendingRefresh = (head: head, state: Data(state), trust: pairTrust)
         }
         throw V4TimeFailure.pending
       }
@@ -768,19 +890,11 @@ final class V4NamespaceVerifier: @unchecked Sendable {
         self.pendingRefresh = nil
         throw V4NamespaceFailure.rollback
       }
-      if trustChanged && !trustPublished {
-        trust = pairTrust
-        self.trustBytes = pairTrustRaw
-        trustHistory.append(pairTrustRaw)
-        capacityDigest = pairDigest
-        limits = pairLimits
-        trustDeadline = try V4SecurityDeadline(
-          clock: environment.clock, capMS: pairTrust.u("not_after_ms"))
-        pendingTrustUpdate = nil
-      }
       if observed == nil || head.generation > observed!.generation
         || (head.generation == observed!.generation && head.sequence >= observed!.sequence)
-      { observed = head }
+      {
+        observed = head
+      }
       self.state = next
       active = head
       if samePending || pendingRefresh == nil { pendingRefresh = nil }
@@ -794,11 +908,29 @@ final class V4NamespaceVerifier: @unchecked Sendable {
   func checkCurrent() throws {
     try environment.gate.withLock {
       _ = try sample()
-      guard let trustDeadline, let active, observed != nil, state != nil else {
+      guard let trust, let trustDeadline, let active, observed != nil, state != nil else {
         throw V4NamespaceFailure.notBootstrapped
       }
       try trustDeadline.check()
       try active.deadline.check()
+      // A newly published TrustConfig can revoke the signer or move the
+      // namespace to a new authority generation before a replacement
+      // Head/State pair is available. Keep the old active pair fenced until
+      // its signer and generation are still authorized by the current trust.
+      guard active.generation == (try trust.u("authority_generation")),
+        try active.value.u("authority_generation") == trust.u("authority_generation")
+      else { throw V4NamespaceFailure.untrusted }
+      let signerID = try active.value.b("signing_key_id")
+      guard
+        try !trust.field("rejected_head_signers").children.contains(where: {
+          try $0.bytes() == signerID
+        }),
+        let signer = try trust.field("head_delegations").children.first(where: {
+          try $0.b("signer_key_id") == signerID
+        }),
+        try signer.digest("head_signer_delegation_digest")
+          == active.value.b("signer_delegation_digest")
+      else { throw V4NamespaceFailure.untrusted }
     }
   }
   var currentSequence: UInt64? {
@@ -974,7 +1106,9 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       for lease in try next.field("revoked_leases").children {
         let issuer = try lease.b("issuer_key_id")
         let value = try lease.b("lease_id")
-        if leases.contains(where: { $0.issuer.elementsEqual(issuer) && $0.lease.elementsEqual(value) }) {
+        if leases.contains(where: {
+          $0.issuer.elementsEqual(issuer) && $0.lease.elementsEqual(value)
+        }) {
           continue
         }
         guard UInt64(leases.count) < (try capacity.u("max_revoked_leases")) else {
@@ -1039,8 +1173,9 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       bootstrapInput?.trustDeadline.cancel()
       bootstrapInput = nil
       pendingRefresh?.head.deadline.cancel()
+      pendingRefresh?.trust.deadline.cancel()
       pendingRefresh = nil
-      if var pendingTrust = pendingTrustUpdate { pendingTrust.resetBytes(in: pendingTrust.indices) }
+      pendingTrustUpdate?.deadline.cancel()
       pendingTrustUpdate = nil
       trustDeadline?.cancel()
       active?.deadline.cancel()
@@ -1048,7 +1183,9 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       trust = nil
       if var bytes = trustBytes { bytes.resetBytes(in: bytes.indices) }
       trustBytes = nil
-      for index in trustHistory.indices { trustHistory[index].resetBytes(in: trustHistory[index].indices) }
+      for index in trustHistory.indices {
+        trustHistory[index].resetBytes(in: trustHistory[index].indices)
+      }
       trustHistory.removeAll(keepingCapacity: false)
       active = nil
       observed = nil
@@ -1078,13 +1215,16 @@ struct V4CredentialEvidence {
   let digest: Data
   let lease: Data?
   let permissionDigest: Data
+  let policyID: String
+  let policyRevision: UInt64
   let policy: V4CredentialPolicy
   let issuedMS: UInt64
   let expiresMS: UInt64
   fileprivate init(
     namespace: V4NamespaceVerifier, kind: Int, cohort: UInt64, issuer: Data,
     digest: Data, lease: Data?, permissionDigest: Data,
-    policy: V4CredentialPolicy, issuedMS: UInt64, expiresMS: UInt64
+    policyID: String, policyRevision: UInt64, policy: V4CredentialPolicy,
+    issuedMS: UInt64, expiresMS: UInt64
   ) {
     self.namespace = namespace
     self.kind = kind
@@ -1093,6 +1233,8 @@ struct V4CredentialEvidence {
     self.digest = digest
     self.lease = lease
     self.permissionDigest = permissionDigest
+    self.policyID = policyID
+    self.policyRevision = policyRevision
     self.policy = policy
     self.issuedMS = issuedMS
     self.expiresMS = expiresMS
@@ -1214,6 +1356,8 @@ extension V4NamespaceVerifier {
         issuer: issuer, digest: value.digest(kind == 0 ? "certificate_digest" : "artifact_digest"),
         lease: kind == 1 ? value.b("lease_id") : nil,
         permissionDigest: permission.digest("credential_issuer_authorization_digest"),
+        policyID: value.t("revocation_policy_id"),
+        policyRevision: value.u("revocation_policy_revision"),
         policy: credentialPolicy(value), issuedMS: issued, expiresMS: end)
       try checkEvidence(evidence)
       return evidence
@@ -1305,6 +1449,7 @@ extension V4NamespaceVerifier {
         issuer: permission.b("issuer_key_id"), digest: value.digest("activation_digest"),
         lease: nil,
         permissionDigest: permission.digest("connection_activation_delegation_digest"),
+        policyID: parent.policyID, policyRevision: parent.policyRevision,
         policy: parent.policy, issuedMS: issued, expiresMS: end)
       try checkEvidence(evidence)
       return evidence
@@ -1336,6 +1481,27 @@ extension V4NamespaceVerifier {
       guard let trust, let state, let observed else { throw V4NamespaceFailure.notBootstrapped }
       _ = try credentialFreshness(evidence.policy)
       try time(evidence.issuedMS, evidence.expiresMS, now: sample())
+      // Evidence is bound to the currently published TrustConfig revision,
+      // rather than only to its original signature. This prevents a G2 trust
+      // update from removing an authorization while an old credential remains
+      // within its nominal lifetime.
+      let issuerPermission = try trust.field("issuer_authorizations").children.contains {
+        try $0.b("issuer_key_id") == evidence.issuer
+          && $0.digest("credential_issuer_authorization_digest") == evidence.permissionDigest
+      }
+      let activationPermission = try trust.field("activation_delegations").children.contains {
+        try $0.b("issuer_key_id") == evidence.issuer
+          && $0.digest("connection_activation_delegation_digest") == evidence.permissionDigest
+      }
+      guard issuerPermission || activationPermission else { throw V4NamespaceFailure.untrusted }
+      guard
+        try trust.field("credential_policies").children.contains(where: {
+          try $0.t("revocation_policy_id") == evidence.policyID
+            && $0.u("revocation_policy_revision") == evidence.policyRevision
+            && $0.u("max_staleness_ms") == evidence.policy.stalenessMS
+            && $0.u("max_head_signer_lifetime_ms") == evidence.policy.signerLifetimeMS
+        })
+      else { throw V4NamespaceFailure.untrusted }
       guard evidence.cohort >= observed.floors[evidence.kind] else {
         throw V4NamespaceFailure.untrusted
       }
@@ -1494,7 +1660,7 @@ extension V4NamespaceVerifier {
         namespace: self, kind: 1, cohort: scope.cohort,
         issuer: scope.issuer, digest: grant.digest("grant_digest"), lease: nil,
         permissionDigest: permission.digest("credential_issuer_authorization_digest"),
-        policy: policy,
+        policyID: scope.policyID, policyRevision: scope.policyRevision, policy: policy,
         issuedMS: scope.issuedMS, expiresMS: scope.expiresMS)
       try checkEvidence(verified)
       return verified
