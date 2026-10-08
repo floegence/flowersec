@@ -385,6 +385,7 @@ func (c *Client) prepareCarrier(ctx context.Context, address netip.AddrPort, roo
 			if err != nil {
 				reporter.Fatal(err)
 			}
+			reporter.Owner(native.Close, native.WaitCleanup)
 			reporter.Cleanup(func() {
 				native.Close()
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -415,6 +416,7 @@ func (c *Client) prepareCarrier(ctx context.Context, address netip.AddrPort, roo
 			if err != nil {
 				reporter.Fatal(err)
 			}
+			reporter.Owner(factory.Close, factory.WaitCleanup)
 			reporter.Cleanup(func() {
 				factory.Close()
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -428,6 +430,7 @@ func (c *Client) prepareCarrier(ctx context.Context, address netip.AddrPort, roo
 			if err != nil {
 				reporter.Fatal(err)
 			}
+			reporter.Owner(factory.Close, factory.WaitCleanup)
 			reporter.Cleanup(func() {
 				factory.Close()
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -441,6 +444,7 @@ func (c *Client) prepareCarrier(ctx context.Context, address netip.AddrPort, roo
 			if err != nil {
 				reporter.Fatal(err)
 			}
+			reporter.Owner(factory.Close, factory.WaitCleanup)
 			reporter.Cleanup(func() {
 				factory.Close()
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)

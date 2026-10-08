@@ -21,6 +21,61 @@ func manualEchoPlan(_ *Runtime, role uint8) (fs.StreamHandlerPlanConfig, error) 
 	}}}}, nil
 }
 
+func TestReporterClosesClientCarrierBeforeWaitingForRuntime(t *testing.T) {
+	for _, kind := range []string{"websocket", "raw-quic", "webtransport"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			serverReporter, err := NewPeerReporter()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := serverReporter.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			server, err := NewServer(ctx, serverReporter, ServerOptions{Carrier: kind, Handlers: manualEchoPlan})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wire, err := server.Material().JSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			clientReporter, err := NewPeerReporter()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := clientReporter.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			client, err := NewClient(ctx, clientReporter, wire, server.TrustPEM, server.Origin, manualEchoPlan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.CloseOwners()
+			owner, ok := client.Carrier.(carrierCleanupOwner)
+			if !ok {
+				t.Fatal("client did not retain its physical carrier owner")
+			}
+			// Reporter shutdown must retire the original carrier without entering
+			// Client.CloseOwners or the one-shot diagnostic cleanup callbacks.
+			clientReporter.CloseOwners()
+			cleanup, stop := context.WithTimeout(ctx, 2*time.Second)
+			defer stop()
+			if err := clientReporter.WaitOwners(cleanup); err != nil {
+				t.Fatalf("reporter physical owners: %v", err)
+			}
+			if err := owner.WaitCleanup(cleanup); err != nil {
+				t.Fatalf("original client carrier remained live after reporter shutdown: %v", err)
+			}
+		})
+	}
+}
+
 // This test exercises the public source, actual namespace bootstrap, SQLite
 // consume, network Noise/READY and registered manual dispatch as one graph.
 func TestCurrentSourceAndManualStreamRetainOriginalOwners(t *testing.T) {

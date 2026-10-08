@@ -113,6 +113,20 @@ func (r *Runtime) WaitOwners(ctx context.Context) error {
 	if r.Environment != nil {
 		result = errors.Join(result, r.Environment.WaitCleanup(ctx))
 	}
+	if result != nil {
+		return result
+	}
+	// An unused SessionPlan retains its completion reservation until Retire.
+	// Retire only after the original callbacks and Environment have exited,
+	// before waiting for the executor that owns that reservation.
+	for _, plan := range r.Plans {
+		if plan != nil {
+			result = errors.Join(result, plan.Retire())
+		}
+	}
+	if result != nil {
+		return result
+	}
 	if r.Executor != nil {
 		select {
 		case <-r.Executor.Done():
