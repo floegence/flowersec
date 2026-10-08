@@ -42,6 +42,7 @@ const relayTestObservation = vi.hoisted(() => ({
   positions: new WeakMap<object, number>(),
   buffers: new WeakMap<Uint8Array, Readonly<{ position: number; side: 0 | 1 }>>(),
   writes: [] as RelayBufferWrite[],
+  returnedPositions: [] as number[],
   meters: [] as RelayMeterSettlement[],
   nextMeter: 0,
 }));
@@ -72,6 +73,16 @@ vi.mock("./relayNativePair.js", async importOriginal => {
         }
         void positionIndex;
       }
+      const push = result.positions.push.bind(result.positions);
+      Object.defineProperty(result.positions, "push", { configurable: true, value: (...positions: Parameters<typeof push>): number => {
+        const length = push(...positions);
+        for (const position of positions) {
+          const id = relayTestObservation.positions.get(position);
+          if (id === undefined) throw new Error("returned relay position was not originally observed");
+          relayTestObservation.returnedPositions.push(id);
+        }
+        return length;
+      } });
       return result;
     }
   }
@@ -645,6 +656,7 @@ describe("Node current production raw QUIC runtime", () => {
       const streamsBeforeSibling = nextRawStreamId;
       const meterBeforeTail = relayTestObservation.meters.length;
       const relayWSSReadBeforeTail = relayWSSReads.length;
+      const returnedPositionsBeforeStop = relayTestObservation.returnedPositions.length;
       await provider.stopSending("normal_drained");
       await provider.closeWrite();
       await withinNativeEvent(provider.waitTermination());
@@ -680,6 +692,10 @@ describe("Node current production raw QUIC runtime", () => {
       expect(hasIngressSettlements(meterTailSettlements)).toBe(true);
       expect(meterTailSettlements.filter(value => value.actual === undefined)).toHaveLength(0);
       await withinNativeEvent(handlerDone);
+      const retiredPositions = new Set(relayTestObservation.writes.filter(value => value.frameType === wire.frame_types.OPEN_STREAM && value.scope === retiredScope).map(value => value.position));
+      // Endpoint callback exit precedes the relay's own native retirement join.
+      // Require that exact original position to return before testing reuse.
+      await waitForNativeCondition(() => relayTestObservation.returnedPositions.slice(returnedPositionsBeforeStop).some(position => retiredPositions.has(position)));
       const siblingOpening = client.openStream("node-v4-wss-native-retirement-tail", { signal });
       sibling = await siblingOpening;
       await sibling.write(new Uint8Array([6, 7, 8]), { signal });
@@ -701,7 +717,6 @@ describe("Node current production raw QUIC runtime", () => {
       const siblingScope = applicationOpenScopes.at(-1);
       if (siblingScope === undefined) throw new Error("sibling application OPEN was not observed");
       expect(siblingScope).not.toBe(retiredScope);
-      const retiredPositions = new Set(relayTestObservation.writes.filter(value => value.frameType === wire.frame_types.OPEN_STREAM && value.scope === retiredScope).map(value => value.position));
       const siblingPositions = new Set(relayTestObservation.writes.filter(value => value.frameType === wire.frame_types.OPEN_STREAM && value.scope === siblingScope).map(value => value.position));
       expect([...retiredPositions].some(position => siblingPositions.has(position))).toBe(true);
       const retiredBuffers = relayTestObservation.writes.filter(value => value.frameType === wire.frame_types.OPEN_STREAM && value.scope === retiredScope).map(value => value.buffer);

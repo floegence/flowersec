@@ -548,7 +548,7 @@ func loadRegistryIDs(repoRoot string) (map[string]struct{}, error) {
 		return nil, fmt.Errorf("read test registry: %w", err)
 	}
 	ids := make(map[string]struct{})
-	pattern := regexp.MustCompile(`(?:commandEntry|commandEntryWithEnvironment|vitestEntry|installedVitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry|nativeTunnelEntry)\("([^"]+)"`)
+	pattern := regexp.MustCompile(`(?:commandEntry|commandEntryWithEnvironment|vitestEntry|installedVitestEntry|browserSmokeEntry|browserCompatibilityEntry|performanceCapacityEntry|privilegedGoTestEntry)\("([^"]+)"`)
 	for _, match := range pattern.FindAllStringSubmatch(string(source), -1) {
 		ids[match[1]] = struct{}{}
 	}
