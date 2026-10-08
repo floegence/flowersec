@@ -55,12 +55,14 @@ func (r *currentReady) UnmarshalJSON(wire []byte) error {
 
 type currentParityState struct {
 	cell                               string
+	sdkExample                         bool
 	ledger                             *executionLedger
 	definitions                        [2]*interopharness.RPCDefinition
 	notified, datagramReady, completed chan struct{}
 	peerReady                          chan struct{}
 	observersReady                     chan struct{}
 	notificationsObserved              chan struct{}
+	exampleNotificationObserved        chan struct{}
 	notificationCount                  atomic.Uint32
 	active                             atomic.Int32
 	session                            *fs.Session
@@ -68,7 +70,7 @@ type currentParityState struct {
 }
 
 func newCurrentParityState() *currentParityState {
-	return &currentParityState{cell: "direct", ledger: newExecutionLedger(), notified: make(chan struct{}, 8), datagramReady: make(chan struct{}, 1), completed: make(chan struct{}, 1), peerReady: make(chan struct{}, 1), observersReady: make(chan struct{}), notificationsObserved: make(chan struct{})}
+	return &currentParityState{cell: "direct", ledger: newExecutionLedger(), notified: make(chan struct{}, 8), datagramReady: make(chan struct{}, 1), completed: make(chan struct{}, 1), peerReady: make(chan struct{}, 1), observersReady: make(chan struct{}), notificationsObserved: make(chan struct{}), exampleNotificationObserved: make(chan struct{})}
 }
 
 func (s *currentParityState) configure(runtime *interopharness.Runtime, role uint8) (fs.StreamHandlerPlanConfig, error) {
@@ -167,6 +169,13 @@ func (s *currentParityState) configure(runtime *interopharness.Runtime, role uin
 				if string(input[:n]) != "hello" {
 					return errors.New("invalid echo stream input")
 				}
+				if s.sdkExample {
+					// Submission is not remote observation. The example's reply
+					// confirms its preceding notification before the client closes.
+					if err := waitSignal(ctx, s.exampleNotificationObserved, "example notification observation"); err != nil {
+						return err
+					}
+				}
 				s.ledger.record("stream-metadata")
 				if _, err := stream.WriteAll(ctx, []byte("world")); err != nil {
 					return err
@@ -210,7 +219,11 @@ func (s *currentParityState) bind(ctx context.Context, role uint8, session *fs.S
 			default:
 				return errors.New("notification observation exceeded its bound")
 			}
-			if s.notificationCount.Add(1) == 2 {
+			count := s.notificationCount.Add(1)
+			if count == 1 {
+				close(s.exampleNotificationObserved)
+			}
+			if count == 2 {
 				close(s.notificationsObserved)
 			}
 			return nil
@@ -305,7 +318,7 @@ func currentNotify(ctx context.Context, service *fs.ServiceClient) error {
 	return errors.Join(err, op.WaitCleanup(cleanup))
 }
 
-func runCurrentDirectServer(ctx context.Context, carrier string) (err error) {
+func runCurrentDirectServer(ctx context.Context, carrier string, sdkExample bool) (err error) {
 	ctx, cancelRun := context.WithCancelCause(ctx)
 	defer cancelRun(context.Canceled)
 	reporter, err := interopharness.NewPeerReporter()
@@ -315,6 +328,7 @@ func runCurrentDirectServer(ctx context.Context, carrier string) (err error) {
 	reporter.ApplicationProfile = "services"
 	defer func() { err = errors.Join(err, reporter.Close()) }()
 	state := newCurrentParityState()
+	state.sdkExample = sdkExample
 	server, err := interopharness.NewServer(ctx, reporter, interopharness.ServerOptions{Carrier: carrier, Profile: protocolv4.DHProfileX25519, Origin: parityOrigin(), Handlers: state.configure})
 	if err != nil {
 		return err
@@ -347,7 +361,12 @@ func runCurrentDirectServer(ctx context.Context, carrier string) (err error) {
 		return err
 	}
 	state.ledger.record("admission")
-	if err = exerciseCurrentServer(ctx, session, carrier, state, reporter); err != nil {
+	if sdkExample {
+		err = exerciseCurrentExampleServer(ctx, session, state, reporter)
+	} else {
+		err = exerciseCurrentServer(ctx, session, carrier, state, reporter)
+	}
+	if err != nil {
 		return fmt.Errorf("server workflow after %v: %w", state.ledger.snapshot(), err)
 	}
 	if state.active.Load() != 0 || server.Runtime.Authorized[1].Load() != 1 || server.Runtime.Released[1].Load() != 1 {
@@ -433,6 +452,34 @@ func exchangeCurrentDatagram(ctx context.Context, session *fs.Session, carrier s
 		return send(response)
 	}
 	return nil
+}
+
+// Public SDK examples declare one outbound RPC, notification and reliable stream.
+// Their server uses the same original admission and handlers without requiring
+// the separate bidirectional interop workload's client callbacks and barriers.
+func exerciseCurrentExampleServer(ctx context.Context, session *fs.Session, state *currentParityState, reporter *interopharness.Reporter) error {
+	if _, err := state.bind(ctx, 1, session, reporter); err != nil {
+		return err
+	}
+	if err := waitSignal(ctx, state.peerReady, "example RPC"); err != nil {
+		return err
+	}
+	if err := state.waitNotification(ctx, "example notification"); err != nil {
+		return err
+	}
+	if _, err := session.ProbeLiveness(ctx, 1000); err != nil {
+		return err
+	}
+	state.ledger.record("liveness")
+	if err := session.WaitTermination(ctx); err != nil {
+		var failure *fs.SessionError
+		if ctx.Err() != nil || !errors.As(err, &failure) ||
+			(failure.Code() != fs.SessionClosed && failure.Code() != fs.SessionOperationFailed) {
+			return err
+		}
+	}
+	state.ledger.record("close")
+	return session.WaitCleanup(ctx)
 }
 
 func exerciseCurrentServer(ctx context.Context, session *fs.Session, carrier string, state *currentParityState, reporter *interopharness.Reporter) error {

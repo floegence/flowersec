@@ -16,6 +16,9 @@ import { finishExampleProcesses } from "./sdk-example-processes.mjs";
 const execFileAsync = promisify(execFile);
 const repositoryRoot = path.resolve(import.meta.dirname, "..");
 const toolchains = readToolchains(repositoryRoot);
+// Source compilation has its own preparation budget. Runtime examples retain
+// their shorter process and original connection deadlines.
+const preparationTimeoutMS = 300_000;
 const controller = new AbortController();
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.once(signal, () => controller.abort(new Error(`SDK examples interrupted by ${signal}`)));
@@ -49,7 +52,7 @@ try {
       prepare: async () => await runProcess("rustup", [
         "run", toolchains.rust.version, "cargo", "build", "--locked",
         "--manifest-path", "examples/rust/Cargo.toml",
-      ], repositoryRoot, process.env),
+      ], repositoryRoot, process.env, controller.signal, preparationTimeoutMS),
       run: async (fixture) => await runProcess("rustup", [
         "run", toolchains.rust.version, "cargo", "run", "--quiet", "--locked",
         "--manifest-path", "examples/rust/Cargo.toml", "--", "connect",
@@ -65,7 +68,7 @@ try {
         "--cache-path", path.join(repositoryRoot, ".flowersec", "swiftpm-cache"),
         "--skip-update",
         "--only-use-versions-from-resolved-file",
-      ], repositoryRoot, process.env),
+      ], repositoryRoot, process.env, controller.signal, preparationTimeoutMS),
       run: async (fixture) => await runProcess("swift", [
         "run",
         "--skip-build",
@@ -81,6 +84,7 @@ try {
   for (const example of examples) {
     await example.prepare?.();
     await runExample(example);
+    process.stdout.write(`public SDK example E2E OK: ${example.name}\n`);
   }
   const required = process.platform === "darwin" ? 4 : 3;
   assert.equal(examples.length, required);
@@ -108,6 +112,12 @@ async function preparePackedTypeScriptExample() {
   await execFileAsync("npm", [
     "install", "--ignore-scripts", "--no-package-lock", "--offline", tarball,
   ], { cwd: consumerRoot, signal: controller.signal });
+  // The packed engineering adapter validates its hash-pinned test input.
+  // Provision that reference data independently of the installed public SDK.
+  const unicodeRoot = path.join(consumerRoot, "node_modules", "@floegence", "testdata", "unicode15_1");
+  await fs.mkdir(unicodeRoot, { recursive: true });
+  await fs.copyFile(path.join(repositoryRoot, "testdata", "unicode15_1", "normalization_generated.json"),
+    path.join(unicodeRoot, "normalization_generated.json"));
   // Keep the repository example's relative engineering-fixture import, with
   // both that fixture and the public entrypoint coming from the packed SDK.
   const entry = path.join(consumerRoot, "examples", "ts", "node-client.mjs");
@@ -122,7 +132,7 @@ async function runExample(example) {
   const exampleRoot = path.join(scratch, example.name);
   await fs.mkdir(exampleRoot, { recursive: true });
   const origin = "https://sdk-example.example";
-  const server = spawn(serverBinary, ["server", "--carrier", "websocket"], {
+  const server = spawn(serverBinary, ["server", "--carrier", "websocket", "--workload", "sdk-example"], {
     cwd: repositoryRoot,
     detached: true,
     env: {
@@ -213,7 +223,7 @@ async function runExample(example) {
   }
 }
 
-async function runProcess(command, arguments_, cwd, environment, signal = controller.signal) {
+async function runProcess(command, arguments_, cwd, environment, signal = controller.signal, timeoutMS = 120_000) {
   signal.throwIfAborted();
   const child = spawn(command, arguments_, {
     cwd,
@@ -228,7 +238,7 @@ async function runProcess(command, arguments_, cwd, environment, signal = contro
   child.stdout.on("data", (chunk) => { stdout = `${stdout}${chunk}`.slice(-65_536); });
   child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-65_536); });
   const completion = childExit(child);
-  const deadline = parityProcessDeadline(() => [{ child, completion }], 120_000, `${command} example process deadline`);
+  const deadline = parityProcessDeadline(() => [{ child, completion }], timeoutMS, `${command} example process deadline`);
   const abort = () => deadline.cancel(signal.reason);
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();

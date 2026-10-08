@@ -271,18 +271,32 @@ impl EngineeringClient {
             anchor: Instant::now(),
             epoch_ms: u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?,
         };
-        let environment = Arc::new(TransportEnvironment::with_options(
-            TransportEnvironmentOptions {
-                clock: Some(Arc::new(clock)),
-                ..TransportEnvironmentOptions::default()
-            },
-        )?);
+        let mut options = TransportEnvironmentOptions {
+            clock: Some(Arc::new(clock)),
+            ..TransportEnvironmentOptions::default()
+        };
+        // This fixture's NamespaceCapacity admits all three 1024-entry
+        // revocation classes. Reserve their complete verifier backing before
+        // constructing the source; no peer input resizes these local limits.
+        options.session_limits.sdk_bytes = 64 << 20;
+        options.session_limits.provider_bytes = 64 << 20;
+        options.session_limits.items = 32_768;
+        options.session_limits.work_slots = 512;
+        options.session_limits.tasks = 512;
+        options.session_limits.timers = 8_192;
+        options.session_limits.native_handles = 64;
+        options.root_limits.sdk_bytes = 512 << 20;
+        options.root_limits.provider_bytes = 512 << 20;
+        options.tenant_limits.sdk_bytes = 128 << 20;
+        options.tenant_limits.provider_bytes = 128 << 20;
+        let environment = Arc::new(TransportEnvironment::with_options(options)?);
         let roots_der = vec![read_bounded(trust_der_path, 65536)?];
-        let mut namespaces = Vec::new();
         let records = material["namespaces"].as_array().ok_or_else(invalid)?;
         if records.is_empty() || records.len() > 3 {
             return Err(invalid().into());
         }
+        // The source admits the retained vector's capacity, not only its length.
+        let mut namespaces = Vec::with_capacity(records.len());
         for record in records {
             if text(record, "tenant")? != tenant {
                 return Err(invalid().into());

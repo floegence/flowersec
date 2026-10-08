@@ -51,6 +51,7 @@ type peerArguments struct {
 	EndpointListeners [2]bool
 	DeploymentPath    string
 	Directory         string
+	SDKExample        bool
 }
 
 func validCarrier(carrier string) bool {
@@ -59,7 +60,7 @@ func validCarrier(carrier string) bool {
 func parsePeerArguments(arguments []string) (peerArguments, error) {
 	var result peerArguments
 	if len(arguments) < 3 || len(arguments)%2 != 1 {
-		return result, errors.New("usage: server-parity-peer ROLE --carrier CARRIER [--server-carrier CARRIER] [--client-listener endpoint|relay] [--server-listener endpoint|relay]")
+		return result, errors.New("usage: server-parity-peer ROLE --carrier CARRIER [--workload sdk-example] [--server-carrier CARRIER] [--client-listener endpoint|relay] [--server-listener endpoint|relay]")
 	}
 	result.Role = arguments[0]
 	result.Carrier = arguments[2]
@@ -80,6 +81,13 @@ func parsePeerArguments(arguments []string) (peerArguments, error) {
 			return result, errors.New("current peer options must occur once")
 		}
 		seen[name] = true
+		if name == "--workload" {
+			if result.Role != "server" || result.Carrier != "websocket" || value != "sdk-example" {
+				return result, errors.New("the SDK example workload requires the direct WebSocket server")
+			}
+			result.SDKExample = true
+			continue
+		}
 		if name == "--wire-revision" {
 			if value != "4" {
 				return result, errors.New("current peer requires wire revision 4")
@@ -150,7 +158,7 @@ func run() error {
 	defer cancel()
 	switch arguments.Role {
 	case "server":
-		return runCurrentDirectServer(ctx, arguments.Carrier)
+		return runCurrentDirectServer(ctx, arguments.Carrier, arguments.SDKExample)
 	case "client":
 		return runCurrentDirectClient(ctx, arguments.Carrier)
 	case "live-installation":

@@ -58,4 +58,9 @@ import Foundation
   try FileManager.default.createDirectory(at: history.directory, withIntermediateDirectories: false,
     attributes: [.posixPermissions: 0o700])
   #expect(throws: EngineeringMaterialError.self) { try history.checkContinuity() }
+  try FileManager.default.removeItem(at: history.directory)
+  let unrelated = directory.appendingPathComponent("unrelated-history", isDirectory: true)
+  try FileManager.default.createSymbolicLink(at: history.directory, withDestinationURL: unrelated)
+  #expect(throws: (any Error).self) { try EngineeringHistory(receiptPath: receipt.path) }
+  #expect(!FileManager.default.fileExists(atPath: unrelated.path))
 }

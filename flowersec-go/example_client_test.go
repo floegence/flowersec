@@ -51,6 +51,10 @@ func TestExampleConnectE2E(t *testing.T) {
 		t.Skip("example E2E input is supplied by the acceptance runner")
 	}
 	if err := connectExample(); err != nil {
+		var operation *exampleExchangeError
+		if errors.As(err, &operation) {
+			t.Logf("exchange cause: %v", operation.cause)
+		}
 		t.Fatal(err)
 	}
 }

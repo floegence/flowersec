@@ -185,7 +185,10 @@ async fn exchange(session: &Session) -> Result<()> {
         return Err(std::io::Error::other("notification publication did not commit").into());
     }
     let cell = std::env::var("FSEC_EXAMPLE_STREAM_CELL").unwrap_or_else(|_| "direct".into());
-    let metadata = Metadata::new("flowersec.parity", 1, &BTreeMap::from([("cell".into(), Bytes::from(cell))]))?;
+    let metadata = Metadata::new(
+        "application/json", 1,
+        &BTreeMap::from([("cell".into(), Bytes::from(serde_json::to_vec(&cell)?))]),
+    )?;
     let stream = session.open_stream("parity.echo", metadata, 65536).await?;
     owners.stream = Some(stream.clone());
     let mut pending = Bytes::from_static(b"hello");

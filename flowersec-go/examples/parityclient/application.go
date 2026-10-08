@@ -64,7 +64,7 @@ func (c *Client) installApplication(config Configuration) error {
 	if err = c.installFactory(config, route, address); err != nil {
 		return err
 	}
-	executorConfig := fs.ApplicationExecutorConfig{Running: 16, ResidentRunning: 8,
+	executorConfig := fs.ApplicationExecutorConfig{QueryOwners: 2, Running: 16, ResidentRunning: 8,
 		CompletionRunning: 2, CompletionReserved: 8, RuntimeBytes: 16384, RuntimeBytesPerTask: 131072}
 	ref, err := c.reserve(fs.ApplicationExecutorCharge(executorConfig))
 	if err != nil {
@@ -297,10 +297,10 @@ func (c *Client) rpcConfiguration(parameters fs.SessionParameters, streams fs.Se
 
 func parityContract(typeID uint32, notify bool) ([]byte, fs.ServiceContractPolicy, error) {
 	fields := []fs.ServiceContractField{
-		{Name: "service_namespace", Kind: fs.ContractTextString, Bytes: []byte(parityNamespace)},
+		{Name: "service_namespace", Kind: fs.ContractTextString, Text: parityNamespace},
 		{Name: "type_id", Number: uint64(typeID)},
-		{Name: "request_schema_revision", Kind: fs.ContractTextString, Bytes: []byte("1")},
-		{Name: "response_schema_revision", Kind: fs.ContractTextString, Bytes: []byte("1")},
+		{Name: "request_schema_revision", Kind: fs.ContractTextString, Text: "1"},
+		{Name: "response_schema_revision", Kind: fs.ContractTextString, Text: "1"},
 		{Name: "min_response_limit_bytes"}, {Name: "max_message_lifetime_ms", Number: 30000},
 		{Name: "restart_flush", Kind: fs.ContractBoolean}, {Name: "request_max_bytes", Number: 4096},
 		{Name: "application_error_catalog", Kind: fs.ContractEncodedArray, Bytes: []byte{0x80}},

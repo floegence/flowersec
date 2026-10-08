@@ -98,6 +98,7 @@ private func runApplicationWorkflow(session: any Session, environment: Transport
   guard try await readAll(from: stream) == Data("world".utf8) else {
     throw ExampleConfigurationError.invalidStreamResponse
   }
+  try await stream.finish()
   if let address = ProcessInfo.processInfo.environment["FSEC_EXAMPLE_TCP_ADDRESS"] {
     guard let value = ProcessInfo.processInfo.environment["FSEC_EXAMPLE_TCP_PORT"],
       let port = Int(value), (1...65535).contains(port) else {

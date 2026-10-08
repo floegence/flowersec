@@ -53,8 +53,8 @@ func (c *Client) Exchange(ctx context.Context, cell string) (result ExchangeResu
 		Value string `json:"value"`
 	}
 	wire, ok := result.RPC.Value.([]byte)
-	if !ok || json.Unmarshal(wire, &response) != nil || response.Value != "ping" || !result.RPC.CleanupComplete {
-		return result, errors.New("unexpected typed parity RPC result or incomplete cleanup")
+	if !ok || json.Unmarshal(wire, &response) != nil || response.Value != "ping" {
+		return result, errors.New("unexpected typed parity RPC result")
 	}
 	result.Notification, err = c.service.NotifyMethod(ctx, fs.MethodSelector{Namespace: parityNamespace, Type: 7002},
 		[]byte(`{"value":"notify"}`), fs.OperationOptions{DefaultLifetimeMS: 10000})
@@ -65,6 +65,8 @@ func (c *Client) Exchange(ctx context.Context, cell string) (result ExchangeResu
 		return result, errors.New("notification was not accepted")
 	}
 	c.service.Close()
+	// Result delivery can precede the original operation's physical cleanup.
+	// Join that owner before opening the example's next application stream.
 	if err = c.service.WaitCleanup(ctx); err != nil {
 		return result, err
 	}
@@ -103,7 +105,7 @@ func (c *Client) Exchange(ctx context.Context, cell string) (result ExchangeResu
 	if err = stream.CloseWrite(); err != nil {
 		return result, err
 	}
-	cursor, err := stream.ReaderCursor(fs.ReaderCursorOptions{Exact: 6, MaxBytes: 6})
+	cursor, err := stream.ReaderCursor(fs.ReaderCursorOptions{Exact: 6})
 	if err != nil {
 		return result, err
 	}

@@ -144,6 +144,12 @@ struct EngineeringMaterial: Decodable, Sendable {
         upperMilliseconds: milliseconds)
     }
     configuration.trustRootsPEM = roots
+    configuration.webSocketOrigin = ProcessInfo.processInfo.environment["FSEC_ORIGIN"]
+    // Admit the fixture's complete namespace, service and native owner graph
+    // within fixed local limits, independently of received material.
+    configuration.maximumRuntimeItems = 16_384
+    configuration.maximumResourceReservations = 8192
+    configuration.maximumResourceReferences = 16_384
     return configuration
   }
 
@@ -249,6 +255,11 @@ private final class EngineeringBootstrapDelegate: NSObject, URLSessionTaskDelega
     completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
     completionHandler(nil)
   }
+  func urlSession(_ session: URLSession, task: URLSessionTask,
+    didReceive challenge: URLAuthenticationChallenge,
+    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    urlSession(session, didReceive: challenge, completionHandler: completionHandler)
+  }
   func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
     completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
     guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
@@ -333,7 +344,15 @@ struct EngineeringHistory: Sendable {
   private let device: dev_t
   private let inode: ino_t
   init(receiptPath: String) throws {
-    directory = URL(fileURLWithPath: receiptPath + ".history", isDirectory: true)
+    let requested = URL(fileURLWithPath: receiptPath + ".history", isDirectory: true)
+    // Resolve the trusted parent before SQLite's no-symlink open. Keep the
+    // new leaf unchanged so an existing history or symlink is still rejected.
+    guard let parent = realpath(requested.deletingLastPathComponent().path, nil) else {
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    defer { free(parent) }
+    directory = URL(fileURLWithPath: String(cString: parent), isDirectory: true)
+      .appendingPathComponent(requested.lastPathComponent, isDirectory: true)
     guard mkdir(directory.path, 0o700) == 0 else {
       throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
