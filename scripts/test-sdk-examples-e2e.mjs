@@ -25,6 +25,7 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 }
 const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "flowersec-sdk-examples-"));
 const serverBinary = path.join(scratch, "server-parity-peer");
+const swiftExampleBinary = path.join(scratch, "swift-build", "debug", "FlowersecSwiftClientExample");
 let nativeAddon, failure;
 
 try {
@@ -69,15 +70,10 @@ try {
         "--skip-update",
         "--only-use-versions-from-resolved-file",
       ], repositoryRoot, process.env, controller.signal, preparationTimeoutMS),
-      run: async (fixture) => await runProcess("swift", [
-        "run",
-        "--skip-build",
-        "--package-path", "examples/swift",
-        "--scratch-path", path.join(scratch, "swift-build"),
-        "--cache-path", path.join(repositoryRoot, ".flowersec", "swiftpm-cache"),
-        "--skip-update",
-        "--only-use-versions-from-resolved-file",
-      ], repositoryRoot, fixture.environment, fixture.signal),
+      // Launch the built example directly so SwiftPM package planning cannot
+      // consume the original server's admission window after material issuance.
+      run: async (fixture) => await runProcess(swiftExampleBinary, [],
+        repositoryRoot, fixture.environment, fixture.signal),
     }] : []),
   ];
 

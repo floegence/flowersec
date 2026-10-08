@@ -218,7 +218,8 @@ test("built public SDK examples run the shared application contract", () => {
   }
   assert.match(runner, /npm", \[\s*"pack"/u);
   assert.match(runner, /prepare: async \(\) => await runProcess\("swift", \[\s*"build"/u);
-  assert.match(runner, /"run",\s*"--skip-build"/u);
+  assert.match(runner, /path\.join\(scratch, "swift-build", "debug", "FlowersecSwiftClientExample"\)/u);
+  assert.match(runner, /runProcess\(swiftExampleBinary, \[\]/u);
   assert.match(runner, /await example\.prepare\?\.\(\);\s*await runExample\(example\);/u);
   assert.match(runner, /"--scratch-path", path\.join\(scratch, "swift-build"\)/u);
   assert.match(runner, /"--only-use-versions-from-resolved-file"/u);
