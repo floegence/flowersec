@@ -1220,27 +1220,8 @@ fn relay_store(
 ) -> RelayStore {
     let (tenant, parent_issuer, service) =
         current_artifact_binding(&current_bytes(&material.artifact, 65536, None));
-    let artifact_root = env::var_os("FLOWERSEC_TASK_ARTIFACT_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            env::current_dir()
-                .expect("current relay artifact directory")
-                .parent()
-                .unwrap()
-                .join("flowersec-current-rust-artifacts")
-        });
-    assert!(
-        !artifact_root.starts_with(env::current_dir().unwrap()),
-        "relay artifacts must stay outside the repository"
-    );
-    let directory = artifact_root.join(format!(
-        "flowersec-current-rust-{}-relay",
-        std::process::id()
-    ));
-    std::fs::create_dir(&directory).expect("create exclusive original relay ledger directory");
-    let path = std::fs::canonicalize(&directory)
-        .unwrap()
-        .join("relay.sqlite");
+    let directory = current_store_directory("relay");
+    let path = directory.join("relay.sqlite");
     let backing = environment
         .sqlite_pool_backing(
             path,

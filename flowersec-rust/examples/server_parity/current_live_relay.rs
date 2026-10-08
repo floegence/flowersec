@@ -190,32 +190,8 @@ fn original_ledgers(
     parent_identity: flowersec::SQLitePoolIdentity,
     relay_identity: flowersec::SQLitePoolIdentity,
 ) -> (CurrentPoolStore, RelayStore) {
-    let root = env::var_os("FLOWERSEC_TASK_ARTIFACT_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            env::current_dir()
-                .expect("public relay task directory")
-                .parent()
-                .unwrap()
-                .join("flowersec-current-rust-artifacts")
-        });
-    assert!(
-        !root.starts_with(env::current_dir().unwrap()),
-        "public relay task artifacts must remain outside the repository"
-    );
-    std::fs::create_dir_all(&root).expect("create original public relay task artifact root");
-    let parent_directory = root.join(format!(
-        "flowersec-current-rust-{}-live-parent",
-        std::process::id()
-    ));
-    let relay_directory = root.join(format!(
-        "flowersec-current-rust-{}-live-relay",
-        std::process::id()
-    ));
-    std::fs::create_dir(&parent_directory)
-        .expect("create exclusive original public relay parent directory");
-    std::fs::create_dir(&relay_directory)
-        .expect("create exclusive original public relay ledger directory");
+    let parent_directory = current_store_directory("live-parent");
+    let relay_directory = current_store_directory("live-relay");
     let limits = POOL_LIMITS;
     let backing = environment
         .sqlite_pool_backing(parent_directory.join("parent.sqlite"), limits)

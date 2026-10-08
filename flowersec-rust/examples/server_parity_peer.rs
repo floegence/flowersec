@@ -1287,6 +1287,44 @@ impl Drop for CurrentPoolStore {
     }
 }
 
+fn current_store_directory(name: &str) -> std::path::PathBuf {
+    let artifact_root = std::env::var_os("FLOWERSEC_TASK_ARTIFACT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .expect("resolve current parity directory")
+                .parent()
+                .expect("resolve repository parent")
+                .join("flowersec-current-rust-artifacts")
+        });
+    create_current_store_directory(&artifact_root, name)
+}
+
+fn create_current_store_directory(
+    artifact_root: &std::path::Path,
+    name: &str,
+) -> std::path::PathBuf {
+    std::fs::create_dir_all(artifact_root).expect("create current ledger artifact root");
+    let artifact_root = std::fs::canonicalize(artifact_root).expect("resolve ledger artifact root");
+    let repository =
+        std::fs::canonicalize(std::env::current_dir().expect("resolve current parity directory"))
+            .expect("resolve current parity repository");
+    assert!(
+        !artifact_root.starts_with(repository),
+        "current ledger artifacts must stay outside the repository"
+    );
+    // PIDs are reused across runs. Keep a fresh, exclusively created directory
+    // until the original ledger owner closes and releases its physical backing.
+    tempfile::Builder::new()
+        .prefix(&format!(
+            "flowersec-current-rust-{}-{name}-",
+            std::process::id()
+        ))
+        .tempdir_in(artifact_root)
+        .expect("create exclusive original ledger directory")
+        .keep()
+}
+
 fn current_pool_store(
     environment: &flowersec::TransportEnvironment,
     material: &CurrentMaterial,
@@ -1302,30 +1340,8 @@ fn current_pool_store_named(
     name: &str,
 ) -> CurrentPoolStore {
     let (tenant, issuer, audience) = current_artifact_binding(artifact);
-    let artifact_root = std::env::var_os("FLOWERSEC_TASK_ARTIFACT_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .expect("resolve current parity directory")
-                .parent()
-                .expect("resolve repository parent")
-                .join("flowersec-current-rust-artifacts")
-        });
-    assert!(
-        !artifact_root
-            .starts_with(std::env::current_dir().expect("resolve current parity directory")),
-        "current pool artifacts must stay outside the repository"
-    );
-    let root = artifact_root.join(format!(
-        "flowersec-current-rust-{}-{}-{name}",
-        std::process::id(),
-        material.role
-    ));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).expect("create current pool directory");
-    let path = std::fs::canonicalize(&root)
-        .expect("canonicalize current pool directory")
-        .join("pool.sqlite");
+    let root = current_store_directory(&format!("{}-{name}", material.role));
+    let path = root.join("pool.sqlite");
     let generation_source = current_bytes(&material.generation.source, 64, None);
     let source = Sha256::digest(&generation_source);
     let mut store_id = [0u8; 32];
@@ -2530,6 +2546,35 @@ async fn main() {
         "tunnel-endpoint-a" => current_tunnel::endpoint_a(&carrier).await,
         "tunnel-endpoint-b" => current_tunnel::endpoint_b(&carrier).await,
         _ => panic!("invalid role"),
+    }
+}
+
+#[cfg(test)]
+mod ledger_directory_tests {
+    use super::*;
+
+    #[test]
+    fn original_ledger_directories_preserve_history_when_pids_are_reused() {
+        let root = current_store_directory("history-test");
+        for name in ["0-pool", "relay", "live-parent", "live-relay"] {
+            let retained = root.join(format!(
+                "flowersec-current-rust-{}-{name}",
+                std::process::id()
+            ));
+            std::fs::create_dir(&retained).unwrap();
+            let history = retained.join("history.sqlite");
+            std::fs::write(&history, b"retained original history").unwrap();
+            let first = create_current_store_directory(&root, name);
+            let second = create_current_store_directory(&root, name);
+            assert_ne!(first, second);
+            assert_ne!(first, retained);
+            assert!(first.is_dir() && second.is_dir());
+            assert_eq!(
+                std::fs::read(history).unwrap(),
+                b"retained original history"
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
