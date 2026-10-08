@@ -1261,7 +1261,14 @@ func (d *ServiceDispatch) Close() {
 	d.Advance()
 }
 func (d *ServiceDispatch) cleanupLocked() {
-	if !d.closed || d.cleaned || d.active != 0 || d.advancing || d.admitting || d.declarationPreparing || d.closingResources || d.durableStarted && !d.durableExited || d.durableNotifications != nil {
+	if !d.closed || d.cleaned || d.active != 0 || d.advancing || d.admitting || d.declarationPreparing || d.closingResources || d.durableNotifications != nil {
+		return
+	}
+	if d.durableStarted && !d.durableExited {
+		// Close may wake the provider while a stream or Resume owner is still
+		// live. Its final retirement must wake that same worker again so it
+		// can observe the empty closed dispatcher and actually exit.
+		d.signalDurable()
 		return
 	}
 	d.cleaned = true

@@ -19,14 +19,26 @@ func (o *StreamOwnership) protectReceiveCredit(minimum uint64) error {
 	p := f.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if f.limit > math.MaxInt64 || minimum == 0 || minimum > uint64(len(f.storage)) || f.minimumPromise != 0 || f.delivered != 0 || f.readPending || f.readTails != 0 || f.limit-f.released < minimum || f.termination.service == nil {
+	if f.limit > math.MaxInt64 || minimum == 0 || minimum > uint64(len(f.storage)) || f.minimumPromise != 0 || f.delivered != 0 || f.readPending || f.readTails != 0 || f.termination.service == nil {
 		return ErrCredit
 	}
 	if err := f.readOwnershipLocked(o); err != nil {
 		return err
 	}
-	if f.abandoned || f.hasTerminal || f.fenced {
+	if f.abandoned || f.fenced {
 		return ErrFlowClosed
+	}
+	// FIN may authenticate before the accepted service owner binds. It has
+	// already returned future credit, so retain its unread bytes and terminal
+	// without installing a minimum that this direction can never replenish.
+	if f.hasTerminal {
+		if f.graceful {
+			return nil
+		}
+		return ErrFlowClosed
+	}
+	if f.limit-f.released < minimum {
+		return ErrCredit
 	}
 	f.minimumPromise = minimum
 	f.creditAck = f.observed.Offset

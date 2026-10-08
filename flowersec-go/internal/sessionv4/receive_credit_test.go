@@ -2,11 +2,56 @@ package sessionv4
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"testing"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
+
+func TestProtectedReceiveCreditBindingPreservesAlreadyAuthenticatedFIN(t *testing.T) {
+	for _, test := range []struct{ name, payload string }{{"empty", ""}, {"unread", "unread"}} {
+		t.Run(test.name, func(t *testing.T) {
+			payload := test.payload
+			f := newNativeServiceFixtureResources(t, 1, 1, &StreamTerminationPolicy{NormalMS: 50, QuarantineMS: 100, QuarantineDirections: 2}, nil, true)
+			s := f.open(t)
+			f.start()
+			if _, err := s.peer.send.Write(f.ctx, []byte(payload), true); err != nil {
+				t.Fatal(err)
+			}
+			if err := nativeResult(t, f.read(s, bytes.NewReader(s.wire.Bytes()))); err != nil {
+				t.Fatal(err)
+			}
+			ref := f.resources.reserve(t, StreamOwnershipCharge())
+			t.Cleanup(ref.Release)
+			owner, err := f.local.admission.OwnStream(s.h, ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				owner.Revoke()
+				if err := owner.Release(); err != nil {
+					t.Error(err)
+				}
+			})
+			before := f.local.pool.Outstanding()
+			if err := owner.protectReceiveCredit(0); !errors.Is(err, ErrCredit) {
+				t.Fatal("terminal bypassed minimum validation", err)
+			}
+			if err := owner.protectReceiveCredit(512); err != nil {
+				t.Fatal("FIN before service binding was rejected", err)
+			}
+			if f.local.pool.Outstanding() != before || s.flow.receive.minimumPromise != 0 {
+				t.Fatal("terminal binding created future credit")
+			}
+			var body [16]byte
+			result, err := owner.ReadInto(f.ctx, body[:])
+			if err != nil || result.ReadTerminal != protocolv4.V4ReadTerminalEof || string(body[:result.Progress.Filled]) != payload {
+				t.Fatal("terminal binding lost unread bytes or EOF", result, err)
+			}
+		})
+	}
+}
 
 // v4.go_rpc_channel.credit
 func TestProtectedReceiveCreditReturnsThroughOriginalMaintenance(t *testing.T) {

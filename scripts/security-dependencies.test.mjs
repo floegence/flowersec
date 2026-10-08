@@ -8,10 +8,28 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { addNodePeerCoverage, readNodePeerCoverage } from "./ts-peer-coverage.mjs";
-import { runCoverageLanes } from "./server-parity-native-addon.mjs";
+import { runCoverageLanes, validateSuccessfulResult } from "./server-parity-native-addon.mjs";
 import { cleanupParityArtifact, ParityProcessCleanupError } from "./server-parity-browser-installation.mjs";
 
 const sourceRoot = path.resolve(import.meta.dirname, "..");
+
+test("native title results accept exact leaf and qualified names but reject uncertain execution", () => {
+  const title = "admits direct raw QUIC with original stores, typed RPC, stream FIN, and cleanup (hold DRAINED: false)";
+  const assertion = { title, fullName: `Node current production raw QUIC runtime ${title}`, status: "passed" };
+  const report = assertions => ({ success: true, testResults: [{ assertionResults: assertions }] });
+  validateSuccessfulResult(report([assertion]), "native title", title);
+  validateSuccessfulResult(report([assertion]), "native title", assertion.fullName);
+  validateSuccessfulResult(report([{ ...assertion, fullName: title }]), "native title", title);
+  assert.throws(() => validateSuccessfulResult(report([]), "native title", title), /exactly one passing test/);
+  assert.throws(() => validateSuccessfulResult(report([{ ...assertion, status: "skipped" }]), "native title", title), /exactly one passing test/);
+  assert.throws(() => validateSuccessfulResult(report([{ ...assertion, status: "failed" }]), "native title", title), /failed assertions/);
+  assert.throws(() => validateSuccessfulResult(report([
+    assertion, { ...assertion, fullName: `Another suite ${title}` },
+  ]), "native title", title), /exactly one passing test/);
+  assert.throws(() => validateSuccessfulResult(report([assertion]), "native title", "cleanup (hold DRAINED: false)"), /exactly one passing test/);
+  assert.throws(() => validateSuccessfulResult(report([assertion]), "native title", `${title} extra`), /exactly one passing test/);
+  assert.throws(() => validateSuccessfulResult({ ...report([assertion]), success: false }, "native title", title), /suiteSuccess=true/);
+});
 
 test("coverage artifacts stay owned through an incomplete lane join and preserve both failures", async t => {
   // Exercise the actual gate finalizer without compiling SDKs or starting the

@@ -215,20 +215,7 @@ async function runNativeIntegration(repositoryRoot, title, signal) {
     }
     if (resultFile !== undefined) {
       const result = JSON.parse(await readFile(resultFile, "utf8"));
-      const assertions = Array.isArray(result.testResults)
-        ? result.testResults.flatMap(testResult => Array.isArray(testResult.assertionResults) ? testResult.assertionResults : [])
-        : [];
-      const executed = assertions.filter(assertion => assertion.status === "passed" || assertion.status === "failed");
-      const failed = assertions.filter(assertion => assertion.status === "failed");
-      const matching = assertions.filter(assertion => assertion.status === "passed" && assertion.fullName === title);
-      if (failed.length !== 0 || executed.length !== 1 || matching.length !== 1) {
-        throw new Error(`native integration title did not execute exactly one passing test: ${JSON.stringify({
-          title,
-          executed: executed.map(assertion => ({ fullName: assertion.fullName, status: assertion.status })),
-          failed: failed.map(assertion => assertion.fullName),
-          matching: matching.map(assertion => assertion.fullName),
-        })}`);
-      }
+      validateSuccessfulResult(result, "native integration title", title);
     }
   } finally {
     if (resultDirectory !== undefined) await rm(resultDirectory, { recursive: true, force: true });
@@ -284,20 +271,7 @@ async function runCoverageTitle(repositoryRoot, file, title, shard, config, sign
   const result = await readJsonFile(resultFile, "coverage title test result");
   const coverageFile = path.join(shard, "coverage-final.json");
   await readCoverageFile(coverageFile);
-  const assertions = Array.isArray(result.testResults)
-    ? result.testResults.flatMap(testResult => Array.isArray(testResult.assertionResults) ? testResult.assertionResults : [])
-    : [];
-  const executed = assertions.filter(assertion => assertion.status === "passed" || assertion.status === "failed");
-  const failed = assertions.filter(assertion => assertion.status === "failed");
-  const matching = assertions.filter(assertion => assertion.status === "passed" && assertion.fullName === title);
-  if (failed.length !== 0 || executed.length !== 1 || matching.length !== 1) {
-    throw new Error(`coverage title did not execute exactly one passing test: ${JSON.stringify({
-      file, title,
-      executed: executed.map(assertion => ({ fullName: assertion.fullName, status: assertion.status })),
-      failed: failed.map(assertion => assertion.fullName),
-      matching: matching.map(assertion => assertion.fullName),
-    })}`);
-  }
+  validateSuccessfulResult(result, `coverage title ${file}`, title);
 }
 
 // These processes have separate test, transport and report owners. A failure
@@ -461,7 +435,7 @@ function resultAssertions(result) {
     : [];
 }
 
-function validateSuccessfulResult(result, label, expectedTitle) {
+export function validateSuccessfulResult(result, label, expectedTitle) {
   if (result?.success !== true) {
     throw new Error(`${label} did not report suiteSuccess=true: ${JSON.stringify({ success: result?.success })}`);
   }
@@ -475,7 +449,10 @@ function validateSuccessfulResult(result, label, expectedTitle) {
   }
   if (expectedTitle !== undefined) {
     const executed = assertions.filter(assertion => assertion.status === "passed" || assertion.status === "failed");
-    const matching = assertions.filter(assertion => assertion.status === "passed" && assertion.fullName === expectedTitle);
+    // Vitest's fullName includes suite ancestors; title is the exact leaf name.
+    // Accept either explicit name while still requiring one executed test.
+    const matching = assertions.filter(assertion => assertion.status === "passed"
+      && (assertion.fullName === expectedTitle || assertion.title === expectedTitle));
     if (executed.length !== 1 || matching.length !== 1) {
       throw new Error(`${label} did not execute exactly one passing test: ${JSON.stringify({
         title: expectedTitle,
