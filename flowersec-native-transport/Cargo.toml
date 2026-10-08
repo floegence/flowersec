@@ -16,7 +16,7 @@ __flowersec_internal_test_support = []
 
 [dependencies]
 qpack = "=0.1.0"
-url = "=2.5.4"
+url = "=2.5.8"
 bytes = "1"
 # The fixed native provider is private source so published builds retain the
 # negotiated reliable-reset implementation.
