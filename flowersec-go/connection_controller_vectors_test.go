@@ -661,7 +661,7 @@ func runControllerVectorTerminalCycleReset(t *testing.T, scenario controllerVect
 		controllerPinPolicy("ERERERERERERERERERERERERERERERERERERERERERE")))
 	source := &controllerTestSource{results: []controllerAcquireResult{{lease: lease.lease}}}
 	controller := newControllerForTest(t, source, 0)
-	session := newControllerTestSession(SessionOperationFailed)
+	session := newControllerTestSession(SessionCanceled)
 	var connects atomic.Int32
 	controller.connectDetailed = func(ctx context.Context, claimed claimedArtifactLease, _ ConnectorOptions, _ map[transportEndpointKey]struct{}) (Session, controllerConnectOutcome) {
 		connects.Add(1)

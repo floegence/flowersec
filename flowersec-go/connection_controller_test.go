@@ -944,13 +944,13 @@ func TestConnectionControllerFailurePhases(t *testing.T) {
 		startController(t, controller)
 		waitControllerSession(t, controller, session)
 		session.terminate()
-		waitControllerState(t, controller, ConnectionFailed)
+		waitControllerState(t, controller, ConnectionWaiting)
 		failure := controller.Snapshot().Failure
 		var sessionError *SessionError
 		if failure == nil || failure.Phase() != ConnectionFailureSession ||
 			!errors.As(failure.Error, &sessionError) || sessionError.Code() != SessionOperationFailed ||
-			failure.Disposition.Kind != RetryDispositionTerminal {
-			t.Fatalf("session failure = %+v, want session/operation_failed/terminal", failure)
+			failure.Disposition.Kind != RetryDispositionRetryable {
+			t.Fatalf("session failure = %+v, want session/operation_failed/retryable", failure)
 		}
 		closeController(t, controller)
 	})
