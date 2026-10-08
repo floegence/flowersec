@@ -16,4 +16,4 @@ napi-derive = "=3.6.3"
 libsqlite3-sys = { version = "=0.38.2", features = ["loadable_extension"] }
 
 [build-dependencies]
-napi-build = "=2.4.1"
+napi-build = "=2.6.0"
