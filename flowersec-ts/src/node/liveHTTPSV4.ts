@@ -10,6 +10,7 @@ import { originalEnvironment } from "../v4/runtime/environment.js";
 import { ResourceVector } from "../v4/runtime/resources.js";
 import { TrustedWindow, timerChunk } from "../v4/runtime/deadline.js";
 import { encodeLiveAuthorizationRequest } from "../v4/runtime/liveAuthorizationWire.js";
+import { credentialOwner } from "../v4/runtime/credentialSupport.js";
 
 export interface V4NodeLiveHTTPSOptions {
   /** Independently trusted control origin; requests append /live/authorize. */
@@ -104,7 +105,7 @@ export function createV4NodeLiveHTTPS(environment: V4TransportEnvironment, optio
     requireControl(request.authority === authority && request.tenant === tenant && request.audience === audience, "control_request_binding");
     requireControl(destination instanceof Uint8Array && destination.byteLength >= 1 && destination.byteLength <= 73728, "control_response_capacity");
     requireControl(active.size < maxConcurrentRequests, "resource_exhausted");
-    const resources = owner.resources, reservation = resources.root.reserve({ owner: { ...resources.owner, kind: "node_live_https_request" }, accounts: resources.accounts, charge });
+    const resources = owner.resources, reservation = resources.root.reserve({ owner: credentialOwner(resources, "node_live_https_request"), accounts: resources.accounts, charge });
     const controller = new AbortController(); active.add(controller);
     let socket: TLSSocket | undefined, agent: Agent | undefined, http: ClientRequest | undefined, response: IncomingMessage | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined, body: Uint8Array | undefined, success = false, responseComplete = false;

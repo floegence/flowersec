@@ -5,6 +5,7 @@ import { ResourceVector } from "../v4/runtime/resources.js";
 import { TrustedDeadline, TrustedWindow, timerChunk } from "../v4/runtime/deadline.js";
 import { bindLiveAuthorizationConfig, type V4LiveAuthorizationConfig, type V4LiveAuthorizationProvider } from "../v4/runtime/liveAuthorization.js";
 import { encodeLiveAuthorizationRequest } from "../v4/runtime/liveAuthorizationWire.js";
+import { credentialOwner } from "../v4/runtime/credentialSupport.js";
 
 const nativeFetch = globalThis.fetch;
 const copy = Uint8Array.prototype.set;
@@ -85,7 +86,7 @@ export function createV4BrowserLiveHTTPS(environment: V4TransportEnvironment, op
     requireControl(request.authority === authority && request.tenant === tenant && request.audience === audience, "control_request_binding");
     requireControl(byteLength(destination) >= 1 && byteLength(destination) <= 73728, "control_response_capacity");
     requireControl(active.size < maxConcurrentRequests, "resource_exhausted");
-    const resources = owner.resources, reservation = resources.root.reserve({ accounts: resources.accounts, owner: { ...resources.owner, kind: "browser_live_https_request" }, charge });
+    const resources = owner.resources, reservation = resources.root.reserve({ accounts: resources.accounts, owner: credentialOwner(resources, "browser_live_https_request"), charge });
     const controller = new AbortController(); active.add(controller);
     let timer: ReturnType<typeof setTimeout> | undefined, body: Uint8Array | undefined;
     let response: Response | undefined, reader: ReadableStreamDefaultReader<Uint8Array> | undefined, success = false;

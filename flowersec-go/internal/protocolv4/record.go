@@ -43,9 +43,20 @@ type RecordProfile struct {
 }
 
 type recordWireField struct {
-	Name, Type string
-	Const, Max *uint64
+	Name, Type    string
+	Const, Max    *uint64
+	source, width int
 }
+
+type recordIntegers [5]uint64
+
+const (
+	recordPayload = iota
+	recordFrame
+	recordEpoch
+	recordScope
+	recordSequence
+)
 
 type recordDomainPart struct {
 	Name, Encoding string
@@ -112,6 +123,38 @@ var loadRecordRegistry = sync.OnceValues(func() (*recordWireRegistry, error) {
 		}
 		r.headerBytes += width
 	}
+	// Compile the fixed registry's field selectors once. Live records still
+	// check every width and maximum, without constructing per-record maps.
+	for kind, layout := range [][]recordWireField{r.Envelope.Layout, r.Header, r.Nonce} {
+		for i := range layout {
+			f := &layout[i]
+			f.width = recordWidth(f.Type)
+			if f.width == 0 {
+				return nil, ErrRecordRegistry
+			}
+			if f.Const != nil {
+				f.source = -1
+				continue
+			}
+			switch f.Name {
+			case "payload_length":
+				f.source = recordPayload
+			case "frame_type":
+				f.source = recordFrame
+			case "epoch":
+				f.source = recordEpoch
+			case "sequence_scope":
+				f.source = recordScope
+			case "sequence":
+				f.source = recordSequence
+			default:
+				return nil, ErrRecordRegistry
+			}
+			if kind == 0 && f.source != recordPayload && f.source != recordFrame || kind == 1 && f.source != recordEpoch && f.source != recordScope && f.source != recordSequence || kind == 2 && f.source != recordEpoch && f.source != recordSequence {
+				return nil, ErrRecordRegistry
+			}
+		}
+	}
 	var err error
 	r.datagram, err = strconv.ParseUint(r.Caps.Datagram, 10, 64)
 	if err != nil {
@@ -143,14 +186,16 @@ func recordWidth(kind string) int {
 	return 0
 }
 
-func appendRecordLayout(out []byte, layout []recordWireField, values map[string]uint64) ([]byte, error) {
+func appendRecordLayout(out []byte, layout []recordWireField, values recordIntegers) ([]byte, error) {
 	for _, f := range layout {
-		n, ok := values[f.Name]
+		var n uint64
 		if f.Const != nil {
-			n, ok = *f.Const, true
+			n = *f.Const
+		} else {
+			n = values[f.source]
 		}
-		width := recordWidth(f.Type)
-		if !ok || width == 0 || width < 8 && n >= uint64(1)<<(8*width) || f.Max != nil && n > *f.Max {
+		width := f.width
+		if width < 8 && n >= uint64(1)<<(8*width) || f.Max != nil && n > *f.Max {
 			return nil, ErrRecordRegistry
 		}
 		var b [8]byte
@@ -238,11 +283,12 @@ func RecordPrefix(frame FrameType, header RecordHeader, plaintextBytes int, prof
 	if frame == FrameDatagram && payload+EnvelopePrefixSize > r.Caps.DatagramEnvelope {
 		return nil, ErrPayloadTooLarge
 	}
-	out, err := appendRecordLayout(make([]byte, 0, EnvelopePrefixSize+r.headerBytes), r.Envelope.Layout, map[string]uint64{"payload_length": payload, "frame_type": uint64(frame)})
+	values := recordIntegers{recordPayload: payload, recordFrame: uint64(frame), recordEpoch: uint64(header.Epoch), recordScope: header.Scope, recordSequence: header.Sequence}
+	out, err := appendRecordLayout(make([]byte, 0, EnvelopePrefixSize+r.headerBytes), r.Envelope.Layout, values)
 	if err != nil {
 		return nil, err
 	}
-	return appendRecordLayout(out, r.Header, map[string]uint64{"epoch": uint64(header.Epoch), "sequence_scope": header.Scope, "sequence": header.Sequence})
+	return appendRecordLayout(out, r.Header, values)
 }
 
 // ParseRecord borrows the immutable input until the caller finishes its crypto
@@ -304,7 +350,7 @@ func RecordNonce(header RecordHeader) ([12]byte, error) {
 	if err != nil {
 		return nonce, err
 	}
-	value, err := appendRecordLayout(nonce[:0], r.Nonce, map[string]uint64{"epoch": uint64(header.Epoch), "sequence": header.Sequence})
+	value, err := appendRecordLayout(nonce[:0], r.Nonce, recordIntegers{recordEpoch: uint64(header.Epoch), recordSequence: header.Sequence})
 	if err != nil || len(value) != len(nonce) {
 		return nonce, ErrRecordRegistry
 	}
@@ -345,10 +391,19 @@ func buildRecordDomain(name, profile string, direction Direction, bytes map[stri
 			if !ok || len(part.Enum) > 0 && !slices.Contains(part.Enum, n) {
 				return nil, ErrRecordRegistry
 			}
-			kind := map[string]string{"u8": "uint8", "u32": "uint32_be", "u64": "uint64_be"}[part.Encoding]
-			out, err = appendRecordLayout(out, []recordWireField{{Name: part.Name, Type: kind}}, integers)
-			if err != nil {
-				return nil, err
+			switch part.Encoding {
+			case "u8":
+				if n > math.MaxUint8 {
+					return nil, ErrRecordRegistry
+				}
+				out = append(out, byte(n))
+			case "u32":
+				if n > math.MaxUint32 {
+					return nil, ErrRecordRegistry
+				}
+				out = binary.BigEndian.AppendUint32(out, uint32(n))
+			case "u64":
+				out = binary.BigEndian.AppendUint64(out, n)
 			}
 		default:
 			return nil, ErrRecordRegistry
@@ -368,9 +423,83 @@ func RecordKeyInfo(profile string, hash [32]byte, epoch uint32, direction Direct
 	return buildRecordDomain("record_key", profile, direction, map[string][]byte{"handshake_hash": hash[:]}, map[string]uint64{"epoch": uint64(epoch), "sequence_scope": scope})
 }
 
+type recordAADTemplate struct {
+	wire                 []byte
+	envelopeAt, headerAt int
+}
+
+// Only registry formatting is precomputed. Every call copies its own complete
+// current envelope/header into a fresh result; no record or authority is cached.
+var loadRecordAADTemplates = sync.OnceValues(func() (map[string][2]recordAADTemplate, error) {
+	r, err := loadRecordRegistry()
+	if err != nil {
+		return nil, err
+	}
+	d := r.domains["record_aad"]
+	templates := make(map[string][2]recordAADTemplate, len(r.Profiles))
+	for profile := range r.Profiles {
+		var pair [2]recordAADTemplate
+		for direction := range pair {
+			t := recordAADTemplate{envelopeAt: -1, headerAt: -1}
+			position := len(d.label)
+			for _, part := range d.Input.Parts {
+				switch part.Name {
+				case "envelope_header", "record_header":
+					width, offset := EnvelopePrefixSize, &t.envelopeAt
+					if part.Name == "record_header" {
+						width, offset = r.headerBytes, &t.headerAt
+					}
+					if *offset != -1 || part.Encoding != "raw" || part.Length != width {
+						return nil, ErrRecordRegistry
+					}
+					*offset = position
+					position += width
+				case "profile":
+					if part.Encoding != "lp-ascii" {
+						return nil, ErrRecordRegistry
+					}
+					position += 4 + len(profile)
+				case "direction":
+					if part.Encoding != "u8" {
+						return nil, ErrRecordRegistry
+					}
+					position++
+				default:
+					return nil, ErrRecordRegistry
+				}
+			}
+			if t.envelopeAt == -1 || t.headerAt == -1 {
+				return nil, ErrRecordRegistry
+			}
+			t.wire, err = buildRecordDomain("record_aad", profile, Direction(direction), map[string][]byte{"envelope_header": make([]byte, EnvelopePrefixSize), "record_header": make([]byte, r.headerBytes)}, map[string]uint64{})
+			if err != nil || len(t.wire) != position {
+				return nil, ErrRecordRegistry
+			}
+			pair[direction] = t
+		}
+		templates[profile] = pair
+	}
+	return templates, nil
+})
+
 func RecordAAD(profile string, direction Direction, prefix []byte) ([]byte, error) {
 	if len(prefix) != EnvelopePrefixSize+RecordHeaderSize() {
 		return nil, ErrTruncated
 	}
-	return buildRecordDomain("record_aad", profile, direction, map[string][]byte{"envelope_header": prefix[:EnvelopePrefixSize], "record_header": prefix[EnvelopePrefixSize:]}, map[string]uint64{})
+	templates, err := loadRecordAADTemplates()
+	if err != nil {
+		return nil, err
+	}
+	pair, ok := templates[profile]
+	if !ok {
+		return nil, ErrRecordProfile
+	}
+	if direction > ServerToClient {
+		return nil, ErrRecordDirection
+	}
+	t := pair[direction]
+	out := slices.Clone(t.wire)
+	copy(out[t.envelopeAt:t.envelopeAt+EnvelopePrefixSize], prefix[:EnvelopePrefixSize])
+	copy(out[t.headerAt:t.headerAt+RecordHeaderSize()], prefix[EnvelopePrefixSize:])
+	return out, nil
 }

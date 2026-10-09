@@ -142,10 +142,7 @@ func (l *ArtifactLease) installTunnelMaterials(c ArtifactLeaseConfig, trusted *A
 				if originals[part] == nil {
 					return cryptov4.ErrConfiguration
 				}
-				wire[part], err = originals[part].Bytes()
-				if err == nil {
-					entry.maps[part], err = entry.codecs[part].Verify(wire[part], originals[part].Key(), protocolv4.DecodeContext{})
-				}
+				entry.maps[part], err = entry.codecs[part].CopyVerified(originals[part], protocolv4.DecodeContext{})
 			}
 			if i == 0 {
 				l.maps[4+part] = entry.maps[part]

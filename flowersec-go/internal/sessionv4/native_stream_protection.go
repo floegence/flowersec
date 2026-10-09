@@ -68,7 +68,7 @@ func (n *nativeStreamTransport) openingAvailableLocked(using *nativeStreamProtec
 	opening := n.opening
 	for i := range n.slots {
 		s := &n.slots[i]
-		if s.protection != nil && s.protection != using && !s.caller {
+		if s.protection != nil && !s.protection.closed && s.protection != using && !s.caller {
 			opening++
 		}
 	}
@@ -99,13 +99,25 @@ func (p *nativeStreamProtection) checkAvailable() error {
 }
 
 func (p *nativeStreamProtection) closeLocked() {
+	if p == nil || p.transport == nil || p.closed {
+		return
+	}
 	p.closed = true
+	if p.index < 0 || p.index >= len(p.transport.slots) {
+		p.provider.Close()
+		return
+	}
+	s := &p.transport.slots[p.index]
+	// Once claimed, the provider is the live stream's physical authority.
+	// Closing the one-shot protection promise must not close that stream; the
+	// slot's normal retirement path owns its eventual close. Unclaimed
+	// protections still own and close their provider here.
+	if s.protection == p && s.used {
+		return
+	}
 	p.provider.Close()
-	if p.index < len(p.transport.slots) {
-		s := &p.transport.slots[p.index]
-		if s.protection == p && !s.used {
-			s.protection = nil
-		}
+	if s.protection == p {
+		s.protection = nil
 	}
 }
 

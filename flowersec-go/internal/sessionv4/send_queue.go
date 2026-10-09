@@ -191,6 +191,13 @@ func (q *SendQueue) writeAdapterOwned(ctx context.Context, input []byte, transfe
 			return q.acceptLocked(&request)
 		}
 		wake, closed := q.slots[slot].wake, q.flow.writer.engine.Done()
+		// The FIFO/space predicate above is current under the queue gate.
+		// Discard only an older hint before parking. Space/FIFO transitions
+		// take this same gate and will publish their next wake after unlock.
+		select {
+		case <-wake:
+		default:
+		}
 		q.mu.Unlock()
 		select {
 		case <-ctx.Done():
@@ -469,7 +476,7 @@ func (q *SendQueue) pump(ctx context.Context, service *SendService) (RecordWrite
 		q.mu.Unlock()
 		return RecordWriteResult{}, 0, ErrFlowClosed
 	}
-	n := min(q.size, len(q.storage)-q.head, q.chunk, int(min(credit, uint64(math.MaxInt))))
+	n := min(q.size, q.chunk, int(min(credit, uint64(math.MaxInt))))
 	fin := q.sealed && n == q.size
 	if n == 0 && !fin {
 		pending := q.size != 0
@@ -480,7 +487,8 @@ func (q *SendQueue) pump(ctx context.Context, service *SendService) (RecordWrite
 		return RecordWriteResult{}, 0, nil
 	}
 	q.pumping = true
-	input := q.storage[q.head : q.head+n]
+	first := min(n, len(q.storage)-q.head)
+	input, wrapped := q.storage[q.head:q.head+first], q.storage[:n-first]
 	// Capture the original final-response responsibility before provider I/O.
 	// Its bounded accounting must not wait on the queue's publication-return
 	// gate. pumping retains the ring and this reference until that tail exits.
@@ -489,7 +497,7 @@ func (q *SendQueue) pump(ctx context.Context, service *SendService) (RecordWrite
 		publishedResponse = q.responsePublication.ObserveResponseHandoff
 	}
 	q.mu.Unlock()
-	result, err := flow.write(ctx, input, fin, q, publishedResponse)
+	result, err := flow.writeParts(ctx, input, wrapped, fin, q, publishedResponse)
 	q.mu.Lock()
 	if q.closed {
 		err = q.failure
@@ -497,7 +505,8 @@ func (q *SendQueue) pump(ctx context.Context, service *SendService) (RecordWrite
 	fatal := err != nil && (result.Submitted || !sendQueueBackpressure(err))
 	published := 0
 	if result.Complete {
-		clear(q.storage[q.head : q.head+n])
+		clear(q.storage[q.head : q.head+first])
+		clear(q.storage[:n-first])
 		q.head = (q.head + n) % len(q.storage)
 		q.size -= n
 		q.published += uint64(n)

@@ -34,10 +34,10 @@ The expensive inventory is grouped by execution boundary and has no second manif
 | --- | --- |
 | Coverage and race | `coverage/{go,typescript,rust,swift}`, `race/go` |
 | Local real browsers | Chromium `browser/chromium/webtransport/*` trust and capability cases, `browser/chromium/websocket/self-contained`, `browser/chromium/proxy-service-worker`, and `browser/{firefox,webkit}/{webtransport-pin-capability,websocket/self-contained}` |
-| Userspace Flowersec fault smoke | `diagnostic/weaknet/{raw-quic,websocket}/direct` |
+| Kernel-backed Flowersec fault smoke | `diagnostic/weaknet/{raw-quic,websocket}/direct` |
 | Kernel fault injector | Four `diagnostic/kernel/*` lifecycle and exact-fault IDs |
 | Kernel-backed Flowersec weaknet | `diagnostic/flowersec-weaknet/{websocket,raw-quic}/direct/{delay-jitter,periodic-loss,burst-loss,outage,mtu-large-payload,rate-5mbps,rate-1mbps,reorder-duplicate}` and `diagnostic/flowersec-weaknet/{websocket,raw-quic}/tunnel/representative` |
-| Controller weaknet | `diagnostic/flowersec-controller-weaknet/{websocket,raw-quic}/{delay-jitter,periodic-loss,reorder,outage-reconnect,pin-rotation-refresh-backoff-lease}` |
+| Controller weaknet | `diagnostic/flowersec-v4-controller-weaknet/{websocket,raw-quic}/{delay-jitter,periodic-loss,reorder,outage-reconnect,pin-rotation-refresh-backoff-lease}` |
 | Required Go performance | Six `performance/capacity/*` WSS/raw-QUIC IDs, raw QUIC migration soak, production WSS soak, `performance/single-connection/{wss,raw-quic}`, and `performance/throughput/{wss,raw-quic}` |
 | Optional WebTransport performance | `performance-optional/webtransport-capability`, followed in the integrated plan by six `performance/capacity/*` WebTransport/Chromium IDs, `performance/soak/webtransport`, `performance/single-connection/webtransport`, and `performance/throughput/webtransport`; only a structured missing-WebTransport result records these IDs as `UNSUPPORTED`, while browser path, launch, navigation, runner, or cleanup failures remain `FAIL` |
 

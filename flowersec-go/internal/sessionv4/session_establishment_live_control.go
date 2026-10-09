@@ -316,11 +316,7 @@ func (p *SessionEstablishment) prepareTunnelServerAllow(c TunnelServerAllowConfi
 	if c.Provider == nil || c.Grant == nil || p.serverAllow.grant != nil {
 		return cryptov4.ErrConfiguration
 	}
-	wire, err := c.Grant.Bytes()
-	if err != nil {
-		return err
-	}
-	grant, err := p.codecs[8].Verify(wire, c.Grant.Key(), protocolv4.DecodeContext{})
+	grant, err := p.codecs[8].CopyVerified(c.Grant, protocolv4.DecodeContext{})
 	if err != nil {
 		return err
 	}

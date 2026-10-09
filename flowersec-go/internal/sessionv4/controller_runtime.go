@@ -99,6 +99,12 @@ func (c *ConnectionController) WaitForSession(ctx context.Context) (*Environment
 			return s, err
 		}
 		c.mu.Lock()
+		// Publication may finish while CaptureSession checks the original
+		// Session gate. Re-read instead of projecting an obsolete error.
+		if changed != c.changed {
+			c.mu.Unlock()
+			continue
+		}
 		initializing := c.attempt != nil && c.attempt.entered && !c.attempt.finished
 		closed := c.closed
 		willRetry := c.retryWindow != nil || c.retryPending

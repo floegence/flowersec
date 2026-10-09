@@ -327,7 +327,7 @@ func TestRenderGoVerifierIncludesTypedFieldChecks(t *testing.T) {
 		}},
 	}}
 
-	_, testFile, err := renderGoVerifier(m, "1.27.1")
+	_, testFile, err := renderGoVerifier(m, "1.27.2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +377,7 @@ func (Session) Close() error { return nil }
 			if err := os.MkdirAll(moduleRoot, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.27.1\n"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(moduleRoot, "go.mod"), []byte("module example.com/interfaceprobe\n\ngo 1.27.2\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			packageDir := filepath.Join(moduleRoot, "sample")
@@ -631,7 +631,7 @@ func TestRepoToolchainVersionUsesRootConfig(t *testing.T) {
 	}
 	for _, invalid := range []string{
 		`{}`, `{"go":{"version":"1.27"}}`, `{"go":{"version":"auto"}}`,
-		`{"go":{"version":1271}}`, `{"go":{"version":"1.27.1"}`,
+		`{"go":{"version":1271}}`, `{"go":{"version":"1.27.2"}`,
 	} {
 		if err := os.WriteFile(configPath, []byte(invalid), 0o644); err != nil {
 			t.Fatal(err)

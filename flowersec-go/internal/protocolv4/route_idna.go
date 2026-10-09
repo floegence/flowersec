@@ -67,6 +67,8 @@ type wireIDNAWorkspace struct {
 	work, scratch [63 * utf8.UTFMax * unicode151.MaxCanonicalDecomposition]rune
 }
 
+const wireDNSMaxBytes = 253
+
 func (r wireIDNA) contextJ(label []rune, i int) bool {
 	if i > 0 && r.prop("ccc", label[i-1]) == "9" {
 		return true
@@ -151,14 +153,14 @@ func (r wireIDNA) bidi(label []rune) bool {
 }
 
 func wireDNS(value string, workspace *wireIDNAWorkspace) error {
-	if len(value) == 0 || len(value) > 253 {
+	if len(value) == 0 || len(value) > wireDNSMaxBytes {
 		return CBORFailure("idna_domain_length")
 	}
 	r, err := runtimeWireIDNA()
 	if err != nil {
 		return err
 	}
-	var points [253]rune
+	var points [wireDNSMaxBytes]rune
 	var boundaries [128][2]int
 	count, used := 0, 0
 	bidi := false

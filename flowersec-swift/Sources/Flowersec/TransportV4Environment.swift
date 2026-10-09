@@ -205,6 +205,9 @@ final class V4EnvironmentFoundation: TransportEnvironmentOwner, @unchecked Senda
   private var sequence: UInt64 = 0
   private var closed = false
   #if os(macOS) || os(iOS)
+  #if DEBUG
+  var nativeSessionTestPrepared: (@Sendable (V4NativeSession) -> Void)?
+  #endif
   private(set) var diagnosticSink: V4DiagnosticSink?
   func installDiagnosticSink(_ configuration: TransportDiagnosticSinkConfiguration?,
     random: @escaping @Sendable (Int) throws -> Data = { try V4Crypto.random($0) }) throws {
@@ -416,7 +419,7 @@ final class V4EnvironmentFoundation: TransportEnvironmentOwner, @unchecked Senda
       return try cryptoOwner(
         kind: 11,
         charge: V4ResourceVector(
-          sdkBytes: UInt64(maximumFrame) * 8 + 4_198_400, items: listener ? 4 : 3, work: listener ? 2 : 1, tasks: 2,
+          sdkBytes: UInt64(maximumFrame) * 10 + 4_199_424, items: listener ? 5 : 4, work: listener ? 2 : 1, tasks: 3,
           timers: 1, connections: listener ? 2 : 1, handles: listener ? 3 : 2))
     }
   }
@@ -475,8 +478,9 @@ final class V4EnvironmentFoundation: TransportEnvironmentOwner, @unchecked Senda
       return try cryptoOwner(
         kind: 10,
         charge: V4ResourceVector(
-          sdkBytes: maxCredit * 2 + UInt64(slots) * 8192 + 2_097_152 + 16_384,
-          items: 9, work: 8, tasks: 8))
+          sdkBytes: maxCredit * 2 + UInt64(slots) * 8192 + 2_097_152 + 16_384
+            + V4ReliableSession.sharedIngressStorageBytes,
+          items: 11, work: 8, tasks: 8))
     }
   }
 
@@ -974,15 +978,16 @@ final class V4EnvironmentFoundation: TransportEnvironmentOwner, @unchecked Senda
   }
 
   func cryptoBuffer(
-    capacity: Int, credential: V4CredentialAdmission? = nil, delivery: (() throws -> Void)? = nil
+    capacity: Int, credential: V4CredentialAdmission? = nil, delivery: (() throws -> Void)? = nil,
+    copies: UInt64 = 2
   ) throws -> V4CryptoBuffer {
     try gate.withLock {
-      guard (0...1_048_584).contains(capacity) else { throw V4ResourceFailure.capacity }
+      guard (0...1_048_584).contains(capacity), (2...4).contains(copies) else { throw V4ResourceFailure.capacity }
       return try V4CryptoBuffer(
         owner: cryptoOwner(
           kind: 9,
           charge: V4ResourceVector(
-            sdkBytes: UInt64(capacity) * 2 + 512, items: 1)), capacity: capacity,
+            sdkBytes: UInt64(capacity) * copies + 512, items: 1)), capacity: capacity,
         credential: credential, delivery: delivery)
     }
   }

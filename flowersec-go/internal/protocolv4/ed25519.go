@@ -14,10 +14,16 @@ func VerifyEd25519(signature, message, publicKey []byte) bool {
 	if len(publicKey) != StrictEd25519PublicKeyBytes || len(signature) != StrictEd25519SignatureBytes {
 		return false
 	}
-	for _, encoded := range [][]byte{publicKey, signature[:StrictEd25519PointBytes]} {
+	for index, encoded := range [][]byte{publicKey, signature[:StrictEd25519PointBytes]} {
 		point, err := new(edwards25519.Point).SetBytes(encoded)
 		if err != nil || !bytes.Equal(point.Bytes(), encoded) || point.Equal(edwards25519.NewIdentityPoint()) == 1 {
 			return false
+		}
+		if index != 0 {
+			// With A in the prime-order subgroup, Go's exact verification
+			// equation R = [S]B - [H(R,A,M)]A also proves R's prime order.
+			// Canonical encoding and non-identity remain explicit above.
+			continue
 		}
 		// Scalar negation supplies the canonical integer L-1, not L reduced to
 		// zero. [(L-1)]P + P is [L]P even when P has a torsion component.
@@ -28,7 +34,10 @@ func VerifyEd25519(signature, message, publicKey []byte) bool {
 			return false
 		}
 		minusOne := new(edwards25519.Scalar).Negate(one)
-		orderPoint := new(edwards25519.Point).ScalarMult(minusOne, point)
+		// Both the point and fixed order scalar are public verification inputs.
+		// Variable-time multiplication preserves the same prime-order predicate
+		// without constant-time table selection intended for secret scalars.
+		orderPoint := new(edwards25519.Point).VarTimeDoubleScalarBaseMult(minusOne, point, edwards25519.NewScalar())
 		orderPoint.Add(orderPoint, point)
 		if orderPoint.Equal(edwards25519.NewIdentityPoint()) != 1 {
 			return false

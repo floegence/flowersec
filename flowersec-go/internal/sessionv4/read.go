@@ -87,6 +87,14 @@ func (f *ReceiveFlow) readIntoOwned(ctx context.Context, dst []byte, owner *Stre
 			p.mu.Unlock()
 			return result, err
 		}
+		// This gate has observed an empty, open direction. A hint left by
+		// an earlier synchronous read cannot make new bytes available. Drain
+		// it before unlocking; the next producer uses this same pool gate and
+		// supplies a fresh wake, so no input or terminal event can be lost.
+		select {
+		case <-f.readWake:
+		default:
+		}
 		p.mu.Unlock()
 		select {
 		case <-ctx.Done():

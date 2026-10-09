@@ -28,13 +28,16 @@ import { createV4SQLitePoolBacking, openV4SQLitePoolStore } from "./sqlitePoolV4
 import { createV4TransportEnvironment, originalEnvironment, type V4EnvironmentSessionSpec } from "../v4/runtime/environment.js";
 import { ResourceRoot, ResourceVector, type ResourceAccount, type ResourceReference } from "../v4/runtime/resources.js";
 import { ClockRate } from "../v4/runtime/timeArithmetic.js";
-import { credentialFixture, fill, map, bytes, text, u, array, get, encode, digest, sign } from "../v4/testSupport/credentials.js";
+import { credentialFixture, fill, map, bytes, text, u, array, get, replace, encode, digest, sign } from "../v4/testSupport/credentials.js";
+import { RecordCipher } from "../v4/runtime/recordCrypto.js";
+import type * as RecordCryptoLibrary from "../v4/runtime/recordCrypto.js";
 import { Reference, type Value } from "../v4/testSupport/cbor.js";
 import { wire } from "../v4/runtime/wireRegistry.js";
 import { wireDomains } from "../v4/runtime/schemaRegistry.js";
 import type { V4AuthenticatedTransport } from "../v4/runtime/session.js";
 import type { NoiseProfile } from "../v4/runtime/noiseHandshake.js";
 import { TrustedDeadline } from "../v4/runtime/deadline.js";
+import { createV4NodeLiveHTTPS } from "./liveHTTPSV4.js";
 import { ProxyServer } from "./proxyServer.js";
 import { connectProxyBrowser, type ProxyBrowserHandle } from "../proxy/index.js";
 import { currentProxyStream } from "../proxy/currentStream.js";
@@ -42,6 +45,45 @@ import { ProxyByteReader, writeAll } from "../proxy/stream.js";
 import { readProxyFrame, writeProxyFrame } from "../proxy/wire.js";
 import { u32be, readU32be } from "../utils/bin.js";
 import { createStreamMetadata } from "../public/streamMetadata.js";
+
+vi.mock("../v4/runtime/recordCrypto.js", async importOriginal => {
+  const actual = await importOriginal<typeof RecordCryptoLibrary>();
+  // Keep real key derivation, AEAD, usage and commit. The test wrapper injects
+  // malicious peer plaintext before the original seal, outside frozen APIs.
+  const originals = new WeakMap<InstanceType<typeof actual.RecordCipher>, InstanceType<typeof actual.RecordCipher>>();
+  class ObservedCipher extends actual.RecordCipher {
+    override seal(...args: Parameters<InstanceType<typeof actual.RecordCipher>["seal"]>) { return super.seal(...args); }
+    override open(...args: Parameters<InstanceType<typeof actual.RecordCipher>["open"]>) { return super.open(...args); }
+  }
+  function observeCipher(cipher: InstanceType<typeof actual.RecordCipher>) {
+    const observed = new Proxy(cipher, {
+      get(target, property) {
+        if (property === "seal" || property === "open") return ObservedCipher.prototype[property].bind(target);
+        if (property === "sharesReceiveDirection") return (other: InstanceType<typeof actual.RecordCipher>) => target.sharesReceiveDirection(originals.get(other) ?? other);
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+    });
+    originals.set(observed, cipher); return observed;
+  }
+  function observeEpoch(epoch: InstanceType<typeof actual.RecordEpoch>): InstanceType<typeof actual.RecordEpoch> {
+    return new Proxy(epoch, {
+      get(target, property) {
+        if (property === "derive") return (...args: Parameters<typeof target.derive>) => observeCipher(target.derive(...args));
+        if (property === "installSuccessor") return (...args: Parameters<typeof target.installSuccessor>) => observeEpoch(target.installSuccessor(...args));
+        const value: unknown = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+    });
+  }
+  class ObservedEpoch extends actual.RecordEpoch {
+    override derive(...args: Parameters<InstanceType<typeof actual.RecordEpoch>["derive"]>) {
+      return observeCipher(super.derive(...args));
+    }
+    override installSuccessor(...args: Parameters<InstanceType<typeof actual.RecordEpoch>["installSuccessor"]>) { return observeEpoch(super.installSuccessor(...args)); }
+  }
+  return { ...actual, RecordCipher: ObservedCipher, RecordEpoch: ObservedEpoch };
+});
 
 const profileX = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", profileP = "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1";
 const request = { independent_reliable_read_progress: false, bound_stream_input_isolation: false, datagram: false, local_consumer_tls13_verification: true };
@@ -56,6 +98,46 @@ function envelope(name: string, payload: Uint8Array): Uint8Array { const out = n
 function parseMessage(bytes: Uint8Array, name: string): Uint8Array {
   expect(bytes.length).toBeGreaterThanOrEqual(8); expect(bytes[4]).toBe(wire.frame_types[name]); expect(bytes.subarray(5, 8)).toEqual(new Uint8Array(3));
   expect(new DataView(bytes.buffer, bytes.byteOffset).getUint32(0)).toBe(bytes.length - 8); return bytes.subarray(8);
+}
+function uintValue(value: Value): bigint { if (value.kind !== "uint") throw new Error("expected uint"); return value.value; }
+function observeSharedWSS(profile: NoiseProfile) {
+  const seal = RecordCipher.prototype.seal, open = RecordCipher.prototype.open, submit = NodeWSSCarrier.prototype.submit;
+  const data: Value[] = [], controls: Value[] = [], opened: bigint[] = [];
+  const records = new Map<bigint, { carrier: NodeWSSCarrier; wire: Uint8Array }[]>();
+  let damage: ((body: Value) => Uint8Array) | undefined;
+  const sealing = vi.spyOn(RecordCipher.prototype, "seal").mockImplementation(function (this: RecordCipher, frame, plaintext, ticket) {
+    if (frame === wire.frame_types.STREAM_ACK) controls.push(decode(plaintext));
+    if (frame !== wire.frame_types.STREAM_DATA) return seal.call(this, frame, plaintext, ticket);
+    const body = decode(plaintext); data.push(body);
+    const fault = damage; damage = undefined;
+    return seal.call(this, frame, fault?.(body) ?? plaintext, ticket);
+  });
+  const opening = vi.spyOn(RecordCipher.prototype, "open").mockImplementation(function (this: RecordCipher, frame) {
+    const header = frame.recordHeader(profile);
+    if (header.frameType === wire.frame_types.STREAM_DATA) opened.push(header.scope);
+    return open.call(this, frame);
+  });
+  const sending = vi.spyOn(NodeWSSCarrier.prototype, "submit").mockImplementation(function (this: NodeWSSCarrier, value, admitted, beforeSubmit) {
+    if (value[4] === wire.frame_types.STREAM_DATA) {
+      const scope = new DataView(value.buffer, value.byteOffset, value.byteLength).getBigUint64(12);
+      const messages = records.get(scope) ?? []; messages.push({ carrier: this, wire: new Uint8Array(value) }); records.set(scope, messages);
+    }
+    return submit.call(this, value, admitted, beforeSubmit);
+  });
+  return {
+    data, controls, opened, records,
+    damageNext: (fault: (body: Value) => Uint8Array) => { damage = fault; },
+    inject: async (record: { carrier: NodeWSSCarrier; wire: Uint8Array }, value = record.wire) => {
+      // Adversarial network input still crosses the real bounded WS provider.
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const result = submit.call(record.carrier, value, () => undefined);
+        if (result !== undefined) { await result.completion; return; }
+        await new Promise(resolve => setTimeout(resolve, 1));
+      }
+      throw new Error("test_wss_injection_blocked");
+    },
+    close: () => { sealing.mockRestore(); opening.mockRestore(); sending.mockRestore(); }
+  };
 }
 class ServerTransport implements V4AuthenticatedTransport {
   readonly role = "server" as const; readonly mode = "message" as const;
@@ -76,22 +158,23 @@ class ServerTransport implements V4AuthenticatedTransport {
   close(): Promise<void> { this.ws.terminate(); return this.done; }
   waitTermination(): Promise<void> { return this.done; }
 }
-function environment(timeOrigin: bigint, services = false) {
+function environment(timeOrigin: bigint, services = false, sessions = 1) {
   const limit = new ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
   const root = new ResourceRoot({
-    profileRevision: "1".repeat(64), limit, accounts: services ? 2048 : 32, reservations: services ? 4096 : 256, references: services ? 8192 : 512,
+    profileRevision: "1".repeat(64), limit, accounts: services ? 2048 : 32 * sessions, reservations: services ? 4096 : 256, references: services ? 8192 : 512,
     rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n
   }), start = performance.now();
+  let clockAdvance = 0n;
   const publicOwner = createV4TransportEnvironment({
     root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: "2".repeat(32), runtimeBytes: 1024n,
-    namespaces: 1, sources: 1, acquisitions: 1, materials: 1, sessions: 1, dependencies: 8, acquireMS: 10000n, cleanupMS: 50,
+    namespaces: 1, sources: 1, acquisitions: sessions, materials: sessions, sessions, dependencies: 8, acquireMS: 10000n, cleanupMS: 50,
     clock: {
       profile: { rate: new ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 1000000n, maxRoundTripMS: 100n },
-      tick: () => ({ milliseconds: BigInt(Math.floor(performance.now() - start)), incarnation: "3".repeat(32) }), initial: () => ({ lowerMS: timeOrigin + 1000n, upperMS: timeOrigin + 1000n })
+      tick: () => ({ milliseconds: BigInt(Math.floor(performance.now() - start)) + clockAdvance, incarnation: "3".repeat(32) }), initial: () => ({ lowerMS: timeOrigin + 1000n, upperMS: timeOrigin + 1000n })
     },
     random: bytes => { crypto.getRandomValues(bytes); }
   });
-  return { root, publicOwner, owner: originalEnvironment(publicOwner) };
+  return { root, publicOwner, owner: originalEnvironment(publicOwner), advanceClock: (milliseconds: bigint) => { clockAdvance += milliseconds; } };
 }
 function credentials(env: ReturnType<typeof environment>, profile: NoiseProfile, leg: Value, timeOrigin: bigint, services = false) {
   const ns = env.owner.namespace({
@@ -673,6 +756,112 @@ describe("Node v4 original WSS pool connection", () => {
       } finally { sends.mockRestore(); writes.mockRestore(); await f.close(); }
     }, 15000);
   }
+  for (const profile of [profileX, profileP] as const) for (const receiverRole of ["client", "server"] as const)
+    for (const fault of ["schema", "inner target", "offset", "credit"] as const) {
+      it(`isolates authenticated shared WSS DATA ${fault} at ${receiverRole}: ${profile}`, async () => {
+        const trace = observeSharedWSS(profile), f = await setup(profile, "ca", "production");
+        try {
+          const client = await connect(f.a.publicOwner, f.source, request), server = await f.accepted;
+          const badOpening = client.openStream("example/bad-data"), badIncoming = await server.acceptStream(), bad = await badOpening;
+          const goodOpening = client.openStream("example/good-data"), goodIncoming = await server.acceptStream(), good = await goodOpening;
+          const sender = receiverRole === "server" ? client : server;
+          const sendingBad = receiverRole === "server" ? bad : badIncoming.stream;
+          const receivingBad = receiverRole === "server" ? badIncoming.stream : bad;
+          const sendingGood = receiverRole === "server" ? good : goodIncoming.stream;
+          const receivingGood = receiverRole === "server" ? goodIncoming.stream : good;
+          await sendingGood.write(fill(21, 1)); expect((await receivingGood.read(1n)).data).toEqual(fill(21, 1));
+          const healthyScope = uintValue(get(trace.data.at(-1)!, 0));
+          await sendingBad.write(fill(22, 128)); await sendingBad.write(fill(22, 72));
+          const prefix = trace.data.at(-1)!, scope = uintValue(get(prefix, 0));
+          const expectedNext = uintValue(get(prefix, 3)) + 1n;
+          const expectedOffset = uintValue(get(prefix, 4)) + BigInt(buffer(get(prefix, 6)).length);
+          trace.damageNext(body => fault === "schema" ? Uint8Array.of(0xa0) : encode(replace(body,
+            fault === "inner target" ? { 0: u(healthyScope) } : fault === "offset" ? { 4: u(expectedOffset + 1n) } : { 6: bytes(fill(23, 128)) })));
+          await sendingBad.write(fill(23, 1));
+          // A real following PING establishes that this shared reader has
+          // handled the malformed message before inspecting local read state.
+          await sender.probeLiveness();
+          const invalid = await receivingBad.read(1n);
+          expect(invalid).toMatchObject({ data: new Uint8Array(), stream_status: "error", error: { code: "stream_data_invalid", scope: "stream" } });
+          await Promise.all([bad.close(), badIncoming.stream.close()]);
+          const drained = trace.controls.find(body => uintValue(get(body, 0)) === 4n && uintValue(get(body, 1)) === scope &&
+            uintValue(get(body, 2)) === BigInt(receiverRole === "server" ? 0 : 1));
+          expect(drained).toBeDefined(); expect(uintValue(get(drained!, 4))).toBe(1n);
+          expect(uintValue(get(get(drained!, 5), 1))).toBe(expectedNext);
+          expect(uintValue(get(get(drained!, 5), 2))).toBe(expectedOffset);
+          expect(bad.cleanupStatus().status).toBe("complete"); expect(badIncoming.stream.cleanupStatus().status).toBe("complete");
+          // Direct adversarial carrier writes must wait for the legitimate
+          // retirement publisher to relinquish this same native sender.
+          await expect.poll(() => trace.controls.some(body => uintValue(get(body, 0)) === 6n)).toBe(true);
+          await sender.probeLiveness();
+          const opens = trace.opened.filter(id => id === scope).length;
+          // Reset can publish reverse DATA/FIN with the same logical scope.
+          // Retain the adversarial message from the original sender direction.
+          const late = trace.records.get(scope)!.filter(record => record.carrier.role === (receiverRole === "server" ? "client" : "server")).at(-1)!;
+          await trace.inject(late); await sender.probeLiveness();
+          await client.rekey(); await trace.inject(late); await sender.probeLiveness();
+          expect(trace.opened.filter(id => id === scope)).toHaveLength(opens);
+          await sendingGood.write(fill(24, 9)); expect((await receivingGood.read(9n)).data).toEqual(fill(24, 9));
+          await Promise.all([good.close(), goodIncoming.stream.close()]);
+          await Promise.all([client.close(), server.close()]); expect(f.failure()).toBeUndefined();
+        } finally { try { await f.close(); } finally { trace.close(); } }
+      }, 15000);
+    }
+  for (const bound of ["records", "bytes", "deadline"] as const) {
+    it(`bounds retired shared WSS DATA by original ${bound} across rekey`, async () => {
+      const trace = observeSharedWSS(profileX), f = await setup(profileX, "ca", "production");
+      try {
+        const client = await connect(f.a.publicOwner, f.source, request), server = await f.accepted;
+        const opening = client.openStream("example/late-data"), incoming = await server.acceptStream(), stream = await opening;
+        await stream.write(fill(25, 1)); expect((await incoming.stream.read(1n)).data).toEqual(fill(25, 1));
+        const scope = uintValue(get(trace.data.at(-1)!, 0)), late = trace.records.get(scope)!.at(-1)!;
+        await stream.closeWrite(); await incoming.stream.closeWrite();
+        expect((await stream.read(1n)).stream_status).toBe("eof"); expect((await incoming.stream.read(1n)).stream_status).toBe("eof");
+        await Promise.all([stream.finish(), incoming.stream.finish()]);
+        await expect.poll(() => trace.controls.some(body => uintValue(get(body, 0)) === 6n)).toBe(true);
+        const opens = trace.opened.filter(id => id === scope).length;
+        const dropped = bound === "bytes" ? new Uint8Array(40_000) : late.wire;
+        if (bound === "bytes") { dropped.set(late.wire.subarray(0, 28)); new DataView(dropped.buffer).setUint32(0, dropped.length - 8); }
+        await trace.inject(late, dropped); await client.probeLiveness(); await client.rekey();
+        if (bound === "records") {
+          for (let count = 1; count < 16; count++) { await trace.inject(late); await client.probeLiveness(); }
+        } else if (bound === "deadline") { f.a.advanceClock(10_000n); f.b.advanceClock(10_000n); }
+        expect(trace.opened.filter(id => id === scope)).toHaveLength(opens);
+        await trace.inject(late, dropped);
+        await expect.poll(() => server.cleanupStatus().status).toBe("complete");
+        await expect(client.probeLiveness()).rejects.toThrow();
+        expect(trace.opened.filter(id => id === scope)).toHaveLength(opens);
+      } finally { await f.close(); trace.close(); }
+    }, 15000);
+  }
+  for (const fault of ["bad tag", "unknown scope", "future epoch", "framing"] as const) {
+    it(`keeps shared WSS ${fault} outside the discard whitelist`, async () => {
+      const trace = observeSharedWSS(profileX), f = await setup(profileX, "ca", "production");
+      try {
+        const client = await connect(f.a.publicOwner, f.source, request), server = await f.accepted;
+        const opening = client.openStream("example/untrusted-data"), incoming = await server.acceptStream(), stream = await opening;
+        await stream.write(fill(26, 1)); expect((await incoming.stream.read(1n)).data).toEqual(fill(26, 1));
+        const scope = uintValue(get(trace.data.at(-1)!, 0)), late = trace.records.get(scope)!.at(-1)!;
+        if (fault === "bad tag") {
+          const submit = NodeWSSCarrier.prototype.submit;
+          const corrupt = vi.spyOn(NodeWSSCarrier.prototype, "submit").mockImplementation(function (this: NodeWSSCarrier, value, admitted, beforeSubmit) {
+            if (value[4] === wire.frame_types.STREAM_DATA) { const invalid = new Uint8Array(value); invalid[invalid.length - 1]! ^= 1; return submit.call(this, invalid, admitted, beforeSubmit); }
+            return submit.call(this, value, admitted, beforeSubmit);
+          });
+          try { await stream.write(fill(27, 1)); } finally { corrupt.mockRestore(); }
+        } else {
+          await Promise.all([stream.close(), incoming.stream.close()]); await client.probeLiveness();
+          const invalid = new Uint8Array(late.wire), header = new DataView(invalid.buffer);
+          if (fault === "unknown scope") header.setBigUint64(12, scope + 100n);
+          if (fault === "future epoch") header.setUint32(8, 1);
+          if (fault === "framing") invalid[5] = 1;
+          await trace.inject(late, invalid);
+        }
+        await expect.poll(() => server.cleanupStatus().status).toBe("complete");
+        await expect(client.probeLiveness()).rejects.toThrow();
+      } finally { await f.close(); trace.close(); }
+    }, 15000);
+  }
   for (const serverBehavior of ["production", "production_public"] as const) for (const profile of [profileX, profileP] as const) for (const binding of ["authenticated_context", "direct_exporter"] as const) for (const tls of ["ca", "pin"] as const) {
     it(`establishes ${serverBehavior} server admission chain: ${profile} ${binding} ${tls}`, async () => {
       const f = await setup(profile, tls, serverBehavior, "https://app.example.com", false, binding);
@@ -940,5 +1129,67 @@ describe("Node v4 original WSS pool connection", () => {
       await f.helloObserved; abort.abort(); await failed; expect(f.counts().helloCount).toBe(1);
       await expect(connect(f.a.publicOwner, f.source, request)).rejects.toMatchObject({ name: "ConnectionError", code: "controller_failed", connection: { networkReady: "not_started" } });
     } finally { await f.close(); }
+  });
+  it("keeps two live Connect and mutual HTTPS request owners until their original socket tails close", async () => {
+    execFileSync("openssl", ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
+      "-keyout", join(directory, "live-client-key.pem"), "-out", join(directory, "live-client-cert.pem"), "-days", "1", "-subj", "/CN=control-client",
+      "-addext", "keyUsage=critical,digitalSignature", "-addext", "extendedKeyUsage=clientAuth"], { stdio: "ignore" });
+    const clientCert = readFileSync(join(directory, "live-client-cert.pem")), clientKey = readFileSync(join(directory, "live-client-key.pem"));
+    let requests = 0, hellos = 0;
+    const control = createServer({ key, cert: certificate, ca: [clientCert], requestCert: true, rejectUnauthorized: true,
+      minVersion: "TLSv1.3", maxVersion: "TLSv1.3", ALPNProtocols: ["http/1.1"] }, incoming => {
+      expect((incoming.socket as TLSSocket).authorized).toBe(true); requests++; incoming.resume();
+    });
+    const carrier = createServer({ key, cert: certificate, minVersion: "TLSv1.3", maxVersion: "TLSv1.3" });
+    const wss = new WebSocketServer({ server: carrier });
+    wss.on("connection", ws => { ws.on("message", () => { hellos++; }); ws.on("error", () => undefined); });
+    await Promise.all([new Promise<void>(resolve => control.listen(0, "127.0.0.1", resolve)), new Promise<void>(resolve => carrier.listen(0, "127.0.0.1", resolve))]);
+    const controlPort = (control.address() as { port: number }).port, carrierPort = (carrier.address() as { port: number }).port;
+    const timeOrigin = BigInt(Date.now()) - 1000n, env = environment(timeOrigin, false, 2);
+    const ns = env.owner.namespace({ tenant: "tenant", authority: "authority", rootKeyID: fill(1, 16), rootPublicKey: ed25519.getPublicKey(fill(7)),
+      maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 8192, stateNodes: 16384 });
+    const leg = map({ 0: u(0), 1: bytes(fill(21, 16)), 2: u(1), 3: u(0), 4: u(1), 5: u(1), 6: text("localhost"), 7: u(carrierPort),
+      8: text("/flowersec/v4/direct"), 9: text("http/1.1"), 10: text("flowersec.direct.v4"), 11: map({ 0: u(0), 1: { kind: "bool", value: true } }),
+      12: map({ 0: array(text("https://app.example.com")), 1: { kind: "bool", value: false } }) });
+    const fixtures = [60, 70].map(connectionSeed => credentialFixture(env.owner.resources, env.owner.clock, () => { throw new Error("Environment owns work"); },
+      "live_authority", profileX, ns, { timeOrigin, leg, connectionSeed })); fixtures[0]!.bootstrap();
+    const live = createV4NodeLiveHTTPS(env.publicOwner, { baseURL: `https://localhost:${controlPort}`, remoteAddress: "127.0.0.1", authority: "spend", tenant: "tenant", audience: "service",
+      ca: [certificate], clientCertificate: clientCert, clientPrivateKey: clientKey, maxConcurrentRequests: 2, timeoutMS: 10000n,
+      headerBytes: 8192, handshakeBytes: 65536, runtimeBytes: 1024n, providerBytes: 4n << 20n });
+    const identityKey = createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), fill(14)]), format: "der", type: "pkcs8" });
+    const noiseKey = createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b656e04220420", "hex"), fill(16)]), format: "der", type: "pkcs8" });
+    const client = configureV4NodeWSS(env.publicOwner, { identityKey, noiseKey, liveAuthority: live, limits: transportLimits,
+      carrier: { remoteAddress: "127.0.0.1", origin: "https://app.example.com", ca: [certificate], queueMessages: 8, runtimeBytes: 1024n, nativeBytes: 1048576n, prepareBytes: 262144 } });
+    let acquired = 0;
+    const source = client.registerLiveSource({ ...fixtures[0]!.config, authorities: ["authority"] }, async (_request, destination) => {
+      const input = fixtures[acquired++]!.input();
+      for (const name of ["artifact", "clientCertificate", "serverCertificate"] as const) destination[name].set(input[name]);
+      return { artifact: input.artifact.length, clientCertificate: input.clientCertificate.length, serverCertificate: input.serverCertificate.length, activation: 0, candidateIndex: 0 };
+    });
+    const held = new Set<TLSSocket>(), originalDestroy = TLSSocket.prototype.destroy;
+    const tail = vi.spyOn(TLSSocket.prototype, "destroy").mockImplementation(function (this: TLSSocket, error?: Error) {
+      if (this.remotePort === controlPort) { held.add(this); return this; }
+      return originalDestroy.call(this, error);
+    });
+    const abort = new AbortController();
+    const pending = [connect(env.publicOwner, source, request, { signal: abort.signal }), connect(env.publicOwner, source, request)]
+      .map(promise => promise.catch(error => error));
+    try {
+      await expect.poll(() => requests).toBe(2); expect(acquired).toBe(2); expect(hellos).toBe(0);
+      const active = env.root.snapshot().reservations;
+      abort.abort(); await expect.poll(() => held.size).toBe(1);
+      expect(env.root.snapshot().reservations).toBeGreaterThanOrEqual(active);
+      await env.publicOwner.close(); expect(env.publicOwner.cleanupStatus().status).toBe("cleanup_incomplete");
+      await expect.poll(() => held.size).toBe(2); expect(env.root.snapshot().reservations).toBeGreaterThan(0);
+      tail.mockRestore(); for (const socket of held) socket.destroy();
+      const failures = await Promise.all(pending);
+      for (const failure of failures) expect(failure).toMatchObject({ name: "ConnectionError", connection: { networkReady: "not_started", admissionState: "not_started", spendState: "unknown" } });
+      expect((await env.publicOwner.waitCleanup()).status).toBe("complete"); expect(env.root.snapshot().reservations).toBe(0); expect(hellos).toBe(0);
+    } finally {
+      tail.mockRestore(); for (const socket of held) socket.destroy(); await env.publicOwner.close(); await Promise.all(pending);
+      for (const ws of wss.clients) ws.terminate(); wss.close(); control.closeAllConnections(); carrier.closeAllConnections();
+      await Promise.all([new Promise<void>(resolve => control.close(() => resolve())), new Promise<void>(resolve => carrier.close(() => resolve()))]);
+      clientKey.fill(0); env.root.close();
+    }
   });
 });

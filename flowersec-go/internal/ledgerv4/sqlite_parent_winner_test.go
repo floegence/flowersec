@@ -1,6 +1,7 @@
 package ledgerv4
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"errors"
@@ -8,6 +9,46 @@ import (
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
+
+func TestParentWinnerAndLocalReservationShareOneDurableTransaction(t *testing.T) {
+	for _, unknown := range []bool{false, true} {
+		f := newSQLiteFixture(t, "")
+		s := f.create()
+		a := sqlitePoolOriginal(t, f, s, s, 1)
+		fault := &sqliteExecFault{ExecerContext: s.execer}
+		if unknown {
+			fault.commits.Store(1)
+			fault.afterCommit = func() error { return ErrUnknown }
+		}
+		s.execer = fault
+		calls := 0
+		err := a.Admit(func(context.Context, protocolv4.AdmissionResponse) error { calls++; return nil })
+		if unknown {
+			if !errors.Is(err, ErrUnknown) || calls != 0 {
+				t.Fatal("uncertain reserve recovered dispatch", calls, err)
+			}
+		} else if err != nil || calls != 1 || fault.commits.Load() != 2 {
+			t.Fatal("local winner needs only original reserve and admit commits", calls, fault.commits.Load(), err)
+		}
+		n, found, err := s.readParentWinner(a.key[:a.keySize], a.scratch)
+		if err != nil || !found {
+			t.Fatal("local reservation did not preserve its winner", err)
+		}
+		winner := bytes.Clone(a.scratch[:n])
+		row, err := s.readAdmission(a.key[:a.keySize], a.scratch)
+		if err != nil || !row.found || unknown && row.state != admissionReserved || !unknown && row.state != admissionAdmitted {
+			t.Fatal("winner and reservation did not commit together", row, err)
+		}
+		loser := sqlitePoolOriginal(t, f, s, s, 2)
+		if err := loser.Admit(func(context.Context, protocolv4.AdmissionResponse) error { t.Error("loser dispatched"); return nil }); !errors.Is(err, ErrConflict) {
+			t.Fatal("local loser escaped winner CAS", err)
+		}
+		n, found, err = s.readParentWinner(a.key[:a.keySize], a.scratch)
+		if err != nil || !found || !bytes.Equal(winner, a.scratch[:n]) {
+			t.Fatal("loser overwrote the original selection", err)
+		}
+	}
+}
 
 // These storage fixtures bypass signature construction, as sqliteOriginal
 // does. Session establishment tests exercise the verified-facts constructor.

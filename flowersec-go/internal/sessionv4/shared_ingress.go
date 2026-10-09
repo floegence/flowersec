@@ -138,12 +138,12 @@ func (g *SharedIngress) Dispatch(ctx context.Context, record *ReceivedRecord, de
 	if ctx == nil || record == nil || record.receiver != g.receiver {
 		return ErrSharedIngress
 	}
+	if complete, err := record.dispatchComplete(); complete || err != nil {
+		return err
+	}
 	body, err := record.Body()
 	if err != nil {
 		return err
-	}
-	if record.dataApplied {
-		return nil
 	}
 	if record.incoming != nil {
 		if body.Type != protocolv4.FrameOpenStream {
@@ -161,7 +161,7 @@ func (g *SharedIngress) Dispatch(ctx context.Context, record *ReceivedRecord, de
 		return nil
 	}
 	if body.Header.Scope == 0 {
-		return g.admission.dispatchControl(ctx, record, deadline)
+		return g.admission.dispatchControlFrame(ctx, record, deadline, body)
 	}
 	g.admission.mu.Lock()
 	s, err := g.admission.slot(OpenHandle{g.admission, body.Header.Scope})
@@ -198,7 +198,11 @@ func (g *SharedIngress) ReadDispatch(ctx context.Context, reader io.Reader, dead
 		return err
 	}
 	defer record.Release()
-	return g.Dispatch(ctx, record, deadline)
+	err = g.Dispatch(ctx, record, deadline)
+	if errors.Is(err, errMaintenanceDiscarded) {
+		return nil
+	}
+	return err
 }
 
 func (g *SharedIngress) Close() {

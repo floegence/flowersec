@@ -411,7 +411,31 @@ func TestSessionApplicationAuthorizeDiagnosticAdmissionDoesNotRetainInvocation(t
 			var fixture *executorFixture
 			var sink *DiagnosticSink
 			if test.enabled {
-				diagnostics := newDiagnosticFixture(t, DiagnosticSinkConfig{}, func(context.Context, diagnosticv4.Event) {}, func(uint16) bool { return true })
+				var now func() time.Time
+				idle, resume := make(chan struct{}), make(chan struct{})
+				if !test.holdBegin {
+					var samples atomic.Uint32
+					now = func() time.Time {
+						// Construction and the pump's initial rotation sample first.
+						// Its third sample prepares the idle timer outside the sink
+						// gate. Hold that real pump there so this case tests admitted
+						// diagnostics rather than best-effort startup contention.
+						if samples.Add(1) == 3 {
+							close(idle)
+							<-resume
+						}
+						return time.Unix(1800, 0)
+					}
+				}
+				diagnostics := newDiagnosticFixtureWithClock(t, DiagnosticSinkConfig{}, func(context.Context, diagnosticv4.Event) {}, func(uint16) bool { return true }, now)
+				if now != nil {
+					defer close(resume)
+					select {
+					case <-idle:
+					case <-time.After(3 * time.Second):
+						t.Fatal("diagnostic pump did not reach its idle clock sample")
+					}
+				}
 				fixture, sink = diagnostics.executorFixture, diagnostics.sink
 			} else {
 				fixture = newExecutorFixture(t, 2, 1, 1, 2)

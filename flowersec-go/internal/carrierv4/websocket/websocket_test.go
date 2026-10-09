@@ -396,6 +396,44 @@ func TestCancellationActualCloseAndRetirement(t *testing.T) {
 	}
 }
 
+func TestCancellationAfterAdjacentMessageReads(t *testing.T) {
+	m, peer, _ := dialPair(t, testOptions())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for range 2 {
+		if err := peer.WriteMessage(ws.BinaryMessage, []byte("message")); err != nil {
+			t.Fatal(err)
+		}
+		if n, err := m.ReadMessage(ctx, make([]byte, 264)); n != len("message") || err != nil {
+			t.Fatal("adjacent message read failed", n, err)
+		}
+	}
+	finished := make(chan error, 1)
+	go func() { _, err := m.ReadMessage(ctx, make([]byte, 264)); finished <- err }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		m.mu.Lock()
+		started := m.reading
+		m.mu.Unlock()
+		if started {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("original read did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal("adjacent read lost original cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("adjacent read retained its physical socket")
+	}
+}
+
 func TestDeadlineAndControlRate(t *testing.T) {
 	t.Run("message-deadline", func(t *testing.T) {
 		o := testOptions()

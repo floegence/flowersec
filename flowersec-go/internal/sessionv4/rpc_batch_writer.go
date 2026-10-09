@@ -552,7 +552,11 @@ func (w *RPCBatchWriter) Published(tail uint64) (bool, error) {
 	q := w.queue
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if q.published >= tail {
+	// Pump advances the published frontier before it drops its physical
+	// borrow of the queue. Retire requires that borrow to be gone as well;
+	// reporting publication during that interval lets a caller race into
+	// ErrCapacity even though the requested records are already written.
+	if q.published >= tail && !q.pumping {
 		return true, nil
 	}
 	if q.closed {

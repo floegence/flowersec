@@ -44,6 +44,60 @@ declare global {
 }
 // Tenant, Environment, Session send, and the admitted 8+8+1 direction pool.
 const browserAccountSlots = 2 + 1 + 8 + 8 + 1;
+test("Chromium runs concurrent live HTTPS bodies through original cancel completion", async ({ browser }) => {
+  let requests = 0;
+  const site = await startBrowserModuleSite({ tls: { cert: certificate, key }, host: { async handle(request, response) {
+    if (request.url !== "/live/authorize") return false;
+    requests++; request.resume(); response.writeHead(200, { "content-type": "application/cbor", "content-length": "2" }); response.write(Buffer.from([1])); return true;
+  } } });
+  const context = await browser.newContext({ ignoreHTTPSErrors: true }), page = await context.newPage();
+  try {
+    await page.goto(site.origin);
+    const result = await page.evaluate(async () => {
+      const sdk = await import("/dist/browser/index.js");
+      const limit = new sdk.ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
+      const root = new sdk.ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: 16, reservations: 256, references: 512,
+        rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
+      const environment = sdk.createTransportEnvironment({ root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: "2".repeat(32),
+        runtimeBytes: 1024n, namespaces: 1, sources: 1, acquisitions: 2, materials: 2, sessions: 2, dependencies: 8, acquireMS: 10000n, cleanupMS: 25,
+        clock: { profile: { rate: new sdk.ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 1000000n, maxRoundTripMS: 100n },
+          tick: () => ({ milliseconds: BigInt(Math.floor(performance.now())), incarnation: "3".repeat(32) }), initial: () => ({ lowerMS: 1000n, upperMS: 1000n }) },
+        random: destination => { crypto.getRandomValues(destination); } });
+      const provider = sdk.createBrowserLiveHTTPS(environment, { deployment: { deploymentID: "test-control", revision: "one", baseURL: location.origin,
+        applicationOrigin: location.origin, notBeforeMS: 0n, notAfterMS: 60000n, terminatorProfile: "tls13-no-early-data-authenticated-control", evidenceReference: "test:local-tls13" },
+        authority: "spend", tenant: "tenant", audience: "service", bearerToken: "test-control-token", credentialNotAfterMS: 60000n,
+        maxConcurrentRequests: 2, timeoutMS: 10000n, headerBytes: 8192, runtimeBytes: 1024n, providerBytes: 1048576n });
+      const request = { tenant: "tenant", audience: "service", authority: "spend", cryptoProfile: "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1",
+        issuer: new Uint8Array(16).fill(1), lease: new Uint8Array(16).fill(2), attempt: new Uint8Array(16).fill(3), artifact: new Uint8Array(32).fill(4),
+        clientIdentity: new Uint8Array(32).fill(5), serverIdentity: new Uint8Array(32).fill(6), candidateIndex: 0, candidateID: new Uint8Array(16).fill(7),
+        routeDigest: new Uint8Array(32).fill(8), activationNotAfterMS: 50000n, attemptNo: 1 as const };
+      const originalRead = ReadableStreamDefaultReader.prototype.read, originalCancel = ReadableStreamDefaultReader.prototype.cancel;
+      const readers = new Set<ReadableStreamDefaultReader>(), cancelTails: (() => void)[] = [];
+      ReadableStreamDefaultReader.prototype.read = function () { readers.add(this); return originalRead.call(this); };
+      ReadableStreamDefaultReader.prototype.cancel = async function (reason) { await originalCancel.call(this, reason).catch(() => undefined); await new Promise<void>(resolve => cancelTails.push(resolve)); };
+      const wait = async (check: () => boolean) => { for (let i = 0; i < 1000; i++) { if (check()) return; await new Promise(resolve => setTimeout(resolve, 5)); } throw new Error("original provider transition did not occur"); };
+      const first = new AbortController(), second = new AbortController(), destinations = [new Uint8Array(4096).fill(9), new Uint8Array(4096).fill(9)];
+      const pending = [first, second].map((abort, i) => provider.requestAuthorization(request, destinations[i]!, { signal: abort.signal, check: () => undefined }).catch(error => error.message));
+      try {
+        await wait(() => readers.size === 2);
+        const active = root.snapshot().reservations;
+        const third = await provider.requestAuthorization(request, new Uint8Array(4096), { signal: new AbortController().signal, check: () => undefined }).catch(error => error.message);
+        first.abort(); await wait(() => cancelTails.length === 1);
+        const heldAfterCancel = root.snapshot().reservations === active;
+        await environment.close(); await wait(() => cancelTails.length === 2);
+        const pendingCleanup = environment.cleanupStatus().status;
+        for (const release of cancelTails) release();
+        const failures = await Promise.all(pending), cleanup = (await environment.waitCleanup()).status;
+        return { third, heldAfterCancel, pendingCleanup, failures, cleanup, reservations: root.snapshot().reservations, erased: destinations.every(bytes => bytes.every(byte => byte === 0)) };
+      } finally {
+        ReadableStreamDefaultReader.prototype.read = originalRead; ReadableStreamDefaultReader.prototype.cancel = originalCancel;
+        first.abort(); second.abort(); for (const release of cancelTails) release(); await environment.close(); await Promise.all(pending); root.close();
+      }
+    });
+    expect(requests).toBe(2);
+    expect(result).toEqual({ third: "resource_exhausted", heldAfterCancel: true, pendingCleanup: "cleanup_incomplete", failures: ["canceled", "canceled"], cleanup: "complete", reservations: 0, erased: true });
+  } finally { await context.close(); await site.close(); }
+});
 async function install(page: Page, peer: PeerMaterial, create: boolean, accounts = browserAccountSlots) {
   await page.exposeFunction("bootstrapV4", peer.bootstrap);
   return page.evaluate(async input => {
@@ -129,10 +183,10 @@ async function connectionRefusal(page: Page, loseContinuity = false) {
     throw new Error("refused material unexpectedly connected");
   }, loseContinuity);
 }
-function expectUnspentRefusal(refusal: Awaited<ReturnType<typeof connectionRefusal>>, code = "controller_failed") {
-  // Connect exposes a closed public projection; store and credential errors
-  // remain internal. Assert original spend/admission facts and physical cleanup.
-  expect(refusal.code).toBe(code);
+function expectUnspentRefusal(refusal: Awaited<ReturnType<typeof connectionRefusal>>) {
+  // Store and credential errors outside Connect's public code vocabulary use
+  // its documented fallback. Preserve spend/admission facts and physical cleanup.
+  expect(refusal.code).toBe("controller_failed");
   expect(refusal.connection).toMatchObject({ spendState: "unspent", admissionState: "not_started",
     networkReady: "not_started", applicationPublish: "not_started", queryAvailability: "unavailable" });
   expect(refusal.cleanup).toEqual({ status: "complete", core_cleanup: "complete", pending_callbacks: 0n });
@@ -149,6 +203,73 @@ async function spendCount(page: Page): Promise<number> {
     };
   }));
 }
+
+test("Chromium runs independent IndexedDB journal and consume transactions with bounded same-store admission", async ({ browser }) => {
+  const site = await startBrowserModuleSite(), peer = await startV4WSSPeer(certificate, key, site.origin, profiles[0]);
+  const context = await browser.newContext({ ignoreHTTPSErrors: true }), page = await context.newPage();
+  try {
+    await page.goto(site.origin); await install(page, peer, true);
+    const result = await page.evaluate(async timeOrigin => {
+      const v = window.v4, runtime = await import("/dist/v4/runtime/environment.js"), verifier = await import("/dist/v4/runtime/credentialVerifier.js"),
+        support = await import("/dist/v4/runtime/credentialSupport.js"), deadline = await import("/dist/v4/runtime/deadline.js"), noble = await import("/node_modules/@noble/curves/ed25519.js");
+      const owner = runtime.originalEnvironment(v.environment), resources = owner.resources, names = ["flowersec-browser-v4-once", "flowersec-browser-v4-second"];
+      const second = v.sdk.createIndexedDBPoolBacking(v.environment, names[1]!, { maxRecords: 4, maxRecordBytes: 16384, transactionMS: 10000n,
+        runtimeBytes: 1024n, providerRuntimeBytes: 1048576n, storageBytes: 1048576n });
+      const open = (backing: NonNullable<typeof v.backing>, create: boolean) => v.sdk.openIndexedDBPoolStore(backing, { create,
+        identity: { authority: "spend", storeID: new Uint8Array(32).fill(9), generation: 1n }, continuity: { check: () => undefined },
+        bindings: [{ tenant: "tenant", issuer: new Uint8Array(16).fill(5) }] });
+      let stores = [v.store!, await open(second, true)];
+      const originalTransaction = IDBDatabase.prototype.transaction, originalAbort = IDBTransaction.prototype.abort;
+      let capture = false;
+      const transactions = new Set<IDBTransaction>();
+      IDBDatabase.prototype.transaction = function (storeNames, mode, options) { const tx = originalTransaction.call(this, storeNames, mode, options); if (capture && names.includes(this.name)) transactions.add(tx); return tx; };
+      IDBTransaction.prototype.abort = function () { if (transactions.has(this)) return; originalAbort.call(this); };
+      const reference = resources.root.reserve({ owner: support.credentialOwner(resources, "test_idb_verifier"), accounts: resources.accounts, charge: verifier.credentialVerifierCharge(resources.runtimeBytes) });
+      const admission = reference.borrow();
+      const namespace = owner.namespace({ tenant: "tenant", authority: "authority", rootKeyID: new Uint8Array(16).fill(1), rootPublicKey: noble.ed25519.getPublicKey(new Uint8Array(32).fill(7)),
+        maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 8192, stateNodes: 16384 });
+      const closure = verifier.verifyDirectCredentials({ ...v.policy, resources, clock: owner.clock, namespaces: [namespace] }, { ...v.materialInput, source: "preauthorized_pool" }, reference);
+      const facts = closure.poolSpendFacts(admission), results: unknown[] = [];
+      try {
+        const key = new Uint8Array(16).fill(4);
+        const persisted = await Promise.all(stores.map(store => store.readPoolJournal(key, () => undefined)));
+        for (const kind of ["journal", "consume"] as const) {
+          transactions.clear(); capture = true;
+          const abort = new AbortController();
+          const consume = (store: typeof stores[number], signal?: AbortSignal) => store.consume(facts,
+            { connect: new Uint8Array(16).fill(1), carrier: new Uint8Array(16).fill(2), generation: 1n, signal },
+            new deadline.TrustedDeadline(owner.clock, BigInt(timeOrigin) + 10000n), admission, () => undefined);
+          const start = (store: typeof stores[number], signal?: AbortSignal) => kind === "journal" ? store.readPoolJournal(key, () => undefined) : consume(store, signal);
+          const pending = stores.map((store, i) => start(store, i === 0 ? abort.signal : undefined).catch(error => error.code));
+          const active = v.root.snapshot().reservations;
+          const refused = await (async () => start(stores[0]!))().catch(error => error.code);
+          abort.abort(); for (const store of stores) store.close();
+          const held = v.root.snapshot().reservations === active, cleanupPending = stores.every(store => !store.cleanupComplete());
+          capture = false; for (const tx of transactions) { transactions.delete(tx); try { originalAbort.call(tx); } catch { /* Retain the original native terminal event. */ } }
+          const failures = await Promise.all(pending);
+          results.push({ kind, refused, held, cleanupPending, failures, cleaned: stores.every(store => store.cleanupComplete()) });
+          if (kind === "journal") stores = await Promise.all([open(v.backing!, false), open(second, false)]);
+        }
+        return { persisted: persisted.map(bytes => bytes === undefined ? null : Array.from(bytes)), results };
+      } finally {
+        capture = false; IDBDatabase.prototype.transaction = originalTransaction; IDBTransaction.prototype.abort = originalAbort;
+        for (const tx of transactions) try { originalAbort.call(tx); } catch { /* Observe native completion. */ }
+        for (const store of stores) store.close(); facts.close(); closure.close(); admission.release(); reference.release();
+        await v.environment.close();
+        for (const [i, backing] of [v.backing!, second].entries()) {
+          await new Promise<void>((resolve, reject) => { const remove = indexedDB.deleteDatabase(names[i]!); remove.onsuccess = () => resolve(); remove.onerror = () => reject(remove.error); });
+          await backing.releaseRemoved();
+        }
+        if (v.root.snapshot().reservations !== 0) throw new Error("original IndexedDB resource owner did not retire");
+      }
+    }, peer.timeOrigin);
+    expect(result.persisted).toEqual([null, null]);
+    expect(result.results).toEqual([
+      { kind: "journal", refused: "capacity", held: true, cleanupPending: true, cleaned: true, failures: ["storage_unavailable", "storage_unavailable"] },
+      { kind: "consume", refused: "capacity", held: true, cleanupPending: true, cleaned: true, failures: ["owner_unavailable", "storage_unavailable"] },
+    ]);
+  } finally { await context.close(); await peer.close(); await site.close(); }
+});
 
 for (const profile of profiles) test(`Chromium runs v4 WSS and strict IndexedDB consume with ${profile}`, async ({ browser }) => {
   const site = await startBrowserModuleSite(), peer = await startV4WSSPeer(certificate, key, site.origin, profile);
@@ -381,7 +502,7 @@ test("Chromium runs v4 browser cross-tab fencing before one unique lease consume
         const read = await stream.read(1n); await session.close(); v.cleanupMaterial(); return Array.from(read.data);
       }),
     ]);
-    expectUnspentRefusal(stale, "closed"); expect(await spendCount(second)).toBe(1); expect(current).toEqual([9]); expect(peer.counts().hellos).toBe(1); expect(peer.failure()).toBeUndefined();
+    expectUnspentRefusal(stale); expect(await spendCount(second)).toBe(1); expect(current).toEqual([9]); expect(peer.counts().hellos).toBe(1); expect(peer.failure()).toBeUndefined();
     expect((await close(first, false)).cleanup).toBe("complete"); expect(await close(second, true)).toEqual({ cleanup: "complete", reservations: 0 });
     expect(await first.evaluate(async () => { await window.v4.backing!.releaseRemoved(); return window.v4.root.snapshot().reservations; })).toBe(0);
   } finally { await context.close(); await peer.close(); await site.close(); }

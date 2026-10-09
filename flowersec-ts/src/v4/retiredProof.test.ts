@@ -20,6 +20,7 @@ it("keeps the unique terminal token charged after logical retirement until the o
     const original = admission.prepareBootstrap("services"); admission.completeBootstrap(original);
     admission.terminal(original); admission.retire(original, true);
     expect(admission.isStable(1n)).toBe(true);
+    expect(admission.isAuthenticatedRetired(1n)).toBe(true);
     expect(admission.snapshot(original).phase).toBe("stable");
     expect(admission.counts()).toMatchObject({ active: 0, positiveProofs: 1 });
     expect(() => admission.prepareLocal(0, 0, "example/next", new Uint8Array(), 256n)).toThrow("open_capacity");
@@ -34,6 +35,8 @@ it("keeps the unique terminal token charged after logical retirement until the o
     expect(() => admission.releaseRetired(original)).toThrow("open_association");
     expect(admission.counts().positiveProofs).toBe(1);
     admission.cancelUnsubmitted(next);
+    expect(admission.isStable(3n)).toBe(true);
+    expect(admission.isAuthenticatedRetired(3n)).toBe(false);
   } finally {
     admission.close(); for (const account of accounts) account.close(); root.close();
     expect(root.snapshot().cleanupComplete).toBe(true);

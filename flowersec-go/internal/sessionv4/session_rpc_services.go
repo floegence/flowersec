@@ -106,6 +106,7 @@ type RPCServices struct {
 	shortResultPosition                   environmentResultProtection
 	native                                *nativeStreamTransport
 	nativeConfigured                      bool
+	bootstrapNative                       *nativeStreamProtection
 	referenceDomain                       string
 	referenceCodec                        *protocolv4.OperationReferenceCodec
 	resultReadBinding                     rpcv4.QueryBinding
@@ -1002,6 +1003,7 @@ func (r *RPCServices) Close() {
 		}
 	}
 	stream, bootstrap := r.stream, r.bootstrap
+	bootstrapNative := r.bootstrapNative
 	floor, deliveryFloor, resultPosition := r.completionFloor, r.deliveryFloor, r.shortResultPosition
 	notifications := r.notifications
 	for _, guard := range r.receiveProtection {
@@ -1021,6 +1023,7 @@ func (r *RPCServices) Close() {
 	r.mu.Unlock()
 	// Cancellation enters channel/Stream/Open gates. It must follow services
 	// publication rather than retain r.mu beneath endpoint or admission locks.
+	bootstrapNative.close()
 	for _, closing := range rpcChannels {
 		if closing != nil {
 			closing.Close()
@@ -1282,6 +1285,7 @@ func (r *RPCServices) retire() error {
 	r.executionRegistryBorrow.Release()
 	r.executionRegistryBorrow = resourcev4.Reference{}
 	r.executionRegistry, r.managementResolver = nil, nil
+	r.bootstrapNative = nil
 	r.managementNative = nil
 	r.notifyReceiverConfig = rpcv4.NotifyReceiverConfig{}
 	r.notifyPublisherConfig = rpcv4.NotifyPublisherConfig{}

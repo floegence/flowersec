@@ -247,7 +247,19 @@ func runCurrentTunnelRelay(ctx context.Context, carriers [2]string, endpointList
 			relay = registeredPool.PoolRelay
 		}
 	} else {
-		relay, err = interopharness.NewPoolRelay(ctx, reporter, carriers, parityOrigin(), interopharness.PoolRelayOptions{EndpointListeners: endpointListeners})
+		options := interopharness.PoolRelayOptions{EndpointListeners: endpointListeners}
+		if os.Getenv("FLOWERSEC_PARITY_CLIENT_PROFILE") == "browser" {
+			certificate, roots, trustPEM, _, tlsErr := interopharness.TLSMaterial("127.0.0.1")
+			if tlsErr != nil {
+				return tlsErr
+			}
+			policy, policyErr := protocolv4.EncodeMap(make([]byte, 4096), "TLSPolicy", []protocolv4.Field{{Name: "mode"}, {Name: "require_consumer_tls13_verification", Kind: protocolv4.Boolean}})
+			if policyErr != nil {
+				return policyErr
+			}
+			options.TLS = &interopharness.PoolRelayTLSManifest{Certificate: certificate, Roots: roots, TrustPEM: trustPEM, Policy: policy}
+		}
+		relay, err = interopharness.NewPoolRelay(ctx, reporter, carriers, parityOrigin(), options)
 		if err != nil {
 			return err
 		}
@@ -281,12 +293,13 @@ func runCurrentTunnelRelay(ctx context.Context, carriers [2]string, endpointList
 	decoder := json.NewDecoder(bufio.NewReader(io.LimitReader(os.Stdin, 1<<20)))
 	for {
 		var command struct {
-			Type                string                                        `json:"type"`
-			WireRevision        int                                           `json:"wire_revision"`
-			RouteDigest         []byte                                        `json:"route_digest"`
-			Authorizations      []interopharness.TunnelAuthorization          `json:"authorizations"`
-			VerificationRecords []interopharness.NamespaceRecord              `json:"verification_records"`
-			BrowserApplication  *interopharness.BrowserApplicationDeclaration `json:"browser_application"`
+			Type                string                                             `json:"type"`
+			WireRevision        int                                                `json:"wire_revision"`
+			RouteDigest         []byte                                             `json:"route_digest"`
+			Authorizations      []interopharness.TunnelAuthorization               `json:"authorizations"`
+			VerificationRecords []interopharness.NamespaceRecord                   `json:"verification_records"`
+			BrowserApplication  *interopharness.BrowserApplicationDeclaration      `json:"browser_application"`
+			BrowserPoolAllow    *interopharness.BrowserPoolServerAllowInstallation `json:"pool_server_allow"`
 		}
 		decoded := make(chan error, 1)
 		go func() { decoded <- decoder.Decode(&command) }()
@@ -312,7 +325,7 @@ func runCurrentTunnelRelay(ctx context.Context, carriers [2]string, endpointList
 				if command.BrowserApplication == nil || command.BrowserApplication.Schema != "parity" {
 					return errors.New("original endpoint B browser application registration is required")
 				}
-				if err = browserInstallation.Start(ctx, cancelRun, relay.Runtime, original, materials[0], relay.TrustPEM, relay.Origin, *command.BrowserApplication); err != nil {
+				if err = browserInstallation.Start(ctx, cancelRun, relay.Runtime, original, materials[0], relay.TrustPEM, relay.Origin, *command.BrowserApplication, command.BrowserPoolAllow); err != nil {
 					return err
 				}
 			}

@@ -21,6 +21,25 @@ type runtimeTestInput struct {
 	interrupt  func()
 }
 
+type blockingPongWriter struct {
+	frames      chan []byte
+	entered     chan struct{}
+	release     chan struct{}
+	once        sync.Once
+	releaseOnce sync.Once
+}
+
+func (w *blockingPongWriter) Write(p []byte) (int, error) {
+	w.frames <- append([]byte(nil), p...)
+	if protocolv4.FrameType(p[4]) == protocolv4.FramePong {
+		w.once.Do(func() { close(w.entered) })
+		<-w.release
+	}
+	return len(p), nil
+}
+
+func (w *blockingPongWriter) unblock() { w.releaseOnce.Do(func() { close(w.release) }) }
+
 func (i *runtimeTestInput) InterruptRead() {
 	i.interrupts.Add(1)
 	if i.interrupt != nil {
@@ -292,6 +311,331 @@ func TestSessionRuntimePublishesOriginalPongOnBothCarriers(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestSessionRuntimeLocallyRefusesMaintenanceRateAndContinues(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		t.Run(map[bool]string{false: "shared", true: "native"}[native], func(t *testing.T) {
+			local, peer, now := idleEndpoints(t, 0)
+			output := &serviceTestWriter{frames: make(chan []byte, 4)}
+			local.maintenance, _ = NewRecordWriter(local.engine, 0, output)
+			_, queue := maintenanceMessages(t, local, 1, 1)
+			reader, writer := io.Pipe()
+			defer writer.Close()
+			f := newRuntimeFixture(t, local, &runtimeTestInput{Reader: reader, interrupt: func() { _ = reader.Close() }}, native)
+			r := f.startOwner(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- r.Run(ctx) }()
+
+			sendPing := func(nonce byte) {
+				t.Helper()
+				peer.control.Reset()
+				if _, err := peer.maintenance.Write(ctx, protocolv4.FramePing, pingBody(t, nonce)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := writer.Write(peer.control.Bytes()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sendPing(31)
+			firstPong := nextServiceFrame(t, output)
+			first, err := peer.receiver.Receive(ctx, firstPong)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first.Release()
+
+			// The second authenticated PING exceeds the one-token local burst.
+			sendPing(32)
+			frontierDeadline := time.NewTimer(5 * time.Second)
+			frontierPoll := time.NewTicker(time.Millisecond)
+			for {
+				frontier, frontierErr := local.engine.ScopeFrontier(0, local.receiver.direction)
+				if frontierErr == nil && frontier.Sequence == 2 {
+					break
+				}
+				select {
+				case <-frontierDeadline.C:
+					frontierPoll.Stop()
+					t.Fatal("runtime did not authenticate the rate-refused PING", frontier, frontierErr)
+				case <-frontierPoll.C:
+				}
+			}
+			frontierDeadline.Stop()
+			frontierPoll.Stop()
+			select {
+			case unexpected := <-output.frames:
+				t.Fatal("rate-refused PING produced a PONG", unexpected)
+			default:
+			}
+			now.Store(100)
+			sendPing(33)
+			thirdPong := nextServiceFrame(t, output)
+			third, err := peer.receiver.Receive(ctx, thirdPong)
+			if err != nil {
+				t.Fatal("Session did not continue after local refusal", err)
+			}
+			frame, err := third.Body()
+			if err != nil {
+				t.Fatal(err)
+			}
+			nonce, _ := frame.Field("nonce").ByteString()
+			if frame.Schema != "PONG" || nonce[0] != 33 {
+				t.Fatal("refused PING produced a reply or later PING was lost", frame)
+			}
+			third.Release()
+
+			cancel()
+			if err := waitRuntime(t, done); !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+			cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			if err := queue.WaitCleanup(cleanup); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func waitRuntimeFrontier(t *testing.T, local *openEndpoint, sequence uint64) {
+	t.Helper()
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(time.Millisecond)
+	defer poll.Stop()
+	for {
+		frontier, err := local.engine.ScopeFrontier(0, local.receiver.direction)
+		if err == nil && frontier.Sequence == sequence {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("reader did not commit expected maintenance sequence", frontier, err)
+		case <-poll.C:
+		}
+	}
+}
+
+func TestSessionRuntimeLocalMaintenanceRefusalInvalidatesOnlyAutomaticSample(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		t.Run(map[bool]string{false: "shared", true: "native"}[native], func(t *testing.T) {
+			local, peer, now := idleEndpoints(t, 0)
+			output := &blockingPongWriter{frames: make(chan []byte, 8), entered: make(chan struct{}), release: make(chan struct{})}
+			defer output.unblock()
+			local.maintenance, _ = NewRecordWriter(local.engine, 0, output)
+			p := autoLiveness(t, local, 1)
+			charge, _ := MaintenanceMessagesCharge(1)
+			queue, err := NewMaintenanceMessages(p, make([]PongSlot, 1), MaintenanceMessagePolicy{IngressBurst: 1, IngressRefillMS: 10, ReplyTimeoutMS: 500}, backgroundResources(t, local).reserve(t, charge))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				queue.Close()
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := queue.WaitCleanup(ctx); err != nil {
+					t.Error(err)
+				} else if err := queue.retire(); err != nil {
+					t.Error(err)
+				}
+			})
+			automatic := nextAuto(t, p, now)
+			if result, err := automatic.Publish(context.Background()); err != nil || !result.Complete {
+				t.Fatal(result, err)
+			}
+			record, err := peer.receiver.Receive(context.Background(), nextRuntimePongFrame(t, output.frames))
+			if err != nil {
+				t.Fatal(err)
+			}
+			frame, err := record.Body()
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, _ := frame.Field("nonce").ByteString()
+			nonce := [16]byte(value)
+			record.Release()
+			manual := testProbe(t, p, 500)
+			reader, writer := io.Pipe()
+			defer writer.Close()
+			f := newRuntimeFixture(t, local, &runtimeTestInput{Reader: reader, interrupt: func() { _ = reader.Close() }}, native)
+			if native {
+				f.config.MaintenanceIngress.policy.Burst = 1
+				f.config.MaintenanceIngress.policy.RefillMS = 10
+				f.config.MaintenanceIngress.tokens = 1
+			}
+			r := f.startOwner(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- r.Run(ctx) }()
+			send := func(kind protocolv4.FrameType, body []byte) {
+				t.Helper()
+				peer.control.Reset()
+				if _, err := peer.maintenance.Write(ctx, kind, body); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := writer.Write(peer.control.Bytes()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			send(protocolv4.FramePing, pingBody(t, 51))
+			select {
+			case <-output.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("first PONG did not enter provider")
+			}
+			body, err := protocolv4.EncodeMap(make([]byte, 64), "PONG", []protocolv4.Field{{Name: "nonce", Kind: protocolv4.ByteString, Bytes: nonce[:]}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			send(protocolv4.FramePong, body)
+			waitRuntimeFrontier(t, local, 2)
+			deadline := time.NewTimer(5 * time.Second)
+			defer deadline.Stop()
+			poll := time.NewTicker(time.Millisecond)
+			defer poll.Stop()
+			for {
+				result, terminal := automatic.Result()
+				if terminal {
+					if !errors.Is(result.Cause, ErrProbeLocalStall) || !result.Submitted {
+						t.Fatal("local refusal lost automatic sample facts", result)
+					}
+					break
+				}
+				select {
+				case err := <-done:
+					t.Fatal("runtime terminated", err)
+				case <-deadline.C:
+					t.Fatal("automatic sample not invalidated")
+				case <-poll.C:
+				}
+			}
+			if result, terminal := manual.Result(); terminal {
+				t.Fatal("explicit Probe terminated", result)
+			}
+			now.Add(11)
+			send(protocolv4.FramePong, pingBody(t, 53))
+			waitRuntimeFrontier(t, local, 3)
+			if _, misses, err := p.AutomaticStatus(); misses != 0 || err != nil {
+				t.Fatal("local refusal became remote miss", misses, err)
+			}
+			select {
+			case <-local.engine.Done():
+				t.Fatal("Session closed")
+			default:
+			}
+			output.unblock()
+			cancel()
+			if err := waitRuntime(t, done); !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestSessionRuntimeLocallyRefusesFullPongQueueAndContinues(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		t.Run(map[bool]string{false: "shared", true: "native"}[native], func(t *testing.T) {
+			local, peer, _ := idleEndpoints(t, 0)
+			output := &blockingPongWriter{frames: make(chan []byte, 8), entered: make(chan struct{}), release: make(chan struct{})}
+			defer output.unblock()
+			local.maintenance, _ = NewRecordWriter(local.engine, 0, output)
+			_, queue := maintenanceMessages(t, local, 1, 8)
+			reader, writer := io.Pipe()
+			defer writer.Close()
+			f := newRuntimeFixture(t, local, &runtimeTestInput{Reader: reader, interrupt: func() { _ = reader.Close() }}, native)
+			r := f.startOwner(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- r.Run(ctx) }()
+			send := func(nonce byte) {
+				t.Helper()
+				peer.control.Reset()
+				if _, err := peer.maintenance.Write(ctx, protocolv4.FramePing, pingBody(t, nonce)); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := writer.Write(peer.control.Bytes()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			receive := func(nonce byte) {
+				t.Helper()
+				record, err := peer.receiver.Receive(ctx, nextRuntimePongFrame(t, output.frames))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer record.Release()
+				frame, err := record.Body()
+				if err != nil {
+					t.Fatal(err)
+				}
+				value, _ := frame.Field("nonce").ByteString()
+				if frame.Schema != "PONG" || len(value) != 16 || value[0] != nonce {
+					t.Fatal("unexpected PONG", frame)
+				}
+			}
+			send(41)
+			select {
+			case <-output.entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("PONG provider tail not entered")
+			}
+			send(42)
+			waitRuntimeFrontier(t, local, 2)
+			select {
+			case err := <-done:
+				t.Fatal("queue refusal terminated runtime", err)
+			default:
+			}
+			output.unblock()
+			receive(41)
+			// The provider exposing bytes is earlier than the reply owner exiting.
+			// Await that real exit before asserting reuse of its single queue slot.
+			deadline := time.NewTimer(5 * time.Second)
+			defer deadline.Stop()
+			poll := time.NewTicker(time.Millisecond)
+			defer poll.Stop()
+			for {
+				queue.mu.Lock()
+				empty := queue.count == 0 && !queue.active
+				queue.mu.Unlock()
+				if empty {
+					break
+				}
+				select {
+				case <-deadline.C:
+					t.Fatal("original reply slot did not retire")
+				case <-poll.C:
+				}
+			}
+			send(43)
+			receive(43)
+			cancel()
+			if err := waitRuntime(t, done); !errors.Is(err, context.Canceled) {
+				t.Fatal(err)
+			}
+			cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			if err := queue.WaitCleanup(cleanup); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func nextRuntimePongFrame(t *testing.T, frames <-chan []byte) []byte {
+	t.Helper()
+	select {
+	case frame := <-frames:
+		return frame
+	case <-time.After(5 * time.Second):
+		t.Fatal("Session did not publish the expected PONG")
+		return nil
 	}
 }
 

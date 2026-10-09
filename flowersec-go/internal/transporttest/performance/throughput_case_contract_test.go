@@ -2,6 +2,8 @@ package performance
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"strings"
@@ -10,6 +12,45 @@ import (
 	"testing"
 	"time"
 )
+
+func TestPayloadThroughputFixturePreservesOriginalBytes(t *testing.T) {
+	// Frozen digests of the original byte(index*31+17) fixture cover its
+	// period boundary and an incomplete final period in a large transfer.
+	for _, fixture := range []struct {
+		size   int
+		digest string
+	}{
+		{0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+		{1, "4a64a107f0cb32536e5bce6c98c393db21cca7f4ea187ba8c4dca8b51d4ea80a"},
+		{255, "93e05340843443403b42b7b9fed9f5981469e9b484839a6b39c02b0782451846"},
+		{256, "e99ccdfa408797be9cac8f15bfe799081a862318cf8946f4993aebac746be804"},
+		{257, "0a720ab46d8213855e7e3229d64ac9b12694edcb30d6c5caa8a50fbc01c47ce8"},
+		{1048577, "2d02232a6b80ef15bd4f45a5214f4abb1bae2bd54df16f48186aadc5679dd663"},
+	} {
+		payload := makePayload(fixture.size)
+		digest := sha256.Sum256(payload)
+		if len(payload) != fixture.size || hex.EncodeToString(digest[:]) != fixture.digest {
+			t.Fatalf("original payload changed at size %d", fixture.size)
+		}
+	}
+}
+
+func TestPayloadThroughputVerifierRejectsEveryMismatchPosition(t *testing.T) {
+	payload := makePayload(1 << 20)
+	if !equalPayload(payload, append([]byte(nil), payload...)) {
+		t.Fatal("identical complete payload rejected")
+	}
+	for _, index := range []int{0, len(payload) / 2, len(payload) - 1} {
+		changed := append([]byte(nil), payload...)
+		changed[index] ^= 1
+		if equalPayload(payload, changed) {
+			t.Fatalf("payload mismatch at byte %d was accepted", index)
+		}
+	}
+	if equalPayload(payload, payload[:len(payload)-1]) || equalPayload(payload, append(payload, 0)) {
+		t.Fatal("incorrect payload length accepted")
+	}
+}
 
 type throughputContractRead struct {
 	payload []byte

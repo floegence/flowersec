@@ -114,6 +114,40 @@ func authorizationSamplingFixture(t *testing.T) (*endpointCredentialFixture, *Cr
 	return x, s, activation, n, trust, source
 }
 
+func TestAdjacentAuthorizationSampleCannotRetainEarlierPermission(t *testing.T) {
+	for _, failure := range []string{"trust", "expiry", "close"} {
+		t.Run(failure, func(t *testing.T) {
+			_, subscriptions, activation, namespace, trust, source := authorizationSamplingFixture(t)
+			authorization, err := NewEndpointAuthorization(subscriptions, activation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { authorization.Close(nil) })
+			original, err := namespace.clock.Sample()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := authorization.CheckWithSample(original); err != nil {
+				t.Fatal(err)
+			}
+			switch failure {
+			case "trust":
+				trust.rejected.Store(true)
+			case "expiry":
+				source.tick.Store(10000)
+				if _, err := namespace.clock.Sample(); err != nil {
+					t.Fatal(err)
+				}
+			case "close":
+				authorization.Close(errors.New("original endpoint closed"))
+			}
+			if err := authorization.CheckWithSample(original); err == nil {
+				t.Fatal("an earlier clock sample retained superseded authorization")
+			}
+		})
+	}
+}
+
 func TestAuthorizationCloseFencesBlockedClockAndRetainsBacking(t *testing.T) {
 	x, s, activation, n, _, source := authorizationSamplingFixture(t)
 	a, err := NewEndpointAuthorization(s, activation)

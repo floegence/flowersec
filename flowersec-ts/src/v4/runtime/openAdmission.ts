@@ -70,7 +70,7 @@ export function openAdmissionCharge(config: OpenAdmissionConfig): ResourceVector
   // Slots retain immutable OPEN association through retirement, independently
   // of active and ingress admission. The fixed snapshots are cleared when the
   // original operation no longer needs them; no map grows with lifetime IDs.
-  const bytes = usedBytes * 2 + 96 + slots * (snapshotBytes + 32 + 256) + openBytes * 2 + 36;
+  const bytes = usedBytes * 3 + 96 + slots * (snapshotBytes + 32 + 256) + openBytes * 2 + 36;
   // Pending ingress and the one serial verifier coexist with terminal proofs.
   // One prepaid maintenance continuation publishes direct rejections.
   return new ResourceVector([BigInt(bytes) + c.runtimeBytes, 0n, 0n, BigInt(slots), BigInt(c.ingressItems + 1), 1n, 0n, 0n, 0n, 0n, 0n]);
@@ -121,6 +121,9 @@ export class OpenAdmission {
   #reservation: ResourceReference | undefined;
   #used: Uint8Array = empty;
   #stable: Uint8Array = empty;
+  // Canceled, unsubmitted IDs are stable for handle lifetime only. Shared
+  // ingress refusal requires a separate authenticated retirement fact.
+  #authenticatedRetired: Uint8Array = empty;
   readonly #byOpener = new Uint32Array(6);
   readonly #lifetime = new BigUint64Array(6);
   #input: Uint8Array = empty;
@@ -145,7 +148,8 @@ export class OpenAdmission {
     this.#slots = [];
     try {
       this.#decoder = new CBORDecoder(decoderConfig(config.runtimeBytes), decoderReservation);
-      this.#used = new Uint8Array(usedBytes); this.#stable = new Uint8Array(usedBytes); this.#input = new Uint8Array(openBytes); this.#projection = new Uint8Array(openBytes);
+      this.#used = new Uint8Array(usedBytes); this.#stable = new Uint8Array(usedBytes); this.#authenticatedRetired = new Uint8Array(usedBytes);
+      this.#input = new Uint8Array(openBytes); this.#projection = new Uint8Array(openBytes);
       this.#length = new Uint8Array(4); this.#digest = new Uint8Array(32);
       for (let i = 0; i < this.#config.terminalCapacity + this.#config.ingressItems + 1; i++) this.#slots.push({
         streamClass: 0, generation: 0, phase: "free", scope: 0n, epoch: 0, currentEpoch: 0, local: false, active: false, ingress: false,
@@ -504,6 +508,10 @@ export class OpenAdmission {
     this.#check(); const role = Number((scope + 1n) % 2n) as RecordDirection, [at, mask] = this.#scope(scope, role);
     return (this.#stable[at]! & mask) !== 0;
   }
+  isAuthenticatedRetired(scope: bigint): boolean {
+    this.#check(); const role = Number((scope + 1n) % 2n) as RecordDirection, [at, mask] = this.#scope(scope, role);
+    return (this.#authenticatedRetired[at]! & mask) !== 0;
+  }
   /** Commit the authenticated retirement fence. Existing barrier and native
    * publication owners can retain the original proof slot after this point. */
   retire(handle: OpenHandle, retainProof = false): void {
@@ -512,6 +520,7 @@ export class OpenAdmission {
     if (slot.phase === "rejected" && !slot.local && !slot.resultSubmitted) fail("open_state");
     const role = slot.local ? this.#config.direction : this.#config.direction === 0 ? 1 : 0, [at, mask] = this.#scope(slot.scope, role);
     this.#stable[at] = this.#stable[at]! | mask;
+    this.#authenticatedRetired[at] = this.#authenticatedRetired[at]! | mask;
     slot.phase = "stable";
     if (!retainProof) this.releaseRetired(handle);
   }
@@ -547,8 +556,8 @@ export class OpenAdmission {
     if (this.#closed) return; this.#closed = true;
     this.#decoder?.close();
     for (const slot of this.#slots) this.#release(slot);
-    this.#used.fill(0); this.#stable.fill(0); this.#byOpener.fill(0); this.#lifetime.fill(0n); this.#input.fill(0); this.#projection.fill(0); this.#digest.fill(0); this.#length.fill(0);
-    this.#stable = this.#used = this.#input = this.#projection = this.#digest = this.#length = empty;
+    this.#used.fill(0); this.#stable.fill(0); this.#authenticatedRetired.fill(0); this.#byOpener.fill(0); this.#lifetime.fill(0n); this.#input.fill(0); this.#projection.fill(0); this.#digest.fill(0); this.#length.fill(0);
+    this.#authenticatedRetired = this.#stable = this.#used = this.#input = this.#projection = this.#digest = this.#length = empty;
     this.#reservation?.release(); this.#reservation = undefined;
   }
   cleanupComplete(): boolean { return this.#reservation === undefined && (this.#decoder?.cleanupComplete() ?? true); }

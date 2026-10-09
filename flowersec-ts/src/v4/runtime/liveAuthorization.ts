@@ -4,6 +4,7 @@ import type { V4EnvironmentRuntime, EnvironmentDependency } from "./environment.
 import type { ClientAdmissionExchange } from "./clientAdmission.js";
 import { ResourceVector, type ResourceReference } from "./resources.js";
 import { timerChunk } from "./deadline.js";
+import { credentialOwner } from "./credentialSupport.js";
 
 export type V4LiveAuthorizationRequest = LiveAuthorizationRequest;
 /** Independently authenticated bounded control transport. One invocation is
@@ -65,7 +66,7 @@ export class LiveAuthorizationClient {
     this.#dependency.check(); check();
     if (signal.aborted || this.#closed) throw new Error("closed");
     if (this.#active.size >= this.#maximum) throw new Error("resource_exhausted");
-    const r = this.environment.resources, reservation = r.root.reserve({ owner: { ...r.owner, kind: "live_authorization_request" }, accounts: r.accounts, charge: this.#charge });
+    const r = this.environment.resources, reservation = r.root.reserve({ owner: credentialOwner(r, "live_authorization_request"), accounts: r.accounts, charge: this.#charge });
     const abort = new AbortController(); this.#active.add(abort);
     let request: LiveAuthorizationRequest | undefined, output: Uint8Array | undefined, timer: ReturnType<typeof setTimeout> | undefined;
     let invocation: Readonly<{ signal: AbortSignal; check(): void }> | undefined;

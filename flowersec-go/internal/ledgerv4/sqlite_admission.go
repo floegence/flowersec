@@ -20,6 +20,14 @@ type SQLiteAdmissionAuthority interface {
 	CheckAdmission(SQLiteIdentity, protocolv4.AdmissionFacts) error
 }
 
+// SQLiteAdmissionScheduler optionally schedules finite original accepted
+// positions before their reserve/admit operations use one shared connection.
+// It must observe the supplied original context without retrying durable work.
+// A successful call returns one release that the caller invokes exactly once.
+type SQLiteAdmissionScheduler interface {
+	ScheduleAdmission(context.Context) (release func(), err error)
+}
+
 // SQLiteAdmission owns the single original reserve/admit path. Its original
 // Invocation is never returned. Only a successful original CAS and Dispatch
 // may call the supplied trusted Acceptor continuation; queries cannot do so.
@@ -217,8 +225,9 @@ func (a *SQLiteAdmission) Admit(action func(context.Context, protocolv4.Admissio
 			a.Close(err)
 		}
 	}()
-	// A shared parent winner is fixed before any local admission write. Any
-	// failure closes this original invocation; it never returns to the race.
+	// A separate parent authority is fixed before any local admission write.
+	// In one real transaction domain, reserve atomically fixes both facts.
+	// Any failure closes this invocation; it never returns to the race.
 	if a.record.fields.Source == "preauthorized_pool" {
 		if a.parent == nil {
 			return ErrConfiguration
@@ -237,8 +246,10 @@ func (a *SQLiteAdmission) Admit(action func(context.Context, protocolv4.Admissio
 			if err = a.winnerContinuation.ContinueOriginalParentWinner(a.invocation.ctx, a.key[:a.keySize], a.target[:n], a.environment, a.check); err != nil {
 				return err
 			}
-		} else if err = a.parent.matchParentWinner(a.invocation.ctx, a.key[:a.keySize], a.target[:n], a.scratch, a.check); err != nil {
-			return err
+		} else if a.parent != a.store {
+			if err = a.parent.matchParentWinner(a.invocation.ctx, a.key[:a.keySize], a.target[:n], a.scratch, a.check); err != nil {
+				return err
+			}
 		}
 	}
 	if err = a.reserve(a.invocation.ctx); err != nil {

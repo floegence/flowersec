@@ -136,6 +136,7 @@ func newBorrowPool(source, metadata Reference, capacity uint32, flexible, shared
 			}
 			ref := &r.refs[index]
 			*ref = referenceSlot{borrowPool: p, protectedIdle: true, generation: ref.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: s.owner, accounts: s.accounts, count: s.count, active: true}
+			r.referenceExtent = max(r.referenceExtent, index+1)
 			r.attachScopes(c, s.accounts[:s.count])
 			c.refs++
 			r.referenceCount++

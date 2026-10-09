@@ -95,7 +95,7 @@ func InitialBackingBytes(limits InitialLimits) (uint64, error) {
 	if limits.MaxFrame <= 0 || limits.MaxFrame > protocolv4.MaxPayloadLength {
 		return 0, cryptov4.ErrConfiguration
 	}
-	decoder, err := protocolv4.DecoderBackingBytes(limits.MaxFrame, limits.Nodes)
+	decoder, err := protocolv4.InitialDecoderBackingBytes(limits.MaxFrame, limits.Nodes)
 	if err != nil {
 		return 0, err
 	}
@@ -172,11 +172,11 @@ func newInitialExchange(ctx context.Context, config InitialConfig, stream io.Rea
 			owned.Release()
 		}
 	}()
-	send, err := protocolv4.NewDecoder(config.Limits.MaxFrame, config.Limits.Nodes)
+	send, err := protocolv4.NewInitialDecoder(config.Limits.MaxFrame, config.Limits.Nodes)
 	if err != nil {
 		return nil, err
 	}
-	receive, err := protocolv4.NewDecoder(config.Limits.MaxFrame, config.Limits.Nodes)
+	receive, err := protocolv4.NewInitialDecoder(config.Limits.MaxFrame, config.Limits.Nodes)
 	if err != nil {
 		return nil, err
 	}

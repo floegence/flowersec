@@ -10,6 +10,7 @@ import (
 	"unsafe"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
@@ -313,12 +314,21 @@ func (r *SessionRuntime) ingress(ctx context.Context) error {
 				err = r.shared.Dispatch(ctx, record, deadline)
 			}
 			record.Release()
+			if errors.Is(err, errMaintenanceDiscarded) {
+				continue
+			}
 			if err != nil {
 				return err
 			}
 			continue
 		}
 		record, err := r.maint.Read(ctx, r.maint.carrier, r.input)
+		if errors.Is(err, errMaintenanceDiscarded) {
+			if record != nil {
+				record.Release()
+			}
+			continue
+		}
 		if errors.Is(err, cryptov4.ErrCapacity) {
 			// Retain the original candidate and rate token until real capacity returns.
 			select {
@@ -331,11 +341,18 @@ func (r *SessionRuntime) ingress(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		deadline, err := r.dispatchDeadline(record)
+		body, err := record.Body()
+		var deadline *timev4.Deadline
 		if err == nil {
-			err = r.admission.dispatchControl(ctx, record, deadline)
+			deadline, err = r.dispatchDeadlineFrame(record, body)
+		}
+		if err == nil {
+			err = r.admission.dispatchControlFrame(ctx, record, deadline, body)
 		}
 		record.Release()
+		if errors.Is(err, errMaintenanceDiscarded) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -369,10 +386,17 @@ func (r *SessionRuntime) bindApplicationPublication(published <-chan struct{}) e
 // Each newly authenticated owner gets its own finite original deadline. A
 // duplicate retirement input keeps the deadline already retained by Retirement.
 func (r *SessionRuntime) dispatchDeadline(record *ReceivedRecord) (*timev4.Deadline, error) {
+	if complete, err := record.dispatchComplete(); complete || err != nil {
+		return nil, err
+	}
 	body, err := record.Body()
 	if err != nil {
 		return nil, err
 	}
+	return r.dispatchDeadlineFrame(record, body)
+}
+
+func (r *SessionRuntime) dispatchDeadlineFrame(record *ReceivedRecord, body *protocolv4.Frame) (*timev4.Deadline, error) {
 	if record.incoming == nil && body.Schema != "STREAM_ACK_RETIRE_BATCH" {
 		return nil, nil
 	}

@@ -90,6 +90,7 @@ final class V4LiveGrantPreparation: @unchecked Sendable {
   private let originalRelay: V4NamespaceValue
   private let relayEvidence: V4CredentialEvidence
   private let forwardingDeadline: V4SecurityDeadline
+  private let authorizationCache = V4LiveGrantAuthorizationCache()
   private var completed: V4NamespaceValue?
   private var evidence: V4CredentialEvidence?
   private var closed = false
@@ -139,7 +140,8 @@ final class V4LiveGrantPreparation: @unchecked Sendable {
       try parentEvidence.namespace.checkEvidence(parentEvidence)
       try relayEvidence.namespace.checkEvidence(relayEvidence)
       try namespace.checkOwner(environment)
-      try namespace.checkLiveGrantDependency(scope, parent: parent, evidence: parentEvidence)
+      try namespace.checkLiveGrantDependency(scope, parent: parent, evidence: parentEvidence,
+        cache: authorizationCache)
       if let evidence { try namespace.checkEvidence(evidence) }
     }
   }

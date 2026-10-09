@@ -38,36 +38,31 @@ func (r *RPCServices) prepareNativeBootstrap(n *nativeStreamTransport, pool *Rec
 	if err != nil {
 		return nil, err
 	}
-	var management [1]*nativeStreamProtection
-	if r.session.Limits().ApplicationProfile == "execution" && a.direction == protocolv4.ClientToServer {
-		// This same provider and association position survives every M
-		// generation. Ordinary native creation cannot consume its promise.
-		if err = n.protectLocal(management[:]); err != nil {
+	var positions [2]*nativeStreamProtection
+	if a.direction == protocolv4.ClientToServer {
+		count := 1
+		if r.session.Limits().ApplicationProfile == "execution" {
+			count++
+		}
+		// The fixed bootstrap and every management generation own separate
+		// prepaid provider/association positions before application publication.
+		// Ordinary native creation cannot consume either promise.
+		if err = n.protectLocal(positions[:count]); err != nil {
 			allocation.release()
 			return nil, err
-		}
-		// The bootstrap still needs its original local creation position.
-		// Reject insufficient admission before READY instead of stalling it.
-		n.mu.Lock()
-		bootstrapAvailable := n.openingAvailableLocked(nil)
-		n.mu.Unlock()
-		if !bootstrapAvailable {
-			management[0].close()
-			allocation.release()
-			return nil, cryptov4.ErrCapacity
 		}
 	}
 	b, err := a.PrepareBootstrap(BootstrapReservation{StreamReservation: allocation.stream.reservation,
 		Receiver: n.readers[0].receiver, reusableReceiver: true})
 	if err != nil {
-		if management[0] != nil {
-			management[0].close()
+		for _, position := range positions {
+			position.close()
 		}
 		allocation.release()
 		return nil, err
 	}
 	r.firstAllocation, r.bootstrap, r.native = allocation, b, n
-	r.managementNative = management[0]
+	r.bootstrapNative, r.managementNative = positions[0], positions[1]
 	return b, nil
 }
 

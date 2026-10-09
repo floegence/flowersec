@@ -12,6 +12,19 @@ import (
 // leaving the work slot free for the explicit recovery observer under test.
 func retirementRecoveryOperation(t *testing.T, factory *NamespaceReferenceFactory, registry *NamespaceRegistry, previous *NamespaceTrustStore) *NamespaceOnlineRetirement {
 	t.Helper()
+	// Recovery starts from retained closed history. Join its real watchdog
+	// before requesting exclusivity; an in-flight clock read is still an owner.
+	previous.Close()
+	previous.mu.Lock()
+	original := previous.namespace
+	previous.mu.Unlock()
+	if original != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := original.WaitCleanup(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
 	factory.mu.Lock()
 	config := factory.slots[0].config
 	factory.mu.Unlock()

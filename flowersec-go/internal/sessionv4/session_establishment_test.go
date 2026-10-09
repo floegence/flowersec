@@ -297,6 +297,7 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 	type serverResult struct {
 		admission *SessionAdmissionReservation
 		core      *SessionCore
+		session   *EnvironmentSession
 		err       error
 	}
 	serverDone := make(chan serverResult, 1)
@@ -390,6 +391,13 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 	}
 	run := func(store *ledgerv4.SQLiteStore, authority ledgerv4.SQLiteAdmissionAuthority, connect func() (*SessionCore, error)) error {
 		t.Cleanup(func() {
+			if server.session != nil {
+				server.session.Close()
+				if err := server.session.WaitPhysicalCleanup(context.Background()); err != nil {
+					t.Error(err)
+					return
+				}
+			}
 			if server.admission != nil {
 				server.admission.Close()
 				if err := server.admission.WaitCleanup(context.Background()); err != nil {
@@ -462,7 +470,7 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 			session.mu.Lock()
 			sa := session.admission
 			session.mu.Unlock()
-			serverDone <- serverResult{sa, core, err}
+			serverDone <- serverResult{admission: sa, core: core, session: session, err: err}
 		}()
 		var err error
 		client, err = connect()

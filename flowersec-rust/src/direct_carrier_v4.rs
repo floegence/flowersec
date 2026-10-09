@@ -438,7 +438,8 @@ impl Provider {
         &self,
         receiver: &SessionReceiver,
         wire: &[u8],
-    ) -> std::result::Result<(), crate::transport::SessionError> {
+    ) -> std::result::Result<crate::crypto_v4::ReceiveDisposition, crate::transport::SessionError>
+    {
         if matches!(self, Self::Native(_))
             && (wire.len() < 44 || !matches!(wire[4], 6 | 9 | 11..=15) || wire[12..20] != [0; 8])
         {

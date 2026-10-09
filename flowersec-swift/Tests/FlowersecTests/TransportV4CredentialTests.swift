@@ -347,6 +347,7 @@ final class CredentialFixture {
   let base: NamespaceFixture
   let profile: String
   let activationDelegation: V4CBORValue
+  private let longLived: Bool
   private let once: V4CBORValue
   var candidateLeg: V4CBORValue?
   var candidateCount = 2
@@ -359,9 +360,10 @@ final class CredentialFixture {
     profile: String = x25519Profile, issuerEnd: UInt64 = 2500,
     clientPermissionSubject: String = "client", activationEnd: UInt64 = 1500,
     allowTunnel: Bool = false,
-    nativeResources: Bool = false
+    nativeResources: Bool = false, longLived: Bool = false
   ) throws {
-    base = try NamespaceFixture(nativeResources: nativeResources)
+    base = try NamespaceFixture(nativeResources: nativeResources, longLived: longLived)
+    self.longLived = longLived
     self.profile = profile
     once = NamespaceFixture.map([
       0: .text("tenant"), 1: .bytes(Data(repeating: 5, count: 16)),
@@ -372,7 +374,8 @@ final class CredentialFixture {
       3: .bytes(base.capacityDigest), 4: .uint(1), 5: .text("activate"),
       6: .bytes(try NamespaceFixture.key(13).publicKey.rawRepresentation), 7: .uint(1),
       8: .bytes(Data(repeating: 5, count: 16)), 9: .text("spend"), 10: .uint(1),
-      11: .uint(1500), 12: .uint(0), 13: .uint(20), 14: .uint(activationEnd), 15: .uint(2000),
+      11: .uint(longLived ? 100_000 : 1500), 12: .uint(0), 13: .uint(20),
+      14: .uint(longLived ? 100_000 : activationEnd), 15: .uint(longLived ? 100_000 : 2000),
       16: .array([.null, .uint(20)]), 17: .bytes(Data(repeating: 6, count: 16)),
     ])
     var permissions: [V4CBORValue] = []
@@ -382,8 +385,8 @@ final class CredentialFixture {
         1: .text("tenant"), 2: .text("authority"), 3: .bytes(base.capacityDigest), 4: .uint(1),
         5: .uint(role == 2 ? 1 : 0), 6: .bytes(Data(repeating: role == 2 ? 5 : 4, count: 16)),
         7: .bytes(try NamespaceFixture.key(role == 2 ? 12 : 11).publicKey.rawRepresentation),
-        8: .text("service"), 9: .uint(1), 10: .uint(1500), 11: .uint(0), 12: .uint(20),
-        13: .uint(issuerEnd), 15: .text(profile),
+        8: .text("service"), 9: .uint(1), 10: .uint(longLived ? 100_000 : 1500), 11: .uint(0), 12: .uint(20),
+        13: .uint(longLived ? 100_000 : issuerEnd), 15: .text(profile),
         24: .array(role == 2 ? [.null, .uint(20)] : [.uint(20), .null]),
       ]
       if role < 2 {
@@ -421,7 +424,8 @@ final class CredentialFixture {
       state: state, authorizations: permissions,
       policies: [
         NamespaceFixture.map([
-          0: .text("credentials"), 1: .uint(1), 2: .uint(1000), 3: .uint(5000),
+          0: .text("credentials"), 1: .uint(1),
+          2: .uint(longLived ? 100_000 : 1000), 3: .uint(longLived ? 100_000 : 5000),
         ])
       ], activationDelegations: [activationDelegation], onceAuthorities: [once])
     try base.owner!.bootstrap(response: bootstrapResponse, state: state)
@@ -432,7 +436,8 @@ final class CredentialFixture {
   ) -> Data {
     base.state(
       issuers: issuers, certificates: certificates, leases: leases,
-      segments: [NamespaceFixture.map([0: .uint(0), 1: .uint(20), 2: .uint(1000), 3: .uint(1000)])])
+      segments: [NamespaceFixture.map([0: .uint(0), 1: .uint(20),
+        2: .uint(longLived ? 100_000 : 1000), 3: .uint(longLived ? 100_000 : 1000)])])
   }
 
   func configuration(

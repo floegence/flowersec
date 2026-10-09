@@ -36,6 +36,7 @@ type owner struct {
 	lifetime                          context.Context
 	cancel                            context.CancelCauseFunc
 	prepareCtx, readCtx, writeCtx     context.Context
+	readWatch, writeWatch             <-chan struct{}
 	readGeneration, writeGeneration   uint64
 	preparing, reading, writing       bool
 	closed, worker, complete, retired bool
@@ -141,17 +142,11 @@ func (m *owner) lifecycle() {
 	defer func() { m.mu.Lock(); m.worker = false; m.cleanupLocked(); m.mu.Unlock() }()
 	for {
 		m.mu.Lock()
-		prepare, read, write := m.prepareCtx, m.readCtx, m.writeCtx
-		rg, wg := m.readGeneration, m.writeGeneration
-		var pd, rd, wd <-chan struct{}
+		prepare := m.prepareCtx
+		rd, wd := m.readWatch, m.writeWatch
+		var pd <-chan struct{}
 		if prepare != nil {
 			pd = prepare.Done()
-		}
-		if read != nil {
-			rd = read.Done()
-		}
-		if write != nil {
-			wd = write.Done()
 		}
 		m.mu.Unlock()
 		var observed uint8
@@ -167,7 +162,24 @@ func (m *owner) lifecycle() {
 			continue
 		}
 		m.mu.Lock()
-		if observed == 1 && !m.preparing || observed == 2 && (!m.reading || m.readGeneration != rg) || observed == 3 && (!m.writing || m.writeGeneration != wg) {
+		if observed == 1 && !m.preparing {
+			m.mu.Unlock()
+			continue
+		}
+		// Watch the original cancellation channel across adjacent calls,
+		// without retaining an ended caller context or waking per message.
+		// Only an active call sharing the observed channel can be canceled.
+		if observed == 2 && (m.readWatch != rd || !m.reading || m.readCtx == nil || m.readCtx.Done() != rd) {
+			if m.readWatch == rd {
+				m.readWatch = nil
+			}
+			m.mu.Unlock()
+			continue
+		}
+		if observed == 3 && (m.writeWatch != wd || !m.writing || m.writeCtx == nil || m.writeCtx.Done() != wd) {
+			if m.writeWatch == wd {
+				m.writeWatch = nil
+			}
 			m.mu.Unlock()
 			continue
 		}
@@ -202,6 +214,7 @@ func (m *owner) cleanupLocked() {
 	m.checkAcceptedRoute = nil
 	m.acceptedEndpoint = protocolv4.AcceptedWebSocketEndpoint{}
 	m.prepareCtx, m.readCtx, m.writeCtx, m.lifetime, m.cancel = nil, nil, nil, nil, nil
+	m.readWatch, m.writeWatch = nil, nil
 	m.complete = true
 	close(m.done)
 }
@@ -318,11 +331,7 @@ func (m *owner) begin(ctx context.Context, writing bool) (*ws.Conn, error) {
 		m.sealLocked()
 		return nil, err
 	}
-	if err := m.reservation.Check(); err != nil {
-		m.sealLocked()
-		return nil, err
-	}
-	if err := m.environment.Check(); err != nil {
+	if err := m.reservation.CheckSameEnvironment(m.environment); err != nil {
 		m.sealLocked()
 		return nil, err
 	}
@@ -332,14 +341,21 @@ func (m *owner) begin(ctx context.Context, writing bool) (*ws.Conn, error) {
 		}
 		m.writing, m.writeCtx = true, ctx
 		m.writeGeneration++
+		if done := ctx.Done(); done != m.writeWatch {
+			m.writeWatch = done
+			m.signalLocked()
+		}
 	} else {
 		if m.reading {
 			return nil, ErrConcurrent
 		}
 		m.reading, m.readCtx = true, ctx
 		m.readGeneration++
+		if done := ctx.Done(); done != m.readWatch {
+			m.readWatch = done
+			m.signalLocked()
+		}
 	}
-	m.signalLocked()
 	return m.conn, nil
 }
 
@@ -355,7 +371,6 @@ func (m *owner) finish(ctx context.Context, writing bool, err error) error {
 	if err != nil {
 		m.sealLocked()
 	}
-	m.signalLocked()
 	m.cleanupLocked()
 	return err
 }

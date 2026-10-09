@@ -15,15 +15,20 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
+#[cfg(test)]
+use std::sync::Condvar;
 use std::sync::{
-    Condvar, Mutex, OnceLock,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio_util::sync::CancellationToken;
 use unicode_normalization::UnicodeNormalization;
 
 const QUANTUM: usize = 16 * 1024;
+
+#[cfg(test)]
+include!("session_v4_shared_input_test_support.rs");
 
 #[cfg(test)]
 pub(crate) struct TerminalPublicationProbe {
@@ -550,58 +555,29 @@ pub(crate) trait SessionTransport: RecordPublisher + Send {
     fn cleanup_status(&self) -> CleanupStatus;
     fn stream_cleanup_status(&self, scope: u64) -> CleanupStatus;
 }
-struct PublicationTicket<'a> {
-    order: &'a PublicationOrder,
-    ticket: Option<u64>,
+struct DeferredRecord {
+    bytes: Vec<u8>,
+    work: Option<RecordWork>,
+    publication: Option<RecordPublication>,
+    _physical: Option<CryptoTail>,
+    send_view: Option<Arc<StreamView>>,
+    aborted: bool,
 }
-impl<'a> PublicationTicket<'a> {
-    fn new(order: &'a PublicationOrder, ticket: u64) -> Self {
-        Self {
-            order,
-            ticket: Some(ticket),
-        }
-    }
-}
-impl Drop for PublicationTicket<'_> {
+impl Drop for DeferredRecord {
     fn drop(&mut self) {
-        if let Some(ticket) = self.ticket.take() {
-            self.order.complete(ticket);
-        }
+        self.bytes.zeroize();
     }
 }
-struct PublicationOrder {
-    next: AtomicU64,
-    turn: Mutex<u64>,
-    changed: Condvar,
-}
-impl PublicationOrder {
-    fn new() -> Self {
-        Self {
-            next: AtomicU64::new(0),
-            turn: Mutex::new(0),
-            changed: Condvar::new(),
-        }
-    }
-    fn ticket(&self) -> u64 {
-        self.next.fetch_add(1, Ordering::AcqRel)
-    }
-    fn wait(&self, ticket: u64) {
-        let mut turn = self.turn.lock().expect("v4 publication order");
-        while *turn != ticket {
-            turn = self.changed.wait(turn).expect("v4 publication order wait");
-        }
-    }
-    fn complete(&self, ticket: u64) {
-        let mut turn = self.turn.lock().expect("v4 publication order");
-        if *turn == ticket {
-            *turn = turn.saturating_add(1);
-            self.changed.notify_all();
-        }
-    }
+struct PublicationStaging {
+    records: Vec<DeferredRecord>,
+    deferred: Vec<DeferredPublication>,
+    // Fields drop in declaration order: bytes and completion metadata precede
+    // the return of their actual staging reservation on every exit path.
+    _charges: Vec<ResourceCharge>,
 }
 struct DeferredPublisher<'a> {
     transport: &'a mut dyn SessionTransport,
-    records: Vec<Vec<u8>>,
+    records: Vec<DeferredRecord>,
     deferred: Vec<DeferredPublication>,
     charges: Vec<ResourceCharge>,
     account: ResourceAccount,
@@ -649,7 +625,7 @@ impl RecordPublisher for DeferredPublisher<'_> {
         let additional_tails = deferred_tails.saturating_sub(self.reserved_deferred);
         let metadata = additional_tails
             .checked_mul(std::mem::size_of::<DeferredPublication>())
-            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<Vec<u8>>()))
+            .and_then(|bytes| bytes.checked_add(std::mem::size_of::<DeferredRecord>()))
             .and_then(|bytes| bytes.checked_add(std::mem::size_of::<ResourceCharge>()))
             .ok_or(CryptoError::Capacity)?;
         let required = ResourceLimits {
@@ -711,7 +687,22 @@ impl RecordPublisher for DeferredPublisher<'_> {
             return Err(CryptoError::State);
         }
         copy.extend_from_slice(record);
-        self.records.push(copy);
+        self.records.push(DeferredRecord {
+            bytes: copy,
+            work: None,
+            publication: None,
+            _physical: None,
+            send_view: None,
+            aborted: false,
+        });
+        Ok(())
+    }
+    fn publish_seal(&mut self, work: RecordWork, record: &mut [u8]) -> Result<()> {
+        self.publish(record)?;
+        let record = self.records.last_mut().ok_or(CryptoError::State)?;
+        record._physical = Some(work.physical_tail());
+        record.send_view = work.send_view();
+        record.work = Some(work);
         Ok(())
     }
     fn is_deferred(&self) -> bool {
@@ -786,7 +777,9 @@ struct Owner {
     // publishing when Session::close runs. Keep the close intent until the
     // original cleanup observer can acquire that same transport owner.
     transport_close_requested: AtomicBool,
-    publication: PublicationOrder,
+    crypto: Arc<CryptoLifetime>,
+    unbound_receive: Arc<Mutex<()>>,
+    maintenance_receive: Arc<Mutex<()>>,
     account: ResourceAccount,
     staging: Arc<WriteStagingOwner>,
     changed: Arc<Notify>,
@@ -829,7 +822,7 @@ impl Owner {
             return Err(cause);
         }
         let session = drive.session.as_mut().ok_or(SessionError::Closed)?;
-        let result = action(session);
+        let mut result = action(session);
         let closed = session.engine.closed;
         if closed {
             Self::close_locked(
@@ -842,6 +835,9 @@ impl Owner {
             );
         }
         drop(drive);
+        if !closed && let Err(cause) = self.complete_rekey_crypto() {
+            result = Err(cause);
+        }
         if closed {
             self.diagnostic.session_failure(
                 result
@@ -858,6 +854,57 @@ impl Owner {
         result
     }
 
+    fn complete_rekey_crypto(&self) -> std::result::Result<(), SessionError> {
+        loop {
+            let work = {
+                let mut drive = self.drive.lock().expect("original rekey work claim");
+                if let Some(cause) = drive.termination {
+                    return Err(cause);
+                }
+                if drive.closing.is_some() {
+                    return Ok(());
+                }
+                drive
+                    .session
+                    .as_mut()
+                    .ok_or(SessionError::Closed)?
+                    .engine
+                    .take_rekey_crypto()
+            };
+            let Some(work) = work else {
+                return Ok(());
+            };
+            // Only immutable snapshots and original owned resources cross this
+            // boundary. DH/KDF never retain a drive or transport guard.
+            let completion = match work.execute() {
+                Ok(completion) => completion,
+                Err(cause) => {
+                    let cause = error(cause);
+                    self.close(cause);
+                    return Err(cause);
+                }
+            };
+            let result = {
+                let mut drive = self.drive.lock().expect("original rekey work commit");
+                if let Some(cause) = drive.termination.or(drive.closing) {
+                    return Err(cause);
+                }
+                drive
+                    .session
+                    .as_mut()
+                    .ok_or(SessionError::Closed)?
+                    .engine
+                    .finish_rekey_crypto(completion)
+                    .map_err(error)
+            };
+            if let Err(cause) = result {
+                self.close(cause);
+            }
+            self.changed.notify_waiters();
+            result?;
+        }
+    }
+
     fn run<T>(
         &self,
         action: impl FnOnce(
@@ -872,9 +919,12 @@ impl Owner {
     /// reader during terminal publication. Once `Drive::closing` is set, the
     /// terminal engine no longer performs AEAD/authentication work; this path
     /// only retains the bounded input queue and physical reader responsibility.
-    /// Before closing, the check and authenticated receive share one drive lock
-    /// so a real parse/authentication failure is never converted into a no-op.
-    fn receive_maintenance(&self, wire: &[u8]) -> std::result::Result<(), SessionError> {
+    /// Before closing, the original direction retains authentication custody
+    /// across the short claim/commit gates and lock-free crypto work.
+    fn receive_maintenance(
+        &self,
+        wire: &[u8],
+    ) -> std::result::Result<ReceiveDisposition, SessionError> {
         if wire.len() < 28 {
             self.close(SessionError::OperationFailed);
             return Err(SessionError::OperationFailed);
@@ -886,41 +936,94 @@ impl Owner {
                 .try_into()
                 .expect("maintenance scope after length check"),
         );
-        let mut drive = self.drive.lock().expect("v4 Session owner lock");
-        if let Some(cause) = drive.termination {
-            return Err(cause);
+        {
+            let drive = self.drive.lock().expect("v4 maintenance receive gate");
+            if let Some(cause) = drive.termination {
+                return Err(cause);
+            }
+            if drive.closing.is_some() {
+                return Ok(ReceiveDisposition::Applied);
+            }
         }
-        if drive.closing.is_some() {
-            // The original terminal publisher still owns the final transition.
-            return Ok(());
-        }
-        let session = drive.session.as_mut().ok_or(SessionError::Closed)?;
-        let result = session.receive(scope, wire).map_err(error);
-        let closed = session.engine.closed;
-        if closed {
-            Self::close_locked(
-                &mut drive,
-                result
-                    .as_ref()
-                    .err()
-                    .copied()
-                    .unwrap_or(SessionError::Closed),
-            );
-        }
-        drop(drive);
-        if closed {
-            let cause = result
-                .as_ref()
-                .err()
-                .copied()
-                .unwrap_or(SessionError::Closed);
-            self.diagnostic.session_failure(cause);
-            self.close_transport();
-            self.staging.close();
-            self.close_application();
-        }
+        let result = self
+            .receive_record(scope, wire, None, |_| Ok(()))
+            .map(|(_, disposition)| disposition);
         self.changed.notify_waiters();
         result
+    }
+    /// Direction serialization is independent of the short Session gate. No
+    /// mutable Session reference crosses AEAD, and Close never takes this lock.
+    fn receive_record<T>(
+        &self,
+        scope: u64,
+        wire: &[u8],
+        bound: Option<&StreamHandle>,
+        after: impl FnOnce(&mut ReliableSession) -> std::result::Result<T, SessionError>,
+    ) -> std::result::Result<(T, ReceiveDisposition), SessionError> {
+        loop {
+            let (direction, pool) = {
+                let drive = self.drive.lock().expect("v4 receive direction lookup");
+                if let Some(cause) = drive.termination.or(drive.closing) {
+                    return Err(cause);
+                }
+                let session = drive.session.as_ref().ok_or(SessionError::Closed)?;
+                let direction = if scope == 0 {
+                    self.maintenance_receive.clone()
+                } else if let Some(index) = session.engine.streams.index(scope) {
+                    session.engine.streams.slots[index]
+                        .view
+                        .receive_owner
+                        .clone()
+                } else {
+                    self.unbound_receive.clone()
+                };
+                (direction, session.engine.streams.input_pool.clone())
+            };
+            let _direction = direction.lock().expect("original reliable input direction");
+            let current = {
+                let drive = self
+                    .drive
+                    .lock()
+                    .expect("original receive owner confirmation");
+                if let Some(cause) = drive.termination.or(drive.closing) {
+                    return Err(cause);
+                }
+                let session = drive.session.as_ref().ok_or(SessionError::Closed)?;
+                if scope == 0 {
+                    self.maintenance_receive.clone()
+                } else if let Some(index) = session.engine.streams.index(scope) {
+                    session.engine.streams.slots[index]
+                        .view
+                        .receive_owner
+                        .clone()
+                } else {
+                    self.unbound_receive.clone()
+                }
+            };
+            if !Arc::ptr_eq(&current, &direction) {
+                continue;
+            }
+            let lease = pool.acquire(scope == 0).map_err(error)?;
+            let prepared = self.run_state(|session| {
+                session
+                    .prepare_receive_input(scope, wire, bound, lease)
+                    .map_err(error)
+            })?;
+            let completed = prepared.map(|mut input| {
+                let opened = input.execute(wire);
+                (input, opened)
+            });
+            return self.run_state(|session| {
+                let disposition = if let Some((input, opened)) = completed {
+                    session
+                        .finish_receive_input(input, wire, opened)
+                        .map_err(error)?
+                } else {
+                    ReceiveDisposition::Discarded { scope }
+                };
+                after(session).map(|value| (value, disposition))
+            });
+        }
     }
 
     fn run_with_publication<T>(
@@ -946,8 +1049,8 @@ impl Owner {
             let mut publisher =
                 DeferredPublisher::new(transport.as_mut(), self.account.clone(), prepaid);
             let mut result = action(session, &mut publisher);
-            // A deferred tail is recorded after its reliable record has been
-            // sealed.  If charging/staging that tail fails, the record must
+            // A deferred tail is recorded after its reliable record ticket has
+            // committed.  If charging/staging that tail fails, the record must
             // remain publishable and the session must enter terminal cleanup;
             // dropping it would leave the caller's frontier ahead of the wire
             // and would incorrectly turn the failure into an ordinary retry.
@@ -956,7 +1059,7 @@ impl Owner {
                 let _ = failure;
                 result = Err(SessionError::OperationFailed);
             }
-            // Any reliable prefix already sealed by the action remains
+            // Any reliable prefix already committed by the action remains
             // publishable even when a later action step fails.  Clearing it
             // would advance the in-memory crypto frontier without a wire
             // record; the failed session is closed after that prefix drains.
@@ -996,9 +1099,15 @@ impl Owner {
             )
         };
 
-        // Keep the pre-paid memory charges alive until every native record
-        // has either been accepted or failed.
-        let _publication_charges = charges;
+        drop(transport);
+        let mut staging = PublicationStaging {
+            records,
+            deferred,
+            _charges: charges,
+        };
+        let deferred = std::mem::take(&mut staging.deferred);
+        let records = &mut staging.records;
+        self.complete_rekey_crypto()?;
 
         // State-only actions do not participate in the native publication
         // order.  In particular, a read or metadata check must not wait for a
@@ -1021,7 +1130,6 @@ impl Owner {
                 self.staging.close();
             }
             drop(drive);
-            drop(transport);
             if closed {
                 self.diagnostic.session_failure(
                     result
@@ -1037,13 +1145,36 @@ impl Owner {
             return result;
         }
 
-        // Allocate the ticket only after the drive action has sealed at least
-        // one native record or deferred tail.  Since transport and drive are
-        // still held here, ticket order matches record-sealing order.
-        let ticket = self.publication.ticket();
-        let ticket_guard = PublicationTicket::new(&self.publication, ticket);
-        drop(transport);
-        self.publication.wait(ticket);
+        // Each committed direction owns its own publication order. A delayed
+        // DATA job cannot prevent scope-0 maintenance from publishing.
+        for record in records.iter_mut() {
+            if let Some(mut work) = record.work.take() {
+                record.publication = work.take_publication();
+                let completion = match work.seal_with_completion(&mut record.bytes) {
+                    Ok(completion) => completion,
+                    Err(_) if work.aborted() => {
+                        record.aborted = true;
+                        continue;
+                    }
+                    Err(cause) => {
+                        self.close(error(cause));
+                        return Err(error(cause));
+                    }
+                };
+                // CLOSE has already sealed the protocol gate, but still owns
+                // its original key and provider publication tail. Only actual
+                // metadata completions need a live protocol-state commit.
+                if completion.needs_commit() {
+                    self.run_state(|session| {
+                        session.engine.finish_record_seal(completion).map_err(error)
+                    })?;
+                }
+                // Publication can wait behind this direction's earlier
+                // provider tail. Retain the original deadline/key fence and
+                // recheck it at the actual handoff gate.
+                record.work = Some(work);
+            }
+        }
 
         let mut publication_error = None;
         let mut stream_error = None;
@@ -1138,7 +1269,25 @@ impl Owner {
                 }
             }
         };
-        for (index, record) in records.iter().enumerate() {
+        for (index, staged) in records.iter_mut().enumerate() {
+            if let Some(publication) = &staged.publication
+                && let Err(cause) = publication.wait()
+            {
+                publication_error = Some(error(cause));
+                break;
+            }
+            if staged.aborted
+                || staged
+                    .send_view
+                    .as_ref()
+                    .is_some_and(|view| view.send_aborted.load(Ordering::Acquire))
+            {
+                stream_error = Some(SessionError::StreamReset);
+                commit_ready(index + 1, false);
+                staged.publication.take();
+                continue;
+            }
+            let record = &staged.bytes;
             // These headers belong to our sealed records, not peer input.
             let scope = u64::from_be_bytes(record[12..20].try_into().expect("sealed scope"));
             let data = scope != 0 && record[4] == 8;
@@ -1162,10 +1311,46 @@ impl Owner {
                 // Release its staged tails without manufacturing acceptance.
                 stream_error = Some(SessionError::StreamReset);
                 commit_ready(index + 1, false);
+                staged.publication.take();
                 continue;
             }
             let publication = {
                 let mut transport = self.transport.lock().expect("v4 Session transport lock");
+                {
+                    let drive = self
+                        .drive
+                        .lock()
+                        .expect("original crypto publication commit");
+                    if let Some(cause) = drive.termination {
+                        publication_error = Some(cause);
+                        break;
+                    }
+                    if staged
+                        .send_view
+                        .as_ref()
+                        .is_some_and(|view| view.send_aborted.load(Ordering::Acquire))
+                    {
+                        drop(drive);
+                        drop(transport);
+                        stream_error = Some(SessionError::StreamReset);
+                        commit_ready(index + 1, false);
+                        staged.publication.take();
+                        continue;
+                    }
+                    if drive.closing.is_none()
+                        && let Some(session) = drive.session.as_ref()
+                        && let Err(cause) = session.engine.check()
+                    {
+                        publication_error = Some(error(cause));
+                        break;
+                    }
+                    if let Some(work) = &staged.work
+                        && let Err(cause) = work.check()
+                    {
+                        publication_error = Some(error(cause));
+                        break;
+                    }
+                }
                 #[cfg(test)]
                 if record.get(4) == Some(&12) {
                     // Hold the sealed terminal publication before handing it
@@ -1202,6 +1387,9 @@ impl Owner {
                     break;
                 }
             }
+            // The direction remains owned through its original scalar/tail
+            // commit, so a later accepted offset cannot be overwritten.
+            staged.publication.take();
         }
 
         // A deferred-only action has no native prefix to wait for.  It is
@@ -1230,7 +1418,6 @@ impl Owner {
                 Ok::<(), SessionError>(())
             }
         })();
-        drop(ticket_guard);
         if let Err(cause) = commit {
             self.close(cause);
             return Err(cause);
@@ -1284,6 +1471,7 @@ impl Owner {
             drive.termination_at = Some(Instant::now());
             drive.close_deadline = Some(Instant::now() + Duration::from_secs(5));
             if let Some(mut session) = drive.session.take() {
+                session.engine.crypto.stop();
                 session.engine.fail();
             }
         }
@@ -1385,7 +1573,14 @@ impl Owner {
             physical.complete = false;
             physical.pending_callbacks = physical.pending_callbacks.max(1);
         }
-        let complete = terminated && physical.complete && self.core_stopped.load(Ordering::Acquire);
+        let crypto_pending = self.crypto.pending();
+        physical.pending_callbacks = physical
+            .pending_callbacks
+            .saturating_add(u64::try_from(crypto_pending).unwrap_or(u64::MAX));
+        let complete = terminated
+            && physical.complete
+            && crypto_pending == 0
+            && self.core_stopped.load(Ordering::Acquire);
         CleanupStatus {
             complete,
             cleanup_incomplete: physical.cleanup_incomplete || (!complete && deadline_expired),
@@ -1524,8 +1719,9 @@ impl NativeStreamBinding {
     }
     pub(crate) fn receive(&self, wire: &[u8]) -> std::result::Result<(), SessionError> {
         let owner = self.owner.upgrade().ok_or(SessionError::Closed)?;
-        let result =
-            owner.run_state(|session| session.receive_bound(&self.handle, wire).map_err(error));
+        let result = owner
+            .receive_record(self.handle.scope(), wire, Some(&self.handle), |_| Ok(()))
+            .map(|_| ());
         owner.changed.notify_waiters();
         result
     }
@@ -1589,11 +1785,20 @@ impl SessionReceiver {
     }
     pub(crate) fn receive_datagram(&self, wire: &[u8]) {
         if let Some(owner) = self.owner.upgrade() {
-            let _ = owner.run_state(|session| Ok(session.engine.receive_datagram(wire)));
+            let prepared =
+                owner.run_state(|session| Ok(session.engine.prepare_datagram_open(wire)));
+            if let Ok(Ok(Some(mut job))) = prepared {
+                let opened = job.execute(wire);
+                let _ =
+                    owner.run_state(|session| Ok(session.engine.finish_datagram_open(job, opened)));
+            }
             owner.changed.notify_waiters();
         }
     }
-    pub(crate) fn receive(&self, wire: &[u8]) -> std::result::Result<(), SessionError> {
+    pub(crate) fn receive(
+        &self,
+        wire: &[u8],
+    ) -> std::result::Result<ReceiveDisposition, SessionError> {
         let owner = self.owner.upgrade().ok_or(SessionError::Closed)?;
         owner.receive_maintenance(wire)
     }
@@ -1621,8 +1826,7 @@ impl SessionReceiver {
                 .map_err(|_| SessionError::OperationFailed)?,
         );
         let owner = self.owner.upgrade().ok_or(SessionError::Closed)?;
-        let result = owner.run_state(|session| {
-            session.receive(scope, wire).map_err(error)?;
+        let result = owner.receive_record(scope, wire, None, |session| {
             let handle = session.capture_native_binding(scope).map_err(error)?;
             let binding = self.original_native_binding(handle.clone());
             let installed = install(binding);
@@ -1640,7 +1844,7 @@ impl SessionReceiver {
             Ok(installed)
         });
         owner.changed.notify_waiters();
-        result
+        result.map(|(installed, _)| installed)
     }
     pub(crate) fn close(&self) {
         if let Some(owner) = self.owner.upgrade() {
@@ -1978,6 +2182,7 @@ impl Session {
         let runtime =
             tokio::runtime::Handle::try_current().map_err(|_| SessionError::OperationFailed)?;
         let mut session = engine.into_session().map_err(error)?;
+        session.engine.deferred_crypto = true;
         let maintenance_publication = session
             .engine
             .streams
@@ -2016,6 +2221,7 @@ impl Session {
         let physical_cleanup = transport_cleanup.clone();
         let cleanup_diagnostic = diagnostic.clone();
         let cleanup_connect_diagnostic = connect_diagnostic.clone();
+        let crypto = session.engine.crypto.clone();
         let owner = Arc::new(Owner {
             authentication_waiters: AtomicUsize::new(0),
             drive: Mutex::new(Drive {
@@ -2027,7 +2233,9 @@ impl Session {
             }),
             transport: Mutex::new(transport),
             transport_close_requested: AtomicBool::new(false),
-            publication: PublicationOrder::new(),
+            crypto,
+            unbound_receive: Arc::new(Mutex::new(())),
+            maintenance_receive: Arc::new(Mutex::new(())),
             account: account.clone(),
             staging: Arc::new(WriteStagingOwner::from_account(account.clone())),
             changed: changed.clone(),
@@ -2318,11 +2526,9 @@ impl Session {
         // Receive only updates authenticated state and pending controls. The
         // existing maintenance owner publishes those controls later; input
         // must not wait behind the native output call it may unblock.
-        let result = self
-            .owner
-            .run_state(|session| session.receive(scope, wire).map_err(error));
+        let result = self.owner.receive_record(scope, wire, None, |_| Ok(()));
         self.owner.changed.notify_waiters();
-        result
+        result.map(|_| ())
     }
     pub async fn open_stream(
         &self,
@@ -6199,10 +6405,16 @@ impl UnreliableMessages {
             .wait_protocol_active()
             .await
             .map_err(unreliable_error)?;
-        self.session
-            .owner
-            .run(|session, transport| {
-                Ok((|| -> std::result::Result<Outcome, Failure> {
+        let owner = &self.session.owner;
+        let maximum = owner
+            .transport
+            .lock()
+            .expect("original datagram provider capacity")
+            .datagram_maximum()
+            .ok_or(Failure::Unavailable)?;
+        let prepared = owner
+            .run_state(|session| {
+                Ok((|| -> std::result::Result<_, Failure> {
                     if session
                         .engine
                         .account
@@ -6211,9 +6423,8 @@ impl UnreliableMessages {
                         .upper_ms
                         >= expires
                     {
-                        return Ok(Outcome::DroppedExpired);
+                        return Ok(Err(Outcome::DroppedExpired));
                     }
-                    let maximum = transport.datagram_maximum().ok_or(Failure::Unavailable)?;
                     if payload.len() > RecordEngine::datagram_maximum(maximum) {
                         return Err(Failure::TooLarge);
                     }
@@ -6222,31 +6433,60 @@ impl UnreliableMessages {
                         .datagram_backing()
                         .ok_or(Failure::Unavailable)?;
                     let Some(original) = backing.send() else {
-                        return Ok(Outcome::DroppedBudget);
+                        return Ok(Err(Outcome::DroppedBudget));
                     };
-                    let wire = match session.engine.seal_datagram(payload, maximum, expires)? {
-                        Ok(wire) => wire,
-                        Err(outcome) => return Ok(outcome),
-                    };
-                    // Expiry may win after the irreversible crypto ticket. It
-                    // drops this original message without refunding usage or retry.
-                    if session
-                        .engine
-                        .account
-                        .security_time()
-                        .map_err(|_| Failure::OperationFailed)?
-                        .upper_ms
-                        >= expires
-                    {
-                        return Ok(Outcome::DroppedExpired);
+                    match session.engine.prepare_datagram(payload, maximum, expires)? {
+                        Ok(job) => Ok(Ok((job, original))),
+                        Err(outcome) => Ok(Err(outcome)),
                     }
-                    // Native admission is synchronous and nonblocking. The original
-                    // lease moves with provider bytes through their actual exit.
-                    let result = transport.publish_datagram(wire, original);
-                    Ok(result)
                 })())
             })
-            .map_err(unreliable_error)?
+            .map_err(unreliable_error)??;
+        let (mut job, original) = match prepared {
+            Ok(value) => value,
+            Err(outcome) => return Ok(outcome),
+        };
+        if let Err(cause) = job.execute() {
+            if cause == CryptoError::Deadline
+                && job.expired().map_err(|_| Failure::OperationFailed)?
+            {
+                return Ok(Outcome::DroppedExpired);
+            }
+            return Err(Failure::OperationFailed);
+        }
+        let mut transport = owner
+            .transport
+            .lock()
+            .expect("original datagram publication");
+        let live = {
+            let mut drive = owner.drive.lock().expect("original datagram final commit");
+            if let Some(cause) = drive.termination.or(drive.closing) {
+                return Err(unreliable_error(cause));
+            }
+            let session = drive.session.as_mut().ok_or(Failure::Unavailable)?;
+            session
+                .check()
+                .map_err(|cause| unreliable_error(error(cause)))?;
+            job.check().map_err(|_| Failure::OperationFailed)?;
+            if session
+                .engine
+                .account
+                .security_time()
+                .map_err(|_| Failure::OperationFailed)?
+                .upper_ms
+                >= expires
+            {
+                Some(Outcome::DroppedExpired)
+            } else if session.engine.frozen || session.engine.epoch != job.epoch() {
+                Some(Outcome::DroppedBudget)
+            } else {
+                None
+            }
+        };
+        if let Some(outcome) = live {
+            return Ok(outcome);
+        }
+        Ok(transport.publish_datagram(job.take_wire(), original))
     }
     pub async fn receive(
         &self,

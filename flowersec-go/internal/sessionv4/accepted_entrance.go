@@ -290,9 +290,13 @@ func (g *acceptedAuthorization) sample(preflight func() error, call func(*protoc
 }
 
 func (g *acceptedAuthorization) Check() error {
+	return g.CheckWithSample(timev4.Sample{})
+}
+
+func (g *acceptedAuthorization) CheckWithSample(adjacent timev4.Sample) error {
 	return g.sample(nil, func(authorization *protocolv4.EndpointAuthorization, deadline *timev4.Deadline) error {
 		if authorization != nil {
-			return authorization.Check()
+			return authorization.CheckWithSample(adjacent)
 		}
 		if deadline == nil {
 			return cryptov4.ErrConfiguration

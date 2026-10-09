@@ -311,11 +311,13 @@ func (s *Server) startTransport(reporter *Reporter) error {
 		options := fs.WebSocketAcceptOptions{Input: input, Source: source, Limits: h.Limits, Entrance: entrance, Dependencies: h.Environment, Accounts: accounts, LocalCapabilities: h.Hello.Offered,
 			RuntimeBytes: 8192, IngressRuntimeBytes: 8192, IntakeRuntimeBytes: 8192, MaxAdmissionRecordBytes: recordBytes, Provider: provider}
 		s.wsAccept = func(w http.ResponseWriter, request *http.Request, server *fs.WebSocketServer) {
-			if err := s.acquireAdmission(request.Context()); err != nil {
-				deliver(nil, err)
-				return
+			if _, scheduled := s.acceptedSource.(*AcceptedRegistrySource); !scheduled {
+				if err := s.acquireAdmission(request.Context()); err != nil {
+					deliver(nil, err)
+					return
+				}
+				defer s.releaseAdmission()
 			}
-			defer s.releaseAdmission()
 			current := options
 			current.Server = server
 			session, upgraded, err := serve.AcceptWebSocket(s.context, w, request, current)
@@ -335,11 +337,13 @@ func (s *Server) startTransport(reporter *Reporter) error {
 			}
 			options.Upgrade = upgrade
 			s.HTTPHandler = http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-				if err := s.acquireAdmission(request.Context()); err != nil {
-					deliver(nil, err)
-					return
+				if _, scheduled := s.acceptedSource.(*AcceptedRegistrySource); !scheduled {
+					if err := s.acquireAdmission(request.Context()); err != nil {
+						deliver(nil, err)
+						return
+					}
+					defer s.releaseAdmission()
 				}
-				defer s.releaseAdmission()
 				session, upgraded, err := serve.AcceptWebSocket(s.context, w, request, options)
 				if upgraded {
 					deliver(session, err)
@@ -377,9 +381,16 @@ func (s *Server) startTransport(reporter *Reporter) error {
 			s.webSocket.Close()
 			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			reporter.ErrorIf(s.webSocket.WaitCleanup(cleanup))
+			cleanupErr := s.webSocket.WaitCleanup(cleanup)
+			reporter.ErrorIf(cleanupErr)
 			if s.transportJoin != nil {
-				reporter.ErrorIf(s.transportJoin(cleanup))
+				// Close can retire this original listener before its sole Serve
+				// goroutine enters. Dismiss only that exact closed result after
+				// the provider has physically cleaned up; joined failures remain.
+				joinErr := s.transportJoin(cleanup)
+				if joinErr != resourcev4.ErrClosed || cleanupErr != nil {
+					reporter.ErrorIf(joinErr)
+				}
 			}
 		})
 		if err = s.installCachedAcceptedRoutes(); err != nil {
@@ -404,11 +415,13 @@ func (s *Server) startTransport(reporter *Reporter) error {
 		options := fs.QUICAcceptOptions{Input: input, Source: source, Limits: h.Limits, Entrance: entrance, Dependencies: h.Environment, Accounts: accounts, LocalCapabilities: h.Hello.Offered, IngressRuntimeBytes: 8192, IntakeRuntimeBytes: 8192, MaxAdmissionRecordBytes: recordBytes}
 		s.quicAccept = func(ingress *fs.QUICIngress) {
 			defer ingress.Close()
-			if err := s.acquireAdmission(s.context); err != nil {
-				deliver(nil, err)
-				return
+			if _, scheduled := s.acceptedSource.(*AcceptedRegistrySource); !scheduled {
+				if err := s.acquireAdmission(s.context); err != nil {
+					deliver(nil, err)
+					return
+				}
+				defer s.releaseAdmission()
 			}
-			defer s.releaseAdmission()
 			session, err := serve.AcceptQUIC(s.context, ingress, options)
 			deliver(session, err)
 		}
@@ -456,11 +469,13 @@ func (s *Server) startTransport(reporter *Reporter) error {
 		options := fs.WebTransportAcceptOptions{Input: input, Source: source, Limits: h.Limits, Entrance: entrance, Dependencies: h.Environment, Accounts: accounts, LocalCapabilities: h.Hello.Offered, IngressRuntimeBytes: 8192, IntakeRuntimeBytes: 8192, MaxAdmissionRecordBytes: recordBytes}
 		s.wtAccept = func(ingress *fs.WebTransportIngress) {
 			defer ingress.Close()
-			if err := s.acquireAdmission(s.context); err != nil {
-				deliver(nil, err)
-				return
+			if _, scheduled := s.acceptedSource.(*AcceptedRegistrySource); !scheduled {
+				if err := s.acquireAdmission(s.context); err != nil {
+					deliver(nil, err)
+					return
+				}
+				defer s.releaseAdmission()
 			}
-			defer s.releaseAdmission()
 			session, err := serve.AcceptWebTransport(s.context, ingress, options)
 			deliver(session, err)
 		}

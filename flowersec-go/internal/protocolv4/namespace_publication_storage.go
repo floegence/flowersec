@@ -72,15 +72,15 @@ func (w *RevocationWorkspace) InspectStoredPublication(input, head []byte, decod
 			if len(w.segments[class]) == cap(w.segments[class]) {
 				return CBORFailure("configuration_capacity")
 			}
-			w.segments[class] = append(w.segments[class], segment)
+			w.segments[class] = append(w.segments[class], newCohortSegment(segment, impact))
 		}
 	}
 	for _, selected := range w.segments {
 		sort.Slice(selected, func(i, j int) bool {
-			return valueUint(selected[i], "CohortPolicySegment", "first_cohort") < valueUint(selected[j], "CohortPolicySegment", "first_cohort")
+			return selected[i].first < selected[j].first
 		})
 		for i := 1; i < len(selected); i++ {
-			if valueUint(selected[i-1], "CohortPolicySegment", "last_cohort") >= valueUint(selected[i], "CohortPolicySegment", "first_cohort") {
+			if selected[i-1].last >= selected[i].first {
 				return CBORFailure("storage_publication_overlap")
 			}
 		}

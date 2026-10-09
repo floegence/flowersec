@@ -349,7 +349,10 @@ async function runClientProfileTopology(topology) {
       route_digest: relayReady.route_digest,
       authorizations: endpointBReady.authorizations,
       verification_records: endpointBReady.verification_records,
-      ...(clientProfile === "browser" ? { browser_application: endpointBReady.browser_application } : {}),
+      ...(clientProfile === "browser" ? {
+        browser_application: endpointBReady.browser_application,
+        pool_server_allow: { installation: poolClient, binding: endpointBReady.server_allow },
+      } : {}),
     })}\n`);
 
     endpointB.child.stdin.end(`${JSON.stringify({ type: "connect" })}\n`);

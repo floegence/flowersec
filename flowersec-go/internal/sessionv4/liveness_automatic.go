@@ -91,6 +91,20 @@ func (p *Liveness) BeginLocalStall(kind LocalStallKind) (*LivenessStall, error) 
 	return o, nil
 }
 
+func (p *Liveness) invalidateAutomaticSample() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed || p.automatic == nil {
+		return
+	}
+	if sample := p.slots[len(p.slots)-1].owner; sample != nil {
+		sample.finish(ErrProbeLocalStall, timev4.Mark{})
+	}
+}
+
 func (o *LivenessStall) End() {
 	p := o.pool
 	p.mu.Lock()

@@ -48,6 +48,11 @@ func diagnosticUntil(t *testing.T, condition func() bool) {
 
 func newDiagnosticFixture(t *testing.T, c DiagnosticSinkConfig, callback func(context.Context, diagnosticv4.Event), sample func(uint16) bool) *diagnosticFixture {
 	t.Helper()
+	return newDiagnosticFixtureWithClock(t, c, callback, sample, nil)
+}
+
+func newDiagnosticFixtureWithClock(t *testing.T, c DiagnosticSinkConfig, callback func(context.Context, diagnosticv4.Event), sample func(uint16) bool, now func() time.Time) *diagnosticFixture {
+	t.Helper()
 	f := &diagnosticFixture{executorFixture: &executorFixture{config: ApplicationExecutorConfig{Diagnostics: true, Running: 1, CompletionRunning: 1, CompletionReserved: 1, RuntimeBytes: 4096, RuntimeBytesPerTask: 64 * 1024}}}
 	f.seconds.Store(1800)
 	config := resourcev4.Config{ProfileRevision: [32]byte{1}, AccountSlots: 8, ReservationSlots: 64, ReferenceSlots: 128, Limit: resourcev4.Vector{resourcev4.SDKBytes: 16 * 1024 * 1024, resourcev4.Items: 20000, resourcev4.Tasks: 32, resourcev4.WorkSlots: 32, resourcev4.Timers: 8}}
@@ -88,7 +93,10 @@ func newDiagnosticFixture(t *testing.T, c DiagnosticSinkConfig, callback func(co
 		if sample == nil {
 			sample = func(uint16) bool { return true }
 		}
-		f.sink, err = newDiagnosticSink(c, f.executor, f.reserve(t, 2, charge), callback, func() time.Time { return time.Unix(f.seconds.Load(), 0) }, sample)
+		if now == nil {
+			now = func() time.Time { return time.Unix(f.seconds.Load(), 0) }
+		}
+		f.sink, err = newDiagnosticSink(c, f.executor, f.reserve(t, 2, charge), callback, now, sample)
 		if err != nil {
 			t.Fatal(err)
 		}

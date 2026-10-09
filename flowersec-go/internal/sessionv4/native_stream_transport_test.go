@@ -36,6 +36,10 @@ func nativeTransportCorePairConfigured(t *testing.T, profile string, configure f
 }
 
 func nativeTransportCorePairPrepared(t *testing.T, profile string, clock *timev4.Clock, preparePlan func(int, *executorFixture, *SessionPlanConfig), configure func(int, *executorFixture, *SessionPlan, *RPCServicesConfig), application ...string) ([2]*SessionCore, context.Context) {
+	return nativeTransportCorePairBeforeRun(t, profile, clock, preparePlan, configure, nil, application...)
+}
+
+func nativeTransportCorePairBeforeRun(t *testing.T, profile string, clock *timev4.Clock, preparePlan func(int, *executorFixture, *SessionPlanConfig), configure func(int, *executorFixture, *SessionPlan, *RPCServicesConfig), beforeRun func([2]*SessionCore, context.Context), application ...string) ([2]*SessionCore, context.Context) {
 	t.Helper()
 	app := "transport"
 	if len(application) != 0 {
@@ -272,14 +276,12 @@ func nativeTransportCorePairPrepared(t *testing.T, profile string, clock *timev4
 		}
 	}
 	ended := make(chan error, 2)
-	for _, core := range cores {
-		go func() { ended <- core.Runtime().Run(ctx) }()
-	}
+	running := 0
 	t.Cleanup(func() {
 		for _, core := range cores {
 			core.Close()
 		}
-		for range 2 {
+		for range running {
 			_ = waitRuntime(t, ended)
 		}
 		cleanup, stop := context.WithTimeout(context.Background(), 5*time.Second)
@@ -305,6 +307,13 @@ func nativeTransportCorePairPrepared(t *testing.T, profile string, clock *timev4
 			}
 		}
 	})
+	if beforeRun != nil {
+		beforeRun(cores, ctx)
+	}
+	for _, core := range cores {
+		running++
+		go func() { ended <- core.Runtime().Run(ctx) }()
+	}
 	return cores, ctx
 }
 
@@ -489,6 +498,73 @@ func TestNativeTransportPartialInputDoesNotBlockHealthyStream(t *testing.T) {
 	assembly.pool.mu.Unlock()
 	if !stillPartial {
 		t.Fatal("healthy progress waited for paused input cleanup")
+	}
+}
+
+func TestNativeTransportRPCBootstrapOwnsOriginalCreationCapacity(t *testing.T) {
+	for _, application := range []string{"services", "execution"} {
+		for _, profile := range []string{protocolv4.DHProfileX25519, protocolv4.DHProfileP256} {
+			t.Run(application+"/"+profile, func(t *testing.T) {
+				cores, ctx := nativeTransportCorePairBeforeRun(t, profile, nil, nil, nil, func(cores [2]*SessionCore, ctx context.Context) {
+					n := cores[0].plan.nativeStreams
+					var held []*nativeStreamSlot
+					t.Cleanup(func() {
+						for _, original := range held {
+							n.finishOpen(original)
+						}
+					})
+					// Hold every ordinary create through its original provider and
+					// association tail before the RPC initializer starts. Bootstrap
+					// must still create scope one without borrowing management.
+					for range n.admission.limits.Opening {
+						original, err := n.open(ctx)
+						if errors.Is(err, cryptov4.ErrCapacity) {
+							break
+						}
+						if err != nil {
+							t.Fatal("ordinary native creation", err)
+						}
+						held = append(held, original)
+					}
+				}, application)
+				for role, core := range cores {
+					r := core.plan.rpc
+					select {
+					case <-r.firstReady:
+					case <-ctx.Done():
+						t.Fatal("bootstrap waited for ordinary native cleanup", role, ctx.Err())
+					}
+					r.mu.Lock()
+					channel := r.channel
+					r.mu.Unlock()
+					if channel == nil {
+						t.Fatal("ordinary creation pressure closed bootstrap", role)
+					}
+				}
+				r := cores[0].plan.rpc
+				n, position := cores[0].plan.nativeStreams, r.bootstrapNative
+				if position == nil || position == r.managementNative {
+					t.Fatal("bootstrap did not own an independent prepaid native position")
+				}
+				n.mu.Lock()
+				original := &n.slots[position.index]
+				retained := position.closed && original.used && original.protection == position && original.stream != nil && !original.caller
+				n.mu.Unlock()
+				if !retained {
+					t.Fatal("prefix publication did not release only its one-shot create promise")
+				}
+				// The live bootstrap association remains occupied, but its used
+				// promise cannot consume another ordinary opening position.
+				next, err := n.open(ctx)
+				if err != nil {
+					t.Fatal("published bootstrap retained future creation capacity", err)
+				}
+				defer n.finishOpen(next)
+				if next == original {
+					t.Fatal("ordinary creation reused the live bootstrap association")
+				}
+			})
+		}
 	}
 }
 

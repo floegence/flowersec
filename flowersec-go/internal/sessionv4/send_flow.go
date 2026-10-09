@@ -172,6 +172,13 @@ func (f *SendFlow) Write(ctx context.Context, payload []byte, fin bool) (result 
 }
 
 func (f *SendFlow) write(ctx context.Context, payload []byte, fin bool, queue *SendQueue, published func()) (result RecordWriteResult, err error) {
+	return f.writeParts(ctx, payload, nil, fin, queue, published)
+}
+
+// writeParts copies the original ring's two possible contiguous ranges into
+// the already admitted plaintext backing. A ring boundary does not reduce the
+// configured publication quantum or require another record/workspace owner.
+func (f *SendFlow) writeParts(ctx context.Context, first, second []byte, fin bool, queue *SendQueue, published func()) (result RecordWriteResult, err error) {
 	if err = ctx.Err(); err != nil {
 		return result, err
 	}
@@ -192,13 +199,19 @@ func (f *SendFlow) write(ctx context.Context, payload []byte, fin bool, queue *S
 		f.mu.Unlock()
 		return result, err
 	}
-	if len(payload) > len(f.storage) || uint64(len(payload)) > math.MaxUint64-f.frontier.Offset || f.frontier.Offset+uint64(len(payload)) > f.limit {
+	if len(first) > len(f.storage) || len(second) > len(f.storage)-len(first) {
 		f.mu.Unlock()
 		return result, ErrCredit
 	}
-	copy(f.storage, payload)
+	size := len(first) + len(second)
+	if uint64(size) > math.MaxUint64-f.frontier.Offset || f.frontier.Offset+uint64(size) > f.limit {
+		f.mu.Unlock()
+		return result, ErrCredit
+	}
+	copy(f.storage, first)
+	copy(f.storage[len(first):], second)
 	f.active = true
-	offset, size := f.frontier.Offset, len(payload)
+	offset := f.frontier.Offset
 	f.mu.Unlock()
 	result, err = f.writer.writeBuildPublished(ctx, protocolv4.FrameStreamData, f.maxPlaintext, func(header protocolv4.RecordHeader, dst []byte) (int, error) {
 		f.mu.Lock()

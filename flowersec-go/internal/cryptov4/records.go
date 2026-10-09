@@ -151,12 +151,13 @@ type epochState struct {
 	datagramGood [2]usage
 }
 type workspace struct {
-	input, output []byte
-	maintenance   bool
-	sharedInput   bool
-	nativeInput   bool
-	datagram      bool
-	direction     protocolv4.Direction
+	input, output         []byte
+	inputUsed, outputUsed int
+	maintenance           bool
+	sharedInput           bool
+	nativeInput           bool
+	datagram              bool
+	direction             protocolv4.Direction
 }
 
 type epochKeyJob struct {
@@ -514,16 +515,29 @@ func (e *Engine) live() error {
 	if !e.ready {
 		return ErrNotReady
 	}
-	if err := e.checkIdle(); err != nil {
-		return err
+	// One actual clock read serves the adjacent idle, epoch and credential
+	// checks. Every owner validates its own current frontier/continuity; no
+	// sample or permission is reused across a ticket, crypto or provider gate.
+	sample, deadlineErr := e.current.deadline.Sample()
+	var idleErr error
+	if sample.BelongsTo(e.config.Clock) {
+		idleErr = idleError(e.idle.CheckAt(sample))
+		if idleErr != nil {
+			e.wakeIdle()
+		}
+	} else {
+		idleErr = e.checkIdle()
 	}
-	if err := e.current.deadline.Check(); err != nil {
-		return securityTimeError(err)
+	if idleErr != nil {
+		return idleErr
 	}
-	if err := e.config.Authorization.Check(); err != nil {
-		return err
+	if deadlineErr != nil {
+		return securityTimeError(deadlineErr)
 	}
-	return nil
+	if guard, ok := e.config.Authorization.(interface{ CheckWithSample(timev4.Sample) error }); ok {
+		return guard.CheckWithSample(sample)
+	}
+	return e.config.Authorization.Check()
 }
 
 func (e *Engine) initialLive(owner *FinishedHandshake) error {
@@ -755,8 +769,11 @@ func (e *Engine) inputWorkspace(maintenance, datagram bool) (*workspace, error) 
 	return e.workspace(maintenance, 1-e.config.SendDirection)
 }
 func (e *Engine) release(w *workspace) {
-	clear(w.input)
-	clear(w.output)
+	// Every byte a builder or AEAD could touch is erased before reuse. The
+	// untouched remainder stays zero from construction or its prior release.
+	clear(w.input[:w.inputUsed])
+	clear(w.output[:w.outputUsed])
+	w.inputUsed, w.outputUsed = 0, 0
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.borrowedWork--
@@ -853,6 +870,10 @@ type Packet struct {
 func (p *Packet) Bytes() ([]byte, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.bytesLocked()
+}
+
+func (p *Packet) bytesLocked() ([]byte, error) {
 	if p.released {
 		return nil, ErrClosed
 	}
@@ -1063,6 +1084,7 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 	if ticketErr != nil {
 		return e.finish(w, epoch, key, header, nil, ticketErr)
 	}
+	w.inputUsed = maxPlaintext // A failing bounded builder may write its whole view.
 	size, err := build(header, w.input[:maxPlaintext:maxPlaintext])
 	if err != nil {
 		return e.finish(w, epoch, key, header, nil, err)
@@ -1078,6 +1100,7 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 	if err != nil {
 		return e.finish(w, epoch, key, header, nil, err)
 	}
+	w.outputUsed = len(prefix)
 	copy(w.output, prefix)
 	// Recheck time at actual crypto start, after any queue/scheduler delay.
 	e.mu.Lock()
@@ -1096,6 +1119,7 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 	if err != nil {
 		return e.finish(w, epoch, key, header, nil, err)
 	}
+	w.outputUsed = len(prefix) + size + key.aead.Overhead()
 	sealed := key.aead.Seal(w.output[:len(prefix)], nonce[:], w.input[:size], aad)
 	return e.finish(w, epoch, key, header, sealed, nil)
 }
@@ -1256,6 +1280,7 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 		e.release(w)
 		return nil, frame, header, err
 	}
+	w.inputUsed = len(input)
 	copy(w.input, input)
 	if datagram {
 		e.possibleFailures++
@@ -1284,6 +1309,8 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 		var nonce [12]byte
 		nonce, err = protocolv4.RecordNonce(header)
 		if err == nil {
+			// Authentication failure may still overwrite its bounded output.
+			w.outputUsed = len(input) - prefixSize
 			plaintext, err = key.aead.Open(w.output[:0], nonce[:], w.input[prefixSize:len(input)], aad)
 			if err != nil {
 				authFailed = true

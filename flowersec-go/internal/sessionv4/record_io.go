@@ -218,31 +218,16 @@ func (w *RecordWriter) writeClaimed(ctx context.Context, seal func() (*cryptov4.
 	if closed {
 		return result, cryptov4.ErrClosed
 	}
-	data, err := packet.Bytes()
+	_, result.Header, err = packet.PreparePublication(w.output)
 	if err != nil {
 		return result, err
-	}
-	_, profile := w.engine.SessionBinding()
-	var frame protocolv4.FrameType
-	frame, result.Header, _, err = protocolv4.ParseRecord(data, profile, protocolv4.MaxPayloadLength)
-	if err != nil {
-		return result, err
-	}
-	if (frame == protocolv4.FrameStreamData || frame == protocolv4.FrameOpenStream) && w.output != nil {
-		if err = packet.MoveReliableOutput(w.output); err != nil {
-			return result, err
-		}
-		data, err = packet.Bytes()
-		if err != nil {
-			return result, err
-		}
 	}
 	if ticketed != nil {
 		if err = ticketed(); err != nil {
 			return result, err
 		}
 	}
-	for result.EnvelopeBytes < len(data) {
+	for {
 		w.mu.Lock()
 		closed = w.closed
 		w.mu.Unlock()
@@ -251,7 +236,9 @@ func (w *RecordWriter) writeClaimed(ctx context.Context, seal func() (*cryptov4.
 		}
 		// A partial record continues only its original suffix. Cancellation after
 		// the ticket does not replay a prefix or transfer publication to a waiter.
-		if _, err = packet.Bytes(); err != nil {
+		data, bytesErr := packet.Bytes()
+		if bytesErr != nil {
+			err = bytesErr
 			return result, err
 		}
 		n, writeErr := w.writer.Write(data[result.EnvelopeBytes:])
@@ -279,8 +266,10 @@ func (w *RecordWriter) writeClaimed(ctx context.Context, seal func() (*cryptov4.
 			providerFailure = io.ErrNoProgress
 			return result, io.ErrNoProgress
 		}
+		if result.Complete {
+			return result, nil
+		}
 	}
-	return result, nil
 }
 
 // WriteData emits the actual ticket in both the authenticated body and header.

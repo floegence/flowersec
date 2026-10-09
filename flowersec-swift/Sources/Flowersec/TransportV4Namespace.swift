@@ -83,22 +83,30 @@ final class V4NamespaceVerifier: @unchecked Sendable {
   private let bootstrapDeadline: V4SecurityDeadline
   private let bootstrapWindow: V4LocalWorkWindow
   private var nonce: Data
-  private var trust: V4NamespaceValue?
+  private var authorizationRevision: UInt64 = 0
+  private var authorizationCacheEnabled = true
+  private var currentAuthorizationRevision: UInt64?
+  private func authorizationChanged() {
+    if authorizationRevision == .max { authorizationCacheEnabled = false }
+    else { authorizationRevision += 1 }
+    currentAuthorizationRevision = nil
+  }
+  private var trust: V4NamespaceValue? { didSet { authorizationChanged() } }
   private var trustBytes: Data?
   private var trustHistory: [Data] = []
   private var trustDeadline: V4SecurityDeadline?
-  private var observed: Head?
-  private var active: Head?
-  private var state: V4NamespaceValue?
+  private var observed: Head? { didSet { authorizationChanged() } }
+  private var active: Head? { didSet { authorizationChanged() } }
+  private var state: V4NamespaceValue? { didSet { authorizationChanged() } }
   private var closed = false
   private var limits: [String: UInt64] = [:]
   // Complete States that are authenticated before their Head can be installed
   // still carry security denials. Keep the identities independently of the
   // active State so a retained pending candidate cannot erase them. The
   // limits and the byte ceiling are checked before each commit.
-  private var denialIssuers: [Data] = []
-  private var denialCertificates: [Data] = []
-  private var denialLeases: [(issuer: Data, lease: Data)] = []
+  private var denialIssuers: [Data] = [] { didSet { authorizationChanged() } }
+  private var denialCertificates: [Data] = [] { didSet { authorizationChanged() } }
+  private var denialLeases: [(issuer: Data, lease: Data)] = [] { didSet { authorizationChanged() } }
   private var denialBytes: UInt64 = 0
   private var capacityDigest = Data()
 
@@ -913,6 +921,9 @@ final class V4NamespaceVerifier: @unchecked Sendable {
       }
       try trustDeadline.check()
       try active.deadline.check()
+      // Only immutable publication relationships are cached. Every call still
+      // checks resource lifetime, trusted time and the original deadlines.
+      if authorizationCacheEnabled, currentAuthorizationRevision == authorizationRevision { return }
       // A newly published TrustConfig can revoke the signer or move the
       // namespace to a new authority generation before a replacement
       // Head/State pair is available. Keep the old active pair fenced until
@@ -931,6 +942,7 @@ final class V4NamespaceVerifier: @unchecked Sendable {
         try signer.digest("head_signer_delegation_digest")
           == active.value.b("signer_delegation_digest")
       else { throw V4NamespaceFailure.untrusted }
+      if authorizationCacheEnabled { currentAuthorizationRevision = authorizationRevision }
     }
   }
   var currentSequence: UInt64? {
@@ -1205,9 +1217,19 @@ struct V4CredentialPolicy: Sendable {
   let signerLifetimeMS: UInt64
 }
 
+final class V4CredentialEvidenceAuthorizationCache: @unchecked Sendable {
+  fileprivate var revision: UInt64?
+}
+
+final class V4LiveGrantAuthorizationCache: @unchecked Sendable {
+  fileprivate var revision: UInt64?
+  fileprivate var result: (V4NamespaceValue, V4CredentialPolicy)?
+}
+
 // Evidence has no public/memberwise constructor. Only the current namespace
 // signature/issuance checks below can mint it for the original TransportEnvironment.
 struct V4CredentialEvidence {
+  fileprivate let authorizationCache = V4CredentialEvidenceAuthorizationCache()
   let namespace: V4NamespaceVerifier
   let kind: Int
   let cohort: UInt64
@@ -1481,6 +1503,7 @@ extension V4NamespaceVerifier {
       guard let trust, let state, let observed else { throw V4NamespaceFailure.notBootstrapped }
       _ = try credentialFreshness(evidence.policy)
       try time(evidence.issuedMS, evidence.expiresMS, now: sample())
+      if authorizationCacheEnabled, evidence.authorizationCache.revision == authorizationRevision { return }
       // Evidence is bound to the currently published TrustConfig revision,
       // rather than only to its original signature. This prevents a G2 trust
       // update from removing an authorization while an old credential remains
@@ -1544,6 +1567,7 @@ extension V4NamespaceVerifier {
           }
         }
       }
+      if authorizationCacheEnabled { evidence.authorizationCache.revision = authorizationRevision }
     }
   }
 }
@@ -1554,19 +1578,25 @@ extension V4NamespaceVerifier {
   // constructed, and no hop or replay owner exists at this boundary.
   func checkLiveGrantDependency(
     _ scope: V4LiveGrantScope, parent: V4NamespaceValue,
-    evidence: V4CredentialEvidence
+    evidence: V4CredentialEvidence, cache: V4LiveGrantAuthorizationCache? = nil
   ) throws {
-    _ = try liveGrantPermission(scope, parent: parent, evidence: evidence)
+    _ = try liveGrantPermission(scope, parent: parent, evidence: evidence, cache: cache)
   }
   private func liveGrantPermission(
     _ scope: V4LiveGrantScope, parent: V4NamespaceValue,
-    evidence: V4CredentialEvidence
+    evidence: V4CredentialEvidence, cache: V4LiveGrantAuthorizationCache? = nil
   ) throws -> (V4NamespaceValue, V4CredentialPolicy) {
     try environment.gate.withLock {
       try scope.checkShape()
       try checkCurrent()
       try evidence.namespace.checkOwner(environment)
       try evidence.namespace.checkEvidence(evidence)
+      if authorizationCacheEnabled, cache?.revision == authorizationRevision,
+        let result = cache?.result {
+        _ = try credentialFreshness(result.1)
+        try time(scope.issuedMS, scope.expiresMS, now: sample())
+        return result
+      }
       guard evidence.kind == 1, parent.schema == "Artifact",
         evidence.digest == (try parent.digest("artifact_digest")),
         scope.tenant == pinnedRoot.tenant, scope.authority == pinnedRoot.authority, let trust,
@@ -1618,7 +1648,12 @@ extension V4NamespaceVerifier {
         signerLifetimeMS: policy.u("max_head_signer_lifetime_ms"))
       _ = try credentialFreshness(requirements)
       try time(scope.issuedMS, scope.expiresMS, now: sample())
-      return (permission, requirements)
+      let result = (permission, requirements)
+      if authorizationCacheEnabled {
+        cache?.result = result
+        cache?.revision = authorizationRevision
+      }
+      return result
     }
   }
   func verifyLiveGrant(

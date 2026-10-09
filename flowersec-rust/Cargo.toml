@@ -59,6 +59,7 @@ hyper = { version = "1", default-features = false, features = ["server", "http1"
 flowersec-native-transport = { version = "=6.0.0", path = "../flowersec-native-transport", features = ["__flowersec_internal_test_support"] }
 proptest = "1"
 regex-lite = "0.1"
+tokio = { version = "1", features = ["test-util"] }
 tempfile = "3"
 cert_test_builder = { package = "rcgen", version = "0.14" }
 

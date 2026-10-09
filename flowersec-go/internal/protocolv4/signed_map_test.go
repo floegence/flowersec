@@ -197,3 +197,56 @@ func TestSignedMapDigestPreservesOriginalSignedBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestSignedMapCopyRetainsIndependentOriginalSignatureFact(t *testing.T) {
+	f := newRuntimeAdmissionFixture(t, "preauthorized_pool", 5)
+	source := f.artifact
+	wire, err := source.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := bytes.Clone(wire)
+	key := source.Key()
+	codec, err := NewSignedMapCodec("Artifact", 65536, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = source.codec.CopyVerified(source, DecodeContext{}); err != CBORFailure("decoder_busy") {
+		t.Fatal("self-copy must refuse without waiting", err)
+	}
+	wrong, err := NewSignedMapCodec("IdentityCertificate", 65536, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = wrong.CopyVerified(source, DecodeContext{}); err != CBORFailure("signature_schema") {
+		t.Fatal("signature fact crossed schema domains", err)
+	}
+	bounded, err := NewSignedMapCodec("Artifact", len(original)-1, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = bounded.CopyVerified(source, DecodeContext{}); err == nil {
+		t.Fatal("copy escaped destination byte capacity")
+	}
+	copyOwner, err := codec.CopyVerified(source, DecodeContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer copyOwner.Release()
+	if _, err = codec.CopyVerified(source, DecodeContext{}); err != CBORFailure("decoder_busy") {
+		t.Fatal("copy replaced a retained owner", err)
+	}
+	source.Release()
+	actual, err := copyOwner.Bytes()
+	if err != nil || !bytes.Equal(actual, original) || copyOwner.Key() != key {
+		t.Fatal("source cleanup changed the copied signature fact", err)
+	}
+	if _, err = source.codec.CopyVerified(source, DecodeContext{}); err != CBORFailure("document_released") {
+		t.Fatal("released original created another signature fact", err)
+	}
+	verified, err := source.codec.Verify(actual, key, DecodeContext{})
+	if err != nil {
+		t.Fatal("copy changed exact signature bytes", err)
+	}
+	defer verified.Release()
+}

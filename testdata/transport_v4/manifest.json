@@ -2,7 +2,7 @@
   "status": "draft",
   "design_sha256": "3f155c57dc1be95d190af9ce2ac5b0113006650259372ab09521c6cff04bef79",
   "schema_revision": "flowersec-v4.0.0-draft.74",
-  "schema_sha256": "9d2322a4755f74a1744e9ff5688b2ef95c3e22bf511d12c4083c96f2fe16813f",
+  "schema_sha256": "3a7a448d49a46f86700e56dc0d30e62d8915bdc67e12d1b697c9d92083f4cc1c",
   "coverage": "draft_cbor_fields_only",
   "vectors": [
     {
@@ -9828,55 +9828,55 @@
     },
     {
       "file": "testdata/transport_v4/corpus.json",
-      "sha256": "7b91a892f24f35bdfc6f13b09e6d4790cdd27d501508c78d179da922cd696d28"
+      "sha256": "723d06e6788bb560c8c7bf0c6a8e59060734b316e122e6287d7b562e09be3e97"
     },
     {
       "file": "testdata/transport_v4/domains.json",
-      "sha256": "9455507e891b4598a7c9ba99e9394e316bc85c78b254086450741e5df2489338"
+      "sha256": "2b88414df5405746136fe97925236467b3a19edad9f00c298dddb2127b3fedb8"
     },
     {
       "file": "testdata/transport_v4/signatures.json",
-      "sha256": "359ddddc3326b10387269aeaf0e3195e064093c229600c47d7dfd7da88ec13cf"
+      "sha256": "b74e7b7a020696a39c12b196793d8169f998d93003e864bc74b25172854ed35b"
     },
     {
       "file": "testdata/transport_v4/strict_signatures.json",
-      "sha256": "9e2b57155ef9fbcd41904bc6a8b65d00c5d32f20d3a0776d8c6936ed61c6f06b"
+      "sha256": "b775091f95997c173baf84ea4970cf12de534ef6caea1056fc3480fffa2e3292"
     },
     {
       "file": "testdata/transport_v4/profile_dh.json",
-      "sha256": "c5e5f31343afa817036ec2b5a8dc834175d9e487d4d71e8763be6bf525de8ec0"
+      "sha256": "90ffdfe11ab97c9ff9c770997a66abf2a9552816ccc499552d98469326d7e18c"
     },
     {
       "file": "testdata/transport_v4/noise.json",
-      "sha256": "75e4fab21231e3c7e611982dedecd31c556e460250b02f34812c5d5e655d5166"
+      "sha256": "3df6bdb390154205facfed85266145aca51a95ff82fd1c29fcfd442686102524"
     },
     {
       "file": "testdata/transport_v4/records.json",
-      "sha256": "607b816061ce951bc207feba77bdd00a9d87c45fbfc613db254456e23d9dc190"
+      "sha256": "909fd2003e603eaa445db8d266a5adc9e40eca16d62b2db132148cf4af0b39a9"
     },
     {
       "file": "testdata/transport_v4/ready.json",
-      "sha256": "d28b0726483b4d1aa2d521eb8246e2bcac7ec6fe6ebc3c99f988afe9dc184feb"
+      "sha256": "131ed8bbc2ae1f50acd7532fb3faaf717000c4b216c60e37d6090e8a6ef181da"
     },
     {
       "file": "testdata/transport_v4/rekey.json",
-      "sha256": "c12417fe75d76f63db4f29fea1cb3b99f8101a01064c79351420b3a3f3dcfa24"
+      "sha256": "2a48193103f95fd26bfd2763cae8ca35b9915b26dadff73e49c3f6f7f92d6f5f"
     },
     {
       "file": "testdata/transport_v4/text.json",
-      "sha256": "4b1c29e886801a61497a48f103be4f04f42876bdac0a71a431788978842a607b"
+      "sha256": "ad6ffe753b3b0bed4e1ec51a33ee763b498a1b825ea6f80a10bbf0081bf6c835"
     },
     {
       "file": "testdata/transport_v4/errors.json",
-      "sha256": "43610a65bfcbeb90c0820d904d0d1cd8f3eb65ba5b9a0cf53e6f63107d1999cc"
+      "sha256": "cd6cf7e8f8a6a485df8e5194ba41dc161a1d84353c000337ebb9230139369fcd"
     },
     {
       "file": "testdata/transport_v4/queries.json",
-      "sha256": "c93905daeee7ba11b156aa23bb9579016d5b5aa41ff4fb40f33d70af2f2cffbb"
+      "sha256": "72e997025d405a68a33431500bbe0f29d565d4c5eeddbbf3c7fe6a63ac0af962"
     },
     {
       "file": "testdata/transport_v4/fragments.json",
-      "sha256": "56fd75fc43b72d3ac8fa62aaf58447461e3283879353dd6cf9f15bc3692d87e8"
+      "sha256": "224a043353cf3c3e3297a2784ff20b9ec677e3e2fab167e1c7b0f0b94df8e04b"
     },
     {
       "file": "testdata/transport_v4/fragment_states.json",
@@ -9916,39 +9916,39 @@
     },
     {
       "file": "testdata/transport_v4/notify.json",
-      "sha256": "00dd85d6a7df31e8f4cf8a9d178de18b0180a296d21af1c6c9ddf56acb196a71"
+      "sha256": "4b766c010a3f42b63859b5037a43044c738a7b6cb888eca3dd34fb7fb158f941"
     },
     {
       "file": "flowersec-go/internal/protocolv4/api_results_generated.go",
-      "sha256": "243eee03c2c7314c36644ecd683ebc3f05766cd7252ae8734810167d2e5522dc"
+      "sha256": "ae0a7a4d94af2d44e1dacaebb47f1f446a6a7cf9d5711fb70efd9ab58089a73b"
     },
     {
       "file": "flowersec-rust/src/api_results_v4_generated.rs",
-      "sha256": "960b370e2f91207a05c68a051020a31764ba2418b93a326d3e4c664bec03f775"
+      "sha256": "0fcfe13b1925944b561b5dc7b47f8ea1369fa5ee465bc6921eb862c14a8526b2"
     },
     {
       "file": "flowersec-swift/Sources/Flowersec/TransportV4APIResults.generated.swift",
-      "sha256": "0ba170ae253d710414a5e12ee4c348f3a85ce2f1a9291c90ce0711639729c49a"
+      "sha256": "dbbcedc3506dadc0fa4aee169756bfd77edb5395053af3368cd4074e74444a4b"
     },
     {
       "file": "flowersec-ts/src/generated/transportV4APIResults.ts",
-      "sha256": "73151c8396e3d06edee7d067f006fcc8ff72db399a5578551236fa57c2fc4b1c"
+      "sha256": "7ea4c15b6be0fc4bde5a03a5e69b9b15d85dd81689a741d854bf9facda69eec4"
     },
     {
       "file": "flowersec-go/internal/protocolv4/registry_generated.go",
-      "sha256": "e0f174c782a2e0a90d7bcb763b0d0dc1eb7843cf698a6838df6e2189934d9f6f"
+      "sha256": "ae69f2ded7009b3066bb874b1155bd64533e358e951997759dc43c42652e418f"
     },
     {
       "file": "flowersec-rust/src/protocol_v4_registry_generated.rs",
-      "sha256": "7746affdd9c0383c6ce4a035f1200883d117fc82299d618e007781fa9e2daacd"
+      "sha256": "7cdabdd6aa48a7e953bb22e93b9baa6cbd6698b12eaacdc1e5a2c1201a4dcbf2"
     },
     {
       "file": "flowersec-swift/Sources/Flowersec/TransportV4Registry.generated.swift",
-      "sha256": "9cfe9a926b069ec9f8bd03a1ae7c09d1f61831621a023658f70e0f5e7fc4b581"
+      "sha256": "d60777a5fe062cadc6f0ddea4688377c4f4f085e803390b395dade55ae99a646"
     },
     {
       "file": "flowersec-ts/src/generated/transportV4Registry.ts",
-      "sha256": "5a7c9f32553cada245594f5fc473bba36fc2a0e54fe53ce8dc5b4010c81086ac"
+      "sha256": "761630576557b08714185314ec0d07a0926ca3c35fbf7c477fdaa1cf3896d7d9"
     }
   ],
   "query_vectors": [

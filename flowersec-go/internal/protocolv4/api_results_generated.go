@@ -1,7 +1,7 @@
 // Generated draft native API types; DO NOT EDIT. Not a qualified SDK runtime.
 package protocolv4
 
-const APIResultsSchemaSHA256 = "9d2322a4755f74a1744e9ff5688b2ef95c3e22bf511d12c4083c96f2fe16813f"
+const APIResultsSchemaSHA256 = "3a7a448d49a46f86700e56dc0d30e62d8915bdc67e12d1b697c9d92083f4cc1c"
 
 type V4ApplicationProfile string
 

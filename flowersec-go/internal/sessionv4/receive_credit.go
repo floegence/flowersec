@@ -49,6 +49,7 @@ func (f *ReceiveFlow) replenishCreditLocked() error {
 	if f.minimumPromise == 0 || f.messageAdmissionPaused || f.closeCreditSealed || f.hasTerminal || f.abandoned || f.fenced || f.pool.closed {
 		return nil
 	}
+	ready := f.creditReadyLocked()
 	current := f.limit - f.released
 	if current < f.minimumPromise {
 		delta := f.minimumPromise - current
@@ -59,7 +60,7 @@ func (f *ReceiveFlow) replenishCreditLocked() error {
 		f.limit += delta
 		f.pool.used += delta
 	}
-	if f.creditReadyLocked() {
+	if !ready && f.creditReadyLocked() {
 		f.termination.service.notify()
 	}
 	return nil
@@ -67,6 +68,14 @@ func (f *ReceiveFlow) replenishCreditLocked() error {
 func (f *ReceiveFlow) creditReadyLocked() bool {
 	return f.minimumPromise != 0 && !f.cleaned && !f.pool.closed && !f.hasTerminal && !f.abandoned && !f.fenced && (f.observed.Offset > f.creditAck || f.limit > f.creditLimit)
 }
+
+// Only the last encoded promise permits further peer DATA. Wake the original
+// maintenance worker when its remaining eighth becomes urgent; local credit
+// replenishment cannot postpone this edge or manufacture peer permission.
+func (f *ReceiveFlow) creditUrgentLocked() bool {
+	return f.observed.Offset >= f.creditLimit || f.creditLimit-f.observed.Offset <= f.minimumPromise/8
+}
+
 func (f *ReceiveFlow) encodeCredit(dst []byte) ([]byte, error) {
 	f.pool.mu.Lock()
 	defer f.pool.mu.Unlock()

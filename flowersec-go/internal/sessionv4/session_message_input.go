@@ -56,6 +56,7 @@ type sessionMessageInput struct {
 	parent, lifetime                context.Context
 	cancel                          context.CancelCauseFunc
 	readContext, writeContext       context.Context
+	readWatch, writeWatch           <-chan struct{}
 	readGeneration, writeGeneration uint64
 	buffer                          []byte
 	offset, length                  int
@@ -180,11 +181,7 @@ func (m *sessionMessageInput) checkLocked(ctx context.Context) error {
 		m.sealLocked(err)
 		return m.cause
 	}
-	if err := m.reservation.Check(); err != nil {
-		m.sealLocked(err)
-		return err
-	}
-	if err := m.environment.Check(); err != nil {
+	if err := m.reservation.CheckSameEnvironment(m.environment); err != nil {
 		m.sealLocked(err)
 		return err
 	}
@@ -208,15 +205,7 @@ func (m *sessionMessageInput) lifecycle() {
 	for {
 		m.mu.Lock()
 		parent := m.parent
-		var readDone, writeDone <-chan struct{}
-		read, write := m.readContext, m.writeContext
-		readGeneration, writeGeneration := m.readGeneration, m.writeGeneration
-		if read != nil {
-			readDone = read.Done()
-		}
-		if write != nil {
-			writeDone = write.Done()
-		}
+		readDone, writeDone := m.readWatch, m.writeWatch
 		m.mu.Unlock()
 		var cause error
 		var observed uint8
@@ -225,20 +214,35 @@ func (m *sessionMessageInput) lifecycle() {
 		case <-parent.Done():
 			cause = parent.Err()
 		case <-readDone:
-			cause = read.Err()
 			observed = 1
 		case <-writeDone:
-			cause = write.Err()
 			observed = 2
 		case <-m.wake:
 			continue
 		}
 		m.mu.Lock()
-		// READY cancels the initial context after its calls have returned.
-		// An old observation must not close the transferred runtime owner.
-		if observed == 1 && (!m.reading || m.readGeneration != readGeneration) || observed == 2 && (m.writeContext == nil || m.writeGeneration != writeGeneration) {
-			m.mu.Unlock()
-			continue
+		// Retain only a bounded cancellation channel between calls. READY may
+		// cancel an ended initial call; it cannot close a different runtime call.
+		// Calls sharing a channel share cancellation, so replacing such a call
+		// needs no lifecycle wake or retained caller context.
+		if observed == 1 {
+			if m.readWatch != readDone || !m.reading || m.readContext == nil || m.readContext.Done() != readDone {
+				if m.readWatch == readDone {
+					m.readWatch = nil
+				}
+				m.mu.Unlock()
+				continue
+			}
+			cause = m.readContext.Err()
+		} else if observed == 2 {
+			if m.writeWatch != writeDone || m.writeContext == nil || m.writeContext.Done() != writeDone {
+				if m.writeWatch == writeDone {
+					m.writeWatch = nil
+				}
+				m.mu.Unlock()
+				continue
+			}
+			cause = m.writeContext.Err()
 		}
 		m.sealLocked(cause)
 		cause, provider, cancel := m.cause, m.provider, m.cancel
@@ -257,6 +261,7 @@ func (m *sessionMessageInput) cleanupLocked() {
 	m.buffer = nil
 	m.offset, m.length = 0, 0
 	m.provider, m.parent, m.lifetime, m.cancel = nil, nil, nil, nil
+	m.readWatch, m.writeWatch = nil, nil
 	m.complete = true
 	close(m.done)
 }
@@ -275,14 +280,16 @@ func (m *sessionMessageInput) beginRead(ctx context.Context) (InitialMessages, c
 	}
 	m.readGeneration++
 	m.reading, m.readContext = true, ctx
-	m.signalLocked()
+	if done := ctx.Done(); done != m.readWatch {
+		m.readWatch = done
+		m.signalLocked()
+	}
 	return m.provider, &sessionMessageCallContext{ctx, m.lifetime}, nil
 }
 
 func (m *sessionMessageInput) endRead() {
 	m.mu.Lock()
 	m.reading, m.readContext = false, nil
-	m.signalLocked()
 	m.cleanupLocked()
 	m.mu.Unlock()
 }
@@ -333,21 +340,7 @@ func (m *SessionMessageInput) Read(dst []byte) (int, error) {
 		return 0, nil
 	}
 	if m.length == 0 {
-		n, err := provider.ReadMessage(call, m.buffer)
-		if err == nil {
-			if n < 0 || n > len(m.buffer) {
-				err = ErrSessionMessageFraming
-			} else {
-				err = m.validate(m.buffer[:n])
-			}
-		}
-		m.mu.Lock()
-		if err != nil {
-			m.sealLocked(err)
-		} else {
-			m.length = n
-		}
-		m.mu.Unlock()
+		m.readValidatedMessage(provider, call)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -360,6 +353,57 @@ func (m *SessionMessageInput) Read(dst []byte) (int, error) {
 		clear(m.buffer[:m.length])
 		m.offset, m.length = 0, 0
 	}
+	return n, nil
+}
+
+func (m *sessionMessageInput) readValidatedMessage(provider InitialMessages, call context.Context) {
+	n, err := provider.ReadMessage(call, m.buffer)
+	if err == nil {
+		if n < 0 || n > len(m.buffer) {
+			err = ErrSessionMessageFraming
+		} else {
+			err = m.validate(m.buffer[:n])
+		}
+	}
+	m.mu.Lock()
+	if err != nil {
+		m.sealLocked(err)
+	} else {
+		m.length = n
+	}
+	m.mu.Unlock()
+}
+
+// readRecordMessage gives the original shared receiver one complete validated
+// envelope in one synchronous read ownership gate. The provider still borrows
+// only this input's precharged buffer, and the same framing checks precede any
+// copy. Byte readers continue to use Read when a whole-message owner is absent.
+func (m *SessionMessageInput) readRecordMessage(dst []byte) (int, error) {
+	m.mu.Lock()
+	ctx := m.parent
+	m.mu.Unlock()
+	provider, call, err := m.beginRead(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer m.endRead()
+	if m.offset != 0 {
+		return 0, ErrSessionMessageFraming
+	}
+	if m.length == 0 {
+		m.readValidatedMessage(provider, call)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.checkLocked(ctx); err != nil {
+		return 0, err
+	}
+	if m.length > len(dst) {
+		return 0, protocolv4.ErrPayloadTooLarge
+	}
+	n := copy(dst, m.buffer[:m.length])
+	clear(m.buffer[:m.length])
+	m.offset, m.length = 0, 0
 	return n, nil
 }
 
@@ -432,14 +476,16 @@ func (m *sessionMessageInput) write(ctx context.Context, wire []byte, runtime bo
 	}
 	m.writeGeneration++
 	m.writeContext = ctx
-	m.signalLocked()
+	if done := ctx.Done(); done != m.writeWatch {
+		m.writeWatch = done
+		m.signalLocked()
+	}
 	provider, lifetime := m.provider, m.lifetime
 	m.mu.Unlock()
 	err := provider.WriteMessage(&sessionMessageCallContext{ctx, lifetime}, wire)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.writeContext = nil
-	m.signalLocked()
 	n := 0
 	if err != nil {
 		m.sealLocked(err)

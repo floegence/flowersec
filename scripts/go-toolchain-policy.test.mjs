@@ -35,17 +35,17 @@ function mutate(root, relative, from, to) {
   return () => fs.writeFileSync(filename, source);
 }
 
-test("the maintained Go security baseline is exactly 1.27.1", () => {
-  assert.equal(goSecurityBaseline, "1.27.1");
+test("the maintained Go security baseline is exactly 1.27.2", () => {
+  assert.equal(goSecurityBaseline, "1.27.2");
   assert.doesNotThrow(() => verifyGoToolchainPolicy(sourceRoot));
 });
 
 test("Go module policy rejects the previous patch and ambiguous toolchain directives", () => {
-  assert.equal(parseGoModPolicy("module example.com/ok\n\ngo 1.27.1\n", "fixture"), "1.27.1");
+  assert.equal(parseGoModPolicy("module example.com/ok\n\ngo 1.27.2\n", "fixture"), "1.27.2");
   const staleVersion = [1, 26, 5].join(".");
   assert.equal(parseGoModPolicy(`module example.com/stale\n\ngo ${staleVersion}\n`, "fixture"), staleVersion);
   assert.throws(
-    () => parseGoModPolicy(`module example.com/ambiguous\n\ngo 1.27.1\ntoolchain go${staleVersion}\n`, "fixture"),
+    () => parseGoModPolicy(`module example.com/ambiguous\n\ngo 1.27.2\ntoolchain go${staleVersion}\n`, "fixture"),
     /must not contain a toolchain directive/,
   );
 });
@@ -86,15 +86,15 @@ test("each maintained toolchain source rejects a stale structured value", (t) =>
   for (const fixture of [
     {
       relative: "flowersec-go/go.mod",
-      from: "go 1.27.1",
+      from: "go 1.27.2",
       to: `go ${stale}`,
-      error: /flowersec-go\/go\.mod must be 1\.27\.1/,
+      error: /flowersec-go\/go\.mod must be 1\.27\.2/,
     },
     {
       relative: "docker/flowersec-runtime/Dockerfile",
-      from: "golang:1.27.1-alpine",
+      from: "golang:1.27.2-alpine",
       to: `golang:${stale}-alpine`,
-      error: /runtime Dockerfile Go builder tag must be 1\.27\.1-alpine/,
+      error: /runtime Dockerfile Go builder tag must be 1\.27\.2-alpine/,
     },
     {
       relative: ".github/workflows/ci.yml",
@@ -116,9 +116,9 @@ test("each maintained toolchain source rejects a stale structured value", (t) =>
     },
     {
       relative: "scripts/test-host-init.sh",
-      from: "readonly go_version=1.27.1",
+      from: "readonly go_version=1.27.2",
       to: `readonly go_version=${stale}`,
-      error: /test host Go version must be 1\.27\.1/,
+      error: /test host Go version must be 1\.27\.2/,
     },
   ]) {
     const restore = mutate(root, fixture.relative, fixture.from, fixture.to);
@@ -137,14 +137,14 @@ test("Go declarations are checked against the supplied repository config", (t) =
   const root = copySourceTree(t);
   const file = path.join(root, "toolchains.json");
   const config = JSON.parse(fs.readFileSync(file, "utf8"));
-  config.go.version = "1.27.2";
+  config.go.version = "1.27.3";
   fs.writeFileSync(file, JSON.stringify(config));
-  assert.throws(() => verifyGoToolchainPolicy(root), /go\.mod must be 1\.27\.2/);
+  assert.throws(() => verifyGoToolchainPolicy(root), /go\.mod must be 1\.27\.3/);
 });
 
 test("new Go modules must use the authoritative version", (t) => {
   const root = copySourceTree(t);
   fs.mkdirSync(path.join(root, "tools/new-module"), { recursive: true });
   fs.writeFileSync(path.join(root, "tools/new-module/go.mod"), "module example.com/new\n\ngo 1.27.0\n");
-  assert.throws(() => verifyGoToolchainPolicy(root), /new-module\/go\.mod must be 1\.27\.1/);
+  assert.throws(() => verifyGoToolchainPolicy(root), /new-module\/go\.mod must be 1\.27\.2/);
 });

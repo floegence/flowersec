@@ -419,6 +419,7 @@ func (n *nativeStreamTransport) readOpen(s *nativeStreamSlot, r *RecordReceiver)
 	if err != nil {
 		return nil, err
 	}
+	r.storageUsed = prefix.RequiredBytes()
 	wire, err := prefix.ReadBody(s.stream, r.storage)
 	if err != nil {
 		return nil, err

@@ -43,8 +43,22 @@ mod controller_service_generation_regressions {
             response_limit: ResponseLimitPolicy::FollowContractMaximum, execution_reference_identity: None,
             streaming: None, resume: None }
     }
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn prepaid_replacement_binding_reuses_exact_verified_contract_and_keeps_old_operation() {
+        async fn settle<F: std::future::Future>(work: F) -> F::Output {
+            tokio::pin!(work);
+            let watchdog = std::time::Instant::now();
+            loop {
+                assert!(watchdog.elapsed() < Duration::from_secs(10), "paused-clock work did not settle");
+                // Keep the executor runnable while real RPC work settles, so
+                // its idle auto-advance cannot spend the prepared deadline.
+                tokio::select! {
+                    biased;
+                    result = &mut work => return result,
+                    _ = tokio::task::yield_now() => {},
+                }
+            }
+        }
         let (fixture, c, s) = crate::crypto_v4::tests::record_pair_for_recovery(Profile::X25519);
         let (client_session, server_session, c_task, s_task) = link(&fixture.environment, c, s);
         let (definition, method) = definition();
@@ -55,19 +69,25 @@ mod controller_service_generation_regressions {
             handler: Arc::new(Echo), execution: None, caller: None }]).unwrap();
         let peer = client_session.services(query, Vec::new()).unwrap();
         let binding = options(&method);
-        let first = peer.bind(definition.clone(), vec![binding.clone()], Duration::from_secs(2), CancellationToken::new()).await.unwrap();
+        let first = settle(peer.bind(definition.clone(), vec![binding.clone()], Duration::from_secs(2), CancellationToken::new())).await.unwrap();
         let request = Arc::new(BytesMessageCodec::new(method.options().request.clone()));
         let response = Arc::new(BytesMessageCodec::new(method.options().response.clone().unwrap()));
         let old_operation = first.prepare_unary(&method, &b"fixed-original".to_vec(), request, response,
             UnaryPrepareOptions { timeout: Duration::from_millis(500), ..UnaryPrepareOptions::default() }).unwrap();
+        let original_deadline = old_operation.deadline();
+        let prepared_at = tokio::time::Instant::now();
         let baseline = first.rebind_baseline().unwrap();
         let backing = client_session.application_account().reserve(
             crate::service_client_v4::ServiceBindingPreparation::preparation_limits(std::slice::from_ref(&binding)).unwrap()).unwrap();
-        let replacement = peer.bind_replacement_prepaid(definition, vec![binding], Duration::from_secs(2),
-            CancellationToken::new(), backing, Some(baseline.clone())).await.unwrap();
+        let replacement = settle(peer.bind_replacement_prepaid(definition, vec![binding], Duration::from_secs(2),
+            CancellationToken::new(), backing, Some(baseline.clone()))).await.unwrap();
         assert!(!baseline.same_revision(&replacement.rebind_baseline().unwrap()));
+        tokio::time::advance(Duration::from_millis(50)).await;
+        assert_eq!(tokio::time::Instant::now().duration_since(prepared_at), Duration::from_millis(50));
+        assert_eq!(old_operation.deadline(), original_deadline);
         old_operation.start().unwrap();
-        assert_eq!(old_operation.wait_encoded(CancellationToken::new()).await.unwrap().payload.as_slice(), b"fixed-original");
+        assert_eq!(settle(old_operation.wait_encoded(CancellationToken::new())).await.unwrap().payload.as_slice(), b"fixed-original");
+        assert_eq!(old_operation.progress().publication, crate::ServicePublication::Committed);
         peer.close(); server.close(); client_session.close(); server_session.close();
         c_task.abort(); s_task.abort();
     }

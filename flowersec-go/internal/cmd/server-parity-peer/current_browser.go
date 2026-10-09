@@ -41,7 +41,7 @@ func prepareCurrentBrowserInstallation(ctx context.Context) (*currentBrowserInst
 	}
 	return &currentBrowserInstallation{owner: owner, native: native}, nil
 }
-func (b *currentBrowserInstallation) Start(ctx context.Context, cancelRun context.CancelCauseFunc, runtime *interopharness.Runtime, original interopharness.Material, wire, trustPEM, origin string, application interopharness.BrowserApplicationDeclaration) error {
+func (b *currentBrowserInstallation) Start(ctx context.Context, cancelRun context.CancelCauseFunc, runtime *interopharness.Runtime, original interopharness.Material, wire, trustPEM, origin string, application interopharness.BrowserApplicationDeclaration, poolAllow *interopharness.BrowserPoolServerAllowInstallation) error {
 	if b == nil {
 		return nil
 	}
@@ -53,6 +53,9 @@ func (b *currentBrowserInstallation) Start(ctx context.Context, cancelRun contex
 	}
 	if err := application.CheckOriginal(); err != nil {
 		return err
+	}
+	if (len(original.Tunnels) != 0) != (poolAllow != nil) {
+		return errors.New("original Chromium pool Allow installation differs from its topology")
 	}
 	// Validate the actual immutable application record before exposing any worker.
 	// OriginalBrowserRunnerDeclaration performs the full native/material check
@@ -68,6 +71,9 @@ func (b *currentBrowserInstallation) Start(ctx context.Context, cancelRun contex
 		}
 		if err == nil {
 			declaration, err = runtime.OriginalBrowserRunnerDeclaration(worker, original, observation, b.native, application, 2)
+		}
+		if err == nil && poolAllow != nil {
+			declaration["pool_server_allow"] = poolAllow
 		}
 		if err == nil {
 			err = b.owner.InstallOriginal(worker, wire, original, trustPEM, origin, observation, declaration)

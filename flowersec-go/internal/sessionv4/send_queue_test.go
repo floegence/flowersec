@@ -110,6 +110,34 @@ func readQueueRecords(t *testing.T, wire []byte, count int) (string, bool) {
 	return string(payload), fin
 }
 
+func TestSendQueueWrappedPrefixKeepsOriginalPublicationQuantum(t *testing.T) {
+	var wire bytes.Buffer
+	q, _, _ := sendQueueFixture(t, 32, 6, 4, 2, &wire)
+	ctx := context.Background()
+	if n, err := q.Write(ctx, []byte("abc")); n != 3 || err != nil {
+		t.Fatal(n, err)
+	}
+	if result, n, err := q.Pump(ctx); n != 3 || !result.Complete || err != nil {
+		t.Fatal(result, n, err)
+	}
+	// This full quantum spans the tail and start of the same charged ring.
+	if n, err := q.Write(ctx, []byte("WXYZ")); n != 4 || err != nil {
+		t.Fatal(n, err)
+	}
+	if err := q.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	if result, n, err := q.Pump(ctx); n != 4 || !result.Complete || err != nil {
+		t.Fatal("ring boundary split the original quantum", result, n, err)
+	}
+	if data, fin := readQueueRecords(t, wire.Bytes(), 2); data != "abcWXYZ" || !fin {
+		t.Fatal("wrapped publication lost bytes or ordered FIN", data, fin)
+	}
+	if !bytes.Equal(q.storage, make([]byte, len(q.storage))) {
+		t.Fatal("wrapped publication retained accepted bytes")
+	}
+}
+
 func TestSendQueueStableAcceptanceSurvivesCancellationAndCreditWait(t *testing.T) {
 	var wire bytes.Buffer
 	q, flow, root := sendQueueFixture(t, 3, 8, 4, 2, &wire)

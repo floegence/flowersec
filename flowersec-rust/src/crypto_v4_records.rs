@@ -4,6 +4,10 @@ use super::{Binding, CryptoError, Profile, RecordPublisher, Result, domain, expa
 use crate::environment_v4::{ResourceAccount, ResourceCharge, ResourceLimits, TrustedTimeSample};
 use ring::aead::{self, Aad, LessSafeKey, Nonce, UnboundKey};
 use std::fmt;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 use zeroize::{Zeroize, Zeroizing};
 #[path = "crypto_v4_datagrams.rs"]
 mod datagrams;
@@ -24,8 +28,8 @@ pub(crate) use streams::{
     install_terminal_publication_probe,
 };
 pub(crate) use streams::{
-    NativeStreamBinding, ReliableSession, ResumeMessageClaim, SessionLink, SessionReceiver,
-    SessionTransport, StreamPreparation, StreamPublicationAdmission, StreamView,
+    NativeStreamBinding, ReceiveDisposition, ReliableSession, ResumeMessageClaim, SessionLink,
+    SessionReceiver, SessionTransport, StreamPreparation, StreamPublicationAdmission, StreamView,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -63,10 +67,438 @@ impl Usage {
             && self.bytes <= limit.bytes
     }
 }
+/// One original reliable direction orders its own immutable publication tickets.
+struct RecordOrder {
+    state: std::sync::Mutex<(u64, u64)>,
+}
+impl RecordOrder {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: std::sync::Mutex::new((0, 0)),
+        })
+    }
+    fn claim(self: &Arc<Self>, lifetime: Arc<CryptoLifetime>) -> Result<RecordPublication> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("reliable direction publication ticket");
+        let ticket = state.0;
+        state.0 = state.0.checked_add(1).ok_or(CryptoError::Sequence)?;
+        Ok(RecordPublication {
+            order: self.clone(),
+            lifetime,
+            ticket,
+        })
+    }
+}
+pub(crate) struct RecordPublication {
+    order: Arc<RecordOrder>,
+    lifetime: Arc<CryptoLifetime>,
+    ticket: u64,
+}
+impl RecordPublication {
+    pub(crate) fn wait(&self) -> Result<()> {
+        let mut waiting = self
+            .lifetime
+            .waiting
+            .lock()
+            .expect("original publication wake owner");
+        loop {
+            if self.lifetime.stopped.load(Ordering::Acquire) {
+                return Err(CryptoError::State);
+            }
+            if self
+                .order
+                .state
+                .lock()
+                .expect("reliable direction publication turn")
+                .1
+                == self.ticket
+            {
+                return Ok(());
+            }
+            waiting = self
+                .lifetime
+                .changed
+                .wait(waiting)
+                .expect("reliable direction publication wait");
+        }
+    }
+}
+impl Drop for RecordPublication {
+    fn drop(&mut self) {
+        let failed = {
+            let mut state = self
+                .order
+                .state
+                .lock()
+                .expect("original publication completion");
+            if state.1 == self.ticket {
+                state.1 = state.1.saturating_add(1);
+                false
+            } else {
+                true
+            }
+        };
+        if failed {
+            self.lifetime.stop();
+        } else {
+            self.lifetime.wake();
+        }
+    }
+}
+/// The original admission remains charged through the actual crypto exit.
+pub(crate) struct CryptoLifetime {
+    stopped: AtomicBool,
+    waiting: std::sync::Mutex<()>,
+    changed: std::sync::Condvar,
+    active: AtomicUsize,
+    deadline: std::sync::Mutex<Option<tokio::time::Instant>>,
+    _charge: std::sync::Mutex<Option<ResourceCharge>>,
+    #[cfg(test)]
+    test_hold: std::sync::Mutex<Option<Arc<RecordCryptoProbe>>>,
+}
+#[cfg(test)]
+struct RecordCryptoProbe {
+    scope: u64,
+    frame: u8,
+    seal: bool,
+    digest: bool,
+    state: std::sync::Mutex<(bool, bool)>,
+    changed: std::sync::Condvar,
+}
+#[cfg(test)]
+pub(crate) struct RecordCryptoHold(Arc<RecordCryptoProbe>);
+#[cfg(test)]
+impl RecordCryptoHold {
+    pub(crate) fn wait_entered(&self) -> bool {
+        let state = self.0.state.lock().unwrap();
+        let (state, _) = self
+            .0
+            .changed
+            .wait_timeout_while(state, std::time::Duration::from_secs(3), |state| !state.0)
+            .unwrap();
+        state.0
+    }
+    pub(crate) fn release(&self) {
+        let mut state = self.0.state.lock().unwrap();
+        state.1 = true;
+        self.0.changed.notify_all();
+    }
+}
+#[cfg(test)]
+impl Drop for RecordCryptoHold {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+impl CryptoLifetime {
+    fn wake(&self) {
+        let _waiting = self.waiting.lock().expect("original crypto wake");
+        self.changed.notify_all();
+    }
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        self.wake();
+    }
+    fn tighten_deadline(&self, deadline: Option<tokio::time::Instant>) {
+        if let Some(deadline) = deadline {
+            let mut current = self.deadline.lock().expect("original crypto hard deadline");
+            *current = Some(deadline);
+        }
+    }
+    fn release(&self) {
+        if self.active.fetch_sub(1, Ordering::AcqRel) == 1 && self.stopped.load(Ordering::Acquire) {
+            self._charge
+                .lock()
+                .expect("original crypto admission return")
+                .take();
+        }
+    }
+    pub(crate) fn pending(&self) -> usize {
+        let active = self.active.load(Ordering::Acquire);
+        if self.stopped.load(Ordering::Acquire) {
+            active
+        } else {
+            active.saturating_sub(1)
+        }
+    }
+}
+pub(crate) struct CryptoTail(Arc<CryptoLifetime>);
+impl Drop for CryptoTail {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+pub(crate) struct RecordWork {
+    lifetime: Arc<CryptoLifetime>,
+    account: ResourceAccount,
+    born: TrustedTimeSample,
+    profile: Profile,
+    deadline: Option<tokio::time::Instant>,
+    key: Option<Arc<RecordMaterial>>,
+    aad: [u8; 128],
+    aad_len: usize,
+    nonce: [u8; 12],
+    publication: Option<RecordPublication>,
+    rekey: Option<rekey::SealPatch>,
+    stream: Option<streams::StreamSealPatch>,
+    receive_view: Option<Arc<StreamView>>,
+    send_view: Option<Arc<StreamView>>,
+}
+pub(crate) struct RecordSealCompletion {
+    rekey: Option<rekey::SealCompletion>,
+    stream: Option<streams::StreamSealCompletion>,
+}
+impl RecordSealCompletion {
+    pub(crate) fn needs_commit(&self) -> bool {
+        self.rekey.is_some() || self.stream.is_some()
+    }
+}
+impl RecordWork {
+    #[cfg(test)]
+    pub(super) fn test_hold(&self, record: &[u8], seal: bool, digest: bool) {
+        let probe = self.lifetime.test_hold.lock().unwrap().clone();
+        let Some(probe) = probe else {
+            return;
+        };
+        if record.get(4) != Some(&probe.frame)
+            || record.get(12..20) != Some(probe.scope.to_be_bytes().as_slice())
+            || seal != probe.seal
+            || digest != probe.digest
+        {
+            return;
+        }
+        let mut state = probe.state.lock().unwrap();
+        state.0 = true;
+        probe.changed.notify_all();
+        while !state.1 {
+            state = probe.changed.wait(state).unwrap();
+        }
+    }
+    pub(crate) fn send_view(&self) -> Option<Arc<StreamView>> {
+        self.send_view.clone()
+    }
+    pub(crate) fn aborted(&self) -> bool {
+        self.send_view
+            .as_ref()
+            .is_some_and(|view| view.send_aborted.load(Ordering::Acquire))
+    }
+    pub(crate) fn physical_tail(&self) -> CryptoTail {
+        self.lifetime.active.fetch_add(1, Ordering::AcqRel);
+        CryptoTail(self.lifetime.clone())
+    }
+    pub(crate) fn take_publication(&mut self) -> Option<RecordPublication> {
+        self.publication.take()
+    }
+    pub(crate) fn check(&self) -> Result<()> {
+        if self.aborted() {
+            return Err(CryptoError::State);
+        }
+        if self
+            .receive_view
+            .as_ref()
+            .is_some_and(|view| view.receive_disabled.load(Ordering::Acquire))
+        {
+            return Err(CryptoError::State);
+        }
+        if self.lifetime.stopped.load(Ordering::Acquire) {
+            return Err(CryptoError::State);
+        }
+        let now = self.account.security_time()?;
+        let deadline = self
+            .deadline
+            .into_iter()
+            .chain(
+                *self
+                    .lifetime
+                    .deadline
+                    .lock()
+                    .expect("original crypto hard deadline"),
+            )
+            .min();
+        if deadline.is_some_and(|deadline| now.monotonic_sample >= deadline) {
+            return Err(CryptoError::Deadline);
+        }
+        if now.clock_incarnation != self.born.clock_incarnation
+            || now
+                .upper_ms
+                .checked_sub(self.born.lower_ms)
+                .is_none_or(|age| age >= 86_400_000)
+        {
+            return Err(CryptoError::Deadline);
+        }
+        Ok(())
+    }
+    fn cipher(&self) -> Result<LessSafeKey> {
+        let algorithm = match self.profile {
+            Profile::X25519 => &aead::CHACHA20_POLY1305,
+            Profile::P256 => &aead::AES_256_GCM,
+        };
+        Ok(LessSafeKey::new(
+            UnboundKey::new(
+                algorithm,
+                self.key
+                    .as_ref()
+                    .ok_or(CryptoError::State)?
+                    .material()?
+                    .as_ref(),
+            )
+            .map_err(|_| CryptoError::Key)?,
+        ))
+    }
+    pub(crate) fn seal_with_completion(
+        &mut self,
+        record: &mut [u8],
+    ) -> Result<RecordSealCompletion> {
+        self.check()?;
+        let end = record
+            .len()
+            .checked_sub(16)
+            .filter(|end| *end >= 28)
+            .ok_or(CryptoError::State)?;
+        let stream = self
+            .stream
+            .take()
+            .map(|patch| patch.execute(&mut record[28..end]))
+            .transpose()?;
+        #[cfg(test)]
+        if stream.is_some() {
+            self.test_hold(record, true, true);
+        }
+        let completion = if let Some(patch) = self.rekey.take() {
+            let end = record
+                .len()
+                .checked_sub(16)
+                .filter(|end| *end >= 28)
+                .ok_or(CryptoError::State)?;
+            patch.execute(&mut record[28..end])?
+        } else {
+            None
+        };
+        self.seal(record)?;
+        Ok(RecordSealCompletion {
+            rekey: completion,
+            stream,
+        })
+    }
+    pub(crate) fn seal(&self, record: &mut [u8]) -> Result<()> {
+        let result = (|| {
+            self.check()?;
+            let end = record
+                .len()
+                .checked_sub(16)
+                .filter(|end| *end >= 28)
+                .ok_or(CryptoError::State)?;
+            let tag = self
+                .cipher()?
+                .seal_in_place_separate_tag(
+                    Nonce::assume_unique_for_key(self.nonce),
+                    Aad::from(&self.aad[..self.aad_len]),
+                    &mut record[28..end],
+                )
+                .map_err(|_| CryptoError::Authentication)?;
+            record[end..].copy_from_slice(tag.as_ref());
+            #[cfg(test)]
+            self.test_hold(record, true, false);
+            self.check()
+        })();
+        if result.is_err() {
+            record.zeroize();
+        }
+        result
+    }
+    fn open(&self, wire: &[u8], plain: &mut [u8]) -> Result<usize> {
+        let result = (|| {
+            self.check()?;
+            let size = wire
+                .len()
+                .checked_sub(28)
+                .ok_or(CryptoError::Authentication)?;
+            if size < 16 || plain.len() < size {
+                return Err(CryptoError::Capacity);
+            }
+            plain[..size].copy_from_slice(&wire[28..]);
+            let n = self
+                .cipher()?
+                .open_in_place(
+                    Nonce::assume_unique_for_key(self.nonce),
+                    Aad::from(&self.aad[..self.aad_len]),
+                    &mut plain[..size],
+                )
+                .map_err(|_| CryptoError::Authentication)?
+                .len();
+            #[cfg(test)]
+            self.test_hold(wire, false, false);
+            self.check()?;
+            plain[n..size].zeroize();
+            Ok(n)
+        })();
+        if result.is_err() {
+            plain.zeroize();
+        }
+        result
+    }
+}
+impl Drop for RecordWork {
+    fn drop(&mut self) {
+        self.rekey.take();
+        self.key.take();
+        self.publication.take();
+        self.lifetime.release();
+    }
+}
+pub(crate) struct RecordOpen {
+    work: RecordWork,
+    epoch: u32,
+    scope: u64,
+    next: u64,
+}
+impl RecordOpen {
+    #[cfg(test)]
+    pub(super) fn test_hold(&self, wire: &[u8]) {
+        self.work.test_hold(wire, false, true);
+    }
+    pub(crate) fn execute(&self, wire: &[u8], plain: &mut [u8]) -> Result<usize> {
+        self.work.open(wire, plain)
+    }
+}
+enum RecordMaterialState {
+    Ready(Zeroizing<[u8; 32]>),
+    Pending {
+        root: Zeroizing<[u8; 32]>,
+        info: [u8; 192],
+        size: usize,
+    },
+}
+struct RecordMaterial {
+    state: std::sync::Mutex<RecordMaterialState>,
+}
+impl RecordMaterial {
+    fn ready(key: Zeroizing<[u8; 32]>) -> Arc<Self> {
+        Arc::new(Self {
+            state: std::sync::Mutex::new(RecordMaterialState::Ready(key)),
+        })
+    }
+    fn material(&self) -> Result<Zeroizing<[u8; 32]>> {
+        // Only this exact key's owner can wait here. No public Session or
+        // Environment lock is held through a first-use derivation.
+        let mut state = self.state.lock().expect("original record key material");
+        if let RecordMaterialState::Pending { root, info, size } = &*state {
+            let key = expand(root, &info[..*size])?;
+            *state = RecordMaterialState::Ready(key);
+        }
+        match &*state {
+            RecordMaterialState::Ready(key) => Ok(Zeroizing::new(**key)),
+            _ => Err(CryptoError::State),
+        }
+    }
+}
 struct RecordKey {
     scope: u64,
     direction: u8,
-    key: Zeroizing<[u8; 32]>,
+    key: Arc<RecordMaterial>,
+    order: Arc<RecordOrder>,
     next: u64,
     disabled: bool,
     usage: Usage,
@@ -82,7 +514,7 @@ struct Candidate {
 }
 pub(crate) struct RecordEngine {
     account: ResourceAccount,
-    _charge: ResourceCharge,
+    crypto: Arc<CryptoLifetime>,
     profile: Profile,
     role: u8,
     root: Zeroizing<[u8; 32]>,
@@ -103,11 +535,14 @@ pub(crate) struct RecordEngine {
     ready: bool,
     closed: bool,
     frozen: bool,
+    deferred_crypto: bool,
     candidate: Option<Candidate>,
     spare_keys: Vec<RecordKey>,
-    rekey: rekey::Coordinator,
+    rekey: rekey::CoordinatorStorage,
     streams: streams::State,
     datagrams: datagrams::State,
+    // Declared last: return the engine admission only after every owned field.
+    _engine_tail: CryptoTail,
 }
 impl fmt::Debug for RecordEngine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -125,7 +560,7 @@ pub(super) struct RecordReservation {
     max_keys: usize,
     keys: Vec<RecordKey>,
     spare_keys: Vec<RecordKey>,
-    rekey: rekey::Coordinator,
+    rekey: rekey::CoordinatorStorage,
     streams: streams::State,
     datagrams: datagrams::State,
 }
@@ -137,11 +572,17 @@ impl RecordReservation {
         let max_keys = (shape.max_streams + 2 + 128) * 2;
         let geometry = rekey::Geometry::new(shape)?;
         Ok(ResourceLimits {
-            sdk_bytes: (2 * max_keys * std::mem::size_of::<RecordKey>()
+            sdk_bytes: (2
+                * max_keys
+                * (std::mem::size_of::<RecordKey>()
+                    + std::mem::size_of::<RecordOrder>()
+                    + std::mem::size_of::<RecordMaterial>()
+                    + 64)
                 + std::mem::size_of::<RecordEngine>()
+                + std::mem::size_of::<rekey::Coordinator>()
                 + geometry.bytes
-                + 256) as u64,
-            items: (2 * max_keys + 4) as u64,
+                + 320) as u64,
+            items: (2 * max_keys + 5) as u64,
             timers: 1,
             work_slots: 2,
             tasks: 1,
@@ -221,7 +662,7 @@ impl RecordReservation {
         spare_keys
             .try_reserve_exact(max_keys)
             .map_err(|_| CryptoError::Capacity)?;
-        let rekey = rekey::Coordinator::new(geometry, credit)?;
+        let rekey = rekey::CoordinatorStorage::new(geometry, credit)?;
         let streams =
             streams::State::prepare_prepaid(account.clone(), &shape, role, stream_charge)?;
         let datagrams =
@@ -241,6 +682,35 @@ impl RecordReservation {
     }
 }
 impl RecordEngine {
+    #[cfg(test)]
+    pub(crate) fn hold_record_crypto(
+        &self,
+        scope: u64,
+        frame: u8,
+        seal: bool,
+        digest: bool,
+    ) -> RecordCryptoHold {
+        let probe = Arc::new(RecordCryptoProbe {
+            scope,
+            frame,
+            seal,
+            digest,
+            state: std::sync::Mutex::new((false, false)),
+            changed: std::sync::Condvar::new(),
+        });
+        *self.crypto.test_hold.lock().unwrap() = Some(probe.clone());
+        RecordCryptoHold(probe)
+    }
+    pub(crate) fn finish_record_seal(&mut self, completion: RecordSealCompletion) -> Result<()> {
+        self.check()?;
+        if let Some(rekey) = completion.rekey {
+            self.finish_rekey_seal(rekey)?;
+        }
+        if let Some(stream) = completion.stream {
+            self.finish_stream_seal(stream)?;
+        }
+        Ok(())
+    }
     #[cfg(test)]
     pub(super) fn prepare(
         account: ResourceAccount,
@@ -273,9 +743,19 @@ impl RecordEngine {
             datagrams,
             ..
         } = reservation;
+        let crypto = Arc::new(CryptoLifetime {
+            stopped: AtomicBool::new(false),
+            waiting: std::sync::Mutex::new(()),
+            changed: std::sync::Condvar::new(),
+            active: AtomicUsize::new(1),
+            deadline: std::sync::Mutex::new(None),
+            _charge: std::sync::Mutex::new(Some(charge)),
+            #[cfg(test)]
+            test_hold: std::sync::Mutex::new(None),
+        });
         let mut engine = Self {
             account,
-            _charge: charge,
+            crypto: crypto.clone(),
             profile: binding.profile,
             role: binding.role.index() as u8,
             root,
@@ -296,11 +776,13 @@ impl RecordEngine {
             ready: false,
             closed: false,
             frozen: false,
+            deferred_crypto: false,
             candidate: None,
             spare_keys,
             rekey,
             streams,
             datagrams,
+            _engine_tail: CryptoTail(crypto),
         };
         engine.datagrams.enabled = binding.features & 1 != 0;
         engine.install(0)?;
@@ -322,7 +804,7 @@ impl RecordEngine {
         Ok(())
     }
     pub(super) fn check(&self) -> Result<()> {
-        if self.closed {
+        if self.closed || self.crypto.stopped.load(Ordering::Acquire) {
             return Err(CryptoError::State);
         }
         let now = self.account.security_time()?;
@@ -379,6 +861,38 @@ impl RecordEngine {
         info.extend_from_slice(&scope.to_be_bytes());
         expand(root, &info)
     }
+    fn record_material(
+        &self,
+        root: &[u8; 32],
+        epoch: u32,
+        scope: u64,
+        direction: u8,
+    ) -> Result<Arc<RecordMaterial>> {
+        if !self.deferred_crypto {
+            return Ok(RecordMaterial::ready(
+                self.record_key(root, epoch, scope, direction)?,
+            ));
+        }
+        let mut encoded = domain(
+            b"flowersec/v4/record-key\0",
+            &[self.profile.name().as_bytes(), &self.hash],
+        )?;
+        encoded.extend_from_slice(&epoch.to_be_bytes());
+        encoded.push(direction);
+        encoded.extend_from_slice(&scope.to_be_bytes());
+        if encoded.len() > 192 {
+            return Err(CryptoError::Capacity);
+        }
+        let mut info = [0; 192];
+        info[..encoded.len()].copy_from_slice(&encoded);
+        Ok(Arc::new(RecordMaterial {
+            state: std::sync::Mutex::new(RecordMaterialState::Pending {
+                root: Zeroizing::new(*root),
+                info,
+                size: encoded.len(),
+            }),
+        }))
+    }
     fn charge_keys(&mut self, count: usize) -> Result<()> {
         self.key_derivations = self
             .key_derivations
@@ -397,11 +911,12 @@ impl RecordEngine {
         }
         self.charge_keys(2)?;
         for direction in 0..2 {
-            let key = self.record_key(&self.root, self.epoch, scope, direction)?;
+            let key = self.record_material(&self.root, self.epoch, scope, direction)?;
             self.keys.push(RecordKey {
                 scope,
                 direction,
                 key,
+                order: RecordOrder::new(),
                 next: 0,
                 disabled: false,
                 usage: Usage::default(),
@@ -544,17 +1059,7 @@ impl RecordEngine {
         self.session_usage = session;
         Ok(())
     }
-    fn cipher(&self, future: bool, index: usize) -> Result<LessSafeKey> {
-        let algorithm = match self.profile {
-            Profile::X25519 => &aead::CHACHA20_POLY1305,
-            Profile::P256 => &aead::AES_256_GCM,
-        };
-        Ok(LessSafeKey::new(
-            UnboundKey::new(algorithm, self.keys_for(future)?[index].key.as_ref())
-                .map_err(|_| CryptoError::Key)?,
-        ))
-    }
-    fn seal(
+    fn prepare_seal(
         &mut self,
         scope: u64,
         frame_type: u8,
@@ -562,7 +1067,7 @@ impl RecordEngine {
         out: &mut [u8],
         marker: bool,
         protected: bool,
-    ) -> Result<usize> {
+    ) -> Result<(usize, RecordWork)> {
         let result = (|| {
             self.check()?;
             if !self.ready || (scope != 0 && self.frozen) {
@@ -596,25 +1101,110 @@ impl RecordEngine {
             self.keys_for_mut(future)?[index].next = next;
             self.check()?;
             out[28..28 + payload.len()].copy_from_slice(payload);
-            let mut nonce = [0; 12];
-            nonce[..4].copy_from_slice(&epoch.to_be_bytes());
-            nonce[4..].copy_from_slice(&sequence.to_be_bytes());
-            let tag = self
-                .cipher(future, index)?
-                .seal_in_place_separate_tag(
-                    Nonce::assume_unique_for_key(nonce),
-                    Aad::from(&aad),
-                    &mut out[28..28 + payload.len()],
-                )
-                .map_err(|_| CryptoError::Authentication)?;
-            out[28 + payload.len()..length + 8].copy_from_slice(tag.as_ref());
-            self.check()?;
-            Ok(length + 8)
+            let mut work = self.record_work(future, index, &aad, epoch, sequence)?;
+            work.publication = Some(
+                self.keys_for(future)?[index]
+                    .order
+                    .claim(self.crypto.clone())?,
+            );
+            if frame_type == 6 {
+                work.rekey = self.prepare_rekey_seal(payload)?;
+            }
+            if self.deferred_crypto
+                && (frame_type == 7
+                    || (frame_type == 9 && scope == 0 && payload.get(..3) == Some(&[0xa3, 0, 5])))
+            {
+                work.stream = Some(streams::StreamSealPatch {
+                    hash: self.hash,
+                    profile: self.profile,
+                    role: self.role,
+                    scope,
+                    epoch,
+                    frame: frame_type,
+                });
+            }
+            Ok((length + 8, work))
         })();
         if result.is_err() {
             out.zeroize();
         }
         result
+    }
+    fn record_work(
+        &self,
+        future: bool,
+        index: usize,
+        aad: &[u8],
+        epoch: u32,
+        sequence: u64,
+    ) -> Result<RecordWork> {
+        if aad.len() > 128 {
+            return Err(CryptoError::Capacity);
+        }
+        let mut fixed_aad = [0; 128];
+        fixed_aad[..aad.len()].copy_from_slice(aad);
+        let mut nonce = [0; 12];
+        nonce[..4].copy_from_slice(&epoch.to_be_bytes());
+        nonce[4..].copy_from_slice(&sequence.to_be_bytes());
+        let born = if future {
+            self.candidate.as_ref().ok_or(CryptoError::State)?.born
+        } else {
+            self.born
+        };
+        let key = self.keys_for(future)?[index].key.clone();
+        let deadline = self
+            .rekey
+            .work_deadline()
+            .into_iter()
+            .chain(self.streams.crypto_deadline(
+                self.keys_for(future)?[index].scope,
+                self.keys_for(future)?[index].direction,
+            ))
+            .min();
+        let receive_view = (self.keys_for(future)?[index].direction != self.role)
+            .then(|| {
+                self.streams
+                    .record_view(self.keys_for(future).ok()?[index].scope)
+            })
+            .flatten();
+        let send_view = (self.keys_for(future)?[index].direction == self.role)
+            .then(|| {
+                self.streams
+                    .record_view(self.keys_for(future).ok()?[index].scope)
+            })
+            .flatten();
+        self.crypto.active.fetch_add(1, Ordering::AcqRel);
+        Ok(RecordWork {
+            lifetime: self.crypto.clone(),
+            account: self.account.clone(),
+            born,
+            profile: self.profile,
+            deadline,
+            key: Some(key),
+            aad: fixed_aad,
+            aad_len: aad.len(),
+            nonce,
+            publication: None,
+            rekey: None,
+            stream: None,
+            receive_view,
+            send_view,
+        })
+    }
+    #[cfg(test)]
+    fn seal(
+        &mut self,
+        scope: u64,
+        frame_type: u8,
+        payload: &[u8],
+        out: &mut [u8],
+        marker: bool,
+        protected: bool,
+    ) -> Result<usize> {
+        let (n, work) = self.prepare_seal(scope, frame_type, payload, out, marker, protected)?;
+        work.seal(&mut out[..n])?;
+        self.check()?;
+        Ok(n)
     }
     #[cfg(test)]
     pub(crate) fn seal_reliable(
@@ -649,7 +1239,7 @@ impl RecordEngine {
             .slot_for(future, scope, self.role)
             .ok()
             .and_then(|i| self.keys_for(future).ok().map(|keys| keys[i].next));
-        let n = match self.seal(scope, frame_type, payload, out, false, false) {
+        let (n, work) = match self.prepare_seal(scope, frame_type, payload, out, false, false) {
             Ok(n) => n,
             Err(error) => {
                 let after = self
@@ -667,7 +1257,9 @@ impl RecordEngine {
                 return Err(error);
             }
         };
-        let result = publisher.publish(&out[..n]).and_then(|()| self.check());
+        let result = publisher
+            .publish_seal(work, &mut out[..n])
+            .and_then(|()| self.check());
         out.zeroize();
         if result.is_err() {
             self.fail();
@@ -706,14 +1298,7 @@ impl RecordEngine {
         }
         Ok(true)
     }
-    fn open(
-        &mut self,
-        scope: u64,
-        wire: &[u8],
-        out: &mut [u8],
-        marker: bool,
-        validate: impl FnOnce(&Self, u8, &[u8]) -> Result<()>,
-    ) -> Result<usize> {
+    fn prepare_open(&mut self, scope: u64, wire: &[u8], marker: bool) -> Result<RecordOpen> {
         let future = self.receive_generation(scope, wire, marker)?;
         let direction = 1 - self.role;
         let index = self.slot_for(future, scope, direction)?;
@@ -722,7 +1307,7 @@ impl RecordEngine {
             if !self.ready {
                 return Err(CryptoError::State);
             }
-            if wire.len() - 8 > self.max_frame || out.len() < wire.len() - 28 {
+            if wire.len() - 8 > self.max_frame {
                 return Err(CryptoError::Capacity);
             }
             let length = u32::from_be_bytes(
@@ -746,39 +1331,75 @@ impl RecordEngine {
                 return Err(CryptoError::Sequence);
             }
             let next = sequence.checked_add(1).ok_or(CryptoError::Sequence)?;
+            let epoch = u32::from_be_bytes(
+                wire[8..12]
+                    .try_into()
+                    .map_err(|_| CryptoError::Authentication)?,
+            );
             let aad = self.aad(&wire[..8], &wire[8..28], direction)?;
-            let size = wire.len() - 28;
-            let payload = size - 16;
-            self.charge(future, index, false, aad.len(), payload, true)?;
+            self.charge(future, index, false, aad.len(), wire.len() - 44, true)?;
             self.check()?;
-            out[..size].copy_from_slice(&wire[28..]);
-            let mut nonce = [0; 12];
-            nonce[..4].copy_from_slice(&wire[8..12]);
-            nonce[4..].copy_from_slice(&sequence.to_be_bytes());
-            let plain = self
-                .cipher(future, index)?
-                .open_in_place(
-                    Nonce::assume_unique_for_key(nonce),
-                    Aad::from(&aad),
-                    &mut out[..size],
-                )
-                .map_err(|_| CryptoError::Authentication)?;
-            if plain.len() != payload {
-                return Err(CryptoError::Authentication);
-            }
-            validate(self, wire[4], plain)?;
-            self.check()?;
-            // Frontier publication shares the original revocation/close gate.
-            let account = self.account.clone();
-            account.with_security(|| {
-                self.keys_for_mut(future)
-                    .map(|keys| keys[index].next = next)
-            })??;
-            out[payload..size].zeroize();
-            Ok(payload)
+            Ok(RecordOpen {
+                work: self.record_work(future, index, &aad, epoch, sequence)?,
+                epoch,
+                scope,
+                next,
+            })
         })();
         if result.is_err() {
             self.keys_for_mut(future)?[index].disabled = true;
+        }
+        result
+    }
+    fn commit_open(
+        &mut self,
+        ticket: &RecordOpen,
+        frame: u8,
+        plain: &[u8],
+        validate: impl FnOnce(&Self, u8, &[u8]) -> Result<()>,
+    ) -> Result<()> {
+        ticket.work.check()?;
+        self.check()?;
+        let future = ticket.epoch == self.epoch.checked_add(1).ok_or(CryptoError::Sequence)?;
+        if !future && ticket.epoch != self.epoch {
+            return Err(CryptoError::Sequence);
+        }
+        let index = self.slot_for(future, ticket.scope, 1 - self.role)?;
+        if self.keys_for(future)?[index].next != ticket.next - 1 {
+            return Err(CryptoError::Sequence);
+        }
+        validate(self, frame, plain)?;
+        self.check()?;
+        let account = self.account.clone();
+        account.with_security(|| {
+            self.keys_for_mut(future)
+                .map(|keys| keys[index].next = ticket.next)
+        })??;
+        Ok(())
+    }
+    fn disable_open(&mut self, ticket: &RecordOpen) {
+        let future = ticket.epoch == self.epoch.saturating_add(1);
+        if let Ok(index) = self.slot_for(future, ticket.scope, 1 - self.role)
+            && let Ok(keys) = self.keys_for_mut(future)
+        {
+            keys[index].disabled = true;
+        }
+    }
+    fn open(
+        &mut self,
+        scope: u64,
+        wire: &[u8],
+        out: &mut [u8],
+        marker: bool,
+        validate: impl FnOnce(&Self, u8, &[u8]) -> Result<()>,
+    ) -> Result<usize> {
+        let ticket = self.prepare_open(scope, wire, marker)?;
+        let result = ticket.execute(wire, out).and_then(|n| {
+            self.commit_open(&ticket, wire[4], &out[..n], validate)?;
+            Ok(n)
+        });
+        if result.is_err() {
+            self.disable_open(&ticket);
             out.zeroize();
         }
         result

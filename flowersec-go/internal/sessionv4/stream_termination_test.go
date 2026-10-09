@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -275,6 +276,54 @@ func TestStreamTerminationAutomaticPublicationAndBlockedProviderDeadline(t *test
 				t.Fatal("provider tail released reservation", err)
 			}
 		})
+	}
+}
+
+func TestStreamTerminationBlockedCreditExpiresWithoutFurtherInput(t *testing.T) {
+	f, now := terminationFixture(t, 1, 2)
+	s := f.open(t)
+	f.start()
+	flow := s.flow.receive
+	flow.pool.mu.Lock()
+	flow.minimumPromise = 512
+	flow.creditLimit = flow.limit
+	flow.creditAck = flow.observed.Offset
+	flow.pool.mu.Unlock()
+	if _, err := s.peer.send.Write(f.ctx, []byte("unread"), false); err != nil {
+		t.Fatal(err)
+	}
+	reader, writer := io.Pipe()
+	defer reader.Close()
+	defer writer.Close()
+	_ = f.read(s, reader)
+	if _, err := writer.Write(s.wire.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	var body [6]byte
+	if read, err := flow.ReadInto(f.ctx, body[:]); err != nil || read.Progress.Filled != 6 {
+		t.Fatal("original DATA was not admitted", read, err)
+	}
+	held := &blockedWriter{entered: make(chan struct{}), finish: make(chan struct{})}
+	defer close(held.finish)
+	f.local.maintenance.writer = held
+	done := make(chan error, 1)
+	go func() { done <- f.termination.Run(f.ctx) }()
+	select {
+	case <-held.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("credit publication did not reach provider")
+	}
+	// This CREDIT has no FIN/STOP direction window. Its original maintenance
+	// publication cap must independently wake the coordinator without another
+	// DATA, cleanup event, or explicit test notification.
+	now.Store(51)
+	if err := nativeResult(t, done); !errors.Is(err, ErrTerminationDeadline) {
+		t.Fatal("blocked credit postponed its original publication cap", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := f.termination.WaitCleanup(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("blocked credit refunded its actual provider tail", err)
 	}
 }
 

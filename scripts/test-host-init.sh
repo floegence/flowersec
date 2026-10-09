@@ -10,7 +10,7 @@ readonly host_go_root=$host_cache/toolchains/go
 readonly host_swift_toolchains=$host_cache/toolchains/swift
 readonly host_path="$host_go_root/bin:$host_cache/toolchains/node/bin:$host_home/.cargo/bin:$host_home/.local/bin:$host_home/.swiftly/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 readonly playwright_download_host=https://npmmirror.com/mirrors/playwright
-readonly go_version=1.27.1
+readonly go_version=1.27.2
 readonly node_version=26.8.1
 readonly rust_version=1.98.0
 readonly swiftly_version=1.1.3
@@ -39,11 +39,19 @@ source_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 source /etc/os-release
 [[ ${ID:-} == ubuntu ]] || { echo "missing host capability: Ubuntu 22.04 or later" >&2; exit 1; }
 dpkg --compare-versions "${VERSION_ID:-0}" ge 22.04 || { echo "missing host capability: Ubuntu 22.04 or later" >&2; exit 1; }
+# Swiftly publishes Ubuntu 22.04 and 24.04 toolchain targets. Newer Ubuntu
+# releases keep the nearest supported ABI target until Swiftly adds a native
+# platform label for them.
+case "${VERSION_ID:-}" in
+  22.04) swiftly_platform=ubuntu22.04 ;;
+  24.04|26.04) swiftly_platform=ubuntu24.04 ;;
+  *) echo "missing host capability: Swiftly platform target for Ubuntu ${VERSION_ID:-unknown}" >&2; exit 1 ;;
+esac
 case $(uname -m) in
   x86_64|amd64)
     architecture=amd64
     go_arch=amd64
-    go_sha256=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445
+    go_sha256=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5
     node_arch=x64
     node_sha256=3e301118d7df53d563b7e96c1617545f26e2f76f9724be668d6cab65c15dda5d
     rustup_target=x86_64-unknown-linux-gnu
@@ -65,7 +73,7 @@ case $(uname -m) in
   aarch64|arm64)
     architecture=arm64
     go_arch=arm64
-    go_sha256=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec
+    go_sha256=94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8
     node_arch=arm64
     node_sha256=23c1b4d19e2f12a7d06fe8aa3d6e0e4923cf77a47e13c5ccdf32fadaa33960f2
     rustup_target=aarch64-unknown-linux-gnu
@@ -171,11 +179,6 @@ if ! command -v bpftool >/dev/null 2>&1; then
   fi
 fi
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
-if ! command -v chromium >/dev/null 2>&1 && ! command -v chromium-browser >/dev/null 2>&1; then
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends chromium || \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends chromium-browser
-fi
-
 install_go() {
   local destination=$host_go_root archive
   if [[ -x $destination/bin/go && -f $destination/.flowersec-archive.sha256 ]] &&
@@ -281,7 +284,7 @@ install_swift() {
     archive=$(mktemp "$host_tmp/swiftly.XXXXXX.tar.gz")
     bootstrap=$(mktemp -d "$host_tmp/swiftly-bootstrap.XXXXXX")
     temporary_paths+=("$archive" "$bootstrap")
-    download_file "Swiftly archive" "https://download.swift.org/swiftly/linux/swiftly-${swiftly_arch}.tar.gz" "$archive"
+    download_file "Swiftly archive" "https://download.swift.org/swiftly/linux/swiftly-${swiftly_version}-${swiftly_arch}.tar.gz" "$archive"
     verify_download "$swiftly_sha256" "$archive" "Swiftly archive"
     tar -C "$bootstrap" -xzf "$archive" swiftly
     chmod 0755 "$bootstrap/swiftly"
@@ -293,7 +296,7 @@ install_swift() {
   rm -f -- "$marker"
   rm -rf -- "$host_swift_toolchains"
   install -d -m 0700 "$host_swift_toolchains"
-  "$swiftly" init --overwrite --assume-yes --skip-install --no-modify-profile --quiet-shell-followup
+  "$swiftly" init --platform "$swiftly_platform" --overwrite --assume-yes --skip-install --no-modify-profile --quiet-shell-followup
   verify_download "$swiftly_binary_sha256" "$swiftly" "Swiftly binary"
   post_install=$(mktemp "$host_tmp/swift-post-install.XXXXXX")
   temporary_paths+=("$post_install")
@@ -444,6 +447,10 @@ expected_playwright_metadata=$(printf '%s\t%s\t%s\t%s\t%s' "$playwright_version"
   echo "Playwright browser metadata does not match the authenticated archive set" >&2
   exit 1
 }
+
+# Install the system libraries required by the pinned browser without fetching
+# another browser distribution or the Ubuntu Chromium snap package.
+node "$source_root/flowersec-ts/node_modules/playwright/cli.js" install-deps chromium
 
 # Never let Playwright fetch or extract root-executed browser binaries. Install
 # the exact archives only after their per-architecture digests match.

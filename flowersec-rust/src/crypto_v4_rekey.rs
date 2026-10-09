@@ -1,5 +1,5 @@
-//! Single-flight reliable rekey. All key operations are synchronous under the
-//! exclusive crypto owner; publication callbacks run outside the security gate.
+//! Single-flight reliable rekey. Bounded original jobs own DH/KDF and phase
+//! authentication outside Session gates; only claim/commit transitions hold state.
 use super::*;
 use crate::crypto_v4::{decode, keys::SoftwareDh, mac};
 use crate::{
@@ -39,7 +39,12 @@ impl Geometry {
             bytes: bytes + calls * 16,
         };
         Ok(Self {
-            bytes: 6 * phase_bytes + 2 * shape.max_streams * std::mem::size_of::<Entry>() + 32_768,
+            bytes: 6 * phase_bytes
+                + 3 * shape.max_streams * std::mem::size_of::<Entry>()
+                + 32_768
+                + 3 * std::mem::size_of::<RekeyCrypto>()
+                + 3 * std::mem::size_of::<RekeyAuthentication>()
+                + std::mem::size_of::<RoundSeed>(),
             margin,
             phase_bytes,
             scopes: shape.max_streams,
@@ -192,6 +197,7 @@ struct Entry {
 struct Round {
     id: [u8; 16],
     secret: Zeroizing<[u8; 32]>,
+    confirm_keys: [Zeroizing<[u8; 32]>; 4],
     ephemeral: Option<SoftwareDh>,
     init: Vec<u8>,
     reply: Vec<u8>,
@@ -206,6 +212,10 @@ pub(super) struct Coordinator {
     pub(super) geometry: Geometry,
     credit: Credit,
     round: Option<Round>,
+    seed: Option<RoundSeed>,
+    crypto: Option<RekeyCrypto>,
+    crypto_pending: bool,
+    pending_incoming: Vec<Entry>,
     intent: Option<Instant>,
     requested: bool,
     timeout_reported: std::sync::atomic::AtomicBool,
@@ -215,6 +225,30 @@ pub(super) struct Coordinator {
     reply: Vec<u8>,
     outgoing: Vec<Entry>,
     incoming: Vec<Entry>,
+}
+// The original reservation owns this fixed slot before admission is consumed.
+// Keep the coordinator's crypto jobs out of each enclosing async stack frame;
+// transferring the reservation into the engine transfers this same allocation.
+pub(super) struct CoordinatorStorage(Vec<Coordinator>);
+impl CoordinatorStorage {
+    pub(super) fn new(geometry: Geometry, credit: Credit) -> Result<Self> {
+        let mut slot = Vec::new();
+        slot.try_reserve_exact(1)
+            .map_err(|_| CryptoError::Capacity)?;
+        slot.push(Coordinator::new(geometry, credit)?);
+        Ok(Self(slot))
+    }
+}
+impl std::ops::Deref for CoordinatorStorage {
+    type Target = Coordinator;
+    fn deref(&self) -> &Self::Target {
+        &self.0[0]
+    }
+}
+impl std::ops::DerefMut for CoordinatorStorage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0[0]
+    }
 }
 fn buffer(cap: usize) -> Result<Vec<u8>> {
     let mut v = Vec::new();
@@ -236,10 +270,18 @@ impl Coordinator {
         incoming
             .try_reserve_exact(geometry.scopes)
             .map_err(|_| CryptoError::Capacity)?;
+        let mut pending_incoming = Vec::new();
+        pending_incoming
+            .try_reserve_exact(geometry.scopes)
+            .map_err(|_| CryptoError::Capacity)?;
         Ok(Self {
             geometry,
             credit,
             round: None,
+            seed: None,
+            crypto: None,
+            crypto_pending: false,
+            pending_incoming,
             intent: None,
             requested: false,
             timeout_reported: std::sync::atomic::AtomicBool::new(false),
@@ -250,6 +292,9 @@ impl Coordinator {
             outgoing,
             incoming,
         })
+    }
+    pub(super) fn work_deadline(&self) -> Option<Instant> {
+        self.deadline.or(self.intent)
     }
     pub(super) fn check_deadline(&self, now: TrustedTimeSample) -> Result<()> {
         if self.deadline.is_some_and(|d| now.monotonic_sample >= d)
@@ -268,10 +313,14 @@ impl Coordinator {
         }
     }
     pub(super) fn busy(&self) -> bool {
-        self.intent.is_some() || self.round.is_some()
+        self.intent.is_some() || self.round.is_some() || self.crypto_pending
     }
     pub(super) fn clear(&mut self) {
         self.round = None;
+        self.seed = None;
+        self.crypto = None;
+        self.crypto_pending = false;
+        self.pending_incoming.clear();
         self.output.zeroize();
         self.init.zeroize();
         self.reply.zeroize();
@@ -325,7 +374,580 @@ fn barrier(out: &mut Vec<u8>, entries: &[Entry]) {
         uint(out, e.next);
     }
 }
+pub(crate) struct SealPatch {
+    hash: [u8; 32],
+    context: [u8; 32],
+    profile: Profile,
+    epoch: u32,
+    id: [u8; 16],
+    phase: u8,
+    key: Zeroizing<[u8; 32]>,
+    init: Option<Vec<u8>>,
+}
+pub(crate) struct SealCompletion {
+    epoch: u32,
+    id: [u8; 16],
+    init: Vec<u8>,
+    digest: [u8; 32],
+}
+impl SealPatch {
+    pub(crate) fn execute(mut self, body: &mut [u8]) -> Result<Option<SealCompletion>> {
+        let name = RecordEngine::schema(self.phase)?;
+        let value = decode(body, name, body.len(), Context::default())?;
+        let mac_id = if self.phase == 2 { 6 } else { 5 };
+        let original_tag = value.field(name, "confirmation_mac")?.bytes()?;
+        if original_tag.len() != 32 {
+            return Err(CryptoError::Authentication);
+        }
+        let offset = original_tag.as_ptr() as usize - body.as_ptr() as usize;
+        let mut unsigned = buffer(body.len())?;
+        codec::encode_head(&mut unsigned, 5, (value.len()? - 1) as u64);
+        let mut fields = value.children()?;
+        while let Some(id) = fields.next() {
+            let id = id?;
+            let value = fields.next().ok_or(CryptoError::Authentication)??;
+            if id.uint()? != mac_id {
+                unsigned.extend_from_slice(id.raw());
+                unsigned.extend_from_slice(value.raw());
+            }
+        }
+        let mut msg = domain(
+            b"flowersec/v4/rekey-confirm-mac\0",
+            &[self.profile.name().as_bytes(), &self.hash, &self.context],
+        )?;
+        msg.extend_from_slice(&self.epoch.to_be_bytes());
+        msg.extend_from_slice(&(self.epoch + 1).to_be_bytes());
+        msg.extend_from_slice(&[self.phase, (self.phase + 1) % 2]);
+        lp(&mut msg, &unsigned)?;
+        let tag = mac(&self.key, &msg);
+        body[offset..offset + 32].copy_from_slice(&tag);
+        let Some(mut init) = self.init.take() else {
+            return Ok(None);
+        };
+        init.clear();
+        init.extend_from_slice(body);
+        let mut input = domain(
+            b"flowersec/v4/rekey-init-digest\0",
+            &[&self.hash, self.profile.name().as_bytes()],
+        )?;
+        input.extend_from_slice(&self.epoch.to_be_bytes());
+        lp(&mut input, body)?;
+        Ok(Some(SealCompletion {
+            epoch: self.epoch,
+            id: self.id,
+            init,
+            digest: Sha256::digest(&input).into(),
+        }))
+    }
+}
+struct RoundSeed {
+    started: Instant,
+    deadline: Instant,
+    id: [u8; 16],
+    secret: Zeroizing<[u8; 32]>,
+    ephemeral: SoftwareDh,
+    confirm_keys: [Zeroizing<[u8; 32]>; 4],
+}
+struct RekeyContext {
+    guard: RecordWork,
+    root: Zeroizing<[u8; 32]>,
+    profile: Profile,
+    hash: [u8; 32],
+    context: [u8; 32],
+    epoch: u32,
+    phase_bytes: usize,
+}
+impl RekeyContext {
+    fn domain(&self, label: &[u8]) -> Result<Vec<u8>> {
+        let mut v = domain(
+            label,
+            &[self.profile.name().as_bytes(), &self.hash, &self.context],
+        )?;
+        v.extend_from_slice(&self.epoch.to_be_bytes());
+        Ok(v)
+    }
+    fn confirm_key(
+        &self,
+        base: &[u8; 32],
+        id: &[u8; 16],
+        phase: u8,
+    ) -> Result<Zeroizing<[u8; 32]>> {
+        let mut info = self.domain(b"flowersec/v4/rekey-confirm-key\0")?;
+        info.extend_from_slice(&(self.epoch + 1).to_be_bytes());
+        lp(&mut info, id)?;
+        info.extend_from_slice(&[phase, (phase + 1) % 2]);
+        expand(base, &info)
+    }
+    fn seed(&self, id: [u8; 16]) -> Result<RoundSeed> {
+        self.guard.check()?;
+        let started = self.guard.account.security_time()?.monotonic_sample;
+        let secret = expand(&self.root, &self.domain(b"flowersec/v4/rekey-secret\0")?)?;
+        let ephemeral = SoftwareDh::ephemeral(self.profile)?;
+        let mut confirm_keys = std::array::from_fn(|_| Zeroizing::new([0; 32]));
+        for phase in 1..=2 {
+            confirm_keys[usize::from(phase - 1)] = self.confirm_key(&secret, &id, phase)?;
+        }
+        self.guard.check()?;
+        Ok(RoundSeed {
+            started,
+            deadline: self
+                .guard
+                .deadline
+                .into_iter()
+                .chain(Some(Coordinator::deadline_after(started, 5000)?))
+                .min()
+                .ok_or(CryptoError::Deadline)?,
+            id,
+            secret,
+            ephemeral,
+            confirm_keys,
+        })
+    }
+    fn transcript(&self, label: &[u8], init: &[u8], reply: Option<&[u8]>) -> Result<[u8; 32]> {
+        let mut v = domain(label, &[&self.hash, self.profile.name().as_bytes()])?;
+        v.extend_from_slice(&self.epoch.to_be_bytes());
+        lp(&mut v, init)?;
+        if let Some(reply) = reply {
+            lp(&mut v, reply)?;
+        }
+        Ok(Sha256::digest(&v).into())
+    }
+    fn phase_mac(&self, key: &[u8; 32], phase: u8, unsigned: &[u8]) -> Result<[u8; 32]> {
+        let mut msg = self.domain(b"flowersec/v4/rekey-confirm-mac\0")?;
+        msg.extend_from_slice(&(self.epoch + 1).to_be_bytes());
+        msg.extend_from_slice(&[phase, (phase + 1) % 2]);
+        lp(&mut msg, unsigned)?;
+        Ok(mac(key, &msg))
+    }
+    fn reply(&self, round: &Round) -> Result<Vec<u8>> {
+        let mut out = buffer(self.phase_bytes)?;
+        codec::encode_head(&mut out, 5, 6);
+        uint(&mut out, 0);
+        uint(&mut out, 2);
+        uint(&mut out, 1);
+        data(&mut out, &round.id);
+        uint(&mut out, 2);
+        uint(&mut out, u64::from(self.epoch + 1));
+        uint(&mut out, 3);
+        data(&mut out, &round.init_digest);
+        uint(&mut out, 4);
+        data(
+            &mut out,
+            round.ephemeral.as_ref().ok_or(CryptoError::State)?.public(),
+        );
+        uint(&mut out, 5);
+        barrier(&mut out, &round.outgoing);
+        let tag = self.phase_mac(&round.confirm_keys[1], 2, &out)?;
+        out[0] += 1;
+        uint(&mut out, 6);
+        data(&mut out, &tag);
+        if out.len() > self.phase_bytes {
+            return Err(CryptoError::Capacity);
+        }
+        Ok(out)
+    }
+}
+pub(crate) struct RekeyAuthentication {
+    context: RekeyContext,
+    phase: u8,
+    marker: bool,
+    base: Zeroizing<[u8; 32]>,
+}
+impl RekeyAuthentication {
+    pub(crate) fn verify(&self, body: &[u8]) -> Result<()> {
+        self.context.guard.check()?;
+        let phase = if self.phase == 0 || !self.marker && body == [0xa1, 0, 0] {
+            0
+        } else {
+            self.phase
+        };
+        if phase == 0 {
+            return Ok(());
+        }
+        let name = RecordEngine::schema(phase)?;
+        let value = decode(body, name, self.context.phase_bytes, Context::default())?;
+        let id = value.b(name, "rekey_id")?;
+        let secret = if phase == 1 {
+            expand(
+                &self.context.root,
+                &self.context.domain(b"flowersec/v4/rekey-secret\0")?,
+            )?
+        } else {
+            Zeroizing::new(*self.base)
+        };
+        let key = self.context.confirm_key(&secret, &id, phase)?;
+        let mac_id = if phase == 2 { 6 } else { 5 };
+        let mut unsigned = buffer(body.len())?;
+        codec::encode_head(&mut unsigned, 5, (value.len()? - 1) as u64);
+        let mut fields = value.children()?;
+        while let Some(id) = fields.next() {
+            let id = id?;
+            let value = fields.next().ok_or(CryptoError::Authentication)??;
+            if id.uint()? != mac_id {
+                unsigned.extend_from_slice(id.raw());
+                unsigned.extend_from_slice(value.raw());
+            }
+        }
+        let tag = self.context.phase_mac(&key, phase, &unsigned)?;
+        if !bool::from(tag.ct_eq(&value.b::<32>(name, "confirmation_mac")?)) {
+            return Err(CryptoError::Authentication);
+        }
+        if phase <= 2 {
+            crate::crypto_v4::keys::check_public(
+                self.context.profile,
+                value
+                    .field(
+                        name,
+                        if phase == 1 {
+                            "client_ephemeral"
+                        } else {
+                            "server_ephemeral"
+                        },
+                    )?
+                    .bytes()?,
+            )?;
+        }
+        self.context.guard.check()
+    }
+}
+pub(crate) struct RekeyCrypto {
+    kind: RekeyCryptoKind,
+}
+enum RekeyCryptoKind {
+    Seed {
+        context: RekeyContext,
+    },
+    Candidate {
+        context: RekeyContext,
+        round: Round,
+        peer: [u8; 65],
+        peer_len: usize,
+        keys: Vec<RecordKey>,
+        seed: bool,
+    },
+    Fill {
+        context: RekeyContext,
+        round: Round,
+        candidate: Candidate,
+        start: usize,
+    },
+}
+pub(crate) struct RekeyCompletion {
+    kind: RekeyCompletionKind,
+    _guard: RecordWork,
+}
+#[expect(
+    clippy::large_enum_variant,
+    reason = "The single-flight completion keeps its original rekey state inline without allocating another heap owner."
+)]
+enum RekeyCompletionKind {
+    Seed(RoundSeed),
+    Candidate(Round, Candidate),
+}
+impl RekeyCrypto {
+    pub(crate) fn execute(self) -> Result<RekeyCompletion> {
+        match self.kind {
+            RekeyCryptoKind::Fill {
+                context,
+                round,
+                mut candidate,
+                start,
+            } => {
+                for key in &mut candidate.keys[start..] {
+                    context.guard.check()?;
+                    let mut info = domain(
+                        b"flowersec/v4/record-key\0",
+                        &[context.profile.name().as_bytes(), &context.hash],
+                    )?;
+                    info.extend_from_slice(&(context.epoch + 1).to_be_bytes());
+                    info.push(key.direction);
+                    info.extend_from_slice(&key.scope.to_be_bytes());
+                    key.key = RecordMaterial::ready(expand(&candidate.root, &info)?);
+                }
+                context.guard.check()?;
+                Ok(RekeyCompletion {
+                    kind: RekeyCompletionKind::Candidate(round, candidate),
+                    _guard: context.guard,
+                })
+            }
+            RekeyCryptoKind::Seed { context } => {
+                context.guard.check()?;
+                let mut id = [0; 16];
+                SystemRandom::new()
+                    .fill(&mut id)
+                    .map_err(|_| CryptoError::Key)?;
+                Ok(RekeyCompletion {
+                    kind: RekeyCompletionKind::Seed(context.seed(id)?),
+                    _guard: context.guard,
+                })
+            }
+            RekeyCryptoKind::Candidate {
+                context,
+                mut round,
+                peer,
+                peer_len,
+                mut keys,
+                seed,
+            } => {
+                context.guard.check()?;
+                if seed {
+                    let seed = context.seed(round.id)?;
+                    round.secret = seed.secret;
+                    round.confirm_keys = seed.confirm_keys;
+                    round.ephemeral = Some(seed.ephemeral);
+                    round.init_digest = context.transcript(
+                        b"flowersec/v4/rekey-init-digest\0",
+                        &round.init,
+                        None,
+                    )?;
+                    round.reply = context.reply(&round)?;
+                }
+                round.transcript = context.transcript(
+                    b"flowersec/v4/rekey-transcript\0",
+                    &round.init,
+                    Some(&round.reply),
+                )?;
+                let shared = round
+                    .ephemeral
+                    .take()
+                    .ok_or(CryptoError::State)?
+                    .shared(&peer[..peer_len])?;
+                let born = context.guard.account.security_time()?;
+                let (mut extracted, _) =
+                    Hkdf::<Sha256>::extract(Some(round.secret.as_ref()), shared.as_ref());
+                let mut prk = Zeroizing::new(<[u8; 32]>::from(extracted));
+                extracted.as_mut_slice().zeroize();
+                let mut info = context.domain(b"flowersec/v4/rekey-root\0")?;
+                info.extend_from_slice(&(context.epoch + 1).to_be_bytes());
+                lp(&mut info, &round.id)?;
+                lp(&mut info, &round.transcript)?;
+                let root = expand(&prk, &info)?;
+                prk.zeroize();
+                for key in &mut keys {
+                    context.guard.check()?;
+                    let mut info = domain(
+                        b"flowersec/v4/record-key\0",
+                        &[context.profile.name().as_bytes(), &context.hash],
+                    )?;
+                    info.extend_from_slice(&(context.epoch + 1).to_be_bytes());
+                    info.push(key.direction);
+                    info.extend_from_slice(&key.scope.to_be_bytes());
+                    key.key = RecordMaterial::ready(expand(&root, &info)?);
+                }
+                for phase in 3..=4 {
+                    round.confirm_keys[usize::from(phase - 1)] =
+                        context.confirm_key(&root, &round.id, phase)?;
+                }
+                context.guard.check()?;
+                Ok(RekeyCompletion {
+                    kind: RekeyCompletionKind::Candidate(
+                        round,
+                        Candidate {
+                            root,
+                            born,
+                            keys,
+                            usage: Usage::default(),
+                            armed: false,
+                            sent: false,
+                            received: false,
+                        },
+                    ),
+                    _guard: context.guard,
+                })
+            }
+        }
+    }
+}
 impl RecordEngine {
+    pub(super) fn prepare_rekey_seal(&mut self, payload: &[u8]) -> Result<Option<SealPatch>> {
+        if !self.deferred_crypto {
+            return Ok(None);
+        }
+        let phase = payload.get(2).copied().ok_or(CryptoError::Authentication)?;
+        if phase == 0 || phase == 2 {
+            return Ok(None);
+        }
+        if !(1..=4).contains(&phase) {
+            return Err(CryptoError::Authentication);
+        }
+        let round = self.rekey.round.as_mut().ok_or(CryptoError::State)?;
+        Ok(Some(SealPatch {
+            hash: self.hash,
+            context: self.context,
+            profile: self.profile,
+            epoch: self.epoch,
+            id: round.id,
+            phase,
+            key: Zeroizing::new(*round.confirm_keys[usize::from(phase - 1)]),
+            init: (phase == 1).then(|| std::mem::take(&mut round.init)),
+        }))
+    }
+    pub(crate) fn finish_rekey_seal(&mut self, completion: SealCompletion) -> Result<()> {
+        self.check()?;
+        let round = self.rekey.round.as_mut().ok_or(CryptoError::State)?;
+        if completion.epoch != self.epoch || completion.id != round.id || round.stage != 1 {
+            return Err(CryptoError::State);
+        }
+        round.init = completion.init;
+        round.init_digest = completion.digest;
+        Ok(())
+    }
+    fn rekey_context(&self) -> Result<RekeyContext> {
+        let index = self.slot_for(false, 0, self.role)?;
+        Ok(RekeyContext {
+            guard: self.record_work(false, index, &[], self.epoch, 0)?,
+            root: Zeroizing::new(*self.root),
+            profile: self.profile,
+            hash: self.hash,
+            context: self.context,
+            epoch: self.epoch,
+            phase_bytes: self.rekey.geometry.phase_bytes,
+        })
+    }
+    pub(super) fn rekey_authentication(
+        &self,
+        phase: u8,
+        marker: bool,
+    ) -> Result<RekeyAuthentication> {
+        let base = if phase < 2 {
+            Zeroizing::new([0; 32])
+        } else if phase < 3 {
+            Zeroizing::new(*self.rekey.round.as_ref().ok_or(CryptoError::State)?.secret)
+        } else {
+            Zeroizing::new(*self.candidate.as_ref().ok_or(CryptoError::State)?.root)
+        };
+        Ok(RekeyAuthentication {
+            context: self.rekey_context()?,
+            phase,
+            marker,
+            base,
+        })
+    }
+    fn queue_candidate(&mut self, round: Round, peer: &[u8], seed: bool) -> Result<()> {
+        if self.rekey.crypto_pending || peer.len() > 65 {
+            return Err(CryptoError::State);
+        }
+        self.rekey.pending_incoming.clear();
+        self.rekey
+            .pending_incoming
+            .extend_from_slice(&round.incoming);
+        self.charge_keys(self.keys.len())?;
+        let mut keys = std::mem::take(&mut self.spare_keys);
+        for old in &self.keys {
+            if old.disabled && old.scope != datagrams::SCOPE {
+                if self.streams.exists(old.scope) {
+                    continue;
+                }
+                return Err(CryptoError::State);
+            }
+            if self.streams.terminal(old.scope, old.direction) {
+                continue;
+            }
+            keys.push(RecordKey {
+                scope: old.scope,
+                direction: old.direction,
+                key: RecordMaterial::ready(Zeroizing::new([0; 32])),
+                order: old.order.clone(),
+                next: 0,
+                disabled: false,
+                usage: Usage::default(),
+            });
+        }
+        let mut fixed_peer = [0; 65];
+        fixed_peer[..peer.len()].copy_from_slice(peer);
+        let mut context = self.rekey_context()?;
+        if seed {
+            let now = self.account.security_time()?;
+            context.guard.deadline = context
+                .guard
+                .deadline
+                .into_iter()
+                .chain(Some(Coordinator::deadline_after(
+                    now.monotonic_sample,
+                    5000,
+                )?))
+                .min();
+        }
+        self.rekey.crypto = Some(RekeyCrypto {
+            kind: RekeyCryptoKind::Candidate {
+                context,
+                round,
+                peer: fixed_peer,
+                peer_len: peer.len(),
+                keys,
+                seed,
+            },
+        });
+        self.rekey.crypto_pending = true;
+        Ok(())
+    }
+    pub(crate) fn take_rekey_crypto(&mut self) -> Option<RekeyCrypto> {
+        self.rekey.crypto.take()
+    }
+    pub(crate) fn finish_rekey_crypto(&mut self, completion: RekeyCompletion) -> Result<()> {
+        completion._guard.check()?;
+        self.check()?;
+        if !self.rekey.crypto_pending {
+            return Err(CryptoError::State);
+        }
+        match completion.kind {
+            RekeyCompletionKind::Seed(seed) => self.rekey.seed = Some(seed),
+            RekeyCompletionKind::Candidate(round, mut candidate) => {
+                // A direction may authenticate its terminal proof while this
+                // owned computation runs. Never reinstall its retired key.
+                candidate.keys.retain(|key| {
+                    self.keys.iter().any(|old| {
+                        old.scope == key.scope
+                            && old.direction == key.direction
+                            && (old.scope == datagrams::SCOPE
+                                || !old.disabled
+                                    && !self.streams.terminal(old.scope, old.direction))
+                    })
+                });
+                let start = candidate.keys.len();
+                for old in &self.keys {
+                    if old.disabled
+                        || self.streams.terminal(old.scope, old.direction)
+                        || candidate
+                            .keys
+                            .iter()
+                            .any(|key| key.scope == old.scope && key.direction == old.direction)
+                    {
+                        continue;
+                    }
+                    if candidate.keys.len() >= self.max_keys {
+                        return Err(CryptoError::Capacity);
+                    }
+                    candidate.keys.push(RecordKey {
+                        scope: old.scope,
+                        direction: old.direction,
+                        key: RecordMaterial::ready(Zeroizing::new([0; 32])),
+                        order: old.order.clone(),
+                        next: 0,
+                        disabled: false,
+                        usage: Usage::default(),
+                    });
+                }
+                if candidate.keys.len() != start {
+                    self.charge_keys(candidate.keys.len() - start)?;
+                    self.rekey.crypto = Some(RekeyCrypto {
+                        kind: RekeyCryptoKind::Fill {
+                            context: self.rekey_context()?,
+                            round,
+                            candidate,
+                            start,
+                        },
+                    });
+                    return Ok(());
+                }
+                self.rekey.round = Some(round);
+                self.candidate = Some(candidate);
+            }
+        }
+        self.rekey.crypto_pending = false;
+        self.rekey.pending_incoming.clear();
+        Ok(())
+    }
     fn rekey_domain(&self, label: &[u8]) -> Result<Vec<u8>> {
         let mut v = domain(
             label,
@@ -350,7 +972,11 @@ impl RecordEngine {
         } else {
             &self.candidate.as_ref().ok_or(CryptoError::State)?.root
         };
-        let key = expand(base, &info)?;
+        let key = if self.deferred_crypto {
+            Zeroizing::new(*round.confirm_keys[usize::from(phase - 1)])
+        } else {
+            expand(base, &info)?
+        };
         let mut msg = self.rekey_domain(b"flowersec/v4/rekey-confirm-mac\0")?;
         msg.extend_from_slice(&(self.epoch + 1).to_be_bytes());
         msg.extend_from_slice(&[phase, (phase + 1) % 2]);
@@ -393,7 +1019,11 @@ impl RecordEngine {
             }
             _ => return Err(CryptoError::State),
         }
-        let tag = self.phase_mac(round, phase, &out)?;
+        let tag = if self.deferred_crypto {
+            [0; 32]
+        } else {
+            self.phase_mac(round, phase, &out)?
+        };
         out[0] += 1;
         uint(&mut out, if phase == 2 { 6 } else { 5 });
         data(&mut out, &tag);
@@ -594,11 +1224,24 @@ impl RecordEngine {
         if self.epoch >= 65_535 || self.rekey.round.is_some() || self.candidate.is_some() {
             return Err(CryptoError::State);
         }
-        let started = now.monotonic_sample;
+        let seed = if self.deferred_crypto {
+            self.rekey
+                .seed
+                .take()
+                .filter(|seed| seed.id == id)
+                .ok_or(CryptoError::State)?
+        } else {
+            self.rekey_context()?.seed(id)?
+        };
+        let started = seed.started.min(now.monotonic_sample);
+        if now.monotonic_sample >= seed.deadline {
+            return Err(CryptoError::Deadline);
+        }
         let mut round = Round {
             id,
-            secret: self.rekey_secret()?,
-            ephemeral: Some(SoftwareDh::ephemeral(self.profile)?),
+            secret: seed.secret,
+            confirm_keys: seed.confirm_keys,
+            ephemeral: Some(seed.ephemeral),
             init: std::mem::take(&mut self.rekey.init),
             reply: std::mem::take(&mut self.rekey.reply),
             outgoing: std::mem::take(&mut self.rekey.outgoing),
@@ -650,11 +1293,12 @@ impl RecordEngine {
             if self.streams.terminal(old.scope, old.direction) {
                 continue;
             }
-            let key = self.record_key(&root, self.epoch + 1, old.scope, old.direction)?;
+            let key = self.record_material(&root, self.epoch + 1, old.scope, old.direction)?;
             keys.push(RecordKey {
                 scope: old.scope,
                 direction: old.direction,
                 key,
+                order: old.order.clone(),
                 next: 0,
                 disabled: false,
                 usage: Usage::default(),
@@ -676,9 +1320,9 @@ impl RecordEngine {
         if !candidate.sent || !candidate.received {
             return Err(CryptoError::State);
         }
-        // Exclusive synchronous publication means no old key operation or
-        // publisher callback remains at this point. Dropping old keys is the
-        // actual reference exit, not a logical "retired" assertion.
+        // Authenticated barriers settle the old generation. Any original
+        // crypto/provider tail retains its exact key Arc and physical charge;
+        // removing this table cannot destroy or refund that retained material.
         let mut old = std::mem::replace(&mut self.keys, candidate.keys);
         old.clear();
         self.spare_keys = old;
@@ -695,6 +1339,11 @@ impl RecordEngine {
         self.rekey.finish(now)?;
         self.streams.controls.rekey_complete(now);
         self.frozen = false;
+        *self
+            .crypto
+            .deadline
+            .lock()
+            .expect("completed original rekey deadline") = None;
         Ok(())
     }
     fn send_phase(
@@ -709,8 +1358,8 @@ impl RecordEngine {
         )?;
         let mut out = std::mem::take(&mut self.rekey.output);
         let result = (|| {
-            let n = self.seal(0, 6, body, &mut out, marker, true)?;
-            publisher.publish(&out[..n])?;
+            let (n, work) = self.prepare_seal(0, 6, body, &mut out, marker, true)?;
+            publisher.publish_seal(work, &mut out[..n])?;
             self.check()?;
             self.streams
                 .controls
@@ -818,6 +1467,9 @@ impl RecordEngine {
         if !self.ready {
             return Err(CryptoError::State);
         }
+        if self.rekey.crypto_pending {
+            return Ok(false);
+        }
         if self.rekey.round.is_none() {
             if self.rekey.intent.is_none() {
                 return Ok(false);
@@ -834,10 +1486,33 @@ impl RecordEngine {
             if self.rekey.credit.available(now, false)? < self.rekey.credit.period {
                 return Ok(false);
             }
-            let mut id = [0; 16];
-            SystemRandom::new()
-                .fill(&mut id)
-                .map_err(|_| CryptoError::Key)?;
+            let id = if self.deferred_crypto {
+                if let Some(seed) = &self.rekey.seed {
+                    seed.id
+                } else {
+                    let mut context = self.rekey_context()?;
+                    context.guard.deadline = context
+                        .guard
+                        .deadline
+                        .into_iter()
+                        .chain(Some(Coordinator::deadline_after(
+                            now.monotonic_sample,
+                            5000,
+                        )?))
+                        .min();
+                    self.rekey.crypto = Some(RekeyCrypto {
+                        kind: RekeyCryptoKind::Seed { context },
+                    });
+                    self.rekey.crypto_pending = true;
+                    return Ok(true);
+                }
+            } else {
+                let mut id = [0; 16];
+                SystemRandom::new()
+                    .fill(&mut id)
+                    .map_err(|_| CryptoError::Key)?;
+                id
+            };
             let mut round = self.new_round(now, id, 0)?;
             // Freeze, snapshot and unique INIT ownership share exclusive &mut.
             // No crypto or I/O takes place under the Environment security lock.
@@ -849,10 +1524,14 @@ impl RecordEngine {
                 ticket.monotonic_sample,
                 10_000,
             )?);
+            self.crypto.tighten_deadline(self.rekey.deadline);
             let init = self.phase_map(&round, 1, 0)?;
             round.init.extend_from_slice(&init);
-            round.init_digest =
-                self.transcript(b"flowersec/v4/rekey-init-digest\0", &init, None)?;
+            round.init_digest = if self.deferred_crypto {
+                [0; 32]
+            } else {
+                self.transcript(b"flowersec/v4/rekey-init-digest\0", &init, None)?
+            };
             self.rekey.round = Some(round);
             self.send_phase(&init, false, publisher)?;
             for entry in &self
@@ -902,17 +1581,18 @@ impl RecordEngine {
             if phase == 3 {
                 self.rekey.deadline =
                     Some(Coordinator::deadline_after(now.monotonic_sample, 30_000)?);
+                self.crypto.tighten_deadline(self.rekey.deadline);
             }
             publisher
                 .prepare_publication(body.len().checked_add(44).ok_or(CryptoError::Capacity)?, 1)?;
             let mut out = std::mem::take(&mut self.rekey.output);
             let result: Result<()> = (|| {
-                let n = self.seal(0, 6, &body, &mut out, true, true)?;
+                let (n, work) = self.prepare_seal(0, 6, &body, &mut out, true, true)?;
                 self.candidate.as_mut().ok_or(CryptoError::State)?.sent = true;
                 if phase == 4 {
                     self.finish_round(now)?;
                 }
-                publisher.publish(&out[..n])?;
+                publisher.publish_seal(work, &mut out[..n])?;
                 if publisher.is_deferred() {
                     publisher.defer_publication(if phase == 4 {
                         crate::crypto_v4::DeferredPublication::rekey_success()
@@ -958,11 +1638,18 @@ impl RecordEngine {
         Ok(true)
     }
     pub(super) fn incoming_barrier_refs(&self, scope: u64) -> u8 {
-        self.rekey.round.as_ref().map_or(0, |r| {
-            r.incoming.iter().filter(|e| e.scope == scope).count() as u8
-        })
+        self.rekey.round.as_ref().map_or_else(
+            || {
+                self.rekey
+                    .pending_incoming
+                    .iter()
+                    .filter(|e| e.scope == scope)
+                    .count() as u8
+            },
+            |r| r.incoming.iter().filter(|e| e.scope == scope).count() as u8,
+        )
     }
-    fn expected_phase(&self, wire: &[u8]) -> Result<u8> {
+    pub(super) fn expected_phase(&self, wire: &[u8]) -> Result<u8> {
         if wire.len() < 44 || wire[4] != 6 {
             return Err(CryptoError::Authentication);
         }
@@ -978,13 +1665,28 @@ impl RecordEngine {
     }
     fn validate_rekey(&self, body: &[u8], phase: u8) -> Result<()> {
         let v = self.parse_phase(body, phase)?;
+        if phase != 0 {
+            let name = Self::schema(phase)?;
+            if v.u(name, "next_epoch")? != u64::from(self.epoch + 1)
+                || phase >= 2
+                    && v.b::<16>(name, "rekey_id")?
+                        != self.rekey.round.as_ref().ok_or(CryptoError::State)?.id
+            {
+                return Err(CryptoError::Authentication);
+            }
+        }
         if phase == 0 {
             return Ok(());
         }
         if phase == 1 {
             let temporary = Round {
                 id: v.b("REKEY_INIT", "rekey_id")?,
-                secret: self.rekey_secret()?,
+                secret: if self.deferred_crypto {
+                    Zeroizing::new([0; 32])
+                } else {
+                    self.rekey_secret()?
+                },
+                confirm_keys: std::array::from_fn(|_| Zeroizing::new([0; 32])),
                 ephemeral: None,
                 init: body.to_vec(),
                 reply: Vec::new(),
@@ -995,11 +1697,15 @@ impl RecordEngine {
                 post_credit: 0,
                 stage: 0,
             };
-            self.verify_phase(&temporary, body, 1)?;
-            crate::crypto_v4::keys::check_public(
-                self.profile,
-                v.field("REKEY_INIT", "client_ephemeral")?.bytes()?,
-            )?;
+            if !self.deferred_crypto {
+                self.verify_phase(&temporary, body, 1)?;
+            }
+            if !self.deferred_crypto {
+                crate::crypto_v4::keys::check_public(
+                    self.profile,
+                    v.field("REKEY_INIT", "client_ephemeral")?.bytes()?,
+                )?;
+            }
             let mut barrier = Vec::with_capacity(self.rekey.geometry.scopes);
             self.read_barrier(v, 1, &mut barrier)?;
             if self
@@ -1013,16 +1719,20 @@ impl RecordEngine {
             return Ok(());
         }
         let round = self.rekey.round.as_ref().ok_or(CryptoError::State)?;
-        self.verify_phase(round, body, phase)?;
+        if !self.deferred_crypto {
+            self.verify_phase(round, body, phase)?;
+        }
         let name = Self::schema(phase)?;
         if phase == 2 {
             if v.b::<32>(name, "init_digest")? != round.init_digest {
                 return Err(CryptoError::Authentication);
             }
-            crate::crypto_v4::keys::check_public(
-                self.profile,
-                v.field(name, "server_ephemeral")?.bytes()?,
-            )?;
+            if !self.deferred_crypto {
+                crate::crypto_v4::keys::check_public(
+                    self.profile,
+                    v.field(name, "server_ephemeral")?.bytes()?,
+                )?;
+            }
             let mut barrier = Vec::with_capacity(self.rekey.geometry.scopes);
             self.read_barrier(v, 2, &mut barrier)?;
         } else {
@@ -1076,7 +1786,8 @@ impl RecordEngine {
                     if candidate.keys.len() + 1 > self.max_keys {
                         return Err(CryptoError::Capacity);
                     }
-                    let key = self.record_key(&candidate.root, self.epoch + 1, scope, direction)?;
+                    let key =
+                        self.record_material(&candidate.root, self.epoch + 1, scope, direction)?;
                     self.candidate
                         .as_mut()
                         .ok_or(CryptoError::State)?
@@ -1085,6 +1796,13 @@ impl RecordEngine {
                             scope,
                             direction,
                             key,
+                            order: self
+                                .keys
+                                .iter()
+                                .find(|key| key.scope == scope && key.direction == direction)
+                                .ok_or(CryptoError::State)?
+                                .order
+                                .clone(),
                             next: 0,
                             disabled: false,
                             usage: Usage::default(),
@@ -1101,88 +1819,137 @@ impl RecordEngine {
     }
     /// This sole entry authenticates the current or preinstalled marker key;
     /// callers cannot assert a phase, completed barrier, or key-install success.
+    #[cfg(test)]
     pub(crate) fn receive_rekey(&mut self, wire: &[u8], plain: &mut [u8]) -> Result<()> {
-        let result = (|| {
-            self.check()?;
-            let expected = self.expected_phase(wire)?;
-            let marker = expected >= 3 && wire[8..12] == (self.epoch + 1).to_be_bytes();
-            let mut phase = expected;
-            let n = self.open(0, wire, plain, marker, |engine, _, body| {
-                phase = if engine.role == 0 && !marker && body == [0xa1, 0, 0] {
-                    0
-                } else {
-                    expected
-                };
-                engine.validate_rekey(body, phase)
-            })?;
-            let body = &plain[..n];
-            let now = self.account.security_time()?;
-            if phase == 0 {
-                self.remember_intent(now)?;
-                return Ok(());
+        let expected = self.expected_phase(wire)?;
+        let marker = expected >= 3 && wire[8..12] == (self.epoch + 1).to_be_bytes();
+        let ticket = self.prepare_open(0, wire, marker)?;
+        let result = ticket
+            .execute(wire, plain)
+            .and_then(|n| self.commit_rekey(&ticket, wire, &plain[..n], expected, marker));
+        plain.zeroize();
+        if result.is_err() {
+            self.disable_open(&ticket);
+            self.fail();
+        }
+        result
+    }
+    pub(super) fn commit_rekey(
+        &mut self,
+        ticket: &RecordOpen,
+        wire: &[u8],
+        body: &[u8],
+        expected: u8,
+        marker: bool,
+    ) -> Result<()> {
+        let phase = if self.role == 0 && !marker && body == [0xa1, 0, 0] {
+            0
+        } else {
+            expected
+        };
+        self.commit_open(ticket, wire[4], body, |engine, _, body| {
+            engine.validate_rekey(body, phase)
+        })?;
+        let now = self.account.security_time()?;
+        if phase == 0 {
+            self.remember_intent(now)?;
+            return Ok(());
+        }
+        if phase == 1 {
+            if !self.rekey.busy() {
+                self.account
+                    .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::RekeyStarts);
+                self.rekey
+                    .timeout_reported
+                    .store(false, std::sync::atomic::Ordering::Release);
             }
-            if phase == 1 {
-                if !self.rekey.busy() {
-                    self.account
-                        .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::RekeyStarts);
-                    self.rekey
-                        .timeout_reported
-                        .store(false, std::sync::atomic::Ordering::Release);
-                }
-                let value = self.parse_phase(body, 1)?;
-                let id = value.b("REKEY_INIT", "rekey_id")?;
-                let post = self.rekey.credit.charge(now, true)?;
-                self.frozen = true;
-                self.rekey.deadline =
-                    Some(Coordinator::deadline_after(now.monotonic_sample, 10_000)?);
-                let mut round = self.new_round(now, id, post)?;
-                round.init.extend_from_slice(body);
-                round.init_digest =
-                    self.transcript(b"flowersec/v4/rekey-init-digest\0", body, None)?;
-                self.read_barrier(value, 1, &mut round.incoming)?;
-                for entry in &round.incoming {
+            let value = self.parse_phase(body, 1)?;
+            let id = value.b("REKEY_INIT", "rekey_id")?;
+            let post = self.rekey.credit.charge(now, true)?;
+            self.frozen = true;
+            self.rekey.deadline = Some(Coordinator::deadline_after(now.monotonic_sample, 10_000)?);
+            self.crypto.tighten_deadline(self.rekey.deadline);
+            if self.deferred_crypto {
+                let mut outgoing = std::mem::take(&mut self.rekey.outgoing);
+                self.snapshot(&mut outgoing)?;
+                let mut incoming = std::mem::take(&mut self.rekey.incoming);
+                self.read_barrier(value, 1, &mut incoming)?;
+                for entry in &incoming {
                     self.streams.hold(entry.scope, false)?;
                 }
-                let reply = self.phase_map(&round, 2, 0)?;
-                round.reply.extend_from_slice(&reply);
-                self.stage_candidate(
-                    &mut round,
+                let mut init = std::mem::take(&mut self.rekey.init);
+                init.extend_from_slice(body);
+                let round = Round {
+                    id,
+                    secret: Zeroizing::new([0; 32]),
+                    confirm_keys: std::array::from_fn(|_| Zeroizing::new([0; 32])),
+                    ephemeral: None,
+                    init,
+                    reply: std::mem::take(&mut self.rekey.reply),
+                    outgoing,
+                    incoming,
+                    transcript: [0; 32],
+                    init_digest: [0; 32],
+                    post_credit: post,
+                    stage: 1,
+                };
+                self.queue_candidate(
+                    round,
                     value.field("REKEY_INIT", "client_ephemeral")?.bytes()?,
+                    true,
                 )?;
-                self.rekey.round = Some(round);
-            } else if phase == 2 {
-                let value = self.parse_phase(body, 2)?;
-                let mut round = self.rekey.round.take().ok_or(CryptoError::State)?;
-                self.read_barrier(value, 2, &mut round.incoming)?;
-                for entry in &round.incoming {
-                    self.streams.hold(entry.scope, false)?;
-                }
-                round.reply.extend_from_slice(body);
+                return self.check();
+            }
+            let mut round = self.new_round(now, id, post)?;
+            round.init.extend_from_slice(body);
+            round.init_digest = self.transcript(b"flowersec/v4/rekey-init-digest\0", body, None)?;
+            self.read_barrier(value, 1, &mut round.incoming)?;
+            for entry in &round.incoming {
+                self.streams.hold(entry.scope, false)?;
+            }
+            let reply = self.phase_map(&round, 2, 0)?;
+            round.reply.extend_from_slice(&reply);
+            self.stage_candidate(
+                &mut round,
+                value.field("REKEY_INIT", "client_ephemeral")?.bytes()?,
+            )?;
+            self.rekey.round = Some(round);
+        } else if phase == 2 {
+            let value = self.parse_phase(body, 2)?;
+            let mut round = self.rekey.round.take().ok_or(CryptoError::State)?;
+            self.read_barrier(value, 2, &mut round.incoming)?;
+            for entry in &round.incoming {
+                self.streams.hold(entry.scope, false)?;
+            }
+            round.reply.extend_from_slice(body);
+            round.stage = 2;
+            if self.deferred_crypto {
+                self.queue_candidate(
+                    round,
+                    value.field("REKEY_REPLY", "server_ephemeral")?.bytes()?,
+                    false,
+                )?;
+            } else {
                 self.stage_candidate(
                     &mut round,
                     value.field("REKEY_REPLY", "server_ephemeral")?.bytes()?,
                 )?;
-                round.stage = 2;
                 self.rekey.round = Some(round);
-            } else {
-                self.candidate.as_mut().ok_or(CryptoError::State)?.received = true;
-                self.rekey.round.as_mut().ok_or(CryptoError::State)?.stage = phase;
-                if phase == 3 {
-                    self.rekey.deadline =
-                        Some(Coordinator::deadline_after(now.monotonic_sample, 30_000)?);
-                } else {
-                    self.finish_round(now)?;
-                    self.account
-                        .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::RekeySuccesses);
-                }
             }
-            self.check()
-        })();
-        plain.zeroize();
-        if result.is_err() {
-            self.fail()
+        } else {
+            self.candidate.as_mut().ok_or(CryptoError::State)?.received = true;
+            self.rekey.round.as_mut().ok_or(CryptoError::State)?.stage = phase;
+            if phase == 3 {
+                self.rekey.deadline =
+                    Some(Coordinator::deadline_after(now.monotonic_sample, 30_000)?);
+                self.crypto.tighten_deadline(self.rekey.deadline);
+            } else {
+                self.finish_round(now)?;
+                self.account
+                    .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::RekeySuccesses);
+            }
         }
-        result
+        self.check()
     }
 }
 

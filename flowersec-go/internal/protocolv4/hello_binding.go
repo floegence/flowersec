@@ -110,11 +110,11 @@ func HelloBackingBytes(limits HelloLimits) (uint64, error) {
 	if limits.RouteBytes <= 0 || limits.ContextBytes <= 0 || uint64(limits.RouteBytes) > uint64(MaxPayloadLength) || uint64(limits.ContextBytes) > uint64(MaxPayloadLength) {
 		return 0, CBORFailure("configuration_capacity")
 	}
-	parsed, err := DecoderBackingBytes(limits.HelloBytes, limits.HelloNodes)
+	parsed, err := InitialDecoderBackingBytes(limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return 0, err
 	}
-	context, err := DecoderBackingBytes(limits.ContextBytes, limits.HelloNodes)
+	context, err := InitialDecoderBackingBytes(limits.ContextBytes, limits.HelloNodes)
 	if err != nil {
 		return 0, err
 	}
@@ -138,15 +138,15 @@ func NewHelloWorkspace(limits HelloLimits) (*HelloWorkspace, error) {
 	if _, err := HelloBackingBytes(limits); err != nil {
 		return nil, err
 	}
-	client, err := NewDecoder(limits.HelloBytes, limits.HelloNodes)
+	client, err := NewInitialDecoder(limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return nil, err
 	}
-	server, err := NewDecoder(limits.HelloBytes, limits.HelloNodes)
+	server, err := NewInitialDecoder(limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return nil, err
 	}
-	context, err := NewDecoder(limits.ContextBytes, limits.HelloNodes)
+	context, err := NewInitialDecoder(limits.ContextBytes, limits.HelloNodes)
 	if err != nil {
 		return nil, err
 	}

@@ -160,6 +160,24 @@ func (s *sqliteStore) checkpoint() error {
 	return nil
 }
 
+// RESTART performs the same full synchronized checkpoint and additionally
+// requires every reader to release the old WAL before the next write reuses
+// its first frame. Keeping allocated space avoids truncation/extension on each
+// transaction. With cache_spill disabled, a transaction writes each dirty page
+// once; max_page_count bounds that complete frame set and the reserved WAL.
+// Explicit lifecycle cleanup still uses the truncating checkpoint above.
+func (s *sqliteStore) checkpointForWrite() error {
+	var output [3]driver.Value
+	if err := s.one("PRAGMA wal_checkpoint(RESTART)", output[:]); err != nil {
+		return err
+	}
+	frames, valid := output[1].(int64)
+	if output[0] != int64(0) || !valid || frames < 0 || frames > int64(s.backing.limits.MaxPages) || output[2] != frames {
+		return ErrStorageUnavailable
+	}
+	return nil
+}
+
 func (s *sqliteStore) verifySchema() error {
 	version, err := s.scalar("PRAGMA user_version")
 	if err != nil {

@@ -167,6 +167,13 @@ func (s *NamespaceState) CheckActivation(a *ActivationAuthority, now timev4.Inte
 	if err := w.reservation.Check(); err != nil {
 		return err
 	}
+	return s.checkActivationContentsLocked(a, now)
+}
+
+func (s *NamespaceState) checkActivationContentsLocked(a *ActivationAuthority, now timev4.Interval) error {
+	if a == nil || a.rules != s.workspace.rules || a.trust.Generation != s.head.generation {
+		return CBORFailure("activation_authority_owner")
+	}
 	if err := s.head.CheckTime(now); err != nil {
 		return err
 	}
@@ -183,13 +190,12 @@ func (s *NamespaceState) CheckActivation(a *ActivationAuthority, now timev4.Inte
 	if err := now.LowerBound(a.binding.issuedAt, true); err != nil {
 		return err
 	}
-	root := s.document.Root()
 	for _, issuer := range [][16]byte{a.trust.ParentIssuer, a.trust.Issuer} {
-		if searchRevocation(root.Named("RevocationState", "revoked_issuers"), "RevokedIssuerEntry", []string{"issuer_key_id"}, issuer[:]).valid() {
+		if searchRevocation(s.revokedIssuers, "RevokedIssuerEntry", []string{"issuer_key_id"}, issuer[:]).valid() {
 			return CBORFailure("revocation_issuer_rejected")
 		}
 	}
-	if searchRevocation(root.Named("RevocationState", "revoked_leases"), "RevokedLeaseEntry", []string{"issuer_key_id", "lease_id"}, a.binding.issuer[:], a.binding.lease[:]).valid() {
+	if searchRevocation(s.revokedLeases, "RevokedLeaseEntry", []string{"issuer_key_id", "lease_id"}, a.binding.issuer[:], a.binding.lease[:]).valid() {
 		return CBORFailure("revocation_lease_rejected")
 	}
 	return nil

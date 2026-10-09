@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func TestReporterClosedChildDetachesItsParentCleanup(t *testing.T) {
@@ -142,5 +144,82 @@ func TestReporterClockIncludesConstructionElapsedTime(t *testing.T) {
 	}
 	if sample.Milliseconds < 250 || sample.UpperMS-sample.LowerMS != 2 {
 		t.Fatalf("construction changed the elapsed-time or uncertainty contract: %+v", sample)
+	}
+}
+
+func TestReporterClocksCalibrateIndependentMonotonicOrigins(t *testing.T) {
+	wall := time.Unix(1700000000, 123456789)
+	elapsed := [2]time.Duration{250 * time.Millisecond, 1003 * time.Millisecond}
+	var clocks [2]*timev4.Clock
+	for index := range clocks {
+		clock, err := newReporterClockFromSources(func() time.Duration { return elapsed[index] }, func() time.Time { return wall }, [16]byte{byte(index + 1)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer clock.Close()
+		clocks[index] = clock
+	}
+	for _, advance := range []time.Duration{0, time.Microsecond, 999 * time.Microsecond, 731 * time.Millisecond} {
+		wall = wall.Add(advance)
+		for index, clock := range clocks {
+			elapsed[index] += advance
+			sample, err := clock.Sample()
+			if err != nil {
+				t.Fatal(err)
+			}
+			current := uint64(wall.UnixMilli())
+			if sample.LowerMS != current || sample.UpperMS != current+2 {
+				t.Fatalf("peer %d inherited its counter origin at %s: %+v, local wall %d", index, advance, sample.Interval, current)
+			}
+		}
+	}
+}
+
+func TestReporterClockDiscardsDelayedWallPairing(t *testing.T) {
+	origin := time.Unix(1700000000, 987654321)
+	var elapsed time.Duration
+	reads := 0
+	clock, err := newReporterClockFromSources(func() time.Duration { return elapsed }, func() time.Time {
+		reads++
+		wall := origin.Add(elapsed)
+		if reads == 1 {
+			elapsed += 5 * time.Millisecond
+		} else {
+			elapsed += 500 * time.Microsecond
+		}
+		return wall
+	}, [16]byte{1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clock.Close()
+	if reads != 2 {
+		t.Fatalf("wall reads = %d, want one rejected pair and one bounded pair", reads)
+	}
+	for _, advance := range []time.Duration{0, 500 * time.Microsecond, 731 * time.Millisecond} {
+		elapsed += advance
+		sample, err := clock.Sample()
+		if err != nil {
+			t.Fatal(err)
+		}
+		current := uint64(origin.Add(elapsed).UnixMilli())
+		if sample.LowerMS > current || sample.UpperMS < current || current-sample.LowerMS > 1 || sample.UpperMS-sample.LowerMS != 2 {
+			t.Fatalf("delayed pairing escaped the original envelope: %+v, local wall %d", sample.Interval, current)
+		}
+	}
+}
+
+func TestReporterClockRejectsUnboundedWallPairing(t *testing.T) {
+	origin := time.Unix(1700000000, 123456789)
+	var elapsed time.Duration
+	reads := 0
+	clock, err := newReporterClockFromSources(func() time.Duration { return elapsed }, func() time.Time {
+		reads++
+		wall := origin.Add(elapsed)
+		elapsed += 3 * time.Millisecond
+		return wall
+	}, [16]byte{1})
+	if clock != nil || err != timev4.ErrUnavailable || reads != 16 {
+		t.Fatalf("unbounded local pairing: clock=%v, err=%v, reads=%d", clock, err, reads)
 	}
 }

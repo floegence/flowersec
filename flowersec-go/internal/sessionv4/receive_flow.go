@@ -269,6 +269,8 @@ func (f *ReceiveFlow) applyDataLocked(frame *protocolv4.Frame, assembly *NativeD
 	if !commit {
 		return nil
 	}
+	creditReady := f.creditReadyLocked()
+	creditUrgent := f.creditUrgentLocked()
 	// A FIN closes the future promise but preserves already queued data.
 	if fin && !f.hasTerminal {
 		f.termination.start(false, nil)
@@ -296,7 +298,7 @@ func (f *ReceiveFlow) applyDataLocked(frame *protocolv4.Frame, assembly *NativeD
 		f.observeConsumerSaturationLocked()
 	}
 	f.signalReadLocked()
-	if (f.hasTerminal || f.creditReadyLocked()) && f.termination.service != nil {
+	if (f.hasTerminal || f.creditReadyLocked() && (!creditReady || !creditUrgent && f.creditUrgentLocked())) && f.termination.service != nil {
 		f.termination.service.notify()
 	}
 	return nil

@@ -187,7 +187,7 @@ function assertHostArchitectureBindings(source) {
       selector: "x86_64|amd64",
       architecture: "amd64",
       tuples: {
-        Go: "    go_arch=amd64\n    go_sha256=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445\n",
+        Go: "    go_arch=amd64\n    go_sha256=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5\n",
         Node: "    node_arch=x64\n    node_sha256=3e301118d7df53d563b7e96c1617545f26e2f76f9724be668d6cab65c15dda5d\n",
         Rust: "    rustup_target=x86_64-unknown-linux-gnu\n    rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c\n    rust_archive_sha256=ed8ee2df70909c88cbaf87a6cfa3920dac00b537de12a6abe6906641e0f5952f\n",
         Swiftly: "    swiftly_arch=x86_64\n    swiftly_sha256=4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0\n    swiftly_binary_sha256=e7ce91d07b4419ea779da6b575721c17eb7c44f932e63b6e2d03a9afe75cce61\n",
@@ -198,7 +198,7 @@ function assertHostArchitectureBindings(source) {
       selector: "aarch64|arm64",
       architecture: "arm64",
       tuples: {
-        Go: "    go_arch=arm64\n    go_sha256=3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec\n",
+        Go: "    go_arch=arm64\n    go_sha256=94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8\n",
         Node: "    node_arch=arm64\n    node_sha256=23c1b4d19e2f12a7d06fe8aa3d6e0e4923cf77a47e13c5ccdf32fadaa33960f2\n",
         Rust: "    rustup_target=aarch64-unknown-linux-gnu\n    rustup_sha256=e3853c5a252fca15252d07cb23a1bdd9377a8c6f3efa01531109281ae47f841c\n    rust_archive_sha256=ac9283184301aeed06ecc9f5aa4c1be7041e18a1b197b6cb6c5d162d98f566da\n",
         Swiftly: "    swiftly_arch=aarch64\n    swiftly_sha256=cc4f912fff6c7f53704fc6d22f9e8ee7fdf6bd574ad276998f7502418bf5a45a\n    swiftly_binary_sha256=6531421eeb80eb69db21e41b1ed94bac1467548972eb82861fc4beb6664bd6aa\n",
@@ -444,8 +444,8 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
   const hostEntry = fs.readFileSync(path.join(sourceRoot, "scripts/test-host.sh"), "utf8");
   assertHostArchitectureBindings(source);
   for (const digest of [
-    "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445",
-    "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec",
+    "ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5",
+    "94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8",
     "3e301118d7df53d563b7e96c1617545f26e2f76f9724be668d6cab65c15dda5d",
     "23c1b4d19e2f12a7d06fe8aa3d6e0e4923cf77a47e13c5ccdf32fadaa33960f2",
     "4c4adb7b7ad7910f38c52b94a938c309586fe395e1fe1538c397384ee36bfff0",
@@ -481,7 +481,7 @@ test("privileged host bootstrap verifies every root-executed toolchain download"
   assert.match(source, /authentication_marker_matches "\$swift_verification_marker"/);
   assert.match(source, /authentication_marker_matches "\$expected" "\$marker"/);
   assert.equal((hostEntry.match(/SWIFTLY_TOOLCHAINS_DIR="\$host_swift_toolchains"/g) ?? []).length, 2);
-  assert.match(source, /swiftly" init --overwrite --assume-yes --skip-install/);
+  assert.match(source, /swiftly" init (?:--platform "\$swiftly_platform" )?--overwrite --assume-yes --skip-install/);
   assert.doesNotMatch(source, /npm --prefix "\$source_root\/flowersec-ts" run ensure:browser/);
   assert.doesNotMatch(hostEntry, /RUSTUP_DIST_SERVER|RUSTUP_UPDATE_ROOT|PLAYWRIGHT_DOWNLOAD_HOST|PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT/);
   assert.match(browserEnsure, /process\.getuid\?\.\(\) === 0[\s\S]*not authenticated/);

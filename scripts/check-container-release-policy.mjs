@@ -34,7 +34,7 @@ export function getContainerDockerfileContracts(repoRoot) {
   return Object.freeze({
     "docker/flowersec-runtime/Dockerfile": Object.freeze({
       syntax: "# syntax=docker/dockerfile:1.26.0@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32",
-      buildFrom: `--platform=$BUILDPLATFORM golang:${goVersion}-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS build`,
+      buildFrom: `--platform=$BUILDPLATFORM golang:${goVersion}-alpine@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS build`,
       buildOutput: "/out/flowersec-runtime",
       buildPackage: "./cmd/flowersec-runtime",
       final: [

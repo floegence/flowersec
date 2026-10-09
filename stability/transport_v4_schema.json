@@ -50151,7 +50151,7 @@
           "id": "go_native_h3",
           "implementation": "github.com/quic-go/webtransport-go@v0.13.0",
           "quic_implementation": "github.com/quic-go/quic-go@v0.62.0",
-          "runtime": "go1.27.1",
+          "runtime": "go1.27.2",
           "protocol": "webtransport-h3",
           "request_headers": {},
           "forbidden_request_headers": [
@@ -50206,7 +50206,7 @@
     "relay": {
       "boundary": "Trusted local deployment configuration selects one exact route digest and one finite profile before Prepare. Each profile requires the Go v4 endpoint owners and Go RelayPair from the same deployed Flowersec build and pinned provider runtime range. Remote deployment facts are operator trust, not facts inferred from a signed descriptor or local successful dial. No receipts or peer capability claims are loaded. Engineering qualification remains not_verified until actual pairwise probes complete.",
       "implementation": "flowersec-go/v6",
-      "runtime": "Go 1.27.1",
+      "runtime": "Go 1.27.2",
       "qualification": "not_verified",
       "profiles": [
         {

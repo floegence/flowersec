@@ -41,6 +41,7 @@ func (r *Root) validOwner(key OwnerKey) bool {
 func (r *Root) freeReference() int {
 	for i := range r.refs {
 		if !r.refs[i].active && r.refs[i].generation < math.MaxUint64 {
+			r.referenceExtent = max(r.referenceExtent, i+1)
 			return i
 		}
 	}
@@ -48,7 +49,9 @@ func (r *Root) freeReference() int {
 }
 
 func (r *Root) ownerExists(owner OwnerKey) bool {
-	for i := range r.refs {
+	// Untouched prepaid slots cannot contain an owner. Keep every initialized
+	// position in the search, including idle protection and borrowed tails.
+	for i := range r.refs[:r.referenceExtent] {
 		if r.refs[i].active && r.refs[i].owner == owner {
 			return true
 		}

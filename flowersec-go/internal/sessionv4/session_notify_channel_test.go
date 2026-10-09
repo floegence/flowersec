@@ -422,6 +422,12 @@ func TestNotifyChannelRebuildWaitsForOriginalAlias(t *testing.T) {
 	job := r.notifyChannels[0]
 	handle := job.handle
 	r.mu.Unlock()
+	services[1].mu.Lock()
+	peerJob := services[1].notifyChannels[0]
+	services[1].mu.Unlock()
+	if peerJob == nil {
+		t.Fatal("accepted peer notification channel missing")
+	}
 	first.owner.queue.mu.Lock()
 	alias, err := first.owner.queue.reservation.Borrow()
 	first.owner.queue.mu.Unlock()
@@ -430,13 +436,15 @@ func TestNotifyChannelRebuildWaitsForOriginalAlias(t *testing.T) {
 	}
 	defer alias.Release()
 	first.Close()
-	select {
-	case <-job.done:
-		if job.cleanupError != nil {
-			t.Fatal(job.cleanupError)
+	for _, original := range []*notifyChannelOpening{job, peerJob} {
+		select {
+		case <-original.done:
+			if original.cleanupError != nil {
+				t.Fatal(original.cleanupError)
+			}
+		case <-ctx.Done():
+			t.Fatal("notify channel did not clean up", ctx.Err())
 		}
-	case <-ctx.Done():
-		t.Fatal("notify channel did not clean up", ctx.Err())
 	}
 	if _, err = r.OpenNotifyChannel(ctx, deadline); !errors.Is(err, resourcev4.ErrCapacity) && !errors.Is(err, cryptov4.ErrCapacity) {
 		t.Fatal("notify position reused while backing remained borrowed", err)

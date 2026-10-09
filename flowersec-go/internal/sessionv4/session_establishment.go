@@ -247,11 +247,7 @@ func newSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits
 			return nil, err
 		}
 		if i < len(originals) && originals[i] != nil {
-			wire, e := originals[i].Bytes()
-			if e != nil {
-				return nil, e
-			}
-			*targets[i], err = p.codecs[i].Verify(wire, originals[i].Key(), decode)
+			*targets[i], err = p.codecs[i].CopyVerified(originals[i], decode)
 			if err != nil {
 				return nil, err
 			}

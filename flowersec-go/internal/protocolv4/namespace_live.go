@@ -713,7 +713,10 @@ func (n *LiveNamespace) checkBoundCredentialAt(credential *Credential, permissio
 	if err := n.checkPolicyAt(policy, now); err != nil {
 		return 0, err
 	}
-	_, deadline, err := n.checkCredentialAt(credential, permission, requirement.StalenessMS, requirement.SignerLifetimeMS, hardEnd, now)
+	if err := n.continuityAvailable(); err != nil {
+		return 0, err
+	}
+	_, deadline, err := n.checkCredentialContentsAt(credential, permission, requirement.StalenessMS, requirement.SignerLifetimeMS, hardEnd, now)
 	return deadline, err
 }
 
@@ -727,16 +730,32 @@ func (n *LiveNamespace) checkCredentialAt(credential *Credential, permission Iss
 	if now, err = n.clock.RefreshSample(now); err != nil {
 		return facts, 0, err
 	}
-	if err := credential.checkPermission(permission); err != nil {
-		return facts, 0, err
-	}
+	return n.checkCredentialContentsAt(credential, permission, staleness, signerLifetime, hardEnd, now)
+}
+
+// The caller holds n.mu and has checked the namespace and sampled its clock.
+// Keep one namespace gate for the bound-policy and credential checks instead
+// of reacquiring the same resource/clock gates within that local operation.
+func (n *LiveNamespace) checkCredentialContentsAt(credential *Credential, permission IssuerPermission, staleness, signerLifetime, hardEnd uint64, now timev4.Sample) (facts CredentialStateFacts, deadline uint64, err error) {
 	if err := n.checkHeadAt(n.active.head, now); err != nil {
 		return facts, 0, err
 	}
-	if err := n.checkIssuerAt(permission, credential.scope, now); err != nil {
+	return n.checkCredentialUnderHeadAt(credential, permission, staleness, signerLifetime, hardEnd, now)
+}
+
+func (n *LiveNamespace) checkCredentialUnderHeadAt(credential *Credential, permission IssuerPermission, staleness, signerLifetime, hardEnd uint64, now timev4.Sample) (facts CredentialStateFacts, deadline uint64, err error) {
+	return n.checkCredentialUnderHeadTrustAt(credential, permission, staleness, signerLifetime, hardEnd, now, namespaceClosureRead{namespace: n})
+}
+
+func (n *LiveNamespace) checkCredentialUnderHeadTrustAt(credential *Credential, permission IssuerPermission, staleness, signerLifetime, hardEnd uint64, now timev4.Sample, trust namespaceClosureRead) (facts CredentialStateFacts, deadline uint64, err error) {
+	if err := credential.checkPermission(permission); err != nil {
 		return facts, 0, err
 	}
-	facts, err = n.active.CheckDetachedCredential(credential, permission, now.Interval)
+	if err := trust.issuerAt(permission, credential.scope, now); err != nil {
+		return facts, 0, err
+	}
+	// checkHeadAt has just checked this same immutable Head under n.mu.
+	facts, err = trust.credentialAt(credential, permission, now)
 	if err != nil {
 		return facts, 0, err
 	}
@@ -789,13 +808,26 @@ func (n *LiveNamespace) checkDetachedActivationAt(a *ActivationAuthority, artifa
 	if err != nil {
 		return 0, err
 	}
+	return n.checkActivationContentsAt(a, artifact, permission, parent, deadline, admission, now)
+}
+
+// The caller retains n.mu and has checked this exact parent credential against
+// the current Head and State. No cached authorization crosses a namespace gate.
+func (n *LiveNamespace) checkActivationContentsAt(a *ActivationAuthority, artifact *Credential, permission IssuerPermission, parent CredentialStateFacts, deadline uint64, admission bool, now timev4.Sample) (uint64, error) {
+	return n.checkActivationContentsTrustAt(a, artifact, permission, parent, deadline, admission, now, namespaceClosureRead{namespace: n})
+}
+
+func (n *LiveNamespace) checkActivationContentsTrustAt(a *ActivationAuthority, artifact *Credential, permission IssuerPermission, parent CredentialStateFacts, deadline uint64, admission bool, now timev4.Sample, trust namespaceClosureRead) (uint64, error) {
+	if a == nil || a.rules != n.rules || permission.Schema != "Artifact" {
+		return 0, CBORFailure("activation_authority_owner")
+	}
 	if parent.Digest != a.binding.artifactDigest {
 		return 0, CBORFailure("activation_parent_binding")
 	}
-	if err := n.checkActivationTrustAt(a.trust, now); err != nil {
+	if err := trust.activationAt(a.trust, now); err != nil {
 		return 0, err
 	}
-	if err := n.active.CheckActivation(a, now.Interval); err != nil {
+	if err := trust.checkActivationAt(a, now); err != nil {
 		return 0, err
 	}
 	if admission {

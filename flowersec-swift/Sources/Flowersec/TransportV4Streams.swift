@@ -27,6 +27,27 @@ enum V4StreamRead {
   case pending, eof, aborted
 }
 enum V4StreamPhase: Sendable { case opening, pending, accepted, recent, stable }
+enum V4StreamReceiveDisposition: Equatable, Sendable {
+  case committed, isolatedStream, discardedData
+}
+private struct V4StreamDataFailure: Error {
+  let cause: any Error
+}
+#if DEBUG
+struct V4SharedInputTestSnapshot {
+  let current: V4StreamTuple?
+  let firstFailure: String?
+  let terminal: V4StreamTuple?
+  let observed: V4StreamTuple?
+  let aborted: Bool?
+  let receiveEnabled: Bool
+  let cryptoNext: UInt64?
+  let usage: V4CryptoUsage
+  let scopeUsage: V4CryptoUsage?
+  let records: UInt64
+  let bytes: UInt64
+}
+#endif
 
 struct V4StreamTuple: Equatable, Sendable {
   let epoch: UInt32
@@ -112,6 +133,8 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     var stoppedSent = false
     var drainSent = false
     var disabled = false
+    var terminalObserved = false
+    var firstFailure: (any Error)?
     var begun: V4ClockMark?
     var quarantined: V4ClockMark?
     var complete: Bool { terminal != nil && proof != nil }
@@ -144,6 +167,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     var barrierRefs = 0
     var unpublished = 0
     var keysRetired = false
+    var cryptoJobs = 0
     init(
       scope: V4RecordScope, opener: V4CryptoRole, kind: String, streamClass: Kind,
       metadata: Data, phase: V4StreamPhase, opened: V4ClockMark
@@ -186,7 +210,19 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   private var localGoAway: UInt64?
   private var goAwaySent = false
   var observationDraining: Bool { access.environment.gate.withLock { draining } }
-  private var busy = false
+  private var polling = false
+  private var deciding = false
+  private var preparingOpen = false
+  private var reservedTokens = 0
+  // One original shared ingress allowance, independent of stream slots and
+  // epochs. Retirement/rekey never resets the counters or first-discard clock.
+  private var sharedDiscardWindow: V4LocalWorkWindow?
+  private var sharedDiscardRecords: UInt64 = 0
+  private var sharedDiscardBytes: UInt64 = 0
+  // Fixed history plus the single window/counter backing is prepaid before
+  // either allocation. No late DATA creates a scope tombstone or owner.
+  static let sharedIngressStorageBytes: UInt64 = 524_292 + 256
+  private var sharedStableScopes: [UInt8]
   private var closed = false
   private var rekey: V4RekeyCoordinator?
   private var pendingPong: Data?
@@ -202,6 +238,47 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   private var clock: V4TrustedClock { access.environment.clock }
   var description: String { "Flowersec.ReliableSession(<redacted>)" }
   var customMirror: Mirror { Mirror(self, unlabeledChildren: [Any]()) }
+  #if DEBUG
+  var cryptoTestRekeyFrozen: Bool { access.environment.gate.withLock { rekey?.frozen == true } }
+  func cryptoTestObserve(_ observer: (@Sendable (UInt64, UInt8, Bool) -> Void)?) {
+    access.environment.gate.withLock { access.channel.cryptoTestCompleted = observer }
+  }
+  func cryptoTestObservePreparation(_ observer: (@Sendable (UInt64, V4CryptoPreparationTestStage) -> Void)?) {
+    access.environment.gate.withLock { access.channel.cryptoTestPrepared = observer }
+  }
+  func cryptoTestSharedInput(_ id: UInt64) -> V4SharedInputTestSnapshot {
+    access.environment.gate.withLock {
+      let d = find(id)?.directions[peer]
+      return V4SharedInputTestSnapshot(current: d?.current,
+        firstFailure: d?.firstFailure.map { String(describing: $0) }, terminal: d?.terminal,
+        observed: d?.proof?.observed, aborted: d?.proof?.aborted,
+        receiveEnabled: access.channel.cryptoTestReceiveEnabled(id),
+        cryptoNext: access.channel.cryptoTestFrontier(id, sending: false),
+        usage: access.channel.usage().session, scopeUsage: access.channel.cryptoTestReceiveUsage(id),
+        records: sharedDiscardRecords, bytes: sharedDiscardBytes)
+    }
+  }
+  func cryptoTestSendProof(_ id: UInt64)
+    -> (terminal: V4StreamTuple, observed: V4StreamTuple, aborted: Bool)? {
+    access.environment.gate.withLock {
+      guard let proof = find(id)?.directions[me].proof else { return nil }
+      return (proof.terminal, proof.observed, proof.aborted)
+    }
+  }
+  // Fault injection still uses the original admitted channel, nonce and AEAD
+  // work. Only protocol body construction is bypassed, and only in DEBUG.
+  func cryptoTestPublish(_ id: UInt64, body: (V4StreamTuple) -> Data,
+    to publisher: any V4RecordPublisher) throws {
+    try run {
+      guard let s = find(id) else { throw V4CryptoFailure.phase }
+      let frontier = try access.channel.frontier(s.scope, sending: true, access: access)
+      let tuple = V4StreamTuple(epoch: frontier.epoch, next: frontier.next,
+        offset: s.directions[me].current.offset)
+      try access.channel.publish(scope: s.scope, frameType: 8, plaintext: body(tuple),
+        to: publisher, access: access)
+    }
+  }
+  #endif
 
   init(_ admission: V4ReliableSessionAdmission) throws {
     try admission.claim()
@@ -212,6 +289,8 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       try admission.streamStorage
       ?? admission.environment.reliableSessionStorage(
         maxCredit: admission.maxCredit, slots: maxSlots)
+    try storage.check()
+    sharedStableScopes = [UInt8](repeating: 0, count: 524_292)
     liveness = try V4LivenessState(
       clock: admission.environment.clock, storage: storage,
       policy: admission.environment.automaticLiveness)
@@ -237,6 +316,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       if admission.role == .client { ordinal = 2 }
     }
     rekey = try V4RekeyCoordinator(access, registry: registry, liveness: liveness)
+    try admission.channel.bindRecordStorage(storage, access: access)
     try check()
   }
   private func check() throws {
@@ -248,9 +328,6 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   }
   private func run<T>(_ body: () throws -> T) throws -> T {
     try access.environment.gate.withLock {
-      guard !busy else { throw V4CryptoFailure.phase }
-      busy = true
-      defer { busy = false }
       do {
         try check()
         try deadlines()
@@ -376,7 +453,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     lifetime[role][group] += 1
   }
   private func takeToken(reject: Bool) throws -> Token {
-    if slots.filter({ $0.token == .positive }).count < maxTokens { return .positive }
+    if slots.filter({ $0.token == .positive }).count + reservedTokens < maxTokens { return .positive }
     if reject, slots.filter({ $0.token == .rejection }).count < 128 { return .rejection }
     throw V4CryptoFailure.capacity
   }
@@ -430,8 +507,13 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   private func send(
     _ scope: V4RecordScope, type: UInt8, body: Data,
     to publisher: any V4RecordPublisher, publication: (any V4RecordPublication)? = nil,
+    reservedOutput: (V4CryptoBuffer, V4RecordOutput)? = nil,
+    beforeTicket: (() throws -> Void)? = nil,
+    ticketed: ((UInt32, UInt64) throws -> Void)? = nil,
+    mayPublish: (() throws -> Bool)? = nil,
     accepted: (@Sendable () -> Void)? = nil
   ) throws {
+    var submitted = false
     do {
       if type != 14 { liveness.localStall() }
       try access.channel.publish(
@@ -440,10 +522,14 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
         critical: type == 9
           && (body.first == 0xa8 || body.first == 0xac
             || (body.count > 2 && (2...6).contains(body[body.startIndex + 2]))),
-        publication: publication, accepted: accepted
+        publication: publication, reservedOutput: reservedOutput, beforeTicket: beforeTicket, ticketed: { epoch, sequence in
+          submitted = true
+          try ticketed?(epoch, sequence)
+        }, mayPublish: mayPublish, accepted: accepted
       )
       try check()
     } catch {
+      if !submitted { throw error }
       close()
       throw error
     }
@@ -454,8 +540,13 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   ) -> Data {
     V4Crypto.map([(0, u(variant)), (1, u(s.scope.number)), (2, u(UInt64(direction)))] + extra)
   }
-  private func sendControl(_ body: Data, to publisher: any V4RecordPublisher) throws {
-    try send(access.channel.maintenance, type: 9, body: body, to: publisher)
+  private func sendControl(_ body: Data, to publisher: any V4RecordPublisher,
+    reservedOutput: (V4CryptoBuffer, V4RecordOutput)? = nil,
+    beforeTicket: (() throws -> Void)? = nil,
+    ticketed: (() throws -> Void)? = nil) throws {
+    try send(access.channel.maintenance, type: 9, body: body, to: publisher,
+      reservedOutput: reservedOutput, beforeTicket: beforeTicket,
+      ticketed: { _, _ in try ticketed?() })
   }
   private func openBody(_ s: Slot, window: UInt64) throws -> Data {
     let frontier = try access.channel.frontier(s.scope, sending: true, access: access)
@@ -466,7 +557,10 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       (2, u(s.scope.number)), (3, u(UInt64(frontier.epoch))), (4, u(0)),
       (5, V4Crypto.text(s.kind)), (6, V4Crypto.bytes(s.metadata)), (7, u(window)),
     ]
-    s.digest = V4Crypto.hash(V4Crypto.domain("open", [V4Crypto.map(fields)]))
+    s.digest = try access.channel.recordDigest(access, scope: s.scope,
+      bytes: V4Crypto.domain("open", [V4Crypto.map(fields)]))
+    try check()
+    guard rekey?.frozen != true else { throw V4CryptoFailure.capacity }
     fields.append((8, V4Crypto.bytes(s.digest)))
     return V4Crypto.map(fields)
   }
@@ -475,6 +569,9 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     to publisher: any V4RecordPublisher, service: Bool = false
   ) throws -> V4StreamHandle {
     try run {
+      guard !preparingOpen else { throw V4CryptoFailure.capacity }
+      preparingOpen = true
+      defer { preparingOpen = false }
       let streamClass = try classify(kind, opener: access.role)
       guard streamClass == .business || service && access.applicationProfile != 0
         && (streamClass != .management || access.applicationProfile == 2),
@@ -505,47 +602,105 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
         ordinal += 1
       }
       let token = try takeToken(reject: false)
+      reservedTokens += 1
+      var tokenReserved = true
+      defer { if tokenReserved { reservedTokens -= 1 } }
       guard receiveWindow <= access.maxCredit - promised else { throw V4CryptoFailure.capacity }
-      // All fallible local validation precedes irreversible scope admission.
+      // Burn the original ordinal/lifetime before releasing the gate for key
+      // preparation. The reserved terminal token cannot be stolen meanwhile.
+      if streamClass != .management {
+        try countLifetime(streamClass, opener: access.role)
+        ordinal += 1
+      }
       let scope = try access.channel.admitReliableScope(id, access: access)
+      try check()
+      guard !draining, rekey?.frozen != true, room(streamClass, opener: access.role),
+        slots.count < maxSlots, receiveWindow <= access.maxCredit - promised else {
+        try access.channel.retire(scope, access: access)
+        throw V4CryptoFailure.capacity
+      }
+      var prepared: Slot?
       do {
         let s = Slot(
           scope: scope, opener: access.role, kind: kind, streamClass: streamClass,
           metadata: metadata, phase: .opening, opened: try clock.mark())
+        prepared = s
         s.token = token
         try growWindow(s, limit: receiveWindow)
         let body = try openBody(s, window: receiveWindow)
         guard body.count + 36 <= access.maxFrame else { throw V4CryptoFailure.capacity }
-        s.prefix = true
-        s.directions[peer].current = V4StreamTuple(epoch: s.openEpoch)
-        s.directions[peer].last = s.directions[peer].current
-        s.directions[me].current = V4StreamTuple(epoch: s.openEpoch, next: 1)
-        s.directions[me].last = s.directions[me].current
-        if streamClass != .management {
-          try countLifetime(streamClass, opener: access.role)
-          ordinal += 1
-        }
-        slots.append(s)
-        try send(scope, type: 7, body: body, to: publisher)
-        s.directions[peer].committed = receiveWindow
-        s.metadata = Data()
+        s.cryptoJobs += 1
+        defer { finishCrypto(s) }
+        try send(scope, type: 7, body: body, to: publisher, beforeTicket: {
+          try self.check()
+          guard !self.draining, self.rekey?.frozen != true,
+            self.room(streamClass, opener: self.access.role), self.slots.count < self.maxSlots else {
+            throw V4CryptoFailure.capacity
+          }
+        }, ticketed: { generation, sequence in
+          guard generation == s.openEpoch, sequence == 0 else { throw V4CryptoFailure.sequence }
+          s.prefix = true
+          s.directions[self.peer].current = V4StreamTuple(epoch: generation)
+          s.directions[self.peer].last = s.directions[self.peer].current
+          s.directions[self.me].current = V4StreamTuple(epoch: generation, next: 1)
+          s.directions[self.me].last = s.directions[self.me].current
+          self.reservedTokens -= 1
+          tokenReserved = false
+          self.slots.append(s)
+          s.directions[self.peer].committed = receiveWindow
+          s.metadata = Data()
+        })
         return handle(s)
       } catch {
+        if let frontier = try? access.channel.frontier(scope, sending: true, access: access), frontier.next == 0 {
+          if let prepared {
+            promised -= prepared.directions[peer].limit - prepared.directions[peer].released
+            discardBacking(prepared)
+            slots.removeAll { $0 === prepared }
+          }
+          try access.channel.retire(scope, access: access)
+          throw error
+        }
         close()
         throw error
       }
     }
   }
-  func materializeBootstrap(to publisher: any V4RecordPublisher) throws -> V4StreamHandle {
+  func materializeBootstrap(to publisher: any V4RecordPublisher) throws -> V4StreamHandle? {
     try run {
-      guard rekey?.frozen != true, access.role == .client, let s = find(1), s.bootstrap, !s.prefix,
+      guard access.role == .client, let s = find(1), s.bootstrap, !s.prefix, !s.canceled,
         s.directions.allSatisfy({ $0.terminal == nil })
       else { throw V4CryptoFailure.phase }
-      let body = try openBody(s, window: 16_384)
-      s.prefix = true
-      s.directions[0].current = V4StreamTuple(epoch: s.openEpoch, next: 1)
-      try send(s.scope, type: 7, body: body, to: publisher)
-      return handle(s)
+      guard !preparingOpen, rekey?.frozen != true else { return nil }
+      let originalEpoch = try access.channel.frontier(s.scope, sending: true, access: access).epoch
+      preparingOpen = true
+      defer { preparingOpen = false }
+      do {
+        let body = try openBody(s, window: 16_384)
+        s.cryptoJobs += 1
+        defer { finishCrypto(s) }
+        try send(s.scope, type: 7, body: body, to: publisher, beforeTicket: {
+          try self.check()
+          guard self.find(1) === s, !s.prefix, !s.canceled, self.rekey?.frozen != true,
+            s.directions.allSatisfy({ $0.terminal == nil }) else { throw V4CryptoFailure.capacity }
+        }, ticketed: { generation, sequence in
+          guard generation == s.openEpoch, sequence == 0 else { throw V4CryptoFailure.sequence }
+          s.prefix = true
+          s.directions[0].current = V4StreamTuple(epoch: generation, next: 1)
+        })
+        return handle(s)
+      } catch let failure as V4CryptoFailure where failure == .capacity {
+        try check()
+        let currentEpoch = try access.channel.frontier(s.scope, sending: true, access: access).epoch
+        // Digest/output preparation releases the gate before a ticket. A
+        // winning freeze or completed rekey keeps this same zero-frontier
+        // scope pending; all other refusals retain their original failure.
+        guard find(1) === s, !s.prefix, !s.canceled,
+          s.directions.allSatisfy({ $0.terminal == nil }),
+          rekey?.frozen == true || currentEpoch != originalEpoch
+        else { throw failure }
+        return nil
+      }
     }
   }
   var bootstrapMaterialized: Bool { find(1)?.prefix == true }
@@ -673,11 +828,20 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   }
   private func decide(
     _ s: Slot, requested: V4StreamDecision,
-    to publisher: any V4RecordPublisher
+    to publisher: any V4RecordPublisher, claim: (() throws -> Void)? = nil
   ) throws {
+    guard !deciding else { throw V4CryptoFailure.capacity }
+    deciding = true
+    defer { deciding = false }
     guard s.phase == .pending, !s.bootstrap,
       s.openEpoch <= (try access.channel.rekeyState(access).epoch)
     else { throw V4CryptoFailure.phase }
+    let reserved = try access.channel.reserveMaintenanceOutput(access,
+      maximum: min(256, access.maxFrame - 36), to: publisher)
+    defer { reserved.1.discard() }
+    try check()
+    try deadlines()
+    guard find(s.scope.number) === s, s.phase == .pending else { throw V4CryptoFailure.capacity }
     var decision = requested
     if draining { decision = .reject(.draining) }
     if let forced = s.forced { decision = .reject(forced) }
@@ -701,24 +865,37 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     if case .accept(let window) = decision { try growWindow(s, limit: window) }
     let body = outcomeBody(s, decision: decision)
     // Publication is the linearization point for the advertised receive limit.
-    try sendControl(body, to: publisher)
-    s.outcome = decision
-    metadataBytes -= s.metadata.count
-    s.metadata = Data()
-    s.forced = nil
-    if case .accept(let window) = decision {
-      s.phase = .accepted
-      acceptedPeerCeiling = max(acceptedPeerCeiling, s.scope.number)
-      s.directions[peer].committed = window
-    } else {
-      try reject(s)
-    }
+    s.cryptoJobs += 1
+    defer { finishCrypto(s) }
+    let accepting: Bool
+    if case .accept = decision { accepting = true } else { accepting = false }
+    try sendControl(body, to: publisher, reservedOutput: reserved, beforeTicket: {
+      try self.check()
+      guard self.find(s.scope.number) === s, s.phase == .pending else { throw V4CryptoFailure.capacity }
+      if accepting {
+        guard try self.elapsed(s.opened) < 10_000, !self.draining, !s.canceled,
+          s.forced == nil, self.room(s.streamClass, opener: s.opener) else {
+          throw V4CryptoFailure.capacity
+        }
+        try claim?()
+      }
+    }, ticketed: {
+      s.outcome = decision
+      self.metadataBytes -= s.metadata.count
+      s.metadata = Data()
+      s.forced = nil
+      if case .accept(let window) = decision {
+        s.phase = .accepted
+        self.acceptedPeerCeiling = max(self.acceptedPeerCeiling, s.scope.number)
+        s.directions[self.peer].committed = window
+      } else { try self.reject(s) }
+    })
   }
   func decideOpen(
     _ stream: V4StreamHandle, decision: V4StreamDecision,
-    to publisher: any V4RecordPublisher
+    to publisher: any V4RecordPublisher, claim: (() throws -> Void)? = nil
   ) throws {
-    try run { try decide(resolve(stream), requested: decision, to: publisher) }
+    try run { try decide(resolve(stream), requested: decision, to: publisher, claim: claim) }
   }
   func phase(_ stream: V4StreamHandle) throws -> V4StreamPhase {
     try run {
@@ -753,23 +930,43 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     }
     let frontier = try access.channel.frontier(s.scope, sending: true, access: access)
     guard frontier.next < .max else { throw V4CryptoFailure.sequence }
+    let original = d.current
+    let reserved = try access.channel.reserveApplicationOutput(access,
+      maximum: min(data.count + 128, access.maxFrame - 36), to: publisher)
+    defer { reserved.1.discard() }
+    try check()
+    guard find(s.scope.number) === s, s.phase == .accepted, !d.stop, d.terminal == nil,
+      d.current == original, rekey?.frozen != true,
+      try access.channel.frontier(s.scope, sending: true, access: access) == frontier else {
+      throw V4CryptoFailure.capacity
+    }
     let body = V4Crypto.map([
       (0, u(s.scope.number)), (1, u(UInt64(me))),
       (2, u(UInt64(frontier.epoch))), (3, u(frontier.next)), (4, u(d.current.offset)),
       (5, Data([fin ? 0xf5 : 0xf4])), (6, V4Crypto.bytes(data)),
     ])
-    try send(s.scope, type: 8, body: body, to: publisher, publication: publication, accepted: {
-      accepted?(data.count)
-    })
-    if frontier.epoch != d.current.epoch { d.last = d.current }
-    d.current = V4StreamTuple(epoch: frontier.epoch, next: frontier.next + 1, offset: end)
-    if fin {
-      d.terminal = d.current
-      d.fin = true
-      s.view.finSubmitted = true
-      d.stop = true
-      try begin(d)
-    }
+    s.cryptoJobs += 1
+    defer { finishCrypto(s) }
+    try send(s.scope, type: 8, body: body, to: publisher, publication: publication, reservedOutput: reserved,
+      ticketed: { generation, sequence in
+        guard generation == frontier.epoch, sequence == frontier.next else {
+          throw V4CryptoFailure.sequence
+        }
+        if generation != d.current.epoch { d.last = d.current }
+        d.current = V4StreamTuple(epoch: generation, next: sequence + 1, offset: end)
+        if fin {
+          d.terminal = d.current
+          d.fin = true
+          s.view.finSubmitted = true
+          d.stop = true
+          try self.begin(d)
+        }
+        accepted?(data.count)
+      }, mayPublish: {
+        try self.check()
+        guard self.find(s.scope.number) === s else { throw V4CryptoFailure.closed }
+        return d.proof?.aborted != true
+      })
     return data.count
   }
   func requestCloseWrite(_ stream: V4StreamHandle) throws {
@@ -883,7 +1080,8 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       let s = try resolve(stream)
       let d = s.directions[me]
       if d.stop || d.terminal != nil || d.finRequested { throw SessionError.streamReset }
-      guard s.phase == .accepted, rekey?.frozen != true else { return 0 }
+      guard s.phase == .accepted, rekey?.frozen != true,
+        try access.channel.canPublish(s.scope, access: access) else { return 0 }
       return Int(min(d.limit - d.current.offset, UInt64(access.maxFrame - 128)))
     }
   }
@@ -918,7 +1116,13 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       return d.fin && d.proof != nil
     }
   }
-  func canOpen() throws -> Bool { try run { rekey?.frozen != true } }
+  func canOpen() throws -> Bool { try run { !preparingOpen && rekey?.frozen != true } }
+  func canMaintain() throws -> Bool {
+    try run {
+      guard !polling, !deciding else { return false }
+      return try access.channel.canPublish(access.channel.maintenance, access: access)
+    }
+  }
   func canReceive() throws -> Bool {
     try run {
       if pendingPong != nil { liveness.localStall() }
@@ -941,8 +1145,15 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       access.channel.maintenance, type: 14,
       body: V4Crypto.map([(0, V4Crypto.bytes(nonce))]), to: publisher, publication: probe)
   }
-  func submitProbe(_ probe: V4LivenessProbe, to publisher: any V4RecordPublisher) throws {
-    try run { try publishProbe(probe, to: publisher) }
+  @discardableResult func submitProbe(_ probe: V4LivenessProbe, to publisher: any V4RecordPublisher) throws -> Bool {
+    try run {
+      guard !polling, !deciding, try access.channel.canPublish(access.channel.maintenance, access: access)
+      else { return false }
+      polling = true
+      defer { polling = false }
+      try publishProbe(probe, to: publisher)
+      return true
+    }
   }
   func probeResult(_ probe: V4LivenessProbe) throws -> TransportLivenessProgress? {
     try access.environment.gate.withLock { try liveness.snapshot(probe) }
@@ -964,9 +1175,11 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
 
   // An optional handle supplies the original bound-input association. A shared
   // input can provision only one bounded OPEN key; all effects follow AEAD.
-  // Quarantined input is discarded only with its original handle, never by a
-  // peer-controlled header claiming another stream's identity.
-  func receive(_ input: Data, on stream: V4StreamHandle? = nil) throws {
+  // Shared DATA acquires local failure scope only after one successful AEAD
+  // under the accepted outer scope. Subsequent headers only reject input at
+  // that permanent gate; they can never authorize delivery or another key.
+  @discardableResult func receive(_ input: Data, on stream: V4StreamHandle? = nil) throws
+    -> V4StreamReceiveDisposition {
     try run {
       var isolated = false
       do {
@@ -974,12 +1187,15 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
           throw V4CryptoFailure.authentication
         }
         let wire = Data(input)
+        guard V4Crypto.number(wire.prefix(4)) == UInt64(wire.count - 8),
+          wire[5..<8].allSatisfy({ $0 == 0 }) else { throw V4CryptoFailure.authentication }
         let id = V4Crypto.number(wire[12..<20])
+        if stream == nil, try rejectClosedSharedData(wire, scope: id) { return .discardedData }
         let scope: V4RecordScope
         if let stream {
           let s = try resolve(stream)
           guard id == stream.number else { throw V4CryptoFailure.authentication }
-          if s.directions[peer].disabled { return }
+          if s.directions[peer].disabled { return .discardedData }
           scope = s.scope
         } else if id == 0 {
           scope = access.channel.maintenance
@@ -997,97 +1213,150 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
           }
           scope = try access.channel.admitReliableScope(id, access: access)
         }
-        let record: V4AuthenticatedRecord
+        let original = find(id)
+        let nativeIsolation = stream != nil && original?.phase == .accepted && original?.prefix == true
+        original?.cryptoJobs += 1
+        defer { if let original { finishCrypto(original) } }
         do {
-          record = try access.channel.receive(
+          let record = try access.channel.receive(
             scope: scope, wire: wire, access: access,
-            isolateFailure: stream != nil,
-            marker: wire[4] == 6 && (try rekey!.markerForInput(wire)))
-        } catch {
-          if stream != nil, let s = find(id), s.phase == .accepted {
-            try isolate(s)
-            isolated = true
-          }
-          throw error
-        }
-        defer { record.close() }
-        var pong: Data?
-        do {
-          try record.withBytes { body in
-            switch record.frameType {
-            case 6:
-              guard record.scope == 0 else { throw V4CryptoFailure.authentication }
-              try rekey!.receive(record, body: body, owner: self)
-            case 7: try receiveOpen(body, scope: scope, record: record)
-            case 8: try receiveData(body, record: record)
-            case 9:
-              guard record.scope == 0 else { throw V4CryptoFailure.authentication }
-              try receiveControl(body)
-            case 14:
-              guard record.scope == 0, pendingPong == nil else { throw V4CryptoFailure.capacity }
-              pendingPong = try decode(body, "PING").b("nonce")
-            case 15:
-              guard record.scope == 0 else { throw V4CryptoFailure.authentication }
-              pong = try decode(body, "PONG").b("nonce")
-            case 12:
-              guard record.scope == 0 else { throw V4CryptoFailure.authentication }
-              let value = try decode(body, "CLOSE")
-              if try value.u("target_scope") == 0 { throw SessionError.closed }
-              guard let s = find(try value.u("target_scope")) else {
-                throw V4CryptoFailure.authentication
-              }
-              try reset(s)
-            case 13:
-              guard record.scope == 0 else { throw V4CryptoFailure.authentication }
-              let value = try decode(body, "GOAWAY")
-              let ceiling = try value.u("accept_ceiling")
-              let reason = try value.u("reason")
-              guard ceiling == 0 || (Self.valid(ceiling) && (ceiling + 1) % 2 == UInt64(me)),
-                peerCeiling == nil || (ceiling == peerCeiling && reason == peerGoAwayReason),
-                !slots.contains(where: {
-                  $0.opener == access.role && $0.phase == .accepted && $0.scope.number > ceiling
-                })
-              else { throw V4CryptoFailure.authentication }
-              peerCeiling = ceiling
-              peerGoAwayReason = reason
-              draining = true
-            case 11:
-              guard record.scope == 0 else { throw V4CryptoFailure.authentication }
-              let value = try decode(body, "ERROR")
-              let code = try value.u("code")
-              if code == 9 || code == 10 {
-                guard let s = find(try value.u("target_scope")),
-                  [.accepted, .recent].contains(s.phase)
-                else {
-                  throw V4CryptoFailure.authentication
+            isolateFailure: nativeIsolation,
+            marker: wire[4] == 6 && (try rekey!.markerForInput(wire)), commit: { [self] record in
+              var pong: Data?
+              do {
+                try record.withBytes { body in
+                  switch record.frameType {
+                  case 6:
+                    guard record.scope == 0 else { throw V4CryptoFailure.authentication }
+                    try rekey!.receive(record, body: body, owner: self)
+                  case 7: try receiveOpen(body, scope: scope, record: record)
+                  case 8: try receiveData(body, record: record)
+                  case 9:
+                    guard record.scope == 0 else { throw V4CryptoFailure.authentication }
+                    try receiveControl(body, record: record)
+                  case 14:
+                    guard record.scope == 0 else { throw V4CryptoFailure.authentication }
+                    let nonce = try decode(body, "PING").b("nonce")
+                    if pendingPong == nil { pendingPong = nonce }
+                  case 15:
+                    guard record.scope == 0 else { throw V4CryptoFailure.authentication }
+                    pong = try decode(body, "PONG").b("nonce")
+                  case 12:
+                    guard record.scope == 0 else { throw V4CryptoFailure.authentication }
+                    let value = try decode(body, "CLOSE")
+                    if try value.u("target_scope") == 0 { throw SessionError.closed }
+                    guard let s = find(try value.u("target_scope")) else {
+                      throw V4CryptoFailure.authentication
+                    }
+                    try reset(s)
+                  case 13:
+                    guard record.scope == 0 else { throw V4CryptoFailure.authentication }
+                    let value = try decode(body, "GOAWAY")
+                    let ceiling = try value.u("accept_ceiling")
+                    let reason = try value.u("reason")
+                    guard ceiling == 0 || (Self.valid(ceiling) && (ceiling + 1) % 2 == UInt64(me)),
+                      peerCeiling == nil || (ceiling == peerCeiling && reason == peerGoAwayReason),
+                      !slots.contains(where: {
+                        $0.opener == access.role && $0.phase == .accepted && $0.scope.number > ceiling
+                      })
+                    else { throw V4CryptoFailure.authentication }
+                    peerCeiling = ceiling
+                    peerGoAwayReason = reason
+                    draining = true
+                  case 11:
+                    guard record.scope == 0 else { throw V4CryptoFailure.authentication }
+                    let value = try decode(body, "ERROR")
+                    let code = try value.u("code")
+                    if code == 9 || code == 10 {
+                      guard let s = find(try value.u("target_scope")),
+                        [.accepted, .recent].contains(s.phase)
+                      else {
+                        throw V4CryptoFailure.authentication
+                      }
+                      if s.phase == .accepted { try reset(s) }
+                    } else if code != 0 {
+                      throw SessionError.operationFailed
+                    }
+                  default: throw V4CryptoFailure.authentication
+                  }
                 }
-                if s.phase == .accepted { try reset(s) }
-              } else if code != 0 {
-                throw SessionError.operationFailed
+              } catch {
+                if record.frameType == 8, let failure = error as? V4StreamDataFailure,
+                  let s = original, find(id) === s, s.phase == .accepted, s.prefix {
+                  try isolate(s, cause: failure.cause)
+                  isolated = true
+                  return .isolatedStream
+                }
+                throw error
               }
-            default: throw V4CryptoFailure.authentication
-            }
-          }
+              try self.check()
+              try self.authenticatedInput?()
+              if let pong { self.liveness.match(nonce: pong, epoch: record.epoch) }
+              return .committed
+            })
+          record.close()
+          return isolated ? .isolatedStream : .committed
         } catch {
-          if record.frameType == 8, let s = find(id), s.phase == .accepted {
-            try isolate(s)
+          if nativeIsolation, let s = original, find(id) === s, s.phase == .accepted,
+            s.prefix, !isolated {
+            try isolate(s, cause: error)
             isolated = true
+            return .isolatedStream
           }
           throw error
         }
-        // Only a complete authenticated, sequence-checked and protocol-valid
-        // record qualifies. Early discarded/quarantined input never reaches it.
-        try authenticatedInput?()
-        if let pong { liveness.match(nonce: pong, epoch: record.epoch) }
       } catch {
         if !isolated { close() }
         throw error
       }
     }
   }
+  private func rejectClosedSharedData(_ wire: Data, scope id: UInt64) throws -> Bool {
+    guard wire[4] == 8, Self.valid(id) else { return false }
+    let permanent: Bool
+    let minimumEpoch: UInt32
+    if let s = find(id) {
+      let d = s.directions[peer]
+      permanent = s.prefix && (s.phase == .recent || s.phase == .stable
+        || s.phase == .accepted
+          && (d.firstFailure != nil || d.proof?.aborted == true || d.terminalObserved))
+      minimumEpoch = s.openEpoch
+    } else {
+      permanent = sharedStableScopes[Int(id / 8)] & (1 << (id % 8)) != 0
+      // A collected bit proves authenticated retirement. The original
+      // Session installs consecutive roots from zero, so all retired epochs
+      // remain globally known without keeping a per-scope epoch/key table.
+      minimumEpoch = 0
+    }
+    guard permanent else { return false }
+    // Candidate keys/peer hints do not permit future epoch rejection. This
+    // checks only the original installed epoch and allocates/opens no key.
+    let installed = try access.channel.rekeyState(access).epoch
+    let headerEpoch = V4Crypto.number(wire[8..<12])
+    guard headerEpoch >= UInt64(minimumEpoch), headerEpoch <= UInt64(installed) else {
+      throw V4CryptoFailure.sequence
+    }
+    if sharedDiscardWindow == nil {
+      sharedDiscardWindow = try V4LocalWorkWindow(clock: clock, durationMS: 10_000)
+    }
+    try sharedDiscardWindow!.check()
+    let bytes = UInt64(wire.count)
+    guard sharedDiscardRecords < 16, sharedDiscardBytes <= 65_536,
+      bytes <= 65_536 - sharedDiscardBytes else { throw V4CryptoFailure.capacity }
+    sharedDiscardRecords += 1
+    sharedDiscardBytes += bytes
+    return true
+  }
   private func receiveOpen(_ body: Data, scope: V4RecordScope, record: V4AuthenticatedRecord) throws
   {
-    let v = try decode(body, "OPEN_STREAM")
+    let v = try access.channel.receiveWork(access, scope: scope, epoch: record.epoch) {
+      let value = try self.decode(body, "OPEN_STREAM")
+      guard try value.b("open_digest") == value.digest("open_digest") else {
+        throw V4CryptoFailure.authentication
+      }
+      return value
+    }
+    try check()
     let id = record.scope
     guard Self.valid(id), id & 1 == (access.role.peer == .client ? 1 : 0),
       record.sequence == 0, try v.u("stream_id") == id, try v.u("scope") == id,
@@ -1098,7 +1367,6 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     let metadata = try v.b("metadata")
     let limit = try v.u("initial_receive_limit")
     let digest = try v.b("open_digest")
-    guard try digest == v.digest("open_digest") else { throw V4CryptoFailure.authentication }
     if let s = find(id) {
       guard s.bootstrap, !s.prefix, kind == "flowersec.rpc.v4", metadata.isEmpty,
         limit == 16_384
@@ -1142,12 +1410,17 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     slots.append(s)
   }
   private func receiveData(_ body: Data, record: V4AuthenticatedRecord) throws {
-    let v = try decode(body, "STREAM_DATA")
+    let v: V4NamespaceValue
+    do { v = try decode(body, "STREAM_DATA") }
+    catch let failure as V4NamespaceFailure
+      where failure == .encoding || failure == .schema || failure == .capacity {
+      throw V4StreamDataFailure(cause: failure)
+    }
     guard let s = find(record.scope), s.prefix, [.opening, .accepted].contains(s.phase),
       try v.u("stream_id") == record.scope, try v.u("direction") == UInt64(peer),
       try v.u("epoch") == UInt64(record.epoch), try v.u("sequence") == record.sequence
     else {
-      throw V4CryptoFailure.authentication
+      throw V4StreamDataFailure(cause: V4CryptoFailure.authentication)
     }
     try rekey?.checkIncomingFrontier(
       scope: record.scope, epoch: record.epoch, next: record.sequence + 1)
@@ -1159,14 +1432,16 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       end <= d.committed, record.epoch >= d.current.epoch,
       record.epoch <= (try access.channel.rekeyState(access)).epoch + 1, record.sequence < .max
     else {
-      throw V4CryptoFailure.authentication
+      throw V4StreamDataFailure(cause: V4CryptoFailure.authentication)
     }
     let current = V4StreamTuple(epoch: record.epoch, next: record.sequence + 1, offset: end)
     if let terminal = d.terminal, !current.precedes(terminal) {
-      throw V4CryptoFailure.authentication
+      throw V4StreamDataFailure(cause: V4CryptoFailure.authentication)
     }
     let fin = try v.field("fin").raw.elementsEqual([0xf5])
-    if fin, let terminal = d.terminal, terminal != current { throw V4CryptoFailure.authentication }
+    if fin, let terminal = d.terminal, terminal != current {
+      throw V4StreamDataFailure(cause: V4CryptoFailure.authentication)
+    }
     if d.stop {
       d.released += UInt64(data.count)
       promised -= UInt64(data.count)
@@ -1184,6 +1459,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       try begin(d)
       try trimPromise(s, limit: end)
     }
+    try fenceObservedTerminal(s)
   }
   private func controlSchema(_ body: Data) throws -> String {
     guard let first = body.first else { throw V4CryptoFailure.authentication }
@@ -1201,11 +1477,11 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     default: throw V4CryptoFailure.authentication
     }
   }
-  private func receiveControl(_ body: Data) throws {
+  private func receiveControl(_ body: Data, record: V4AuthenticatedRecord) throws {
     let schema = try controlSchema(body)
     let v = try decode(body, schema)
     if schema == "STREAM_ACK_RETIRE_BATCH" || schema == "STREAM_ACK_RETIRE_ACK" {
-      try receiveRetirement(v, body: body)
+      try receiveRetirement(v, body: body, record: record)
       return
     }
     let id = try v.u("stream_id")
@@ -1300,6 +1576,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
         releaseQueue(s)
       }
       try trimPromise(s, limit: terminal.offset)
+      try fenceObservedTerminal(s)
     case "STREAM_ACK_DRAINED":
       let terminal = try V4StreamTuple(v.field("terminal_tuple"))
       let observed = try V4StreamTuple(v.field("observed_tuple"))
@@ -1315,13 +1592,18 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     default: throw V4CryptoFailure.authentication
     }
   }
+  private func finishCrypto(_ s: Slot) {
+    s.cryptoJobs -= 1
+    guard !closed else { return }
+    do { try recent(s); try collect() } catch { close() }
+  }
   private func recent(_ s: Slot) throws {
     guard s.directions.allSatisfy({ $0.complete }) else { return }
     if s.phase != .recent && s.phase != .stable {
       s.phase = .recent
       s.recentAt = try clock.mark()
     }
-    if !s.keysRetired {
+    if !s.keysRetired, s.cryptoJobs == 0 {
       try access.channel.retire(s.scope, access: access)
       s.keysRetired = true
     }
@@ -1329,7 +1611,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   private func collect() throws {
     slots.removeAll { s in
       guard s.phase == .stable, s.batchRefs == 0, s.barrierRefs == 0, s.unpublished == 0,
-        s.ring.count == 0
+        s.ring.count == 0, s.cryptoJobs == 0, s.keysRetired
       else { return false }
       discardBacking(s)
       return true
@@ -1337,19 +1619,23 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   }
   private func stable(_ ids: [UInt64]) throws {
     for id in ids {
-      guard let s = find(id), s.batchRefs > 0 else { throw V4CryptoFailure.phase }
+      guard let s = find(id), s.batchRefs > 0, s.phase == .recent, s.prefix,
+        s.directions.allSatisfy({ $0.complete }) else { throw V4CryptoFailure.phase }
       s.batchRefs -= 1
       s.phase = .stable
+      sharedStableScopes[Int(id / 8)] |= 1 << (id % 8)
     }
     try collect()
   }
-  private func retirementDigest(_ body: Data, proposer: V4CryptoRole) -> Data {
-    V4Crypto.hash(
+  private func retirementDigest(_ body: Data, proposer: V4CryptoRole,
+    receiving epoch: UInt32? = nil) throws -> Data {
+    try access.channel.recordDigest(access, scope: access.channel.maintenance, bytes:
       Data("flowersec/v4/retire-batch\0".utf8) + V4Crypto.lp(access.hash)
         + V4Crypto.lp(Data(access.profile.rawValue.utf8)) + Data([proposer.rawValue])
-        + V4Crypto.lp(body))
+        + V4Crypto.lp(body), receiving: epoch)
   }
-  private func receiveRetirement(_ v: V4NamespaceValue, body: Data) throws {
+  private func receiveRetirement(_ v: V4NamespaceValue, body: Data,
+    record: V4AuthenticatedRecord) throws {
     let sequence = try v.u("batch_seq")
     if v.schema == "STREAM_ACK_RETIRE_ACK" {
       let digest = try v.b("batch_digest")
@@ -1367,7 +1653,8 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       try stable(batch.ids)
       return
     }
-    let digest = retirementDigest(body, proposer: access.role.peer)
+    let digest = try retirementDigest(body, proposer: access.role.peer, receiving: record.epoch)
+    try check()
     if sequence < lastIn { return }
     if sequence == lastIn {
       guard digest == lastInDigest else { throw V4CryptoFailure.authentication }
@@ -1395,11 +1682,14 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     for id in ids { find(id)!.batchRefs += 1 }
     incoming = Batch(sequence: sequence, digest: digest, ids: ids, started: try clock.mark())
   }
-  private func isolate(_ s: Slot) throws {
-    try reset(s)
+  private func isolate(_ s: Slot, cause: any Error) throws {
+    try check()
     let d = s.directions[peer]
+    if d.firstFailure == nil { d.firstFailure = cause }
+    try reset(s)
     d.disabled = true
-    d.quarantined = try clock.mark()
+    if d.quarantined == nil { d.quarantined = try clock.mark() }
+    try access.channel.disableReceive(s.scope, access: access)
     releaseQueue(s)
     guard
       slots.filter({ $0.directions[peer].disabled && !$0.directions[peer].complete }).count <= 32
@@ -1407,6 +1697,15 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       close()
       throw V4CryptoFailure.capacity
     }
+  }
+  private func fenceObservedTerminal(_ s: Slot) throws {
+    let d = s.directions[peer]
+    guard !d.terminalObserved, let terminal = d.terminal,
+      d.current == terminal || d.last == terminal else { return }
+    if !s.keysRetired { try access.channel.disableReceive(s.scope, access: access) }
+    // Retain the authenticated terminal proof across any later rekeys. This
+    // does not mark a normal FIN aborted or manufacture a DRAINED publication.
+    d.terminalObserved = true
   }
   private func deadlines() throws {
     for batch in [incoming, outgoing].compactMap({ $0 }) {
@@ -1446,13 +1745,13 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
       guard s.phase == .accepted else { continue }
       let send = s.directions[me]
       let receive = s.directions[peer]
-      if send.finRequested, send.terminal == nil, !send.stop, rekey?.frozen != true {
+      if send.finRequested, send.terminal == nil, !send.stop, rekey?.frozen != true,
+        try access.channel.canPublish(s.scope, access: access) {
         _ = try write(s, data: Data(), fin: true, to: publisher)
         return true
       }
       if receive.stop, !receive.fin, !receive.stopSent {
-        try sendControl(control(2, s, peer), to: publisher)
-        receive.stopSent = true
+        try sendControl(control(2, s, peer), to: publisher, ticketed: { receive.stopSent = true })
         return true
       }
       if let terminal = send.terminal, !send.stoppedSent, !send.fin || send.stoppedRequested {
@@ -1462,8 +1761,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
             [
               (3, u(UInt64(terminal.epoch))),
               (4, u(terminal.next)), (5, u(terminal.offset)),
-            ]), to: publisher)
-        send.stoppedSent = true
+            ]), to: publisher, ticketed: { send.stoppedSent = true })
         return true
       }
       if let terminal = receive.terminal, !receive.drainSent {
@@ -1478,17 +1776,18 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
             [
               (3, terminal.encoded), (4, u(aborted ? 1 : 0)),
               (5, observed.encoded),
-            ]), to: publisher)
-        receive.proof = proof
-        receive.drainSent = true
-        if aborted {
-          receive.disabled = true
-          promised -= receive.limit - receive.released
-          receive.limit = receive.released
-          receive.committed = receive.released
-        }
-        try recent(s)
-        discardBacking(s)
+            ]), to: publisher, ticketed: {
+              receive.proof = proof
+              receive.drainSent = true
+              if aborted {
+                receive.disabled = true
+                self.promised -= receive.limit - receive.released
+                receive.limit = receive.released
+                receive.committed = receive.released
+              }
+              try self.recent(s)
+              self.discardBacking(s)
+            })
         return true
       }
     }
@@ -1498,9 +1797,9 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     for s in slots {
       let d = s.directions[peer]
       guard s.phase == .accepted, s.creditDirty, !d.stop, d.terminal == nil else { continue }
-      try sendControl(control(0, s, peer, [(3, u(d.ack)), (4, u(d.limit))]), to: publisher)
-      d.committed = d.limit
-      s.creditDirty = false
+      let limit = d.limit
+      try sendControl(control(0, s, peer, [(3, u(d.ack)), (4, u(limit))]), to: publisher,
+        ticketed: { d.committed = limit; s.creditDirty = false })
       return true
     }
     return false
@@ -1510,17 +1809,17 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   }
   private func pollRetirement(to publisher: any V4RecordPublisher) throws -> Bool {
     if repeatACK {
-      try sendControl(retireACK(lastIn, lastInDigest), to: publisher)
-      repeatACK = false
+      try sendControl(retireACK(lastIn, lastInDigest), to: publisher, ticketed: { self.repeatACK = false })
       return true
     }
     if let batch = incoming {
       guard batch.ids.allSatisfy({ find($0)?.unpublished == 0 }) else { return false }
-      try sendControl(retireACK(batch.sequence, batch.digest), to: publisher)
-      lastIn = batch.sequence
-      lastInDigest = batch.digest
-      incoming = nil
-      try stable(batch.ids)
+      try sendControl(retireACK(batch.sequence, batch.digest), to: publisher, ticketed: {
+        self.lastIn = batch.sequence
+        self.lastInDigest = batch.digest
+        self.incoming = nil
+        try self.stable(batch.ids)
+      })
       return true
     }
     guard outgoing == nil, lastOut < .max else { return false }
@@ -1541,7 +1840,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
     let sequence = lastOut + 1
     let body = V4Crypto.map([(0, u(5)), (1, u(sequence)), (2, array)])
     let batch = Batch(
-      sequence: sequence, digest: retirementDigest(body, proposer: access.role),
+      sequence: sequence, digest: try retirementDigest(body, proposer: access.role),
       ids: ids, started: try clock.mark())
     for id in ids { find(id)!.batchRefs += 1 }
     outgoing = batch
@@ -1552,6 +1851,10 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   // terminal controls precede credit, then acknowledged evidence retirement.
   @discardableResult func poll(to publisher: any V4RecordPublisher) throws -> Bool {
     try run {
+      guard !polling, !deciding, try access.channel.canPublish(access.channel.maintenance, access: access)
+      else { return false }
+      polling = true
+      defer { polling = false }
       do {
         let epoch = try access.channel.rekeyState(access).epoch
         if let s = slots.first(where: {
@@ -1564,15 +1867,15 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
         if let nonce = pendingPong {
           try send(
             access.channel.maintenance, type: 15,
-            body: V4Crypto.map([(0, V4Crypto.bytes(nonce))]), to: publisher)
-          pendingPong = nil
+            body: V4Crypto.map([(0, V4Crypto.bytes(nonce))]), to: publisher,
+            ticketed: { _, _ in self.pendingPong = nil })
           return true
         }
         if try rekey!.poll(owner: self, to: publisher) { return true }
         if !rekey!.frozen, let ceiling = localGoAway, !goAwaySent {
           try send(access.channel.maintenance, type: 13, body: V4Crypto.map([
-            (0, V4NamespaceValue.head(0, ceiling)), (1, V4NamespaceValue.head(0, 0))]), to: publisher)
-          goAwaySent = true
+            (0, V4NamespaceValue.head(0, ceiling)), (1, V4NamespaceValue.head(0, 0))]), to: publisher,
+            ticketed: { _, _ in self.goAwaySent = true })
           return true
         }
         if !rekey!.frozen, try pollCredit(to: publisher) { return true }
@@ -1586,6 +1889,8 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
         }
         return false
       } catch {
+        if (error as? V4CryptoFailure == .capacity || error as? V4ResourceFailure == .capacity),
+          (try? check()) != nil { return false }
         close()
         throw error
       }
@@ -1593,10 +1898,17 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   }
   @discardableResult func requestRekey(to publisher: any V4RecordPublisher) throws -> Bool {
     try run {
+      guard !polling, !deciding else { throw V4CryptoFailure.phase }
+      guard try access.channel.canPublish(access.channel.maintenance, access: access)
+      else { return false }
+      polling = true
+      defer { polling = false }
       do {
         try rekey!.rememberIntent()
         return try rekey!.poll(owner: self, to: publisher)
       } catch {
+        if (error as? V4CryptoFailure == .capacity || error as? V4ResourceFailure == .capacity),
+          (try? check()) != nil { return false }
         close()
         throw error
       }
@@ -1604,6 +1916,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   }
   func epoch() throws -> UInt32 { try run { try access.channel.rekeyState(access).epoch } }
   private func observed(_ d: Direction, epoch: UInt32) throws -> V4StreamTuple {
+    if d.terminalObserved, let terminal = d.terminal, terminal.epoch == epoch { return terminal }
     if d.current.epoch == epoch { return d.current }
     if d.last.epoch == epoch { return d.last }
     if epoch > d.last.epoch, epoch < d.current.epoch {
@@ -1651,7 +1964,7 @@ final class V4ReliableSession: @unchecked Sendable, CustomStringConvertible, Cus
   func rekeyInstall(_ token: V4ReliableSessionAdmission, epoch: UInt32) throws {
     try checkAccess(token)
     for s in slots {
-      for d in s.directions where d.current.epoch < epoch {
+      for d in s.directions where d.current.epoch < epoch && !d.disabled {
         d.last = d.current
         d.current = V4StreamTuple(epoch: epoch, offset: d.current.offset)
       }

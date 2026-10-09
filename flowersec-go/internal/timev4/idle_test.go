@@ -117,3 +117,131 @@ func TestIdleCheckAtRechecksPublishedFrontierWithoutHostCallback(t *testing.T) {
 		t.Fatal("expired idle owner revived", err)
 	}
 }
+
+func TestIdleAdjacentGatesPreserveMonotonicOwnerAcrossWallRepair(t *testing.T) {
+	for _, gate := range []string{"check", "refresh", "remaining"} {
+		t.Run(gate, func(t *testing.T) {
+			clock, source := testClock(t, &Interval{10000, 10000})
+			idle, err := NewIdle(clock, 30000, 0)
+			if err != nil || idle.Start() != nil {
+				t.Fatal(err)
+			}
+			before, err := clock.Sample()
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := func(sample Sample, wantRemaining uint64) error {
+				t.Helper()
+				adapter := clock.sample
+				clock.sample = func() (Tick, error) {
+					t.Fatal("adjacent idle gate called host clock")
+					return Tick{}, ErrUnavailable
+				}
+				defer func() { clock.sample = adapter }()
+				switch gate {
+				case "check":
+					return idle.CheckAt(sample)
+				case "refresh":
+					return idle.RefreshAt(sample)
+				default:
+					remaining, armed, err := idle.RemainingMSAt(sample)
+					if err == nil && (!armed || remaining != wantRemaining) {
+						t.Fatalf("remaining = %d, armed = %v, want %d", remaining, armed, wantRemaining)
+					}
+					return err
+				}
+			}
+			// Another read ages the wall anchor while the original idle remains
+			// continuous and unexpired. Both valid and wall-invalid samples
+			// must reach the same latest monotonic frontier.
+			source.set(10001, 1, nil)
+			unavailable, err := clock.Sample()
+			if !errors.Is(err, ErrUnavailable) {
+				t.Fatal("old wall anchor authorized work", err)
+			}
+			if _, err := clock.RefreshSample(before); !errors.Is(err, ErrUnavailable) {
+				t.Fatal("adjacent wall gate accepted aged anchor", err)
+			}
+			for _, sample := range []Sample{before, unavailable} {
+				if err := check(sample, 19999); err != nil {
+					t.Fatal("anchor ageing poisoned idle", err)
+				}
+			}
+			installTest(t, clock, Interval{20001, 20001})
+			source.set(10002, 1, nil)
+			mark, err := clock.Monotonic()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := clock.InstallTrusted(mark, Interval{40000, 40000}); !errors.Is(err, ErrContradiction) {
+				t.Fatal("contradiction did not invalidate wall trust", err)
+			}
+			if err := check(before, 19998); err != nil {
+				t.Fatal("wall invalidation poisoned idle", err)
+			}
+			source.set(10003, 1, nil)
+			installTest(t, clock, Interval{20003, 20003})
+			if _, err := clock.RefreshSample(before); !errors.Is(err, ErrUnavailable) {
+				t.Fatal("repair revived retired wall authorization", err)
+			}
+			if err := check(before, 19997); err != nil {
+				t.Fatal("wall repair poisoned idle", err)
+			}
+			deadline := uint64(30000)
+			if gate == "refresh" {
+				// Only actual qualifying activity above moved the idle deadline.
+				deadline = 40003
+			}
+			source.set(deadline, 1, nil)
+			if _, err := clock.Monotonic(); err != nil {
+				t.Fatal(err)
+			}
+			if err := check(before, 0); !errors.Is(err, ErrExpired) {
+				t.Fatal("wall repair extended original idle deadline", err)
+			}
+			installTest(t, clock, Interval{10000 + deadline, 10000 + deadline})
+			if err := check(before, 0); !errors.Is(err, ErrExpired) {
+				t.Fatal("repair revived expired idle", err)
+			}
+		})
+	}
+}
+
+func TestIdleAdjacentGatesRejectRetiredMonotonicEra(t *testing.T) {
+	for _, gate := range []string{"check", "refresh", "remaining"} {
+		t.Run(gate, func(t *testing.T) {
+			clock, source := testClock(t, &Interval{10000, 10000})
+			idle, err := NewIdle(clock, 1000, 0)
+			if err != nil || idle.Start() != nil {
+				t.Fatal(err)
+			}
+			before, err := clock.Sample()
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := func(sample Sample) error {
+				switch gate {
+				case "check":
+					return idle.CheckAt(sample)
+				case "refresh":
+					return idle.RefreshAt(sample)
+				default:
+					_, _, err := idle.RemainingMSAt(sample)
+					return err
+				}
+			}
+			source.set(1, 2, nil)
+			installTest(t, clock, Interval{10001, 10001})
+			after, err := clock.Sample()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := check(before); !errors.Is(err, ErrContinuity) {
+				t.Fatal("retired monotonic era authorized idle", err)
+			}
+			if err := check(after); !errors.Is(err, ErrContinuity) {
+				t.Fatal("new era revived original idle", err)
+			}
+		})
+	}
+}

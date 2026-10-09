@@ -27,12 +27,20 @@ const text = (value: Value): string => { if (value.kind !== "text") throw new Er
 const uint = (value: Value): bigint => { if (value.kind !== "uint") throw new Error("invalid current browser fixture integer"); return value.value; };
 const data = (value: Value): number[] => { if (value.kind !== "bytes") throw new Error("invalid current browser fixture bytes"); return Array.from(value.value); };
 const unpack = (wire: string, maximum: number): number[] => { const bytes = peerBytes(wire, maximum); try { return Array.from(bytes); } finally { bytes.fill(0); } };
-async function bootstrap(endpoint: string, trustPEM: string, tenant: string, authority: string, nonce: readonly number[]): Promise<Readonly<{ response: number[]; state: number[] }>> {
+async function bootstrap(endpoint: string, trustPEM: string, tenant: string, authority: string, nonce: readonly number[], publicCAHost?: string): Promise<Readonly<{ response: number[]; state: number[] }>> {
   const url = new URL(endpoint);
-  if (!["http:", "https:"].includes(url.protocol) || !["127.0.0.1", "localhost"].includes(url.hostname) || url.username !== "" || url.password !== "" || nonce.length !== 32) throw new Error("invalid current bootstrap endpoint");
+  const publicCA = publicCAHost !== undefined && url.hostname === publicCAHost;
+  if (!["http:", "https:"].includes(url.protocol) || (!publicCA && !["127.0.0.1", "localhost"].includes(url.hostname)) || publicCA && url.protocol !== "https:" || url.username !== "" || url.password !== "" || nonce.length !== 32) throw new Error("invalid current bootstrap endpoint");
   const body = Buffer.from(JSON.stringify({ tenant, authority, nonce: Buffer.from(nonce).toString("base64") }));
   const raw = await new Promise<Buffer>((resolve, reject) => {
-    const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, { method: "POST", ...(url.protocol === "https:" ? { ca: trustPEM, minVersion: "TLSv1.3" } : {}), headers: { "content-type": "application/json", "content-length": body.length }, timeout: 10000 }, response => {
+    const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, { method: "POST", ...(url.protocol === "https:" ? {
+      minVersion: "TLSv1.3",
+      ...(publicCA ? {
+        // Mirror Chromium's test-host mapping while preserving SNI and public CA verification.
+        family: 4, autoSelectFamily: false,
+        lookup: (_hostname: string, _options: unknown, callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void) => callback(null, "127.0.0.1", 4),
+      } : { ca: trustPEM }),
+    } : {}), headers: { "content-type": "application/json", "content-length": body.length }, timeout: 10000 }, response => {
       if (response.statusCode !== 200) { response.resume(); reject(new Error("current bootstrap refused")); return; }
       const chunks: Buffer[] = []; let length = 0;
       response.on("data", (chunk: Buffer) => { length += chunk.length; if (length > 262144) { request.destroy(new Error("current bootstrap exceeded its bound")); return; } chunks.push(chunk); });
@@ -72,6 +80,8 @@ export async function startGoWebTransportPeer(origin: string, options: Readonly<
     const value = await ready, material = readCurrentPeerMaterial(value.artifact_json);
     if (value.wire_revision !== 4 || value.profile !== material.profile || value.source !== "preauthorized_pool" || material.profile !== "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1" || material.source !== "preauthorized_pool" || material.role !== 0 || material.tunnels.length !== 0 || value.origin !== origin || typeof value.trust_pem !== "string" || value.trust_pem.length === 0 || value.trust_pem.length > 1048576) throw new Error("unsupported current Go WT installation");
     const endpoint = new URL(value.url); if (endpoint.protocol !== "https:" || endpoint.href !== value.url || endpoint.username !== "" || endpoint.password !== "" || endpoint.hash !== "" || endpoint.search !== "") throw new Error("invalid current Go WT endpoint");
+    const publicCAHost = options.publicCA ? process.env.FLOWERSEC_BROWSER_PUBLIC_CA_HOST : undefined;
+    if (options.publicCA && (publicCAHost === undefined || endpoint.hostname !== publicCAHost)) throw new Error("current Go WT endpoint differs from the configured public-CA host");
     const artifact = decode(material.artifact, 65536), activation = decode(material.activation, 4096), client = decode(material.client_certificate, 16384), server = decode(material.server_certificate, 16384), route = decode(material.route, 16384);
     const leg = peerField(route, "Route", "direct_leg"), tls = peerField(leg, "Leg", "tls_policy"), mode = uint(peerField(tls, "TLSPolicy", "mode"));
     if (uint(peerField(leg, "Leg", "carrier")) !== 2n || mode > 1n) throw new Error("current browser driver did not install WebTransport");
@@ -82,7 +92,7 @@ export async function startGoWebTransportPeer(origin: string, options: Readonly<
       tlsMode: mode === 0n ? "ca" : "pin", pins, services: true, spendAuthority: text(peerField(activation, "ActivationAuthorization", "authority_id")), identitySeed: unpack(material.identity_seed, 32), noiseSeed: unpack(material.dh_seed, 32), policy,
       namespaces: material.namespaces.map(record => ({ tenant: record.tenant, authority: record.authority, generation: record.generation, rootKeyID: unpack(record.root_key_id, 16), rootPublicKey: unpack(record.root_public_key, 32) })),
       input: { artifact: unpack(material.artifact, 65536), clientCertificate: unpack(material.client_certificate, 16384), serverCertificate: unpack(material.server_certificate, 16384), activation: unpack(material.activation, 4096), candidateIndex: 0 },
-      bootstrap: (index, nonce) => { const record = material.namespaces[index]; if (record === undefined) throw new Error("unknown original namespace"); return bootstrap(record.bootstrap_url, value.trust_pem, record.tenant, record.authority, nonce); } };
+      bootstrap: (index, nonce) => { const record = material.namespaces[index]; if (record === undefined) throw new Error("unknown original namespace"); return bootstrap(record.bootstrap_url, value.trust_pem, record.tenant, record.authority, nonce, publicCAHost); } };
     return { ...fixture, certificateHash: value.certificate_hash, finished: async () => { const code = await ended; if (code !== 0) throw new Error(`current Go WT driver failed (${code}):\n${diagnostics}`); }, diagnostics: () => diagnostics, close };
   } catch (error) { await close(); throw error; }
 }

@@ -74,12 +74,19 @@ func (o *StreamOwnership) releaseClosed() {
 // The existing bounded coordinator revisits explicit raw closes without
 // waiting for any owner. It takes no owner lock while holding admission.
 func (a *OpenAdmission) releaseClosedStreams() {
+	a.mu.Lock()
 	for i := range a.slots {
-		a.mu.Lock()
 		owner := a.slots[i].owner
+		if owner == nil || !owner.closeRequested.Load() {
+			continue
+		}
+		// Only an explicit close needs an owner gate. Scan untouched slots
+		// under one admission gate, then release it before physical cleanup.
 		a.mu.Unlock()
 		owner.releaseClosed()
+		a.mu.Lock()
 	}
+	a.mu.Unlock()
 }
 
 // reserveCopy uses this Stream's original budget root and account scopes.

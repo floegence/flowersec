@@ -21,6 +21,7 @@ const POSITIONS: usize = 64;
 pub(crate) struct DatagramBacking {
     sends: Arc<Semaphore>,
     receiving: AtomicBool,
+    crypto: Arc<Semaphore>,
     _charge: Option<ResourceCharge>,
 }
 pub(crate) struct DatagramLease {
@@ -33,7 +34,65 @@ impl Drop for ReceiveLease {
         self.0.receiving.store(false, Ordering::Release);
     }
 }
+struct CryptoLease {
+    _backing: Arc<DatagramBacking>,
+    _permit: OwnedSemaphorePermit,
+}
+pub(crate) struct DatagramSeal {
+    work: RecordWork,
+    pub(crate) wire: Zeroizing<Vec<u8>>,
+    expires_ms: u64,
+    _original: CryptoLease,
+}
+impl DatagramSeal {
+    pub(crate) fn check(&self) -> Result<()> {
+        self.work.check()
+    }
+    pub(crate) fn expired(&self) -> Result<bool> {
+        Ok(self.work.account.security_time()?.upper_ms >= self.expires_ms)
+    }
+    pub(crate) fn epoch(&self) -> u32 {
+        u32::from_be_bytes(
+            self.wire[8..12]
+                .try_into()
+                .expect("original datagram epoch"),
+        )
+    }
+    pub(crate) fn execute(&mut self) -> Result<()> {
+        if self.expired()? {
+            return Err(CryptoError::Deadline);
+        }
+        self.work.seal(&mut self.wire)?;
+        if self.expired()? {
+            self.wire.zeroize();
+            return Err(CryptoError::Deadline);
+        }
+        Ok(())
+    }
+    pub(crate) fn take_wire(&mut self) -> Vec<u8> {
+        std::mem::take(&mut *self.wire)
+    }
+}
+pub(crate) struct DatagramOpen {
+    work: RecordWork,
+    plain: Zeroizing<[u8; MAXIMUM]>,
+    epoch: u32,
+    sequence: u64,
+    delta: Usage,
+    _original: CryptoLease,
+}
+impl DatagramOpen {
+    pub(crate) fn execute(&mut self, wire: &[u8]) -> Result<usize> {
+        self.work.open(wire, self.plain.as_mut())
+    }
+}
 impl DatagramBacking {
+    fn claim_crypto(self: &Arc<Self>) -> Option<CryptoLease> {
+        Some(CryptoLease {
+            _backing: self.clone(),
+            _permit: self.crypto.clone().try_acquire_owned().ok()?,
+        })
+    }
     pub(crate) fn send(self: &Arc<Self>) -> Option<DatagramLease> {
         Some(DatagramLease {
             _backing: self.clone(),
@@ -161,6 +220,7 @@ impl State {
             backing: Arc::new(DatagramBacking {
                 sends: Arc::new(Semaphore::new(if enabled { POSITIONS } else { 0 })),
                 receiving: AtomicBool::new(false),
+                crypto: Arc::new(Semaphore::new(if enabled { 2 } else { 0 })),
                 _charge: charge,
             }),
             replay: Replay::new(),
@@ -294,13 +354,13 @@ impl RecordEngine {
             .map_err(|_| UnreliableMessageError::OperationFailed)?;
         self.datagrams.guard()
     }
-    pub(crate) fn seal_datagram(
+    pub(crate) fn prepare_datagram(
         &mut self,
         payload: &[u8],
         native: usize,
         expires_ms: u64,
     ) -> std::result::Result<
-        std::result::Result<Vec<u8>, UnreliableSendOutcome>,
+        std::result::Result<DatagramSeal, UnreliableSendOutcome>,
         UnreliableMessageError,
     > {
         if !self.datagram_available() {
@@ -323,6 +383,9 @@ impl RecordEngine {
         if payload.len() > Self::datagram_maximum(native) {
             return Err(UnreliableMessageError::TooLarge);
         }
+        let Some(original) = self.datagrams.backing.claim_crypto() else {
+            return Ok(Err(UnreliableSendOutcome::DroppedBudget));
+        };
         let index = self
             .slot_for(false, SCOPE, self.role)
             .map_err(|_| UnreliableMessageError::Unavailable)?;
@@ -362,27 +425,20 @@ impl RecordEngine {
         self.check()
             .map_err(|_| UnreliableMessageError::OperationFailed)?;
         output[28..28 + size].copy_from_slice(&plain[..size]);
-        let mut nonce = [0; 12];
-        nonce[..4].copy_from_slice(&self.epoch.to_be_bytes());
-        nonce[4..].copy_from_slice(&sequence.to_be_bytes());
-        let tag = self
-            .cipher(false, index)
-            .map_err(|_| UnreliableMessageError::OperationFailed)?
-            .seal_in_place_separate_tag(
-                Nonce::assume_unique_for_key(nonce),
-                Aad::from(&aad),
-                &mut output[28..28 + size],
-            )
+        let work = self
+            .record_work(false, index, &aad, self.epoch, sequence)
             .map_err(|_| UnreliableMessageError::OperationFailed)?;
-        output[28 + size..].copy_from_slice(tag.as_ref());
-        self.check()
-            .map_err(|_| UnreliableMessageError::OperationFailed)?;
-        Ok(Ok(std::mem::take(&mut *output)))
+        Ok(Ok(DatagramSeal {
+            work,
+            wire: output,
+            expires_ms,
+            _original: original,
+        }))
     }
-    pub(crate) fn receive_datagram(
+    pub(crate) fn prepare_datagram_open(
         &mut self,
         wire: &[u8],
-    ) -> std::result::Result<(), UnreliableMessageError> {
+    ) -> std::result::Result<Option<DatagramOpen>, UnreliableMessageError> {
         self.datagram_guard()?;
         if wire.len() < 44
             || wire.len() > MAXIMUM
@@ -393,25 +449,28 @@ impl RecordEngine {
         {
             self.account
                 .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::CurrentDatagramDrops);
-            return Ok(());
+            return Ok(None);
         }
         let wire_epoch = u32::from_be_bytes(wire[8..12].try_into().expect("bounded epoch"));
         if wire_epoch < self.epoch {
             self.account
                 .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::OldDatagramDrops);
-            return Ok(());
+            return Ok(None);
         }
         if wire_epoch > self.epoch {
             self.account
                 .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::FutureDatagramDrops);
-            return Ok(());
+            return Ok(None);
         }
         let sequence = u64::from_be_bytes(wire[20..28].try_into().expect("bounded sequence"));
         if !self.datagrams.replay.admits(sequence) {
             self.account
                 .diagnostic_count(crate::diagnostics_v4::DiagnosticCounter::OldDatagramDrops);
-            return Ok(());
+            return Ok(None);
         }
+        let Some(original) = self.datagrams.backing.claim_crypto() else {
+            return Ok(None);
+        };
         let index = self
             .slot_for(false, SCOPE, 1 - self.role)
             .map_err(|_| UnreliableMessageError::Unavailable)?;
@@ -434,7 +493,7 @@ impl RecordEngine {
         {
             self.datagrams.key_blocked = true;
             self.datagrams.clear_queue();
-            return self.datagrams.guard();
+            return self.datagrams.guard().map(|()| None);
         }
         self.charge(false, index, false, aad.len(), size, true)
             .map_err(|_| UnreliableMessageError::OperationFailed)?;
@@ -443,31 +502,44 @@ impl RecordEngine {
             .attempts
             .add(delta)
             .map_err(|_| UnreliableMessageError::OperationFailed)?;
-        let mut output = Zeroizing::new([0u8; MAXIMUM]);
-        output[..size + 16].copy_from_slice(&wire[28..]);
-        let mut nonce = [0; 12];
-        nonce[..4].copy_from_slice(&self.epoch.to_be_bytes());
-        nonce[4..].copy_from_slice(&sequence.to_be_bytes());
-        let opened = self
-            .cipher(false, index)
-            .map_err(|_| UnreliableMessageError::OperationFailed)?
-            .open_in_place(
-                Nonce::assume_unique_for_key(nonce),
-                Aad::from(&aad),
-                &mut output[..size + 16],
-            );
-        let plain = match opened {
-            Ok(plain) => plain,
-            Err(_) => {
+        let work = self
+            .record_work(false, index, &aad, self.epoch, sequence)
+            .map_err(|_| UnreliableMessageError::OperationFailed)?;
+        Ok(Some(DatagramOpen {
+            work,
+            plain: Zeroizing::new([0; MAXIMUM]),
+            epoch: self.epoch,
+            sequence,
+            delta,
+            _original: original,
+        }))
+    }
+    pub(crate) fn finish_datagram_open(
+        &mut self,
+        job: DatagramOpen,
+        opened: Result<usize>,
+    ) -> std::result::Result<(), UnreliableMessageError> {
+        self.datagram_guard()?;
+        if job.epoch != self.epoch {
+            return Ok(());
+        }
+        job.work
+            .check()
+            .map_err(|_| UnreliableMessageError::OperationFailed)?;
+        let size = match opened {
+            Ok(size) => size,
+            Err(CryptoError::Authentication) => {
                 self.datagrams.failed_authentication();
                 self.account.diagnostic_count(
                     crate::diagnostics_v4::DiagnosticCounter::CurrentDatagramDrops,
                 );
                 return Ok(());
             }
+            Err(_) => return Err(UnreliableMessageError::OperationFailed),
         };
+        let sequence = job.sequence;
         let Ok(value) = crate::codec_v4::decode_context(
-            plain,
+            &job.plain[..size],
             "DATAGRAM",
             crate::codec_v4::Limits {
                 bytes: MAXIMUM,
@@ -510,6 +582,8 @@ impl RecordEngine {
             .controls
             .activity(now)
             .map_err(|_| UnreliableMessageError::OperationFailed)?;
+        let sequence = job.sequence;
+        let delta = job.delta;
         let account = self.account.clone();
         account
             .with_security(|| -> Result<()> {

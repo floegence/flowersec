@@ -810,7 +810,7 @@ export class V4EnvironmentRuntime implements V4EnvironmentOwner {
     if (options?.signal?.aborted) fail("canceled");
     if (this.#sessions.size + this.#admissions.size + this.#preparations.size + this.#connectionClaims.size >= this.#config.sessions) this.#resourceUnavailable();
     const abort = new AbortController(), signal = options?.signal === undefined ? abort.signal : AbortSignal.any([abort.signal, options.signal]);
-    this.#preparations.add(abort); state.claimed = true;
+    state.preparationAbort = abort; this.#preparations.add(abort); state.claimed = true;
     if (state.timer !== undefined) clearTimeout(state.timer); state.timer = undefined;
     let fields: ClientPreparationFields | undefined;
     try {
@@ -822,7 +822,7 @@ export class V4EnvironmentRuntime implements V4EnvironmentOwner {
       spec.transport.checkPreparation(); state.closure.checkServerIdentity(spec.noise.localStaticPrivate, spec.signer.publicKey, this.#reference!);
       return await this.#establish(material, spec, new Uint8Array(), { ...options, signal }, undefined, undefined, undefined, { exchange, authority, owner, fields });
     } catch (error) { this.releaseMaterial(token, material); throw error; }
-    finally { exchange.close(); if (fields !== undefined) clearClientPreparation(fields); this.#preparations.delete(abort); this.#cleanup(); }
+    finally { delete state.preparationAbort; exchange.close(); if (fields !== undefined) clearClientPreparation(fields); this.#preparations.delete(abort); this.#cleanup(); }
   }
   #checkPoolServerActivation(state: MaterialState): void {
     if (state.closure!.requiresPoolServerAllow(this.#reference!) && state.poolServerAllowed !== true) fail("owner_unavailable");
@@ -869,7 +869,11 @@ export class V4EnvironmentRuntime implements V4EnvironmentOwner {
     const serverWorkIndex = costs.length; if (server !== undefined) costs.push(["server_admission_store", server.authority.charge()]);
     const refs = state.admission?.take(costs, rpcPlan === undefined ? undefined : { inputs: rpcPlan.inputs, queries: rpcPlan.queries }) ?? c.root.reserveBatch(costs.map(([kind, charge]) => this.#request(kind, charge)));
     const abort = new AbortController(), signal = options?.signal === undefined ? abort.signal : AbortSignal.any([abort.signal, options.signal]);
-    this.#admissions.add(abort); if (state.connectionClaim !== undefined) this.#connectionClaims.delete(state.connectionClaim); state.claimed = true; if (state.timer !== undefined) clearTimeout(state.timer); state.timer = undefined;
+    this.#admissions.add(abort);
+    // Transfer the original connection slot into admission. Carrier and
+    // exchange custody remain retained, but one connection counts only once.
+    if (state.preparationAbort !== undefined) this.#preparations.delete(state.preparationAbort);
+    if (state.connectionClaim !== undefined) this.#connectionClaims.delete(state.connectionClaim); state.claimed = true; if (state.timer !== undefined) clearTimeout(state.timer); state.timer = undefined;
     let ledger: CryptoUsageLedger | undefined, delivery: ReceiveDeliveryGate | undefined, runtime: V4AuthenticatedSessionRuntime | undefined;
     let ephemeral = new Uint8Array(), sendAccount: ResourceAccount | undefined, sendAccounts: ProtectedResourceAccounts | undefined, nativePositions: NativeProtocolPositions | undefined;
     let maintenancePositions: MaintenancePositions | undefined;

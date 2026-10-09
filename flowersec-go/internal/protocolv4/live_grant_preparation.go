@@ -105,10 +105,15 @@ func (p LiveGrantPreparation) checkScopeAt(v CredentialValidation, requirement C
 	if scope.Cohort < n.observed.floors[1] {
 		return 0, false, CBORFailure("revocation_floor_rejected")
 	}
-	if err := n.checkIssuerAt(v.Issuer, scope, now); err != nil {
+	trust, err := n.lockClosureReadAt(now)
+	if err != nil {
 		return 0, false, err
 	}
-	if err := n.checkPolicyAt(v.Policy, now); err != nil {
+	defer trust.unlock()
+	if err := trust.issuerAt(v.Issuer, scope, now); err != nil {
+		return 0, false, err
+	}
+	if err := trust.policyAt(v.Policy, now); err != nil {
 		return 0, false, err
 	}
 	if err := n.rules.CheckPublication(requirement); err != nil {
@@ -120,18 +125,22 @@ func (p LiveGrantPreparation) checkScopeAt(v CredentialValidation, requirement C
 	}
 	// Independent trust callbacks precede temporal classification. A provider
 	// returning a time sentinel cannot turn a failed trust lookup into a wait.
-	if err := n.checkHeadTrustAt(state.head, now); err != nil {
+	if err := trust.headTrustAt(state.head, now); err != nil {
 		return 0, false, err
 	}
 	if err := func() error {
 		w := state.workspace
-		w.mu.Lock()
-		defer w.mu.Unlock()
-		if w.current != state {
+		if trust.state == nil {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			if w.current != state {
+				return CBORFailure("revocation_state_owner")
+			}
+			if err := w.reservation.Check(); err != nil {
+				return err
+			}
+		} else if trust.state != state {
 			return CBORFailure("revocation_state_owner")
-		}
-		if err := w.reservation.Check(); err != nil {
-			return err
 		}
 		cohort, err := state.cohort(1, scope.Cohort)
 		if err != nil {

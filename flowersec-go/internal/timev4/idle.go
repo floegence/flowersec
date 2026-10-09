@@ -146,7 +146,7 @@ func (i *Idle) Refresh() error {
 // Refreshing its local frontier invokes no host adapter and cannot revive an
 // expired owner or a retired clock era.
 func (i *Idle) CheckAt(sample Sample) error {
-	current, err := i.clock.RefreshSample(sample)
+	current, err := i.clock.refreshMark(sample.Mark)
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.terminal != nil {
@@ -155,7 +155,7 @@ func (i *Idle) CheckAt(sample Sample) error {
 	if !i.enabled || !i.started {
 		return nil
 	}
-	if err != nil || !current.Mark.SameEra(i.last) {
+	if err != nil || !current.SameEra(i.last) {
 		i.terminal = ErrContinuity
 		return i.terminal
 	}
@@ -168,7 +168,7 @@ func (i *Idle) CheckAt(sample Sample) error {
 // RefreshAt recognizes qualifying activity at an existing continuous sample.
 // It checks the previous idle limit before advancing it and calls no host code.
 func (i *Idle) RefreshAt(sample Sample) error {
-	current, err := i.clock.RefreshSample(sample)
+	current, err := i.clock.refreshMark(sample.Mark)
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.terminal != nil {
@@ -177,7 +177,7 @@ func (i *Idle) RefreshAt(sample Sample) error {
 	if !i.enabled || !i.started {
 		return nil
 	}
-	if err != nil || !current.Mark.SameEra(i.last) {
+	if err != nil || !current.SameEra(i.last) {
 		i.terminal = ErrContinuity
 		return i.terminal
 	}
@@ -186,14 +186,14 @@ func (i *Idle) RefreshAt(sample Sample) error {
 			i.terminal = ErrExpired
 			return i.terminal
 		}
-		i.last = current.Mark
+		i.last = current
 	}
 	return nil
 }
 
 // RemainingMSAt projects the original idle limit at the caller's local gate.
 func (i *Idle) RemainingMSAt(sample Sample) (uint64, bool, error) {
-	current, err := i.clock.RefreshSample(sample)
+	current, err := i.clock.refreshMark(sample.Mark)
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.terminal != nil {
@@ -202,7 +202,7 @@ func (i *Idle) RemainingMSAt(sample Sample) (uint64, bool, error) {
 	if !i.enabled || !i.started {
 		return 0, false, nil
 	}
-	if err != nil || !current.Mark.SameEra(i.last) {
+	if err != nil || !current.SameEra(i.last) {
 		i.terminal = ErrContinuity
 		return 0, true, i.terminal
 	}

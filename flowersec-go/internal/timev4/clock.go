@@ -244,6 +244,15 @@ func (c *Clock) currentMarkLocked(mark Mark) (Mark, error) {
 	return Mark{Tick: c.last, owner: c, era: c.era}, nil
 }
 
+// refreshMark advances a monotonic-only owner to the published frontier.
+// Wall-anchor availability and trust generations do not establish or break
+// monotonic continuity. This local gate invokes no host adapter.
+func (c *Clock) refreshMark(mark Mark) (Mark, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.currentMarkLocked(mark)
+}
+
 func (c *Clock) interval(now Mark) (Interval, error) {
 	a := c.anchor
 	if a == nil || !now.SameEra(a.origin) || now.Milliseconds < a.at.Milliseconds {

@@ -606,9 +606,12 @@
     func publish(_ buffer: V4CryptoBuffer, completion: @escaping @Sendable (Bool) -> Void) throws {
       try claim.publish(buffer, completion: completion)
     }
+    func reserveRecordOutput(maintenance: Bool) throws -> V4RecordOutput {
+      try claim.reserveRecordOutput(maintenance: maintenance)
+    }
     func receive() async throws -> V4CryptoBuffer { try await claim.receive() }
     func flush() async throws { try await claim.flush() }
-    func writable() throws -> Bool { try claim.writable() }
+    func writable(maintenance: Bool = false) throws -> Bool { try claim.writable(maintenance: maintenance) }
     func wakeup(_ action: (@Sendable () -> Void)?) { claim.wakeup(action) }
     func recordCompletion(_ action: (@Sendable () throws -> Void)?) {
       claim.recordCompletion(action)

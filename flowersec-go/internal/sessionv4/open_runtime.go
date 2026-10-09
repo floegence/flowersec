@@ -197,6 +197,15 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 	if err = ctx.Err(); err != nil {
 		return h, result, err
 	}
+	// This is the original fixed encoder's direction owner, never a Session
+	// state gate. Close and maintenance do not acquire or wait for it.
+	a.openEncode.Lock()
+	encodingHeld := true
+	defer func() {
+		if encodingHeld {
+			a.openEncode.Unlock()
+		}
+	}()
 	a.mu.Lock()
 	if a.closed || a.draining || a.peerGoAway.set {
 		a.mu.Unlock()
@@ -230,7 +239,20 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 	}
 	scope := 2*a.nextOrdinal - 1 + uint64(a.direction)
 	sizeHeader := protocolv4.RecordHeader{Scope: scope, Epoch: ^uint32(0)}
-	input, _, err := protocolv4.EncodeOpen(a.encode, sizeHeader, a.direction, kind, metadata, reservation.InitialReceiveLimit)
+	if len(reservation.OpenStorage) < len(kind)+len(metadata) || !a.beginTailLocked() {
+		a.mu.Unlock()
+		return h, result, cryptov4.ErrConfiguration
+	}
+	defer a.endTail()
+	copy(reservation.OpenStorage, kind)
+	copy(reservation.OpenStorage[len(kind):], metadata)
+	snapshot := reservation.OpenStorage[:len(kind)+len(metadata)]
+	defer clear(snapshot)
+	// Claim the existing bounded OPEN encoder. Close and maintenance never
+	// wait for this original job or clear its storage before its actual exit.
+	a.mu.Unlock()
+	input, _, err := protocolv4.EncodeOpen(a.encode, sizeHeader, a.direction,
+		string(snapshot[:len(kind)]), snapshot[len(kind):], reservation.InitialReceiveLimit)
 	if err == nil {
 		var frame *protocolv4.Frame
 		frame, err = a.decoder.DecodeRecordBody(input, protocolv4.FrameOpenStream, sizeHeader, a.direction, protocolv4.DecodeContext{})
@@ -238,11 +260,33 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 			frame.Release()
 		}
 	}
-	if err != nil || len(reservation.OpenStorage) < len(kind)+len(metadata) {
-		a.mu.Unlock()
-		if err == nil {
-			err = cryptov4.ErrConfiguration
+	kindDigest := sha256.Sum256(snapshot[:len(kind)])
+	a.mu.Lock()
+	if err == nil && (a.closed || a.draining || a.peerGoAway.set) {
+		err = cryptov4.ErrClosed
+	}
+	if err == nil {
+		err = a.checkDeadline(deadline)
+	}
+	if err == nil && (!a.positiveAvailableProtected(a.direction, class, false, protected) || !a.localOpeningAvailable(protected)) {
+		err = cryptov4.ErrCapacity
+	}
+	if err == nil && protected >= 0 {
+		_, err = reservation.openProtection.availableLocked(a, class)
+	}
+	if err == nil && protected < 0 && class == BusinessStream && a.direction == protocolv4.ServerToClient {
+		for i := int(a.limits.Terminal); i < len(a.slots); i++ {
+			if a.slots[i].phase == openPending && a.slots[i].contender {
+				err = ErrOpenPending
+				break
+			}
 		}
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		a.mu.Unlock()
 		return h, result, err
 	}
 	carrier.mu.Lock()
@@ -262,13 +306,6 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 	}
 	a.nextOrdinal++
 	a.lifetime[a.direction][class]++
-	copy(reservation.OpenStorage, kind)
-	copy(reservation.OpenStorage[len(kind):], metadata)
-	snapshot := reservation.OpenStorage[:len(kind)+len(metadata)]
-	// Keep the aggregate pin through snapshot clearing and all failure tails.
-	a.beginTailLocked()
-	defer a.endTail()
-	defer clear(snapshot)
 	carrier.bound, carrier.scope = a, scope
 	carrier.mu.Unlock()
 	s := &a.slots[i]
@@ -277,7 +314,7 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 	if protected >= 0 {
 		s.protectionInUse, s.protectionScope = true, scope
 	}
-	a.slots[i].kindDigest = sha256.Sum256(snapshot[:len(kind)])
+	a.slots[i].kindDigest = kindDigest
 	a.insert(scope, i)
 	a.active++
 	a.opening++
@@ -285,6 +322,8 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 	a.byOpener[a.direction][class]++
 	h = OpenHandle{a, scope}
 	a.mu.Unlock()
+	encodingHeld = false
+	a.openEncode.Unlock()
 	// Keep the original positive/proof/ordinal owner while bounded key work
 	// runs without holding either Session admission or carrier association.
 	err = a.engine.OpenLocalScope(scope)
@@ -313,28 +352,47 @@ func (a *OpenAdmission) OpenLocal(ctx context.Context, class StreamClass, kind s
 	}
 	result, err = flow.send.writer.WriteBuildGuard(ctx, protocolv4.FrameOpenStream, len(input), func(header protocolv4.RecordHeader, dst []byte) (int, error) {
 		a.mu.Lock()
-		defer a.mu.Unlock()
 		s, lookupErr := a.slot(h)
 		if lookupErr != nil {
+			a.mu.Unlock()
 			return 0, lookupErr
 		}
 		// Retain the actual ticket even when cancellation/deadline wins after
 		// precharge. The caller closes this Session on a failed publication.
 		s.header, s.submitted = header, true
+		if a.retirement != nil {
+			a.retirement.notify()
+		}
 		if a.closed || s.cancelled {
+			a.mu.Unlock()
+			return 0, cryptov4.ErrClosed
+		}
+		if err := a.checkDeadline(s.deadline); err != nil {
+			a.mu.Unlock()
+			return 0, err
+		}
+		localLimit := s.localLimit
+		flow.send.mu.Lock()
+		flow.send.frontier = TerminalTuple{Epoch: header.Epoch, NextSequence: header.Sequence + 1}
+		flow.send.mu.Unlock()
+		a.mu.Unlock()
+		wire, digest, encodeErr := protocolv4.EncodeOpen(dst, header, a.direction, string(snapshot[:len(kind)]), snapshot[len(kind):], localLimit)
+		if encodeErr != nil {
+			return 0, encodeErr
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		s, lookupErr = a.slot(h)
+		if lookupErr != nil {
+			return 0, lookupErr
+		}
+		if a.closed || s.cancelled || s.header != header {
 			return 0, cryptov4.ErrClosed
 		}
 		if err := a.checkDeadline(s.deadline); err != nil {
 			return 0, err
 		}
-		wire, digest, encodeErr := protocolv4.EncodeOpen(dst, header, a.direction, string(snapshot[:len(kind)]), snapshot[len(kind):], s.localLimit)
-		if encodeErr != nil {
-			return 0, encodeErr
-		}
 		s.digest = digest
-		flow.send.mu.Lock()
-		flow.send.frontier = TerminalTuple{Epoch: header.Epoch, NextSequence: header.Sequence + 1}
-		flow.send.mu.Unlock()
 		return len(wire), nil
 	}, nil, &a.openGate)
 	if err != nil {

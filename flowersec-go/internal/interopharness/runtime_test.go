@@ -5,12 +5,61 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
 	fs "github.com/floegence/flowersec/flowersec-go/v6"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
+
+type failedNamespaceBootstrap struct {
+	failure error
+	queries int
+}
+
+func (p *failedNamespaceBootstrap) Query(context.Context, protocolv4.NamespaceBootstrapRequest, []byte) (int, error) {
+	p.queries++
+	return 0, p.failure
+}
+
+func (*failedNamespaceBootstrap) Fetch(context.Context, protocolv4.NamespaceContent, []byte) (int, error) {
+	return 0, errors.New("failed bootstrap unexpectedly fetched namespace state")
+}
+
+func TestReporterBootstrapFailureRetiresOriginalNamespaceOwner(t *testing.T) {
+	for _, failure := range []error{timev4.ErrFutureTimestamp, timev4.ErrExpired} {
+		t.Run(failure.Error(), func(t *testing.T) {
+			reporter, err := NewPeerReporter()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := reporter.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			provider := &failedNamespaceBootstrap{failure: failure}
+			reporter.bootstrap = provider
+			policy, err := protocolv4.EncodeMap(make([]byte, 4096), "TLSPolicy", []protocolv4.Field{{Name: "mode"}, {Name: "require_consumer_tls13_verification", Kind: protocolv4.Boolean, Number: 1}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			authority, err := construct(reporter, func() *sessionv4.PublicQUICTestHarness {
+				return sessionv4.NewEngineeringNativeHarness(reporter, "preauthorized_pool", protocolv4.DHProfileX25519, "websocket", netip.MustParseAddrPort("127.0.0.1:443"), policy, "https://runner.flowersec.invalid", false)
+			})
+			if authority != nil || !errors.Is(err, failure) || provider.queries != 1 {
+				t.Fatalf("original failed bootstrap: authority=%v, err=%v, queries=%d", authority, err, provider.queries)
+			}
+			if err := reporter.Close(); err != nil {
+				t.Fatalf("failed bootstrap retained a namespace owner: %v", err)
+			}
+		})
+	}
+}
 
 func manualEchoPlan(_ *Runtime, role uint8) (fs.StreamHandlerPlanConfig, error) {
 	return fs.StreamHandlerPlanConfig{RuntimeBytes: 16384, Handlers: []fs.RawStreamHandlerConfig{{Kind: "engineering/manual", Manual: true, Slots: 2, WorkClass: fs.WorkResident, AuthorizeOpen: func(_ context.Context, binding any, _ []byte) error {

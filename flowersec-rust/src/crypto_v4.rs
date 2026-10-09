@@ -25,8 +25,8 @@ pub use connect::{
 pub(crate) use keys::LocalKeys;
 pub(crate) use records::ReliableSession;
 pub(crate) use records::{
-    DatagramLease, NativeStreamBinding, RecordEngine, ResumeMessageClaim, SessionLink,
-    SessionReceiver, SessionTransport, StreamPreparation, StreamPublicationAdmission,
+    DatagramLease, NativeStreamBinding, ReceiveDisposition, RecordEngine, ResumeMessageClaim,
+    SessionLink, SessionReceiver, SessionTransport, StreamPreparation, StreamPublicationAdmission,
 };
 pub use records::{
     DrainOperation, DrainOutcome, DrainResult, Metadata, OpenRequest, ProbeOutcome, ProbeResult,
@@ -134,6 +134,10 @@ pub(crate) trait RecordPublisher {
         Ok(())
     }
     fn publish(&mut self, record: &[u8]) -> Result<()>;
+    fn publish_seal(&mut self, work: records::RecordWork, record: &mut [u8]) -> Result<()> {
+        work.seal(record)?;
+        self.publish(record)
+    }
     fn is_deferred(&self) -> bool {
         false
     }

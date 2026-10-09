@@ -142,7 +142,7 @@ func newApplicationIdentity(c ApplicationIdentityConfig, wire []byte, trust *pro
 	if trust != nil {
 		i.certificate, err = i.codec.VerifyCredential(wire, trust)
 	} else {
-		i.certificate, err = i.codec.Verify(wire, c.Certificate.Key(), protocolv4.DecodeContext{})
+		i.certificate, err = i.codec.CopyVerified(c.Certificate, protocolv4.DecodeContext{})
 	}
 	if err != nil {
 		return nil, err

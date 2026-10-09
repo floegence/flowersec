@@ -74,6 +74,12 @@ func (a *OpenAdmission) prepareBootstrap(reservation BootstrapReservation, share
 		reservation.InitialReceiveLimit != spec.ReceiveLimit || reservation.SendCapacity == 0 || reservation.ReceiveCapacity < spec.ReceiveLimit || reservation.SendQueue != nil && reservation.SendQueue.Capacity < spec.ReceiveLimit {
 		return nil, cryptov4.ErrConfiguration
 	}
+	header := protocolv4.RecordHeader{Scope: spec.Scope, Epoch: ^uint32(0)}
+	wire, _, err := protocolv4.EncodeOpen(reservation.OpenStorage, header, spec.Opener, spec.Kind, nil, spec.ReceiveLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(wire)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if shared != nil && (a.sharedIngress != shared || shared.admission != a || shared.receiver != reservation.Receiver) {
@@ -85,11 +91,6 @@ func (a *OpenAdmission) prepareBootstrap(reservation BootstrapReservation, share
 	i := a.freeSlot(false, false)
 	if i < 0 {
 		return nil, cryptov4.ErrCapacity
-	}
-	header := protocolv4.RecordHeader{Scope: spec.Scope, Epoch: ^uint32(0)}
-	wire, _, err := protocolv4.EncodeOpen(reservation.OpenStorage, header, spec.Opener, spec.Kind, nil, spec.ReceiveLimit)
-	if err != nil {
-		return nil, err
 	}
 	provider := &bootstrapWriter{}
 	reservation.Writer = provider
@@ -312,20 +313,40 @@ func (b *Bootstrap) PublishPrefix(ctx context.Context) (result RecordWriteResult
 	flow.send.mu.Unlock()
 	a.mu.Unlock()
 	result, err = flow.send.writer.WriteBuildGuard(ctx, protocolv4.FrameOpenStream, b.prefixMax, func(header protocolv4.RecordHeader, dst []byte) (int, error) {
+		defer func() {
+			flow.send.mu.Lock()
+			flow.send.encoding = false
+			flow.send.mu.Unlock()
+		}()
 		a.mu.Lock()
-		defer a.mu.Unlock()
 		s, err := a.slot(b.handle)
 		if err != nil {
+			a.mu.Unlock()
 			return 0, err
 		}
 		s.header, s.submitted = header, true
 		flow.send.mu.Lock()
-		defer func() { flow.send.encoding = false; flow.send.mu.Unlock() }()
 		if header.Epoch != flow.send.frontier.Epoch || header.Sequence != 0 || flow.send.frontier.NextSequence != 0 || flow.send.frontier.Offset != 0 {
+			flow.send.mu.Unlock()
+			a.mu.Unlock()
 			return 0, ErrStreamData
 		}
 		flow.send.frontier.NextSequence = header.Sequence + 1
+		flow.send.mu.Unlock()
+		a.mu.Unlock()
 		wire, digest, err := protocolv4.EncodeOpen(dst, header, b.spec.Opener, b.spec.Kind, nil, b.spec.ReceiveLimit)
+		if err != nil {
+			return 0, err
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		s, err = a.slot(b.handle)
+		if err != nil {
+			return 0, err
+		}
+		if a.closed || s.cancelled || s.header != header {
+			return 0, cryptov4.ErrClosed
+		}
 		s.digest = digest
 		return len(wire), err
 	}, nil, sendTicket{flow: flow.send})

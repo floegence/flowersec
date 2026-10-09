@@ -74,10 +74,10 @@ test("Chromium runs the current WebSocket client profile", async ({ page, browse
         let length = 0;
         for (;;) {
           const response = await stream.read(16n, { signal });
-          if (response.wait_status !== "ready" || response.stream_status === "aborted" || response.stream_status === "error" || response.length > received.length - length) throw new Error("parity echo stream failed");
-          received.set(response.data, length); length += response.length;
+          if (response.wait_status !== "ready" || response.stream_status === "aborted" || response.stream_status === "error" || response.data.length > received.length - length) throw new Error("parity echo stream failed");
+          received.set(response.data, length); length += response.data.length;
           if (response.stream_status === "eof") break;
-          if (response.length === 0) throw new Error("empty open parity Stream read");
+          if (response.data.length === 0) throw new Error("empty open parity Stream read");
         }
         if (decoder.decode(received.subarray(0, length)) !== "world") throw new Error("parity stream response differs");
         const finished = await stream.finish({ signal });

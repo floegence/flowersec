@@ -2,7 +2,7 @@ import { registerPoolJournalStore, type PoolJournalStore } from "../v4/runtime/p
 import type { V4TransportEnvironment } from "../v4/public.js";
 import { originalEnvironment, type V4EnvironmentRuntime, type EnvironmentDependency } from "../v4/runtime/environment.js";
 import { ResourceVector, type ResourceReference } from "../v4/runtime/resources.js";
-import { credentialDigest, equalCredential } from "../v4/runtime/credentialSupport.js";
+import { credentialDigest, credentialOwner, equalCredential } from "../v4/runtime/credentialSupport.js";
 import { isVerifiedPoolSpendFacts, type VerifiedPoolSpendFacts, type PoolSpendFields } from "../v4/runtime/credentialVerifier.js";
 import { encodePoolProjection, poolLeaseKey, type PoolRecordIdentity } from "../v4/runtime/poolRecord.js";
 import { poolProjectionInspectionBytes, validatePersistedPoolProjection } from "../v4/runtime/poolRecordStorage.js";
@@ -70,7 +70,7 @@ export function createV4IndexedDBPoolBacking(environment: V4TransportEnvironment
     typeof limits.providerRuntimeBytes !== "bigint" || limits.providerRuntimeBytes <= 0n || limits.providerRuntimeBytes > maximum ||
     typeof limits.storageBytes !== "bigint" || limits.storageBytes < 65536n + BigInt(limits.maxRecords) * BigInt(limits.maxRecordBytes + 1024) * 3n || limits.storageBytes > maximum) fail("configuration_capacity");
   const owner = originalEnvironment(environment), c = Object.freeze({ ...limits }), resources = owner.resources;
-  const reference = resources.root.reserve({ owner: { ...resources.owner, kind: "indexeddb_pool_disk" }, accounts: resources.accounts,
+  const reference = resources.root.reserve({ owner: credentialOwner(resources, "indexeddb_pool_disk"), accounts: resources.accounts,
     charge: new ResourceVector([4096n + c.runtimeBytes, 0n, c.storageBytes, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n]) });
   return new V4IndexedDBPoolBacking(token, { environment: owner, name, limits: c, reference, active: false, closed: false });
 }
@@ -248,7 +248,7 @@ export class V4IndexedDBPoolStore implements PoolSpendStore, PoolJournalStore {
   async #journal(key: Uint8Array, expected: Uint8Array | undefined, replacement: Uint8Array | undefined, check: () => void): Promise<Uint8Array | undefined> {
     this.#check(); const state = this.#state, limits = state.backing.limits, resources = state.backing.environment.resources;
     if (key.length !== 16 || (expected?.length ?? 0) > limits.maxRecordBytes || (replacement?.length ?? 0) > limits.maxRecordBytes) fail("capacity");
-    const ref = resources.root.reserve({ owner: { ...resources.owner, kind: "indexeddb_pool_journal" }, accounts: resources.accounts,
+    const ref = resources.root.reserve({ owner: credentialOwner(resources, "indexeddb_pool_journal"), accounts: resources.accounts,
       charge: new ResourceVector([BigInt(limits.maxRecordBytes * 4 + 65536), BigInt(limits.maxRecordBytes + 16384), 0n, 1n, 1n, 1n, 0n, 0n, 0n, 0n, 0n]) });
     let result: Uint8Array | undefined;
     try {
@@ -285,7 +285,7 @@ export class V4IndexedDBPoolStore implements PoolSpendStore, PoolJournalStore {
     const s = this.#state, c = s.backing.limits;
     this.#check(); if (!isVerifiedPoolSpendFacts(facts) || !deadline.belongsTo(s.backing.environment.clock) || !s.dependency.reference.sameEnvironment(admission)) fail("owner_unavailable");
     facts.check(admission); const r = s.backing.environment.resources;
-    const reference = r.root.reserve({ owner: { ...r.owner, kind: "indexeddb_pool_consume" }, accounts: r.accounts,
+    const reference = r.root.reserve({ owner: credentialOwner(r, "indexeddb_pool_consume"), accounts: r.accounts,
       charge: new ResourceVector([BigInt(c.maxRecordBytes * 3 + 32768) + c.runtimeBytes, 0n, 0n, 4n, 1n, 1n, 1n, 0n, 0n, 0n, 0n]) });
     let fields: PoolSpendFields | undefined, projection: Uint8Array | undefined, key: Uint8Array | undefined;
     const check = (): void => { reference.check(); admission.check(); deadline.check(); facts.check(admission); if (guard() !== undefined) fail("owner_unavailable"); };

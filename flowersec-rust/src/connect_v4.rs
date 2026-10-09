@@ -3946,12 +3946,14 @@ async fn connect_original_attempt(
                 tokio::select! {
                     result = incoming.recv() => match result {
                         Some(wire) => {
-                            if input_provider
-                                .receive_maintenance(&receiver, &wire)
-                                .is_err()
-                            {
-                                receiver.close_input(crate::SessionError::OperationFailed);
-                                break;
+                            match input_provider.receive_maintenance(&receiver, &wire) {
+                                Ok(crate::crypto_v4::ReceiveDisposition::Applied
+                                    | crate::crypto_v4::ReceiveDisposition::Isolated { .. }
+                                    | crate::crypto_v4::ReceiveDisposition::Discarded { .. }) => {},
+                                Err(cause) => {
+                                    receiver.close_input(cause);
+                                    break;
+                                }
                             }
                         }
                         None => {

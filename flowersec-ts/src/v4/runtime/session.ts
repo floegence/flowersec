@@ -45,16 +45,17 @@ import type { OperationOptions } from "../../public/contract.js";
 import { applyRawStreamMetadataContract, type StreamMetadata, streamMetadataBytes, streamMetadataFromDocument } from "../../public/streamMetadata.js";
 import type { V4LifecycleResult, V4CleanupStatus, V4CloseResult, V4SessionInfo, V4ReadResult, V4WriteProgress } from "../../generated/transportV4APIResults.js";
 import type { V4SessionOwner, V4StreamOwner, V4CursorReadOwner, V4WriteRequestOwner } from "../public.js";
-import { byteLength, byteSlice, CBORDecoder, cborDecoderCharge, type CBORDocument } from "./cbor.js";
+import { byteLength, byteSlice, CBORDecoder, CBORWireError, cborDecoderCharge, type CBORDocument } from "./cbor.js";
 import { isVerifiedCredentialClosure, type VerifiedCredentialClosure, type CredentialSessionBinding } from "./credentialVerifier.js";
 import { RecordCryptoError, type CryptoKeyPositions, type CryptoUsageLedger } from "./cryptoUsage.js";
 import type { ClockMark } from "./clock.js";
-import { timerChunk, type TrustedDeadline } from "./deadline.js";
+import { timerChunk, TrustedWindow, type TrustedDeadline } from "./deadline.js";
 import { EnvelopeDecoder, envelopeDecoderCharge, type EnvelopeFrame, type EnvelopePrefixCheck } from "./envelope.js";
 import { NoiseHandshake, type NoiseHandshakeConfig, type NoiseRole, type ReadyConfig, type ReadyIdentitySigner } from "./noiseHandshake.js";
 import type { RecordDirection } from "./record.js";
 import { type RecordAuthorization, type RecordCipher, type RecordCipherConfig, type RecordEpoch, type RecordPacket, recordEpochCharge } from "./recordCrypto.js";
-import { ReliableReceiveDirection, type ReceiveDeliveryGate, type ReceiveDirectionConfig, receiveDirectionCharge, receiveDecoderCharge, receiveCursorCharge } from "./receiveDirection.js";
+import { ReliableReceiveDirection, ReceiveError, type ReceiveDeliveryGate, type ReceiveDirectionConfig, receiveDirectionCharge, receiveDecoderCharge, receiveCursorCharge } from "./receiveDirection.js";
+import { SchemaValidationError } from "./schema.js";
 import { ResourceError, ResourceVector, type ResourceReference, type ResourceRoot, type ResourceAccount, type ResourceOwner, type ProtectedResourceReservation, type ProtectedResourceAccounts, protectedAccountPoolCharge } from "./resources.js";
 import { bootstrapSpec, FixedCBORWriter, OpenAdmission, OpenAdmissionError, type OpenAdmissionConfig, type OpenHandle } from "./openAdmission.js";
 import { RekeyRound, type RekeyEntry, type RekeyConfig } from "./rekey.js";
@@ -244,6 +245,7 @@ const copy = Uint8Array.prototype.set;
 const readyActivation = Symbol("original dual READY completion");
 const complete = cleanupResult({ status: "complete", core_cleanup: "complete", pending_callbacks: 0n });
 const pending: V4CleanupStatus = Object.freeze({ status: "pending", core_cleanup: "pending", pending_callbacks: 0n });
+const sharedDiscardPolicy = Object.freeze({ maxRecords: 16, maxBytes: 65536, durationMS: 10000n });
 function frameType(name: string): number { const value = wire.frame_types[name]; if (value === undefined) fail("configuration_capacity"); return value; }
 function capacity(maxFrame: number, runtimeBytes: bigint): number {
   if (!Number.isSafeInteger(maxFrame) || maxFrame < 103 || maxFrame > wire.resource_caps.max_payload_length ||
@@ -264,9 +266,10 @@ export function authenticatedSessionCharge(maxReceiveDirections: number, runtime
   // Eight probe slots prepay bounded waiters, timers and actual provider tails.
   // The idle and optional automatic scheduler share this admission lifecycle.
   // One fixed Drain owner includes its scheduler, deadline and result cell.
+  // The shared discard counters and original timerless window cost 192 bytes.
   // After actual core exit this reservation shrinks to the compact close cell;
   // remaining callbacks retain their separate original work reservations.
-  return new ResourceVector([runtimeBytes * 11n + 5632n + BigInt(maxReceiveDirections) * 256n, 0n, 0n, 11n, 11n, 11n, 13n, 0n, 0n, 9n, 0n]).add(sessionCleanupCharge(runtimeBytes));
+  return new ResourceVector([runtimeBytes * 11n + 5824n + BigInt(maxReceiveDirections) * 256n, 0n, 0n, 11n, 11n, 11n, 13n, 0n, 0n, 9n, 0n]).add(sessionCleanupCharge(runtimeBytes));
 }
 
 /** Registry envelope only; HANDSHAKE and READY carry their original payloads. */
@@ -467,7 +470,7 @@ class TransportOutput {
       if (result === undefined || !accepted) fail("carrier_failed");
       admitted = true;
       this.#tail = result.completion.then(
-        () => { try { this.#activity?.(); } finally { this.#finish(); } },
+        () => { this.#finish(); this.#activity?.(); },
         error => { if (!this.#closed) { observeNativeConnectionFailure(error); this.#failed?.(error); } this.#finish(); throw error; },
       );
       void this.#tail.catch(() => undefined);
@@ -844,9 +847,8 @@ function controlDecoderConfig(maxFrame: number, runtimeBytes: bigint): Readonly<
 export function sessionControlDecoderCharge(maxFrame: number, runtimeBytes: bigint): ResourceVector { return cborDecoderCharge(controlDecoderConfig(maxFrame, runtimeBytes)); }
 export function sessionControlCharge(maxFrame: number, runtimeBytes: bigint): ResourceVector {
   capacity(maxFrame, runtimeBytes);
-  // Independent inbound plaintext and outbound canonical body, plus the fixed
-  // PING nonce. Cipher/output owners retain their own separate backing.
-  return new ResourceVector([BigInt(maxFrame * 3 + 32 * 7 + 64 * 3 * 1024 + 1024) + runtimeBytes, 0n, 0n, 2n, 1n, 1n, 0n, 0n, 0n, 0n, 0n]);
+  // Inbound and outbound control workspaces plus the PING and pending PONG nonces.
+  return new ResourceVector([BigInt(maxFrame * 3 + 32 * 7 + 64 * 3 * 1024 + 1040) + runtimeBytes, 0n, 0n, 2n, 1n, 1n, 0n, 0n, 0n, 0n, 0n]);
 }
 
 /** Original shared reliable-carrier owner. OPEN, control and DATA all use the
@@ -856,6 +858,12 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   readonly #info: V4SessionInfo;
   readonly #bindings = new Map<bigint, ReceiveBinding>();
   #quarantineDirections = 0;
+  // One original shared-ingress gate survives every scope/epoch retirement.
+  // Its fixed metadata belongs to the prepaid Session owner; discarded frames
+  // retain the ordinary envelope admission and allocate no tombstone or task.
+  #sharedDiscardWindow: TrustedWindow | undefined;
+  #sharedDiscardRecords = 0;
+  #sharedDiscardBytes = 0;
   readonly #abort = new AbortController();
   readonly #receiveDirection: RecordDirection;
   readonly #sendDirection: RecordDirection;
@@ -867,6 +875,9 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   #plain: Uint8Array = empty;
   #encode: Uint8Array = empty;
   #nonce: Uint8Array = empty;
+  #pendingPong: Uint8Array = empty;
+  #pongPending = false;
+  #pongSending = false;
   #handshakeHash: Uint8Array = empty;
   #retireScratch: Uint8Array = empty;
   #retireDigest: Uint8Array = empty;
@@ -1095,7 +1106,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       }
       this.#open = new OpenAdmission(streams.limits, streams.open, streams.openDecoder);
       this.#controlReservation = streams.control.take(sessionControlCharge(config.maxFrame, config.runtimeBytes));
-      this.#plain = new Uint8Array(config.maxFrame); this.#encode = new Uint8Array(config.maxFrame); this.#nonce = new Uint8Array(16);
+      this.#plain = new Uint8Array(config.maxFrame); this.#encode = new Uint8Array(config.maxFrame);
+      this.#nonce = new Uint8Array(16); this.#pendingPong = new Uint8Array(16);
       this.#handshakeHash = new Uint8Array(32); epoch.copyHandshakeHash(this.#handshakeHash);
       this.#retireScratch = new Uint8Array(config.maxFrame); this.#retireDigest = new Uint8Array(32);
       this.#lastRetireSentDigest = new Uint8Array(32); this.#lastRetireReceivedDigest = new Uint8Array(32);
@@ -1122,7 +1134,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       },
     });
     this.output.observeFailure(error => this.#observeControllerFailure(error));
-    this.output.observeRecords(() => this.#idle!.activity(), () => this.#liveness!.localStall());
+    this.output.observeRecords(() => { this.#idle!.activity(); this.#wake(); }, () => this.#liveness!.localStall());
     Object.defineProperty(this, "then", { value: undefined });
   }
   #observeControllerFailure(error: unknown): void {
@@ -2023,6 +2035,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     for (const association of this.#nativeAssociations) association.wake();
     if (this.#closed) { this.#cleanup(); return; }
     if (!this.#ready) return;
+    this.#flushPong();
     try {
       this.#driveBootstrap();
       this.#driveRPCChannels();
@@ -2045,6 +2058,13 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     if (!this.#closed && this.#rekeyRound !== undefined && !this.#rekeyWorking && this.output.available()) {
       void this.#progressRekey().catch(() => undefined);
     }
+  }
+  #flushPong(): void {
+    if (this.#closed || !this.#pongPending || this.#pongSending || !this.output.available()) return;
+    this.#pongSending = true;
+    const clear = (): void => { this.#pendingPong.fill(0); this.#pongPending = false; };
+    void this.#control(frameType("PONG"), writer => writer.map(1).uint(0).data(this.#pendingPong).result(), clear)
+      .then(() => { this.#pongSending = false; this.#wake(); }, () => { clear(); this.#pongSending = false; this.#wake(); });
   }
   registerMessageStream<A, B>(definition: V4MessageStreamDefinition<A, B>, authorize: V4StreamOpenAuthorizer | undefined,
     handler: V4MessageStreamHandler<A, B>, options: V4StreamRegistrationOptions): V4StreamRegistration {
@@ -3791,6 +3811,9 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         await this.#maintenance(header.frameType, packet, candidate ? this.#candidateReceive! : this.#controlReceive!);
         return;
       }
+      let binding = this.#bindings.get(header.scope);
+      if (native === undefined && header.frameType === frameType("STREAM_DATA") &&
+          this.#discardClosedSharedData(header.scope, header.epoch, frame.payloadBytes() + envelopePrefixBytes, binding)) return;
       if (header.epoch === this.#epochNumber + 1 && this.#sendSwitched && this.#receiveSwitched) {
         // Both markers authorize the peer's new epoch before our COMMIT/ACK
         // provider releases its output borrow. Keep this bounded input with
@@ -3803,8 +3826,10 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         };
         if (native === undefined) await this.#readerWait(awaitSwitch);
         else await awaitSwitch();
+        binding = this.#bindings.get(header.scope);
+        if (native === undefined && header.frameType === frameType("STREAM_DATA") &&
+            this.#discardClosedSharedData(header.scope, header.epoch, frame.payloadBytes() + envelopePrefixBytes, binding)) return;
       }
-      let binding = this.#bindings.get(header.scope);
       if (header.frameType === frameType("OPEN_STREAM")) {
         if (fixedPrefix) {
           if (binding === undefined || binding.handle !== this.#bootstrap || this.#sendDirection !== 1 ||
@@ -3884,7 +3909,9 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         return;
       }
       if (header.frameType === frameType("STREAM_DATA") && this.#open!.isStable(header.scope)) {
-        if (header.epoch > this.#epochNumber) fail("protocol_violation"); return;
+        // Shared late DATA has already crossed its original discard gate.
+        // Native input remains fenced by its authenticated physical handle.
+        if (native === undefined || header.epoch > this.#epochNumber) fail("protocol_violation"); return;
       }
       if (header.frameType === frameType("STREAM_DATA") && binding !== undefined &&
           (binding.receiveDrained || binding.quarantined || this.#open!.phase(binding.handle) === "rejected")) {
@@ -3895,8 +3922,10 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       native?.reader.beginAuthentication();
       packet.observeValidation(() => this.#idle!.activity());
       try { binding.direction.accept(packet, binding.terminalReceive?.offset); binding.nextReceive++; }
-      catch {
+      catch (error) {
         if (native !== undefined) { this.#isolateNativeInput(native); return; }
+        if (!(error instanceof SchemaValidationError || error instanceof CBORWireError || error instanceof ReceiveError &&
+            ["receive_data", "receive_sequence", "receive_credit"].includes(error.code))) throw error;
         // The shared envelope is authenticated to this existing scope. Seal its
         // receive direction permanently and retain the original promise until
         // STOPPED/DRAINED closes the authenticated abandoned frontier.
@@ -3923,6 +3952,26 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       void this.close().catch(() => undefined); throw error;
     }
     finally { packet?.release(); frame?.release(); this.#wake(); }
+  }
+  #discardClosedSharedData(scope: bigint, epoch: number, bytes: number, binding: ReceiveBinding | undefined): boolean {
+    const terminal = binding?.terminalReceive;
+    const fullyObserved = binding !== undefined && terminal !== undefined && terminal.next === binding.nextReceive &&
+      terminal.offset === binding.direction?.progress().ack_offset;
+    const closed = this.#open!.isAuthenticatedRetired(scope) || binding !== undefined &&
+      (binding.receiveDrained || binding.quarantined || fullyObserved || this.#open!.phase(binding.handle) === "rejected");
+    if (!closed) return false;
+    // This unauthenticated header only refuses an already closed direction.
+    // It never selects a key, advances a frontier, or admits a future epoch.
+    // Roots are installed consecutively from zero; retired roots remain known
+    // without retaining their keys. A live proof also keeps its OPEN epoch.
+    if (epoch > this.#epochNumber || binding !== undefined && epoch < this.#open!.snapshot(binding.handle).openEpoch) fail("protocol_violation");
+    this.#sharedDiscardWindow ??= new TrustedWindow(this.config.clock, sharedDiscardPolicy.durationMS);
+    this.#sharedDiscardWindow.check();
+    if (this.#sharedDiscardRecords >= sharedDiscardPolicy.maxRecords ||
+        bytes > sharedDiscardPolicy.maxBytes - this.#sharedDiscardBytes) fail("protocol_violation");
+    this.#sharedDiscardRecords++;
+    this.#sharedDiscardBytes += bytes;
+    return true;
   }
   async #readerWait(work: () => Promise<void>): Promise<void> {
     this.#readBlocked = true; this.#liveness!.localStall();
@@ -4007,7 +4056,10 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
         }
         packet.commitValidated();
         if (stopped === undefined && drain === undefined) { this.#terminal(binding); return; }
-      } else if (schema === "PING") { document.copyPayload(document.field(0, 0), this.#nonce); pong = true; }
+      } else if (schema === "PING") {
+        document.copyPayload(document.field(0, 0), this.#nonce);
+        if (!this.#pongPending) { copy.call(this.#pendingPong, this.#nonce); this.#pongPending = true; pong = true; }
+      }
       else if (schema === "PONG") {
         document.copyPayload(document.field(0, 0), this.#nonce);
         packet.commitValidated();
@@ -4072,12 +4124,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
       else void this.#drained(drain, true).catch(() => { void this.close().catch(() => undefined); });
     }
     if (pong) {
-      // The single ingress owner keeps the nonce while the original control
-      // gate waits for current output capacity. A previous tail completing
-      // does not reserve that position against concurrent Stream termination.
-      this.#readBlocked = true; this.#liveness!.localStall();
-      try { await this.#control(frameType("PONG"), writer => writer.map(1).uint(0).data(this.#nonce).result()); }
-      finally { this.#readBlocked = false; this.#nonce.fill(0); }
+      this.#nonce.fill(0);
+      this.#flushPong();
     }
   }
 
@@ -4103,6 +4151,7 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
   close(): Promise<V4LifecycleResult> {
     if (this.#closed) return this.cleanupOwner.closed;
     this.#closeInitializing = true; this.#closed = true;
+    this.#sharedDiscardWindow?.cancel();
     this.config.diagnosticActivity?.close();
     this.#cancelBootstrapInitialization();
     this.#drain?.finish("failed");
@@ -4154,12 +4203,12 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     this.cleanupOwner.updateCore(this.#reservation === undefined ? 0 :
       Number(this.#receiving !== undefined) + Number(this.#drainWork !== undefined) + Number(!this.output.cleanupComplete()) + Number(!this.#transportClosed) +
       Number(this.#unreliable?.cleanupComplete() === false) + Number(this.#nativeAcceptor !== undefined) + Number(this.#managementTask !== undefined) + Number(this.#bootstrapTask !== undefined) + Number(this.#supervisor !== undefined) + Number(this.#dispatchQueued) +
-      Number(this.#rpc !== undefined) + Number(this.#retireWorking) + Number(this.#rekeyWorking) + this.#rpcTasks.filter(Boolean).length + this.#notifyTasks.filter(Boolean).length + this.#nativeAssociations.size + this.#dispatching.size, this.#cleanupFault);
+      Number(this.#rpc !== undefined) + Number(this.#retireWorking) + Number(this.#rekeyWorking) + Number(this.#pongSending) + this.#rpcTasks.filter(Boolean).length + this.#notifyTasks.filter(Boolean).length + this.#nativeAssociations.size + this.#dispatching.size, this.#cleanupFault);
   }
   #collect(): void {
     if (this.#reservation === undefined || !this.#closed || !this.#transportClosed || this.#rpcTasks.some(Boolean) || this.#notifyTasks.some(Boolean) || this.#managementTask !== undefined || this.#bootstrapTask !== undefined || this.#supervisor !== undefined || this.#dispatchQueued || this.#nativeAcceptor !== undefined || this.#nativeAssociations.size !== 0 ||
         this.#unreliable?.cleanupComplete() === false || this.config.unreliablePreparation?.cleanupComplete() === false && this.#unreliable === undefined || this.#nativeScheduler?.cleanupComplete() === false || this.#nativeSend?.cleanupComplete() === false || this.#nativePositions?.cleanupComplete() === false || this.#maintenancePositions?.cleanupComplete() === false || this.#drainWork !== undefined || this.#liveness?.cleanupComplete() === false || this.#receiving !== undefined || !this.reader.cleanupComplete() ||
-        !this.output.cleanupComplete() || !this.epoch.cleanupComplete() || !this.config.ledger.cleanupComplete() ||
+        !this.output.cleanupComplete() || this.#pongSending || !this.epoch.cleanupComplete() || !this.config.ledger.cleanupComplete() ||
         this.#controlSend?.cleanupComplete() === false || this.#controlReceive?.cleanupComplete() === false || this.#controlDecoder?.cleanupComplete() === false || this.#waiters.size !== 0 || this.#rejecting || this.#retireWorking || this.#rekeyWorking || this.#candidate?.cleanupComplete() === false || this.#rekeyRetired.some(epoch => !epoch.cleanupComplete())) return;
     for (const binding of this.#bindings.values()) {
       if (this.#physicalComplete(binding, false)) binding.stream?.notifyAdapterCleanup();
@@ -4170,7 +4219,8 @@ export class V4AuthenticatedSessionRuntime implements V4SessionOwner {
     if (this.#dispatching.size !== 0 || this.#rpc?.cleanupComplete() === false) return;
     for (const binding of this.#bindings.values()) this.#releaseStream(binding);
     this.#bindings.clear(); this.#open?.close();
-    this.#plain.fill(0); this.#encode.fill(0); this.#nonce.fill(0); this.#plain = this.#encode = this.#nonce = empty;
+    this.#plain.fill(0); this.#encode.fill(0); this.#nonce.fill(0); this.#pendingPong.fill(0);
+    this.#plain = this.#encode = this.#nonce = this.#pendingPong = empty;
     this.#handshakeHash.fill(0); this.#retireScratch.fill(0); this.#retireDigest.fill(0); this.#lastRetireSentDigest.fill(0); this.#lastRetireReceivedDigest.fill(0);
     this.#retireIn?.digest.fill(0); this.#retireOut?.digest.fill(0); this.#retireTail?.digest.fill(0); this.#retireIn = this.#retireOut = this.#retireTail = undefined;
     this.#handshakeHash = this.#retireScratch = this.#retireDigest = this.#lastRetireSentDigest = this.#lastRetireReceivedDigest = empty;

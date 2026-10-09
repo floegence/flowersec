@@ -47,6 +47,7 @@ type Root struct {
 	accounts                   []accountSlot
 	charges                    []chargeSlot
 	refs                       []referenceSlot
+	referenceExtent            int
 	chargeCount                uint32
 	referenceCount             uint32
 	resultCount                uint32

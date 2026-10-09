@@ -400,18 +400,19 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 			return err
 		}
 	}
-	if err := pair.RoundTrip(ctx, bytes.Repeat([]byte("controller-weaknet"), 1024), []byte("controller-response")); err != nil {
-		return err
-	}
 	if scenarioName == "outage-reconnect" {
-		if err := verifyOutageBehavior(ctx, pair); err != nil {
+		if err := verifyControllerOutage(ctx, pair); err != nil {
 			return err
 		}
-		if err := endpoint.InterruptConnections(); err != nil {
+		// A qualified explicit probe observes an outage; it neither closes the
+		// Session nor grants a native-network automatic retry. This workload's
+		// recovery policy explicitly replaces once, using fresh original material.
+		replaced, err := controller.ReplaceSession(ctx, flowersec.ControllerReplaceOptions{})
+		if err != nil {
 			return err
 		}
-		if err := waitForControllerReplacement(ctx, controller, client); err != nil {
-			return err
+		if !replaced.CurrentSwitched || replaced.Current == nil || replaced.Current == client {
+			return errors.New("controller outage recovery did not publish a new native Session")
 		}
 		serverIndex = source.AcquisitionCount() - 1
 		server, err = source.WaitServer(ctx, serverIndex)
@@ -430,6 +431,8 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 		if err := replacement.RoundTrip(ctx, []byte("reconnected"), []byte("reconnected-response")); err != nil {
 			return err
 		}
+	} else if err := pair.RoundTrip(ctx, bytes.Repeat([]byte("controller-weaknet"), 1024), []byte("controller-response")); err != nil {
+		return err
 	}
 	return nil
 }
@@ -454,25 +457,6 @@ func waitForControllerCurrent(ctx context.Context, controller *flowersec.Connect
 		return nil, errors.New("current signed pin refresh was not published")
 	}
 	return replacement.Current, nil
-}
-func waitForControllerReplacement(ctx context.Context, controller *flowersec.ConnectionController, previous *flowersec.Session) error {
-	for {
-		snapshot := controller.Snapshot()
-		if snapshot.Current {
-			current, err := controller.CaptureSession()
-			if err == nil && current != previous {
-				return nil
-			}
-		}
-		if snapshot.Closed || snapshot.LastError != nil && !snapshot.Pending && !snapshot.WaitingRetry && !snapshot.Current {
-			return fmt.Errorf("controller failed before actual native reconnect: %v", snapshot.LastError)
-		}
-		select {
-		case <-ctx.Done():
-			return context.Cause(ctx)
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
 }
 
 func verifyDirectResetAndCancellation(ctx context.Context, pair *transporttest.ProductDirectPair) error {
@@ -533,6 +517,10 @@ func observePeerReset(ctx context.Context, stream peerResetReader) error {
 func verifyOutageBehavior(ctx context.Context, pair *transporttest.ProductDirectPair) error {
 	failedDuringOutage := false
 	outageDeadline := time.Now().Add(3500 * time.Millisecond)
+	// Recovery can deliver queued probes together. Keep the original window
+	// within the admitted maintenance burst, including the final recovery probe.
+	probeInterval := time.NewTicker(time.Second)
+	defer probeInterval.Stop()
 	for time.Now().Before(outageDeadline) {
 		probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		_, probeErr := pair.Client.ProbeLiveness(probeCtx, 250)
@@ -540,7 +528,11 @@ func verifyOutageBehavior(ctx context.Context, pair *transporttest.ProductDirect
 		if probeErr != nil {
 			failedDuringOutage = true
 		}
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-probeInterval.C:
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
 	}
 	if !failedDuringOutage {
 		return errors.New("Flowersec outage did not interrupt any liveness operation")
@@ -549,6 +541,63 @@ func verifyOutageBehavior(ctx context.Context, pair *transporttest.ProductDirect
 		return fmt.Errorf("Flowersec session did not recover after outage: %w", err)
 	}
 	return nil
+}
+
+func verifyControllerOutage(ctx context.Context, pair *transporttest.ProductDirectPair) error {
+	deadline := time.Now().Add(3500 * time.Millisecond)
+	probeInterval := time.NewTicker(500 * time.Millisecond)
+	defer probeInterval.Stop()
+	const operationTimeoutMS = uint64(250)
+	probes := 0
+	lastOutcome := "none"
+	for time.Now().Before(deadline) {
+		probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+		result, probeErr := pair.Client.ProbeLiveness(probeCtx, operationTimeoutMS)
+		qualified := isQualifiedControllerOutage(result, probeErr, probeCtx, operationTimeoutMS)
+		cancel()
+		probes++
+		lastOutcome = describeControllerProbeOutcome(result, probeErr)
+		if qualified {
+			return nil
+		}
+		select {
+		case <-probeInterval.C:
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
+	return fmt.Errorf("Flowersec outage did not interrupt a controller liveness operation after %d probes (last: %s)", probes, lastOutcome)
+}
+
+func isQualifiedControllerOutage(result flowersec.LivenessResult, err error, callerCtx context.Context, timeoutMS uint64) bool {
+	var sessionErr *flowersec.SessionError
+	if err == nil || !errors.As(err, &sessionErr) || result.Cause == nil {
+		return false
+	}
+	return isQualifiedControllerOutageCode(sessionErr.Code(), result.Cause.Code(), result, callerCtx, timeoutMS)
+}
+
+func isQualifiedControllerOutageCode(code, causeCode flowersec.SessionErrorCode, result flowersec.LivenessResult, callerCtx context.Context, timeoutMS uint64) bool {
+	if callerCtx == nil || callerCtx.Err() != nil || !result.Submitted || result.Cause == nil || code != causeCode {
+		return false
+	}
+	switch code {
+	case flowersec.SessionLivenessFailed, flowersec.SessionClosed:
+		return true
+	case flowersec.SessionTimeout:
+		return timeoutMS > 0 && result.ElapsedAvailable && result.ElapsedMilliseconds >= timeoutMS
+	default:
+		return false
+	}
+}
+
+func describeControllerProbeOutcome(result flowersec.LivenessResult, err error) string {
+	code := "none"
+	var sessionErr *flowersec.SessionError
+	if errors.As(err, &sessionErr) {
+		code = string(sessionErr.Code())
+	}
+	return fmt.Sprintf("code=%s submitted=%t complete=%t elapsed_available=%t elapsed_ms=%d", code, result.Submitted, result.Complete, result.ElapsedAvailable, result.ElapsedMilliseconds)
 }
 
 func roundTripUnreliable(ctx context.Context, client *flowersec.Session, server *flowersec.Session) error {
@@ -748,7 +797,7 @@ func validateObservation(scenario string, observation linuxnetlab.KernelFaultObs
 			return errors.New("burst loss was not observed")
 		}
 	case "outage", "outage-reconnect":
-		if observation.Client.OutageDropPackets+observation.Server.OutageDropPackets == 0 {
+		if observation.Client.OutageDropPackets == 0 || observation.Server.OutageDropPackets == 0 {
 			return fmt.Errorf("outage drops were not observed: client=%d server=%d packets=%d/%d", observation.Client.OutageDropPackets, observation.Server.OutageDropPackets, observation.Client.Packets, observation.Server.Packets)
 		}
 	case "representative":

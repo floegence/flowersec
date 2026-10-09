@@ -462,11 +462,11 @@
         {
           "ecosystem": "go",
           "name": "golang.org/x/crypto",
-          "version": "v0.55.0",
+          "version": "v0.57.0",
           "declaredLicense": "BSD-3-Clause",
           "concludedLicense": "BSD-3-Clause",
           "source": "https://golang.org/x/crypto",
-          "purl": "pkg:golang/golang.org/x/crypto@v0.55.0",
+          "purl": "pkg:golang/golang.org/x/crypto@v0.57.0",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -476,9 +476,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:+KWHjbgOaAQ66dh/YlkZKHlz9ZUlq61AFirAR9ntP8M=",
-            "sourceEvidenceSha256": "6c0948409f2109920fced38aacd960f5dd04bbe2a792fd6e89a148752ef4b665",
-            "expressionEvidenceSha256": "b1464a4f3d09dfc43e731b42a8d8d3d38247dbf44fe4bf41663b803e4072db58",
+            "sourceEvidenceValue": "h1:3ZVCjf8Ggz7zneR/EHRVx68Ctf+2pmIMP2UFhh9cC6M=",
+            "sourceEvidenceSha256": "5eebfb44f0e1024f5bee4ac7e7158c11b06dd12b1a9b3094583026a8499fcd24",
+            "expressionEvidenceSha256": "487705e0237af87d4e54dbeb095cb4c202fbfc92e9209c8398364ecaa2232b70",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -496,11 +496,11 @@
         {
           "ecosystem": "go",
           "name": "golang.org/x/net",
-          "version": "v0.58.0",
+          "version": "v0.60.0",
           "declaredLicense": "BSD-3-Clause",
           "concludedLicense": "BSD-3-Clause",
           "source": "https://golang.org/x/net",
-          "purl": "pkg:golang/golang.org/x/net@v0.58.0",
+          "purl": "pkg:golang/golang.org/x/net@v0.60.0",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -510,9 +510,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:ynWG7rqYi4ccpTEuPZ2QGWHktVEM9DMCj9yzDE0Q7To=",
-            "sourceEvidenceSha256": "60edcac66ef03c1c0440a483a7f4f1de6d2c846b0ca5c669ec1e275fe290adc8",
-            "expressionEvidenceSha256": "753d73897af7f67e2710ca91899cbf466ebb6bc454fafdf6ca6a437edd9909b9",
+            "sourceEvidenceValue": "h1:79p50tfZlm0J9YfoDsSi639qSXNGVwEzOPLCxM2FsYU=",
+            "sourceEvidenceSha256": "f4e71212b3b979ddb7740f4af3cccd75ad7559d2b14435bf8a4ddd3d1155f324",
+            "expressionEvidenceSha256": "49c5ea0c18207eef2dbdf2fc8cbed287163594e9cc94bfeccb385880e080d75a",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -530,11 +530,11 @@
         {
           "ecosystem": "go",
           "name": "golang.org/x/sys",
-          "version": "v0.47.0",
+          "version": "v0.48.0",
           "declaredLicense": "BSD-3-Clause",
           "concludedLicense": "BSD-3-Clause",
           "source": "https://golang.org/x/sys",
-          "purl": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "purl": "pkg:golang/golang.org/x/sys@v0.48.0",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -544,9 +544,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
-            "sourceEvidenceSha256": "21f0a176f392517df6da5642c890da6b8887d0e0eee6c6ef93cb5466c26dcee3",
-            "expressionEvidenceSha256": "fe9e6ecbe3eebe3dc1041924a4d028ce2d5676b492c407b3ac6389deb021c4d9",
+            "sourceEvidenceValue": "h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=",
+            "sourceEvidenceSha256": "e86b9a30fa6ac1fd60546777017adaa7c2e41db910f2879a6577a465ab9699ec",
+            "expressionEvidenceSha256": "19599dc76d29330384369a5dda16fbfe95644df5afe6c4afc8b1cba07a5c1678",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -564,11 +564,11 @@
         {
           "ecosystem": "go",
           "name": "golang.org/x/text",
-          "version": "v0.41.0",
+          "version": "v0.42.0",
           "declaredLicense": "BSD-3-Clause",
           "concludedLicense": "BSD-3-Clause",
           "source": "https://golang.org/x/text",
-          "purl": "pkg:golang/golang.org/x/text@v0.41.0",
+          "purl": "pkg:golang/golang.org/x/text@v0.42.0",
           "sourceOfferRequired": false,
           "review": {
             "decision": "approved",
@@ -578,9 +578,9 @@
             "reviewedAt": "2026-08-07",
             "policyRevision": "source-license-policy-v3",
             "sourceEvidenceKind": "go-module-sum",
-            "sourceEvidenceValue": "h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=",
-            "sourceEvidenceSha256": "026efef5878906bfaa0d1f3ba31ee805c4deb1810ac920afd44cc1fc9cbe2472",
-            "expressionEvidenceSha256": "d6f6dc2df00bac059f9f19638af22fea4aff7b2fb8e72598461854132ee245ef",
+            "sourceEvidenceValue": "h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=",
+            "sourceEvidenceSha256": "392855dc541b1411f1ca1dd9a4ea6375794704cabe7bb84db1aa9615039871e0",
+            "expressionEvidenceSha256": "db07496bd9cd63bc10bed42d4ae6ac8d561d30a71b16d866853ec6c09c554044",
             "copyright": {
               "requirement": "retain-upstream-copyright-and-license-notices",
               "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -735,7 +735,7 @@
       "edges": [
         {
           "from": "pkg:generic/flowersec-noise@1.1.0-flowersec.1",
-          "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+          "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
           "kind": "runtime"
         },
         {
@@ -805,22 +805,22 @@
         },
         {
           "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v6@v6.0.0",
-          "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+          "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v6@v6.0.0",
-          "to": "pkg:golang/golang.org/x/net@v0.58.0",
+          "to": "pkg:golang/golang.org/x/net@v0.60.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v6@v6.0.0",
-          "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "to": "pkg:golang/golang.org/x/sys@v0.48.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/floegence/flowersec/flowersec-go/v6@v6.0.0",
-          "to": "pkg:golang/golang.org/x/text@v0.41.0",
+          "to": "pkg:golang/golang.org/x/text@v0.42.0",
           "kind": "runtime"
         },
         {
@@ -845,17 +845,17 @@
         },
         {
           "from": "pkg:golang/github.com/flynn/noise@v1.1.0",
-          "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+          "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
-          "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "to": "pkg:golang/golang.org/x/sys@v0.48.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-          "to": "pkg:golang/golang.org/x/net@v0.58.0",
+          "to": "pkg:golang/golang.org/x/net@v0.60.0",
           "kind": "runtime"
         },
         {
@@ -865,22 +865,22 @@
         },
         {
           "from": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-          "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+          "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-          "to": "pkg:golang/golang.org/x/net@v0.58.0",
+          "to": "pkg:golang/golang.org/x/net@v0.60.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-          "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "to": "pkg:golang/golang.org/x/sys@v0.48.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-          "to": "pkg:golang/golang.org/x/text@v0.41.0",
+          "to": "pkg:golang/golang.org/x/text@v0.42.0",
           "kind": "runtime"
         },
         {
@@ -900,52 +900,52 @@
         },
         {
           "from": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
-          "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+          "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
-          "to": "pkg:golang/golang.org/x/net@v0.58.0",
+          "to": "pkg:golang/golang.org/x/net@v0.60.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
-          "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "to": "pkg:golang/golang.org/x/sys@v0.48.0",
           "kind": "runtime"
         },
         {
           "from": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
-          "to": "pkg:golang/golang.org/x/text@v0.41.0",
+          "to": "pkg:golang/golang.org/x/text@v0.42.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/golang.org/x/crypto@v0.55.0",
-          "to": "pkg:golang/golang.org/x/net@v0.58.0",
+          "from": "pkg:golang/golang.org/x/crypto@v0.57.0",
+          "to": "pkg:golang/golang.org/x/net@v0.60.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/golang.org/x/crypto@v0.55.0",
-          "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "from": "pkg:golang/golang.org/x/crypto@v0.57.0",
+          "to": "pkg:golang/golang.org/x/sys@v0.48.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/golang.org/x/crypto@v0.55.0",
-          "to": "pkg:golang/golang.org/x/text@v0.41.0",
+          "from": "pkg:golang/golang.org/x/crypto@v0.57.0",
+          "to": "pkg:golang/golang.org/x/text@v0.42.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/golang.org/x/net@v0.58.0",
-          "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+          "from": "pkg:golang/golang.org/x/net@v0.60.0",
+          "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/golang.org/x/net@v0.58.0",
-          "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "from": "pkg:golang/golang.org/x/net@v0.60.0",
+          "to": "pkg:golang/golang.org/x/sys@v0.48.0",
           "kind": "runtime"
         },
         {
-          "from": "pkg:golang/golang.org/x/net@v0.58.0",
-          "to": "pkg:golang/golang.org/x/text@v0.41.0",
+          "from": "pkg:golang/golang.org/x/net@v0.60.0",
+          "to": "pkg:golang/golang.org/x/text@v0.42.0",
           "kind": "runtime"
         },
         {
@@ -975,7 +975,7 @@
         },
         {
           "from": "pkg:golang/modernc.org/libc@v1.75.7",
-          "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "to": "pkg:golang/golang.org/x/sys@v0.48.0",
           "kind": "runtime"
         },
         {
@@ -1000,7 +1000,7 @@
         },
         {
           "from": "pkg:golang/modernc.org/memory@v1.12.1",
-          "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "to": "pkg:golang/golang.org/x/sys@v0.48.0",
           "kind": "runtime"
         },
         {
@@ -1035,7 +1035,7 @@
         },
         {
           "from": "pkg:golang/modernc.org/sqlite@v1.59.0",
-          "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+          "to": "pkg:golang/golang.org/x/sys@v0.48.0",
           "kind": "runtime"
         },
         {
@@ -73631,11 +73631,11 @@
     {
       "ecosystem": "go",
       "name": "golang.org/x/crypto",
-      "version": "v0.55.0",
+      "version": "v0.57.0",
       "declaredLicense": "BSD-3-Clause",
       "concludedLicense": "BSD-3-Clause",
       "source": "https://golang.org/x/crypto",
-      "purl": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "purl": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -73645,9 +73645,9 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:+KWHjbgOaAQ66dh/YlkZKHlz9ZUlq61AFirAR9ntP8M=",
-        "sourceEvidenceSha256": "6c0948409f2109920fced38aacd960f5dd04bbe2a792fd6e89a148752ef4b665",
-        "expressionEvidenceSha256": "b1464a4f3d09dfc43e731b42a8d8d3d38247dbf44fe4bf41663b803e4072db58",
+        "sourceEvidenceValue": "h1:3ZVCjf8Ggz7zneR/EHRVx68Ctf+2pmIMP2UFhh9cC6M=",
+        "sourceEvidenceSha256": "5eebfb44f0e1024f5bee4ac7e7158c11b06dd12b1a9b3094583026a8499fcd24",
+        "expressionEvidenceSha256": "487705e0237af87d4e54dbeb095cb4c202fbfc92e9209c8398364ecaa2232b70",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -73665,11 +73665,11 @@
     {
       "ecosystem": "go",
       "name": "golang.org/x/net",
-      "version": "v0.58.0",
+      "version": "v0.60.0",
       "declaredLicense": "BSD-3-Clause",
       "concludedLicense": "BSD-3-Clause",
       "source": "https://golang.org/x/net",
-      "purl": "pkg:golang/golang.org/x/net@v0.58.0",
+      "purl": "pkg:golang/golang.org/x/net@v0.60.0",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -73679,9 +73679,9 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:ynWG7rqYi4ccpTEuPZ2QGWHktVEM9DMCj9yzDE0Q7To=",
-        "sourceEvidenceSha256": "60edcac66ef03c1c0440a483a7f4f1de6d2c846b0ca5c669ec1e275fe290adc8",
-        "expressionEvidenceSha256": "753d73897af7f67e2710ca91899cbf466ebb6bc454fafdf6ca6a437edd9909b9",
+        "sourceEvidenceValue": "h1:79p50tfZlm0J9YfoDsSi639qSXNGVwEzOPLCxM2FsYU=",
+        "sourceEvidenceSha256": "f4e71212b3b979ddb7740f4af3cccd75ad7559d2b14435bf8a4ddd3d1155f324",
+        "expressionEvidenceSha256": "49c5ea0c18207eef2dbdf2fc8cbed287163594e9cc94bfeccb385880e080d75a",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -73699,11 +73699,11 @@
     {
       "ecosystem": "go",
       "name": "golang.org/x/sys",
-      "version": "v0.47.0",
+      "version": "v0.48.0",
       "declaredLicense": "BSD-3-Clause",
       "concludedLicense": "BSD-3-Clause",
       "source": "https://golang.org/x/sys",
-      "purl": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "purl": "pkg:golang/golang.org/x/sys@v0.48.0",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -73713,9 +73713,9 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=",
-        "sourceEvidenceSha256": "21f0a176f392517df6da5642c890da6b8887d0e0eee6c6ef93cb5466c26dcee3",
-        "expressionEvidenceSha256": "fe9e6ecbe3eebe3dc1041924a4d028ce2d5676b492c407b3ac6389deb021c4d9",
+        "sourceEvidenceValue": "h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=",
+        "sourceEvidenceSha256": "e86b9a30fa6ac1fd60546777017adaa7c2e41db910f2879a6577a465ab9699ec",
+        "expressionEvidenceSha256": "19599dc76d29330384369a5dda16fbfe95644df5afe6c4afc8b1cba07a5c1678",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -73733,11 +73733,11 @@
     {
       "ecosystem": "go",
       "name": "golang.org/x/text",
-      "version": "v0.41.0",
+      "version": "v0.42.0",
       "declaredLicense": "BSD-3-Clause",
       "concludedLicense": "BSD-3-Clause",
       "source": "https://golang.org/x/text",
-      "purl": "pkg:golang/golang.org/x/text@v0.41.0",
+      "purl": "pkg:golang/golang.org/x/text@v0.42.0",
       "sourceOfferRequired": false,
       "review": {
         "decision": "approved",
@@ -73747,9 +73747,9 @@
         "reviewedAt": "2026-08-07",
         "policyRevision": "source-license-policy-v3",
         "sourceEvidenceKind": "go-module-sum",
-        "sourceEvidenceValue": "h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=",
-        "sourceEvidenceSha256": "026efef5878906bfaa0d1f3ba31ee805c4deb1810ac920afd44cc1fc9cbe2472",
-        "expressionEvidenceSha256": "d6f6dc2df00bac059f9f19638af22fea4aff7b2fb8e72598461854132ee245ef",
+        "sourceEvidenceValue": "h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=",
+        "sourceEvidenceSha256": "392855dc541b1411f1ca1dd9a4ea6375794704cabe7bb84db1aa9615039871e0",
+        "expressionEvidenceSha256": "db07496bd9cd63bc10bed42d4ae6ac8d561d30a71b16d866853ec6c09c554044",
         "copyright": {
           "requirement": "retain-upstream-copyright-and-license-notices",
           "fulfillment": "source-dependency-metadata-recorded-in-generated-notice-distribution-obligations-evaluated-separately"
@@ -86948,7 +86948,7 @@
     },
     {
       "from": "pkg:generic/flowersec-noise@1.1.0-flowersec.1",
-      "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "kind": "runtime"
     },
     {
@@ -87363,22 +87363,22 @@
     },
     {
       "from": "pkg:generic/flowersec-source@6.0.0",
-      "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:generic/flowersec-source@6.0.0",
-      "to": "pkg:golang/golang.org/x/net@v0.58.0",
+      "to": "pkg:golang/golang.org/x/net@v0.60.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:generic/flowersec-source@6.0.0",
-      "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "to": "pkg:golang/golang.org/x/sys@v0.48.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:generic/flowersec-source@6.0.0",
-      "to": "pkg:golang/golang.org/x/text@v0.41.0",
+      "to": "pkg:golang/golang.org/x/text@v0.42.0",
       "kind": "runtime"
     },
     {
@@ -87538,17 +87538,17 @@
     },
     {
       "from": "pkg:golang/github.com/flynn/noise@v1.1.0",
-      "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
-      "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "to": "pkg:golang/golang.org/x/sys@v0.48.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-      "to": "pkg:golang/golang.org/x/net@v0.58.0",
+      "to": "pkg:golang/golang.org/x/net@v0.60.0",
       "kind": "runtime"
     },
     {
@@ -87558,22 +87558,22 @@
     },
     {
       "from": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-      "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-      "to": "pkg:golang/golang.org/x/net@v0.58.0",
+      "to": "pkg:golang/golang.org/x/net@v0.60.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-      "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "to": "pkg:golang/golang.org/x/sys@v0.48.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-      "to": "pkg:golang/golang.org/x/text@v0.41.0",
+      "to": "pkg:golang/golang.org/x/text@v0.42.0",
       "kind": "runtime"
     },
     {
@@ -87593,52 +87593,52 @@
     },
     {
       "from": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
-      "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
-      "to": "pkg:golang/golang.org/x/net@v0.58.0",
+      "to": "pkg:golang/golang.org/x/net@v0.60.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
-      "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "to": "pkg:golang/golang.org/x/sys@v0.48.0",
       "kind": "runtime"
     },
     {
       "from": "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
-      "to": "pkg:golang/golang.org/x/text@v0.41.0",
+      "to": "pkg:golang/golang.org/x/text@v0.42.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:golang/golang.org/x/crypto@v0.55.0",
-      "to": "pkg:golang/golang.org/x/net@v0.58.0",
+      "from": "pkg:golang/golang.org/x/crypto@v0.57.0",
+      "to": "pkg:golang/golang.org/x/net@v0.60.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:golang/golang.org/x/crypto@v0.55.0",
-      "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "from": "pkg:golang/golang.org/x/crypto@v0.57.0",
+      "to": "pkg:golang/golang.org/x/sys@v0.48.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:golang/golang.org/x/crypto@v0.55.0",
-      "to": "pkg:golang/golang.org/x/text@v0.41.0",
+      "from": "pkg:golang/golang.org/x/crypto@v0.57.0",
+      "to": "pkg:golang/golang.org/x/text@v0.42.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:golang/golang.org/x/net@v0.58.0",
-      "to": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "from": "pkg:golang/golang.org/x/net@v0.60.0",
+      "to": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:golang/golang.org/x/net@v0.58.0",
-      "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "from": "pkg:golang/golang.org/x/net@v0.60.0",
+      "to": "pkg:golang/golang.org/x/sys@v0.48.0",
       "kind": "runtime"
     },
     {
-      "from": "pkg:golang/golang.org/x/net@v0.58.0",
-      "to": "pkg:golang/golang.org/x/text@v0.41.0",
+      "from": "pkg:golang/golang.org/x/net@v0.60.0",
+      "to": "pkg:golang/golang.org/x/text@v0.42.0",
       "kind": "runtime"
     },
     {
@@ -87668,7 +87668,7 @@
     },
     {
       "from": "pkg:golang/modernc.org/libc@v1.75.7",
-      "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "to": "pkg:golang/golang.org/x/sys@v0.48.0",
       "kind": "runtime"
     },
     {
@@ -87693,7 +87693,7 @@
     },
     {
       "from": "pkg:golang/modernc.org/memory@v1.12.1",
-      "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "to": "pkg:golang/golang.org/x/sys@v0.48.0",
       "kind": "runtime"
     },
     {
@@ -87728,7 +87728,7 @@
     },
     {
       "from": "pkg:golang/modernc.org/sqlite@v1.59.0",
-      "to": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "to": "pkg:golang/golang.org/x/sys@v0.48.0",
       "kind": "runtime"
     },
     {

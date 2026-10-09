@@ -32,6 +32,7 @@ type signedDomain struct {
 type signedMapRegistry struct {
 	signatures map[string]signedDomain
 	digests    map[string]signedDomain
+	textCap    int
 }
 
 var runtimeSignedMaps = sync.OnceValues(func() (*signedMapRegistry, error) {
@@ -65,6 +66,14 @@ var runtimeSignedMaps = sync.OnceValues(func() (*signedMapRegistry, error) {
 			}
 			r.signatures[part.Schema] = domain
 		}
+	}
+	var schemas []string
+	for name := range r.signatures {
+		schemas = append(schemas, name)
+	}
+	r.textCap, err = schemaTextCapacity(maps, schemas)
+	if err != nil {
+		return nil, err
 	}
 	return r, nil
 })
@@ -103,7 +112,7 @@ func SignedMapBackingBytes(schema string, byteCap, nodeCap int) (uint64, error) 
 	if !ok || byteCap <= 0 || byteCap > math.MaxInt-len(domain.label)-4 {
 		return 0, CBORFailure("signature_schema")
 	}
-	decoder, err := DecoderBackingBytes(byteCap, nodeCap)
+	decoder, err := decoderBackingBytes(byteCap, nodeCap, min(byteCap, r.textCap))
 	if err != nil {
 		return 0, err
 	}
@@ -126,7 +135,7 @@ func NewSignedMapCodec(schema string, byteCap, nodeCap int) (*SignedMapCodec, er
 	if !ok || byteCap <= 0 || byteCap > math.MaxInt-len(domain.label)-4 {
 		return nil, CBORFailure("signature_schema")
 	}
-	decoder, err := NewDecoder(byteCap, nodeCap)
+	decoder, err := newDecoder(byteCap, nodeCap, min(byteCap, r.textCap))
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +165,40 @@ func (c *SignedMapCodec) Verify(input []byte, key [32]byte, context DecodeContex
 		return nil, err
 	}
 	return c.verifyDocument(doc, key, context)
+}
+
+// CopyVerified copies an SDK-owned immutable signature fact into this codec's
+// independently charged document. It accepts only a live same-schema SignedMap,
+// never caller-supplied bytes or a key. Current trust, permissions, containing
+// bindings and time still belong to the destination's admission owner.
+func (c *SignedMapCodec) CopyVerified(original *SignedMap, context DecodeContext) (*SignedMap, error) {
+	if original == nil || original.codec == nil {
+		return nil, CBORFailure("document_released")
+	}
+	source := original.codec
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	if source.current != original {
+		return nil, CBORFailure("document_released")
+	}
+	if source.schema != c.schema {
+		return nil, CBORFailure("signature_schema")
+	}
+	// Opposite-direction copies cannot wait on each other's codec locks.
+	if !c.mu.TryLock() {
+		return nil, CBORFailure("decoder_busy")
+	}
+	defer c.mu.Unlock()
+	if c.current != nil {
+		return nil, CBORFailure("decoder_busy")
+	}
+	doc, err := c.decoder.DecodeShape(original.document.Bytes(), c.schema, context)
+	if err != nil {
+		return nil, err
+	}
+	v := &SignedMap{codec: c, document: doc, key: original.key, activationSourceProfile: context.Selectors["activation_source_profile"]}
+	c.current = v
+	return v, nil
 }
 
 // VerifyCredential resolves an untrusted issuer identifier only inside the

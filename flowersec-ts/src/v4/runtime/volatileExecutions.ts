@@ -5,7 +5,7 @@ import { executionStorage, executionMode, type ExecutionStorage, type ExecutionR
 import { captureExecutionTarget, type ExecutionTarget, type ExecutionObservation, type ExecutionManagementResult } from "./executionManagementCodec.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { V4AuthenticatedContext } from "../streamHandlers.js";
-import type { CredentialResources } from "./credentialSupport.js";
+import { credentialOwner, type CredentialResources } from "./credentialSupport.js";
 import type { TrustedClock } from "./clock.js";
 import type { ContractRoutes, CapturedContractRoute } from "./contractRoutes.js";
 import type { RPCPublicationGuard } from "./rpcPublisher.js";
@@ -202,7 +202,7 @@ export class VolatileExecutions {
           if (saved.payload !== undefined) {
             const reference = resources.root.reserve({
               accounts: [...resources.accounts, this.#resultAccount!],
-              owner: { ...resources.owner, kind: `execution_result_${++this.#next}` }, charge: rpcPayloadCharge(facts.limit, resources.runtimeBytes)
+              owner: credentialOwner(resources, `execution_result_${++this.#next}`), charge: rpcPayloadCharge(facts.limit, resources.runtimeBytes)
             });
             try { result = new RPCPayload(facts.limit, resources.runtimeBytes, reference); result.write(0, saved.payload); result.seal(); }
             finally { reference.release(); saved.payload.fill(0); }
@@ -259,7 +259,7 @@ export class VolatileExecutions {
       if (!notification && !streaming) {
         const r = this.#resources, reference = r.root.reserve({
           accounts: [...r.accounts, this.#resultAccount!],
-          owner: { ...r.owner, kind: `execution_result_${++this.#next}` }, charge: rpcPayloadCharge(limit, r.runtimeBytes)
+          owner: credentialOwner(r, `execution_result_${++this.#next}`), charge: rpcPayloadCharge(limit, r.runtimeBytes)
         });
         try { result = new RPCPayload(limit, r.runtimeBytes, reference); } finally { reference.release(); }
       }

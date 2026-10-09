@@ -150,10 +150,8 @@ export async function installBrowserRunner(config: BrowserRunnerInstallation, ra
     const completionMethod = parity ? unary(7003) : undefined;
     const datagramBarrierMethod = parity ? unary(7005) : undefined;
     const methods: Record<string, sdk.MethodDefinition<Uint8Array, Uint8Array>> = { echo: method };
-    if (notificationMethod !== undefined && completionMethod !== undefined && datagramBarrierMethod !== undefined) { methods.notify = notificationMethod; methods.completion = completionMethod; methods.datagramBarrier = datagramBarrierMethod; }
+    if (notificationMethod !== undefined && completionMethod !== undefined && datagramBarrierMethod !== undefined) { methods.observation = notificationMethod; methods.completion = completionMethod; methods.datagramBarrier = datagramBarrierMethod; }
     const definition = new sdk.ServiceDefinition({ namespace: config.service_namespace, methods });
-    const notificationMethods = notificationMethod === undefined ? [] : [{ namespace: config.service_namespace, method: notificationMethod,
-      contract: bytes(config.service_notification_contract!,65536), permission: "allowed" as const }];
     const installedContracts = new Map<number, Uint8Array>();
     if (parity) {
       if (config.service_contracts?.length !== 4) throw new Error("original bidirectional parity contracts are missing");
@@ -182,9 +180,9 @@ export async function installBrowserRunner(config: BrowserRunnerInstallation, ra
         const waiter = notificationWait; notificationWait = undefined; waiter?.detach(); waiter?.resolve();
       }, options: { workClass: "short" as const, applicationBytes: 16384n, authorization: "authenticated" as const, applicationTimeoutMS: 10000n } }];
     try {
-      plan = sdk.createHandlerPlan(environment, { applicationBytes: 16384n, services: { profile: "services", query: { typeID: config.service_query_type, contractDigest: bytes(config.service_query_digest,32) }, definitions: [definition], maxMethods: parity ? 4 : 1, maxCaptureBytes: 1048576, notificationMethods, unaryHandlers, notificationHandlers,
+      plan = sdk.createHandlerPlan(environment, { applicationBytes: 16384n, services: { profile: "services", query: { typeID: config.service_query_type, contractDigest: bytes(config.service_query_digest,32) }, definitions: [definition], maxMethods: parity ? 4 : 1, maxCaptureBytes: 1048576, unaryHandlers, notificationHandlers,
         queryPermissions: Object.values(methods).map(selected => ({ namespace: config.service_namespace, method: selected, permission: "allowed" as const })) },
-        streams: ["release-bulk", "native-isolation", "capacity-bidi"].map(kind => ({ kind, handler: async () => { throw new Error("runner does not accept inbound application streams"); }, authorize: () => false, options: { applicationBytes: 16384n, maxConcurrentStreams: config.max_streams, maxAuthorizing: config.max_streams, metadataNamespaces: [{ namespace: "application/json", version: 1 }] } })) });
+        streams: parity ? [] : ["release-bulk", "native-isolation", "capacity-bidi"].map(kind => ({ kind, handler: async () => { throw new Error("runner does not accept inbound application streams"); }, authorize: () => false, options: { applicationBytes: 16384n, maxConcurrentStreams: config.max_streams, maxAuthorizing: config.max_streams, metadataNamespaces: [{ namespace: "application/json", version: 1 }] } })) });
     } finally { for (const contract of installedContracts.values()) contract.fill(0); }
     const deployment = { ...config.deployment, routeDigest: bytes(config.deployment.routeDigest,32), notBeforeMS: BigInt(config.deployment.notBeforeMS), notAfterMS: BigInt(config.deployment.notAfterMS) };
     const limits = Object.fromEntries(Object.entries(config.limits).map(([key,value]) => [key, typeof value === "string" ? BigInt(value) : value])) as unknown as sdk.BrowserWSSClientConfig["limits"];
@@ -192,7 +190,7 @@ export async function installBrowserRunner(config: BrowserRunnerInstallation, ra
     const common = { identityKey, noiseKey, poolStore: store, handlerPlan: plan, limits, ...(poolServerAllow === undefined ? {} : { poolServerAllow }) };
     const client = config.carrier === "wss" ? await sdk.configureBrowserWSS(environment, { ...common, carrier: { deployment: deployment as unknown as sdk.BrowserWSSDeployment, queueMessages: 8, sendBufferBytes: 65544, runtimeBytes: BigInt(config.carrier_runtime_bytes), providerRuntimeBytes: BigInt(config.provider_runtime_bytes) } }) : await sdk.configureBrowserWebTransport(environment, { ...common, carrier: { deployment: deployment as unknown as sdk.BrowserWebTransportDeployment, applicationStreams: config.carrier_application_streams!, streamBufferBytes: 65544, runtimeBytes: BigInt(config.carrier_runtime_bytes), providerRuntimeBytes: BigInt(config.provider_runtime_bytes), providerStreamBytes: BigInt(config.provider_stream_bytes) } });
     for (const [index, record] of config.namespaces.entries()) {
-      const namespace = client.namespace({ tenant: record.tenant, authority: record.authority, rootKeyID: bytes(record.root_key_id,16), rootPublicKey: bytes(record.root_public_key,32), maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 65536, stateNodes: 131072 });
+      const namespace = client.namespace({ tenant: record.tenant, authority: record.authority, rootKeyID: bytes(record.root_key_id,16), rootPublicKey: bytes(record.root_public_key,32), maxTrustLifetimeMS: 30000000n, bootstrapMS: 10000n, stateBytes: 65536, stateNodes: 131072 });
       await namespace.fetchBootstrap(async (request, responseDestination, stateDestination) => {
         const response = await fetch(config.bootstrap_endpoint, { method: "POST", signal: request.signal,
           headers: { "content-type": "application/json" }, body: JSON.stringify({ capability: config.host_capability, index, nonce: base64(request.nonce) }) });

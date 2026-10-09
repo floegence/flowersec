@@ -299,7 +299,7 @@ func newArtifactLease(c ArtifactLeaseConfig, wire [6][]byte, keys [6][32]byte, t
 		if trusted != nil {
 			l.maps[mapIndex], err = l.codecs[mapIndex].VerifyCredential(wire[mapIndex], trusted.Trust[credentialIndex])
 		} else {
-			l.maps[mapIndex], err = l.codecs[mapIndex].Verify(wire[mapIndex], originals[credentialIndex].Key(), protocolv4.DecodeContext{})
+			l.maps[mapIndex], err = l.codecs[mapIndex].CopyVerified(originals[credentialIndex], protocolv4.DecodeContext{})
 		}
 		if err != nil {
 			return nil, err

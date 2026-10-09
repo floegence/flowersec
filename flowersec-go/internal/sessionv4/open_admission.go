@@ -132,6 +132,7 @@ type OpenAdmission struct {
 	direction                                                 protocolv4.Direction
 	limits                                                    OpenLimits
 	slots                                                     []openSlot
+	slotExtents                                               [3]int
 	index                                                     []int
 	metadata                                                  []byte
 	metadataUsed                                              []bool
@@ -150,6 +151,7 @@ type OpenAdmission struct {
 	application                                               *SessionPlan
 	decoder                                                   *protocolv4.Decoder
 	encode                                                    []byte
+	openEncode                                                sync.Mutex
 	retirement                                                *Retirement
 	retirementService                                         *RetirementService
 	barriers                                                  *Barriers
@@ -278,6 +280,17 @@ func (a *OpenAdmission) find(scope uint64) int {
 	return -1
 }
 func (a *OpenAdmission) insert(scope uint64, slot int) {
+	// Ordinary proofs, rejection reserve and ingress have independent prepaid
+	// ranges. Every indexed owner stays inside its range's initialized prefix,
+	// even after moving, becoming recent/held, or returning its slot.
+	base := [3]int{0, int(a.limits.Terminal - a.limits.RejectionReserve), int(a.limits.Terminal)}
+	region := 0
+	if slot >= base[2] {
+		region = 2
+	} else if slot >= base[1] {
+		region = 1
+	}
+	a.slotExtents[region] = max(a.slotExtents[region], slot-base[region]+1)
 	for pos, count := a.bucket(scope), 0; count < len(a.index); pos, count = (pos+1)&(len(a.index)-1), count+1 {
 		if a.index[pos] <= 0 {
 			a.index[pos] = slot + 1
@@ -285,6 +298,30 @@ func (a *OpenAdmission) insert(scope uint64, slot int) {
 		}
 	}
 	panic("sessionv4: fixed OPEN index capacity invariant")
+}
+
+func (a *OpenAdmission) initializedSlotCount() int {
+	return a.slotExtents[0] + a.slotExtents[1] + a.slotExtents[2]
+}
+
+// nextInitializedSlot retains physical slot order and skips only untouched
+// tails. This is a scheduling/cleanup bound, never a protocol admission gate.
+func (a *OpenAdmission) nextInitializedSlot(at int) int {
+	base := [3]int{0, int(a.limits.Terminal - a.limits.RejectionReserve), int(a.limits.Terminal)}
+	first := -1
+	for region, start := range base {
+		end := start + a.slotExtents[region]
+		if start == end {
+			continue
+		}
+		if first < 0 {
+			first = start
+		}
+		if at < end {
+			return max(at, start)
+		}
+	}
+	return first
 }
 func (a *OpenAdmission) remove(scope uint64) {
 	for pos, count := a.bucket(scope), 0; count < len(a.index); pos, count = (pos+1)&(len(a.index)-1), count+1 {
@@ -393,6 +430,7 @@ func (a *OpenAdmission) Hold(record *ReceivedRecord, carrier *CarrierAssociation
 	if !ok || !yes || !good || !numeric || len(digest) != 32 {
 		return OpenHandle{}, ErrOpenAssociation
 	}
+	kindDigest := sha256.Sum256([]byte(kind))
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	carrier.mu.Lock()
@@ -416,7 +454,7 @@ func (a *OpenAdmission) Hold(record *ReceivedRecord, carrier *CarrierAssociation
 	}
 	s := &a.slots[i]
 	*s = openSlot{scope: frame.Header.Scope, phase: openPending, carrier: carrier, incoming: record.incoming, header: frame.Header, deadline: deadline, peerLimit: limit, metadataStart: start, metadataSize: len(kind) + len(metadata), kindSize: len(kind)}
-	s.kindDigest = sha256.Sum256([]byte(kind))
+	s.kindDigest = kindDigest
 	copy(s.digest[:], digest)
 	carrier.bound, carrier.scope = a, s.scope
 	a.insert(s.scope, i)
@@ -551,7 +589,7 @@ func (a *OpenAdmission) collect(s *openSlot) {
 func (a *OpenAdmission) Collect() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	for i := range a.slots {
+	for scanned, i := 0, a.nextInitializedSlot(0); scanned < a.initializedSlotCount(); scanned, i = scanned+1, a.nextInitializedSlot(i+1) {
 		a.collect(&a.slots[i])
 	}
 }

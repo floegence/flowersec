@@ -47,6 +47,10 @@ func (e *EndpointCredentials) CheckCurrent(bindings []CredentialValidation, hard
 }
 
 func (e *EndpointCredentials) checkCurrentAt(bindings []CredentialValidation, hardEnd uint64, samples credentialSamples) (CredentialValidity, error) {
+	return e.checkCurrentAuthorizationAt(bindings, hardEnd, samples, nil, false)
+}
+
+func (e *EndpointCredentials) checkCurrentAuthorizationAt(bindings []CredentialValidation, hardEnd uint64, samples credentialSamples, activation *ActivationAuthority, admission bool) (CredentialValidity, error) {
 	var result CredentialValidity
 	if e == nil || len(bindings) != e.count {
 		return result, CBORFailure("credential_validation_count")
@@ -61,7 +65,6 @@ func (e *EndpointCredentials) checkCurrentAt(bindings []CredentialValidation, ha
 	}
 	result = CredentialValidity{Requirements: requirement, DeadlineMS: min(hardEnd, e.hardEnd)}
 	for i, binding := range bindings {
-		credential := e.credentials[i]
 		currentScope := e.credentialScope(i)
 		if binding.Namespace == nil {
 			return result, CBORFailure("credential_namespace_owner")
@@ -74,20 +77,96 @@ func (e *EndpointCredentials) checkCurrentAt(bindings []CredentialValidation, ha
 				return result, CBORFailure("credential_namespace_owner")
 			}
 		}
-		var deadline uint64
-		var err error
+	}
+	for i, binding := range bindings {
 		if i == 3 && e.pendingGrant != nil {
-			deadline, err = e.pendingGrant.checkAt(binding, requirement, min(hardEnd, e.hardEnd), samples[i])
-		} else {
-			deadline, err = binding.Namespace.checkBoundCredentialAt(credential, binding.Issuer, binding.Policy, requirement, min(hardEnd, e.hardEnd), samples[i])
+			deadline, err := e.pendingGrant.checkAt(binding, requirement, min(hardEnd, e.hardEnd), samples[i])
+			if err != nil {
+				return result, err
+			}
+			result.deadlines[i] = deadline
+			result.DeadlineMS = min(result.DeadlineMS, deadline)
+			continue
 		}
-		if err != nil {
+		checked := false
+		for j, earlier := range bindings[:i] {
+			if earlier.Namespace == binding.Namespace && (j != 3 || e.pendingGrant == nil) {
+				checked = true
+				break
+			}
+		}
+		if checked {
+			continue
+		}
+		if err := binding.Namespace.checkClosureNamespaceAt(e, bindings, requirement, min(hardEnd, e.hardEnd), samples[i], activation, admission, &result); err != nil {
 			return result, err
+		}
+	}
+	return result, nil
+}
+
+// All credentials borrowing one original namespace use its current Head/State
+// under one lock. This is a finite local check, with no stored authorization or
+// snapshot reused by a later call. Independent issuer and activation trust
+// checks still consume their original scopes and the same clock envelope.
+func (n *LiveNamespace) checkClosureNamespaceAt(e *EndpointCredentials, bindings []CredentialValidation, requirement CredentialRequirements, hardEnd uint64, now timev4.Sample, activation *ActivationAuthority, admission bool, result *CredentialValidity) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if err := n.checkAvailable(); err != nil {
+		return err
+	}
+	if err := n.continuityAvailable(); err != nil {
+		return err
+	}
+	var err error
+	if now, err = n.clock.RefreshSample(now); err != nil {
+		return err
+	}
+	if err := n.rules.CheckPublication(requirement); err != nil {
+		return err
+	}
+	trust, err := n.lockClosureReadAt(now)
+	if err != nil {
+		return err
+	}
+	defer trust.unlock()
+	if err := trust.headAt(n.active.head, now); err != nil {
+		return err
+	}
+	for i, binding := range bindings {
+		if binding.Namespace != n || i == 3 && e.pendingGrant != nil {
+			continue
+		}
+		credential, policy := e.credentials[i], binding.Policy
+		if credential == nil || policy == nil || policy.id != credential.facts.PolicyID || policy.revision != credential.facts.PolicyRevision {
+			return CBORFailure("credential_policy_reference")
+		}
+		policyChecked := false
+		for j, earlier := range bindings[:i] {
+			if earlier.Namespace == n && earlier.Policy == policy && (j != 3 || e.pendingGrant == nil) {
+				policyChecked = true
+				break
+			}
+		}
+		if !policyChecked {
+			if err := trust.policyAt(policy, now); err != nil {
+				return err
+			}
+		}
+		facts, deadline, err := n.checkCredentialUnderHeadTrustAt(credential, binding.Issuer, requirement.StalenessMS, requirement.SignerLifetimeMS, hardEnd, now, trust)
+		if err != nil {
+			return err
+		}
+		if i == 0 && activation != nil {
+			deadline, err = n.checkActivationContentsTrustAt(activation, credential, binding.Issuer, facts, deadline, admission, now, trust)
+			if err != nil {
+				return err
+			}
 		}
 		result.DeadlineMS = min(result.DeadlineMS, deadline)
 		result.deadlines[i] = deadline
 	}
-	return result, nil
+	return nil
 }
 
 // EndpointAuthorization retains original detached credentials and exact shared
@@ -193,6 +272,17 @@ func (a *EndpointAuthorization) CheckSession() (CredentialValidity, error)   { r
 func (a *EndpointAuthorization) Check() error                                { _, err := a.CheckSession(); return err }
 func (a *EndpointAuthorization) CheckAdmission() (CredentialValidity, error) { return a.check(true) }
 
+// CheckWithSample shares the original Engine gate's current clock read. It
+// still checks this complete current authorization and independently samples
+// any other Environment clock; no result is retained for a subsequent call.
+func (a *EndpointAuthorization) CheckWithSample(sample timev4.Sample) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	samples, err := a.sampleLockedAt(sample)
+	_, err = a.checkLockedAt(false, samples, err)
+	return err
+}
+
 // WithCurrentAuthorization orders a finite SDK ownership transfer with this
 // original authorization's close gate. It may not call application code, wait
 // for I/O, or reenter the authorization. A prior Check alone cannot authorize
@@ -252,13 +342,19 @@ func (a *EndpointAuthorization) checkLocked(admission bool) (result CredentialVa
 // subscriptions until every read returns prevents Close from refunding a
 // blocked adapter; no task, timer, waiter or new reference is created here.
 func (a *EndpointAuthorization) sampleLocked() (samples credentialSamples, err error) {
+	return a.sampleLockedAt(timev4.Sample{})
+}
+
+func (a *EndpointAuthorization) sampleLockedAt(adjacent timev4.Sample) (samples credentialSamples, err error) {
 	if a.terminal != nil {
 		return samples, a.terminal
 	}
 	if a.closure == nil || a.sampling == math.MaxUint32 {
 		return samples, CBORFailure("credential_authorization_owner")
 	}
-	bindings, count := a.bindings, a.closure.count
+	// sampling pins these original immutable bindings through the adapter read;
+	// cleanup cannot clear them until this synchronous borrower returns.
+	bindings, count := &a.bindings, a.closure.count
 	claimed, attached := a.subscriptions.delivery[0].claimed, a.subscriptions.delivery[1].attached
 	a.sampling++
 	a.mu.Unlock()
@@ -272,7 +368,7 @@ func (a *EndpointAuthorization) sampleLocked() (samples credentialSamples, err e
 			a.cleanupLocked()
 		}
 	}()
-	samples, err = sampleCredentialBindings(bindings[:count])
+	samples, err = sampleCredentialBindingsAt(bindings[:count], adjacent)
 	returned = true
 	return samples, err
 }
@@ -297,16 +393,13 @@ func (a *EndpointAuthorization) checkLockedAt(admission bool, samples credential
 	if err != nil {
 		return result, err
 	}
-	result, err = a.closure.checkCurrentAt(a.bindings[:a.closure.count], a.hardEnd, samples)
+	if a.activation == nil {
+		return result, CBORFailure("activation_authority_owner")
+	}
+	result, err = a.closure.checkCurrentAuthorizationAt(a.bindings[:a.closure.count], a.hardEnd, samples, a.activation, admission)
 	if err != nil {
 		return result, err
 	}
-	parent := a.bindings[0]
-	deadline, err := parent.Namespace.checkDetachedActivationAt(a.activation, a.closure.credentials[0], parent.Issuer, result.Requirements.StalenessMS, result.Requirements.SignerLifetimeMS, result.DeadlineMS, admission, samples[0])
-	if err != nil {
-		return result, err
-	}
-	result.DeadlineMS = min(result.DeadlineMS, deadline)
 	// Retain each dependency's original projection separately. Switching which
 	// namespace supplies the minimum must not reset another namespace's clock
 	// anchor. Renewal consumes no new timer, allocation or retained Head bytes.

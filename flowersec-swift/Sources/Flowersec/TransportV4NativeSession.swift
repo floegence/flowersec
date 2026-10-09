@@ -101,19 +101,24 @@
     func openServiceChannel(_ channelClass: V4RPCChannelClass) async throws -> V4RPCChannel { try await openServiceChannel(channelClass, deadlineAtMS: nil) }
     func openServiceChannel(_ channelClass: V4RPCChannelClass, deadlineAtMS: UInt64? = nil) async throws -> V4RPCChannel {
       guard let bootstrap = admission.services else { throw ServiceFailure.serviceUnavailable }
+      if channelClass == .interactive, await bootstrap.acceptsOpeningWaiter {
+        do { try await bootstrap.waitReady(deadlineAtMS: deadlineAtMS); return bootstrap }
+        catch {
+          if error is CancellationError || error as? ServiceFailure == .deadlineExceeded || error as? ServiceFailure == .resourceExhausted { throw error }
+          if await bootstrap.acceptsOpeningWaiter { throw error }
+        }
+      }
+      try checkServiceOpeningDeadline(deadlineAtMS)
       let original = gate.withLock { dynamicRPCChannels[channelClass, default: []] }
       for channel in original {
         if await channel.isAvailable { try await channel.waitReady(deadlineAtMS: deadlineAtMS); return channel }
-      }
-      let bootstrapAvailable = await bootstrap.isAvailable
-      if channelClass == .interactive && bootstrapAvailable {
-        try await bootstrap.waitReady(deadlineAtMS: deadlineAtMS); return bootstrap
       }
       var retired: [V4RPCChannel] = []
       for channel in original { if await channel.finishedPhysically { retired.append(channel) } }
       let bootstrapFinished = await bootstrap.finishedPhysically
       let selected = try gate.withLock { () -> (V4RPCChannel, Bool) in
         try check()
+        try checkServiceOpeningDeadline(deadlineAtMS)
         dynamicRPCChannels[channelClass]?.removeAll { item in retired.contains { $0 === item } }
         if let opening = openingRPCChannels[channelClass] { return (opening, false) }
         let future = try bootstrap.sessionEngine.checkout(opener: Int(admission.plan.role.rawValue),
@@ -131,7 +136,10 @@
           await channel.close(); gate.withLock { openingRPCChannels.removeValue(forKey: channelClass) }
           throw ServiceFailure.serviceUnavailable
         }
-        do { try await channel.start { try await serviceTransport.open(kind: "flowersec.rpc.v4") } }
+        do {
+          try checkServiceOpeningDeadline(deadlineAtMS)
+          try await channel.start { try await serviceTransport.open(kind: "flowersec.rpc.v4") }
+        }
         catch {
           await channel.close(); gate.withLock {
             if openingRPCChannels[channelClass] === channel { openingRPCChannels.removeValue(forKey: channelClass) }
@@ -175,6 +183,19 @@
     var serviceObservationDraining: Bool { core.observationDraining }
     private var gate: NSRecursiveLock { admission.plan.environment.gate }
     fileprivate var core: V4ReliableSession { admission.core }
+    #if DEBUG
+    var cryptoTestTerminated: Bool { gate.withLock { termination != nil } }
+    var cryptoTestRekeyFrozen: Bool { core.cryptoTestRekeyFrozen }
+    func cryptoTestObserve(_ observer: (@Sendable (UInt64, UInt8, Bool) -> Void)?) {
+      core.cryptoTestObserve(observer)
+    }
+    func cryptoTestObservePreparation(_ observer: (@Sendable (UInt64, V4CryptoPreparationTestStage) -> Void)?) {
+      core.cryptoTestObservePreparation(observer)
+    }
+    func cryptoTestSharedInput(_ id: UInt64) -> V4SharedInputTestSnapshot {
+      core.cryptoTestSharedInput(id)
+    }
+    #endif
     private var socket: V4ConsumedWebSocket { admission.socket }
     init(_ admission: V4NativeSessionAdmission) throws {
       self.admission = admission
@@ -200,6 +221,9 @@
       socket.wakeup { [weak self] in self?.events.signal() }
       socket.recordCompletion { [weak self] in try self?.recordActivity() }
       core.observeAuthenticatedInput { [weak self] in try self?.recordActivity() }
+      #if DEBUG
+      admission.plan.environment.nativeSessionTestPrepared?(self)
+      #endif
       reader = Task { [weak self, socket] in
         defer { inputTail.release() }
         do {
@@ -223,8 +247,15 @@
             defer { input.close() }
             try self.gate.withLock {
               try self.check()
-              try input.withBytes { try self.core.receive($0) }
-              if try socket.writable() { _ = try self.core.poll(to: socket) }
+              let disposition = try input.withBytes { try self.core.receive($0) }
+              switch disposition {
+              case .committed, .isolatedStream, .discardedData:
+                // These outcomes belong to this original complete input. An
+                // isolated Stream or bounded rejection keeps the same reader;
+                // thrown framing/AEAD/Session errors still end it below.
+                break
+              }
+              if try socket.writable(maintenance: true) { _ = try self.core.poll(to: socket) }
               self.events.signal()
             }
           }
@@ -239,7 +270,7 @@
             guard let self else { return }
             try self.gate.withLock {
               try self.check()
-              if try self.socket.writable() {
+              if try self.socket.writable(maintenance: true) {
                 _ = try self.core.poll(to: self.socket)
               } else {
                 self.core.noteLivenessProviderBlocked()
@@ -323,6 +354,24 @@
       try socket.check()
       _ = try core.epoch()
     }
+    // Reuse the original bounded waiter and pending-OPEN deadline while a
+    // maintenance record owns its output/crypto position. No acceptance can
+    // steal that position or fabricate a new publication after the deadline.
+    private func withMaintenance<T>(before deadline: ContinuousClock.Instant,
+      _ operation: () throws -> T) async throws -> T {
+      while true {
+        let revision = events.revision
+        let result: T? = try gate.withLock {
+          try check()
+          if Task.isCancelled { throw SessionError.canceled }
+          guard ContinuousClock.now < deadline else { throw SessionError.timeout }
+          guard try socket.writable(maintenance: true), try core.canMaintain() else { return nil }
+          return try operation()
+        }
+        if let result { return result }
+        try await events.wait(after: revision)
+      }
+    }
     private func terminate(_ error: SessionError) {
       gate.withLock {
         guard termination == nil else { return }
@@ -364,7 +413,7 @@
       if let receiver { notificationAvailable = await receiver.acceptsChannel } else { notificationAvailable = false }
       let stream = try gate.withLock { () -> V4NativeByteStream? in
         try check()
-        guard try socket.writable(), let handle = try core.pendingOpen(service: true,
+        guard try socket.writable(maintenance: true), try core.canMaintain(), let handle = try core.pendingOpen(service: true,
           kinds: ["flowersec.notify.v4", "flowersec.execution-management.v4"]) else { return nil }
         let metadata = try core.pendingMetadata(handle); defer { metadata.metadata.close() }
         let managementBlocked = metadata.kind == "flowersec.execution-management.v4" && core.observationDraining
@@ -394,7 +443,7 @@
       let bootstrapFinished = await bootstrap.finishedPhysically
       let accepted: (V4RPCChannel, V4NativeByteStream)? = try gate.withLock {
         try check()
-        guard try socket.writable(), let handle = try core.pendingOpen(service: true, kinds: ["flowersec.rpc.v4"]) else { return nil }
+        guard try socket.writable(maintenance: true), try core.canMaintain(), let handle = try core.pendingOpen(service: true, kinds: ["flowersec.rpc.v4"]) else { return nil }
         guard peerRPCChannels.count < 4, wrappers < admission.plan.slots else {
           try core.decideOpen(handle, decision: .reject(.resource), to: socket); return nil
         }
@@ -429,7 +478,7 @@
       do {
         try gate.withLock {
           try check()
-          guard try socket.writable(), let handle = try core.pendingOpen(kinds: server.streamKinds) else { return }
+          guard try socket.writable(maintenance: true), try core.canMaintain(), let handle = try core.pendingOpen(kinds: server.streamKinds) else { return }
           let metadata = try core.pendingMetadata(handle); defer { metadata.metadata.close() }
           guard wrappers < admission.plan.slots else { try core.decideOpen(handle, decision: .reject(.resource), to: socket); return }
           wrappers += 1
@@ -465,14 +514,15 @@
 
     private func bootstrapTransport() async throws -> any V4RPCTransport {
       while true {
+        try Task.checkCancellation()
         let version = events.revision
         let result: V4NativeByteStream? = try gate.withLock {
           try check()
           guard let handle = try core.bootstrapStream() else { throw ServiceFailure.serviceUnavailable }
-          if try socket.writable() {
+          if !core.bootstrapMaterialized, try socket.writable(), try core.canOpen() {
             // Native Swift establishment is client-side. This is the original
             // preaccepted scope 1, never a public OPEN replacement.
-            if !core.bootstrapMaterialized { _ = try core.materializeBootstrap(to: socket) }
+            _ = try core.materializeBootstrap(to: socket)
           }
           guard core.bootstrapMaterialized else { return nil }
           return try stream(handle, kind: "flowersec.rpc.v4")
@@ -570,7 +620,8 @@
       _ candidate: PendingRawOpen, value: V4NativeByteStream
     ) throws -> IncomingStream? {
       guard ContinuousClock.now < candidate.deadline else { throw SessionError.timeout }
-      try core.decideOpen(candidate.handle, decision: .accept(receiveWindow: admission.plan.window), to: socket)
+      try core.decideOpen(candidate.handle, decision: .accept(receiveWindow: admission.plan.window),
+        to: socket, claim: { try candidate.capture?.accept() })
       events.signal()
       guard try core.phase(candidate.handle) == .accepted else { return nil }
       return IncomingStream(kind: candidate.kind, metadata: candidate.metadata, stream: value)
@@ -703,7 +754,7 @@
           let result: IncomingStream? = try gate.withLock {
             try check()
             if Task.isCancelled { throw SessionError.canceled }
-            guard try socket.writable() else { return nil }
+            guard try socket.writable(maintenance: true), try core.canMaintain() else { return nil }
             if pending == nil { pending = try core.pendingOpen(excluding: admission.server?.streamKinds ?? []) }
             guard let handle = pending else { return nil }
             let metadata = try core.pendingMetadata(handle)
@@ -772,13 +823,10 @@
             raw = nil
             do {
               let value = try prepareRawAcceptance(candidate)
-              let accepted = try gate.withLock { () -> IncomingStream? in
+              let accepted = try await withMaintenance(before: candidate.deadline) { () -> IncomingStream? in
                 try check()
                 if Task.isCancelled { throw SessionError.canceled }
                 guard try core.phase(candidate.handle) == .pending else { return nil }
-                if let capture = candidate.capture {
-                  return try capture.commit { try commitRawAcceptance(candidate, value: value) }
-                }
                 return try commitRawAcceptance(candidate, value: value)
               }
               pending = nil
@@ -820,7 +868,7 @@
               authorized = try await waiting.authorize(metadata: candidate.metadata,
                 registration: candidate.registration)
             } catch { authorized = false }
-            let accepted: IncomingStream? = try gate.withLock {
+            let accepted: IncomingStream? = try await withMaintenance(before: candidate.deadline) {
               try check()
               if Task.isCancelled { throw SessionError.canceled }
               try candidate.storage.check()
@@ -835,17 +883,16 @@
                 return nil
               }
               do {
-                return try candidate.capture.commit {
                   guard ContinuousClock.now < candidate.deadline else { throw SessionError.timeout }
                   try core.decideOpen(
-                    candidate.handle, decision: .accept(receiveWindow: admission.plan.window), to: socket)
+                    candidate.handle, decision: .accept(receiveWindow: admission.plan.window), to: socket,
+                    claim: { try candidate.capture.accept() })
                   pending = nil
                   events.signal()
                   guard try core.phase(candidate.handle) == .accepted else { return nil }
                   preparedView?.activate()
                   return IncomingStream(kind: candidate.kind, metadata: candidate.metadata, stream: value,
                     preparedMessageHandler: preparedHandler)
-                }
               } catch {
                 let phase = try core.phase(candidate.handle)
                 pending = nil
@@ -1039,9 +1086,11 @@
         let done = try gate.withLock {
           try check()
           if Task.isCancelled { throw SessionError.canceled }
-          if !requested, try socket.writable() {
-            _ = try core.requestRekey(to: socket)
-            requested = true
+          // The scheduler may finish the original intent before this caller
+          // wakes. Observe completion before requesting another round.
+          if try core.epoch() > epoch { return true }
+          if !requested, try socket.writable(maintenance: true), try core.canMaintain() {
+            requested = try core.requestRekey(to: socket)
           }
           return try core.epoch() > epoch
         }
@@ -1075,9 +1124,8 @@
             let result: TransportLivenessProgress? = try gate.withLock {
               if let result = try core.probeResult(probe) { return result }
               try check()
-              if !submitted, try socket.writable() {
-                try core.submitProbe(probe, to: socket)
-                submitted = true
+              if !submitted, try socket.writable(maintenance: true) {
+                submitted = try core.submitProbe(probe, to: socket)
               }
               return try core.probeResult(probe)
             }

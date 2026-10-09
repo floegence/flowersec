@@ -33,6 +33,14 @@ extension V4ServiceSession {
     try checkServiceSession()
     guard !serviceObservationDraining else { throw ServiceFailure.serviceUnavailable }
   }
+  func checkServiceOpeningDeadline(_ deadlineAtMS: UInt64?) throws {
+    try Task.checkCancellation()
+    if let deadlineAtMS {
+      guard let now = serviceEnvironment.clock.sample().interval, now.upperMS < deadlineAtMS else {
+        throw ServiceFailure.deadlineExceeded
+      }
+    }
+  }
   func openServiceChannel(_ channelClass: V4RPCChannelClass) async throws -> V4RPCChannel {
     guard let serviceChannel else { throw ServiceFailure.serviceUnavailable }
     try await serviceChannel.waitReady(); return serviceChannel
@@ -229,9 +237,13 @@ public final class ServiceClient: @unchecked Sendable {
     // channel captured with their original bytes, admission and publication.
     if await channel.acceptsOpeningWaiter {
       do { try await channel.waitReady(deadlineAtMS: deadlineAtMS); try checkPreparation(); return channel }
-      catch { if await channel.acceptsOpeningWaiter { throw error } }
+      catch {
+        if error is CancellationError || error as? ServiceFailure == .deadlineExceeded || error as? ServiceFailure == .resourceExhausted { throw error }
+        if await channel.acceptsOpeningWaiter { throw error }
+      }
     }
     try Task.checkCancellation(); try checkPreparation()
+    try session.checkServiceOpeningDeadline(deadlineAtMS)
     let selected = try await session.openServiceChannel(channelClass, deadlineAtMS: deadlineAtMS)
     try Task.checkCancellation(); try checkPreparation()
     guard selected.sessionEngine === channel.sessionEngine else { throw ServiceFailure.serviceUnavailable }

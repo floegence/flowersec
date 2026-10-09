@@ -677,7 +677,7 @@ test("npm, Rust, Go, and Swift source archives carry exact generated distributio
   assert.match(browserBundle, /node_modules\/tr46\//, "browser bundle must contain tr46");
   assert.match(browserBundle, /node_modules\/punycode\//, "browser bundle must contain punycode");
 
-  const rustTarget = path.join(root, "rust-target");
+  const rustTarget = path.join(sourceRoot, ".flowersec", "rust-source-package-target");
   run("rustup", ["run", readToolchains(sourceRoot).rust.version, "cargo",
     "package", "--allow-dirty",
     "--manifest-path", path.join(sourceRoot, "flowersec-rust/Cargo.toml"),

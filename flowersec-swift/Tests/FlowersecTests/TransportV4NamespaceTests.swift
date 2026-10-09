@@ -931,11 +931,14 @@ final class NamespaceFixture {
   let capacity: V4CBORValue
   let capacityDigest: Data
   let delegation: V4CBORValue
+  private let longLived: Bool
 
   init(
     createOwner: Bool = true, nativeResources: Bool = false,
-    cleanupTimeout: Duration = .milliseconds(10), bootstrapMS: UInt64 = 10_000
+    cleanupTimeout: Duration = .milliseconds(10), bootstrapMS: UInt64 = 10_000,
+    longLived: Bool = false
   ) throws {
+    self.longLived = longLived
     configuration = V4NamespaceConfiguration(
       stateBytes: 8192, stateNodes: 4096, bootstrapMS: bootstrapMS)
     let limit = V4ResourceVector(
@@ -967,15 +970,16 @@ final class NamespaceFixture {
     pin = V4NamespaceTrustRoot(
       tenant: "tenant", authority: "authority",
       keyID: Data(repeating: 1, count: 16), publicKey: try Self.key(7).publicKey.rawRepresentation,
-      maximumTrustLifetimeMS: 10_000)
+      maximumTrustLifetimeMS: longLived ? 100_000 : 10_000)
     capacity = Self.map([
       0: .text("tenant"), 1: .text("authority"), 2: .text("capacity.1"),
       3: .uint(8192), 4: .uint(16), 5: .uint(16), 6: .uint(16), 7: .uint(16), 8: .uint(795),
-      9: .uint(262144), 10: .uint(128), 11: .uint(0), 12: .uint(100), 13: .uint(1000),
-      14: .uint(1000),
+      9: .uint(262144), 10: .uint(128), 11: .uint(0), 12: .uint(100),
+      13: .uint(longLived ? 100_000 : 1000), 14: .uint(longLived ? 100_000 : 1000),
     ])
     capacityDigest = Self.digest("namespace-capacity", capacity.encoded())
-    delegation = try Self.headDelegation(capacityDigest: capacityDigest)
+    delegation = try Self.headDelegation(capacityDigest: capacityDigest,
+      until: longLived ? 100_000 : 5000)
     if createOwner {
       owner = try environment.namespace(pinnedRoot: pin, configuration: configuration)
     }
@@ -993,7 +997,7 @@ final class NamespaceFixture {
   }
   static func headDelegation(
     capacityDigest: Data, generation: UInt64 = 1, delegationID: UInt8 = 2,
-    signerID: UInt8 = 3, seed: UInt8 = 9
+    signerID: UInt8 = 3, seed: UInt8 = 9, until: UInt64 = 5000
   ) throws -> V4CBORValue {
     Self.map([
       0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
@@ -1002,7 +1006,7 @@ final class NamespaceFixture {
       6: .bytes(Data(repeating: signerID, count: 16)),
       7: .bytes(try Self.key(seed).publicKey.rawRepresentation),
       8: .uint(0), 9: .text("publication"), 10: .uint(1), 11: .uint(1), 12: .uint(1),
-      13: .uint(5000),
+      13: .uint(until),
     ])
   }
   static func input(_ label: String, _ bytes: Data) -> Data {
@@ -1089,8 +1093,9 @@ final class NamespaceFixture {
     let trust = try Self.signed(
       [
         0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
-        3: .uint(1), 4: .uint(1), 5: .uint(1), 6: .uint(5000), 7: capacity,
-        8: Self.map([0: .text("publication"), 1: .uint(1), 2: .uint(4000), 3: .uint(5000)]),
+        3: .uint(1), 4: .uint(1), 5: .uint(1), 6: .uint(longLived ? 100_000 : 5000), 7: capacity,
+        8: Self.map([0: .text("publication"), 1: .uint(1),
+          2: .uint(longLived ? 100_000 : 4000), 3: .uint(longLived ? 100_000 : 5000)]),
         9: .array(policies), 10: .array(authorizations),
         11: .array(headDelegations ?? [delegation]),
         12: .array(activationDelegations),
@@ -1101,7 +1106,8 @@ final class NamespaceFixture {
       [
         0: .text("4"), 1: .text("tenant"), 2: .text("authority"),
         3: .bytes(nonce ?? owner!.bootstrapNonce()), 4: .uint(issued), 5: .uint(until),
-        6: .bytes(trust), 7: .bytes(head(state: state, floors: floors, seed: headSeed)),
+        6: .bytes(trust), 7: .bytes(head(state: state, sequence: 1,
+          until: longLived ? 100_000 : 4000, floors: floors, seed: headSeed)),
         8: .bytes(pin.keyID),
       ],
       signature: 9, label: "trust-bootstrap/signature", seed: responseSeed)

@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:94acd102-d9ee-51aa-82c9-e39578930ebe",
+  "serialNumber": "urn:uuid:37b4176d-3396-5171-8ced-08bdfe146584",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "1232618a035be3df441e87ab7a37162a01a4f844e6ce13aef4086d6b1e3dc6ed"
+        "value": "b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651"
       }
     ]
   },
@@ -386,9 +386,9 @@
     {
       "type": "library",
       "name": "golang.org/x/crypto",
-      "version": "v0.55.0",
-      "purl": "pkg:golang/golang.org/x/crypto@v0.55.0",
-      "bom-ref": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "version": "v0.57.0",
+      "purl": "pkg:golang/golang.org/x/crypto@v0.57.0",
+      "bom-ref": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -414,9 +414,9 @@
     {
       "type": "library",
       "name": "golang.org/x/net",
-      "version": "v0.58.0",
-      "purl": "pkg:golang/golang.org/x/net@v0.58.0",
-      "bom-ref": "pkg:golang/golang.org/x/net@v0.58.0",
+      "version": "v0.60.0",
+      "purl": "pkg:golang/golang.org/x/net@v0.60.0",
+      "bom-ref": "pkg:golang/golang.org/x/net@v0.60.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -442,9 +442,9 @@
     {
       "type": "library",
       "name": "golang.org/x/sys",
-      "version": "v0.47.0",
-      "purl": "pkg:golang/golang.org/x/sys@v0.47.0",
-      "bom-ref": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "version": "v0.48.0",
+      "purl": "pkg:golang/golang.org/x/sys@v0.48.0",
+      "bom-ref": "pkg:golang/golang.org/x/sys@v0.48.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -470,9 +470,9 @@
     {
       "type": "library",
       "name": "golang.org/x/text",
-      "version": "v0.41.0",
-      "purl": "pkg:golang/golang.org/x/text@v0.41.0",
-      "bom-ref": "pkg:golang/golang.org/x/text@v0.41.0",
+      "version": "v0.42.0",
+      "purl": "pkg:golang/golang.org/x/text@v0.42.0",
+      "bom-ref": "pkg:golang/golang.org/x/text@v0.42.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -625,10 +625,10 @@
         "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
         "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
-        "pkg:golang/golang.org/x/crypto@v0.55.0",
-        "pkg:golang/golang.org/x/net@v0.58.0",
-        "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.41.0",
+        "pkg:golang/golang.org/x/crypto@v0.57.0",
+        "pkg:golang/golang.org/x/net@v0.60.0",
+        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/text@v0.42.0",
         "pkg:golang/modernc.org/libc@v1.75.7",
         "pkg:golang/modernc.org/mathutil@v1.7.1",
         "pkg:golang/modernc.org/memory@v1.12.1",
@@ -638,7 +638,7 @@
     {
       "ref": "pkg:generic/flowersec-noise@1.1.0-flowersec.1",
       "dependsOn": [
-        "pkg:golang/golang.org/x/crypto@v0.55.0"
+        "pkg:golang/golang.org/x/crypto@v0.57.0"
       ]
     },
     {
@@ -656,7 +656,7 @@
     {
       "ref": "pkg:golang/github.com/flynn/noise@v1.1.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/crypto@v0.55.0"
+        "pkg:golang/golang.org/x/crypto@v0.57.0"
       ]
     },
     {
@@ -670,7 +670,7 @@
     {
       "ref": "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
       "dependsOn": [
-        "pkg:golang/golang.org/x/sys@v0.47.0"
+        "pkg:golang/golang.org/x/sys@v0.48.0"
       ]
     },
     {
@@ -680,17 +680,17 @@
     {
       "ref": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/net@v0.58.0"
+        "pkg:golang/golang.org/x/net@v0.60.0"
       ]
     },
     {
       "ref": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
       "dependsOn": [
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/golang.org/x/crypto@v0.55.0",
-        "pkg:golang/golang.org/x/net@v0.58.0",
-        "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.41.0"
+        "pkg:golang/golang.org/x/crypto@v0.57.0",
+        "pkg:golang/golang.org/x/net@v0.60.0",
+        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/text@v0.42.0"
       ]
     },
     {
@@ -699,10 +699,10 @@
         "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
         "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-        "pkg:golang/golang.org/x/crypto@v0.55.0",
-        "pkg:golang/golang.org/x/net@v0.58.0",
-        "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.41.0"
+        "pkg:golang/golang.org/x/crypto@v0.57.0",
+        "pkg:golang/golang.org/x/net@v0.60.0",
+        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/text@v0.42.0"
       ]
     },
     {
@@ -710,27 +710,27 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:golang/golang.org/x/crypto@v0.55.0",
+      "ref": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/net@v0.58.0",
-        "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.41.0"
+        "pkg:golang/golang.org/x/net@v0.60.0",
+        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/text@v0.42.0"
       ]
     },
     {
-      "ref": "pkg:golang/golang.org/x/net@v0.58.0",
+      "ref": "pkg:golang/golang.org/x/net@v0.60.0",
       "dependsOn": [
-        "pkg:golang/golang.org/x/crypto@v0.55.0",
-        "pkg:golang/golang.org/x/sys@v0.47.0",
-        "pkg:golang/golang.org/x/text@v0.41.0"
+        "pkg:golang/golang.org/x/crypto@v0.57.0",
+        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/text@v0.42.0"
       ]
     },
     {
-      "ref": "pkg:golang/golang.org/x/sys@v0.47.0",
+      "ref": "pkg:golang/golang.org/x/sys@v0.48.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:golang/golang.org/x/text@v0.41.0",
+      "ref": "pkg:golang/golang.org/x/text@v0.42.0",
       "dependsOn": []
     },
     {
@@ -741,7 +741,7 @@
         "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
         "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
-        "pkg:golang/golang.org/x/sys@v0.47.0",
+        "pkg:golang/golang.org/x/sys@v0.48.0",
         "pkg:golang/modernc.org/mathutil@v1.7.1",
         "pkg:golang/modernc.org/memory@v1.12.1"
       ]
@@ -756,7 +756,7 @@
       "ref": "pkg:golang/modernc.org/memory@v1.12.1",
       "dependsOn": [
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
-        "pkg:golang/golang.org/x/sys@v0.47.0",
+        "pkg:golang/golang.org/x/sys@v0.48.0",
         "pkg:golang/modernc.org/mathutil@v1.7.1"
       ]
     },
@@ -768,7 +768,7 @@
         "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
         "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
-        "pkg:golang/golang.org/x/sys@v0.47.0",
+        "pkg:golang/golang.org/x/sys@v0.48.0",
         "pkg:golang/modernc.org/libc@v1.75.7",
         "pkg:golang/modernc.org/mathutil@v1.7.1",
         "pkg:golang/modernc.org/memory@v1.12.1"

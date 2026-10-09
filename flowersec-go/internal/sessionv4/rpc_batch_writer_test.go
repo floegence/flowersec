@@ -50,6 +50,19 @@ func TestRPCBatchWriterUsesOriginalQueueAndActualPublication(t *testing.T) {
 	if accepted, _, pending, _, _, _, _ := q.Snapshot(); accepted != tail || pending != n+m {
 		t.Fatal("batch not in original ring", accepted, pending)
 	}
+	// The pump publishes its frontier before releasing the physical queue
+	// borrow. Published must wait for that final release, since Retire rejects
+	// a live pump even when all requested bytes have been written.
+	q.mu.Lock()
+	publishedBefore := q.published
+	q.published, q.pumping = tail, true
+	q.mu.Unlock()
+	if published, err := writer.Published(tail); published || err != nil {
+		t.Fatal("publication outran its physical queue handoff", published, err)
+	}
+	q.mu.Lock()
+	q.published, q.pumping = publishedBefore, false
+	q.mu.Unlock()
 	if _, err := owner.Write(context.Background(), []byte{1}); !errors.Is(err, ErrStreamOwned) {
 		t.Fatal("competing writer", err)
 	}

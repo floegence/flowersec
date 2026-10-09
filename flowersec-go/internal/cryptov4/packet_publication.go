@@ -11,6 +11,10 @@ import "github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 func (p *Packet) MoveReliableOutput(dst []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.moveReliableOutputLocked(dst)
+}
+
+func (p *Packet) moveReliableOutputLocked(dst []byte) error {
 	if p.released {
 		return ErrClosed
 	}
@@ -39,4 +43,29 @@ func (p *Packet) MoveReliableOutput(dst []byte) error {
 	p.data, p.workspace = dst[:n], nil
 	p.engine.release(w)
 	return nil
+}
+
+// PreparePublication reads metadata and moves this same original ciphertext
+// under one packet gate. It returns no provider publication permission: the
+// writer still calls Bytes at each actual provider attempt after its SDK hooks.
+func (p *Packet) PreparePublication(dst []byte) (protocolv4.FrameType, protocolv4.RecordHeader, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var header protocolv4.RecordHeader
+	if p.released {
+		return 0, header, ErrClosed
+	}
+	if !p.outgoing {
+		return 0, header, ErrConfiguration
+	}
+	frame, header, _, err := protocolv4.ParseRecord(p.data, p.engine.config.Profile, p.engine.config.MaxFrame)
+	if err != nil {
+		return frame, header, err
+	}
+	if dst != nil && (frame == protocolv4.FrameStreamData || frame == protocolv4.FrameOpenStream) {
+		err = p.moveReliableOutputLocked(dst)
+	} else {
+		_, err = p.bytesLocked()
+	}
+	return frame, header, err
 }

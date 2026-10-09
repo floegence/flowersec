@@ -249,6 +249,9 @@
     func publish(_ buffer: V4CryptoBuffer, completion: @escaping @Sendable (Bool) -> Void) throws {
       try state.publish(buffer, opcode: .binary, completion: completion)
     }
+    func reserveRecordOutput(maintenance: Bool) throws -> V4RecordOutput {
+      try state.reserveRecordOutput(maintenance: maintenance)
+    }
     func receive() async throws -> V4CryptoBuffer { try await state.receive() }
     func flush() async throws { try await state.flush(access: nil) }
     func consumePool(using store: V4SQLitePoolStore) throws -> V4ConsumedWebSocket {
@@ -341,9 +344,14 @@
     func publish(_ input: V4CryptoBuffer, completion: @escaping @Sendable (Bool) -> Void) throws {
       try state.publish(input, opcode: .binary, access: self, completion: completion)
     }
+    func reserveRecordOutput(maintenance: Bool) throws -> V4RecordOutput {
+      try state.reserveRecordOutput(access: self, maintenance: maintenance)
+    }
     func receive() async throws -> V4CryptoBuffer { try await state.receive(access: self) }
     func flush() async throws { try await state.flush(access: self) }
-    func writable() throws -> Bool { try state.writable(access: self) }
+    func writable(maintenance: Bool = false) throws -> Bool {
+      try state.writable(access: self, maintenance: maintenance)
+    }
     func wakeup(_ action: (@Sendable () -> Void)?) { state.setWakeup(action) }
     func recordCompletion(_ action: (@Sendable () throws -> Void)?) {
       state.setRecordCompletion(action)
@@ -386,6 +394,8 @@
     private var tlsFinished = false
     private var physicalReady = false
     private var pendingWrites = 0
+    private var applicationOutputs = 0
+    private var maintenanceOutputs = 0
     private var consumptionStarted = false
     private var tunnelHopClaimed = false
     private weak var poolClaim: V4PreparedPoolClaim?
@@ -537,11 +547,45 @@
         timer = nil
       }
     }
-    func writable(access: V4PreparedPoolClaim) throws -> Bool {
+    func writable(access: V4PreparedPoolClaim, maintenance: Bool = false) throws -> Bool {
       try lock.withLock {
         try checkAccess(access)
-        return pendingWrites < 2
+        if !established { return pendingWrites < 2 }
+        return maintenance ? maintenanceOutputs == 0 : applicationOutputs < 2
       }
+    }
+    func reserveRecordOutput(access: V4PreparedPoolClaim? = nil, maintenance: Bool) throws -> V4RecordOutput {
+      try lock.withLock {
+        try checkAccess(access)
+        guard upgraded, let channel,
+          maintenance ? maintenanceOutputs == 0 : applicationOutputs < 2 else {
+          throw V4CryptoFailure.capacity
+        }
+        let tail = try charge.executionTail()
+        pendingWrites += 1
+        if maintenance { maintenanceOutputs += 1 } else { applicationOutputs += 1 }
+        return V4RecordOutput(publish: { [self] input, completion in
+          try publish(input, opcode: .binary, access: access, completion: completion,
+            reserved: (channel, tail, maintenance))
+        }, discard: { [self] in
+          finishOutput(tail: tail, maintenance: maintenance)
+        })
+      }
+    }
+    private func finishOutput(tail: V4ResourceReference, maintenance: Bool?) {
+      lock.withLock {
+        pendingWrites -= 1
+        if let maintenance {
+          if maintenance { maintenanceOutputs -= 1 } else { applicationOutputs -= 1 }
+        }
+        if pendingWrites == 0, let waiting = writeWaiter {
+          writeWaiter = nil
+          if let failure { waiting.resume(throwing: failure) } else { waiting.resume() }
+        }
+        wakeup?()
+      }
+      tail.release()
+      cleanupEvents.signal()
     }
     func setWakeup(_ action: (@Sendable () -> Void)?) { lock.withLock { wakeup = action } }
     func setInputWakeup(_ action: (@Sendable () -> Void)?) { lock.withLock { inputWakeup = action } }
@@ -706,11 +750,13 @@
     func publish(
       _ input: V4CryptoBuffer, opcode: WebSocketOpcode,
       access: V4PreparedPoolClaim? = nil, completion: (@Sendable (Bool) -> Void)? = nil,
-      admissionCheck: () throws -> Void = {}
+      admissionCheck: () throws -> Void = {},
+      reserved: ((any Channel), V4ResourceReference, Bool)? = nil
     ) throws {
       var enqueued = false
       do {
         let (channel, tail) = try lock.withLock { () throws -> (any Channel, V4ResourceReference) in
+          if let reserved { return (reserved.0, reserved.1) }
           try checkAccess(access)
           guard upgraded, let value = self.channel, pendingWrites < 2 else { throw V4WebSocketFailure.capacity }
           let tail = try charge.executionTail()
@@ -720,9 +766,7 @@
         var retainedByCompletion = false
         defer {
           if !retainedByCompletion {
-            lock.withLock { pendingWrites -= 1 }
-            tail.release()
-            cleanupEvents.signal()
+            finishOutput(tail: tail, maintenance: reserved?.2)
           }
         }
         let bytes = try input.withBytes { $0 }
@@ -740,38 +784,33 @@
           guard self.channel === channel else { throw V4WebSocketFailure.closed }
           enqueued = true
           retainedByCompletion = true
-          // The event-loop enqueue preserves gate claim order. Actual provider
-          // submission runs after this short critical section has returned.
-          channel.eventLoop.execute { [self, input, tail] in
-          channel.writeAndFlush(frame).whenComplete { [self, input, tail] result in
-            defer { tail.release(); cleanupEvents.signal() }
-            _ = input
-            lock.withLock {
-              pendingWrites -= 1
-              switch result {
-              case .success: completion?(true)
-              case .failure: completion?(false)
-              }
-              if case .success = result {
-                do {
-                  try check()
-                  // Record activity is ordered with Session gates before any
-                  // waiter wakes. Native Ping/Pong and enqueue never qualify.
-                  if established && opcode == .binary { try recordCompletion?() }
-                } catch { fail(error) }
-              }
-              if pendingWrites == 0, let waiting = writeWaiter {
-                writeWaiter = nil
-                switch result {
-                case .success: waiting.resume()
-                case .failure(let error): waiting.resume(throwing: error)
+          // The original direction remains claimed through enqueue. Host
+          // registration and provider work run outside every enclosing gate.
+          route.environment.root.gate.outside {
+            channel.eventLoop.execute { [self, input, tail] in
+              channel.writeAndFlush(frame).whenComplete { [self, input, tail] result in
+                defer { finishOutput(tail: tail, maintenance: reserved?.2) }
+                _ = input
+                lock.withLock {
+                  switch result {
+                  case .success: completion?(true)
+                  case .failure: completion?(false)
+                  }
+                  if case .success = result {
+                    do {
+                      try check()
+                      // Record activity is ordered with Session gates before any
+                      // waiter wakes. Native Ping/Pong and enqueue never qualify.
+                      if established && opcode == .binary { try recordCompletion?() }
+                    } catch { fail(error) }
+                  }
                 }
+                if case .failure(let error) = result { fail(error) }
               }
-              wakeup?()
             }
-            if case .failure(let error) = result { fail(error) }
           }
-          }
+          try checkAccess(access)
+          guard self.channel === channel else { throw V4WebSocketFailure.closed }
         }
       } catch {
         if !enqueued { completion?(false) }

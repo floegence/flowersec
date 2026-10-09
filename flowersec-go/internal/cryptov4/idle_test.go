@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 func TestIdleStartsAtOriginalDualReady(t *testing.T) {
@@ -80,5 +81,90 @@ func TestIdleStartsAtOriginalDualReady(t *testing.T) {
 				t.Fatal("late timer allowed another ticket", err)
 			}
 		})
+	}
+}
+
+func TestApplicationAndPacketWallRepairPreserveOriginalIdleDeadline(t *testing.T) {
+	tick := timev4.Tick{Incarnation: [16]byte{1}}
+	clock, err := timev4.NewClock(timev4.Profile{Rate: timev4.Rate{Denominator: 1}, MaxWidthMS: 100, MaxAgeMS: 100, MaxRoundTripMS: 100}, func() (timev4.Tick, error) { return tick, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(clock.Close)
+	install := func(wall uint64) error {
+		t.Helper()
+		mark, err := clock.Monotonic()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return clock.InstallTrusted(mark, timev4.Interval{LowerMS: wall, UpperMS: wall})
+	}
+	if err := install(100000); err != nil {
+		t.Fatal(err)
+	}
+	engine, _ := enginePairWithClock(t, protocolv4.DHProfileX25519, clock, func(config *Config) { config.IdleDurationMS = 1000 })
+	packet, err := engine.Seal(protocolv4.FrameStreamData, 1, []byte("original provider tail"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packet.Release()
+	gate, err := engine.PrepareApplicationAcceptance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tick.Milliseconds = 101
+	if _, err := clock.Sample(); !errors.Is(err, timev4.ErrUnavailable) {
+		t.Fatal("aged wall anchor remained authorized", err)
+	}
+	if _, err := gate.Check(); !errors.Is(err, timev4.ErrUnavailable) {
+		t.Fatal("application gate accepted aged wall time", err)
+	}
+	if _, err := packet.Bytes(); !errors.Is(err, timev4.ErrUnavailable) {
+		t.Fatal("provider gate accepted aged wall time", err)
+	}
+	if err := install(100101); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gate.Check(); err != nil {
+		t.Fatal("same-era anchor repair poisoned application idle", err)
+	}
+	if _, err := packet.Bytes(); err != nil {
+		t.Fatal("same-era anchor repair poisoned provider idle", err)
+	}
+	tick.Milliseconds = 102
+	if err := install(400000); !errors.Is(err, timev4.ErrContradiction) {
+		t.Fatal("wall contradiction remained authorized", err)
+	}
+	if _, err := gate.Check(); !errors.Is(err, timev4.ErrUnavailable) {
+		t.Fatal("application gate accepted invalid wall trust", err)
+	}
+	if _, err := packet.Bytes(); !errors.Is(err, timev4.ErrUnavailable) {
+		t.Fatal("provider gate accepted invalid wall trust", err)
+	}
+	if err := install(100102); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gate.Check(); !errors.Is(err, timev4.ErrUnavailable) {
+		t.Fatal("wall repair revived retired application authorization", err)
+	}
+	current, err := engine.PrepareApplicationAcceptance()
+	if err != nil {
+		t.Fatal("wall repair poisoned original idle", err)
+	}
+	if _, err := current.Check(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := packet.Bytes(); err != nil {
+		t.Fatal(err)
+	}
+	tick.Milliseconds = 1000
+	if err := install(101000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := current.Check(); !errors.Is(err, ErrIdle) {
+		t.Fatal("wall repair extended application idle deadline", err)
+	}
+	if _, err := packet.Bytes(); !errors.Is(err, ErrIdle) {
+		t.Fatal("wall repair extended provider idle deadline", err)
 	}
 }

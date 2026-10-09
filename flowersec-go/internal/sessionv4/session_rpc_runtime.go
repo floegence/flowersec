@@ -23,6 +23,7 @@ func (r *RPCServices) run(ctx context.Context) error {
 	r.runtimeStarted = true
 	r.runtimeContext = ctx
 	b, publication := r.bootstrap, r.publication
+	bootstrapNative := r.bootstrapNative
 	var identity [32]byte
 	copy(identity[:16], r.owner.Instance[:])
 	copy(identity[16:], r.owner.Backing[:])
@@ -31,9 +32,13 @@ func (r *RPCServices) run(ctx context.Context) error {
 	copy(channelID[:], digest[:16])
 	r.mu.Unlock()
 	defer r.Close()
+	defer bootstrapNative.close()
 	if b.admission.direction == b.spec.Opener {
 		if r.native != nil {
-			original, err := r.native.open(ctx)
+			if bootstrapNative == nil {
+				return cryptov4.ErrConfiguration
+			}
+			original, err := r.native.openProtected(ctx, bootstrapNative)
 			if err != nil {
 				return err
 			}
@@ -50,6 +55,9 @@ func (r *RPCServices) run(ctx context.Context) error {
 			if err := r.publishBootstrap(ctx); err != nil {
 				return err
 			}
+			// Prefix publication consumes this one-shot promise. The actual
+			// stream and authenticated association retain their original slots.
+			bootstrapNative.close()
 			r.native.finishOpen(original)
 			original = nil
 		} else if err := r.publishBootstrap(ctx); err != nil {

@@ -89,7 +89,7 @@ func (s *sqliteStore) writeTransactionMode(ctx context.Context, guard func() err
 // commit is an internal final publication gate. All callbacks, encoding and
 // signing finish before it; only the original bounded driver COMMIT runs there.
 func (s *sqliteStore) writeTransactionCommit(ctx context.Context, guard func() error, write func() error, retained bool, commit func() error) (err error) {
-	if err = s.checkpoint(); err != nil {
+	if err = s.checkpointForWrite(); err != nil {
 		return err
 	}
 	if err = s.exec("BEGIN IMMEDIATE"); err != nil {
@@ -169,6 +169,17 @@ func (a *sqliteAdmission) reserve(ctx context.Context) error {
 		return ErrFenced
 	}
 	return s.writeTransaction(ctx, a.check, func() error {
+		// Only an identical connection is the same transaction domain. Remote
+		// continuations and distinct parent stores retain their earlier claim.
+		if a.parent == s && a.winnerContinuation == nil {
+			n, err := a.record.encodeParentWinner(a.target)
+			if err != nil {
+				return err
+			}
+			if err = s.matchParentWinnerInTransaction(ctx, a.key[:a.keySize], a.target[:n], a.scratch); err != nil {
+				return err
+			}
+		}
 		// All competitors share exactly tenant + Artifact issuer + lease. A
 		// duplicate can report a fact but cannot manufacture this invocation.
 		existing, err := s.readAdmission(a.key[:a.keySize], a.scratch)

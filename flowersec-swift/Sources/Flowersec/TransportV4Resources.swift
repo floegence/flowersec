@@ -1,5 +1,22 @@
 import Foundation
 
+// Resource owners intentionally share this recursive submission gate. A claimed
+// synchronous crypto job must leave every enclosing acquisition, including a
+// native Session or typed-stream caller's acquisition, before doing crypto.
+// Only an owner with an immutable input and a retained physical job may use it.
+final class V4CommitGate: NSRecursiveLock, @unchecked Sendable {
+  private var depth = 0
+  override func lock() { super.lock(); depth += 1 }
+  override func unlock() { depth -= 1; super.unlock() }
+  func outside<T>(_ operation: () throws -> T) rethrows -> T {
+    let acquisitions = depth
+    precondition(acquisitions > 0)
+    for _ in 0..<acquisitions { unlock() }
+    defer { for _ in 0..<acquisitions { lock() } }
+    return try operation()
+  }
+}
+
 // All types in this file are internal composition capabilities. Neither peer
 // labels nor caller-provided strings can create accounts or resource owners.
 enum V4ResourceFailure: Error, Equatable, Sendable {
@@ -181,7 +198,7 @@ final class V4ResourceService: @unchecked Sendable {
 final class V4ResourceRoot: @unchecked Sendable {
   let diagnosticCounters = V4DiagnosticCounters()
   private static let maximumDepth = 8
-  let gate = NSRecursiveLock()
+  let gate = V4CommitGate()
   private struct AccountSlot {
     var generation: UInt64 = 0
     var kind = V4ResourceAccount.Kind.tenant

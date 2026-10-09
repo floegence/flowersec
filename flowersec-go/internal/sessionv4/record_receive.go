@@ -25,6 +25,7 @@ type RecordReceiver struct {
 	context         protocolv4.DecodeContext
 	maxFrame        uint32
 	storage         []byte
+	storageUsed     int // Written only by the single active input owner.
 	reservation     resourcev4.Reference
 	closed, active  bool
 	idle            chan struct{}
@@ -125,6 +126,18 @@ type ReceivedRecord struct {
 	dataApplied        bool
 }
 
+// dispatchComplete observes only a completed ownership transfer, never decoder
+// plaintext. Shared DATA has already passed authentication, authorization and
+// acceptance under the original receive gate before Read returns it.
+func (r *ReceivedRecord) dispatchComplete() (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.released {
+		return false, cryptov4.ErrClosed
+	}
+	return r.dataApplied, nil
+}
+
 // claimMaintenance prevents a retained authenticated input from manufacturing
 // additional response obligations. The record/schema checks precede this call.
 func (r *ReceivedRecord) claimMaintenance() error {
@@ -173,6 +186,27 @@ func (r *ReceivedRecord) AcceptMessage() error {
 	default:
 		return cryptov4.ErrConfiguration
 	}
+}
+
+func (r *ReceivedRecord) acceptMaintenanceFrame(f *protocolv4.Frame) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.released {
+		return cryptov4.ErrClosed
+	}
+	if r.maintenanceHandled || r.frame != f {
+		return cryptov4.ErrTransition
+	}
+	if f.Header.Scope != 0 || f.Type != protocolv4.FramePing && f.Type != protocolv4.FramePong {
+		return cryptov4.ErrConfiguration
+	}
+	r.maintenanceHandled = true
+	r.receiver.mu.Lock()
+	defer r.receiver.mu.Unlock()
+	if err := r.receiver.checkLocked(); err != nil {
+		return err
+	}
+	return r.packet.Accepted()
 }
 
 // Body only exposes plaintext while the original engine and receiver remain
@@ -226,7 +260,8 @@ func (r *RecordReceiver) begin(ctx context.Context) error {
 func (r *RecordReceiver) finish() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	clear(r.storage)
+	clear(r.storage[:r.storageUsed])
+	r.storageUsed = 0
 	r.active = false
 	r.signalCleanupLocked()
 }
@@ -259,20 +294,32 @@ func (r *RecordReceiver) readShared(ctx context.Context, reader io.Reader, gate 
 		}
 	}()
 	input := &gate.input
-	prefix, err := ReadRecordPrefix(input, r.maxFrame)
-	if err != nil {
-		if input.failed(err) {
-			gate.admission.closeWithTransportCause(err)
+	var wire []byte
+	if messages, ok := reader.(*SessionMessageInput); ok {
+		// This canonical message owner validates the entire frame before
+		// exposing any bytes; it need not enter two byte-read ownership gates.
+		var n int
+		n, err = messages.readRecordMessage(r.storage)
+		r.storageUsed = n
+		if controllerNetworkRetry(err) {
+			input.failure = err
 		}
-		return nil, err
+		wire = r.storage[:n]
+	} else {
+		var prefix RecordPrefix
+		prefix, err = ReadRecordPrefix(input, r.maxFrame)
+		if err == nil {
+			r.mu.Lock()
+			err = r.checkLocked()
+			r.mu.Unlock()
+		}
+		if err == nil {
+			// Include the entire provider view before I/O, including a failed
+			// partial read. Prior input was erased at its original owner's exit.
+			r.storageUsed = prefix.RequiredBytes()
+			wire, err = prefix.ReadBody(input, r.storage)
+		}
 	}
-	r.mu.Lock()
-	err = r.checkLocked()
-	r.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-	wire, err := prefix.ReadBody(input, r.storage)
 	if err != nil {
 		if input.failed(err) {
 			gate.admission.closeWithTransportCause(err)
@@ -366,6 +413,7 @@ func (r *RecordReceiver) read(ctx context.Context, reader io.Reader, incoming bo
 	if err != nil {
 		return nil, err
 	}
+	r.storageUsed = prefix.RequiredBytes()
 	wire, err := prefix.ReadBody(reader, r.storage)
 	if err != nil {
 		return nil, err
@@ -399,6 +447,7 @@ func (r *RecordReceiver) receiveMaintenance(ctx context.Context, wire []byte) (_
 	if len(wire) > len(r.storage) {
 		return nil, protocolv4.ErrPayloadTooLarge
 	}
+	r.storageUsed = len(wire)
 	n := copy(r.storage, wire)
 	_, header, _, err := protocolv4.ParseRecord(r.storage[:n], r.context.Selectors["crypto_profile_id"], r.maxFrame)
 	if err != nil {
@@ -427,6 +476,7 @@ func (r *RecordReceiver) receiveNativeSegments(ctx context.Context, scope uint64
 		if len(part) > len(r.storage)-size {
 			return nil, protocolv4.ErrPayloadTooLarge
 		}
+		r.storageUsed = size + len(part)
 		size += copy(r.storage[size:], part)
 	}
 	if err = ctx.Err(); err != nil {

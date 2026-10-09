@@ -155,6 +155,9 @@ final class V4RekeyCoordinator {
   private var deadline: V4LocalWorkWindow?
   private var requested = false
   private var timeoutRecorded = false
+  private var preparing = false
+  private var computing = false
+  private var closed = false
   private var clock: V4TrustedClock { access.environment.clock }
   init(
     _ access: V4ReliableSessionAdmission, registry: V4NamespaceRegistry, liveness: V4LivenessState
@@ -183,6 +186,7 @@ final class V4RekeyCoordinator {
         blocks: (bytes + 15) / 16 + calls * 9, ciphertextBytes: bytes + calls * 16))
   }
   func check() throws {
+    guard !closed else { throw V4CryptoFailure.closed }
     do { try intent?.check(); try deadline?.check() }
     catch {
       if (error as? V4TimeFailure) == .expired && !timeoutRecorded {
@@ -217,6 +221,8 @@ final class V4RekeyCoordinator {
     ).root
   }
   private func mac(_ round: Round, phase: UInt8, unsigned: Data) throws -> Data {
+    try check()
+    guard !computing else { throw V4CryptoFailure.phase }
     let base: SymmetricKey
     if phase < 3 {
       base = round.secret
@@ -224,9 +230,35 @@ final class V4RekeyCoordinator {
       guard let root = round.candidate else { throw V4CryptoFailure.phase }
       base = root
     }
-    return try V4RekeyMaterial.confirmation(
-      base: base, profile: access.profile, hash: access.hash,
-      context: access.context, epoch: round.epoch, id: round.id, phase: phase, unsigned: unsigned)
+    let epoch = round.epoch, id = round.id
+    let window = deadline
+    let liveRound = self.round === round
+    computing = true
+    defer { computing = false }
+    let result = try access.channel.rekeyCrypto(access, deadline: { try window?.check() }) {
+      try V4RekeyMaterial.confirmation(base: base, profile: access.profile, hash: access.hash,
+        context: access.context, epoch: epoch, id: id, phase: phase, unsigned: unsigned)
+    }
+    try check()
+    guard liveRound ? self.round === round : self.round == nil else {
+      throw V4CryptoFailure.closed
+    }
+    return result
+  }
+  private func initialDigest(_ round: Round) throws -> Data {
+    try check()
+    guard !computing, self.round === round else { throw V4CryptoFailure.phase }
+    let epoch = round.epoch, initial = round.initial
+    let window = deadline
+    computing = true
+    defer { computing = false }
+    let digest = try access.channel.rekeyCrypto(access, deadline: { try window?.check() }) {
+      V4RekeyMaterial.transcript("rekey-init-digest", hash: access.hash,
+        profile: access.profile, epoch: epoch, initial: initial)
+    }
+    try check()
+    guard self.round === round else { throw V4CryptoFailure.closed }
+    return digest
   }
   private func body(_ round: Round, phase: UInt8, frontier: UInt64 = 0) throws -> Data {
     var fields: [(UInt64, Data)] = [
@@ -287,36 +319,58 @@ final class V4RekeyCoordinator {
     return entries
   }
   private func stage(_ round: Round, peer: Data) throws {
-    guard let ephemeral = round.ephemeral else { throw V4CryptoFailure.phase }
-    round.transcript = V4RekeyMaterial.transcript(
-      "rekey-transcript", hash: access.hash,
-      profile: access.profile, epoch: round.epoch, initial: round.initial, reply: round.reply)
-    var shared = try ephemeral.shared(peer)
-    defer {
-      V4Crypto.wipe(&shared)
-      ephemeral.close()
-      round.ephemeral = nil
+    try check()
+    guard !computing, self.round === round, let ephemeral = round.ephemeral else {
+      throw V4CryptoFailure.phase
     }
-    var extracted = V4Crypto.mac(round.secret, shared)
-    defer { V4Crypto.wipe(&extracted) }
-    let info =
-      V4RekeyMaterial.domain("rekey-root", access: access, epoch: round.epoch)
-      + V4Crypto.integer(UInt64(round.epoch + 1), width: 4) + V4Crypto.lp(round.id)
-      + V4Crypto.lp(round.transcript)
-    let root = V4Crypto.expand(SymmetricKey(data: extracted), info: info)
-    round.candidate = root
-    try access.channel.rekeyStage(access, root: root)
+    // Transfer the original ephemeral into this physical job. Close can retire
+    // the round immediately but cannot clear material while DH is using it.
+    round.ephemeral = nil
+    computing = true
+    defer { computing = false; ephemeral.close() }
+    let epoch = round.epoch, initial = round.initial, reply = round.reply
+    let secret = round.secret, id = round.id
+    let window = deadline
+    let result = try access.channel.rekeyCrypto(access, deadline: { try window?.check() }) { () throws -> (Data, SymmetricKey) in
+      let transcript = V4RekeyMaterial.transcript("rekey-transcript", hash: access.hash,
+        profile: access.profile, epoch: epoch, initial: initial, reply: reply)
+      var shared = try ephemeral.shared(peer)
+      defer { V4Crypto.wipe(&shared) }
+      try window?.check()
+      var extracted = V4Crypto.mac(secret, shared)
+      defer { V4Crypto.wipe(&extracted) }
+      let info = V4RekeyMaterial.domain("rekey-root", access: access, epoch: epoch)
+        + V4Crypto.integer(UInt64(epoch + 1), width: 4) + V4Crypto.lp(id)
+        + V4Crypto.lp(transcript)
+      return (transcript, V4Crypto.expand(SymmetricKey(data: extracted), info: info))
+    }
+    try check()
+    guard self.round === round else { throw V4CryptoFailure.closed }
+    round.transcript = result.0
+    round.candidate = result.1
+    try access.channel.rekeyStage(access, root: result.1, deadline: { try window?.check() })
+    try check()
+    guard self.round === round else { throw V4CryptoFailure.closed }
   }
   private func newRound(id: Data, server: Bool, owner: V4ReliableSession) throws -> Round {
     let state = try access.channel.rekeyState(access)
-    guard round == nil, state.epoch < 65_535 else { throw V4CryptoFailure.phase }
+    guard !preparing, !computing, round == nil, state.epoch < 65_535 else {
+      throw V4CryptoFailure.phase
+    }
+    preparing = true
+    defer { preparing = false }
     liveness.beginRekey()
     let generationWindow = try V4LocalWorkWindow(clock: clock, durationMS: 5000)
-    let result = try Round(
-      epoch: state.epoch, id: id, secret: access.channel.rekeySecret(access),
-      ephemeral: V4SoftwareDH.generate(access.profile), post: credit.charge(server: server))
+    let post = try credit.charge(server: server)
+    let secret = try access.channel.rekeySecret(access, deadline: { try generationWindow.check() })
+    let ephemeral = try access.channel.rekeyCrypto(access, deadline: { try generationWindow.check() }) {
+      try V4SoftwareDH.generate(access.profile)
+    }
+    let result = Round(epoch: state.epoch, id: id, secret: secret, ephemeral: ephemeral, post: post)
     try generationWindow.check()
+    try check()
     try access.channel.rekeyFreeze(access)
+    self.round = result
     result.outgoing = try owner.rekeySnapshot(access, epoch: state.epoch)
     deadline = try V4LocalWorkWindow(clock: clock, durationMS: 10_000)
     if intent == nil { access.environment.root.diagnosticCounters.increment(.rekeyStarted) }
@@ -325,13 +379,21 @@ final class V4RekeyCoordinator {
     intent = nil
     return result
   }
-  private func send(_ body: Data, marker: Bool, publisher: any V4RecordPublisher) throws {
+  private func send(_ body: Data, marker: Bool, publisher: any V4RecordPublisher,
+    reserved: (V4CryptoBuffer, V4RecordOutput)? = nil) throws {
     try access.channel.publish(
       scope: access.channel.maintenance, frameType: 6, plaintext: body,
-      to: publisher, access: access, marker: marker, critical: true)
-    if marker { try access.channel.rekeyMarker(access, sent: true) }
+      to: publisher, access: access, marker: marker, critical: true,
+      reservedOutput: reserved,
+      ticketed: { _, _ in
+        if marker { try self.access.channel.rekeyMarker(self.access, sent: true) }
+      })
   }
-  private func finish(_ round: Round, owner: V4ReliableSession) throws {
+  @discardableResult private func finish(_ round: Round, owner: V4ReliableSession) throws -> Bool {
+    // A peer can authenticate a queued record before the original synchronous
+    // sender has returned from provider handoff. The same round/deadline stays
+    // pending until those old jobs actually exit; no lock waits for them.
+    guard try access.channel.rekeyCanFinish(access) else { return false }
     let epoch = try access.channel.rekeyFinish(access)
     for entry in round.outgoing + round.incoming {
       try owner.rekeyRelease(access, scope: entry.scope)
@@ -344,11 +406,13 @@ final class V4RekeyCoordinator {
     deadline = nil
     liveness.completeRekey()
     access.environment.root.diagnosticCounters.increment(.rekeySucceeded)
+    return true
   }
   @discardableResult func poll(owner: V4ReliableSession, to publisher: any V4RecordPublisher) throws
     -> Bool
   {
     try check()
+    guard !preparing, !computing else { return false }
     if round == nil {
       if try access.channel.rekeySafetyDue(
         access, waitMS: credit.period + credit.startBudget + 45_000)
@@ -365,15 +429,17 @@ final class V4RekeyCoordinator {
       guard try credit.available(server: false) >= credit.period else { return false }
       let round = try newRound(id: V4Crypto.random(16), server: false, owner: owner)
       round.initial = try body(round, phase: 1)
-      round.initDigest = V4RekeyMaterial.transcript(
-        "rekey-init-digest", hash: access.hash,
-        profile: access.profile, epoch: round.epoch, initial: round.initial)
+      round.initDigest = try initialDigest(round)
       self.round = round
       try send(round.initial, marker: false, publisher: publisher)
       for entry in round.outgoing { try owner.rekeyPublished(access, scope: entry.scope) }
       return true
     }
     let round = round!
+    if round.stage == 4 {
+      _ = try finish(round, owner: owner)
+      return false
+    }
     let phase: UInt8
     switch (access.role, round.stage) {
     case (.server, 1): phase = 2
@@ -390,17 +456,27 @@ final class V4RekeyCoordinator {
         }
       }
     }
-    let state = try access.channel.rekeyState(access)
-    let message = try phase == 2 ? round.reply : body(round, phase: phase, frontier: state.sendNext)
-    try access.channel.rekeyArm(access)
-    round.stage = phase
-    if phase == 3 { deadline = try V4LocalWorkWindow(clock: clock, durationMS: 30_000) }
-    try send(message, marker: phase >= 3, publisher: publisher)
-    if phase == 2 {
-      for entry in round.outgoing { try owner.rekeyPublished(access, scope: entry.scope) }
-    } else if phase == 4 {
-      try finish(round, owner: owner)
+    let originalStage = round.stage
+    let reserved = try phase >= 3 ? access.channel.reserveMaintenanceOutput(access,
+      maximum: phaseBytes, to: publisher) : nil
+    defer { reserved?.1.discard() }
+    try check()
+    guard self.round === round, round.stage == originalStage else { throw V4CryptoFailure.closed }
+    let publishPhase: () throws -> Void = {
+      let state = try self.access.channel.rekeyState(self.access)
+      let message = try phase == 2 ? round.reply : self.body(round, phase: phase, frontier: state.sendNext)
+      try self.access.channel.rekeyArm(self.access)
+      round.stage = phase
+      if phase == 3 { self.deadline = try V4LocalWorkWindow(clock: self.clock, durationMS: 30_000) }
+      try self.send(message, marker: phase >= 3, publisher: publisher, reserved: reserved)
+      if phase == 2 {
+        for entry in round.outgoing { try owner.rekeyPublished(self.access, scope: entry.scope) }
+      } else if phase == 4 {
+        try self.finish(round, owner: owner)
+      }
     }
+    if phase >= 3 { try access.channel.withRekeyMarker(access, publishPhase) }
+    else { try publishPhase() }
     return true
   }
   func markerForInput(_ wire: Data) throws -> Bool {
@@ -436,9 +512,7 @@ final class V4RekeyCoordinator {
       temp.ephemeral?.close()
       let round = try newRound(id: id, server: true, owner: owner)
       round.initial = bytes
-      round.initDigest = V4RekeyMaterial.transcript(
-        "rekey-init-digest", hash: access.hash,
-        profile: access.profile, epoch: round.epoch, initial: bytes)
+      round.initDigest = try initialDigest(round)
       round.incoming = try barrier(value, phase: 1, owner: owner, epoch: round.epoch)
       round.reply = try body(round, phase: 2)
       try stage(round, peer: value.b("client_ephemeral"))
@@ -485,6 +559,7 @@ final class V4RekeyCoordinator {
     round?.incoming.filter { $0.scope == scope }.count ?? 0
   }
   func close() {
+    closed = true
     intent?.cancel()
     deadline?.cancel()
     intent = nil

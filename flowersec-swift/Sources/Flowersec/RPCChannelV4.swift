@@ -459,6 +459,9 @@ actor V4RPCChannel {
   }
   var isAvailable: Bool { !closed && stream != nil && reader != nil }
   var acceptsOpeningWaiter: Bool { !closed }
+  #if DEBUG
+  var cryptoTestReadyWaiterCount: Int { readyWaiters.count }
+  #endif
   func waitReady(deadlineAtMS: UInt64? = nil) async throws {
     let token = UUID()
     try await withTaskCancellationHandler {

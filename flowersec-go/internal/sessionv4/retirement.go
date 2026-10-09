@@ -116,9 +116,6 @@ func (r *Retirement) Start(ctx context.Context, maxItems int, deadline *timev4.D
 	}
 	b.sequence, b.deadline = r.lastSent+1, deadline
 	wire, err := protocolv4.EncodeMap(r.batchBytes, "STREAM_ACK_RETIRE_BATCH", []protocolv4.Field{variant, {Name: "batch_seq", Number: b.sequence}, {Name: "scope_ids", Kind: protocolv4.EncodedArray, Bytes: array}})
-	if err == nil {
-		b.digest, err = protocolv4.RetirementDigest(r.handshake, r.profile, a.direction, wire)
-	}
 	if err != nil {
 		b.count = 0
 		a.mu.Unlock()
@@ -134,6 +131,23 @@ func (r *Retirement) Start(ctx context.Context, maxItems int, deadline *timev4.D
 		a.slots[a.find(id)].retirementReferences++
 	}
 	b.live, b.writing = true, true
+	a.mu.Unlock()
+	// The original batch and method tail retain the fixed buffers and proof
+	// references while hashing. No admission state lock surrounds crypto.
+	digest, digestErr := protocolv4.RetirementDigest(r.handshake, r.profile, a.direction, wire)
+	a.mu.Lock()
+	if digestErr == nil && a.closed {
+		digestErr = cryptov4.ErrClosed
+	}
+	if digestErr == nil {
+		digestErr = a.checkDeadline(b.deadline)
+	}
+	if digestErr != nil {
+		r.release(b)
+		a.mu.Unlock()
+		return result, digestErr
+	}
+	b.digest = digest
 	a.mu.Unlock()
 	result, err = r.writer.WriteBuild(ctx, protocolv4.FrameStreamAck, len(wire), func(_ protocolv4.RecordHeader, dst []byte) (int, error) {
 		a.mu.Lock()

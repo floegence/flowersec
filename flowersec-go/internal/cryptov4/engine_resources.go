@@ -42,12 +42,12 @@ var engineRegistry = sync.OnceValues(func() (*engineRegistryData, error) {
 	return &engineRegistryData{usage.Profiles, streams}, nil
 })
 
-// These backend allowances were sized from Go 1.27.1 and the module's pinned
-// golang.org/x/crypto v0.55.0, with assembly enabled on amd64/arm64. Dependency
+// These backend allowances were sized from Go 1.27.2 and the module's pinned
+// golang.org/x/crypto v0.57.0, with assembly enabled on amd64/arm64. Dependency
 // replacements or different crypto sources require a separately qualified bound.
 // Runtime FIPS/frozen modules and unsupported build backends fail admission.
 func engineResourceBackend() error {
-	if !engineResourceAssembly || runtime.Version() != "go1.27.1" || fips140.Enabled() || fips140.Version() != "latest" {
+	if !engineResourceAssembly || runtime.Version() != "go1.27.2" || fips140.Enabled() || fips140.Version() != "latest" {
 		return ErrConfiguration
 	}
 	return nil
@@ -225,10 +225,7 @@ func (e *Engine) resourceLive() error {
 	if e.reservation == (resourcev4.Reference{}) {
 		return nil // Internal unreserved protocol primitive.
 	}
-	if err := e.reservation.Check(); err != nil {
-		return err
-	}
-	return e.environment.Check()
+	return e.reservation.CheckSameEnvironment(e.environment)
 }
 
 // CheckEnvironment binds another admitted component to this original Engine's

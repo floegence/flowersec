@@ -83,26 +83,54 @@ func NewReporter(artifactDir string) (*Reporter, error) {
 }
 
 func newReporterClock(started time.Time, incarnation [16]byte) (*timev4.Clock, error) {
+	return newReporterClockFromSources(func() time.Duration { return time.Since(started) }, time.Now, incarnation)
+}
+
+// A Time's wall and monotonic components need not be sampled atomically. Use
+// the independent local wall read only within its measured monotonic bracket;
+// construction delay must not become a permanent offset between peer clocks.
+func newReporterClockFromSources(elapsed func() time.Duration, wall func() time.Time, incarnation [16]byte) (*timev4.Clock, error) {
+	const uncertainty = 2 * time.Millisecond
+	const attempts = 16
+	var offset int64
+	var after time.Duration
+	paired := false
+	for range attempts {
+		before := elapsed()
+		wallNanos := wall().UnixNano()
+		after = elapsed()
+		if before < 0 || after < before || after > 30*time.Minute || wallNanos < int64(after) {
+			return nil, timev4.ErrUnavailable
+		}
+		if after-before > uncertainty {
+			continue
+		}
+		// UTC minus elapsed lies in [wall-after, wall-before]. Keep its
+		// nanosecond phase before rounding, so the same 2 ms envelope covers
+		// every later integer tick without repeated quantization expansion.
+		offset = wallNanos - int64(after)
+		paired = true
+		break
+	}
+	if !paired {
+		return nil, timev4.ErrUnavailable
+	}
+	epoch := uint64(offset / int64(time.Millisecond))
+	phase := time.Duration(offset % int64(time.Millisecond))
 	clock, err := timev4.NewClock(timev4.Profile{Rate: timev4.Rate{Denominator: 1}, MaxWidthMS: 2000, MaxAgeMS: 1800000, MaxRoundTripMS: 1000}, func() (timev4.Tick, error) {
-		elapsed := time.Since(started)
-		if elapsed < 0 || elapsed > 30*time.Minute {
+		current := elapsed()
+		if current < after || current > 30*time.Minute {
 			return timev4.Tick{}, timev4.ErrUnavailable
 		}
-		// Align integer ticks with the same wall-clock millisecond used by
-		// epoch. Independent peers must not inherit different rounding phases.
-		phase := time.Duration(started.Nanosecond()) % time.Millisecond
-		return timev4.Tick{Milliseconds: uint64((elapsed + phase) / time.Millisecond), Incarnation: incarnation}, nil
+		return timev4.Tick{Milliseconds: uint64((current + phase) / time.Millisecond), Incarnation: incarnation}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	mark, err := clock.Monotonic()
 	if err == nil {
-		// Anchor the actual sampled mark, including time spent constructing
-		// the reporter. Attaching epoch to a later mark would stop the clock
-		// during construction and can reject freshly signed bootstrap replies.
-		lower := uint64(started.UnixMilli()) + mark.Milliseconds
-		err = clock.InstallTrusted(mark, timev4.Interval{LowerMS: lower, UpperMS: lower + 2})
+		lower := epoch + mark.Milliseconds
+		err = clock.InstallTrusted(mark, timev4.Interval{LowerMS: lower, UpperMS: lower + uint64(uncertainty/time.Millisecond)})
 	}
 	if err != nil {
 		clock.Close()

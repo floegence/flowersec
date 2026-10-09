@@ -156,11 +156,7 @@ func NewTunnelRoute(c TunnelRouteConfig, reservation, dependencies resourcev4.Re
 			if err != nil {
 				return nil, err
 			}
-			wire, e := original.Bytes()
-			if e != nil {
-				return nil, e
-			}
-			r.maps[side][i], err = r.codecs[side][i].Verify(wire, original.Key(), protocolv4.DecodeContext{})
+			r.maps[side][i], err = r.codecs[side][i].CopyVerified(original, protocolv4.DecodeContext{})
 			if err != nil {
 				return nil, err
 			}

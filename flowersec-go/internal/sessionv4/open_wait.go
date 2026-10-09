@@ -227,11 +227,15 @@ func (a *OpenAdmission) notifyPendingLocked() { notifyOpenWait(a.pendingWake) }
 // One fixed notification per original pending slot prevents separate jobs
 // from consuming each other's capacity-change hint. No waiter queue is built.
 func (a *OpenAdmission) notifyDecisionOpportunityLocked() {
-	a.notifyPendingLocked()
+	pending := false
 	for i := int(a.limits.Terminal); i < len(a.slots); i++ {
 		if a.slots[i].phase == openPending {
+			pending = true
 			notifyOpenWait(a.outcomeWake[i])
 		}
+	}
+	if pending {
+		a.notifyPendingLocked()
 	}
 }
 

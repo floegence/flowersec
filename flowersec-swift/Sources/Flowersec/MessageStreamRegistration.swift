@@ -36,6 +36,13 @@ final class V4MessageRegistrationLifetime: @unchecked Sendable {
       return value
     }
   }
+  func accept(_ capture: V4MessageRegistrationCapture) throws {
+    try gate.withLock {
+      try check()
+      guard capture.lifetime === self, !capture.accepted else { throw ServiceFailure.contractMismatch }
+      capture.accepted = true
+    }
+  }
   func close() { gate.withLock { closed = true } }
 }
 
@@ -50,6 +57,7 @@ final class V4MessageRegistrationCapture: @unchecked Sendable {
   func commit<Value>(_ operation: () throws -> Value?) throws -> Value? {
     try lifetime.commit(self, operation: operation)
   }
+  func accept() throws { try lifetime.accept(self) }
 }
 
 // A bounded waiter detaches from an ordinary authorization callback at the

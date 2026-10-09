@@ -43,7 +43,9 @@ func NewHTTPSBootstrap(record NamespaceRecord, trustPEM string, scopes ...assemb
 			return nil, errors.New("invalid independent bootstrap URL")
 		}
 	}
-	transport := &http.Transport{DialContext: scopedControlDial(scope), TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, RootCAs: roots}, MaxConnsPerHost: 1, MaxIdleConns: 1, MaxIdleConnsPerHost: 1, DisableCompression: true}
+	// A cold query must relinquish its finite authority socket before the
+	// independent prepared runtime is retained for later connection admission.
+	transport := &http.Transport{DialContext: scopedControlDial(scope), TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, RootCAs: roots}, MaxConnsPerHost: 1, DisableKeepAlives: true, DisableCompression: true}
 	return &HTTPSBootstrap{record: record, client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("bootstrap redirects are forbidden") }}}, nil
 }
 func (p *HTTPSBootstrap) Query(ctx context.Context, request protocolv4.NamespaceBootstrapRequest, output []byte) (int, error) {

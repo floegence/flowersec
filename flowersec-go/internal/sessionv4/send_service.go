@@ -19,7 +19,9 @@ type sendServiceSignal struct {
 }
 
 func (s *sendServiceSignal) notify() {
-	s.ready.Store(true)
+	if s.ready.Swap(true) {
+		return
+	}
 	select {
 	case s.wake <- struct{}{}:
 	default:
@@ -44,6 +46,7 @@ type SendService struct {
 	admission                 *OpenAdmission
 	reservation               resourcev4.Reference
 	slots                     []sendServiceSlot
+	slotExtent                int
 	workers                   [3]uint32
 	cursor                    [3]int
 	wake                      [3]chan struct{}
@@ -128,6 +131,7 @@ func (s *SendService) attach(scope uint64, class StreamClass, q *SendQueue) erro
 			continue
 		}
 		slot.queue, slot.scope, slot.class = q, scope, class
+		s.slotExtent = max(s.slotExtent, i+1)
 		q.serviceNotify.wake = s.wake[class]
 		slot.signal = &q.serviceNotify
 		q.service = s
@@ -146,8 +150,10 @@ func (s *SendService) pick(class StreamClass) (int, *SendQueue) {
 	if s.closed {
 		return -1, nil
 	}
-	for scanned := range len(s.slots) {
-		i := (s.cursor[class] + scanned) % len(s.slots)
+	// Untouched prepaid slots have never held a queue. Retain the complete
+	// initialized range, including busy and detached positions, in the rotation.
+	for scanned := range s.slotExtent {
+		i := (s.cursor[class] + scanned) % s.slotExtent
 		slot := &s.slots[i]
 		if slot.queue == nil || slot.class != class || slot.busy || !slot.signal.ready.Swap(false) {
 			continue
@@ -163,7 +169,7 @@ func (s *SendService) pick(class StreamClass) (int, *SendQueue) {
 			continue
 		}
 		slot.busy = true
-		s.cursor[class] = (i + 1) % len(s.slots)
+		s.cursor[class] = (i + 1) % s.slotExtent
 		return i, slot.queue
 	}
 	return -1, nil
@@ -205,16 +211,14 @@ func (s *SendService) returned(index int, q *SendQueue, complete bool) {
 	if q.closed || q.finComplete {
 		s.detachLocked(slot)
 	} else if complete && (q.size != 0 || q.sealed) {
-		slot.signal.notify()
+		// This original worker immediately resumes the class rotation. Publish
+		// readiness without waking a second worker for the same single-owner
+		// queue; independently accepted work still supplies its own wake.
+		slot.signal.ready.Store(true)
 	}
-	// An event arriving during publication kept ready set while busy. Give
-	// another original worker a chance without restarting a failed attempt.
-	if slot.queue != nil && slot.signal.ready.Load() {
-		select {
-		case s.wake[slot.class] <- struct{}{}:
-		default:
-		}
-	}
+	// An event arriving during publication kept ready set while busy. The
+	// returning worker also observes that event in its next pick, including
+	// after a before-ticket refusal. A refusal alone publishes no readiness.
 }
 
 func (s *SendService) worker(ctx context.Context, class StreamClass) {
@@ -310,9 +314,27 @@ func (s *SendService) Run(ctx context.Context) (err error) {
 			default:
 			}
 			s.mu.Lock()
-			for i := range s.slots {
-				if s.slots[i].queue != nil {
-					s.slots[i].signal.notify()
+			for i := range s.slots[:s.slotExtent] {
+				slot := &s.slots[i]
+				if q := slot.queue; q != nil {
+					q.mu.Lock()
+					work := !q.closed && !q.finComplete && (q.size != 0 || q.sealed)
+					q.mu.Unlock()
+					// An empty queue needs no crypto position. Its next acceptance
+					// or FIN supplies the original wake under the same queue gate.
+					// Waking every idle native worker makes an availability event
+					// scale with workers times streams rather than queued work.
+					if work {
+						if slot.busy {
+							// The original worker supplies the wake when it returns,
+							// including after a no-ticket capacity refusal. Preserve
+							// that opportunity without waking a worker that cannot
+							// select this still-busy queue.
+							slot.signal.ready.Store(true)
+						} else {
+							slot.signal.notify()
+						}
+					}
 				}
 			}
 			s.mu.Unlock()
@@ -397,7 +419,7 @@ func (s *SendService) serviceOperations() (uint64, bool) {
 	if s.closed {
 		return next, false
 	}
-	for i := range s.slots {
+	for i := range s.slots[:s.slotExtent] {
 		if q := s.slots[i].queue; q != nil {
 			q.mu.Lock()
 			remaining, live := q.serviceOperationsLocked()

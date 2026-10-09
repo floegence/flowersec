@@ -194,11 +194,7 @@ func NewRelayHop(ctx context.Context, c RelayHopConfig, prepared *PreparedCarrie
 		if err != nil {
 			return nil, err
 		}
-		wire, err := original.Bytes()
-		if err != nil {
-			return nil, err
-		}
-		r.maps[i], err = r.codecs[i].Verify(wire, original.Key(), protocolv4.DecodeContext{})
+		r.maps[i], err = r.codecs[i].CopyVerified(original, protocolv4.DecodeContext{})
 		if err != nil {
 			return nil, err
 		}
@@ -260,12 +256,20 @@ func NewRelayHop(ctx context.Context, c RelayHopConfig, prepared *PreparedCarrie
 	adopted = true
 	initial := c.Initial
 	initial.Role, initial.Authorization, initial.Reservation, initial.hop = binding.Role, &r.guard, refs.Initial, &r.hop
+	var exchange *InitialExchange
 	if binding.MessageCarrier {
-		r.initial, err = NewInitialMessages(ctx, initial, &prepared.messageAdapter)
+		exchange, err = NewInitialMessages(ctx, initial, &prepared.messageAdapter)
 	} else {
-		r.initial, err = NewInitialStream(ctx, initial, &prepared.streamAdapter)
+		exchange, err = NewInitialStream(ctx, initial, &prepared.streamAdapter)
 	}
-	if err != nil {
+	// Registration transfers cleanup before Initial construction finishes.
+	// Publish under the same gate as Close, then close this original exchange
+	// if cancellation already passed the publication point.
+	r.mu.Lock()
+	r.initial = exchange
+	closed := r.closed
+	r.mu.Unlock()
+	if err != nil || closed {
 		r.Close()
 	}
 	return r, err

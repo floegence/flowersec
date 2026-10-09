@@ -11,6 +11,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
 var (
@@ -858,6 +859,13 @@ func (g *applicationAuthorization) Check() error {
 		return err
 	}
 	return g.endpoint.Check()
+}
+
+func (g *applicationAuthorization) CheckWithSample(sample timev4.Sample) error {
+	if err := g.lease.Check(); err != nil {
+		return err
+	}
+	return g.endpoint.CheckWithSample(sample)
 }
 func (g *applicationAuthorization) RemainingMS() (uint64, error) {
 	if err := g.lease.Check(); err != nil {

@@ -167,15 +167,22 @@ func (b relayCommitStore) Commit(ctx context.Context, tx Transaction, dst []byte
 			if err = s.exec("UPDATE manifest SET relay_rows=relay_rows+3 WHERE id=1"); err != nil {
 				return err
 			}
-			// Materialize the full second slot before the first claim succeeds.
-			// Its zero projection is storage reservation, not consumed history.
+			// Materialize the claimed leg and the full unused slot in the same
+			// transaction. Only the unused leg needs a zero projection to reserve
+			// storage; the original leg already has its complete claimed record.
 			// Later claims replace only their original fixed unused slot.
 			for slot := int64(0); slot < 2; slot++ {
-				if err = s.exec("INSERT INTO relay_leg VALUES (?1,?2,0,?3,?3,zeroblob(?4))", named(1, parent), named(2, slot), named(3, sqliteUint(0)), named(4, int64(s.backing.limits.MaxRecordBytes))); err != nil {
+				if byte(slot) == side {
+					err = s.exec("INSERT INTO relay_leg VALUES (?1,?2,1,?3,?4,?5)", named(1, parent), named(2, slot), named(3, sqliteUint(1)), named(4, sqliteUint(a.fence)), named(5, tx.Projection))
+				} else {
+					err = s.exec("INSERT INTO relay_leg VALUES (?1,?2,0,?3,?3,zeroblob(?4))", named(1, parent), named(2, slot), named(3, sqliteUint(0)), named(4, int64(s.backing.limits.MaxRecordBytes)))
+				}
+				if err != nil {
 					return err
 				}
 			}
 			aggregate = 1
+			return nil
 		}
 		if err := s.exec("UPDATE relay_leg SET claimed=1,version=?1,fence=?2,projection=?3 WHERE lease=?4 AND side=?5 AND claimed=0", named(1, sqliteUint(1)), named(2, sqliteUint(a.fence)), named(3, tx.Projection), named(4, parent), named(5, int64(side))); err != nil {
 			return err

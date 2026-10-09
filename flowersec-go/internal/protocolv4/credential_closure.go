@@ -324,9 +324,9 @@ func (e *EndpointCredentials) MatchActivation(a *ActivationAuthority) error {
 	return nil
 }
 
-func (e *EndpointCredentials) credentialScope(index int) CredentialScope {
+func (e *EndpointCredentials) credentialScope(index int) *CredentialScope {
 	if index == 3 && e.pendingGrant != nil {
-		return e.pendingGrant.Scope
+		return &e.pendingGrant.Scope
 	}
-	return e.credentials[index].scope
+	return &e.credentials[index].scope
 }

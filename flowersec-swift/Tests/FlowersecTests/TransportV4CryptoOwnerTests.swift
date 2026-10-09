@@ -275,6 +275,127 @@ final class TransportCryptoOwnerTests: XCTestCase {
   }
 }
 
+@MainActor
+final class TransportHeldCryptoOwnerTests: XCTestCase {
+  func testActualSessionAeadLeavesIndependentDirectionsMaintenanceAndCloseAvailable() async throws {
+    for profile in V4CryptoProfile.allCases {
+      for sending in [true, false] {
+        let fixture = try CryptoOwnerFixture(profile)
+        let (a, b) = try fixture.establish()
+        let client = try a.makeSession(), server = try b.makeSession()
+        let c = CryptoTestPublisher(), s = CryptoTestPublisher()
+        let local = try client.open(kind: "example.crypto", receiveWindow: 8, to: c)
+        try server.receive(c.last())
+        let remote = try XCTUnwrap(server.pendingOpen())
+        try server.decideOpen(remote, decision: .accept(receiveWindow: 8), to: s)
+        try client.receive(s.last())
+        let baseline = fixture.credentials.base.root.snapshot()
+        let hold = ActualCryptoHold(scope: local.number, sending: sending)
+        a.cryptoTestCompleted = { scope, frame, seal in hold.observe(scope, frame, seal) }
+        defer { hold.release(); client.close(); server.close(); a.cryptoTestCompleted = nil }
+        let output = ActualCryptoPublisher()
+        let input: Data
+        if sending { input = Data() } else {
+          try server.write(remote, data: Data([7]), to: s)
+          input = try s.last()
+        }
+        let job = Task.detached {
+          do {
+            if sending { try client.write(local, data: Data([1, 2]), fin: true, to: output) }
+            else { try client.receive(input, on: local) }
+            return false
+          } catch { return true }
+        }
+        guard await Task.detached(operation: { hold.waitEntered() }).value else {
+          hold.release(); _ = await job.value
+          return XCTFail("the original Session never reached actual AEAD completion")
+        }
+        XCTAssertGreaterThan(fixture.credentials.base.root.snapshot().executionTails,
+          baseline.executionTails)
+        XCTAssertEqual(a.cryptoTestFrontier(local.number, sending: sending), sending ? 2 : 0)
+        if sending {
+          try server.write(remote, data: Data([7]), to: s)
+          try client.receive(s.last(), on: local)
+          guard case .data(let bytes) = try client.read(local, maximum: 8) else {
+            return XCTFail("the opposite direction did not deliver while seal was held")
+          }
+          XCTAssertEqual(try bytes.withBytes { $0 }, Data([7])); bytes.close()
+          XCTAssertTrue(try client.requestRekey(to: c))
+          try server.receive(c.last())
+          XCTAssertFalse(try server.poll(to: s),
+            "the frozen barrier must include the original DATA ticket before AEAD exits")
+        } else {
+          try client.write(local, data: Data([1]), to: c)
+          try server.receive(c.last(), on: remote)
+          guard case .data(let bytes) = try server.read(remote, maximum: 8) else {
+            return XCTFail("the opposite direction did not deliver while open was held")
+          }
+          XCTAssertEqual(try bytes.withBytes { $0 }, Data([1])); bytes.close()
+          let probe = try client.beginProbe()
+          defer { client.releaseProbe(probe) }
+          XCTAssertTrue(try client.submitProbe(probe, to: c))
+          try server.receive(c.last())
+          for _ in 0..<4 {
+            guard try server.poll(to: s) else { break }
+            try client.receive(s.last())
+            if try client.probeResult(probe) != nil { break }
+          }
+          XCTAssertNotNil(try client.probeResult(probe),
+            "authenticated maintenance must finish while application AEAD is held")
+        }
+        let closed = DispatchSemaphore(value: 0)
+        Task.detached { client.close(); closed.signal() }
+        let closedInTime = await Task.detached {
+          waitForCryptoClose(closed)
+        }.value
+        guard closedInTime else {
+          hold.release(); _ = await job.value
+          return XCTFail("Close waited for the original crypto job")
+        }
+        XCTAssertGreaterThan(fixture.credentials.base.root.snapshot().executionTails, 0)
+        hold.release()
+        let failed = await job.value
+        XCTAssertTrue(failed, "a late crypto result must fail its original lifecycle fence")
+        XCTAssertEqual(output.count, 0, "Close must discard a late ciphertext before provider handoff")
+        XCTAssertEqual(a.cryptoTestFrontier(local.number, sending: sending), sending ? 2 : 0)
+        XCTAssertEqual(fixture.credentials.base.root.snapshot().executionTails, baseline.executionTails)
+      }
+    }
+  }
+}
+
+private func waitForCryptoClose(_ signal: DispatchSemaphore) -> Bool {
+  signal.wait(timeout: .now() + 2) == .success
+}
+
+private final class ActualCryptoHold: @unchecked Sendable {
+  let scope: UInt64
+  let sending: Bool
+  private let gate = NSCondition()
+  private var entered = false, released = false
+  init(scope: UInt64, sending: Bool) { self.scope = scope; self.sending = sending }
+  func observe(_ scope: UInt64, _ frame: UInt8, _ sending: Bool) {
+    guard scope == self.scope, frame == 8, sending == self.sending else { return }
+    gate.lock(); defer { gate.unlock() }
+    entered = true; gate.broadcast()
+    while !released { gate.wait() }
+  }
+  func waitEntered() -> Bool {
+    gate.lock(); defer { gate.unlock() }
+    let deadline = Date().addingTimeInterval(3)
+    while !entered { if !gate.wait(until: deadline) { return entered } }
+    return true
+  }
+  func release() { gate.lock(); released = true; gate.broadcast(); gate.unlock() }
+}
+
+private final class ActualCryptoPublisher: V4RecordPublisher, @unchecked Sendable {
+  private let gate = NSLock()
+  private var writes = 0
+  var count: Int { gate.withLock { writes } }
+  func publish(_ buffer: V4CryptoBuffer) throws { gate.withLock { writes += 1 } }
+}
+
 final class CryptoTestPublisher: V4HandshakeWriter, V4RecordPublisher {
   var buffers: [V4CryptoBuffer] = []
   var failure = false

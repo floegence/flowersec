@@ -650,15 +650,18 @@ impl ReliableSession {
             14 => {
                 let nonce = decode(body, "PING", self.engine.max_frame, Context::default())?
                     .b("PING", "nonce")?;
-                let slot = self
+                // A saturated reply queue sheds excess authenticated PINGs; it
+                // must not turn a valid repeated control record into path failure.
+                if let Some(slot) = self
                     .engine
                     .streams
                     .controls
                     .pongs
                     .iter_mut()
                     .find(|n| n.is_none())
-                    .ok_or(CryptoError::Capacity)?;
-                *slot = Some(nonce);
+                {
+                    *slot = Some(nonce);
+                }
             }
             15 => {
                 let nonce = decode(body, "PONG", self.engine.max_frame, Context::default())?
@@ -813,7 +816,7 @@ impl ReliableSession {
             }
             // The small ticket gate orders cancellation/result observation
             // with sealing; release it before the actual blocking provider call.
-            let size = {
+            let (size, work) = {
                 let mut progress = probe.result.lock().expect("v4 probe result");
                 if progress.outcome != ProbeOutcome::Pending {
                     return Ok(());
@@ -822,7 +825,9 @@ impl ReliableSession {
                 let future = self.engine.candidate.as_ref().is_some_and(|c| c.sent);
                 let key = self.engine.slot_for(future, 0, self.engine.role)?;
                 let before = self.engine.keys_for(future)?[key].next;
-                let sealed = self.engine.seal(0, 14, &body, &mut out, false, false);
+                let prepared = self
+                    .engine
+                    .prepare_seal(0, 14, &body, &mut out, false, false);
                 if self.engine.keys_for(future)?[key].next != before {
                     progress.submitted = true;
                     self.engine.streams.controls.probes[index]
@@ -830,9 +835,9 @@ impl ReliableSession {
                         .ok_or(CryptoError::State)?
                         .epoch = Some(epoch);
                 }
-                sealed?
+                prepared?
             };
-            publisher.publish(&out[..size])?;
+            publisher.publish_seal(work, &mut out[..size])?;
             let publication = ProbePublication {
                 probe,
                 stall_generation,

@@ -52,6 +52,35 @@ func TestPreparedDirectCapacityOutlivesPreparationCaller(t *testing.T) {
 	}
 }
 
+func TestPreparedDirectCapacityReleasesBootstrapConnections(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	endpoint, err := OpenProductDirectEndpoint(ctx, carrier.KindWebSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := endpoint.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
+	// Independent clients must release the four finite authority sockets
+	// without waiting for idle expiry or closing their prepared owners.
+	if err := endpoint.PrepareCapacity(ctx, 9); err != nil {
+		t.Fatal(err)
+	}
+	pair, err := endpoint.Connect(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("prepared-capacity-bootstrap")
+	got, callErr := pair.CallEcho(ctx, payload)
+	closeErr := pair.Close()
+	if callErr != nil || closeErr != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("prepared Session echo = %q, call=%v, cleanup=%v", got, callErr, closeErr)
+	}
+}
+
 // Keep every business stream active across a genuine rekey. Opening them all
 // requires the signed aggregate credit and original provider backing; the
 // rekey additionally decodes the actual complete active-scope barrier.

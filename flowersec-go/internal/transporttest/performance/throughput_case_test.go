@@ -152,6 +152,11 @@ func TestPayloadThroughputDirectionsTransferVerifiedBytes(t *testing.T) {
 				defer cancel()
 				result, err := runProductionPayloadThroughput(ctx, carrier.KindWebSocket, contract)
 				if err != nil {
+					t.Logf("endpoint setup: %s; completed sample overheads: %v", result.SetupDuration, result.OverheadDurations)
+					t.Logf("sample stages: %+v", result.CycleTimings)
+					for sampleIndex, sample := range result.Samples {
+						t.Logf("completed sample %d: %d verified bytes in %s", sampleIndex+1, sample.Bytes, sample.Duration)
+					}
 					t.Fatal(err)
 				}
 				if result.Summary.Bytes == 0 || result.Summary.P99 <= 0 || len(result.Resources) != 4 {

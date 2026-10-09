@@ -13,6 +13,67 @@ final class TransportStreamOwnerTests: XCTestCase {
     defer { buffer.close() }
     return try buffer.withBytes { $0 }
   }
+  func testPendingPongKeepsFirstNonceAndDiscardsFurtherAuthenticatedPingsForBothProfiles() throws {
+    for profile in V4CryptoProfile.allCases {
+      let fixture = try CryptoOwnerFixture(profile)
+      let (raw, b) = try fixture.establish()
+      let server = try b.makeSession()
+      defer { raw.close(); server.close() }
+      let c = CryptoTestPublisher(), s = CryptoTestPublisher()
+      let first = Data(repeating: 1, count: 16)
+      let repeated = Data(repeating: 2, count: 16)
+      func ping(_ nonce: Data) throws {
+        try raw.publish(scope: raw.maintenance, frameType: 14,
+          plaintext: V4Crypto.map([(0, V4Crypto.bytes(nonce))]), to: c)
+        XCTAssertEqual(try server.receive(c.last()), .committed)
+      }
+      func pong(_ nonce: Data) throws {
+        XCTAssertTrue(try server.poll(to: s))
+        let record = try raw.receive(scope: raw.maintenance, wire: s.last())
+        defer { record.close() }
+        XCTAssertEqual(record.frameType, 15)
+        XCTAssertEqual(try record.withBytes { $0 }, V4Crypto.map([(0, V4Crypto.bytes(nonce))]))
+      }
+
+      try ping(first)
+      XCTAssertFalse(try server.canReceive(), "The only pending PONG position is occupied")
+      // Each repeated nonce has a new authenticated record sequence. Overflow
+      // consumes input without replacing the original reply or closing Session.
+      try ping(repeated)
+      try ping(repeated)
+      XCTAssertEqual(b.cryptoTestFrontier(0, sending: false), 3)
+      try pong(first)
+      XCTAssertTrue(try server.canReceive())
+      XCTAssertFalse(try server.poll(to: s), "Overflow PINGs must not create additional PONG work")
+
+      try ping(repeated)
+      try pong(repeated)
+      XCTAssertFalse(try server.poll(to: s))
+    }
+  }
+
+  func testPendingPongDoesNotMaskInvalidPingScopeForBothProfiles() throws {
+    for profile in V4CryptoProfile.allCases {
+      let fixture = try CryptoOwnerFixture(profile)
+      let (raw, b) = try fixture.establish()
+      let server = try b.makeSession()
+      defer { raw.close(); server.close() }
+      let c = CryptoTestPublisher()
+      let body = V4Crypto.map([(0, V4Crypto.bytes(Data(repeating: 3, count: 16)))])
+      try raw.publish(scope: raw.maintenance, frameType: 14, plaintext: body, to: c)
+      XCTAssertEqual(try server.receive(c.last()), .committed)
+      XCTAssertFalse(try server.canReceive())
+      try raw.publish(scope: raw.maintenance, frameType: 14, plaintext: body, to: c)
+      var wire = try c.last()
+      wire.replaceSubrange(12..<20, with: V4Crypto.integer(3, width: 8))
+      XCTAssertThrowsError(try server.receive(wire)) {
+        XCTAssertEqual($0 as? V4CryptoFailure, .authentication,
+          "A wrong scope must fail authentication even while the PONG position is occupied")
+      }
+      XCTAssertThrowsError(try server.epoch(), "Invalid maintenance scope must close the Session")
+    }
+  }
+
   func testStreamAcceptanceSurvivesAuthorizationFailureAfterProviderHandoff() throws {
     let fixture = try CryptoOwnerFixture(.x25519)
     let (a, b) = try fixture.establish()
@@ -306,7 +367,11 @@ final class TransportStreamOwnerTests: XCTestCase {
       try raw.publish(scope: scope, frameType: 8, plaintext: Data([0xa0]), to: c)
       var wire = try c.last()
       if mode != 0 { wire[wire.count - 1] ^= 1 }
-      XCTAssertThrowsError(try server.receive(wire, on: mode == 2 ? remote : nil))
+      let originalFrontier = b.cryptoTestFrontier(scope.number, sending: false)
+      if mode == 1 { XCTAssertThrowsError(try server.receive(wire)) }
+      else { XCTAssertEqual(try server.receive(wire, on: mode == 2 ? remote : nil), .isolatedStream) }
+      XCTAssertEqual(b.cryptoTestFrontier(scope.number, sending: false), originalFrontier,
+        "failed AEAD/schema/state validation must not advance the reliable authentication frontier")
       if mode == 1 {
         XCTAssertThrowsError(try server.phase(remote))
       } else {
@@ -320,6 +385,82 @@ final class TransportStreamOwnerTests: XCTestCase {
         try server.receive(wire, on: remote)
       }
     }
+  }
+
+  func testSharedDiscardProofAndCountersSurviveRetirementAndRekeyForBothProfiles() throws {
+    for profile in V4CryptoProfile.allCases {
+      let fixture = try CryptoOwnerFixture(profile)
+      let (a, b) = try fixture.establish()
+      let client = try a.makeSession(), server = try b.makeSession()
+      defer { client.close(); server.close() }
+      let c = CryptoTestPublisher(), s = CryptoTestPublisher()
+      func settle() throws {
+        for _ in 0..<32 {
+          var progress = false
+          if try client.poll(to: c) { try server.receive(c.last()); progress = true }
+          if try server.poll(to: s) { try client.receive(s.last()); progress = true }
+          if !progress { return }
+        }
+        XCTFail("bounded maintenance failed to settle")
+      }
+      let local = try client.open(kind: "example.retire", receiveWindow: 8, to: c)
+      try server.receive(c.last())
+      let remote = try XCTUnwrap(server.pendingOpen())
+      try server.decideOpen(remote, decision: .accept(receiveWindow: 8), to: s)
+      try client.receive(s.last())
+      try client.write(local, data: Data(), fin: true, to: c)
+      let late = try c.last()
+      try server.receive(late)
+      let terminal = server.cryptoTestSharedInput(local.number)
+      XCTAssertFalse(terminal.receiveEnabled)
+      // FIN itself proves terminal input before DRAINED is published.
+      XCTAssertEqual(try server.receive(late), .discardedData)
+      XCTAssertEqual(server.cryptoTestSharedInput(local.number).scopeUsage, terminal.scopeUsage)
+      try server.write(remote, data: Data(), fin: true, to: s)
+      try client.receive(s.last())
+      try settle()
+      fixture.credentials.base.source.advance(51)
+      try settle()
+      XCTAssertEqual(try server.phase(remote), .stable)
+      XCTAssertNil(server.cryptoTestSharedInput(local.number).current)
+      XCTAssertEqual(try server.receive(late), .discardedData)
+      XCTAssertTrue(try client.requestRekey(to: c))
+      try server.receive(c.last())
+      try settle()
+      XCTAssertEqual(try server.epoch(), 1)
+      XCTAssertEqual(try server.receive(late), .discardedData)
+      XCTAssertEqual(server.cryptoTestSharedInput(local.number).records, 3)
+      XCTAssertEqual(server.cryptoTestSharedInput(local.number).bytes, UInt64(late.count * 3))
+      for _ in 3..<16 { XCTAssertEqual(try server.receive(late), .discardedData) }
+      XCTAssertThrowsError(try server.receive(late))
+      XCTAssertThrowsError(try server.epoch())
+    }
+  }
+
+  func testRetainedSharedTerminalRejectsEpochBeforeAuthenticatedOpen() throws {
+    let fixture = try CryptoOwnerFixture(.x25519)
+    let (a, b) = try fixture.establish()
+    let client = try a.makeSession(), server = try b.makeSession()
+    defer { client.close(); server.close() }
+    let c = CryptoTestPublisher(), s = CryptoTestPublisher()
+    XCTAssertTrue(try client.requestRekey(to: c))
+    try server.receive(c.last())
+    for _ in 0..<8 {
+      if try server.poll(to: s) { try client.receive(s.last()) }
+      if try client.poll(to: c) { try server.receive(c.last()) }
+    }
+    XCTAssertEqual(try server.epoch(), 1)
+    let local = try client.open(kind: "example.epoch", receiveWindow: 8, to: c)
+    try server.receive(c.last())
+    let remote = try XCTUnwrap(server.pendingOpen())
+    try server.decideOpen(remote, decision: .accept(receiveWindow: 8), to: s)
+    try client.receive(s.last())
+    try client.write(local, data: Data(), fin: true, to: c)
+    var wire = try c.last()
+    try server.receive(wire)
+    wire.replaceSubrange(8..<12, with: V4Crypto.integer(0, width: 4))
+    XCTAssertThrowsError(try server.receive(wire))
+    XCTAssertThrowsError(try server.epoch())
   }
 
   func testReservedKindsCapacityAndRevocationRemainOwnerChecked() throws {
@@ -351,7 +492,10 @@ final class TransportStreamOwnerTests: XCTestCase {
     let remote = try XCTUnwrap(server.bootstrapStream())
     XCTAssertThrowsError(try client.write(local, data: Data([1]), to: c))
     XCTAssertThrowsError(try server.write(remote, data: Data([1]), to: s))
+    c.onWrite = { XCTAssertFalse(try client.canOpen(), "Bootstrap publication still owns OPEN preparation") }
     _ = try client.materializeBootstrap(to: c)
+    c.onWrite = nil
+    XCTAssertTrue(try client.canOpen())
     try server.receive(c.last(), on: remote)
     XCTAssertNil(try server.pendingOpen())
     try server.write(remote, data: Data([1]), to: s)

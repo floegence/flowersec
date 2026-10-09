@@ -246,6 +246,19 @@ func (a *SessionAdmissionReservation) AdmitSQLite(store *ledgerv4.SQLiteStore, a
 		}
 	}()
 	guard := func() error { a.mu.Lock(); defer a.mu.Unlock(); return a.checkLocked() }
+	if scheduler, ok := authority.(ledgerv4.SQLiteAdmissionScheduler); ok {
+		release, scheduleErr := scheduler.ScheduleAdmission(a.ctx)
+		if scheduleErr != nil {
+			return nil, response, scheduleErr
+		}
+		if release == nil {
+			return nil, response, cryptov4.ErrConfiguration
+		}
+		defer release()
+		if err = guard(); err != nil {
+			return nil, response, err
+		}
+	}
 	durable, err := ledgerv4.NewSQLiteAdmission(a.ctx, store, authority, a.acceptedFacts, owner, a.config.Core.Clock, a.config.Initial.Deadline, guard, buffers, invocation, a.environment)
 	if err != nil {
 		return nil, response, err

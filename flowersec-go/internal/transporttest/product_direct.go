@@ -589,10 +589,10 @@ func (endpoint *ProductDirectEndpoint) PrepareCapacity(ctx context.Context, sess
 			}
 		}
 	}()
-	for range sessions {
+	for index := range sessions {
 		p, err := endpoint.prepareConnection(ctx)
 		if err != nil {
-			return err
+			return fmt.Errorf("prepare direct capacity position %d/%d: %w", index+1, sessions, err)
 		}
 		prepared = append(prepared, p)
 	}

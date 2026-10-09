@@ -1,6 +1,7 @@
 package performance
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -79,11 +80,18 @@ type payloadThroughputSample struct {
 }
 
 type payloadThroughputResult struct {
-	Carrier   carrier.Kind
-	Baseline  caseResourceRecord
-	Resources []caseResourceRecord
-	Samples   []payloadThroughputSample
-	Summary   payloadThroughputSummary
+	Carrier           carrier.Kind
+	Baseline          caseResourceRecord
+	Resources         []caseResourceRecord
+	Samples           []payloadThroughputSample
+	Summary           payloadThroughputSummary
+	SetupDuration     time.Duration
+	OverheadDurations []time.Duration
+	CycleTimings      []payloadThroughputCycleTiming
+}
+
+type payloadThroughputCycleTiming struct {
+	Connect, Warmup, Transfer, Close, Snapshot time.Duration
 }
 
 type payloadThroughputSummary struct {
@@ -149,18 +157,30 @@ func runProductionPayloadThroughput(ctx context.Context, kind carrier.Kind, cont
 		contract.Direction = payloadClientToServer
 	}
 	result.Samples = make([]payloadThroughputSample, 0, contract.Samples)
+	result.SetupDuration = time.Since(resourceStarted)
 	for sample := 0; sample < contract.Samples; sample++ {
+		cycleStarted := time.Now()
+		result.CycleTimings = append(result.CycleTimings, payloadThroughputCycleTiming{})
+		timing := &result.CycleTimings[len(result.CycleTimings)-1]
 		pair, connectErr := endpoint.Connect(ctx)
+		timing.Connect = time.Since(cycleStarted)
 		if connectErr != nil {
 			return result, fmt.Errorf("connect %s payload throughput sample %d: %w", kind, sample+1, connectErr)
 		}
 		warmupBytes := min(len(payload), 64<<10)
-		if warmupErr := pair.RoundTrip(ctx, payload[:warmupBytes], payload[:warmupBytes]); warmupErr != nil {
+		phaseStarted := time.Now()
+		warmupErr := pair.RoundTrip(ctx, payload[:warmupBytes], payload[:warmupBytes])
+		timing.Warmup = time.Since(phaseStarted)
+		if warmupErr != nil {
 			_ = pair.Close()
 			return result, fmt.Errorf("warm up %s payload throughput sample %d: %w", kind, sample+1, warmupErr)
 		}
+		phaseStarted = time.Now()
 		measured, err := runPayloadThroughputSample(ctx, pair, payload, contract)
+		timing.Transfer = time.Since(phaseStarted)
+		phaseStarted = time.Now()
 		closeErr := pair.Close()
+		timing.Close = time.Since(phaseStarted)
 		if err != nil {
 			return result, errors.Join(fmt.Errorf("%s payload throughput sample %d: %w", kind, sample+1, err), closeErr)
 		}
@@ -168,7 +188,9 @@ func runProductionPayloadThroughput(ctx context.Context, kind carrier.Kind, cont
 			return result, fmt.Errorf("close %s payload throughput sample %d: %w", kind, sample+1, closeErr)
 		}
 		result.Samples = append(result.Samples, measured)
+		phaseStarted = time.Now()
 		snapshot, snapshotErr := transporttest.CaptureResourceSnapshot()
+		timing.Snapshot = time.Since(phaseStarted)
 		if snapshotErr != nil {
 			return result, fmt.Errorf("capture %s payload throughput sample %d resources: %w", kind, sample+1, snapshotErr)
 		}
@@ -176,6 +198,7 @@ func runProductionPayloadThroughput(ctx context.Context, kind carrier.Kind, cont
 			return result, errors.New("payload throughput CPU counter moved backwards")
 		}
 		result.Resources = append(result.Resources, caseResourceRecord{Phase: fmt.Sprintf("measured sample %d", sample+1), AtNS: time.Since(resourceStarted).Nanoseconds(), RSSBytes: snapshot.RSSBytes, CPUNanoseconds: snapshot.CPUNanoseconds - base.CPUNanoseconds, OpenFDs: snapshot.OpenFDs, Goroutines: snapshot.Goroutines, Tasks: snapshot.Tasks})
+		result.OverheadDurations = append(result.OverheadDurations, time.Since(cycleStarted)-measured.Duration)
 	}
 	result.Summary = summarizePayloadThroughput(result)
 	if err := validatePayloadThroughputResult(contract, result); err != nil {
@@ -750,15 +773,7 @@ func readFullPayload(stream interface{ Read([]byte) (int, error) }, buffer []byt
 }
 
 func equalPayload(left, right []byte) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return bytes.Equal(left, right)
 }
 
 func validatePayloadThroughputResult(contract payloadThroughputContract, result payloadThroughputResult) error {
@@ -798,8 +813,15 @@ func summarizePayloadThroughput(result payloadThroughputResult) payloadThroughpu
 
 func makePayload(size int) []byte {
 	payload := make([]byte, size)
-	for index := range payload {
+	// The original byte formula repeats every 256 bytes. Build that exact
+	// seed, then copy its repetitions without adding a per-byte instrumented
+	// harness loop to the transport's original end-to-end deadline.
+	seed := min(len(payload), 256)
+	for index := range payload[:seed] {
 		payload[index] = byte(index*31 + 17)
+	}
+	for filled := seed; filled < len(payload); {
+		filled += copy(payload[filled:], payload[:filled])
 	}
 	return payload
 }

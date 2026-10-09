@@ -96,3 +96,48 @@ func TestNativeInputPartitionSurvivesOutgoingPressure(t *testing.T) {
 	held.Release()
 	requireEngineCleanup(t, e)
 }
+
+func TestWorkspaceReuseErasesSuccessfulAndFailedRecordBytes(t *testing.T) {
+	for _, profile := range []string{protocolv4.DHProfileX25519, protocolv4.DHProfileP256} {
+		t.Run(profile, func(t *testing.T) {
+			e, peer, _ := enginePair(t, profile, func(c *Config) { c.WorkSlots = 1 })
+			for _, size := range []int{2048, 32} {
+				p, err := e.Seal(protocolv4.FrameStreamData, 1, bytes.Repeat([]byte{0xa7}, size))
+				if err != nil {
+					t.Fatal(err)
+				}
+				w := p.workspace
+				wire, err := p.Bytes()
+				if err != nil {
+					t.Fatal(err)
+				}
+				in, _, _, err := peer.Open(wire, acceptRecord)
+				if err != nil {
+					t.Fatal(err)
+				}
+				received := in.workspace
+				in.Release()
+				p.Release()
+				for _, workspace := range []*workspace{w, received} {
+					if !bytes.Equal(workspace.input, make([]byte, len(workspace.input))) || !bytes.Equal(workspace.output, make([]byte, len(workspace.output))) {
+						t.Fatal("a reused workspace retained successful plaintext or ciphertext")
+					}
+				}
+			}
+			_, err := e.SealBuild(protocolv4.FrameStreamData, 1, 3072, func(_ protocolv4.RecordHeader, dst []byte) (int, error) {
+				for i := range dst {
+					dst[i] = 0x71
+				}
+				return 0, ErrConfiguration
+			})
+			var ticket *TicketError
+			if !errors.As(err, &ticket) || len(e.free) != 1 {
+				t.Fatal("builder failure did not retain its original ticket", err)
+			}
+			failed := e.free[0]
+			if !bytes.Equal(failed.input, make([]byte, len(failed.input))) || !bytes.Equal(failed.output, make([]byte, len(failed.output))) {
+				t.Fatal("failed builder retained bytes outside its reported result")
+			}
+		})
+	}
+}

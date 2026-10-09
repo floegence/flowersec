@@ -329,7 +329,19 @@ func runCurrentDirectServer(ctx context.Context, carrier string, sdkExample bool
 	defer func() { err = errors.Join(err, reporter.Close()) }()
 	state := newCurrentParityState()
 	state.sdkExample = sdkExample
-	server, err := interopharness.NewServer(ctx, reporter, interopharness.ServerOptions{Carrier: carrier, Profile: protocolv4.DHProfileX25519, Origin: parityOrigin(), Handlers: state.configure})
+	options := interopharness.ServerOptions{Carrier: carrier, Profile: protocolv4.DHProfileX25519, Origin: parityOrigin(), Handlers: state.configure}
+	if os.Getenv("FLOWERSEC_PARITY_CLIENT_PROFILE") == "browser" {
+		certificate, roots, trustPEM, _, tlsErr := interopharness.TLSMaterial("127.0.0.1")
+		if tlsErr != nil {
+			return tlsErr
+		}
+		policy, policyErr := protocolv4.EncodeMap(make([]byte, 4096), "TLSPolicy", []protocolv4.Field{{Name: "mode"}, {Name: "require_consumer_tls13_verification", Kind: protocolv4.Boolean}})
+		if policyErr != nil {
+			return policyErr
+		}
+		options.Certificate, options.Roots, options.TrustPEM, options.TLSPolicy = &certificate, roots, trustPEM, policy
+	}
+	server, err := interopharness.NewServer(ctx, reporter, options)
 	if err != nil {
 		return err
 	}
@@ -353,7 +365,7 @@ func runCurrentDirectServer(ctx context.Context, carrier string, sdkExample bool
 	if err = writeJSON(currentReady{Type: "ready", Runtime: "go", Carrier: carrier, Path: "direct", ArtifactJSON: artifactJSON, TrustPEM: server.TrustPEM, Origin: server.Origin, WireRevision: 4, Profile: material.Profile, Source: material.Source}); err != nil {
 		return err
 	}
-	if err = browserInstallation.Start(ctx, cancelRun, server.Runtime, material, artifactJSON, server.TrustPEM, server.Origin, browserApplication); err != nil {
+	if err = browserInstallation.Start(ctx, cancelRun, server.Runtime, material, artifactJSON, server.TrustPEM, server.Origin, browserApplication, nil); err != nil {
 		return err
 	}
 	session, err := server.WaitSession(ctx)

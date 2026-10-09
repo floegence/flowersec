@@ -34,6 +34,8 @@ pub(crate) use session::{
     StreamPreparation, StreamPublicationAdmission,
 };
 
+const VIEW_BYTES: u64 =
+    (std::mem::size_of::<StreamView>() + std::mem::size_of::<std::sync::Mutex<()>>() + 64) as u64;
 const USED_BYTES: usize = 524_292;
 const REJECT_RESERVED: usize = 128;
 const INGRESS: usize = 128;
@@ -55,6 +57,9 @@ pub(crate) struct StreamView {
     accepted: AtomicU64,
     authenticated: AtomicU64,
     authentication_waiters: AtomicUsize,
+    receive_owner: Arc<std::sync::Mutex<()>>,
+    pub(super) receive_disabled: AtomicBool,
+    pub(super) send_aborted: AtomicBool,
 }
 #[derive(Clone)]
 pub(crate) struct StreamHandle {
@@ -96,6 +101,14 @@ pub(crate) enum ReadState {
     Pending,
     Eof,
     Aborted,
+}
+/// A shared reader may continue only on a disposition produced by the original
+/// receive owner. A failed tag or header never manufactures local attribution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ReceiveDisposition {
+    Applied,
+    Isolated { scope: u64 },
+    Discarded { scope: u64 },
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StreamPhase {
@@ -160,6 +173,7 @@ struct Direction {
     deadline: Option<Instant>,
     normal_deadline: Option<Instant>,
     quarantined: bool,
+    first_error: Option<CryptoError>,
 }
 impl Direction {
     fn new(epoch: u32, limit: u64) -> Self {
@@ -190,6 +204,7 @@ impl Direction {
             deadline: None,
             normal_deadline: None,
             quarantined: false,
+            first_error: None,
         }
     }
     fn in_epoch(&self, epoch: u32) -> Result<Tuple> {
@@ -247,6 +262,7 @@ struct Slot {
     token: Token,
     open_epoch: u32,
     open_digest: [u8; 32],
+    open_digest_ready: bool,
     bootstrap: bool,
     prefix: bool,
     cancel: bool,
@@ -279,9 +295,42 @@ impl Slot {
 struct BatchState {
     sequence: u64,
     digest: [u8; 32],
+    digest_ready: bool,
     ids: Vec<u64>,
     deadline: Instant,
     submitted: bool,
+}
+/// One pre-admitted shared ingress allowance, retained for the Session's full
+/// lifetime. Neither a scope's retirement nor an epoch change renews it.
+#[derive(Default)]
+struct SharedDiscard {
+    records: u64,
+    bytes: u64,
+    deadline: Option<Instant>,
+}
+impl SharedDiscard {
+    fn reject(&mut self, now: Instant, bytes: usize) -> Result<()> {
+        let deadline = match self.deadline {
+            Some(deadline) => deadline,
+            None => {
+                let deadline = now
+                    .checked_add(Duration::from_secs(10))
+                    .ok_or(CryptoError::Deadline)?;
+                self.deadline = Some(deadline);
+                deadline
+            }
+        };
+        if now >= deadline {
+            return Err(CryptoError::Deadline);
+        }
+        let bytes = u64::try_from(bytes).map_err(|_| CryptoError::Capacity)?;
+        if self.records >= 16 || bytes > 65_536 - self.bytes {
+            return Err(CryptoError::Capacity);
+        }
+        self.records += 1;
+        self.bytes += bytes;
+        Ok(())
+    }
 }
 pub(super) struct State {
     pub(super) controls: controls::State,
@@ -296,6 +345,9 @@ pub(super) struct State {
     max_active: usize,
     max_credit: u64,
     used: Vec<u8>,
+    // ID consumption alone is not authenticated input/retirement evidence.
+    // This fixed bitmap records only completed original retirement proofs.
+    authenticated_stable: Vec<u8>,
     slots: Vec<Slot>,
     max_slots: usize,
     max_tokens: usize,
@@ -309,7 +361,8 @@ pub(super) struct State {
     closed: bool,
     draining: bool,
     output: Vec<u8>,
-    plaintext: Vec<u8>,
+    input_pool: Arc<ReceivePool>,
+    shared_discard: SharedDiscard,
     body: Vec<u8>,
     outgoing: Option<BatchState>,
     incoming: Option<BatchState>,
@@ -327,10 +380,15 @@ impl State {
             .ok_or(CryptoError::Capacity)?;
         let metadata = std::mem::size_of::<crate::crypto_v4::DeferredPublication>()
             + std::mem::size_of::<Vec<u8>>()
+            + std::mem::size_of::<RecordWork>()
+            + std::mem::size_of::<RecordPublication>()
+            + std::mem::size_of::<CryptoTail>()
             + std::mem::size_of::<ResourceCharge>();
         let bytes = tails
             .checked_mul(metadata)
-            .and_then(|bytes| bytes.checked_add(shape.max_frame))
+            // Every maintenance quantum fits the protocol's 64 KiB normal
+            // lane; application max_frame belongs to the input/output owners.
+            .and_then(|bytes| bytes.checked_add(shape.max_frame.min(65_536)))
             .and_then(|bytes| bytes.checked_add(256))
             .ok_or(CryptoError::Capacity)?;
         Ok(ResourceLimits {
@@ -349,19 +407,20 @@ impl State {
         let max_tokens = (2 * shape.max_streams + REJECT_RESERVED).min(4096);
         let max_slots = max_tokens + INGRESS;
         let bytes = std::mem::size_of::<State>()
-            + USED_BYTES
+            + 2 * USED_BYTES
             + max_slots * std::mem::size_of::<Slot>()
             + max_tokens * 2048
             + INGRESS * 4096
             + 2 * (2048 + 64 * BATCH)
-            + 3 * (shape.max_frame + 8)
+            + 2 * (shape.max_frame + 8)
             + 2 * shape.max_credit as usize;
         let limits = crate::crypto_v4::connect::candidate_add_limits(
             ResourceLimits {
                 sdk_bytes: bytes as u64,
-                items: (max_slots + max_tokens + INGRESS + 4) as u64,
+                items: (max_slots + max_tokens + INGRESS + 5) as u64,
                 timers: (max_slots * 5 + 4) as u64,
-                work_slots: 10,
+                // The three input jobs transfer existing scratch-work slots.
+                work_slots: 7,
                 tasks: 1,
                 ..ResourceLimits::default()
             },
@@ -373,9 +432,13 @@ impl State {
         )?;
         let limits = crate::crypto_v4::connect::candidate_add_limits(
             limits,
+            ReceivePool::limits(shape.max_frame),
+        )?;
+        let limits = crate::crypto_v4::connect::candidate_add_limits(
+            limits,
             if shape.application_profile != 0 {
                 ResourceLimits {
-                    sdk_bytes: 128,
+                    sdk_bytes: VIEW_BYTES,
                     items: 1,
                     ..ResourceLimits::default()
                 }
@@ -389,7 +452,7 @@ impl State {
                 // Every actual M ordinal may retain its original view until
                 // proof and physical cleanup finish; lifetime is capped at 16.
                 ResourceLimits {
-                    sdk_bytes: 16 * 128,
+                    sdk_bytes: 16 * VIEW_BYTES,
                     items: 16,
                     ..ResourceLimits::default()
                 }
@@ -410,6 +473,10 @@ impl State {
         }
         let maintenance_publication =
             Some(charge.split(Self::maintenance_publication_limits(shape)?)?);
+        let input_pool = ReceivePool::new(
+            shape.max_frame,
+            charge.split(ReceivePool::limits(shape.max_frame))?,
+        )?;
         let control_charge = if automatic {
             Some(charge.split(controls::State::preparation_limits(true))?)
         } else {
@@ -417,7 +484,7 @@ impl State {
         };
         let bootstrap_view_charge = if shape.application_profile != 0 {
             Some(charge.split(ResourceLimits {
-                sdk_bytes: 128,
+                sdk_bytes: VIEW_BYTES,
                 items: 1,
                 ..ResourceLimits::default()
             })?)
@@ -426,7 +493,7 @@ impl State {
         };
         let management_view_charge = if shape.application_profile == 2 {
             Some(Arc::new(charge.split(ResourceLimits {
-                sdk_bytes: 16 * 128,
+                sdk_bytes: 16 * VIEW_BYTES,
                 items: 16,
                 ..ResourceLimits::default()
             })?))
@@ -447,6 +514,11 @@ impl State {
         used.try_reserve_exact(USED_BYTES)
             .map_err(|_| CryptoError::Capacity)?;
         used.resize(USED_BYTES, 0);
+        let mut authenticated_stable = Vec::new();
+        authenticated_stable
+            .try_reserve_exact(USED_BYTES)
+            .map_err(|_| CryptoError::Capacity)?;
+        authenticated_stable.resize(USED_BYTES, 0);
         let mut slots = Vec::new();
         slots
             .try_reserve_exact(max_slots)
@@ -479,6 +551,7 @@ impl State {
             max_active: shape.max_streams,
             max_credit,
             used,
+            authenticated_stable,
             slots,
             max_slots,
             max_tokens,
@@ -492,7 +565,8 @@ impl State {
             closed: false,
             draining: false,
             output: buffer(shape.max_frame + 8)?,
-            plaintext: buffer(shape.max_frame + 8)?,
+            input_pool,
+            shared_discard: SharedDiscard::default(),
             body: Vec::new(),
             outgoing: None,
             incoming: None,
@@ -554,6 +628,10 @@ impl State {
         let (i, b) = Self::bit(scope)?;
         self.used[i] |= b;
         Ok(())
+    }
+    fn authenticated_stable(&self, scope: u64) -> Result<bool> {
+        let (i, b) = Self::bit(scope)?;
+        Ok(self.authenticated_stable[i] & b != 0)
     }
     fn index(&self, scope: u64) -> Option<usize> {
         self.slots.iter().position(|s| s.scope == scope)
@@ -746,7 +824,7 @@ impl State {
                 .clone()
         } else {
             Arc::new(self.account.reserve(ResourceLimits {
-                sdk_bytes: 128,
+                sdk_bytes: VIEW_BYTES,
                 items: 1,
                 ..ResourceLimits::default()
             })?)
@@ -765,6 +843,9 @@ impl State {
             accepted: AtomicU64::new(0),
             authenticated: AtomicU64::new(0),
             authentication_waiters: AtomicUsize::new(0),
+            receive_owner: Arc::new(std::sync::Mutex::new(())),
+            receive_disabled: AtomicBool::new(false),
+            send_aborted: AtomicBool::new(false),
         });
         if !bootstrap && !self.credit_room(class, local_window, true) {
             return Err(CryptoError::Capacity);
@@ -791,6 +872,7 @@ impl State {
             token,
             open_epoch: epoch,
             open_digest: [0; 32],
+            open_digest_ready: false,
             bootstrap,
             prefix: false,
             cancel: false,
@@ -885,6 +967,17 @@ impl State {
             }
         }
     }
+    pub(super) fn record_view(&self, scope: u64) -> Option<Arc<StreamView>> {
+        self.index(scope)
+            .map(|index| self.slots[index].view.clone())
+    }
+    pub(super) fn crypto_deadline(&self, scope: u64, direction: u8) -> Option<Instant> {
+        let drain = self.controls.drain.as_ref().map(|drain| drain.deadline());
+        let direction = self
+            .index(scope)
+            .and_then(|index| self.slots[index].directions[usize::from(direction)].deadline);
+        drain.into_iter().chain(direction).min()
+    }
     pub(super) fn check_deadlines(&self, sample: TrustedTimeSample) -> Result<()> {
         if self.closed {
             return Err(CryptoError::State);
@@ -921,7 +1014,7 @@ impl State {
             slot.metadata.clear();
         }
         self.output.as_mut_slice().zeroize();
-        self.plaintext.as_mut_slice().zeroize();
+        self.input_pool.close();
         self.body.as_mut_slice().zeroize();
     }
     pub(super) fn install_epoch(&mut self, epoch: u32) {
@@ -1108,27 +1201,93 @@ fn record_header(wire: &[u8]) -> Result<Tuple> {
         offset: 0,
     })
 }
-fn projection(value: Value<'_>, omit: u64) -> Result<Vec<u8>> {
-    let mut out = map(
-        value
-            .len()?
-            .checked_sub(1)
-            .ok_or(CryptoError::Authentication)? as u64,
-        value.raw().len(),
-    )?;
+fn open_digest(value: Value<'_>) -> Result<[u8; 32]> {
+    if value.len()? != 9 {
+        return Err(CryptoError::Authentication);
+    }
+    let omitted = value.field("OPEN_STREAM", "open_digest")?.raw().len() + 1;
+    let length = value
+        .raw()
+        .len()
+        .checked_sub(omitted)
+        .ok_or(CryptoError::Authentication)?;
+    let mut digest = Sha256::new();
+    digest.update(b"flowersec/v4/open\0");
+    digest.update((length as u32).to_be_bytes());
+    digest.update([0xa8]);
     let mut fields = value.children()?;
     while let Some(id) = fields.next() {
         let id = id?;
         let value = fields.next().ok_or(CryptoError::Authentication)??;
-        if id.uint()? != omit {
-            out.extend_from_slice(id.raw());
-            out.extend_from_slice(value.raw());
+        if id.uint()? != 8 {
+            digest.update(id.raw());
+            digest.update(value.raw());
         }
     }
-    Ok(out)
+    Ok(digest.finalize().into())
 }
-fn open_digest(value: Value<'_>) -> Result<[u8; 32]> {
-    Ok(Sha256::digest(domain(b"flowersec/v4/open\0", &[&projection(value, 8)?])?).into())
+
+fn retirement_digest(hash: &[u8; 32], profile: Profile, role: u8, body: &[u8]) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(b"flowersec/v4/retire-batch\0");
+    for part in [hash.as_slice(), profile.name().as_bytes()] {
+        digest.update((part.len() as u32).to_be_bytes());
+        digest.update(part);
+    }
+    digest.update([role]);
+    digest.update((body.len() as u32).to_be_bytes());
+    digest.update(body);
+    digest.finalize().into()
+}
+
+pub(super) struct StreamSealPatch {
+    pub(super) hash: [u8; 32],
+    pub(super) profile: Profile,
+    pub(super) role: u8,
+    pub(super) scope: u64,
+    pub(super) epoch: u32,
+    pub(super) frame: u8,
+}
+pub(super) enum StreamSealCompletion {
+    Open {
+        scope: u64,
+        epoch: u32,
+        digest: [u8; 32],
+    },
+    Retirement {
+        sequence: u64,
+        digest: [u8; 32],
+    },
+}
+impl StreamSealPatch {
+    pub(super) fn execute(self, body: &mut [u8]) -> Result<StreamSealCompletion> {
+        if self.frame == 7 {
+            let value = decode(body, "OPEN_STREAM", body.len(), Context::default())?;
+            let digest = open_digest(value)?;
+            let start = body
+                .len()
+                .checked_sub(32)
+                .ok_or(CryptoError::Authentication)?;
+            body[start..].copy_from_slice(&digest);
+            Ok(StreamSealCompletion::Open {
+                scope: self.scope,
+                epoch: self.epoch,
+                digest,
+            })
+        } else {
+            let value = decode(
+                body,
+                "STREAM_ACK_RETIRE_BATCH",
+                body.len(),
+                Context::default(),
+            )?;
+            let sequence = value.u("STREAM_ACK_RETIRE_BATCH", "batch_seq")?;
+            Ok(StreamSealCompletion::Retirement {
+                sequence,
+                digest: retirement_digest(&self.hash, self.profile, self.role, body),
+            })
+        }
+    }
 }
 
 impl ReliableSession {
@@ -1186,10 +1345,10 @@ impl ReliableSession {
         self.local_liveness_stall();
         let mut out = std::mem::take(&mut self.engine.streams.output);
         let result = (|| {
-            let size = self
+            let (size, work) = self
                 .engine
-                .seal(scope, frame, body, &mut out, false, protected)?;
-            publisher.publish(&out[..size])?;
+                .prepare_seal(scope, frame, body, &mut out, false, protected)?;
+            publisher.publish_seal(work, &mut out[..size])?;
             if publisher.is_deferred() {
                 publisher
                     .defer_publication(crate::crypto_v4::DeferredPublication::handoff(handoff));
@@ -1248,7 +1407,11 @@ impl ReliableSession {
         bytes(&mut body, metadata);
         uint(&mut body, 7);
         uint(&mut body, window);
-        let digest: [u8; 32] = Sha256::digest(domain(b"flowersec/v4/open\0", &[&body])?).into();
+        let digest: [u8; 32] = if self.engine.deferred_crypto {
+            [0; 32]
+        } else {
+            Sha256::digest(domain(b"flowersec/v4/open\0", &[&body])?).into()
+        };
         body[0] += 1;
         uint(&mut body, 8);
         bytes(&mut body, &digest);
@@ -1369,9 +1532,9 @@ impl ReliableSession {
             return Err(CryptoError::Capacity);
         }
         let (body, digest) = self.open_body(scope, kind, metadata, receive_window)?;
+        let epoch = self.current_epoch();
         let state = &mut self.engine.streams;
         let token = state.take_token(false)?;
-        let epoch = self.engine.epoch;
         let slot = match state.slot(SlotSeed {
             scope,
             opener: role,
@@ -1421,6 +1584,7 @@ impl ReliableSession {
         }
         let mut slot = slot;
         slot.open_digest = digest;
+        slot.open_digest_ready = !self.engine.deferred_crypto;
         slot.prefix = true;
         slot.directions[usize::from(role)].current.next = 1;
         slot.directions[usize::from(role)].last = slot.directions[usize::from(role)].current;
@@ -1476,6 +1640,7 @@ impl ReliableSession {
         s.prefix = true;
         s.open_epoch = epoch;
         s.open_digest = digest;
+        s.open_digest_ready = !self.engine.deferred_crypto;
         s.directions[0].current = Tuple {
             epoch,
             next: 1,
@@ -2013,6 +2178,7 @@ impl ReliableSession {
         receive.fin = false;
         receive.begin(now, failure)?;
         if failure {
+            s.view.receive_disabled.store(true, Ordering::Release);
             receive.disabled = true;
             for key in &mut self.engine.keys {
                 if key.scope == s.scope && key.direction == peer as u8 {
@@ -2029,6 +2195,12 @@ impl ReliableSession {
         }
         self.engine.streams.release_queue(index);
         Ok(())
+    }
+    fn isolate_input_error(&mut self, index: usize, cause: CryptoError) -> Result<()> {
+        self.engine.streams.slots[index].directions[usize::from(1 - self.engine.role)]
+            .first_error
+            .get_or_insert(cause);
+        self.reset_index(index, true)
     }
     pub(crate) fn reset(&mut self, handle: &StreamHandle) -> Result<()> {
         self.check()?;
@@ -2086,6 +2258,7 @@ impl RecordEngine {
         header: Tuple,
         frame: u8,
         body: &[u8],
+        digest: Option<[u8; 32]>,
     ) -> Result<()> {
         let state = &self.streams;
         if matches!(frame, 12..=15) {
@@ -2100,7 +2273,7 @@ impl RecordEngine {
                 || v.u("OPEN_STREAM", "direction")? != u64::from(1 - self.role)
                 || v.u("OPEN_STREAM", "epoch")? != u64::from(header.epoch)
                 || v.u("OPEN_STREAM", "sequence")? != 0
-                || v.b::<32>("OPEN_STREAM", "open_digest")? != open_digest(v)?
+                || Some(v.b::<32>("OPEN_STREAM", "open_digest")?) != digest
             {
                 return Err(CryptoError::Authentication);
             }
@@ -2168,7 +2341,7 @@ impl RecordEngine {
         let name = control_schema(body)?;
         let v = decode(body, name, self.max_frame, Context::default())?;
         if name == "STREAM_ACK_RETIRE_BATCH" || name == "STREAM_ACK_RETIRE_ACK" {
-            return self.validate_retirement(v, name, body);
+            return self.validate_retirement(v, name, digest);
         }
         let target = v.u(name, "stream_id")?;
         let direction = v.u(name, "direction")?;
@@ -2193,6 +2366,7 @@ impl RecordEngine {
         }
         if name == "OPEN_ACCEPT" {
             if s.bootstrap
+                || !s.open_digest_ready
                 || s.opener != self.role
                 || v.u(name, "open_epoch")? != u64::from(s.open_epoch)
                 || v.u(name, "open_sequence")? != 0
@@ -2279,7 +2453,12 @@ impl RecordEngine {
         }
         Ok(())
     }
-    fn validate_retirement(&self, v: Value<'_>, name: &str, body: &[u8]) -> Result<()> {
+    fn validate_retirement(
+        &self,
+        v: Value<'_>,
+        name: &str,
+        digest: Option<[u8; 32]>,
+    ) -> Result<()> {
         let state = &self.streams;
         let seq = v.u(name, "batch_seq")?;
         if name == "STREAM_ACK_RETIRE_ACK" {
@@ -2295,12 +2474,12 @@ impl RecordEngine {
                 };
             }
             let b = state.outgoing.as_ref().ok_or(CryptoError::Authentication)?;
-            if !b.submitted || seq != b.sequence || digest != b.digest {
+            if !b.submitted || !b.digest_ready || seq != b.sequence || digest != b.digest {
                 return Err(CryptoError::Authentication);
             }
             return Ok(());
         }
-        let digest = self.retirement_digest(1 - self.role, body)?;
+        let digest = digest.ok_or(CryptoError::Authentication)?;
         if seq < state.last_in {
             return Ok(());
         }
@@ -2335,20 +2514,171 @@ impl RecordEngine {
         }
         Ok(())
     }
-    fn retirement_digest(&self, role: u8, body: &[u8]) -> Result<[u8; 32]> {
-        let mut input = domain(
-            b"flowersec/v4/retire-batch\0",
-            &[&self.hash, self.profile.name().as_bytes()],
-        )?;
-        input.push(role);
-        input.extend_from_slice(&(body.len() as u32).to_be_bytes());
-        input.extend_from_slice(body);
-        Ok(Sha256::digest(input).into())
+    pub(super) fn finish_stream_seal(&mut self, completion: StreamSealCompletion) -> Result<()> {
+        self.check()?;
+        match completion {
+            StreamSealCompletion::Open {
+                scope,
+                epoch,
+                digest,
+            } => {
+                let index = self.streams.index(scope).ok_or(CryptoError::State)?;
+                let slot = &mut self.streams.slots[index];
+                if slot.open_digest_ready
+                    || !slot.prefix
+                    || slot.open_epoch != epoch
+                    || slot.opener != self.role
+                    || !matches!(slot.phase, Phase::Opening | Phase::Accepted)
+                {
+                    return Err(CryptoError::State);
+                }
+                slot.open_digest = digest;
+                slot.open_digest_ready = true;
+            }
+            StreamSealCompletion::Retirement { sequence, digest } => {
+                let batch = self.streams.outgoing.as_mut().ok_or(CryptoError::State)?;
+                if batch.sequence != sequence || batch.digest_ready {
+                    return Err(CryptoError::State);
+                }
+                batch.digest = digest;
+                batch.digest_ready = true;
+            }
+        }
+        Ok(())
+    }
+}
+/// Three original pre-admitted input slots: two independent application
+/// directions and a reserved maintenance direction. Waiting never holds drive.
+pub(crate) struct ReceivePool {
+    slots: std::sync::Mutex<[Option<Vec<u8>>; 3]>,
+    changed: std::sync::Condvar,
+    closed: AtomicBool,
+    _charge: ResourceCharge,
+}
+pub(crate) struct ReceiveLease {
+    pool: Arc<ReceivePool>,
+    index: usize,
+    bytes: Vec<u8>,
+}
+impl ReceivePool {
+    fn limits(frame: usize) -> ResourceLimits {
+        ResourceLimits {
+            sdk_bytes: (3 * (frame + 8)
+                + std::mem::size_of::<Self>()
+                + 3 * std::mem::size_of::<ReceiveInput>()) as u64,
+            items: 3,
+            work_slots: 3,
+            ..ResourceLimits::default()
+        }
+    }
+    fn new(frame: usize, charge: ResourceCharge) -> Result<Arc<Self>> {
+        let mut slots = [None, None, None];
+        for slot in &mut slots {
+            let mut bytes = Vec::new();
+            bytes
+                .try_reserve_exact(frame + 8)
+                .map_err(|_| CryptoError::Capacity)?;
+            bytes.resize(frame + 8, 0);
+            *slot = Some(bytes);
+        }
+        Ok(Arc::new(Self {
+            slots: std::sync::Mutex::new(slots),
+            changed: std::sync::Condvar::new(),
+            closed: AtomicBool::new(false),
+            _charge: charge,
+        }))
+    }
+    pub(crate) fn acquire(self: &Arc<Self>, maintenance: bool) -> Result<ReceiveLease> {
+        let mut slots = self.slots.lock().expect("original receive slots");
+        loop {
+            if self.closed.load(Ordering::Acquire) {
+                return Err(CryptoError::State);
+            }
+            let range = if maintenance { 2..3 } else { 0..2 };
+            if let Some(index) = range.into_iter().find(|index| slots[*index].is_some()) {
+                return Ok(ReceiveLease {
+                    pool: self.clone(),
+                    index,
+                    bytes: slots[index].take().expect("available receive slot"),
+                });
+            }
+            slots = self
+                .changed
+                .wait(slots)
+                .expect("original receive slot wait");
+        }
+    }
+    pub(crate) fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        let mut slots = self.slots.lock().expect("original receive slot closure");
+        for bytes in slots.iter_mut().flatten() {
+            bytes.as_mut_slice().zeroize();
+        }
+        self.changed.notify_all();
+    }
+}
+impl Drop for ReceiveLease {
+    fn drop(&mut self) {
+        // Erase the storage while retaining the original fixed slot length.
+        self.bytes.as_mut_slice().zeroize();
+        let mut slots = self
+            .pool
+            .slots
+            .lock()
+            .expect("original receive slot return");
+        slots[self.index] = Some(std::mem::take(&mut self.bytes));
+        self.pool.changed.notify_all();
+    }
+}
+pub(crate) struct ReceiveInput {
+    ticket: RecordOpen,
+    lease: ReceiveLease,
+    scope: u64,
+    header: Tuple,
+    frame: u8,
+    known: bool,
+    accepted: bool,
+    bound: bool,
+    rekey: Option<(u8, bool)>,
+    rekey_authentication: Option<rekey::RekeyAuthentication>,
+    digest_context: ([u8; 32], Profile, u8),
+    stream_digest: Option<[u8; 32]>,
+}
+impl ReceiveInput {
+    pub(crate) fn execute(&mut self, wire: &[u8]) -> Result<usize> {
+        let n = self.ticket.execute(wire, &mut self.lease.bytes)?;
+        if let Some(authentication) = &self.rekey_authentication {
+            authentication.verify(&self.lease.bytes[..n])?;
+        }
+        let body = &self.lease.bytes[..n];
+        self.stream_digest = if self.frame == 7 {
+            Some(open_digest(decode(
+                body,
+                "OPEN_STREAM",
+                body.len(),
+                Context::default(),
+            )?)?)
+        } else if self.frame == 9 && control_schema(body)? == "STREAM_ACK_RETIRE_BATCH" {
+            Some(retirement_digest(
+                &self.digest_context.0,
+                self.digest_context.1,
+                self.digest_context.2,
+                body,
+            ))
+        } else {
+            None
+        };
+        #[cfg(test)]
+        if self.stream_digest.is_some() {
+            self.ticket.test_hold(wire);
+        }
+        Ok(n)
     }
 }
 impl ReliableSession {
     /// scope is supplied by the original bounded native/shared input owner. A
     /// new OPEN gets only a charged provisional key until its real AEAD passes.
+    #[cfg(test)]
     pub(crate) fn receive(&mut self, scope: u64, wire: &[u8]) -> Result<()> {
         self.receive_input(scope, wire, None)
     }
@@ -2429,6 +2759,10 @@ impl ReliableSession {
                 }
             }
             if read_hint == 2 {
+                self.engine.streams.slots[index]
+                    .view
+                    .receive_disabled
+                    .store(true, Ordering::Release);
                 for key in &mut self.engine.keys {
                     if key.scope == self.engine.streams.slots[index].scope
                         && key.direction == (1 - role) as u8
@@ -2496,6 +2830,7 @@ impl ReliableSession {
     /// The native input owner retains this original authenticated association.
     /// Shared carrier input always uses receive and cannot project a bad tag
     /// onto a Stream merely by inspecting its unauthenticated header.
+    #[cfg(test)]
     pub(crate) fn receive_bound(&mut self, handle: &StreamHandle, wire: &[u8]) -> Result<()> {
         self.check()?;
         let i = self.engine.streams.resolve(handle)?;
@@ -2509,28 +2844,123 @@ impl ReliableSession {
         }
         self.receive_input(handle.scope(), wire, Some(handle))
     }
+    #[cfg(test)]
     fn receive_input(
         &mut self,
         scope: u64,
         wire: &[u8],
         bound: Option<&StreamHandle>,
     ) -> Result<()> {
-        self.check()?;
-        if wire.get(4) == Some(&6) {
-            let mut plain = std::mem::take(&mut self.engine.streams.plaintext);
-            let result = self.engine.receive_rekey(wire, &mut plain);
-            self.engine.streams.plaintext = plain;
-            if result.is_ok() {
-                let now = self.engine.account.security_time()?;
-                if self.engine.rekey.busy() {
-                    self.engine
-                        .streams
-                        .controls
-                        .interrupt(ProbeOutcome::RekeyInProgress, Some(now));
-                }
-                self.engine.streams.controls.activity(now)?;
+        let lease = self.engine.streams.input_pool.acquire(scope == 0)?;
+        let Some(mut input) = self.prepare_receive_input(scope, wire, bound, lease)? else {
+            return Ok(());
+        };
+        let opened = input.execute(wire);
+        self.finish_receive_input(input, wire, opened).map(|_| ())
+    }
+    /// Headers here can only reject a direction already permanently closed by
+    /// its original owner or authenticated terminal evidence. They never bind
+    /// a scope, select a key, or advance a protocol frontier.
+    fn reject_closed_data(
+        &mut self,
+        scope: u64,
+        wire: &[u8],
+        header: Tuple,
+        shared: bool,
+    ) -> Result<bool> {
+        if wire.get(4) != Some(&8) {
+            return Ok(false);
+        }
+        let known = self.engine.streams.index(scope);
+        let terminal = match known {
+            Some(index) => {
+                let slot = &self.engine.streams.slots[index];
+                let direction = slot.directions[usize::from(1 - self.engine.role)];
+                // Shared input needs its own authenticated-error fence or
+                // actual terminal evidence. An ordinary Reset/quarantine is
+                // still responsible for its previously promised input.
+                direction.complete()
+                    || direction.first_error.is_some()
+                        && slot.view.receive_disabled.load(Ordering::Acquire)
+                    || !shared
+                        && (direction.disabled
+                            || slot.view.receive_disabled.load(Ordering::Acquire))
+                    || direction.fin && direction.terminal.is_some()
             }
-            return result;
+            // Collected scopes must have real retirement evidence. The
+            // Session's consecutive installed roots 0..current supply only a
+            // bounded rejection range; no retired key is selected or revived.
+            None => self.engine.streams.authenticated_stable(scope)?,
+        };
+        if !terminal {
+            return Ok(false);
+        }
+        if wire.len() < 44
+            || wire.len() > self.engine.max_frame + 8
+            || wire[5..8] != [0, 0, 0]
+            || wire[12..20] != scope.to_be_bytes()
+            || u32::from_be_bytes(
+                wire[..4]
+                    .try_into()
+                    .map_err(|_| CryptoError::Authentication)?,
+            ) as usize
+                != wire.len() - 8
+            || header.epoch > self.engine.epoch
+            || known.is_some_and(|index| {
+                header.epoch
+                    < self.engine.streams.slots[index].directions[usize::from(1 - self.engine.role)]
+                        .initial_epoch
+            })
+        {
+            return Err(CryptoError::Authentication);
+        }
+        if shared {
+            let now = self.engine.account.security_time()?.monotonic_sample;
+            self.engine.streams.shared_discard.reject(now, wire.len())?;
+        }
+        Ok(true)
+    }
+    pub(crate) fn prepare_receive_input(
+        &mut self,
+        scope: u64,
+        wire: &[u8],
+        bound: Option<&StreamHandle>,
+        lease: ReceiveLease,
+    ) -> Result<Option<ReceiveInput>> {
+        self.check()?;
+        if let Some(handle) = bound {
+            let i = self.engine.streams.resolve(handle)?;
+            let slot = &self.engine.streams.slots[i];
+            if !slot.accepted() || !slot.prefix {
+                return Err(CryptoError::State);
+            }
+            if wire.len() < 44 || wire[4] != 8 || wire[12..20] != handle.scope().to_be_bytes() {
+                self.isolate_input_error(i, CryptoError::Authentication)?;
+                return Err(CryptoError::Authentication);
+            }
+        }
+        if wire.get(4) == Some(&6) {
+            let expected = self.engine.expected_phase(wire)?;
+            let marker = expected >= 3 && wire[8..12] == (self.engine.epoch + 1).to_be_bytes();
+            let ticket = self.engine.prepare_open(0, wire, marker)?;
+            return Ok(Some(ReceiveInput {
+                ticket,
+                lease,
+                scope,
+                header: record_header(wire)?,
+                frame: 6,
+                known: false,
+                accepted: false,
+                bound: false,
+                rekey: Some((expected, marker)),
+                rekey_authentication: self
+                    .engine
+                    .deferred_crypto
+                    .then(|| self.engine.rekey_authentication(expected, marker))
+                    .transpose()?,
+                digest_context: (self.engine.hash, self.engine.profile, 1 - self.engine.role),
+                stream_digest: None,
+            }));
         }
         let header = match record_header(wire) {
             Ok(header) => header,
@@ -2546,27 +2976,13 @@ impl ReliableSession {
             return Err(CryptoError::Authentication);
         }
         if frame == 8 {
-            let terminal = known.is_some_and(|i| {
-                self.engine.streams.slots[i].directions[usize::from(1 - self.engine.role)].disabled
-                    || self.engine.streams.slots[i].directions[usize::from(1 - self.engine.role)]
-                        .complete()
-            }) || known.is_none() && self.engine.streams.used(scope)?;
-            if terminal {
-                if header.epoch > self.engine.epoch
-                    || wire.len() > self.engine.max_frame + 8
-                    || wire[5..8] != [0, 0, 0]
-                    || wire[12..20] != scope.to_be_bytes()
-                    || u32::from_be_bytes(
-                        wire[..4]
-                            .try_into()
-                            .map_err(|_| CryptoError::Authentication)?,
-                    ) as usize
-                        != wire.len() - 8
-                {
+            match self.reject_closed_data(scope, wire, header, bound.is_none()) {
+                Ok(true) => return Ok(None),
+                Ok(false) => {}
+                Err(cause) => {
                     self.engine.fail();
-                    return Err(CryptoError::Authentication);
+                    return Err(cause);
                 }
-                return Ok(());
             }
         }
         let new_open = frame == 7 && known.is_none();
@@ -2584,41 +3000,140 @@ impl ReliableSession {
                 return Err(e);
             }
         }
-        let mut plain = std::mem::take(&mut self.engine.streams.plaintext);
-        let mut authenticated = false;
-        let result = self
-            .engine
-            .open(scope, wire, &mut plain, false, |engine, kind, body| {
-                authenticated = true;
-                engine.validate_stream_input(scope, header, kind, body)
-            });
-        let result = match result {
-            Ok(n) => self.apply_input(scope, header, frame, &plain[..n]),
-            Err(e) => Err(e),
+        let ticket = match self.engine.prepare_open(scope, wire, false) {
+            Ok(ticket) => ticket,
+            Err(error) => {
+                if frame == 8
+                    && bound.is_some()
+                    && known.is_some_and(|i| self.engine.streams.slots[i].accepted())
+                    && !matches!(error, CryptoError::Authorization(_) | CryptoError::Deadline)
+                {
+                    self.isolate_input_error(known.expect("known accepted scope"), error)?;
+                } else {
+                    self.engine.fail();
+                }
+                return Err(error);
+            }
         };
-        plain.as_mut_slice().zeroize();
-        self.engine.streams.plaintext = plain;
+        Ok(Some(ReceiveInput {
+            ticket,
+            lease,
+            scope,
+            header,
+            frame,
+            known: known.is_some(),
+            accepted: known.is_some_and(|index| {
+                let slot = &self.engine.streams.slots[index];
+                slot.accepted() && slot.prefix
+            }),
+            bound: bound.is_some(),
+            rekey: None,
+            rekey_authentication: None,
+            digest_context: (self.engine.hash, self.engine.profile, 1 - self.engine.role),
+            stream_digest: None,
+        }))
+    }
+    pub(crate) fn finish_receive_input(
+        &mut self,
+        input: ReceiveInput,
+        wire: &[u8],
+        opened: Result<usize>,
+    ) -> Result<ReceiveDisposition> {
+        let ReceiveInput {
+            ticket,
+            lease,
+            scope,
+            header,
+            frame,
+            known,
+            accepted,
+            bound,
+            rekey,
+            rekey_authentication: _authentication,
+            digest_context: _,
+            stream_digest,
+        } = input;
+        // A permanent direction fence may win while AEAD is outside the
+        // gate. Its late completion cannot deliver or reopen the direction.
+        if !bound && frame == 8 && accepted && matches!(opened, Ok(_) | Err(CryptoError::State)) {
+            self.check()?;
+            match self.reject_closed_data(scope, wire, header, true) {
+                Ok(true) => return Ok(ReceiveDisposition::Discarded { scope }),
+                Ok(false) => {}
+                Err(cause) => {
+                    self.engine.fail();
+                    return Err(cause);
+                }
+            }
+        }
+        let plain = &lease.bytes;
+        let mut authenticated = false;
+        let mut semantic_failure = false;
+        let result = opened.and_then(|n| {
+            if let Some((expected, marker)) = rekey {
+                return self
+                    .engine
+                    .commit_rekey(&ticket, wire, &plain[..n], expected, marker);
+            }
+            self.engine
+                .commit_open(&ticket, frame, &plain[..n], |engine, kind, body| {
+                    authenticated = true;
+                    let result =
+                        engine.validate_stream_input(scope, header, kind, body, stream_digest);
+                    semantic_failure = result.as_ref().err().is_some_and(|cause| {
+                        matches!(
+                            cause,
+                            CryptoError::Authentication
+                                | CryptoError::Capacity
+                                | CryptoError::Configuration
+                                | CryptoError::Sequence
+                        )
+                    });
+                    result
+                })?;
+            self.apply_input(scope, header, frame, &plain[..n], stream_digest)
+        });
         if let Err(error) = &result {
+            self.engine.disable_open(&ticket);
+            let known = known.then(|| self.engine.streams.index(scope)).flatten();
             if frame == 8
-                && (bound.is_some() || authenticated)
-                && known.is_some_and(|i| self.engine.streams.slots[i].accepted())
+                && (bound || accepted && authenticated && semantic_failure)
+                && known.is_some_and(|i| {
+                    self.engine.streams.slots[i].accepted() && self.engine.streams.slots[i].prefix
+                })
                 && !matches!(error, CryptoError::Authorization(_) | CryptoError::Deadline)
             {
-                self.reset_index(known.expect("known accepted scope"), true)?;
+                let index = known.expect("known accepted scope");
+                self.isolate_input_error(index, *error)?;
+                if !bound {
+                    self.check()?;
+                    return Ok(ReceiveDisposition::Isolated { scope });
+                }
             } else {
                 self.engine.fail();
             }
         }
         if result.is_ok() && !self.engine.closed {
             self.check()?;
-            self.engine
-                .streams
-                .controls
-                .activity(self.engine.account.security_time()?)?;
+            let now = self.engine.account.security_time()?;
+            if rekey.is_some() && self.engine.rekey.busy() {
+                self.engine
+                    .streams
+                    .controls
+                    .interrupt(ProbeOutcome::RekeyInProgress, Some(now));
+            }
+            self.engine.streams.controls.activity(now)?;
         }
-        result
+        result.map(|()| ReceiveDisposition::Applied)
     }
-    fn apply_input(&mut self, scope: u64, header: Tuple, frame: u8, body: &[u8]) -> Result<()> {
+    fn apply_input(
+        &mut self,
+        scope: u64,
+        header: Tuple,
+        frame: u8,
+        body: &[u8],
+        digest: Option<[u8; 32]>,
+    ) -> Result<()> {
         let now = self.engine.account.security_time()?.monotonic_sample;
         let role = usize::from(self.engine.role);
         let peer = 1 - role;
@@ -2638,6 +3153,7 @@ impl ReliableSession {
                 s.prefix = true;
                 s.open_epoch = header.epoch;
                 s.open_digest = digest;
+                s.open_digest_ready = true;
                 s.directions[peer].current = Tuple {
                     epoch: header.epoch,
                     next: 1,
@@ -2676,6 +3192,7 @@ impl ReliableSession {
                 bootstrap: false,
             })?;
             slot.open_digest = digest;
+            slot.open_digest_ready = true;
             slot.prefix = true;
             slot.directions[peer].current.next = 1;
             slot.directions[peer].last = slot.directions[peer].current;
@@ -2692,7 +3209,7 @@ impl ReliableSession {
                 self.engine.charge_keys(2)?;
                 for direction in 0..2 {
                     let candidate = self.engine.candidate.as_ref().ok_or(CryptoError::State)?;
-                    let key = self.engine.record_key(
+                    let key = self.engine.record_material(
                         &candidate.root,
                         self.engine.epoch + 1,
                         scope,
@@ -2707,6 +3224,14 @@ impl ReliableSession {
                             scope,
                             direction,
                             key,
+                            order: self
+                                .engine
+                                .keys
+                                .iter()
+                                .find(|key| key.scope == scope && key.direction == direction)
+                                .ok_or(CryptoError::State)?
+                                .order
+                                .clone(),
                             next: 0,
                             disabled: false,
                             usage: Usage::default(),
@@ -2759,7 +3284,7 @@ impl ReliableSession {
         let name = control_schema(body)?;
         let v = decode(body, name, self.engine.max_frame, Context::default())?;
         if name == "STREAM_ACK_RETIRE_BATCH" || name == "STREAM_ACK_RETIRE_ACK" {
-            return self.apply_retirement(v, name, body, now);
+            return self.apply_retirement(v, name, digest, now);
         }
         let target = v.u(name, "stream_id")?;
         let Some(i) = self.engine.streams.index(target) else {
@@ -2849,6 +3374,12 @@ impl ReliableSession {
                     observed: tuple_value(v.field(name, "observed_tuple")?)?,
                     aborted: v.u(name, "outcome")? == 1,
                 };
+                if proof.aborted {
+                    self.engine.streams.slots[i]
+                        .view
+                        .send_aborted
+                        .store(true, Ordering::Release);
+                }
                 let d = &mut self.engine.streams.slots[i].directions[role];
                 d.proof = Some(proof);
                 d.deadline = None;
@@ -2876,7 +3407,7 @@ impl ReliableSession {
         &mut self,
         v: Value<'_>,
         name: &str,
-        body: &[u8],
+        digest: Option<[u8; 32]>,
         now: Instant,
     ) -> Result<()> {
         let seq = v.u(name, "batch_seq")?;
@@ -2892,7 +3423,7 @@ impl ReliableSession {
                 .ok_or(CryptoError::State)?;
             self.engine.streams.last_out = batch.sequence;
             self.engine.streams.last_out_digest = batch.digest;
-            self.make_stable(&batch.ids);
+            self.make_stable(&batch.ids)?;
             return Ok(());
         }
         if seq < self.engine.streams.last_in {
@@ -2916,23 +3447,48 @@ impl ReliableSession {
         }
         self.engine.streams.incoming = Some(BatchState {
             sequence: seq,
-            digest: self.engine.retirement_digest(1 - self.engine.role, body)?,
+            digest: digest.ok_or(CryptoError::Authentication)?,
+            digest_ready: true,
             ids,
             deadline: now + Duration::from_secs(90),
             submitted: true,
         });
         Ok(())
     }
-    fn make_stable(&mut self, ids: &[u64]) {
+    fn make_stable(&mut self, ids: &[u64]) -> Result<()> {
+        // Preflight the entire authenticated retirement commit before
+        // recording any historical input entitlement or releasing a slot.
         for scope in ids {
-            if let Some(i) = self.engine.streams.index(*scope) {
-                let s = &mut self.engine.streams.slots[i];
-                s.phase = Phase::Held;
-                s.batch_refs -= 1;
+            let index = self
+                .engine
+                .streams
+                .index(*scope)
+                .ok_or(CryptoError::State)?;
+            let slot = &self.engine.streams.slots[index];
+            if slot.phase != Phase::Recent
+                || !slot.prefix
+                || !slot.open_digest_ready
+                || !slot.directions.iter().all(Direction::complete)
+                || slot.batch_refs == 0
+            {
+                return Err(CryptoError::State);
             }
+        }
+        for scope in ids {
+            let (byte, bit) = State::bit(*scope)?;
+            self.engine.streams.authenticated_stable[byte] |= bit;
+            let i = self
+                .engine
+                .streams
+                .index(*scope)
+                .ok_or(CryptoError::State)?;
+            let s = &mut self.engine.streams.slots[i];
+            s.phase = Phase::Held;
+            s.batch_refs -= 1;
         }
         self.engine.streams.collect();
         self.retire_keys();
+        Ok(())
     }
 }
 impl ReliableSession {
@@ -2956,6 +3512,10 @@ impl ReliableSession {
                         d.stop = true;
                         d.fin = false;
                         d.disabled = true;
+                        self.engine.streams.slots[i]
+                            .view
+                            .receive_disabled
+                            .store(true, Ordering::Release);
                         self.engine.streams.slots[i]
                             .view
                             .end
@@ -3061,6 +3621,12 @@ impl ReliableSession {
                 uint(&mut body, u64::from(aborted));
                 uint(&mut body, 5);
                 tuple(&mut body, observed);
+                if aborted {
+                    self.engine.streams.slots[i]
+                        .view
+                        .receive_disabled
+                        .store(true, Ordering::Release);
+                }
                 let d = &mut self.engine.streams.slots[i].directions[peer];
                 d.proof = Some(proof);
                 d.drain_sent = true;
@@ -3150,7 +3716,7 @@ impl ReliableSession {
             self.send(0, 9, &body, false, publisher)?;
             self.engine.streams.last_in = batch.sequence;
             self.engine.streams.last_in_digest = batch.digest;
-            self.make_stable(&batch.ids);
+            self.make_stable(&batch.ids)?;
             return Ok(true);
         }
         if self.engine.streams.outgoing.is_some() {
@@ -3204,7 +3770,16 @@ impl ReliableSession {
         if body.len() + 36 > self.engine.max_frame {
             return Err(CryptoError::Capacity);
         }
-        let digest = self.engine.retirement_digest(self.engine.role, &body)?;
+        let digest = if self.engine.deferred_crypto {
+            [0; 32]
+        } else {
+            retirement_digest(
+                &self.engine.hash,
+                self.engine.profile,
+                self.engine.role,
+                &body,
+            )
+        };
         for scope in &ids {
             let i = self
                 .engine
@@ -3216,6 +3791,7 @@ impl ReliableSession {
         self.engine.streams.outgoing = Some(BatchState {
             sequence,
             digest,
+            digest_ready: !self.engine.deferred_crypto,
             ids,
             deadline: now + Duration::from_secs(90),
             submitted: true,
@@ -3436,6 +4012,61 @@ mod tests {
         }
     }
     #[test]
+    fn shared_discard_exact_boundaries_and_unauthenticated_consumption() {
+        let now = Instant::now();
+        let mut records = SharedDiscard::default();
+        for _ in 0..16 {
+            records.reject(now, 44).unwrap();
+        }
+        assert_eq!(records.reject(now, 44), Err(CryptoError::Capacity));
+        assert_eq!((records.records, records.bytes), (16, 16 * 44));
+        let mut bytes = SharedDiscard::default();
+        bytes.reject(now, 44).unwrap();
+        bytes.reject(now, 65_536 - 44).unwrap();
+        assert_eq!(bytes.reject(now, 44), Err(CryptoError::Capacity));
+        assert_eq!((bytes.records, bytes.bytes), (2, 65_536));
+        let mut deadline = SharedDiscard::default();
+        deadline.reject(now, 44).unwrap();
+        deadline
+            .reject(now + Duration::from_secs(10) - Duration::from_nanos(1), 44)
+            .unwrap();
+        assert_eq!(
+            deadline.reject(now + Duration::from_secs(10), 44),
+            Err(CryptoError::Deadline)
+        );
+        assert_eq!(deadline.deadline, Some(now + Duration::from_secs(10)));
+
+        for profile in [Profile::X25519, Profile::P256] {
+            let (_owner, client, server) = record_pair_for_limits(profile);
+            let mut client = client.into_session().unwrap();
+            let mut server = server.into_session().unwrap();
+            let (handle, remote) = accepted(&mut client, &mut server, 8);
+            assert!(server.make_stable(&[remote.scope()]).is_err());
+            assert!(
+                !server
+                    .engine
+                    .streams
+                    .authenticated_stable(remote.scope())
+                    .unwrap()
+            );
+            // A consumed local ID with no authenticated OPEN/retirement cannot
+            // turn an unknown outer scope into a permissible discard.
+            let scope: u64 = 101;
+            server.engine.streams.set_used(scope).unwrap();
+            assert!(server.engine.streams.used(scope).unwrap());
+            assert!(!server.engine.streams.authenticated_stable(scope).unwrap());
+            let mut wire = vec![0; 44];
+            wire[..4].copy_from_slice(&36_u32.to_be_bytes());
+            wire[4] = 8;
+            wire[12..20].copy_from_slice(&scope.to_be_bytes());
+            assert!(server.receive(scope, &wire).is_err());
+            assert!(server.engine.closed);
+            assert_eq!(server.engine.streams.shared_discard.records, 0);
+            drop(handle);
+        }
+    }
+
+    #[test]
     fn rejected_open_keeps_original_epoch_proof_across_rekey_and_retires() {
         let (_owner, client, server) = record_pair_for_limits(Profile::P256);
         let mut client: crate::crypto_v4::ReliableSession = client.into_session().unwrap();
@@ -3544,10 +4175,26 @@ mod tests {
         client.engine.streams.slots[0].directions[0].limit = 8;
         let mut c = Writer::default();
         client.write(&ch, b"12345678", false, &mut c).unwrap();
+        let wire = c.0.pop_front().unwrap();
+        let mut input = server
+            .prepare_receive_input(
+                ch.scope(),
+                &wire,
+                None,
+                server.engine.streams.input_pool.acquire(false).unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        let opened = input.execute(&wire);
+        assert_eq!(
+            server.finish_receive_input(input, &wire, opened).unwrap(),
+            ReceiveDisposition::Isolated { scope: ch.scope() }
+        );
+        assert!(!server.engine.closed);
         assert!(
-            server
-                .receive(ch.scope(), &c.0.pop_front().unwrap())
-                .is_err()
+            server.engine.streams.slots[0].directions[0]
+                .first_error
+                .is_some()
         );
         assert_eq!(
             server.engine.streams.slots[0].directions[0].current.offset,

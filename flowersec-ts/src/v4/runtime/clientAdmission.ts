@@ -3,7 +3,7 @@ import type { ConnectionFacts } from "./connectionFacts.js";
 import { applicationResumeFeature } from "./checkpointToken.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { OperationOptions } from "../../public/contract.js";
-import { CredentialError, CredentialWork, credentialWorkCharge, credentialDigest, equalCredential, requireCredential, type CredentialResources, type OwnedCredentialMap } from "./credentialSupport.js";
+import { CredentialError, CredentialWork, credentialOwner, credentialWorkCharge, credentialDigest, equalCredential, requireCredential, type CredentialResources, type OwnedCredentialMap } from "./credentialSupport.js";
 import type { ClientPreparationFields, VerifiedCredentialClosure } from "./credentialVerifier.js";
 import { EnvelopeDecoder, envelopeDecoderCharge, type EnvelopeFrame } from "./envelope.js";
 import { FixedCBORWriter } from "./openAdmission.js";
@@ -68,7 +68,7 @@ export class ClientAdmissionExchange {
     this.#activation = new Uint8Array(fields.activation);
     let work: CredentialWork | undefined, decoder: EnvelopeDecoder | undefined;
     try {
-      const request = (kind: string, charge: ResourceVector) => ({ owner: { ...resources.owner, kind }, accounts: resources.accounts, charge });
+      const request = (kind: string, charge: ResourceVector) => ({ owner: credentialOwner(resources, kind), accounts: resources.accounts, charge });
       const refs = resources.root.reserveBatch([request("client_admission_work", credentialWorkCharge(65536, resources.runtimeBytes)),
         request("client_admission_envelope", envelopeDecoderCharge({ maxFrame: 65536, mode: transport.mode, runtimeBytes: resources.runtimeBytes }))]);
       try {

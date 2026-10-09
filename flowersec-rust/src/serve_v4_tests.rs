@@ -371,3 +371,5 @@ async fn production_listener_durable_admission_and_original_serve_children() {
             });
     }
 }
+
+include!("serve_v4_shared_input_tests.rs");

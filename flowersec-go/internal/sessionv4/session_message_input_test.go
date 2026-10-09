@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"runtime"
@@ -221,6 +222,38 @@ func TestSessionMessageInputPreservesOneEnvelopePerMessage(t *testing.T) {
 	}
 	if n, err := m.Write(append(bytes.Clone(first), second...)); n != 0 || !errors.Is(err, ErrSessionMessageFraming) || p.writes.Load() != 1 {
 		t.Fatal("concatenated write reached provider", n, err)
+	}
+}
+
+func TestSessionMessageInputWholeRecordKeepsFramingAndOriginalBuffer(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("malformed=%t", malformed), func(t *testing.T) {
+			wire := messageEnvelope(t, protocolv4.FrameStreamData, 40)
+			if malformed {
+				wire = append(wire, wire...)
+			}
+			provider := &sessionMessageProvider{read: func(_ context.Context, dst []byte) (int, error) {
+				if len(dst) != 136 || cap(dst) != 136 {
+					t.Fatal("provider received different uncharged backing")
+				}
+				return copy(dst, wire), nil
+			}}
+			input, _, _ := messageInputFixture(t, context.Background(), provider)
+			for range 2 {
+				dst := bytes.Repeat([]byte{0x55}, 136)
+				n, err := input.readRecordMessage(dst)
+				if malformed {
+					if n != 0 || err == nil || !bytes.Equal(dst, bytes.Repeat([]byte{0x55}, len(dst))) {
+						t.Fatal("invalid whole message exposed bytes", n, err)
+					}
+				} else if err != nil || n != len(wire) || !bytes.Equal(dst[:n], wire) || input.length != 0 || input.offset != 0 {
+					t.Fatal("whole envelope did not release its original read gate", n, err)
+				}
+			}
+			if malformed && provider.reads.Load() != 1 || !malformed && provider.reads.Load() != 2 {
+				t.Fatal("whole message changed provider ownership", provider.reads.Load())
+			}
+		})
 	}
 }
 
@@ -447,6 +480,55 @@ func TestSessionMessageInputPropagatesOriginalCallCancellation(t *testing.T) {
 	}
 	if parent.valueCalls.Load() != 0 {
 		t.Fatal("SDK installed hidden standard-library context propagation")
+	}
+}
+
+func TestSessionMessageInputCancellationAfterAdjacentCalls(t *testing.T) {
+	for _, writing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("writing=%t", writing), func(t *testing.T) {
+			entered := make(chan struct{})
+			var calls int
+			step := func(ctx context.Context) error {
+				calls++
+				if calls < 3 {
+					return nil
+				}
+				close(entered)
+				<-ctx.Done()
+				return ctx.Err()
+			}
+			p := &sessionMessageProvider{
+				read:  func(ctx context.Context, dst []byte) (int, error) { return copy(dst, []byte{1}), step(ctx) },
+				write: func(ctx context.Context, _ []byte) error { return step(ctx) },
+			}
+			m, _, _ := messageInputFixture(t, context.Background(), p)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			call := func() error {
+				if writing {
+					return m.WriteMessage(ctx, []byte{1})
+				}
+				_, err := m.ReadMessage(ctx, make([]byte, 8))
+				return err
+			}
+			for range 2 {
+				if err := call(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result := make(chan error, 1)
+			go func() { result <- call() }()
+			awaitMessage(t, entered)
+			cancel()
+			select {
+			case err := <-result:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal("adjacent call lost original cancellation", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("adjacent call retained its original provider tail")
+			}
+		})
 	}
 }
 

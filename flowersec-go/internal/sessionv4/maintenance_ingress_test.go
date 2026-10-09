@@ -96,6 +96,16 @@ func TestMaintenanceIngressCandidateRetainsOriginalAdmissionOnCapacity(t *testin
 	if !ready || tokens != 3 || length != len(next) {
 		t.Fatal("original candidate replaced", ready, tokens, length)
 	}
+	blockedRead := new(maintenanceReadCounter)
+	if _, err := f.input.Read(ctx, f.carrier, blockedRead); !errors.Is(err, cryptov4.ErrCapacity) || blockedRead.reads != 0 {
+		t.Fatal("capacity retry did not retain the original candidate", err, blockedRead.reads)
+	}
+	f.input.mu.Lock()
+	tokens = f.input.tokens
+	f.input.mu.Unlock()
+	if tokens != 3 {
+		t.Fatal("capacity retry charged the original candidate twice", tokens)
+	}
 	held.Release()
 	noRead := new(maintenanceReadCounter)
 	record, err := f.input.Read(ctx, f.carrier, noRead)
@@ -280,7 +290,31 @@ func TestMaintenanceIngressIdentityRateAndFramingBoundaries(t *testing.T) {
 			if reader == nil {
 				reader = bytes.NewReader(wire)
 			}
-			if _, err := f.input.Read(ctx, f.carrier, reader); !errors.Is(err, expected) {
+			record, err := f.input.Read(ctx, f.carrier, reader)
+			if mode == "rate" {
+				if !errors.Is(err, errMaintenanceDiscarded) || record == nil {
+					t.Fatal("rate-limited authenticated frame was not locally refused", record, err)
+				}
+				record.Release()
+				if err := f.local.engine.CheckApplicationAuthorization(); err != nil {
+					t.Fatal("ordinary maintenance rate refusal closed Session", err)
+				}
+				f.now.Store(100)
+				record, err = f.input.Read(ctx, f.carrier, bytes.NewReader(f.ping(t, 3)))
+				if err != nil || record == nil {
+					t.Fatal("native input did not recover after rate refill", err)
+				}
+				frame, bodyErr := record.Body()
+				if bodyErr != nil || frame.Header.Sequence != 2 {
+					t.Fatal("rate refusal lost native framing", frame, bodyErr)
+				}
+				record.Release()
+				return
+			}
+			if record != nil {
+				record.Release()
+			}
+			if !errors.Is(err, expected) {
 				t.Fatal(err, expected)
 			}
 			select {

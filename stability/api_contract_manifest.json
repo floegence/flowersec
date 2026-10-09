@@ -13238,7 +13238,7 @@
       "`connect(environment:source:requirements:)`",
       "`import Flowersec`"
     ],
-    "signature_sha256": "0aa318d2bef1110588fe02b5f30ae6ed7c7eb851943190432416fa2f106a12c8",
+    "signature_sha256": "e7a436ef2371a1cb157128561b05b16f1ac15beedc432d0055b6c4fc3d690721",
     "symbols": [
       {
         "kind": "swift.associatedtype",
@@ -15652,6 +15652,11 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "TransportConnectError.bootstrapDeadline",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "TransportConnectError.canceled",
         "doc_token": ""
       },
@@ -15672,12 +15677,32 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "TransportConnectError.futureTimestamp",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "TransportConnectError.invalidMaterial",
         "doc_token": ""
       },
       {
         "kind": "swift.enum.case",
         "name": "TransportConnectError.securityFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportConnectError.timeNotProven",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportConnectError.timePending",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TransportConnectError.timeUnavailable",
         "doc_token": ""
       },
       {
@@ -18383,6 +18408,11 @@
       {
         "kind": "swift.method",
         "name": "TransportEnvironment.refreshNamespace(authority:head:state:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
+        "name": "TransportEnvironment.refreshNamespace(authority:trust:head:state:)",
         "doc_token": ""
       },
       {

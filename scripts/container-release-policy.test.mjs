@@ -51,7 +51,7 @@ test("container policy reads configuration from the repository being checked", (
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
   fs.writeFileSync(path.join(root, relative), source);
-  const config = { ...readToolchains(), go: { version: "1.27.2" } };
+  const config = { ...readToolchains(), go: { version: "1.27.3" } };
   fs.writeFileSync(path.join(root, "toolchains.json"), JSON.stringify(config));
   assert.throws(() => verifyContainerReleasePolicy(root), /build stage base changed/);
 });

@@ -109,6 +109,23 @@ func authorityMaterialBytesFor(t AuthorityReporter, f *authorityFixture, registr
 	if err != nil {
 		t.Fatal(err)
 	}
+	var n *protocolv4.LiveNamespace
+	// The registered trust owner exists before bootstrap can fail. Retire it
+	// on construction failure as well as after a delivered namespace exits.
+	t.Cleanup(func() {
+		x.trust.Close()
+		if n != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := n.WaitCleanup(ctx); err != nil {
+				t.Error(err)
+			}
+		}
+		f.root.Close()
+		if err := x.trust.DestroyEnvironment(); err != nil {
+			t.Error(err)
+		}
+	})
 	if len(registries) != 0 {
 		if err := registries[0].Register(x.trust); err != nil {
 			t.Fatal(err)
@@ -151,7 +168,6 @@ func authorityMaterialBytesFor(t AuthorityReporter, f *authorityFixture, registr
 			t.Fatal("invalid engineering namespace subscription capacity")
 		}
 	}
-	var n *protocolv4.LiveNamespace
 	if len(registries) != 0 {
 		// The independently installed cross-SDK authority profile admits up to
 		// 8 KiB of namespace state, including the TypeScript issuer's signed cap.
@@ -200,18 +216,6 @@ func authorityMaterialBytesFor(t AuthorityReporter, f *authorityFixture, registr
 			t.Fatal(err)
 		}
 	}
-	t.Cleanup(func() {
-		x.trust.Close()
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		if err := n.WaitCleanup(ctx); err != nil {
-			t.Error(err)
-		}
-		f.root.Close()
-		if err := x.trust.DestroyEnvironment(); err != nil {
-			t.Error(err)
-		}
-	})
 	read := func(m *protocolv4.SignedMap) []byte {
 		wire, err := m.Bytes()
 		if err != nil {

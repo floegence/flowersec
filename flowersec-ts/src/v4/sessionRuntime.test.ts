@@ -156,8 +156,8 @@ class MemoryTransport implements V4AuthenticatedTransport {
   }
   waitTermination(): Promise<void> { return this.termination; }
 }
-function endpoint(role: "client" | "server", transport: MemoryTransport, profile: "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1" | "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1", source: ActivationSource = "live_authority", operationDeadlineMS = 1000n, services?: (environment: V4EnvironmentRuntime, material: ReturnType<typeof credentialFixture>) => RPCApplicationConfig | Promise<RPCApplicationConfig>, serviceOptions: { maxDataBytes?: number; resourceAccounts?: number; sessions?: number; sessionNotAfterMS?: number; resume?: boolean; writeDeadlineMS?: bigint; profile?: "services" | "execution"; operationEntropy?: Uint8Array; environment?: V4EnvironmentRuntime; clockOriginMS?: number; clockMS?: () => bigint; clientSubject?: string; authorizedClientSubjects?: readonly string[]; connectionSeed?: number } = {}) {
-  const limit = new ResourceVector([512n * 1024n * 1024n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
+function endpoint(role: "client" | "server", transport: MemoryTransport, profile: "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1" | "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1", source: ActivationSource = "live_authority", operationDeadlineMS = 1000n, services?: (environment: V4EnvironmentRuntime, material: ReturnType<typeof credentialFixture>) => RPCApplicationConfig | Promise<RPCApplicationConfig>, serviceOptions: { providerBytes?: bigint; maxDataBytes?: number; resourceAccounts?: number; sessions?: number; sessionNotAfterMS?: number; resume?: boolean; writeDeadlineMS?: bigint; profile?: "services" | "execution"; operationEntropy?: Uint8Array; environment?: V4EnvironmentRuntime; clockOriginMS?: number; clockMS?: () => bigint; clientSubject?: string; authorizedClientSubjects?: readonly string[]; connectionSeed?: number } = {}) {
+  const limit = new ResourceVector([512n * 1024n * 1024n, serviceOptions.providerBytes ?? (128n << 20n), 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
   // Include Session/Environment accounts and all 13 protected direction positions.
   const root = serviceOptions.environment?.resources.root ?? new ResourceRoot({
     profileRevision: "1".repeat(64), limit, accounts: serviceOptions.resourceAccounts ?? (services === undefined ? 16 : 64), reservations: services === undefined ? 200 : 2000, references: services === undefined ? 400 : 4000,
@@ -2847,6 +2847,7 @@ describe("original v4 reliable Session assembly", () => {
   });
   it("saves and starts one execution stream and queries its original history from a new Session", async () => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    const clockMS = () => 0n;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
     const method = new V4MethodDefinition({
@@ -2867,7 +2868,7 @@ describe("original v4 reliable Session assembly", () => {
     let calls = 0, cancellationObserved = false, releaseHandler!: () => void, enteredHandler!: () => void;
     const held = new Promise<void>(resolve => { releaseHandler = resolve; }), entered = new Promise<void>(resolve => { enteredHandler = resolve; });
     let contract: ServiceContractSnapshot | undefined;
-    const client = endpoint("client", a, profile, "live_authority", 1000n, clientConfig, { profile: "execution", operationEntropy: fill(48, 24) });
+    const client = endpoint("client", a, profile, "live_authority", 1000n, clientConfig, { profile: "execution", operationEntropy: fill(48, 24), clockMS });
     const server = endpoint("server", b, profile, "live_authority", 1000n, (environment, material) => {
       const resources = environment.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 128, arrayItems: 8, runtimeBytes: 1024n };
       const references = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n), cborDecoderCharge(offerConfig)].map((charge, index) => ({
@@ -2899,7 +2900,7 @@ describe("original v4 reliable Session assembly", () => {
           }]
         };
       } finally { decoder?.close(); for (const reference of references) reference.release(); }
-    }, { profile: "execution" });
+    }, { profile: "execution", clockMS });
     let c: V4Session | undefined, s: V4Session | undefined, nextClient: ReturnType<typeof endpoint> | undefined;
     let nextC: V4Session | undefined, nextS: V4Session | undefined, store: V4OperationReferenceStore | undefined;
     let directory: string | undefined, db: DatabaseSync | undefined;
@@ -2921,7 +2922,9 @@ describe("original v4 reliable Session assembly", () => {
         if (previous !== undefined) return Buffer.from(previous.canonical as Uint8Array).equals(record.canonical) ? "confirmed" : "conflict";
         db!.prepare("INSERT INTO saved VALUES (?,?)").run(record.identity, record.canonical); return "confirmed";
       });
-      const options = { deadlineAtMS: 40000n, admissionNotAfterMS: 5000n, maxItemBytes: 128 };
+      // The captured Offer supplies the same cutoff for the original, joined
+      // and conflicting requests, without a narrower local admission window.
+      const options = { deadlineAtMS: 40000n, maxItemBytes: 128 };
       const saved = await service.prepareAndSave(method, "original", store, options);
       expect(saved).toMatchObject({ status: "prepared", save: { attempted: true, outcome: "confirmed" } });
       if (saved.status !== "prepared") throw new Error("missing execution stream capability");
@@ -2958,7 +2961,7 @@ describe("original v4 reliable Session assembly", () => {
       expect((await c.waitCleanup()).status).toBe("complete"); expect((await s.waitCleanup()).status).toBe("complete");
       await client.close();
       const nextA = new MemoryTransport("client", "message"), nextB = new MemoryTransport("server", "message"); nextA.peer = nextB; nextB.peer = nextA;
-      const nextOptions = { profile: "execution" as const, connectionSeed: 70, clockOriginMS: Math.min(a.createdAtMS, b.createdAtMS) };
+      const nextOptions = { profile: "execution" as const, connectionSeed: 70, clockMS };
       nextClient = endpoint("client", nextA, profile, "live_authority", 1000n, clientConfig, nextOptions);
       const nextServer = endpoint("server", nextB, profile, "live_authority", 1000n, (_environment, material) => ({
         ...common,
@@ -3348,6 +3351,104 @@ describe("original v4 reliable Session assembly", () => {
     expect(client.environment.resources.root.snapshot().reservations).toBe(0);
     expect(server.environment.resources.root.snapshot().reservations).toBe(0);
   });
+  it("retains the first and recovered results of two services in one Environment", async () => {
+    const directory = mkdtempSync(join(realpathSync(tmpdir()), "flowersec-ts-two-service-results-"));
+    const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
+    const declarations = [42, 45].map((typeID, index) => {
+      const method = new V4MethodDefinition({ typeID, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
+        requestMaxBytes: 128, minResponseLimitBytes: 0, maxResponseBytes: 128, restartFlush: false });
+      return { method, definition: new V4ServiceDefinition({ namespace: `example.results${index}`, methods: { echo: method } }) };
+    });
+    const common = { query: { typeID: 43, contractDigest: fill(32) }, resultRead: { typeID: 44, contractDigest: fill(33) },
+      definitions: declarations.map(value => value.definition), maxMethods: 2, maxCaptureBytes: 128 };
+    const backings: ReturnType<typeof createSQLitePoolBacking>[] = [], environments: V4EnvironmentRuntime[] = [], persisted = [new Uint8Array(2048), new Uint8Array(2048)], sizes = [0, 0], calls = [0, 0];
+    try {
+      for (const generation of [0, 1]) {
+        const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+        const contracts: ServiceContractSnapshot[] = [], stores: V4SQLiteExecutionStore[] = [];
+        // Two original SQLite workers coexist; each retains its qualified provider allowance.
+        let cleanupStarted: number | undefined;
+        const options = { profile: "execution" as const, providerBytes: 256n << 20n,
+          clockMS: () => BigInt(generation) * 1000n + (cleanupStarted === undefined ? 0n : BigInt(Math.floor(performance.now() - cleanupStarted))), connectionSeed: 80 + generation };
+        const client = endpoint("client", a, profile, "live_authority", 1000n, (_environment, material) => ({ ...common, localExecutionAuthority: "3".repeat(64),
+          referenceTargets: [{ authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+            peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }] }] }), options);
+        const server = endpoint("server", b, profile, "live_authority", 1000n, async (environment, material) => {
+          const handlers: NonNullable<RPCApplicationConfig["unaryHandlers"]>[number][] = [];
+          for (const [index, { method, definition }] of declarations.entries()) {
+            const backing = createSQLitePoolBacking(environment, join(directory, `${index}.sqlite`), {
+              maxPages: 512, maxRecords: 8, maxRecordBytes: 16384, runtimeBytes: 1024n, providerRuntimeBytes: 1024n, diskOverheadBytes: 4096n }); backings.push(backing);
+            const store = await openV4SQLiteExecutionStore(backing, { create: generation === 0, maxContracts: 4,
+              service: { tenant: "tenant", audience: "service", namespace: definition.namespace, callerAuthorities: ["3".repeat(64)], maxRecords: 8, maxActive: 4, resultBytes: 1048576n },
+              identity: { authority: "execution", storeID: fill(5 + index), generation: 1n }, continuity: { check: () => undefined } }); stores.push(store);
+            const resources = environment.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 128, arrayItems: 8, runtimeBytes: 1024n };
+            const references = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n), cborDecoderCharge(offerConfig)].map((charge, position) => ({
+              accounts: resources.accounts, owner: { ...resources.owner, kind: `test_two_services_${index}_${position}` }, charge })));
+            let decoder: CBORDecoder | undefined;
+            try {
+              const contract = new ServiceContractSnapshot(encode(map({ 0: text(definition.namespace), 1: u(method.typeID), 2: u(0), 3: u(1),
+                6: text("text-v1"), 7: text("text-v1"), 8: u(1), 9: u(0), 10: u(128), 13: u(1), 14: u(30000), 15: u(30000),
+                16: u(10000), 17: u(60000), 18: u(10000), 19: u(1), 21: { kind: "bool", value: false }, 23: u(128), 27: array() })), 1024n, references[0]!, references[1]!); contracts.push(contract);
+              if (generation === 0) expect(await store.installContract(contract, [{ notBeforeMS: 900n, notAfterMS: 10000n }], 0n)).toBe(1n);
+              const contractDigest = new Uint8Array(32); contract.copyDigest(contractDigest);
+              decoder = new CBORDecoder(offerConfig, references[2]!);
+              const document = decoder.decodeMap(encode(map({ 0: bytes(contractDigest), 1: u(900), 2: u(10000) })), "AdmissionOffer");
+              let offer: AdmissionOffer;
+              try { offer = new AdmissionOffer(document, contract, 10000n, new Uint8Array(32)); } finally { document.release(); }
+              handlers.push({ namespace: definition.namespace, method, contract, offer, maximumOfferWindowMS: 10000n, execution: store.service,
+                handler: (_context, value: string) => { calls[index] = calls[index]! + 1; return `${index}:${value.toUpperCase()}`; },
+                options: { workClass: "short", maxConcurrentCalls: 4, applicationBytes: 1024n, authorization: "authenticated" } });
+            } finally { decoder?.close(); for (const reference of references) reference.release(); }
+          }
+          return { ...common, unaryHandlers: handlers,
+            executionIdentity: { authority: "3".repeat(64), subject: "client", identityDigest: Buffer.from(digest("certificate_digest", material.client)).toString("hex") },
+            executionPermissions: declarations.map(({ definition }) => ({ namespace: definition.namespace, query: true, cancel: true })),
+            queryPermissions: declarations.map(({ definition, method }) => ({ namespace: definition.namespace, method, permission: "allowed" as const })) };
+        }, options);
+        environments.push(client.environment, server.environment);
+        let c: V4Session | undefined, s: V4Session | undefined;
+        const owners: { close(): void }[] = [];
+        try {
+          const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
+          const referenceCodec = createOperationReferenceCodec(client.environment); owners.push(referenceCodec);
+          if (generation === 0) {
+            const services = await Promise.all(declarations.map(({ definition }) => c!.bindService(definition, { maximumOfferWindowMS: 10000n,
+              target: { authority: "authority", tenant: "tenant", audience: "service", localSubject: "client",
+                peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", server.material.server)).toString("hex") }] } }))); owners.push(...services);
+            const operations = await Promise.all(services.map((service, index) => service.prepareOperation(declarations[index]!.method, "original", { deadlineAtMS: 40000n, admissionNotAfterMS: 5000n }))); owners.push(...operations);
+            for (const [index, operation] of operations.entries()) {
+              if (!(operation instanceof V4ExecutionUnaryOperation)) throw new Error("missing execution capability");
+              sizes[index] = referenceCodec.export(operation.reference(), persisted[index]!); expect(operation.start().status).toBe("admitted");
+            }
+            const results = await Promise.all(operations.map(operation => operation.takeResult()));
+            try { expect(results).toMatchObject([{ kind: "value", value: "0:ORIGINAL" }, { kind: "value", value: "1:ORIGINAL" }]); }
+            finally { for (const result of results) if ("release" in result) result.release(); }
+          }
+          const references = persisted.map((bytes, index) => referenceCodec.import(bytes.subarray(0, sizes[index]), "authority"));
+          const observations = await Promise.all(references.map(reference => c!.queryOperation(reference)));
+          for (const observation of observations) expect(observation).toMatchObject({ status: "ok", observation: { state: "completed", resultAvailable: true, workActive: false } });
+          for (const [index, reference] of references.entries()) {
+            const read = c.readOperationResult(reference); owners.push(read);
+            const result = await read.takeEncodedResult();
+            try { expect(result).toMatchObject({ kind: "retained_result", bytes: new TextEncoder().encode(`${index}:ORIGINAL`) }); }
+            finally { if ("release" in result) result.release(); read.close(); }
+          }
+          expect(calls).toEqual([1, 1]);
+        } finally {
+          cleanupStarted = performance.now();
+          for (const owner of owners) owner.close(); await Promise.all([c?.close(), s?.close()]);
+          for (const contract of contracts) contract.release(); for (const store of stores) store.close();
+          await Promise.all([client.environment.close(), server.environment.close()]); await Promise.all(stores.map(store => store.waitCleanup()));
+          for (const environment of [client.environment, server.environment]) expect((await environment.waitCleanup()).status).toBe("complete");
+        }
+      }
+    } finally {
+      await Promise.all(environments.map(environment => environment.close())); rmSync(directory, { recursive: true, force: true });
+      for (const backing of backings) backing.releaseRemoved(); for (const bytes of persisted) bytes.fill(0);
+      for (const environment of environments) expect(environment.resources.root.snapshot().reservations).toBe(0);
+    }
+  }, 15000);
   it.each([
     { shape: "unary", lostReceipt: false, applicationFailure: false, closeAfterCommit: false }, { shape: "unary", lostReceipt: true, applicationFailure: false, closeAfterCommit: false },
     { shape: "notify", lostReceipt: false, applicationFailure: false, closeAfterCommit: false }, { shape: "server_streaming", lostReceipt: false, applicationFailure: false, closeAfterCommit: false },
@@ -4866,6 +4967,87 @@ describe("original v4 reliable Session assembly", () => {
     } finally { await Promise.all([c.close(), s.close()]); await Promise.all([client.close(), server.close()]); }
   });
   for (const profile of ["fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1"] as const) {
+    it(`keeps the first pending PONG while reading past repeated PINGs and an occupied output tail: ${profile}`, async () => {
+      const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+      const client = endpoint("client", a, profile, "live_authority", 10000n), server = endpoint("server", b, profile, "live_authority", 10000n);
+      const [c, s] = await Promise.all([client.establish(), server.establish()]);
+      let release!: () => void, submitted!: () => void, repeated!: () => void, pings = 0, pongs = 0;
+      const tail = new Promise<void>(resolve => { release = resolve; });
+      const heldPing = new Promise<void>(resolve => { submitted = resolve; }), repeatedPings = new Promise<void>(resolve => { repeated = resolve; });
+      const secondAbort = new AbortController(), pending: Promise<unknown>[] = [];
+      try {
+        a.submissionTail = frame => {
+          const type = inspectEnvelopePrefix(frame, 65536).frameType;
+          if (type === wire.frame_types.PONG) pongs++;
+          if (type !== wire.frame_types.PING) return undefined;
+          submitted(); return tail;
+        };
+        b.submissionTail = frame => {
+          if (inspectEnvelopePrefix(frame, 65536).frameType === wire.frame_types.PING && ++pings === 2) repeated();
+          return undefined;
+        };
+        const occupying = c.probeLiveness(); pending.push(occupying); void occupying.catch(() => undefined);
+        await transportEvent(heldPing);
+        expect(await occupying).toMatchObject({ submitted: true, complete: false });
+        let firstSettled = false, secondSettled = false;
+        const first = s.probeLiveness(), second = s.probeLiveness({ signal: secondAbort.signal }); pending.push(first, second);
+        void first.then(() => { firstSettled = true; }, () => { firstSettled = true; });
+        void second.then(() => { secondSettled = true; }, () => { secondSettled = true; });
+        await transportEvent(repeatedPings);
+        const opening = s.openStream("example/pending-pong-reader"); pending.push(opening); void opening.catch(() => undefined);
+        // This OPEN follows both authenticated PINGs on the real carrier.
+        // Reaching admission proves their pending reply did not stop reading.
+        await expect.poll(() => c.pendingOpen()).toBeDefined();
+        expect(a.nativeSubmissionsPending).toBe(1); expect(pongs).toBe(0);
+        expect(firstSettled).toBe(false); expect(secondSettled).toBe(false);
+        release();
+        expect(await first).toMatchObject({ submitted: true, complete: true });
+        expect(pongs).toBe(1); expect(secondSettled).toBe(false);
+        secondAbort.abort();
+        await expect(second).rejects.toMatchObject({ code: "canceled", result: { submitted: true, complete: true } });
+        const incoming = await c.acceptStream(), outgoing = await opening;
+        expect(incoming.kind).toBe("example/pending-pong-reader");
+        // A new nonce succeeds after the first reply releases the pending slot.
+        expect((await s.probeLiveness()).submitted).toBe(true); expect(pongs).toBe(2);
+        await Promise.all([incoming.stream.close(), outgoing.close()]);
+        await Promise.all([c.close(), s.close()]);
+        expect((await c.waitCleanup()).status).toBe("complete"); expect((await s.waitCleanup()).status).toBe("complete");
+        expect(a.nativeSubmissionsPending).toBe(0); expect(b.nativeSubmissionsPending).toBe(0);
+      } finally {
+        release(); secondAbort.abort(); a.submissionTail = b.submissionTail = undefined;
+        await Promise.all([c.close(), s.close()]); await Promise.allSettled(pending);
+        await Promise.all([client.close(), server.close()]);
+      }
+    });
+    it(`keeps pending PONG publication owned until its real provider tail exits after Close: ${profile}`, async () => {
+      const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+      const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
+      const [c, s] = await Promise.all([client.establish(), server.establish()]);
+      let release!: () => void, submitted!: () => void, pongs = 0;
+      const tail = new Promise<void>(resolve => { release = resolve; }), published = new Promise<void>(resolve => { submitted = resolve; });
+      let probing: ReturnType<typeof s.probeLiveness> | undefined;
+      try {
+        a.submissionTail = frame => {
+          if (inspectEnvelopePrefix(frame, 65536).frameType !== wire.frame_types.PONG) return undefined;
+          pongs++; submitted(); return tail;
+        };
+        probing = s.probeLiveness(); void probing.catch(() => undefined);
+        await transportEvent(published); expect((await probing).submitted).toBe(true);
+        // The peer has the authenticated response, but the original PONG
+        // continuation and its output backing still belong to this Session.
+        await c.close();
+        expect(c.cleanupStatus()).toMatchObject({ status: "cleanup_incomplete", core_cleanup: "pending" });
+        expect(a.nativeSubmissionsPending).toBe(1);
+        const cleaned = new Promise<void>(resolve => c.onCleanup(resolve));
+        release(); await transportEvent(cleaned);
+        expect((await c.waitCleanup()).status).toBe("complete");
+        expect(a.nativeSubmissionsPending).toBe(0); expect(pongs).toBe(1);
+      } finally {
+        release(); a.submissionTail = undefined;
+        await Promise.all([c.close(), s.close()]); await probing?.catch(() => undefined);
+        await Promise.all([client.close(), server.close()]);
+      }
+    });
     for (const role of ["client", "server"] as const) it(`retains next-epoch DATA behind the original ${role} marker completion: ${profile}`, async () => {
       const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
       const client = endpoint("client", a, profile), server = endpoint("server", b, profile);
@@ -5225,6 +5407,7 @@ it("holds public proxy admission through the original native reset submission ta
   if (address === null || typeof address === "string") throw new Error("upstream did not bind TCP");
   const upstreamOrigin = `http://127.0.0.1:${address.port}`;
   const proxy = new ProxyServer({ upstream: upstreamOrigin, upstreamOrigin, allowedOrigins: ["https://app.example"],
+    maxBodyBytes: 4096, maxJsonFrameBytes: 4096, maxWebSocketFrameBytes: 4096,
     maxConcurrentStreams: 2, maxConcurrentHTTPStreams: 2, maxConcurrentEventStreams: 1 });
   // Keep HTTP/crypto setup independent of the original short operation window.
   // Cancellation stays within that window while retaining the native tail.
@@ -5328,6 +5511,7 @@ it("holds public fetch admission when cancellation rejects before response metad
   if (address === null || typeof address === "string") throw new Error("upstream did not bind TCP");
   const upstreamOrigin = `http://127.0.0.1:${address.port}`;
   const proxy = new ProxyServer({ upstream: upstreamOrigin, upstreamOrigin, allowedOrigins: ["https://app.example"],
+    maxBodyBytes: 4096, maxJsonFrameBytes: 4096, maxWebSocketFrameBytes: 4096,
     maxConcurrentStreams: 2, maxConcurrentHTTPStreams: 2, maxConcurrentEventStreams: 1 });
   const client = endpoint("client", a, profile, "live_authority", 250n, undefined, { writeDeadlineMS: 5000n }), server = endpoint("server", b, profile, "live_authority", 250n, undefined, { writeDeadlineMS: 5000n });
   let c: V4Session | undefined, s: V4Session | undefined, runtime: ReturnType<typeof createProxyRuntime> | undefined;

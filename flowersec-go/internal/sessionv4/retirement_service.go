@@ -208,6 +208,7 @@ func (p *RetirementService) Run(ctx context.Context) (err error) {
 	timer.Stop()
 	defer timer.Stop()
 	busy, retry := false, false
+	var flushAt time.Time
 	for {
 		ready, remaining, err := p.status()
 		if err != nil {
@@ -215,7 +216,49 @@ func (p *RetirementService) Run(ctx context.Context) (err error) {
 		}
 		var submit chan<- struct{}
 		if ready && !busy && !retry {
-			submit = jobs
+			r := p.retirement
+			a := r.admission
+			a.mu.Lock()
+			ack := r.ackReadyLocked()
+			count, opening := 0, false
+			for i := range a.slots {
+				s := &a.slots[i]
+				if s.local {
+					if !r.out.live && s.phase == openRecent && s.barrierUnpublished == 0 {
+						count++
+					}
+					opening = opening || s.phase == openOpening && s.submitted
+				}
+			}
+			a.mu.Unlock()
+			if count != 0 {
+				// Start the original batch cap at its first eligible proof. The
+				// finite flush window shares the existing coordinator timer and
+				// never occupies a maintenance ticket or publication position.
+				p.mu.Lock()
+				if p.outDeadline == nil {
+					p.outDeadline, err = timev4.NewAge(a.engine.Clock(), p.timeoutMS, math.MaxUint64)
+					flushAt = time.Now().Add(time.Duration(min(uint64(50), max(uint64(1), p.timeoutMS/2))) * time.Millisecond)
+				}
+				if err == nil {
+					var cap uint64
+					cap, err = p.outDeadline.RemainingMS()
+					remaining = min(remaining, cap)
+				}
+				p.mu.Unlock()
+				if err != nil {
+					return err
+				}
+			}
+			// ACKs release the peer's original batch immediately. Outbound
+			// recent proofs gather for at most one non-restarting 50 ms window;
+			// a full batch or submitted opening awaiting outcome bypasses it.
+			// New proofs cannot postpone that window or its original hard cap.
+			if ack || opening && count != 0 || count >= len(r.out.ids) || !flushAt.IsZero() && !time.Now().Before(flushAt) {
+				submit = jobs
+			} else if !flushAt.IsZero() {
+				remaining = min(remaining, uint64(max(time.Millisecond, time.Until(flushAt)+time.Millisecond-1)/time.Millisecond))
+			}
 		}
 		if retry {
 			remaining = min(remaining, uint64(10))

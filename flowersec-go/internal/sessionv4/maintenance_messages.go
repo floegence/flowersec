@@ -3,6 +3,7 @@ package sessionv4
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 	"unsafe"
@@ -14,6 +15,9 @@ import (
 )
 
 var ErrMaintenanceRate = errors.New("sessionv4: ordinary maintenance rate exhausted")
+
+var errMaintenanceDiscarded = errors.New("sessionv4: authenticated ordinary maintenance record locally refused")
+var errPongQueueFull = fmt.Errorf("sessionv4: pong reply queue full: %w", cryptov4.ErrCapacity)
 
 // MaintenanceMessagePolicy fixes finite ingress work and original reply work
 // windows before admission. Refill uses cumulative proven elapsed time and
@@ -92,32 +96,41 @@ func (q *MaintenanceMessages) consume(now timev4.Mark, rate timev4.Rate) error {
 	return q.refill.consume(now, rate, q.policy.IngressRefillMS, q.policy.IngressBurst, &q.tokens)
 }
 
+func (a *OpenAdmission) invalidateAutomaticSample() {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	p := a.liveness
+	a.mu.Unlock()
+	if p != nil {
+		p.invalidateAutomaticSample()
+	}
+}
+
 // Handle copies only the fixed opaque nonce; it never retains the decoder or
 // peer bytes. Rate/queue refusal is local resource failure, not path failure.
 // PONG still passes the original same-session/epoch/direction matcher.
 func (q *MaintenanceMessages) Handle(record *ReceivedRecord) (matched bool, err error) {
-	p := q.liveness
-	if record == nil || record.receiver.engine != p.admission.engine || record.receiver.direction != 1-p.admission.direction {
+	if record == nil || q.liveness == nil || record.receiver.engine != q.liveness.admission.engine || record.receiver.direction != 1-q.liveness.admission.direction {
 		return false, ErrProbeOwner
 	}
 	f, err := record.Body()
 	if err != nil {
 		return false, err
 	}
-	if f.Header.Scope != 0 || f.Schema != "PING" && f.Schema != "PONG" {
-		return false, ErrProbeOwner
-	}
-	value, ok := f.Field("nonce").ByteString()
-	if !ok || len(value) != 16 {
-		return false, ErrProbeOwner
-	}
-	nonce, ping := [16]byte(value), f.Schema == "PING"
-	if err := record.claimMaintenance(); err != nil {
+	return q.handleFrame(record, f)
+}
+
+func (q *MaintenanceMessages) handleFrame(record *ReceivedRecord, f *protocolv4.Frame) (matched bool, err error) {
+	nonce, ping, err := validateMaintenanceFrame(record, q.liveness.admission, f)
+	if err != nil {
 		return false, err
 	}
-	if err := record.AcceptMessage(); err != nil {
+	if err := record.acceptMaintenanceFrame(f); err != nil {
 		return false, err
 	}
+	p := q.liveness
 	clock := p.admission.engine.Clock()
 	now, err := clock.Monotonic()
 	if err != nil {
@@ -130,15 +143,18 @@ func (q *MaintenanceMessages) Handle(record *ReceivedRecord) (matched bool, err 
 	}
 	if err = q.consume(now, clock.Profile().Rate); err != nil {
 		q.mu.Unlock()
+		if !ping && errors.Is(err, ErrMaintenanceRate) {
+			p.invalidateAutomaticSample()
+		}
 		return false, err
 	}
 	if !ping {
 		q.mu.Unlock()
-		return p.HandlePong(record)
+		return p.handlePongFrame(f)
 	}
 	if q.count == len(q.slots) {
 		q.mu.Unlock()
-		return false, cryptov4.ErrCapacity
+		return false, errPongQueueFull
 	}
 	window, err := timev4.NewWindow(p.admission.engine.Clock(), q.policy.ReplyTimeoutMS)
 	if err == nil {
@@ -149,6 +165,20 @@ func (q *MaintenanceMessages) Handle(record *ReceivedRecord) (matched bool, err 
 	}
 	q.mu.Unlock()
 	return false, err
+}
+
+func validateMaintenanceFrame(record *ReceivedRecord, admission *OpenAdmission, f *protocolv4.Frame) ([16]byte, bool, error) {
+	if record == nil || admission == nil || record.receiver.engine != admission.engine || record.receiver.direction != 1-admission.direction || f == nil {
+		return [16]byte{}, false, ErrProbeOwner
+	}
+	if f.Header.Scope != 0 || f.Schema != "PING" && f.Schema != "PONG" {
+		return [16]byte{}, false, ErrProbeOwner
+	}
+	value, ok := f.Field("nonce").ByteString()
+	if !ok || len(value) != 16 {
+		return [16]byte{}, false, ErrProbeOwner
+	}
+	return [16]byte(value), f.Schema == "PING", nil
 }
 
 type pongTicket struct {

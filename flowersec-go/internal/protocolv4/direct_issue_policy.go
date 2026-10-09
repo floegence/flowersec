@@ -299,12 +299,12 @@ func (p *DirectIssuePolicy) CopyCohortEvidence(f DirectIssueFacts, dst []byte) (
 	defer w.mu.Unlock()
 	segments := w.segments[1]
 	i := sort.Search(len(segments), func(i int) bool {
-		return valueUint(segments[i], "CohortPolicySegment", "last_cohort") >= f.Scope.Cohort
+		return segments[i].last >= f.Scope.Cohort
 	})
-	if i == len(segments) || valueUint(segments[i], "CohortPolicySegment", "first_cohort") > f.Scope.Cohort {
+	if i == len(segments) || segments[i].first > f.Scope.Cohort {
 		return 0, CBORFailure("revocation_segment_missing")
 	}
-	wire := segments[i].Encoded()
+	wire := segments[i].value.Encoded()
 	if len(wire) > len(dst) {
 		return 0, CBORFailure("encoder_capacity")
 	}

@@ -133,18 +133,19 @@ func (r *AcceptedRegistry) Source(runtime *Runtime) *AcceptedRegistrySource {
 }
 
 type AcceptedRegistrySource struct {
-	mu       sync.Mutex
-	registry *AcceptedRegistry
-	runtime  *Runtime
-	selected *AcceptedRecord
-	pool     ledgerv4.SQLitePoolAdmissionAuthority
+	mu        sync.Mutex
+	registry  *AcceptedRegistry
+	runtime   *Runtime
+	selected  *AcceptedRecord
+	pool      ledgerv4.SQLitePoolAdmissionAuthority
+	scheduler *Server
 }
 
 func (s *AcceptedRegistrySource) ResolveAcceptedMaterial(ctx context.Context, hello []byte) (*fs.ConnectionMaterial, fs.InitialHello, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fs.InitialHello{}, err
 	}
-	decoder, err := protocolv4.NewDecoder(16384, 1024)
+	decoder, err := protocolv4.NewInitialDecoder(16384, 1024)
 	if err != nil {
 		return nil, fs.InitialHello{}, err
 	}
@@ -177,6 +178,16 @@ func (s *AcceptedRegistrySource) ResolveAcceptedMaterial(ctx context.Context, he
 	authority := selected.Authority
 	material, err := s.runtime.admitAcceptedMaterial(authority.Lease, authority.Identity[1], authority.Generation)
 	return material, authority.Hello, err
+}
+
+func (s *AcceptedRegistrySource) ScheduleAdmission(ctx context.Context) (func(), error) {
+	if s.scheduler == nil {
+		return func() {}, nil
+	}
+	if err := s.scheduler.acquireAdmission(ctx); err != nil {
+		return nil, err
+	}
+	return s.scheduler.releaseAdmission, nil
 }
 func (s *AcceptedRegistrySource) CheckAdmission(identity ledgerv4.SQLiteIdentity, facts protocolv4.AdmissionFacts) error {
 	s.mu.Lock()
@@ -316,6 +327,7 @@ func (s *Server) NewAcceptedPosition(registry *AcceptedRegistry, handlers Handle
 	source := registry.Source(runtime)
 	h.Authority = source
 	position := &Server{Runtime: runtime, Carrier: s.Carrier, Origin: s.Origin, TrustPEM: s.TrustPEM, Address: s.Address, Namespace: s.Namespace, certificate: s.certificate, roots: s.roots, context: s.context, onTransportError: s.onTransportError, positionOnly: true, admissionGate: registry.admissionGate, results: make(chan SessionResult, 2), acceptedSource: source, onSession: source.Deliver}
+	source.scheduler = position
 	if err = position.startTransport(reporter); err != nil {
 		return nil, err
 	}

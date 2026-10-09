@@ -37,6 +37,7 @@ type MaintenanceIngress struct {
 	input                                             connectionInputReader
 	length                                            int
 	ready, active, closed, cleaned, watching, started bool
+	rateRefused                                       bool
 	tokens                                            uint32
 	refill                                            maintenanceRefill
 	window                                            *timev4.Window
@@ -201,7 +202,7 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 				err = p.checkLocked()
 			}
 		}
-		if err != nil && !errors.Is(err, cryptov4.ErrCapacity) {
+		if err != nil && !errors.Is(err, cryptov4.ErrCapacity) && !errors.Is(err, errMaintenanceDiscarded) {
 			if p.cause == nil {
 				p.cause = err
 			} else {
@@ -213,9 +214,10 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 			err = p.cause
 		}
 		p.active = false
-		if err == nil || failed {
+		if err == nil || failed || errors.Is(err, errMaintenanceDiscarded) {
 			clear(p.storage)
 			p.ready, p.length, p.window = false, 0, nil
+			p.rateRefused = false
 		}
 		p.cleanupLocked()
 		p.mu.Unlock()
@@ -239,21 +241,28 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 		if e := protocolv4.ValidateRecordScope(protocolv4.FrameType(prefix.bytes[4]), 0); e != nil {
 			return nil, e
 		}
-		clock := p.admission.engine.Clock()
-		now, e := clock.Monotonic()
-		if e != nil {
-			return nil, e
-		}
-		p.mu.Lock()
-		err = p.refill.consume(now, clock.Profile().Rate, p.policy.RefillMS, p.policy.Burst, &p.tokens)
-		p.mu.Unlock()
-		if err != nil {
-			return nil, err
-		}
 		wire, e := prefix.ReadBody(assembly, p.storage)
 		if e != nil {
 			providerFailure = input.failed(e)
 			return nil, e
+		}
+		// Charge this original candidate once, preserving the result across
+		// before-attempt crypto contention. Refusal is acted on only after
+		// full authentication and validation.
+		kind := protocolv4.FrameType(prefix.bytes[4])
+		if kind == protocolv4.FramePing || kind == protocolv4.FramePong {
+			clock := p.admission.engine.Clock()
+			now, clockErr := clock.Monotonic()
+			if clockErr != nil {
+				return nil, clockErr
+			}
+			p.mu.Lock()
+			rateErr := p.refill.consume(now, clock.Profile().Rate, p.policy.RefillMS, p.policy.Burst, &p.tokens)
+			p.rateRefused = errors.Is(rateErr, ErrMaintenanceRate)
+			p.mu.Unlock()
+			if rateErr != nil && !errors.Is(rateErr, ErrMaintenanceRate) {
+				return nil, rateErr
+			}
 		}
 		p.mu.Lock()
 		p.length, p.ready = len(wire), true
@@ -263,7 +272,36 @@ func (p *MaintenanceIngress) Read(ctx context.Context, carrier *CarrierAssociati
 			return nil, err
 		}
 	}
-	return p.receiver.receiveMaintenance(ctx, p.storage[:p.length])
+	record, err = p.receiver.receiveMaintenance(ctx, p.storage[:p.length])
+	if err != nil {
+		return nil, err
+	}
+	frame, err := record.Body()
+	if err != nil {
+		record.Release()
+		return nil, err
+	}
+	if frame.Schema == "PING" || frame.Schema == "PONG" {
+		if _, _, err := validateMaintenanceFrame(record, p.admission, frame); err != nil {
+			record.Release()
+			return nil, err
+		}
+		if p.rateRefused {
+			if acceptErr := record.acceptMaintenanceFrame(frame); acceptErr != nil {
+				record.Release()
+				return nil, acceptErr
+			}
+			if frame.Schema == "PONG" {
+				p.admission.invalidateAutomaticSample()
+			}
+			return record, errMaintenanceDiscarded
+		}
+		if err != nil {
+			record.Release()
+			return nil, err
+		}
+	}
+	return record, nil
 }
 
 // Watch is the pre-admitted lifetime task, independent of native Read. A stuck

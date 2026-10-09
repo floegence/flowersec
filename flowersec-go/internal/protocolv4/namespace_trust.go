@@ -524,10 +524,7 @@ func (t *NamespaceTrustStore) checkCurrentOwnerLocked() error {
 	if t.closed || t.count == 0 {
 		return CBORFailure("revocation_trust_owner")
 	}
-	if err := t.reservation.Check(); err != nil {
-		return err
-	}
-	return t.dependencies.Check()
+	return t.reservation.CheckSameEnvironment(t.dependencies)
 }
 
 func (t *NamespaceTrustStore) checkCurrentLockedAt(sample timev4.Sample) error {
@@ -678,6 +675,12 @@ func (t *NamespaceTrustStore) headAtMode(binding NamespaceHeadTrust, sample time
 		}
 		pending = t.configurations[t.count-1].issued
 	}
+	return t.headCurrentLocked(binding, pending)
+}
+
+// These content checks borrow the caller's current trust gate. They perform
+// no callbacks and retain no authorization beyond that synchronous gate.
+func (t *NamespaceTrustStore) headCurrentLocked(binding NamespaceHeadTrust, pending uint64) (uint64, error) {
 	current := &t.configurations[t.count-1]
 	if binding.Tenant != t.root.Tenant || binding.Authority != t.root.Authority || binding.Capacity != t.rules.capacityDigest || binding.Generation != current.generation || includesTrustID(current.rejectedHeads, binding.Signer) {
 		return 0, CBORFailure("revocation_trust_binding")
@@ -719,6 +722,10 @@ func (t *NamespaceTrustStore) issuerAt(permission IssuerPermission, scope Creden
 	if err := t.checkCurrentLockedAt(sample); err != nil {
 		return err
 	}
+	return t.issuerCurrentLocked(permission, scope)
+}
+
+func (t *NamespaceTrustStore) issuerCurrentLocked(permission IssuerPermission, scope CredentialScope) error {
 	current := &t.configurations[t.count-1]
 	if includesTrustID(current.retired, scope.Issuer) {
 		return CBORFailure("revocation_issuer_rejected")
@@ -744,6 +751,10 @@ func (t *NamespaceTrustStore) policyAt(policy *CredentialPolicy, sample timev4.S
 	if err := t.checkCurrentLockedAt(sample); err != nil {
 		return err
 	}
+	return t.policyCurrentLocked(policy)
+}
+
+func (t *NamespaceTrustStore) policyCurrentLocked(policy *CredentialPolicy) error {
 	if policy == nil {
 		return CBORFailure("credential_policy_owner")
 	}
@@ -768,6 +779,10 @@ func (t *NamespaceTrustStore) activationAt(binding ActivationTrustBinding, sampl
 	if err := t.checkCurrentLockedAt(sample); err != nil {
 		return err
 	}
+	return t.activationCurrentLocked(binding)
+}
+
+func (t *NamespaceTrustStore) activationCurrentLocked(binding ActivationTrustBinding) error {
 	c := &t.configurations[t.count-1]
 	if includesTrustID(c.retired, binding.Issuer) || includesTrustID(c.retired, binding.ParentIssuer) {
 		return CBORFailure("revocation_issuer_rejected")

@@ -320,10 +320,334 @@
         try await fixture.environment.close()
       }
     }
-    func testActualPublicPoolWSSHandshakeStreamsRekeyAndPingForBothProfiles() async throws {
+    func testActualSharedWSSDataIsolationKeepsHealthyStreamAndMaintenanceForBothProfiles() async throws {
+      for profile in V4CryptoProfile.allCases {
+        for fault in 0..<4 {
+          let test = try NativeSessionFixture(profile: profile)
+          defer { test.cleanup() }
+          let material = try await test.material()
+          let session = try await test.environment.connectMaterial(material)
+          let native = try XCTUnwrap(session as? V4NativeSession)
+          let bad = try await session.openStream(kind: "example.bad")
+          let healthy = try await session.openStream(kind: "example.healthy")
+          _ = try await bad.write(Data([1]))
+          let initial = try await bad.read(maxBytes: 8)
+          XCTAssertEqual(initial, Data([1]))
+          let before = native.cryptoTestSharedInput(1)
+          let wire = try await test.peer.injectDataFault(stream: 0, fault: fault)
+          do { _ = try await bad.read(maxBytes: 8); XCTFail("authenticated bad DATA must abort its Stream") }
+          catch { XCTAssertEqual(error as? SessionError, .streamReset) }
+          let failed = native.cryptoTestSharedInput(1)
+          XCTAssertEqual(failed.current, before.current)
+          XCTAssertEqual(failed.cryptoNext, before.cryptoNext)
+          XCTAssertNotNil(failed.firstFailure)
+          XCTAssertFalse(failed.receiveEnabled)
+          XCTAssertEqual(failed.scopeUsage?.opens, try XCTUnwrap(before.scopeUsage).opens + 1)
+          try await test.peer.sendRaw(wire)
+          _ = try await healthy.write(Data([7, 8]))
+          let continued = try await healthy.read(maxBytes: 8)
+          XCTAssertEqual(continued, Data([7, 8]))
+          XCTAssertEqual(native.cryptoTestSharedInput(1).scopeUsage, failed.scopeUsage,
+            "closed DATA must not perform another AEAD attempt")
+          _ = try await session.probeLiveness()
+          try await session.rekey()
+          let drained = try await test.peer.waitForDrainProof(stream: 0)
+          XCTAssertTrue(drained.aborted)
+          XCTAssertEqual(drained.observed, before.current)
+          let afterRekey = native.cryptoTestSharedInput(1)
+          XCTAssertEqual(afterRekey.current, before.current)
+          XCTAssertEqual(afterRekey.firstFailure, failed.firstFailure)
+          XCTAssertFalse(afterRekey.receiveEnabled)
+          XCTAssertEqual(afterRekey.records, 1)
+          XCTAssertEqual(afterRekey.bytes, UInt64(wire.count))
+          XCTAssertEqual(afterRekey.aborted, true)
+          XCTAssertEqual(afterRekey.observed, before.current)
+          XCTAssertNotNil(afterRekey.terminal)
+          _ = try await healthy.write(Data([9]))
+          let rekeyed = try await healthy.read(maxBytes: 8)
+          XCTAssertEqual(rekeyed, Data([9]))
+          XCTAssertNil(test.peer.error)
+          try await session.close()
+          XCTAssertTrue(material.cleanupStatus().complete)
+          try await test.environment.close()
+        }
+      }
+    }
+
+    func testActualSharedWSSDiscardLimitsAndFatalHeaders() async throws {
+      // Each budget has an independent Session; records count whole messages,
+      // and the original clock starts at the first actual discard.
+      for boundary in 0..<10 {
+        let test = try NativeSessionFixture(profile: .x25519, longLived: boundary == 2)
+        defer { test.cleanup() }
+        let material = try await test.material()
+        let session = try await test.environment.connectMaterial(material)
+        let native = try XCTUnwrap(session as? V4NativeSession)
+        let stream = try await session.openStream(kind: "example.bad")
+        if boundary < 3 {
+          let wire = try await test.peer.injectDataFault(stream: 0, fault: 0)
+          do { _ = try await stream.read(maxBytes: 1); XCTFail("bad DATA must abort") } catch {}
+          if boundary == 0 {
+            for _ in 0..<16 { try await test.peer.sendRaw(wire) }
+            _ = try await session.probeLiveness()
+            XCTAssertEqual(native.cryptoTestSharedInput(1).records, 16)
+            try await test.peer.sendRaw(wire)
+          } else if boundary == 1 {
+            try await test.peer.sendRaw(Self.closedData(scope: 1, epoch: 0, bytes: 65_536))
+            _ = try await session.probeLiveness()
+            XCTAssertEqual(native.cryptoTestSharedInput(1).bytes, 65_536)
+            try await test.peer.sendRaw(wire)
+          } else {
+            try await test.peer.sendRaw(wire)
+            _ = try await session.probeLiveness()
+            // A completed stream no longer has a quarantine deadline; only
+            // the original shared first-discard window can reject this input.
+            let drained = try await test.peer.waitForDrainProof(stream: 0)
+            XCTAssertTrue(drained.aborted)
+            XCTAssertEqual(drained.observed, V4StreamTuple())
+            test.fixture.base.source.advance(9999)
+            try await test.peer.sendRaw(wire)
+            _ = try await session.probeLiveness()
+            XCTAssertEqual(native.cryptoTestSharedInput(1).records, 2)
+            test.fixture.base.source.advance(1)
+            try await test.peer.sendRaw(wire)
+          }
+        } else {
+          var wire: Data
+          if boundary >= 7 {
+            wire = try await test.peer.injectDataFault(stream: 0, fault: 0)
+            do { _ = try await stream.read(maxBytes: 1); XCTFail("bad DATA must abort") } catch {}
+          } else { wire = try await test.peer.captureData(stream: 0) }
+          switch boundary {
+          case 3: wire[wire.count - 1] ^= 1
+          case 4, 8: wire.replaceSubrange(12..<20, with: V4Crypto.integer(99, width: 8))
+          case 5, 7: wire.replaceSubrange(8..<12, with: V4Crypto.integer(1, width: 4))
+          default: wire[5] = 1
+          }
+          try await test.peer.sendRaw(wire)
+        }
+        let termination = await session.waitTermination()
+        XCTAssertNotEqual(termination.error, .closed)
+        if boundary == 2 { XCTAssertEqual(termination.error, .timeout) }
+        XCTAssertTrue(material.cleanupStatus().complete)
+        try await test.environment.close()
+      }
+    }
+
+    private static func closedData(scope: UInt64, epoch: UInt32, bytes: Int) -> Data {
+      V4Crypto.integer(UInt64(bytes - 8), width: 4) + Data([8, 0, 0, 0])
+        + V4Crypto.integer(UInt64(epoch), width: 4) + V4Crypto.integer(scope, width: 8)
+        + V4Crypto.integer(.max, width: 8) + Data(count: bytes - 28)
+    }
+
+    func testActualSharedWSSCloseRetainsOriginalCryptoTailUntilPhysicalExit() async throws {
       for profile in V4CryptoProfile.allCases {
         let test = try NativeSessionFixture(profile: profile)
         defer { test.cleanup() }
+        let material = try await test.material()
+        let session = try await test.environment.connectMaterial(material)
+        let native = try XCTUnwrap(session as? V4NativeSession)
+        let stream = try await session.openStream(kind: "example.held")
+        // The facade's deinit resets its original Stream. Retain that real
+        // input owner through Close so fault injection still owes one AEAD.
+        defer { withExtendedLifetime(stream) {} }
+        let before = native.cryptoTestSharedInput(1)
+        let baseline = test.fixture.base.root.snapshot().executionTails
+        let hold = NativeSharedCryptoHold()
+        native.cryptoTestObserve { scope, frame, sending in
+          if scope == 1, frame == 8, !sending { hold.observe() }
+        }
+        defer { hold.release(); native.cryptoTestObserve(nil) }
+        _ = try await test.peer.injectDataFault(stream: 0, fault: 0)
+        let entered = await hold.waitEntered()
+        guard entered else {
+          hold.release()
+          return XCTFail("original WSS reader never entered AEAD: \(profile), terminated=\(native.cryptoTestTerminated), peer=\(String(describing: test.peer.error))")
+        }
+        XCTAssertEqual(native.cryptoTestSharedInput(1).current, before.current)
+        let during = test.fixture.base.root.snapshot().executionTails
+        XCTAssertGreaterThan(during, baseline)
+        let completion = NativeSharedCloseProbe()
+        let closing = Task { try await session.close(); completion.finish() }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(3))
+        while !native.cryptoTestTerminated, ContinuousClock.now < deadline {
+          try await ContinuousClock().sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(native.cryptoTestTerminated)
+        XCTAssertFalse(completion.complete, "Close must join the original physical input job")
+        XCTAssertGreaterThan(test.fixture.base.root.snapshot().executionTails, 0)
+        hold.release()
+        try await closing.value
+        XCTAssertEqual(native.cryptoTestSharedInput(1).cryptoNext, before.cryptoNext)
+        XCTAssertTrue(completion.complete)
+        XCTAssertTrue(material.cleanupStatus().complete)
+        XCTAssertLessThan(test.fixture.base.root.snapshot().executionTails, during)
+        try await test.environment.close()
+      }
+    }
+
+    private func bootstrapContractFixture(_ test: NativeSessionFixture) async throws -> (
+      ServiceDefinition, ServiceContractQueryTarget, ServiceContractQueryBinding, ServiceBindingTarget
+    ) {
+      let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+      let corpus = try JSONDecoder().decode(V4JSON.self,
+        from: Data(contentsOf: root.appendingPathComponent("testdata/transport_v4/corpus.json")))
+      let vector = try XCTUnwrap(corpus["vectors"].array?.first { $0["id"].text == "service_unary_transient" })
+      let bytes = try v4RuleHex(XCTUnwrap(vector["hex"].text))
+      let contract = try await test.environment.captureServiceContract(bytes)
+      let parsed = try V4NamespaceDocument(bytes, schema: "ServiceContract", bytes: 8192, nodes: 4096,
+        registry: V4NamespaceRegistry()).root
+      let request = try MessageDefinition(schemaDigest: Data(repeating: 7, count: 32),
+        revision: parsed.t("request_schema_revision"), maxMessageBytes: 1_048_576)
+      let response = try MessageDefinition(schemaDigest: Data(repeating: 8, count: 32),
+        revision: parsed.t("response_schema_revision"), maxMessageBytes: 1_048_576)
+      let errors = try parsed.field("application_error_catalog").children.map { entry in
+        try ApplicationErrorDefinition(code: UInt32(entry.u("code")),
+          message: MessageDefinition(schemaDigest: entry.b("schema_digest"), revision: entry.t("schema_revision"),
+            maxMessageBytes: max(1, Int(entry.u("max_payload_bytes")))), maxPayloadBytes: Int(entry.u("max_payload_bytes")))
+      }
+      let method = try MethodDefinition(MethodDefinitionOptions(typeID: contract.typeID, shape: .unary,
+        semantics: .transient, request: request, response: response, responseRevision: response.revision,
+        requestMaxBytes: 1_048_576, minResponseLimitBytes: Int(contract.uint(9)),
+        maxResponseBytes: Int(contract.uint(10)), errors: errors))
+      let definition = try ServiceDefinition(namespace: contract.namespace, methods: [ServiceMethod(name: "read", method: method)])
+      let selector = try ServiceContractQueryTarget(namespace: contract.namespace, typeID: contract.typeID, maximumOfferWindowMS: 1000)
+      let binding = try ServiceContractQueryBinding(typeID: 12345, contractDigest: Data(repeating: 6, count: 32))
+      let peer = try ServiceBindingTarget.Peer(subject: "server",
+        identityDigest: NamespaceFixture.digest("certificate-digest", test.input.serverCertificate))
+      let target = try ServiceBindingTarget(authority: contract.namespace, tenant: "tenant", audience: "service", localSubject: "client", peers: [peer])
+      test.peer.answerContractQueries(with: bytes)
+      return (definition, selector, binding, target)
+    }
+
+    func testFirstRPCSharesBootstrapDuringApplicationOpenForBothProfiles() async throws {
+      for profile in V4CryptoProfile.allCases {
+        let test = try NativeSessionFixture(profile: profile, services: true, longLived: true)
+        defer { test.cleanup() }
+        let (definition, selector, binding, target) = try await bootstrapContractFixture(test)
+        let probe = NativeBootstrapPreparationProbe(stage: .scopeKeys, applicationFirst: true)
+        test.fixture.base.environment.nativeSessionTestPrepared = { probe.prepare($0) }
+        defer { probe.hold.release(); test.fixture.base.environment.nativeSessionTestPrepared = nil }
+        let source = try await test.source()
+        let session = try await test.environment.connect(source: source)
+        let native = try XCTUnwrap(session as? V4NativeSession)
+        let channel = try XCTUnwrap(native.serviceChannel)
+        guard await probe.hold.waitEntered() else { return XCTFail("application OPEN did not retain its original key preparation") }
+        let now = try XCTUnwrap(test.fixture.base.environment.clock.sample().interval)
+        let deadline = now.upperMS + 20_000
+        let query = Task { try await session.queryContracts([selector], target: target, binding: binding, deadlineAtMS: deadline) }
+        let bind = Task { try await session.bindService(definition, target: target,
+          contractSource: PeerServiceContractSource(binding: binding, maximumOfferWindowMS: 1000), deadlineAtMS: deadline) }
+        let canceled = Task { try await session.queryContracts([selector], target: target, binding: binding, deadlineAtMS: deadline) }
+        let held = Task { try await session.queryContracts([selector], target: target, binding: binding, deadlineAtMS: deadline) }
+        try await nativeManagementWait { await channel.cryptoTestReadyWaiterCount == 4 }
+        do {
+          _ = try await session.queryContracts([selector], target: target, binding: binding, deadlineAtMS: deadline)
+          XCTFail("A fifth initializer waiter exceeded the original bound")
+        } catch { XCTAssertEqual(error as? ServiceFailure, .resourceExhausted) }
+        canceled.cancel()
+        do { _ = try await canceled.value; XCTFail("Canceled waiter returned an RPC channel") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        held.cancel()
+        do { _ = try await held.value; XCTFail("Canceled filler returned an RPC channel") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        do { _ = try await session.queryContracts([selector], target: target, binding: binding, deadlineAtMS: 0); XCTFail("Initializer renewed an expired caller deadline") }
+        catch { XCTAssertEqual(error as? ServiceFailure, .deadlineExceeded) }
+        let acceptsOpeningWaiter = await channel.acceptsOpeningWaiter
+        XCTAssertTrue(acceptsOpeningWaiter)
+        XCTAssertTrue(test.peer.bootstrapPrefixes.isEmpty)
+        XCTAssertTrue(test.peer.rpcOpenIDs.isEmpty)
+        probe.hold.release()
+        let application = try await XCTUnwrap(probe.applicationTask).value
+        let results = try await query.value
+        XCTAssertEqual(results.first?.status, .availableFull)
+        let client = try await bind.value
+        XCTAssertTrue(client.channel === channel)
+        XCTAssertEqual(test.peer.bootstrapPrefixes, [0])
+        XCTAssertTrue(test.peer.rpcOpenIDs.isEmpty, "First Query/Bind allocated an additional ordinary RPC OPEN")
+        XCTAssertEqual(test.peer.queryDeadlines.count, 2)
+        XCTAssertTrue(test.peer.queryDeadlines.contains(deadline))
+        XCTAssertTrue(test.peer.queryDeadlines.allSatisfy { $0 <= deadline })
+        client.close()
+        try await application.close()
+        try await session.close(); source.close()
+        try await test.environment.close()
+      }
+    }
+
+    func testFirstRPCResumesAfterPreTicketRekeyForBothProfiles() async throws {
+      for profile in V4CryptoProfile.allCases {
+        for stage in [V4CryptoPreparationTestStage.openDigest, .recordOutput] {
+          let test = try NativeSessionFixture(profile: profile, services: true, longLived: true)
+          defer { test.cleanup() }
+          let (_, selector, binding, target) = try await bootstrapContractFixture(test)
+          let probe = NativeBootstrapPreparationProbe(stage: stage)
+          test.fixture.base.environment.nativeSessionTestPrepared = { probe.prepare($0) }
+          defer { probe.hold.release(); test.fixture.base.environment.nativeSessionTestPrepared = nil }
+          let source = try await test.source()
+          let session = try await test.environment.connect(source: source)
+          let native = try XCTUnwrap(session as? V4NativeSession)
+          guard await probe.hold.waitEntered() else { return XCTFail("Bootstrap did not enter pre-ticket preparation") }
+          let deadline = try XCTUnwrap(test.fixture.base.environment.clock.sample().interval).upperMS + 5000
+          let query = Task { try await session.queryContracts([selector], target: target, binding: binding, deadlineAtMS: deadline) }
+          let rekey = Task { try await session.rekey() }
+          try await nativeManagementWait { native.cryptoTestRekeyFrozen }
+          XCTAssertTrue(test.peer.bootstrapPrefixes.isEmpty)
+          XCTAssertGreaterThan(test.fixture.base.root.snapshot().executionTails, 0)
+          probe.hold.release()
+          try await rekey.value
+          let results = try await query.value
+          XCTAssertEqual(results.first?.status, .availableFull)
+          XCTAssertEqual(test.peer.bootstrapPrefixes, [1], "Original zero-frontier bootstrap did not follow the winning rekey")
+          XCTAssertTrue(test.peer.rpcOpenIDs.isEmpty)
+          XCTAssertEqual(test.peer.queryDeadlines, [deadline])
+          XCTAssertFalse(native.cryptoTestTerminated)
+          try await session.close(); source.close()
+          try await test.environment.close()
+        }
+      }
+    }
+
+    func testFirstRPCCloseRetainsOriginalPreTicketOutputForBothProfiles() async throws {
+      for profile in V4CryptoProfile.allCases {
+        let test = try NativeSessionFixture(profile: profile, services: true, longLived: true)
+        defer { test.cleanup() }
+        let (_, selector, binding, target) = try await bootstrapContractFixture(test)
+        let probe = NativeBootstrapPreparationProbe(stage: .recordOutput)
+        test.fixture.base.environment.nativeSessionTestPrepared = { probe.prepare($0) }
+        defer { probe.hold.release(); test.fixture.base.environment.nativeSessionTestPrepared = nil }
+        let material = try await test.material()
+        let session = try await test.environment.connectMaterial(material)
+        let native = try XCTUnwrap(session as? V4NativeSession)
+        let channel = try XCTUnwrap(native.serviceChannel)
+        guard await probe.hold.waitEntered() else { return XCTFail("Bootstrap did not retain its original output reservation") }
+        let deadline = try XCTUnwrap(test.fixture.base.environment.clock.sample().interval).upperMS + 5000
+        let query = Task { try await session.queryContracts([selector], target: target, binding: binding, deadlineAtMS: deadline) }
+        try await nativeManagementWait { await channel.cryptoTestReadyWaiterCount == 1 }
+        let completion = NativeSharedCloseProbe()
+        let closing = Task { try await session.close(); await native.waitPhysicalCleanup(); completion.finish() }
+        try await nativeManagementWait { native.cryptoTestTerminated }
+        XCTAssertFalse(completion.complete)
+        XCTAssertGreaterThan(test.fixture.base.root.snapshot().executionTails, 0)
+        probe.hold.release()
+        do { _ = try await query.value; XCTFail("Close admitted a late first RPC waiter") } catch {}
+        try await closing.value
+        XCTAssertTrue(completion.complete)
+        XCTAssertTrue(material.cleanupStatus().complete)
+        XCTAssertTrue(test.peer.bootstrapPrefixes.isEmpty, "A late pre-ticket result published after Close")
+        XCTAssertTrue(test.peer.rpcOpenIDs.isEmpty)
+        try await test.environment.close()
+      }
+    }
+
+    func testActualPublicPoolWSSHandshakeStreamsRekeyAndPingForBothProfiles() async throws {
+      for profile in V4CryptoProfile.allCases {
+        let test = try NativeSessionFixture(profile: profile)
+        defer {
+          XCTAssertNil(test.peer.error, "The original native peer must remain healthy: \(profile)")
+          test.cleanup()
+        }
         let material = try await test.material()
         let session = try await test.environment.connectMaterial(material)
         XCTAssertTrue(test.peer.established)
@@ -2829,6 +3153,76 @@
     func recordNotify(_ value: Data) { notifyValues.append(value) }
   }
 
+  private final class NativeSharedCloseProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finished = false
+    var complete: Bool { lock.withLock { finished } }
+    func finish() { lock.withLock { finished = true } }
+  }
+
+  private final class NativeSharedCryptoHold: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var entered = false, released = false
+    private var waiter: CheckedContinuation<Bool, Never>?
+    func observe() {
+      condition.lock(); defer { condition.unlock() }
+      entered = true; condition.broadcast()
+      waiter?.resume(returning: true); waiter = nil
+      while !released { condition.wait() }
+    }
+    func waitEntered() async -> Bool {
+      let timeout = Task {
+        do { try await ContinuousClock().sleep(for: .seconds(3)) } catch { return }
+        condition.withLock { waiter?.resume(returning: false); waiter = nil }
+      }
+      let result = await withCheckedContinuation { next in
+        condition.withLock {
+          if entered { next.resume(returning: true) } else { waiter = next }
+        }
+      }
+      timeout.cancel()
+      await timeout.value
+      return result
+    }
+    func release() {
+      condition.lock(); released = true; condition.broadcast(); condition.unlock()
+    }
+    func waitEnteredSynchronously() -> Bool {
+      condition.lock(); defer { condition.unlock() }
+      let deadline = Date().addingTimeInterval(3)
+      while !entered { if !condition.wait(until: deadline) { return false } }
+      return true
+    }
+  }
+
+  private final class NativeBootstrapPreparationProbe: @unchecked Sendable {
+    let hold = NativeSharedCryptoHold()
+    private let lock = NSLock()
+    private let stage: V4CryptoPreparationTestStage
+    private let applicationFirst: Bool
+    private var application: Task<any ByteStream, any Error>?
+    init(stage: V4CryptoPreparationTestStage, applicationFirst: Bool = false) {
+      self.stage = stage; self.applicationFirst = applicationFirst
+    }
+    var applicationTask: Task<any ByteStream, any Error>? { lock.withLock { application } }
+    func prepare(_ session: V4NativeSession) {
+      session.cryptoTestObservePreparation { [self] scope, phase in
+        if scope == (applicationFirst ? 3 : 1), phase == stage { hold.observe() }
+      }
+      if applicationFirst {
+        let task = Task.detached { try await session.openStream(kind: "example.bootstrap-contention") }
+        lock.withLock { application = task }
+        _ = hold.waitEnteredSynchronously()
+      }
+    }
+  }
+
+  private struct NativeReceivedDrainProof: Sendable {
+    let terminal: V4StreamTuple
+    let observed: V4StreamTuple
+    let aborted: Bool
+  }
+
   private final class NativeSessionFixture {
     let fixture: CredentialFixture
     let client: V4LocalIdentity
@@ -2847,11 +3241,11 @@
     init(
       profile: V4CryptoProfile, mode: NativeSessionPeer.Mode = .echo, pinned: Bool = false,
       replacement: Bool = false, replacementMode: NativeSessionPeer.Mode = .echo,
-      services: Bool = false, loopbackHTTP: Bool = false
+      services: Bool = false, loopbackHTTP: Bool = false, longLived: Bool = false
     )
       throws
     {
-      fixture = try CredentialFixture(profile: profile.rawValue, nativeResources: true)
+      fixture = try CredentialFixture(profile: profile.rawValue, nativeResources: true, longLived: longLived)
       client = try fixture.base.environment.generateIdentity(profile: profile)
       server = try fixture.base.environment.generateIdentity(profile: profile)
       peer = NativeSessionPeer(mode: mode)
@@ -2885,12 +3279,14 @@
         ])
       }
       func certificate(_ identity: V4LocalIdentity) -> [UInt64: V4CBORValue] {
-        [
+        var fields: [UInt64: V4CBORValue] = [
           3: NamespaceFixture.map([
             0: .uint(profile == .x25519 ? 0 : 1), 1: .bytes(identity.dhPublicKey),
           ]),
           4: .bytes(identity.identityPublicKey),
         ]
+        if longLived { fields[9] = .uint(90_000) }
+        return fields
       }
       let sessionContract: [UInt64: V4CBORValue] =
         services
@@ -2903,7 +3299,9 @@
         ] : [:]
       input = try fixture.input(
         source: .preauthorizedPool, indices: [0],
-        client: certificate(client), server: certificate(server), artifact: sessionContract)
+        client: certificate(client), server: certificate(server),
+        artifact: sessionContract.merging(longLived ? [19: .uint(80_000), 20: .uint(90_000)] : [:]) { _, new in new },
+        activation: longLived ? [14: .uint(80_000), 15: .uint(90_000)] : [:])
       let plan = try fixture.verify(input).directPoolPlan(
         in: fixture.base.environment, identity: client)
       let serverAdmission = try fixture.verify(input)
@@ -2987,7 +3385,7 @@
         artifact: input.artifact, clientCertificate: input.clientCertificate,
         serverCertificate: input.serverCertificate, activationAuthorization: input.activation)
     }
-    func source() async throws -> ConnectionMaterialSource {
+    @MainActor func source() async throws -> ConnectionMaterialSource {
       var credentials = [credential()]
       if let replacementInput {
         credentials.append(TransportPoolCredential(input: replacementInput))
@@ -2995,7 +3393,7 @@
       return try await environment.makePreauthorizedPoolSource(
         credentials, identity: TransportApplicationIdentity(client))
     }
-    func material() async throws -> ConnectionMaterial {
+    @MainActor func material() async throws -> ConnectionMaterial {
       try await environment.preparePoolMaterial(
         TransportPoolCredential(
           artifact: input.artifact,
@@ -3035,6 +3433,7 @@
     private var streams: [V4StreamHandle] = []
     private var terminal: Set<UInt64> = []
     private var localAwaiting: Set<UInt64> = []
+    private var receivedDrainProofs: [UInt64: NativeReceivedDrainProof] = [:]
     private var initialPayloads: [UInt64: Data] = [:]
     private var bridgeInputs: [UInt64: Data] = [:]
     private var bridgeEOFs: Set<UInt64> = []
@@ -3046,6 +3445,18 @@
     private var metadataInputs: [Data] = []
     private var holdingPongs = false
     private var pongs: [Data] = []
+    private var queryContract: Data?
+    private var queryInput = Data()
+    private var queryHeaders: [UInt64: V4ApplicationHeader] = [:]
+    private var queryBytes: [UInt64: Int] = [:]
+    private var queryResponseSerial: UInt64 = 0
+    private var originalBootstrapPrefixes: [UInt32] = []
+    private var additionalRPCOpens: [UInt64] = []
+    private var originalQueryDeadlines: [UInt64] = []
+    var bootstrapPrefixes: [UInt32] { lock.withLock { originalBootstrapPrefixes } }
+    var rpcOpenIDs: [UInt64] { lock.withLock { additionalRPCOpens } }
+    var queryDeadlines: [UInt64] { lock.withLock { originalQueryDeadlines } }
+    func answerContractQueries(with contract: Data) { lock.withLock { queryContract = contract } }
     var error: String? { lock.withLock { failure } }
     var noiseInputs: Int { lock.withLock { noiseCount } }
     var receivedMetadata: [Data] { lock.withLock { metadataInputs } }
@@ -3076,6 +3487,16 @@
       guard let channel = lock.withLock({ channel }) else { throw SessionError.closed }
       try await channel.closeFuture.get()
     }
+    func waitForDrainProof(stream index: Int) async throws -> NativeReceivedDrainProof {
+      let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+      while true {
+        if let proof = lock.withLock({
+          streams.indices.contains(index) ? receivedDrainProofs[streams[index].number] : nil
+        }) { return proof }
+        guard ContinuousClock.now < deadline else { throw SessionError.timeout }
+        try await ContinuousClock().sleep(for: .milliseconds(5))
+      }
+    }
     func waitPongs(_ count: Int) async throws {
       let start = ContinuousClock.now
       while lock.withLock({ pongs.count < count }) {
@@ -3104,6 +3525,38 @@
           try process()
         }
       }.get()
+    }
+    func captureData(stream index: Int, fault: Int = -1) async throws -> Data {
+      guard let channel = lock.withLock({ channel }) else { throw SessionError.closed }
+      return try await channel.eventLoop.submit { [self] in
+        try lock.withLock {
+          guard streams.indices.contains(index), let core else { throw SessionError.closed }
+          let id = streams[index].number
+          let output = CryptoTestPublisher()
+          try core.cryptoTestPublish(id, body: { frontier in
+            if fault == 0 { return Data([0xa0]) }
+            let data = fault == 3 ? Data(count: Int(plan.window) + 1) : Data()
+            return V4Crypto.map([
+              (0, V4NamespaceValue.head(0, fault == 1 ? streams[1].number : id)),
+              (1, V4NamespaceValue.head(0, 1)),
+              (2, V4NamespaceValue.head(0, UInt64(frontier.epoch))),
+              (3, V4NamespaceValue.head(0, frontier.next)),
+              (4, V4NamespaceValue.head(0, frontier.offset + (fault == 2 ? 1 : 0))),
+              (5, V4Crypto.bytes(data)), (6, Data([0xf4])),
+            ])
+          }, to: output)
+          return try output.last()
+        }
+      }.get()
+    }
+    func injectDataFault(stream: Int, fault: Int) async throws -> Data {
+      let wire = try await captureData(stream: stream, fault: fault)
+      try await sendRaw(wire)
+      return wire
+    }
+    func sendRaw(_ wire: Data) async throws {
+      guard let channel = lock.withLock({ channel }) else { throw SessionError.closed }
+      try await channel.eventLoop.submit { [self] in try lock.withLock { try raw(wire) } }.get()
     }
     func sendBridgePayload(toStream index: Int, bytes: Data, finish: Bool = false) async throws {
       guard let channel = lock.withLock({ channel }) else { throw SessionError.closed }
@@ -3243,6 +3696,17 @@
         step = 4
       default:
         try core!.receive(wire)
+        if queryContract != nil, wire[4] == 7, V4Crypto.number(wire[12..<20]) == 1 {
+          originalBootstrapPrefixes.append(UInt32(V4Crypto.number(wire[8..<12])))
+        }
+        // Observe only a proof that this peer actually authenticated and
+        // committed, before ordinary RETIRE_ACK can collect its original Slot.
+        for stream in streams {
+          if let proof = core!.cryptoTestSendProof(stream.number) {
+            receivedDrainProofs[stream.number] = NativeReceivedDrainProof(
+              terminal: proof.terminal, observed: proof.observed, aborted: proof.aborted)
+          }
+        }
         try process()
       }
     }
@@ -3250,12 +3714,14 @@
       guard let core else { return }
       while let remote = try core.pendingOpen() {
         let pending = try core.pendingMetadata(remote)
+        if pending.kind == "flowersec.rpc.v4" { additionalRPCOpens.append(remote.number) }
         metadataInputs.append(try pending.metadata.withBytes { $0 })
         pending.metadata.close()
         try core.decideOpen(remote, decision: .accept(receiveWindow: plan.window), to: self)
         streams.append(remote)
       }
       for _ in 0..<32 { if try !core.poll(to: self) { break } }
+      try processBootstrapQueries()
       for stream in streams where !terminal.contains(stream.number) && !holdingBridgeInput {
         if localAwaiting.contains(stream.number), try core.phase(stream) == .accepted {
           try core.write(
@@ -3283,6 +3749,48 @@
         }
       }
       for _ in 0..<32 { if try !core.poll(to: self) { break } }
+    }
+    private func processBootstrapQueries() throws {
+      guard let core, let contract = queryContract, core.bootstrapMaterialized,
+        let stream = try core.bootstrapStream() else { return }
+      for _ in 0..<8 {
+        guard case .data(let bytes) = try core.read(stream, maximum: 16_384) else { break }
+        queryInput.append(try bytes.withBytes { $0 }); bytes.close()
+        try core.replenish(stream, window: 16_384)
+      }
+      let registry = try V4ApplicationWireRegistry()
+      while queryInput.count >= 4 {
+        let length = Int(V4Crypto.number(queryInput.prefix(4))) + 4
+        guard queryInput.count >= length else { return }
+        let fragment = try V4RPCFragment(encoded: Data(queryInput.prefix(length)))
+        queryInput.removeFirst(length)
+        switch fragment.kind {
+        case .begin:
+          let header = try V4ApplicationHeader(encoded: fragment.payload, registry: registry)
+          guard header.kind == "query_contracts_request", fragment.replyTo == 0 else { throw ServiceFailure.protocolFailure }
+          queryHeaders[fragment.serial] = header; queryBytes[fragment.serial] = 0
+          originalQueryDeadlines.append(try header.uint(5))
+        case .data:
+          guard let header = queryHeaders[fragment.serial], queryBytes[fragment.serial] == Int(fragment.offset) else {
+            throw ServiceFailure.protocolFailure
+          }
+          queryBytes[fragment.serial, default: 0] += fragment.payload.count
+          guard queryBytes[fragment.serial] == (try header.payloadBytes) else { continue }
+          let payload = NamespaceFixture.map([
+            0: .array([NamespaceFixture.map([0: .uint(0), 1: .uint(0), 2: .bytes(contract)])])
+          ]).encoded()
+          let response = try V4ApplicationHeader(kind: "query_contracts_response", fields: [
+            2: .uint(try header.uint(2)), 3: .uint(UInt64(payload.count)), 6: .bytes(try header.bytes(6)),
+          ], registry: registry)
+          queryResponseSerial += 1
+          let output = try V4RPCFragment(kind: .begin, serial: queryResponseSerial, replyTo: fragment.serial, payload: response.encoded()).encoded()
+            + V4RPCFragment(kind: .data, serial: queryResponseSerial, payload: payload).encoded()
+          _ = try core.write(stream, data: output, to: self)
+          queryHeaders.removeValue(forKey: fragment.serial); queryBytes.removeValue(forKey: fragment.serial)
+        case .abort, .stopOutput:
+          queryHeaders.removeValue(forKey: fragment.serial); queryBytes.removeValue(forKey: fragment.serial)
+        }
+      }
     }
     func waitInput(stream: UInt64, bytes: Data) async throws {
       let deadline = ContinuousClock.now.advanced(by: .seconds(5))

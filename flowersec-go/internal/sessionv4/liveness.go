@@ -458,10 +458,21 @@ func (p *Liveness) HandlePong(record *ReceivedRecord) (matched bool, err error) 
 	if !ok || len(bytes) != 16 {
 		return false, ErrProbeOwner
 	}
-	nonce := [16]byte(bytes)
 	if err := record.AcceptMessage(); err != nil {
 		return false, err
 	}
+	return p.handlePongFrame(f)
+}
+
+func (p *Liveness) handlePongFrame(f *protocolv4.Frame) (matched bool, err error) {
+	if f == nil || f.Schema != "PONG" || f.Header.Scope != 0 {
+		return false, ErrProbeOwner
+	}
+	bytes, ok := f.Field("nonce").ByteString()
+	if !ok || len(bytes) != 16 {
+		return false, ErrProbeOwner
+	}
+	nonce := [16]byte(bytes)
 	p.mu.Lock()
 	if err := p.reservation.Check(); err != nil {
 		p.mu.Unlock()
