@@ -515,18 +515,16 @@ func observePeerReset(ctx context.Context, stream peerResetReader) error {
 }
 
 func verifyOutageBehavior(ctx context.Context, pair *transporttest.ProductDirectPair) error {
-	failedDuringOutage := false
+	failedDuringOutage := [2]bool{}
 	outageDeadline := time.Now().Add(3500 * time.Millisecond)
+	probes := [2]func(context.Context, uint64) (flowersec.LivenessResult, error){pair.Client.ProbeLiveness, pair.Server.ProbeLiveness}
 	// Recovery can deliver queued probes together. Keep the original window
 	// within the admitted maintenance burst, including the final recovery probe.
 	probeInterval := time.NewTicker(time.Second)
 	defer probeInterval.Stop()
 	for time.Now().Before(outageDeadline) {
-		probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-		_, probeErr := pair.Client.ProbeLiveness(probeCtx, 250)
-		cancel()
-		if probeErr != nil {
-			failedDuringOutage = true
+		for direction, outcome := range probeOutageDirections(ctx, probes, 250, 300*time.Millisecond) {
+			failedDuringOutage[direction] = failedDuringOutage[direction] || outcome.qualified
 		}
 		select {
 		case <-probeInterval.C:
@@ -534,11 +532,13 @@ func verifyOutageBehavior(ctx context.Context, pair *transporttest.ProductDirect
 			return context.Cause(ctx)
 		}
 	}
-	if !failedDuringOutage {
-		return errors.New("Flowersec outage did not interrupt any liveness operation")
+	if !failedDuringOutage[0] || !failedDuringOutage[1] {
+		return fmt.Errorf("Flowersec outage did not interrupt both liveness directions: client=%t server=%t", failedDuringOutage[0], failedDuringOutage[1])
 	}
-	if _, err := pair.Client.ProbeLiveness(ctx, 5000); err != nil {
-		return fmt.Errorf("Flowersec session did not recover after outage: %w", err)
+	for direction, probe := range probes {
+		if _, err := probe(ctx, 5000); err != nil {
+			return fmt.Errorf("Flowersec session direction %d did not recover after outage: %w", direction, err)
+		}
 	}
 	return nil
 }
@@ -549,15 +549,16 @@ func verifyControllerOutage(ctx context.Context, pair *transporttest.ProductDire
 	defer probeInterval.Stop()
 	const operationTimeoutMS = uint64(250)
 	probes := 0
-	lastOutcome := "none"
+	probeDirections := [2]func(context.Context, uint64) (flowersec.LivenessResult, error){pair.Client.ProbeLiveness, pair.Server.ProbeLiveness}
+	qualified := [2]bool{}
+	lastOutcome := [2]string{"none", "none"}
 	for time.Now().Before(deadline) {
-		probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-		result, probeErr := pair.Client.ProbeLiveness(probeCtx, operationTimeoutMS)
-		qualified := isQualifiedControllerOutage(result, probeErr, probeCtx, operationTimeoutMS)
-		cancel()
 		probes++
-		lastOutcome = describeControllerProbeOutcome(result, probeErr)
-		if qualified {
+		for direction, outcome := range probeOutageDirections(ctx, probeDirections, operationTimeoutMS, 300*time.Millisecond) {
+			qualified[direction] = qualified[direction] || outcome.qualified
+			lastOutcome[direction] = describeControllerProbeOutcome(outcome.result, outcome.err)
+		}
+		if qualified[0] && qualified[1] {
 			return nil
 		}
 		select {
@@ -566,29 +567,7 @@ func verifyControllerOutage(ctx context.Context, pair *transporttest.ProductDire
 			return context.Cause(ctx)
 		}
 	}
-	return fmt.Errorf("Flowersec outage did not interrupt a controller liveness operation after %d probes (last: %s)", probes, lastOutcome)
-}
-
-func isQualifiedControllerOutage(result flowersec.LivenessResult, err error, callerCtx context.Context, timeoutMS uint64) bool {
-	var sessionErr *flowersec.SessionError
-	if err == nil || !errors.As(err, &sessionErr) || result.Cause == nil {
-		return false
-	}
-	return isQualifiedControllerOutageCode(sessionErr.Code(), result.Cause.Code(), result, callerCtx, timeoutMS)
-}
-
-func isQualifiedControllerOutageCode(code, causeCode flowersec.SessionErrorCode, result flowersec.LivenessResult, callerCtx context.Context, timeoutMS uint64) bool {
-	if callerCtx == nil || callerCtx.Err() != nil || !result.Submitted || result.Cause == nil || code != causeCode {
-		return false
-	}
-	switch code {
-	case flowersec.SessionLivenessFailed, flowersec.SessionClosed:
-		return true
-	case flowersec.SessionTimeout:
-		return timeoutMS > 0 && result.ElapsedAvailable && result.ElapsedMilliseconds >= timeoutMS
-	default:
-		return false
-	}
+	return fmt.Errorf("Flowersec outage did not interrupt both controller liveness directions after %d probes (client: %s; server: %s)", probes, lastOutcome[0], lastOutcome[1])
 }
 
 func describeControllerProbeOutcome(result flowersec.LivenessResult, err error) string {

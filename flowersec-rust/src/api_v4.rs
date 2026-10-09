@@ -2930,7 +2930,7 @@ mod write_owner_tests {
         assert_eq!(environment.charged(), baseline);
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn prepared_expiry_reclaims_input_without_start_or_wait() {
         let root = short_owner();
         let stream = NativeWrite::new(root.clone());
@@ -2938,8 +2938,22 @@ mod write_owner_tests {
             WriteOperation::try_prepare(stream.clone(), Bytes::from_static(b"body")).unwrap();
         assert_eq!(charge(&root), (4, 1));
         // No Start or Wait drives expiration: the original owner already owns
-        // its finite timer responsibility from Prepare.
-        tokio::time::sleep(Duration::from_millis(30)).await;
+        // its finite timer responsibility from Prepare. Observe its cleanup
+        // within the original 30ms budget; elapsed sleep alone does not order
+        // ready timer tasks before the test's next progress snapshot.
+        tokio::time::timeout(Duration::from_millis(30), async {
+            loop {
+                let changed = operation.owner.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if operation.cleanup_status().complete {
+                    break;
+                }
+                changed.await;
+            }
+        })
+        .await
+        .expect("prepared owner's timer must complete cleanup within 30ms");
         assert_eq!(
             operation.progress().terminal_reason.as_deref(),
             Some("deadline_exceeded")

@@ -47,15 +47,16 @@ mod registered_resume_regressions {
         }
     }
     #[derive(Debug)]
-    struct Continuation { entries: AtomicUsize, entered: Semaphore, release: Semaphore }
+    struct Continuation { entries: AtomicUsize, entered: Semaphore, release: Semaphore, cancellation: Mutex<Option<CancellationToken>> }
     #[async_trait::async_trait]
     impl UnaryResumeServiceHandler for Continuation {
         async fn authorize(&self, _: UnaryRequestContext, checkpoint: &ApplicationCheckpoint) -> Result<(), ServiceError> {
             if checkpoint.position() != [7] { return Err(ServiceError(ServiceFailure::PermissionDenied)); } Ok(())
         }
-        async fn resume(&self, _: UnaryRequestContext, checkpoint: ApplicationCheckpoint, target: crate::Stream) -> Result<UnaryResponse, ServiceError> {
+        async fn resume(&self, context: UnaryRequestContext, checkpoint: ApplicationCheckpoint, target: crate::Stream) -> Result<UnaryResponse, ServiceError> {
             assert_eq!(checkpoint.position(), [7]); self.entries.fetch_add(1, Ordering::AcqRel);
             target.write(bytes::Bytes::from_static(b"tail")).await.map_err(|_| ServiceError(ServiceFailure::ServiceUnavailable))?;
+            *self.cancellation.lock().unwrap() = Some(context.cancellation);
             self.entered.add_permits(1); self.release.acquire().await.unwrap().forget();
             Ok(UnaryResponse { payload: b"retained-original-result".to_vec(), application_error_code: None })
         }
@@ -103,8 +104,30 @@ mod registered_resume_regressions {
         }).await.unwrap();
     }
 
+    // Keep real SQLite and RPC work runnable without spending a paused logical
+    // deadline. The wall-clock watchdog still bounds each original wait.
+    async fn settle_io<F: std::future::Future>(watchdog: Duration, work: F) -> F::Output {
+        tokio::pin!(work);
+        let started = std::time::Instant::now();
+        loop {
+            assert!(started.elapsed() < watchdog, "original I/O watchdog expired after {watchdog:?}");
+            tokio::select! {
+                biased;
+                result = &mut work => return result,
+                _ = tokio::task::yield_now() => {},
+            }
+        }
+    }
+
     #[tokio::test]
     async fn registered_resume_transfers_one_active_slot_and_preserves_raw_target_after_result_close() {
+        resume_after_result_close(false).await;
+    }
+    #[tokio::test]
+    async fn registered_resume_keeps_original_deadline_after_result_close() {
+        resume_after_result_close(true).await;
+    }
+    async fn resume_after_result_close(by_deadline: bool) {
         let (fixture, c, s) = crate::crypto_v4::tests::record_pair_for_recovery(Profile::X25519);
         let directory = scratch(); let path = std::fs::canonicalize(directory.path()).unwrap().join("execution.sqlite");
         let service = durable(&fixture.environment, path.clone());
@@ -118,7 +141,7 @@ mod registered_resume_regressions {
         ]).unwrap();
         let (token_send, token_recv) = oneshot::channel();
         let original = Arc::new(Original { token: Mutex::new(Some(token_send)), entries: AtomicUsize::new(0) });
-        let continuation = Arc::new(Continuation { entries: AtomicUsize::new(0), entered: Semaphore::new(0), release: Semaphore::new(0) });
+        let continuation = Arc::new(Continuation { entries: AtomicUsize::new(0), entered: Semaphore::new(0), release: Semaphore::new(0), cancellation: Mutex::new(None) });
         let stream_binding = ServiceResumeBinding { stream_kind: "recover".into(), stream_metadata: Metadata::empty() };
         let registration = RegisteredResumeService::new(&fixture.environment, ResumeServiceConfig { binding: stream_binding.clone(),
             definition: definition.clone(), method: resume_method.clone(), contract: resume_contract, original_contract: original_contract.clone(),
@@ -132,65 +155,87 @@ mod registered_resume_regressions {
             Duration::from_secs(3), CancellationToken::new()).await.unwrap();
         let codec = Arc::new(BytesMessageCodec::new(original_method.options().request.clone()));
         let response_codec = Arc::new(BytesMessageCodec::new(original_method.options().response.clone().unwrap()));
-        let operation = client.prepare_unary(&original_method, &vec![1], codec, response_codec,
-            UnaryPrepareOptions { admission: crate::ServiceAdmission::TryNow, ..options() }).unwrap();
-        let reference = operation.reference().unwrap();
-        let (blocker_stream, blocker_peer) = tokio::join!(client_session.open_stream("staging-check", Metadata::empty(), 65536), async {
-            server_session.next_open().await.unwrap().accept(65536).unwrap()
-        });
-        let blocker_stream = Arc::new(blocker_stream.unwrap());
-        let mut blockers = Vec::new();
-        for _ in 0..128 {
-            match crate::WriteOperation::try_prepare(blocker_stream.clone(), bytes::Bytes::from(vec![0u8; 16384])) {
-                Ok(blocker) => blockers.push(blocker),
-                Err(crate::SessionError::ResourceExhausted) => break,
-                Err(error) => panic!("unexpected staging refusal: {error:?}"),
-            }
-        }
-        assert_eq!(operation.try_start().unwrap(), crate::ServiceStartResult::NotAdmitted {
-            publication: crate::ServicePublication::NotSubmitted, reason: crate::ServiceStartRefusal::ResourceExhausted,
-        });
-        assert_eq!(operation.status(), crate::OperationStatus::NotStarted);
-        assert_eq!(operation.reference().unwrap().target(), reference.target());
-        assert_eq!(original.entries.load(Ordering::Acquire), 0);
-        for blocker in &blockers { blocker.cancel(); }
-        drop(blockers); blocker_stream.reset().await.unwrap(); blocker_peer.reset().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                match operation.try_start().unwrap() {
-                    crate::ServiceStartResult::Admitted => break,
-                    crate::ServiceStartResult::NotAdmitted { reason: crate::ServiceStartRefusal::ResourceExhausted, .. } => tokio::task::yield_now().await,
-                    refusal => panic!("unexpected retry of original prepared request: {refusal:?}"),
+        // This positive transfer must complete before the original three-second
+        // cap. The late-callback case advances to that same cap explicitly.
+        tokio::time::pause();
+        let (dispatch, target, operation) = settle_io(Duration::from_secs(3), async {
+            let operation = client.prepare_unary(&original_method, &vec![1], codec, response_codec,
+                UnaryPrepareOptions { admission: crate::ServiceAdmission::TryNow, ..options() }).unwrap();
+            let reference = operation.reference().unwrap();
+            let (blocker_stream, blocker_peer) = tokio::join!(client_session.open_stream("staging-check", Metadata::empty(), 65536), async {
+                server_session.next_open().await.unwrap().accept(65536).unwrap()
+            });
+            let blocker_stream = Arc::new(blocker_stream.unwrap());
+            let mut blockers = Vec::new();
+            for _ in 0..128 {
+                match crate::WriteOperation::try_prepare(blocker_stream.clone(), bytes::Bytes::from(vec![0u8; 16384])) {
+                    Ok(blocker) => blockers.push(blocker),
+                    Err(crate::SessionError::ResourceExhausted) => break,
+                    Err(error) => panic!("unexpected staging refusal: {error:?}"),
                 }
             }
-        }).await.unwrap();
-        let token = token_recv.await.unwrap(); assert!(operation.wait_encoded(CancellationToken::new()).await.is_err());
-        inactive(&service, &reference, &identity, &server_session).await;
-        let dispatch = tokio::spawn({ let session = server_session.clone(); let handler = registration.raw_registration().handler;
-            async move { let opening = session.next_open().await.unwrap(); crate::resume_service_v4::handle_sdk_resume_open(handler, opening, CancellationToken::new()).await } });
-        let target = client_session.open_stream("recover", Metadata::empty(), 65536).await.unwrap();
-        let recovery = client.prepare_resume(&resume_method, &target, &token, options()).unwrap();
-        let recovery_reference = recovery.reference().unwrap(); recovery.start().unwrap();
-        let result = recovery.wait_encoded(CancellationToken::new()).await.unwrap();
-        let confirmation = ApplicationResumeResult::capture(&result.payload).unwrap();
-        assert_eq!(confirmation.status(), ApplicationResumeStatus::Accepted); assert_eq!(confirmation.progress().unwrap().generation, token.generation() + 1);
-        tokio::time::timeout(Duration::from_secs(3), continuation.entered.acquire()).await.unwrap().unwrap().forget();
-        assert!(recovery.wait_cleanup().await.complete); recovery.close();
-        assert_eq!(target.read().await.unwrap().unwrap().as_ref(), b"tail");
-        let original_fact = service.observe_authorized(&reference.target(), &identity, &server_session.application_account(), false, false, None, || Ok(())).unwrap().observation.unwrap();
-        let exchange_fact = service.observe_authorized(&recovery_reference.target(), &identity, &server_session.application_account(), false, false, None, || Ok(())).unwrap().observation.unwrap();
-        assert!(original_fact.work_active); assert_eq!(original_fact.state, ExecutionState::Executing);
-        assert!(!exchange_fact.work_active); assert!(exchange_fact.result_available);
-        assert_eq!(original.entries.load(Ordering::Acquire), 1); assert_eq!(continuation.entries.load(Ordering::Acquire), 1);
-        // The live store owns an exclusive SQLite connection. Inspect its
-        // persisted rows under the store lock while the continuation is active.
-        let active: u32 = service.with_test_store_connection(|database| database.query_row(
-            "SELECT COUNT(*) FROM execution_record WHERE json_extract(CAST(metadata AS TEXT),'$.active')=1", [], |row| row.get(0)).unwrap());
-        assert_eq!(active, 1);
-        continuation.release.add_permits(1); inactive(&service, &reference, &identity, &server_session).await;
-        let mut original_result = [0; 128]; let (count, code) = service.read_authorized(&reference.target(), &identity, &server_session.application_account(), false,
-            &mut original_result, || Ok(())).unwrap();
-        assert_eq!(&original_result[..count], b"retained-original-result"); assert_eq!(code, None);
+            assert_eq!(operation.try_start().unwrap(), crate::ServiceStartResult::NotAdmitted {
+                publication: crate::ServicePublication::NotSubmitted, reason: crate::ServiceStartRefusal::ResourceExhausted,
+            });
+            assert_eq!(operation.status(), crate::OperationStatus::NotStarted);
+            assert_eq!(operation.reference().unwrap().target(), reference.target());
+            assert_eq!(original.entries.load(Ordering::Acquire), 0);
+            for blocker in &blockers { blocker.cancel(); }
+            drop(blockers); blocker_stream.reset().await.unwrap(); blocker_peer.reset().await.unwrap();
+            settle_io(Duration::from_secs(1), tokio::time::timeout(Duration::from_secs(1), async {
+                loop {
+                    match operation.try_start().unwrap() {
+                        crate::ServiceStartResult::Admitted => break,
+                        crate::ServiceStartResult::NotAdmitted { reason: crate::ServiceStartRefusal::ResourceExhausted, .. } => tokio::task::yield_now().await,
+                        refusal => panic!("unexpected retry of original prepared request: {refusal:?}"),
+                    }
+                }
+            })).await.unwrap();
+            let token = token_recv.await.unwrap(); assert!(operation.wait_encoded(CancellationToken::new()).await.is_err());
+            inactive(&service, &reference, &identity, &server_session).await;
+            let dispatch = tokio::spawn({ let session = server_session.clone(); let handler = registration.raw_registration().handler;
+                async move { let opening = session.next_open().await.unwrap(); crate::resume_service_v4::handle_sdk_resume_open(handler, opening, CancellationToken::new()).await } });
+            let target = client_session.open_stream("recover", Metadata::empty(), 65536).await.unwrap();
+            let recovery = client.prepare_resume(&resume_method, &target, &token, options()).unwrap();
+            let recovery_reference = recovery.reference().unwrap(); recovery.start().unwrap();
+            let result = recovery.wait_encoded(CancellationToken::new()).await.unwrap();
+            let confirmation = ApplicationResumeResult::capture(&result.payload).unwrap();
+            assert_eq!(confirmation.status(), ApplicationResumeStatus::Accepted); assert_eq!(confirmation.progress().unwrap().generation, token.generation() + 1);
+            tokio::time::timeout(Duration::from_secs(3), continuation.entered.acquire()).await.unwrap().unwrap().forget();
+            assert!(recovery.wait_cleanup().await.complete); recovery.close();
+            assert_eq!(target.read().await.unwrap().unwrap().as_ref(), b"tail");
+            let original_fact = service.observe_authorized(&reference.target(), &identity, &server_session.application_account(), false, false, None, || Ok(())).unwrap().observation.unwrap();
+            let exchange_fact = service.observe_authorized(&recovery_reference.target(), &identity, &server_session.application_account(), false, false, None, || Ok(())).unwrap().observation.unwrap();
+            assert!(original_fact.work_active); assert_eq!(original_fact.state, ExecutionState::Executing);
+            assert!(!exchange_fact.work_active); assert!(exchange_fact.result_available);
+            assert_eq!(original.entries.load(Ordering::Acquire), 1); assert_eq!(continuation.entries.load(Ordering::Acquire), 1);
+            // The live store owns an exclusive SQLite connection. Inspect its
+            // persisted rows under the store lock while the continuation is active.
+            let active: u32 = service.with_test_store_connection(|database| database.query_row(
+                "SELECT COUNT(*) FROM execution_record WHERE json_extract(CAST(metadata AS TEXT),'$.active')=1", [], |row| row.get(0)).unwrap());
+            assert_eq!(active, 1);
+            if by_deadline {
+                tokio::time::advance(options().timeout).await;
+                let cancellation = continuation.cancellation.lock().unwrap().clone().unwrap();
+                settle_io(Duration::from_secs(3), cancellation.cancelled()).await;
+                assert!(service.observe_authorized(&reference.target(), &identity, &server_session.application_account(), false, false, None, || Ok(())).unwrap().observation.unwrap().work_active,
+                    "the canceled continuation keeps its original active slot until actual return");
+            }
+            continuation.release.add_permits(1); inactive(&service, &reference, &identity, &server_session).await;
+            let terminal = service.observe_authorized(&reference.target(), &identity, &server_session.application_account(), false, false, None, || Ok(())).unwrap().observation.unwrap();
+            let mut original_result = [0; 128]; let result = service.read_authorized(&reference.target(), &identity, &server_session.application_account(), false,
+                &mut original_result, || Ok(()));
+            if by_deadline {
+                assert_eq!(result.unwrap_err().0, ServiceFailure::DeadlineExceeded);
+                assert_eq!(terminal.error, Some(ServiceFailure::DeadlineExceeded));
+                assert!(!terminal.result_available);
+            } else {
+                let (count, code) = result.unwrap();
+                assert_eq!(&original_result[..count], b"retained-original-result"); assert_eq!(code, None);
+            }
+            (dispatch, target, operation)
+        }).await;
+        tokio::time::resume();
         dispatch.await.unwrap().unwrap(); target.reset().await.unwrap(); operation.close(); peer.close(); server.close();
         client_session.close(); server_session.close(); c_task.abort(); s_task.abort();
         drop(service); let _ = fixture.environment.close().await; drop(fixture); drop(directory);
@@ -514,14 +559,20 @@ mod registered_resume_regressions {
             let store = Arc::new(StreamingSaveStore { behavior: StreamingSaveBehavior::CommitThenHold, bytes: 32768,
                 persistent: reference_store.clone(), entered: Semaphore::new(0), release: Semaphore::new(0), calls: AtomicUsize::new(0), persisted: Mutex::new(None) });
             let cancellation = CancellationToken::new();
+            // Prove the real COMMIT and readback before expiring the original
+            // 100 ms delivery deadline; persistence is not a second delivery.
+            if by_deadline { tokio::time::pause(); }
             let pending = tokio::spawn({
                 let client = client.clone(); let method = original_method.clone(); let store = store.clone(); let cancellation = cancellation.clone();
                 async move { prepare_saved_stream(&client, &method, asynchronous, store, cancellation,
                     if by_deadline { Duration::from_millis(100) } else { Duration::from_secs(3) }).await }
             });
-            tokio::time::timeout(Duration::from_secs(2), store.entered.acquire()).await.unwrap().unwrap().forget();
+            settle_io(Duration::from_secs(2), tokio::time::timeout(Duration::from_secs(2), store.entered.acquire())).await.unwrap().unwrap().forget();
             assert_eq!(original_entries.load(Ordering::Acquire), 0);
-            if !by_deadline { cancellation.cancel(); }
+            if by_deadline {
+                tokio::time::advance(Duration::from_millis(100)).await;
+                tokio::time::resume();
+            } else { cancellation.cancel(); }
             let error = tokio::time::timeout(Duration::from_secs(2), pending).await.unwrap().unwrap().unwrap_err();
             let crate::PrepareAndSaveError::Save(failure) = error else { panic!("unexpected preparation failure: {error:?}"); };
             assert_eq!(failure.failure, if by_deadline { ServiceFailure::DeadlineExceeded } else { ServiceFailure::Canceled });
