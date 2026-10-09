@@ -1318,6 +1318,91 @@
             "expr": "flowersec.DuplexStream.Close",
             "doc_token": "`flowersec.DuplexStream`",
             "signature": "func(flowersec.DuplexStream) error"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.InvitationCode",
+            "doc_token": "`flowersec.InvitationCode`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.InvitationExchangeOptions",
+            "doc_token": "`flowersec.InvitationExchangeOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.InvitationExchangeHandlerOptions",
+            "doc_token": "`flowersec.InvitationExchangeHandlerOptions`"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.InvitationExchangeError",
+            "doc_token": "`flowersec.InvitationExchangeError`"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidInvitationCode",
+            "doc_token": "`flowersec.ErrInvalidInvitationCode`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewInvitationCode",
+            "doc_token": "`flowersec.NewInvitationCode`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.DeriveInvitationCode",
+            "doc_token": "`flowersec.DeriveInvitationCode`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.ParseInvitationCode",
+            "doc_token": "`flowersec.ParseInvitationCode`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.ExchangeInvitation",
+            "doc_token": "`flowersec.ExchangeInvitation`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewInvitationExchangeHandler",
+            "doc_token": "`flowersec.NewInvitationExchangeHandler`"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.RejectInvitationExchange",
+            "doc_token": "`flowersec.RejectInvitationExchange`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.String",
+            "doc_token": "`flowersec.InvitationCode`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.GoString",
+            "doc_token": "`flowersec.InvitationCode`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.MarshalJSON",
+            "doc_token": "`flowersec.InvitationCode`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.Text",
+            "doc_token": "`flowersec.InvitationCode`"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.LookupID",
+            "doc_token": "`flowersec.InvitationCode`"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.InvitationExchangeError).Error",
+            "doc_token": "`flowersec.InvitationExchangeError`"
           }
         ]
       },

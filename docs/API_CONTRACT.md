@@ -64,6 +64,18 @@ Every production CA-mode TLS connector validates both the certificate chain and 
 
 The public contract is split into four layers. The portable core is the shared artifact, lease, one-shot connector, session, RPC, and stream model implemented by every SDK. An optional `ConnectionController` is the sole Flowersec long-lived connection owner above a refreshable artifact source. Each SDK profile records runtime-owned carrier support, listener support, and platform trust constraints. A language convenience is an ecosystem-specific API shape layered on top of the portable core, not a promise that every SDK exposes the same syntax. Retry decisions are structured as `terminal`, `retryable`, or an absolute `retry_after` deadline. The public connection, session, controller, and unreliable-message codes are frozen cross-language values; only application-defined RPC error-code taxonomies remain SDK-local. Unversioned artifact, lease, connector, error, and controller names are the only current public entrypoints.
 
+## Authenticated invitation exchange
+
+The Go-only enrollment API exposes `flowersec.InvitationCode`, `flowersec.NewInvitationCode`,
+`flowersec.DeriveInvitationCode`, `flowersec.ParseInvitationCode`, `flowersec.ErrInvalidInvitationCode`,
+`flowersec.InvitationExchangeOptions`, `flowersec.InvitationExchangeHandlerOptions`,
+`flowersec.ExchangeInvitation`, `flowersec.NewInvitationExchangeHandler`,
+`flowersec.InvitationExchangeError`, and `flowersec.RejectInvitationExchange`. This separate WSS
+profile authenticates descriptor delivery with a high-entropy invitation. It
+does not extend the portable Session or ordinary CA/pin connector contract.
+See [INVITATION_EXCHANGE_V1.md](INVITATION_EXCHANGE_V1.md) for the complete
+credential, TLS, transcript, application-ownership, and resource boundary.
+
 ## Product-private loopback adapter
 
 The Go server surface adds `flowersec.PrivateLoopbackHandlerOptions` and

@@ -51,6 +51,16 @@ cross-runtime profile or interoperability guarantee. The SDK does not claim
 that browser JavaScript verified P-256-only; deployments requiring that proof
 must use a native verifier or an explicitly browser-supported profile.
 
+## Invitation enrollment boundary
+
+The explicit Go invitation profile authenticates descriptor exchange using an
+out-of-band 128-bit secret and Noise NNpsk0. Its enrollment-only TLS verifier
+permits a valid self-signed server leaf; the Noise transcript authenticates the
+issuer before accepting any descriptor. It never installs that certificate or
+changes ordinary CA/pin verification. Membership, expiry, explicit consent,
+single-use binding, and descriptor signatures remain application-owned. See
+[INVITATION_EXCHANGE_V1.md](INVITATION_EXCHANGE_V1.md).
+
 ## Admission and Session Security
 
 The application durably commits a lease only after TLS establishes a candidate
