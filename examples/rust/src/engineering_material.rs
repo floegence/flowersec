@@ -626,9 +626,12 @@ fn bootstrap(url: &str, root_der: &[u8], body: &[u8]) -> Result<Vec<u8>> {
                 "*",
                 "--proto",
                 "=http,https",
-                "--tlsv1.3",
-                "--tls-max",
-                "1.3",
+                // Apple's SecureTransport-backed curl rejects the explicit
+                // TLS 1.3 selector even though it negotiates TLS 1.3 when the
+                // server's policy requires it. Keep a TLS floor here; the
+                // parity peer only advertises TLS 1.3, so a downgrade cannot
+                // be accepted by the endpoint.
+                "--tlsv1.2",
                 "--cacert",
             ])
             .arg(&root_path)
