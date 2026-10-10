@@ -778,7 +778,8 @@ func cleanupTunnelFailure(owners ...func(context.Context) error) error {
 }
 
 func verifyTunnelResetCancellationAndDatagram(ctx context.Context, pair *tunnelworkload.Pair, kind carrier.Kind) error {
-	stream, err := pair.Client.OpenStream(ctx, "weaknet-tunnel-reset", flowersec.EmptyStreamMetadata())
+	// Exercise Reset on the endpoint's original registered manual stream kind.
+	stream, err := pair.Client.OpenStream(ctx, "release-tunnel-bulk", flowersec.EmptyStreamMetadata())
 	if err != nil {
 		return err
 	}
