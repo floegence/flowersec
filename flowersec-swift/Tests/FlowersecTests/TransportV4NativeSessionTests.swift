@@ -48,7 +48,13 @@
     }
     // Independently observe durable pending state; never mutate or reopen its
     // exclusive owner to fabricate completion or recovery.
-    static func pendingJournal(_ directory: URL) throws -> [Data] {
+    static func pendingJournal(_ directory: URL, in environment: V4EnvironmentFoundation) throws -> [Data] {
+      // The independent SQLite reader must not overlap the exclusive owner's
+      // local transaction. Observe actual durable bytes under its original
+      // storage gate without mutating or manufacturing journal completion.
+      try environment.gate.withLock { try readPendingJournal(directory) }
+    }
+    private static func readPendingJournal(_ directory: URL) throws -> [Data] {
       var handle: OpaquePointer?
       let opened = sqlite3_open_v2(
         directory.appendingPathComponent("refill.sqlite3").path, &handle,
@@ -747,7 +753,7 @@
           // This original proof was initiated by configured background upkeep.
           // Holding its real HTTPS reply keeps the durable operation pending.
           try await controls.waitForProof()
-          let pending = try V4ManagedPoolAuthority.pendingJournal(test.directory)
+          let pending = try V4ManagedPoolAuthority.pendingJournal(test.directory, in: test.fixture.base.environment)
           let originalIntent = try V4PoolRefillIntent.decode(pending[1])
           XCTAssertEqual(originalIntent.deadlineMS, 6000)
           let retained = test.fixture.base.root.snapshot()
@@ -764,7 +770,7 @@
           }
           try await canceled()
           XCTAssertEqual(
-            try V4ManagedPoolAuthority.pendingJournal(test.directory), pending,
+            try V4ManagedPoolAuthority.pendingJournal(test.directory, in: test.fixture.base.environment), pending,
             "Acquire must preserve the original pending operation, generation and deadline")
           XCTAssertEqual(
             test.fixture.base.root.snapshot(), retained,
@@ -776,7 +782,7 @@
           if scenario == .success {
             controls.release()
             try await controls.waitForAcknowledgement()
-            let installed = try V4ManagedPoolAuthority.pendingJournal(test.directory)
+            let installed = try V4ManagedPoolAuthority.pendingJournal(test.directory, in: test.fixture.base.environment)
             XCTAssertEqual(
               installed[1], pending[1], "Background installation must retain its original request")
             try await canceled()
@@ -807,7 +813,7 @@
             XCTAssertTrue(cleanup.complete)
             XCTAssertEqual(cleanup.pendingCallbacks, 0)
             XCTAssertEqual(
-              try V4ManagedPoolAuthority.pendingJournal(test.directory), pending,
+              try V4ManagedPoolAuthority.pendingJournal(test.directory, in: test.fixture.base.environment), pending,
               "Close or invalid proof must not replace or retire the original pending operation")
             let released = test.fixture.base.root.snapshot()
             do {
