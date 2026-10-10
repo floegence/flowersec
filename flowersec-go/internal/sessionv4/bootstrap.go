@@ -146,7 +146,7 @@ func (b *Bootstrap) Complete() error {
 	b.creation, b.complete = creation, true
 	s.phase = openLive
 	a.highestAccepted[b.spec.Opener] = max(a.highestAccepted[b.spec.Opener], s.scope)
-	notifyOpenWait(a.outcomeWake[a.find(s.scope)])
+	notifyOpenWait(a.outcomeWakeLocked(a.find(s.scope)))
 	return nil
 }
 
@@ -199,7 +199,7 @@ func (b *Bootstrap) WaitMaterialized(ctx context.Context) error {
 	}
 	s.outcomeWaiting = true
 	s.retirementReferences++
-	wake := a.outcomeWake[a.find(s.scope)]
+	wake := a.outcomeWakeLocked(a.find(s.scope))
 	a.mu.Unlock()
 	defer a.finishOutcomeWait(b.handle)
 	for {
@@ -354,7 +354,7 @@ func (b *Bootstrap) PublishPrefix(ctx context.Context) (result RecordWriteResult
 	if s, lookupErr := a.slot(b.handle); lookupErr == nil {
 		s.deciding = false
 		b.materialized = err == nil && result.Complete
-		notifyOpenWait(a.outcomeWake[a.find(s.scope)])
+		notifyOpenWait(a.outcomeWakeLocked(a.find(s.scope)))
 	}
 	flow.send.mu.Lock()
 	flow.send.active = false
@@ -417,6 +417,6 @@ func (b *Bootstrap) BindPeerPrefix(record *ReceivedRecord, carrier *CarrierAssoc
 	flow.lastObserved = flow.observed
 	s.header, s.submitted = f.Header, true
 	b.materialized = true
-	notifyOpenWait(a.outcomeWake[a.find(s.scope)])
+	notifyOpenWait(a.outcomeWakeLocked(a.find(s.scope)))
 	return nil
 }

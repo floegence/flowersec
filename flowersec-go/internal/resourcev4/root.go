@@ -1,6 +1,7 @@
 package resourcev4
 
 import (
+	"hash/maphash"
 	"math"
 	"sync"
 	"unsafe"
@@ -47,7 +48,11 @@ type Root struct {
 	accounts                   []accountSlot
 	charges                    []chargeSlot
 	refs                       []referenceSlot
-	referenceExtent            int
+	referenceLinks             []referenceLinks
+	ownerBuckets               []uint32
+	ownerSeed                  maphash.Seed
+	freeChargeFirst            uint32
+	freeReferenceFirst         uint32
 	chargeCount                uint32
 	referenceCount             uint32
 	resultCount                uint32
@@ -64,6 +69,7 @@ type accountSlot struct {
 }
 
 type chargeSlot struct {
+	freeNext                uint32
 	verificationEnvironment [16]byte
 	applicationService      bool
 	resultOwner             bool
@@ -71,7 +77,7 @@ type chargeSlot struct {
 	protectedClosed         bool
 	generation              uint64
 	value                   Vector
-	accounts                [MaxAccountsPerCharge]Account
+	accounts                [MaxAccountsPerCharge]accountSlotKey
 	accountRefs             [MaxAccountsPerCharge]uint32
 	count                   int
 	refs                    uint32
@@ -86,6 +92,22 @@ type Account struct {
 	generation uint64
 }
 
+// A slot key is retained only inside its owning root. Public handles keep the
+// root identity so equal indexes and generations never cross authorities.
+type accountSlotKey struct {
+	index      uint32
+	generation uint64
+}
+
+// Validate the public handle's root before retaining or comparing this key.
+func (a Account) slotKey() accountSlotKey {
+	return accountSlotKey{index: a.index, generation: a.generation}
+}
+
+func (a accountSlotKey) account(r *Root) Account {
+	return Account{root: r, index: a.index, generation: a.generation}
+}
+
 func BackingBytes(config Config) (uint64, error) {
 	if config.ProfileRevision == [32]byte{} || config.AccountSlots == 0 || config.ReservationSlots == 0 || config.ReferenceSlots < config.ReservationSlots {
 		return 0, ErrConfiguration
@@ -98,6 +120,8 @@ func BackingBytes(config Config) (uint64, error) {
 		{config.AccountSlots, unsafe.Sizeof(accountSlot{})},
 		{config.ReservationSlots, unsafe.Sizeof(chargeSlot{})},
 		{config.ReferenceSlots, unsafe.Sizeof(referenceSlot{})},
+		{config.ReferenceSlots, unsafe.Sizeof(referenceLinks{})},
+		{config.ReferenceSlots, unsafe.Sizeof(uint32(0))},
 	} {
 		if uint64(part.count) > uint64(math.MaxInt)/uint64(part.size) {
 			return 0, ErrConfiguration
@@ -119,8 +143,20 @@ func NewRoot(config Config) (*Root, error) {
 	if err != nil || backing > config.Limit[SDKBytes] {
 		return nil, ErrConfiguration
 	}
-	return &Root{profile: config.ProfileRevision, limit: config.Limit, used: Vector{SDKBytes: backing}, peak: Vector{SDKBytes: backing},
-		accounts: make([]accountSlot, int(config.AccountSlots)), charges: make([]chargeSlot, int(config.ReservationSlots)), refs: make([]referenceSlot, int(config.ReferenceSlots))}, nil
+	r := &Root{profile: config.ProfileRevision, limit: config.Limit, used: Vector{SDKBytes: backing}, peak: Vector{SDKBytes: backing},
+		accounts: make([]accountSlot, int(config.AccountSlots)), charges: make([]chargeSlot, int(config.ReservationSlots)), refs: make([]referenceSlot, int(config.ReferenceSlots)),
+		referenceLinks: make([]referenceLinks, int(config.ReferenceSlots)), ownerBuckets: make([]uint32, int(config.ReferenceSlots)), ownerSeed: maphash.MakeSeed(),
+		freeChargeFirst: 1, freeReferenceFirst: 1}
+	for i := range r.charges[:len(r.charges)-1] {
+		r.charges[i].freeNext = uint32(i) + 2
+	}
+	for i := range r.referenceLinks {
+		r.referenceLinks[i].previous = uint32(i)
+		if i+1 < len(r.referenceLinks) {
+			r.referenceLinks[i].next = uint32(i) + 2
+		}
+	}
+	return r, nil
 }
 
 func (r *Root) Account(key AccountKey, limit Vector) (Account, error) {
@@ -157,7 +193,14 @@ func (r *Root) Account(key AccountKey, limit Vector) (Account, error) {
 }
 
 func (a Account) slotLocked(r *Root) *accountSlot {
-	if a.root != r || a.generation == 0 || uint64(a.index) >= uint64(len(r.accounts)) {
+	if a.root != r {
+		return nil
+	}
+	return a.slotKey().slotLocked(r)
+}
+
+func (a accountSlotKey) slotLocked(r *Root) *accountSlot {
+	if a.generation == 0 || uint64(a.index) >= uint64(len(r.accounts)) {
 		return nil
 	}
 	s := &r.accounts[a.index]

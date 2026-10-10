@@ -143,7 +143,7 @@ func (d *ServiceDispatch) dispatchStreamOpen(transport *sessionStreamDispatcher,
 		if metadataSize > len(snapshot) {
 			err = cryptov4.ErrConfiguration
 		} else {
-			copy(snapshot[:], a.metadata[s.metadataStart:s.metadataStart+metadataSize])
+			a.metadata.copyRange(snapshot[:], s.metadataStart, s.metadataStart+metadataSize)
 		}
 	}
 	a.mu.Unlock()

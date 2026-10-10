@@ -178,6 +178,9 @@ func newUnattachedTunnelServerRecipient(pin artifactLeaseUse, identity identityU
 	}
 	if r.live {
 		limit, _ := protocolv4.SchemaByteLimit("Grant")
+		// A signed Grant can fail its containing request/closure checks while
+		// this registration remains usable. Keep full reusable capacity until
+		// captureLiveGrant accepts the original request or the recipient exits.
 		r.grantCodec, err = protocolv4.NewSignedMapCodec("Grant", limit, limit)
 		if err != nil {
 			return nil, err

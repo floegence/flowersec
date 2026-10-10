@@ -20,8 +20,8 @@ type SQLiteAdmissionAuthority interface {
 	CheckAdmission(SQLiteIdentity, protocolv4.AdmissionFacts) error
 }
 
-// SQLiteAdmissionScheduler optionally schedules finite original accepted
-// positions before their reserve/admit operations use one shared connection.
+// SQLiteAdmissionScheduler optionally schedules finite original admission
+// positions before their durable operations use one shared connection.
 // It must observe the supplied original context without retrying durable work.
 // A successful call returns one release that the caller invokes exactly once.
 type SQLiteAdmissionScheduler interface {

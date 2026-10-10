@@ -128,11 +128,7 @@ func NewWebTransportCarrierFactory(c WebTransportFactoryConfig, reservation, env
 	if err != nil {
 		return nil, err
 	}
-	decoder, err := protocolv4.NewDecoder(webTransportFactoryRouteBytes, webTransportFactoryRouteNodes)
-	if err != nil {
-		return nil, err
-	}
-	factory.document, err = decoder.DecodeMap(c.Route, "Route", protocolv4.DecodeContext{})
+	factory.document, err = protocolv4.NewOnceDocument(c.Route, "Route", webTransportFactoryRouteBytes, webTransportFactoryRouteNodes, protocolv4.DecodeContext{})
 	if err != nil {
 		return nil, err
 	}

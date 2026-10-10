@@ -129,6 +129,9 @@ func (s *Server) IndependentAuthority() (authority *sessionv4.PublicQUICTestHarn
 	if err != nil {
 		return nil, err
 	}
+	if child.Capacity != nil {
+		child.Capacity = &sessionv4.EngineeringHostCapacity{Sessions: 1, Materials: 1}
+	}
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, child.Close())
@@ -169,6 +172,7 @@ func (s *Server) NewHTTPAcceptPosition(source *AcceptedMaterials, handlers Handl
 		}
 	}()
 	runtime := &Runtime{Reporter: reporter, Authority: h, Role: 1, Executor: s.Runtime.Executor}
+	reporter.Owner(runtime.CloseOwners, runtime.WaitOwners)
 	err = runtime.initialize(s.context, []uint8{1}, handlers)
 	if err != nil {
 		return nil, err
@@ -250,6 +254,11 @@ func (s *Server) IssueAuthority(policy []byte, address netip.AddrPort) (*session
 	if err != nil {
 		return nil, err
 	}
+	if child.Capacity != nil {
+		// Detached issuance owns only one temporary authority graph. It does
+		// not inherit the listener's retained Session/material positions.
+		child.Capacity = &sessionv4.EngineeringHostCapacity{Materials: 1}
+	}
 	authority, err := construct(child, func() *sessionv4.PublicQUICTestHarness {
 		return sessionv4.NewEngineeringNativeHarness(child, s.Runtime.Authority.Lease.Source, s.Runtime.Authority.Admission[0].Initial.Profile, s.Carrier, address, policy, s.Origin, s.Carrier != "websocket" && s.Carrier != "local-websocket")
 	})
@@ -274,6 +283,9 @@ func (s *Server) IssueDirectRouteSet(routes [][]byte) (*sessionv4.PublicQUICTest
 	child, err := s.Runtime.Reporter.detachedAuthority()
 	if err != nil {
 		return nil, err
+	}
+	if child.Capacity != nil {
+		child.Capacity = &sessionv4.EngineeringHostCapacity{Materials: 1}
 	}
 	child.directRoutes = make([][]byte, len(routes))
 	for index, route := range routes {

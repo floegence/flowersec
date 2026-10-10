@@ -62,11 +62,7 @@ func (p *SessionEstablishment) connectLiveSQLite(a *SessionAdmissionReservation,
 			return nil, cryptov4.ErrConfiguration
 		}
 		publication = allow[0]
-		fields, _, err := issuance.CopyProjection(p.fsbCopy)
-		if err != nil {
-			return nil, err
-		}
-		serverRequest, err = publication.Request(issuance, fields, a.config.Initial.Deadline.Cap())
+		serverRequest, err = p.liveServerAllowRequest(issuance, publication, a.config.Initial.Deadline.Cap())
 		if err != nil {
 			return nil, err
 		}
@@ -150,6 +146,20 @@ func (p *SessionEstablishment) connectLiveSQLite(a *SessionAdmissionReservation,
 		return nil, err
 	}
 	return p.connectActivated(a, initial)
+}
+
+// The plan exposes its frozen projection through CopyProjection. Preserve the
+// original full MapBytes refusal and erase this private scratch when copying
+// and request construction actually return. Request retains detached fields
+// from the plan, never byte views into this buffer or signed publication bytes.
+func (p *SessionEstablishment) liveServerAllowRequest(issuance *protocolv4.LiveActivationPlan, publication LiveServerAllowConfig, end uint64) (TunnelServerAllowRequest, error) {
+	projection := make([]byte, p.mapBytes)
+	defer clear(projection)
+	fields, _, err := issuance.CopyProjection(projection)
+	if err != nil {
+		return TunnelServerAllowRequest{}, err
+	}
+	return publication.Request(issuance, fields, end)
 }
 
 // activateLiveProof is the shared local gate for in-process and authenticated

@@ -174,8 +174,7 @@ func (a *OpenAdmission) cleanupClosed(ctx context.Context) error {
 			*s = openSlot{}
 		}
 		clear(a.index)
-		clear(a.metadata)
-		clear(a.metadataUsed)
+		a.metadata.clear()
 		clear(a.encode)
 		a.active, a.opening, a.pending, a.positiveProofs, a.rejectionProofs = 0, 0, 0, 0, 0
 		a.byOpener = [2][3]uint32{}
@@ -291,8 +290,12 @@ func (a *OpenAdmission) Retire() error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.slots, a.index, a.metadata, a.metadataUsed, a.encode = nil, nil, nil, nil, nil
-	a.stable = [2][]uint64{}
+	a.slots, a.index, a.encode = nil, nil, nil
+	a.metadata = openMetadataArena{}
+	for i := range a.stable {
+		a.stable[i].Clear()
+		a.stable[i] = nil
+	}
 	a.decoder = nil
 	a.diagnostics = nil
 	a.diagnosticOperation = nil

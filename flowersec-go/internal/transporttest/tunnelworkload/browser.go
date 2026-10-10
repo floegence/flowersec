@@ -61,6 +61,7 @@ type BrowserEndpoint struct {
 	constructionDone                  chan struct{}
 	closed                            bool
 	browserRuntimeBound               bool
+	capacityDeclared                  bool
 }
 
 // BrowserArtifact owns one original paired PoolService publication. Start arms
@@ -109,10 +110,18 @@ func OpenBrowserCapacityEndpointAt(ctx context.Context, topology BrowserTopology
 	if sessions != 1000 && sessions != 100 {
 		return nil, errors.New("browser tunnel capacity must use an exact supported session count")
 	}
-	return openCurrentBrowserEndpoint(ctx, topology, host, origin, sessions)
+	endpoint, err := openCurrentBrowserEndpoint(ctx, topology, host, origin, sessions)
+	if err == nil {
+		endpoint.capacityDeclared = true
+	}
+	return endpoint, err
 }
 func OpenBrowserStreamCapacityEndpointAt(ctx context.Context, topology BrowserTopology, host, origin string) (*BrowserEndpoint, error) {
-	return openCurrentBrowserEndpoint(ctx, topology, host, origin, 100)
+	endpoint, err := openCurrentBrowserEndpoint(ctx, topology, host, origin, 100)
+	if err == nil {
+		endpoint.capacityDeclared = true
+	}
+	return endpoint, err
 }
 func openCurrentBrowserEndpoint(ctx context.Context, topology BrowserTopology, host, origin string, positions int) (*BrowserEndpoint, error) {
 	if ctx == nil || positions < 1 || positions > 1000 {
@@ -198,6 +207,9 @@ func (e *BrowserEndpoint) IssueBrowserArtifact() (_ *BrowserArtifact, resultErr 
 	if err != nil {
 		return nil, err
 	}
+	if e.capacityDeclared {
+		declareTunnelCapacity(relayReporter, true)
+	}
 	now, err := relayReporter.AuthorityClock().Sample()
 	if err != nil {
 		return nil, err
@@ -241,6 +253,9 @@ func (e *BrowserEndpoint) IssueBrowserArtifact() (_ *BrowserArtifact, resultErr 
 	serverReporter, err := reporter()
 	if err != nil {
 		return nil, err
+	}
+	if e.capacityDeclared {
+		declareTunnelCapacity(serverReporter, false)
 	}
 	artifact.server, err = interopharness.NewTunnelServer(ctx, serverReporter, serverWire, artifact.relay.TrustPEM, e.origin, currentBrowserHandlers(), interopharness.TunnelServerOptions{SocketScope: endpointScope})
 	if err != nil {
@@ -553,6 +568,7 @@ func OpenBrowserBatchEndpointAt(ctx context.Context, topology BrowserTopology, h
 		return nil, err
 	}
 	endpoint.operationDeadlineMS = uint64(plan.Cold.OperationDeadlineSeconds) * 1000
+	endpoint.capacityDeclared = true
 	return endpoint, nil
 }
 func currentBrowserHandlers() interopharness.HandlerConfig {

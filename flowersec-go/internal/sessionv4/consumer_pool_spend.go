@@ -1,11 +1,24 @@
 package sessionv4
 
 import (
+	"context"
+
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
+
+// sqliteAdmissionScheduleContext retains the actual admission's original work
+// boundary while an engineering authority waits for its shared connection.
+// Scheduling neither constructs a deadline nor owns a durable invocation.
+type sqliteAdmissionScheduleContext struct {
+	context.Context
+	deadline *timev4.Deadline
+	guard    func() error
+	wake     <-chan struct{}
+}
 
 // ConsumePoolSQLite binds issuance-time pool material to the original local
 // winner, verifies current activation trust before the write, and performs one
@@ -58,6 +71,19 @@ func (a *SessionAdmissionReservation) ConsumePoolSQLite(store *ledgerv4.SQLiteSt
 		}
 	}()
 	guard := func() error { a.mu.Lock(); defer a.mu.Unlock(); return a.checkLocked() }
+	if scheduler, ok := authority.(ledgerv4.SQLiteAdmissionScheduler); ok {
+		release, scheduleErr := scheduler.ScheduleAdmission(sqliteAdmissionScheduleContext{Context: a.ctx, deadline: a.config.Initial.Deadline, guard: guard, wake: a.wake})
+		if scheduleErr != nil {
+			return nil, scheduleErr
+		}
+		if release == nil {
+			return nil, cryptov4.ErrConfiguration
+		}
+		defer release()
+		if err = guard(); err != nil {
+			return nil, err
+		}
+	}
 	durable, err := ledgerv4.NewSQLitePoolSpend(a.ctx, store, authority, facts, proof, a.poolOwner, a.config.Core.Clock, a.config.Initial.Deadline, guard, reservation, a.environment, observations...)
 	if err != nil {
 		return nil, err

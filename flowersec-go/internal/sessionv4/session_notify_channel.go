@@ -258,7 +258,7 @@ func (r *RPCServices) dispatchNotifyOpen(h OpenHandle, writer *RecordWriter) (bo
 		a.mu.Unlock()
 		return false, err
 	}
-	matched := string(a.metadata[s.metadataStart:s.metadataStart+s.kindSize]) == spec.Kind
+	matched := a.metadata.equals(s.metadataStart, s.metadataStart+s.kindSize, spec.Kind)
 	valid := s.metadataSize == s.kindSize && s.peerLimit >= 16384
 	a.mu.Unlock()
 	if !matched {

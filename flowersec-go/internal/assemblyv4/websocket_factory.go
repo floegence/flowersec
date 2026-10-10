@@ -131,11 +131,7 @@ func NewWebSocketCarrierFactory(c WebSocketFactoryConfig, reservation, environme
 	if err != nil {
 		return nil, err
 	}
-	decoder, err := protocolv4.NewDecoder(webSocketFactoryRouteBytes, webSocketFactoryRouteNodes)
-	if err != nil {
-		return nil, err
-	}
-	factory.document, err = decoder.DecodeMap(c.Route, "Route", protocolv4.DecodeContext{})
+	factory.document, err = protocolv4.NewOnceDocument(c.Route, "Route", webSocketFactoryRouteBytes, webSocketFactoryRouteNodes, protocolv4.DecodeContext{})
 	if err != nil {
 		return nil, err
 	}

@@ -23,5 +23,5 @@ func (ref Reference) RetainsCleanupScope(session Account, backing Reference) boo
 		}
 	}
 	account := session.slotLocked(r)
-	return account != nil && account.key.Kind == SessionAccount && accountIndex(s.accounts[:s.count], session) >= 0
+	return account != nil && account.key.Kind == SessionAccount && accountIndex(s.accounts[:s.count], session.slotKey()) >= 0
 }

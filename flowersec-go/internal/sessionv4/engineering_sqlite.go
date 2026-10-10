@@ -19,7 +19,7 @@ func authorityConsumePool(t AuthorityReporter, f *authorityFixture, a *SessionAd
 		t.Fatal(err)
 	}
 	fields, _ := facts.Fields()
-	authority := poolSQLiteAuthority{acceptedSQLiteAuthority: acceptedSQLiteAuthority{identity: ledgerv4.SQLiteIdentity{Authority: "local.consumer", StoreID: [32]byte{2}, Generation: 1}}, original: fields}
+	authority := poolSQLiteAuthority{acceptedSQLiteAuthority: acceptedSQLiteAuthority{identity: ledgerv4.SQLiteIdentity{Authority: "local.consumer", StoreID: [32]byte{2}, Generation: 1}}, original: fields, admissionGate: make(chan struct{}, 1)}
 	var result *InitialExchange
 	err = authoritySessionSQLite(t, f, a, authority.identity, authority, 4096, func(store *ledgerv4.SQLiteStore, reserve func(uint32, resourcev4.Vector) resourcev4.Reference) error {
 		authority.parent = store

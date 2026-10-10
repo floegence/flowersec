@@ -160,18 +160,22 @@ type authorityFixture struct {
 	config               SessionAdmissionConfig
 }
 
-func newAuthorityFixture(t AuthorityReporter, source string) *authorityFixture {
+func newAuthorityFixture(t AuthorityReporter, source string, declared ...*resourcev4.Config) *authorityFixture {
 	f := &authorityFixture{}
-	var limit resourcev4.Vector
-	for i := range limit {
-		limit[i] = 1 << 30
-	}
+	limit := engineeringSessionLimit()
 	var err error
 	accounts, reservations, references := uint32(16), uint32(512), uint32(4096)
 	if _, engineering := t.(EngineeringAuthorityTime); engineering {
 		accounts, reservations, references = 512, 8192, 65536
 	}
-	f.root, err = resourcev4.NewRoot(resourcev4.Config{ProfileRevision: [32]byte{1}, Limit: limit, AccountSlots: accounts, ReservationSlots: reservations, ReferenceSlots: references})
+	config := resourcev4.Config{ProfileRevision: [32]byte{1}, Limit: limit, AccountSlots: accounts, ReservationSlots: reservations, ReferenceSlots: references}
+	if len(declared) > 1 {
+		t.Fatal("one original engineering root declaration is required")
+	}
+	if len(declared) == 1 && declared[0] != nil {
+		config = *declared[0]
+	}
+	f.root, err = resourcev4.NewRoot(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +195,7 @@ func newAuthorityFixture(t AuthorityReporter, source string) *authorityFixture {
 	} else {
 		f.trust = newSessionAdmissionTrustProfile(t, f.root, f.environment, f.owner, source, application)
 	}
-	f.scope = corePlanTestScope(t, f.root, limit, 1)
+	f.scope = engineeringScope(t, f.root, config.Limit, limit, 1)
 	f.preauth, err = f.root.Reserve(admissionResourceKey(f.owner, 200), resourcev4.Vector{resourcev4.SDKBytes: 4 << 20, resourcev4.Items: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -201,17 +205,7 @@ func newAuthorityFixture(t AuthorityReporter, source string) *authorityFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := SessionCoreConfig{Session: f.trust.session, Clock: f.trust.clock,
-		Open: openResourceLimits(), MaxScopes: 4, PendingScopes: 2, WorkSlots: 4,
-		Maintenance:     cryptov4.MaintenanceReserve{Calls: 4, Blocks: 128, Bytes: 1024},
-		EngineResources: cryptov4.EngineResourceOptions{RuntimeBytes: 4096}, RuntimeBytes: 65536,
-		MessageCarrier: true, MessageRuntimeBytes: 8192, DecoderNodes: 128, MaxDataPayloadBytes: 1024, SendWorkers: [3]uint32{1},
-		ProbeSlots: 2, PongSlots: 2, RekeyWaitSlots: 2,
-		Automatic: AutomaticLivenessPolicy{1000000, 1000, 1000, 3}, Messages: MaintenanceMessagePolicy{8, 1000, 10000},
-		Termination: StreamTerminationPolicy{10000, 1000, 8}, Rekey: RekeyPhaseBudgets{5000, 10000, 30000},
-		SharedDiscard: SharedDiscardPolicy{16, 65536, 10000}, NativeIngress: MaintenanceIngressPolicy{10000, 1000, 8},
-		DispatchTimeoutMS: 10000, RetirementTimeoutMS: 10000,
-	}
+	c := engineeringBaseCore(f.trust.session, f.trust.clock)
 	f.config = SessionAdmissionConfig{Core: c, Features: f.trust.features, Initial: InitialConfig{Role: protocolv4.ClientToServer, Profile: c.Session.Profile, ActivationSourceProfile: source, Limits: InitialLimits{int(c.Session.Contract.Limits().MaxFrame), 4096}, Deadline: deadline}, RuntimeBytes: 32768, InitialRuntimeBytes: 32768}
 	return f
 }
@@ -256,4 +250,18 @@ func EngineeringActiveCapacity(application string, business uint32) (uint32, err
 		return 0, cryptov4.ErrConfiguration
 	}
 	return business + fixed, nil
+}
+
+func engineeringBaseCore(parameters protocolv4.ArtifactSessionParameters, clock *timev4.Clock) SessionCoreConfig {
+	return SessionCoreConfig{Session: parameters, Clock: clock,
+		Open: openResourceLimits(), MaxScopes: 4, PendingScopes: 2, WorkSlots: 4,
+		Maintenance:     cryptov4.MaintenanceReserve{Calls: 4, Blocks: 128, Bytes: 1024},
+		EngineResources: cryptov4.EngineResourceOptions{RuntimeBytes: 4096}, RuntimeBytes: 65536,
+		MessageCarrier: true, MessageRuntimeBytes: 8192, DecoderNodes: 128, MaxDataPayloadBytes: 1024, SendWorkers: [3]uint32{1},
+		ProbeSlots: 2, PongSlots: 2, RekeyWaitSlots: 2,
+		Automatic: AutomaticLivenessPolicy{1000000, 1000, 1000, 3}, Messages: MaintenanceMessagePolicy{8, 1000, 10000},
+		Termination: StreamTerminationPolicy{10000, 1000, 8}, Rekey: RekeyPhaseBudgets{5000, 10000, 30000},
+		SharedDiscard: SharedDiscardPolicy{16, 65536, 10000}, NativeIngress: MaintenanceIngressPolicy{10000, 1000, 8},
+		DispatchTimeoutMS: 10000, RetirementTimeoutMS: 10000,
+	}
 }

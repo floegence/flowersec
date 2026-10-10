@@ -237,7 +237,7 @@ func (p *ProtectedReservation) borrowLocked(source *referenceSlot) (Reference, b
 			continue
 		}
 		b.protectedIdle = false
-		b.owner = source.owner
+		r.changeReferenceOwner(index, source.owner)
 		b.generation++
 		return Reference{r, index, b.generation}, true
 	}

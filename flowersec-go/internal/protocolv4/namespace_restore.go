@@ -130,7 +130,7 @@ func restoreNamespace(ctx, environment context.Context, t *NamespaceTrustStore, 
 		}
 	}
 	headLimit, _ := SchemaByteLimit("FreshnessHead")
-	decoder, err := NewDecoder(headLimit, headLimit)
+	decoder, err := newSchemaDecoder("FreshnessHead", headLimit, headLimit)
 	if err != nil {
 		return nil, nil, err
 	}

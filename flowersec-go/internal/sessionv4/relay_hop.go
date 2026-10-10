@@ -190,7 +190,7 @@ func NewRelayHop(ctx context.Context, c RelayHopConfig, prepared *PreparedCarrie
 			schema = "Grant"
 		}
 		limit, _ := protocolv4.SchemaByteLimit(schema)
-		r.codecs[i], err = protocolv4.NewSignedMapCodec(schema, limit, c.MapNodes)
+		r.codecs[i], err = protocolv4.NewImmutableSignedMapCodec(schema, limit, c.MapNodes)
 		if err != nil {
 			return nil, err
 		}

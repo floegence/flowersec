@@ -12,6 +12,7 @@ import (
 	fs "github.com/floegence/flowersec/flowersec-go/v6"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/assemblyv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/linuxnetlab"
 )
@@ -42,6 +43,7 @@ type Endpoint struct {
 	pendingPreparedTunnels            []*preparedTunnel
 	capacityPreparing                 bool
 	capacityPrepared                  bool
+	capacityDeclared                  bool
 }
 
 // Only the original public Session owners implement this production projection.
@@ -263,7 +265,19 @@ func OpenCapacityEndpointAt(ctx context.Context, topology Topology, listenHost s
 	if sessions != 100 && sessions != 1000 {
 		return nil, errors.New("tunnel capacity must be an exact supported session count")
 	}
-	return openCurrentEndpoint(ctx, topology, listenHost, sessions)
+	endpoint, err := openCurrentEndpoint(ctx, topology, listenHost, sessions)
+	if err == nil {
+		endpoint.capacityDeclared = true
+	}
+	return endpoint, err
+}
+
+func declareTunnelCapacity(reporter *interopharness.Reporter, relay bool) {
+	if relay {
+		reporter.Capacity = &sessionv4.EngineeringHostCapacity{Materials: 2, Parents: 1, Legs: 2}
+		return
+	}
+	reporter.Capacity = &sessionv4.EngineeringHostCapacity{Sessions: 1, Materials: 1, Legs: 1}
 }
 func openCurrentEndpoint(ctx context.Context, topology Topology, listenHost string, positions int) (*Endpoint, error) {
 	if ctx == nil || positions < 1 || positions > 1000 {
@@ -387,6 +401,10 @@ func (e *Endpoint) PrepareCapacity(ctx context.Context, sessions int) error {
 					prepared.relayReporter, buildErr = interopharness.NewPeerReporter()
 					if buildErr == nil {
 						prepared.relayReporter.OperationDeadlineMS = operationDeadlineMS
+						// All independent positions are provisioned before the ramp;
+						// use the existing finite signed engineering envelope.
+						prepared.relayReporter.ActivationWindowMS = 180000
+						declareTunnelCapacity(prepared.relayReporter, true)
 						prepared.relay, buildErr = interopharness.NewPoolRelay(prepared.call, prepared.relayReporter, carriers, releaseRunnerOrigin, interopharness.PoolRelayOptions{EndpointListeners: [2]bool{false, false}, ListenHost: listenHost, SocketScope: relayScope})
 						if prepared.relay != nil {
 							prepared.cleanupWaiters = append(prepared.cleanupWaiters, waitRelayOwners(prepared.relay))
@@ -426,6 +444,7 @@ func (e *Endpoint) PrepareCapacity(ctx context.Context, sessions int) error {
 				}
 				if buildErr == nil {
 					prepared.serverReporter.OperationDeadlineMS = operationDeadlineMS
+					declareTunnelCapacity(prepared.serverReporter, false)
 					serverWire, wireErr := prepared.relay.Material[1].JSON()
 					if wireErr != nil {
 						buildErr = wireErr
@@ -453,6 +472,7 @@ func (e *Endpoint) PrepareCapacity(ctx context.Context, sessions int) error {
 							}
 							if buildErr == nil {
 								prepared.clientReporter.OperationDeadlineMS = operationDeadlineMS
+								declareTunnelCapacity(prepared.clientReporter, false)
 								prepared.client, buildErr = interopharness.NewClient(prepared.call, prepared.clientReporter, clientWire, prepared.relay.TrustPEM, prepared.relay.Origin, currentTunnelHandlers(&prepared.definition), interopharness.ClientOptions{DialScope: endpointScope, PoolClientDeployment: installed, ServerAllowBinding: binding})
 								if prepared.client != nil {
 									prepared.cleanupWaiters = append(prepared.cleanupWaiters, func(cleanup context.Context) error {
@@ -683,6 +703,9 @@ func (e *Endpoint) Connect(ctx context.Context) (_ *Pair, resultErr error) {
 			if err != nil {
 				return nil, err
 			}
+			if e.capacityDeclared {
+				declareTunnelCapacity(relayReporter, true)
+			}
 			issuedAt := time.Now()
 			relay, err = interopharness.NewPoolRelay(call, relayReporter, carriers, releaseRunnerOrigin, interopharness.PoolRelayOptions{EndpointListeners: [2]bool{false, false}, ListenHost: e.listenHost, SocketScope: relayScope})
 			if relay != nil {
@@ -712,14 +735,6 @@ func (e *Endpoint) Connect(ctx context.Context) (_ *Pair, resultErr error) {
 			}
 		}
 	}
-	clientWire, err := relay.Material[0].JSON()
-	if err != nil {
-		return nil, err
-	}
-	serverWire, err := relay.Material[1].JSON()
-	if err != nil {
-		return nil, err
-	}
 	var server *interopharness.TunnelServer
 	var client *interopharness.Client
 	var definition *interopharness.RPCDefinition
@@ -730,9 +745,21 @@ func (e *Endpoint) Connect(ctx context.Context) (_ *Pair, resultErr error) {
 		prepared.cleanupWaiters = nil
 		preparedTransferred = true
 	} else {
+		var clientWire, serverWire string
+		clientWire, err = relay.Material[0].JSON()
+		if err != nil {
+			return nil, err
+		}
+		serverWire, err = relay.Material[1].JSON()
+		if err != nil {
+			return nil, err
+		}
 		serverReporter, reporterErr := reporter()
 		if reporterErr != nil {
 			return nil, reporterErr
+		}
+		if e.capacityDeclared {
+			declareTunnelCapacity(serverReporter, false)
 		}
 		pair.cleanupWaiters = append(pair.cleanupWaiters, waitReporterOwners(serverReporter))
 		server, err = interopharness.NewTunnelServer(call, serverReporter, serverWire, relay.TrustPEM, relay.Origin, currentTunnelHandlers(nil), interopharness.TunnelServerOptions{SocketScope: endpointScope})
@@ -748,6 +775,9 @@ func (e *Endpoint) Connect(ctx context.Context) (_ *Pair, resultErr error) {
 		clientReporter, reporterErr := reporter()
 		if reporterErr != nil {
 			return nil, reporterErr
+		}
+		if e.capacityDeclared {
+			declareTunnelCapacity(clientReporter, false)
 		}
 		pair.cleanupWaiters = append(pair.cleanupWaiters, waitReporterOwners(clientReporter))
 		installed, binding, configErr := server.LocalPoolClientConfiguration()
@@ -859,20 +889,7 @@ func (p *Pair) Close(ctx context.Context) error {
 		}
 		p.cleaning = true
 		p.cleanupDone = make(chan struct{})
-		if !p.closing {
-			p.closing = true
-			if p.cancel != nil {
-				p.cancel(context.Canceled)
-			}
-			if p.echo != nil {
-				p.echo.Close()
-			}
-			for _, session := range []tunnelSession{p.Client, p.Server} {
-				if session != nil {
-					p.closeErr = errors.Join(p.closeErr, transporttest.NormalizeCloseError(session.Close()))
-				}
-			}
-		}
+		p.startCloseLocked()
 		p.mu.Unlock()
 		err := p.join(ctx)
 		p.mu.Lock()
@@ -892,6 +909,26 @@ func (p *Pair) Close(ctx context.Context) error {
 			p.endpoint.mu.Unlock()
 		}
 		return err
+	}
+}
+
+// Start every endpoint-owned pair before waiting for any one physical tail.
+// Joining remains retryable under the caller's original cleanup context.
+func (p *Pair) startCloseLocked() {
+	if p.closing {
+		return
+	}
+	p.closing = true
+	if p.cancel != nil {
+		p.cancel(context.Canceled)
+	}
+	if p.echo != nil {
+		p.echo.Close()
+	}
+	for _, session := range []tunnelSession{p.Client, p.Server} {
+		if session != nil {
+			p.closeErr = errors.Join(p.closeErr, transporttest.NormalizeCloseError(session.Close()))
+		}
 	}
 }
 func (p *Pair) join(ctx context.Context) error {
@@ -956,6 +993,13 @@ func (e *Endpoint) Close(ctx context.Context) error {
 	e.mu.Lock()
 	pairs := append([]*Pair(nil), e.slots...)
 	e.mu.Unlock()
+	for _, pair := range pairs {
+		if pair != nil {
+			pair.mu.Lock()
+			pair.startCloseLocked()
+			pair.mu.Unlock()
+		}
+	}
 	var err error
 	for _, pair := range pairs {
 		err = errors.Join(err, pair.Close(ctx))

@@ -301,6 +301,7 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 		err       error
 	}
 	serverDone := make(chan serverResult, 1)
+	serverAccepted := make(chan struct{})
 	var server serverResult
 	var client *SessionCore
 	var clientSession *EnvironmentSession
@@ -353,6 +354,13 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 					t.Error("initializer could acquire recursively", err)
 				}
 				if failInitialize {
+					// Ensure the original peer has delivered before deliberately
+					// failing initialization and closing the private candidate.
+					select {
+					case <-serverAccepted:
+					case <-initCtx.Done():
+						return context.Cause(initCtx)
+					}
 					return initializeFailure
 				}
 				if lateInitialize {
@@ -466,6 +474,12 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 				serverDone <- serverResult{err: err}
 				return
 			}
+			close(serverAccepted)
+			if failInitialize {
+				// Force the late peer observation that previously replaced the
+				// client's original initialization error with Core's ErrClosed.
+				_ = session.WaitTermination(ctx)
+			}
 			core, err := session.Core()
 			session.mu.Lock()
 			sa := session.admission
@@ -475,6 +489,14 @@ func sessionEstablishmentDuplex(t *testing.T, source string, acquireInEnvironmen
 		var err error
 		client, err = connect()
 		server = <-serverDone
+		if failInitialize && !errors.Is(server.err, cryptov4.ErrClosed) {
+			t.Error("late peer observation did not exercise candidate closure", server.err)
+		}
+		// Both original owners are collected before selecting the client's
+		// result. A later peer observation cannot replace that operation error.
+		if err != nil {
+			return err
+		}
 		if server.err != nil {
 			return server.err
 		}

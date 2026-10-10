@@ -37,8 +37,10 @@ type wireContext struct {
 	node     int
 }
 
-// Decoder owns fixed backing arrays. Admission must reserve BackingBytes before
-// constructing it, including the two normalization workspaces and node arena.
+// Decoder owns backing bounded by its declared capacities. Generic decoders
+// retain fixed arrays; private owners allocate input/nodes per document.
+// Admission must reserve BackingBytes before construction, including the
+// two normalization workspaces and complete declared node allowance.
 // A Document holds exclusive use until Release; there is no waiter queue.
 type Decoder struct {
 	mu            sync.Mutex
@@ -48,7 +50,10 @@ type Decoder struct {
 	work, scratch []rune
 	used, size    int
 	textCap       int
-	idna          wireIDNAWorkspace
+	fixedSchema   string
+	byteLimit     int // Private input keeps its original prepaid byte limit.
+	nodeLimit     int // Private arena keeps its original prepaid node limit.
+	idna          *wireIDNAWorkspace
 	active        bool
 	borrowed      bool // Private fixed-query decoders retain their original input owner.
 	// Only ContractSnapshotCodec sets this private envelope mode. It verifies
@@ -68,11 +73,27 @@ func decoderBackingBytes(byteCap, nodeCap, textCap int) (uint64, error) {
 	}
 	// Each input byte costs one byte plus two worst-case rune workspaces.
 	a, b := uint64(space)*8+uint64(byteCap), uint64(nodeCap)*uint64(unsafe.Sizeof(cborNode{}))
-	overhead := uint64(unsafe.Sizeof(Decoder{})) + uint64(unsafe.Sizeof(Document{}))
+	overhead := uint64(unsafe.Sizeof(Decoder{})) + uint64(unsafe.Sizeof(Document{})) + uint64(unsafe.Sizeof(wireIDNAWorkspace{}))
 	if b/uint64(unsafe.Sizeof(cborNode{})) != uint64(nodeCap) || a > ^uint64(0)-overhead || b > ^uint64(0)-overhead-a {
 		return 0, CBORFailure("configuration_capacity")
 	}
 	return a + b + overhead, nil
+}
+
+// The complete IDNA workspace remains prepaid even when the schema never
+// uses host/origin rules. Rule validation owns the decoder exclusively.
+func (d *Decoder) idnaWorkspace() *wireIDNAWorkspace {
+	if d.idna == nil {
+		d.idna = new(wireIDNAWorkspace)
+	}
+	return d.idna
+}
+
+func (d *Decoder) clearIDNA() {
+	if d.idna != nil {
+		clear(d.idna.work[:])
+		clear(d.idna.scratch[:])
+	}
 }
 
 func NewDecoder(byteCap, nodeCap int) (*Decoder, error) {
@@ -80,6 +101,16 @@ func NewDecoder(byteCap, nodeCap int) (*Decoder, error) {
 }
 
 func newDecoder(byteCap, nodeCap, textCap int) (*Decoder, error) {
+	d, err := newDecoderWorkspace(byteCap, nodeCap, textCap)
+	if err != nil {
+		return nil, err
+	}
+	d.input = make([]byte, byteCap)
+	d.nodes = make([]cborNode, nodeCap)
+	return d, nil
+}
+
+func newDecoderWorkspace(byteCap, nodeCap, textCap int) (*Decoder, error) {
 	if _, err := decoderBackingBytes(byteCap, nodeCap, textCap); err != nil {
 		return nil, err
 	}
@@ -88,7 +119,7 @@ func newDecoder(byteCap, nodeCap, textCap int) (*Decoder, error) {
 		return nil, err
 	}
 	space, _ := unicode151.NormalizationSpace(textCap)
-	return &Decoder{registry: r, input: make([]byte, byteCap), nodes: make([]cborNode, nodeCap), textCap: textCap, work: make([]rune, space), scratch: make([]rune, space)}, nil
+	return &Decoder{registry: r, textCap: textCap, work: make([]rune, space), scratch: make([]rune, space)}, nil
 }
 
 // Document is an owned immutable snapshot. Byte views and Values are valid
@@ -107,6 +138,47 @@ type Value struct {
 
 func (doc *Document) Root() Value   { return Value{doc, doc.root} }
 func (doc *Document) Bytes() []byte { return doc.decoder.input[:doc.decoder.size:doc.decoder.size] }
+
+// compactImmutableBacking runs only before an immutable signed-map constructor
+// publishes any document views. The original limits have already been checked.
+// Each replacement is charged alongside its original array, so a nearly full
+// map simply retains the original backing. Node indices and document identity
+// stay stable, and later rule checks retain complete text and IDNA workspace.
+func (doc *Document) compactImmutableBacking(spare uint64) {
+	d := doc.decoder
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	nodeBytes := uint64(d.used) * uint64(unsafe.Sizeof(cborNode{}))
+	if d.used <= len(d.nodes)/2 && nodeBytes <= spare {
+		nodes := make([]cborNode, d.used)
+		copy(nodes, d.nodes[:d.used])
+		clear(d.nodes)
+		d.nodes = nodes
+		spare -= nodeBytes
+	}
+	if d.size < len(d.input) && uint64(d.size) <= spare {
+		input := make([]byte, d.size)
+		copy(input, d.input[:d.size])
+		clear(d.input)
+		d.input = input
+		spare -= uint64(d.size)
+	}
+	textBytes := 0
+	for _, node := range d.nodes[:d.used] {
+		if node.major == 3 {
+			textBytes = max(textBytes, node.end-node.dataStart)
+		}
+	}
+	space, _ := unicode151.NormalizationSpace(textBytes)
+	workspaceBytes := uint64(space) * 8
+	if space < len(d.work) && workspaceBytes <= spare {
+		clear(d.work)
+		clear(d.scratch)
+		d.work = make([]rune, space)
+		d.scratch = make([]rune, space)
+	}
+}
+
 func (doc *Document) Release() {
 	d := doc.decoder
 	d.mu.Lock()
@@ -120,8 +192,13 @@ func (doc *Document) Release() {
 		}
 		clear(d.work)
 		clear(d.scratch)
-		clear(d.idna.work[:])
-		clear(d.idna.scratch[:])
+		d.clearIDNA()
+		if d.nodeLimit != 0 {
+			d.nodes = nil
+		}
+		if d.byteLimit != 0 {
+			d.input = nil
+		}
 		d.used = 0
 		d.size = 0
 		d.active = false
@@ -236,6 +313,17 @@ func (v Value) Index(index int) Value {
 }
 
 func (d *Decoder) DecodeShape(input []byte, schema string, context DecodeContext) (*Document, error) {
+	doc, err := d.decodeShape(input, schema, context)
+	if err != nil {
+		return nil, err
+	}
+	doc.compactPrivateNodes()
+	return doc, nil
+}
+
+// Record decoding selects and validates its complete shape after canonical
+// syntax. Keep the original node arena until that final shape has been checked.
+func (d *Decoder) decodeShape(input []byte, schema string, context DecodeContext) (*Document, error) {
 	if !d.mu.TryLock() {
 		return nil, CBORFailure("decoder_busy")
 	}
@@ -243,10 +331,17 @@ func (d *Decoder) DecodeShape(input []byte, schema string, context DecodeContext
 	if d.active || d.borrowed {
 		return nil, CBORFailure("decoder_busy")
 	}
+	if d.fixedSchema != "" && schema != d.fixedSchema {
+		return nil, CBORFailure("configuration_capacity")
+	}
 	if d.snapshotEnvelope && schema != "ContractSnapshots" {
 		return nil, CBORFailure("configuration_capacity")
 	}
-	if len(input) > len(d.input) {
+	byteLimit := len(d.input)
+	if d.byteLimit != 0 {
+		byteLimit = d.byteLimit
+	}
+	if len(input) > byteLimit {
 		return nil, CBORFailure("map_size")
 	}
 	var field *wireField
@@ -259,6 +354,15 @@ func (d *Decoder) DecodeShape(input []byte, schema string, context DecodeContext
 			return nil, err
 		}
 		field = &wireField{Type: "map", SchemaRef: schema}
+	}
+	// Configure private backing once before parsing retains any node pointers.
+	// Every node consumes a distinct original CBOR header byte, also when an
+	// encoded-schema body is parsed. Original byte and node refusals remain.
+	if d.byteLimit != 0 {
+		d.input = make([]byte, max(1, len(input)))
+	}
+	if d.nodeLimit != 0 {
+		d.nodes = make([]cborNode, min(d.nodeLimit, max(1, len(input))))
 	}
 	copy(d.input, input)
 	d.size = len(input)
@@ -276,18 +380,53 @@ func (d *Decoder) DecodeShape(input []byte, schema string, context DecodeContext
 		clear(d.nodes[:d.used])
 		clear(d.work)
 		clear(d.scratch)
-		clear(d.idna.work[:])
-		clear(d.idna.scratch[:])
+		d.clearIDNA()
+		if d.nodeLimit != 0 {
+			d.nodes = nil
+		}
+		if d.byteLimit != 0 {
+			d.input = nil
+		}
 		d.size = 0
 		d.used = 0
 		return nil, err
 	}
 	if d.generation == ^uint64(0) {
+		clear(d.input[:d.size])
+		clear(d.nodes[:d.used])
+		clear(d.work)
+		clear(d.scratch)
+		d.clearIDNA()
+		if d.nodeLimit != 0 {
+			d.nodes = nil
+		}
+		if d.byteLimit != 0 {
+			d.input = nil
+		}
+		d.size, d.used = 0, 0
 		return nil, CBORFailure("decoder_retired")
 	}
 	d.generation++
 	d.active = true
 	return &Document{decoder: d, generation: d.generation, root: root, schema: schema}, nil
+}
+
+// Only the unexposed document's owner calls this after its complete shape and
+// rules succeed. Both arrays must fit the original prepaid node allowance;
+// dense documents retain their arena. Indices and document views stay stable.
+func (doc *Document) compactPrivateNodes() {
+	d := doc.decoder
+	if d.nodeLimit == 0 {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.active && d.generation == doc.generation && d.used < len(d.nodes) && d.used <= d.nodeLimit-len(d.nodes) {
+		nodes := make([]cborNode, d.used)
+		copy(nodes, d.nodes[:d.used])
+		clear(d.nodes)
+		d.nodes = nodes
+	}
 }
 
 func mapLength(m *wireMap, n uint64, context *DecodeContext) error {

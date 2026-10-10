@@ -184,5 +184,12 @@ func NewRecordDecoder(byteCap, nodeCap int) (*Decoder, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newDecoder(byteCap, nodeCap, min(byteCap, textCap))
+	d, err := newDecoderWorkspace(byteCap, nodeCap, min(byteCap, textCap))
+	if err != nil {
+		return nil, err
+	}
+	// Admission still reserves the complete original byte/node/text charge.
+	// A record owns its input copy and arena only through its actual Release.
+	d.byteLimit, d.nodeLimit = byteCap, nodeCap
+	return d, nil
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"strconv"
@@ -157,7 +158,12 @@ func NewClient(ctx context.Context, reporter *Reporter, artifactJSON, trustPEM, 
 		// Installed live endpoints obtain activation only through their original
 		// control service, after the pending material is adopted below.
 		reporter.originalLiveDeployment = material.Source == "live_authority"
-		authority := sessionv4.NewEngineeringNativeHarness(reporter, material.Source, material.Profile, kind, address, tlsPolicy, origin, kind != "websocket" && kind != "local-websocket")
+		authority, err := construct(reporter, func() *sessionv4.PublicQUICTestHarness {
+			return sessionv4.NewEngineeringNativeHarness(reporter, material.Source, material.Profile, kind, address, tlsPolicy, origin, kind != "websocket" && kind != "local-websocket")
+		})
+		if err != nil {
+			reporter.Fatal(fmt.Errorf("initialize original client harness: %w", err))
+		}
 		config := engineeringLeaseConfig(reporter, material)
 		var liveControl *controlv4.RegisteredControlTransport
 		var liveRecipient [16]byte
@@ -198,7 +204,13 @@ func NewClient(ctx context.Context, reporter *Reporter, artifactJSON, trustPEM, 
 			}
 			authority.UseEngineeringLivePeerMaterial(reporter, config, [32]byte(material.IdentitySeed), [32]byte(material.DHSeed), control, protocolv4.Direction(material.Role), admissionIdentity)
 		} else {
-			authority.UseEngineeringPeerMaterial(reporter, config, [32]byte(material.IdentitySeed), [32]byte(material.DHSeed), protocolv4.Direction(material.Role))
+			_, err = construct(reporter, func() struct{} {
+				authority.UseEngineeringPeerMaterial(reporter, config, [32]byte(material.IdentitySeed), [32]byte(material.DHSeed), protocolv4.Direction(material.Role))
+				return struct{}{}
+			})
+			if err != nil {
+				reporter.Fatal(fmt.Errorf("import original client material: %w", err))
+			}
 		}
 		if poolPublication != nil {
 			local, ok := authority.Authority.(ledgerv4.SQLitePoolAdmissionAuthority)

@@ -3,6 +3,8 @@ package protocolv4
 import (
 	"bytes"
 	"testing"
+
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
 
 func signRuntimeFixture(t *testing.T, schema string, wire []byte, context DecodeContext) *SignedMap {
@@ -214,5 +216,95 @@ func TestPoolSelectionRuntimeBoundsAndActualOwnership(t *testing.T) {
 	artifact.Release()
 	if _, err := tiny.Derive(artifact, []uint64{0}); err != CBORFailure("artifact_owner") {
 		t.Fatal("released Artifact accepted", err)
+	}
+}
+
+func TestPoolSelectionPrepaidScratchRetainsOnlyOriginalResult(t *testing.T) {
+	seed := oracleSeed(t, "artifact_pool_sixteen_fields")
+	artifact := signRuntimeFixture(t, "Artifact", oracleBytes(t, seed.Hex), DecodeContext{})
+	charge, err := PoolSelectionBackingBytes(1<<16, 1<<16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := resourcev4.Config{ProfileRevision: [32]byte{1}, AccountSlots: 1, ReservationSlots: 4, ReferenceSlots: 8}
+	rootBytes, err := resourcev4.BackingBytes(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.Limit = resourcev4.Vector{resourcev4.SDKBytes: rootBytes + charge}
+	root, err := resourcev4.NewRoot(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	owner := resourcev4.OwnerKey{ProfileRevision: [32]byte{1}, Environment: [16]byte{1}, Kind: 1, Instance: [16]byte{1}, Backing: [16]byte{1}, Direction: 1}
+	reserved, err := root.Reserve(owner, resourcev4.Vector{resourcev4.SDKBytes: charge})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reserved.Release()
+	before := root.Snapshot()
+	w, err := NewPoolSelectionWorkspace(1<<16, 1<<16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.route != nil || w.array != nil || w.encoded != nil {
+		t.Fatal("idle workspace allocated prepaid scratch")
+	}
+	for _, indices := range [][]uint64{{0}, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}, {15}} {
+		selection, err := w.Derive(artifact, indices)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wire, err := selection.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		original := bytes.Clone(wire)
+		if w.route != nil || w.array != nil || len(w.encoded) != len(wire) || len(wire) >= w.selectionLimit {
+			t.Fatal("retained selection kept unused scratch")
+		}
+		if _, err := w.Derive(artifact, []uint64{0}); err != CBORFailure("decoder_busy") || !bytes.Equal(wire, original) {
+			t.Fatal("live original result overwritten", err)
+		}
+		if root.Snapshot() != before {
+			t.Fatal("scratch retirement refunded its original charge")
+		}
+		selection.Release()
+		if w.route != nil || w.array != nil || w.encoded != nil || !bytes.Equal(wire, make([]byte, len(wire))) {
+			t.Fatal("Release retained scratch or original result bytes")
+		}
+	}
+	if _, err := w.Derive(artifact, []uint64{2, 1}); err == nil || w.route != nil || w.array != nil || w.encoded != nil {
+		t.Fatal("failed derivation retained scratch", err)
+	}
+	if root.Snapshot() != before {
+		t.Fatal("result Release refunded its original owner's reservation")
+	}
+	reserved.Release()
+	root.Close()
+	if after := root.Snapshot(); !after.CleanupComplete || after.Reservations != 0 || after.References != 0 {
+		t.Fatal("owner cleanup retained reservation", after)
+	}
+}
+
+func TestPoolSelectionActivationScratchRetiresForBothOriginalSources(t *testing.T) {
+	for _, source := range []string{"live_authority", "preauthorized_pool"} {
+		t.Run(source, func(t *testing.T) {
+			f := newRuntimeAdmissionFixture(t, source, 5)
+			for _, index := range []uint64{16, 5, 16, 5} {
+				binding, err := f.workspace.BindActivation(f.artifact, f.proof, source, index)
+				if index == 5 {
+					if err != nil || binding.Winner() != f.binding.Winner() {
+						t.Fatal("reused scratch changed original binding", err)
+					}
+				} else if err == nil {
+					t.Fatal("out-of-range winner accepted")
+				}
+				if f.workspace.current != nil || f.workspace.route != nil || f.workspace.array != nil || f.workspace.encoded != nil {
+					t.Fatal("activation exit retained original scratch")
+				}
+			}
+		})
 	}
 }

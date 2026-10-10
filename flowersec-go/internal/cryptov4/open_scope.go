@@ -17,12 +17,12 @@ func (e *Engine) unusedScope(scope uint64) bool {
 		return false
 	}
 	role, ordinal := (scope+1)%2, (scope-1)/2
-	return ordinal < e.ordinal[role] && e.used[role][ordinal/64]&(uint64(1)<<(ordinal%64)) == 0
+	return ordinal < e.ordinal[role] && !e.used[role].Has(ordinal)
 }
 
 func (e *Engine) consumeScope(scope uint64) {
 	role, ordinal := (scope+1)%2, (scope-1)/2
-	e.used[role][ordinal/64] |= uint64(1) << (ordinal % 64)
+	e.used[role].Add(ordinal)
 }
 
 // OpenIncoming is used only for a carrier's unbound first OPEN. A hostile

@@ -117,21 +117,27 @@ func (l *ArtifactLease) installTunnelMaterials(c ArtifactLeaseConfig, trusted *A
 			entry.validation[0] = entry.liveGrant.Validation
 		}
 		for part, schema := range []string{"Grant", "IdentityCertificate"} {
+			if part == 0 && entry.pendingGrant {
+				// The lease retains the authenticated pending scope. The original
+				// establishment/recipient verifies its eventual Grant in its own
+				// independently charged codec, never in this immutable lease.
+				continue
+			}
 			var err error
-			if i == 0 {
+			if i == 0 && l.codecs[4+part] != nil {
 				entry.codecs[part] = l.codecs[4+part]
 			} else {
 				limit, e := protocolv4.SchemaByteLimit(schema)
 				if e != nil {
 					return e
 				}
-				entry.codecs[part], err = protocolv4.NewSignedMapCodec(schema, min(limit, c.MapBytes), c.MapNodes)
+				entry.codecs[part], err = protocolv4.NewImmutableSignedMapCodec(schema, min(limit, c.MapBytes), c.MapNodes)
 				if err != nil {
 					return err
 				}
-			}
-			if part == 0 && entry.pendingGrant {
-				continue
+				if i == 0 {
+					l.codecs[4+part] = entry.codecs[part]
+				}
 			}
 			if trusted != nil {
 				if trust[part] == nil || len(wire[part]) == 0 {

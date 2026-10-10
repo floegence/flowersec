@@ -124,6 +124,14 @@ func admissionArray(maps ...[]byte) protocolv4.Field {
 }
 
 func admissionDocument(t AuthorityReporter, schema string, wire []byte, sources ...string) *protocolv4.Document {
+	doc := admissionOwnedDocument(t, schema, wire, sources...)
+	t.Cleanup(doc.Release)
+	return doc
+}
+
+// admissionOwnedDocument is released by its synchronous caller. It keeps
+// temporary rewrite/planning decoders out of the authority's cleanup graph.
+func admissionOwnedDocument(t AuthorityReporter, schema string, wire []byte, sources ...string) *protocolv4.Document {
 	t.Helper()
 	// This authority owns the complete input already. Reserve its actual
 	// encoded size while retaining the original maximum byte/node limits.
@@ -139,7 +147,6 @@ func admissionDocument(t AuthorityReporter, schema string, wire []byte, sources 
 	if err != nil {
 		t.Fatal(schema, err)
 	}
-	t.Cleanup(doc.Release)
 	return doc
 }
 
@@ -185,7 +192,8 @@ var authorityRegistry = sync.OnceValues(func() (authorityFieldRegistry, error) {
 // replaces named fields in checked-in canonical templates.
 func admissionMap(t AuthorityReporter, schema string, wire []byte, changes map[string]protocolv4.Field, sources ...string) []byte {
 	t.Helper()
-	doc := admissionDocument(t, schema, wire, sources...)
+	doc := admissionOwnedDocument(t, schema, wire, sources...)
+	defer doc.Release()
 	registry, err := authorityRegistry()
 	if err != nil {
 		t.Fatal(err)
@@ -341,29 +349,12 @@ func newSessionAdmissionTrustProfile(t AuthorityReporter, root *resourcev4.Root,
 		f.certificates[role] = initialSignTemplate(t, "IdentityCertificate", initialFixture(t, "certificate_fields"), changes, seed)
 	}
 	parentTemplate := initialFixture(t, "artifact_transport_fields")
-	parent := admissionDocument(t, "Artifact", parentTemplate)
+	parent := admissionOwnedDocument(t, "Artifact", parentTemplate)
+	defer parent.Release()
 	candidate := parent.Root().Named("Artifact", "candidates").Index(0)
 	reference := admissionEncode(t, "RevocationNamespaceRef", map[string]protocolv4.Field{"tenant_id": admissionText("tenant-1"), "revocation_authority_id": admissionText("revocation-1"), "generation": {Number: 1}, "namespace_capacity_digest": admissionBytes(capacityDigest[:]), "role_mask": {Number: 3}})
 	candidateWire := admissionMap(t, "Candidate", candidate.Encoded(), map[string]protocolv4.Field{"revocation_namespace_refs": admissionArray(reference)})
-	contractFields := map[string]protocolv4.Field{"max_frame": {Number: 65536}, "max_streams": {Number: 4}, "max_credit": {Number: 1 << 20}, "idle_duration_ms": {Number: 1000000}}
-	if application != "transport" {
-		value, err := protocolv4.EnumValue("SessionContract", "application_profile", application)
-		if err != nil {
-			t.Fatal(err)
-		}
-		contractFields["application_profile"] = protocolv4.Field{Number: value}
-		contractFields["max_streams"] = protocolv4.Field{Number: 16}
-		contractFields["rpc_max_general_outstanding"] = protocolv4.Field{Number: 32}
-	}
-	if capacity, enabled := t.(EngineeringStreamCapacity); enabled && capacity.AuthorityMaxStreams() != 0 {
-		maximum := capacity.AuthorityMaxStreams()
-		if maximum > 139 {
-			t.Fatal("engineering active capacity exceeds the fixed provider envelope")
-		}
-		contractFields["max_streams"] = protocolv4.Field{Number: uint64(maximum)}
-		contractFields["max_credit"] = protocolv4.Field{Number: max(uint64(1<<20), uint64(maximum)*engineeringInitialReceiveLimit)}
-	}
-	contract := admissionMap(t, "SessionContract", parent.Root().Named("Artifact", "session_contract").Encoded(), contractFields)
+	contract := engineeringSessionContract(t, parent.Root().Named("Artifact", "session_contract").Encoded(), application)
 	changes := common()
 	if engineeringOriginalLive(t) {
 		var psk, nonce [32]byte
@@ -421,7 +412,8 @@ func newSessionAdmissionTrustProfile(t AuthorityReporter, root *resourcev4.Root,
 	proofTemplate := initialFixture(t, "activation_live_fields")
 	if source == "preauthorized_pool" {
 		proofTemplate = initialFixture(t, "activation_pool_fields")
-		d := admissionDocument(t, "ActivationAuthorization", proofTemplate, source)
+		d := admissionOwnedDocument(t, "ActivationAuthorization", proofTemplate, source)
+		defer d.Release()
 		ref := d.Root().Named("ActivationAuthorization", "candidate_selection")
 		w, err := protocolv4.NewPoolSelectionWorkspace(65536, 4096)
 		if err != nil {
@@ -658,7 +650,7 @@ func initialSignTemplate(t AuthorityReporter, schema string, wire []byte, change
 	if err != nil {
 		t.Fatal(schema, err)
 	}
-	codec, err := protocolv4.NewSignedMapCodec(schema, len(encoded), min(len(encoded), 4096))
+	codec, err := protocolv4.NewOnceSigningMapCodec(schema, len(encoded), min(len(encoded), 4096))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,12 +669,15 @@ func (s bootstrapSigner) PublicKey() []byte { return s.key.Public().(ed25519.Pub
 func (s bootstrapSigner) Sign(p []byte) ([]byte, error) { return ed25519.Sign(s.key, p), nil }
 
 func corePlanTestScope(t AuthorityReporter, root *resourcev4.Root, limit resourcev4.Vector, sessionID byte) SessionResourceScope {
+	return engineeringScope(t, root, limit, limit, sessionID)
+}
+
+func engineeringScope(t AuthorityReporter, root *resourcev4.Root, tenantLimit, sessionLimit resourcev4.Vector, sessionID byte) SessionResourceScope {
 	t.Helper()
-	tenant, err := root.Account(resourcev4.AccountKey{Kind: resourcev4.TenantAccount, ID: [16]byte{1}}, limit)
+	tenant, err := root.Account(resourcev4.AccountKey{Kind: resourcev4.TenantAccount, ID: [16]byte{1}}, tenantLimit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessionLimit := limit
 	sessionLimit[resourcev4.Sessions] = 1
 	session, err := root.Account(resourcev4.AccountKey{Kind: resourcev4.SessionAccount, ID: [16]byte{sessionID}}, sessionLimit)
 	if err != nil {
@@ -736,7 +731,62 @@ func (a acceptedSQLiteAuthority) CheckParentWinner(identity ledgerv4.SQLiteIdent
 
 type poolSQLiteAuthority struct {
 	acceptedSQLiteAuthority
-	original protocolv4.PoolSpendFields
+	original      protocolv4.PoolSpendFields
+	admissionGate chan struct{}
+}
+
+// ScheduleAdmission serializes only the original TxA-P and its local activation
+// continuation. Independent imported materials retain this same deployment
+// token; each wait keeps its own context, deadline and admission guard.
+func (a poolSQLiteAuthority) ScheduleAdmission(ctx context.Context) (func(), error) {
+	if ctx == nil {
+		return nil, ledgerv4.ErrConfiguration
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, context.Cause(ctx)
+	}
+	if a.admissionGate == nil {
+		return func() {}, nil
+	}
+	schedule, ok := ctx.(sqliteAdmissionScheduleContext)
+	if !ok || schedule.deadline == nil || schedule.guard == nil {
+		return nil, ledgerv4.ErrConfiguration
+	}
+	if err := schedule.guard(); err != nil {
+		return nil, err
+	}
+	remaining, err := schedule.deadline.RemainingMS()
+	if err != nil {
+		return nil, err
+	}
+	timer := time.NewTimer(time.Duration(min(remaining, uint64((1<<63-1)/int64(time.Millisecond)))) * time.Millisecond)
+	defer timer.Stop()
+	release := func() { <-a.admissionGate }
+	for {
+		select {
+		case a.admissionGate <- struct{}{}:
+			if err := schedule.guard(); err != nil {
+				release()
+				return nil, err
+			}
+			return release, nil
+		case <-ctx.Done():
+			return nil, context.Cause(ctx)
+		case <-schedule.wake:
+			if err := schedule.guard(); err != nil {
+				return nil, err
+			}
+		case <-timer.C:
+			if err := schedule.guard(); err != nil {
+				return nil, err
+			}
+			remaining, err = schedule.deadline.RemainingMS()
+			if err != nil {
+				return nil, err
+			}
+			timer.Reset(time.Duration(min(remaining, uint64((1<<63-1)/int64(time.Millisecond)))) * time.Millisecond)
+		}
+	}
 }
 
 func (a poolSQLiteAuthority) CheckPoolSpend(i ledgerv4.SQLiteIdentity, f protocolv4.PoolSpendFacts) error {
@@ -869,4 +919,28 @@ func EngineeringServiceContractWithLimit(t AuthorityReporter, namespace string, 
 		t.Fatal(err)
 	}
 	return wire, policy
+}
+
+// engineeringSessionContract is the original authority recipe shared with local
+// capacity planning. Its unsigned geometry never supplies admission authority.
+func engineeringSessionContract(t AuthorityReporter, template []byte, application string) []byte {
+	contractFields := map[string]protocolv4.Field{"max_frame": {Number: 65536}, "max_streams": {Number: 4}, "max_credit": {Number: 1 << 20}, "idle_duration_ms": {Number: 1000000}}
+	if application != "transport" {
+		value, err := protocolv4.EnumValue("SessionContract", "application_profile", application)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contractFields["application_profile"] = protocolv4.Field{Number: value}
+		contractFields["max_streams"] = protocolv4.Field{Number: 16}
+		contractFields["rpc_max_general_outstanding"] = protocolv4.Field{Number: 32}
+	}
+	if capacity, enabled := t.(EngineeringStreamCapacity); enabled && capacity.AuthorityMaxStreams() != 0 {
+		maximum := capacity.AuthorityMaxStreams()
+		if maximum > 139 {
+			t.Fatal("engineering active capacity exceeds the fixed provider envelope")
+		}
+		contractFields["max_streams"] = protocolv4.Field{Number: uint64(maximum)}
+		contractFields["max_credit"] = protocolv4.Field{Number: max(uint64(1<<20), uint64(maximum)*engineeringInitialReceiveLimit)}
+	}
+	return admissionMap(t, "SessionContract", template, contractFields)
 }

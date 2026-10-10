@@ -109,6 +109,12 @@ func TestLiveControlCancellationRetainsProviderUntilActualExit(t *testing.T) {
 	<-entered
 	before := f.root.Snapshot().Charged
 	a.Close()
+	p.Close()
+	if err := p.Retire(); err == nil || p.reservation.CheckRetained() != nil || p.shared.CheckRetained() != nil {
+		close(release)
+		<-done
+		t.Fatal("establishment retired immutable facts while its control provider remained active", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	if err := a.WaitCleanup(ctx); !errors.Is(err, context.DeadlineExceeded) || f.root.Snapshot().Charged != before {

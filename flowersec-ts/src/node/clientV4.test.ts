@@ -992,6 +992,7 @@ describe("Node v4 original WSS pool connection", () => {
     } finally { await f.close(); }
   }, 15000);
   for (const profile of [profileX, profileP] as const) it(`serves the proxy through current authenticated WSS Streams: ${profile}`, async () => {
+    let stage = "setup";
     const body = new Uint8Array(2300).fill(97), observed: Uint8Array[] = [];
     let idleStarted = false, idleClosed = false;
     const upstream = createHTTPServer(async (request, response) => {
@@ -1038,6 +1039,7 @@ describe("Node v4 original WSS pool connection", () => {
       }, { applicationBytes: 1024n })) {
         registrations.push(peer.registerStream(declaration.kind, declaration.authorize, declaration.handler, declaration.options));
       }
+      stage = "manual request";
       const stream = await session.openStream("flowersec-proxy/http1", { metadata: createStreamMetadata({ protocol: "flowersec.proxy.http", version: 2 }) });
       io = currentProxyStream(stream, { readBytes: 128, inputBackingBytes: 8192, finishTimeoutMS: 1000, cleanupTimeoutMS: 100 });
       const writer = { write: (bytes: Uint8Array) => writeAll(io!, bytes) };
@@ -1048,6 +1050,7 @@ describe("Node v4 original WSS pool connection", () => {
       }
       await writeAll(io, u32be(0)); await writeProxyFrame(writer, "ProxyBodyEnd", { v: 2, trailers: [] });
       await io.closeWrite();
+      stage = "manual response";
       const reader = new ProxyByteReader(io), response = await readProxyFrame(reader, "ProxyHTTPResponse", 4096);
       expect(response).toMatchObject({ v: 2, request_id: "current-wss", ok: true, status: 200 });
       const chunks: Uint8Array[] = [];
@@ -1059,8 +1062,10 @@ describe("Node v4 original WSS pool connection", () => {
       await expect.poll(() => proxy.activeCount).toBe(0);
       expect(authorizations).toBe(1); expect(failures).toEqual([]);
       await expect(session.openStream("flowersec-proxy/http1", { metadata: createStreamMetadata({ protocol: "denied", version: 2 }) })).rejects.toThrow();
+      stage = "runtime fetch";
       const fetched = await runtime.fetch("/echo", { method: "POST", body: body.slice() });
       expect(fetched.status).toBe(200); expect(new Uint8Array(await fetched.arrayBuffer())).toEqual(body);
+      stage = "websocket echo";
       const websocket = await runtime.openWebSocketStream("/socket");
       const wsio = websocket.stream, wsReader = new ProxyByteReader(wsio);
       expect(websocket.protocol).toBe("");
@@ -1072,6 +1077,7 @@ describe("Node v4 original WSS pool connection", () => {
       expect(await wsio.read()).toBeNull(); await wsio.finish!(); wsio.dispose?.();
       await expect.poll(() => proxy.activeCount).toBe(0);
       expect(authorizations).toBe(3); expect(failures).toEqual([]);
+      stage = "idle cancellation";
       const idle = await runtime.fetch("/idle", { headers: { accept: "text/event-stream" } });
       expect(idle.status).toBe(200); expect(idleStarted).toBe(true);
       await idle.body!.cancel();
@@ -1085,6 +1091,9 @@ describe("Node v4 original WSS pool connection", () => {
       for (const registration of registrations) registration.close();
       await Promise.all(registrations.map(registration => registration.waitCleanup()));
       await Promise.all([session.close(), peer.close()]);
+    } catch (error) {
+      console.error("current WSS proxy failure", { profile, stage, error, upstreamFailures: failures, peerFailure: f.failure() });
+      throw error;
     } finally {
       await handle?.dispose(); io?.dispose(); for (const registration of registrations) registration.close();
       await proxy.close(); await f.close();

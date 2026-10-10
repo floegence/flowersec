@@ -62,5 +62,7 @@ func capacityContractForDefinition(definition capacityCaseDefinition) capacityCo
 }
 
 func capacityCaseTimeout(definition capacityCaseDefinition) time.Duration {
-	return capacityContractForDefinition(definition).Watchdog + 30*time.Second
+	// Deployment provisioning precedes the measured ramp. Keep its finite
+	// preparation allowance separate from the unchanged production watchdog.
+	return capacityContractForDefinition(definition).Watchdog + 180*time.Second
 }

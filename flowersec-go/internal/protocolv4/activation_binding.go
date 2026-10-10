@@ -111,6 +111,9 @@ func (w *PoolSelectionWorkspace) BindActivation(artifact, proof *SignedMap, sour
 		return nil, CBORFailure("pool_index_membership")
 	}
 	candidate := candidates.Index(int(index))
+	if w.route == nil {
+		w.route = make([]byte, w.routeLimit)
+	}
 	route, err := projectCandidate(w.route, candidate)
 	if err != nil {
 		return nil, err

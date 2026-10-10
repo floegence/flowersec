@@ -104,7 +104,7 @@ func newNativeStreamTransport(a *OpenAdmission, connection native.Connection, c 
 		if err = ref.CheckSameEnvironment(owned); err != nil {
 			return nil, err
 		}
-		n.readers[i].receiver, err = NewRecordReceiver(a.engine, 1-a.direction, a.engine.MaxFrame(), c.DecoderNodes, c.decode(), ref)
+		n.readers[i].receiver, err = newLazyRecordReceiver(a.engine, 1-a.direction, a.engine.MaxFrame(), c.DecoderNodes, c.decode(), ref)
 		if err != nil {
 			return nil, err
 		}
@@ -419,8 +419,11 @@ func (n *nativeStreamTransport) readOpen(s *nativeStreamSlot, r *RecordReceiver)
 	if err != nil {
 		return nil, err
 	}
-	r.storageUsed = prefix.RequiredBytes()
-	wire, err := prefix.ReadBody(s.stream, r.storage)
+	storage, err := r.prepareStorage(prefix.RequiredBytes())
+	if err != nil {
+		return nil, err
+	}
+	wire, err := prefix.ReadBody(s.stream, storage)
 	if err != nil {
 		return nil, err
 	}

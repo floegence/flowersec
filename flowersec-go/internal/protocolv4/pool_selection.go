@@ -35,14 +35,16 @@ func (d *Document) MatchCandidateRoute(member PoolMember) error {
 }
 
 // PoolSelectionWorkspace reserves all route/array/set and member backing before
-// deriving a selection. It has one retained result and no dynamic queue/growth.
+// deriving a selection. Prepaid scratch is allocated only for the current
+// derivation; one retained result exists, with no dynamic queue or limit growth.
 // The caller's declared caps must cover its signed Artifact before any spend.
 type PoolSelectionWorkspace struct {
-	mu                    sync.Mutex
-	route, array, encoded []byte
-	members               []PoolMember
-	indices               []uint64
-	current               *PoolSelection
+	mu                         sync.Mutex
+	route, array, encoded      []byte
+	routeLimit, selectionLimit int
+	members                    []PoolMember
+	indices                    []uint64
+	current                    *PoolSelection
 }
 
 type PoolSelection struct {
@@ -72,7 +74,7 @@ func NewPoolSelectionWorkspace(routeBytes, selectionBytes int) (*PoolSelectionWo
 	if err != nil {
 		return nil, err
 	}
-	return &PoolSelectionWorkspace{route: make([]byte, routeBytes), array: make([]byte, selectionBytes), encoded: make([]byte, selectionBytes), members: make([]PoolMember, maximum), indices: make([]uint64, maximum)}, nil
+	return &PoolSelectionWorkspace{routeLimit: routeBytes, selectionLimit: selectionBytes, members: make([]PoolMember, maximum), indices: make([]uint64, maximum)}, nil
 }
 
 // projectCandidate preserves exact canonical field values and uses only the
@@ -139,6 +141,7 @@ func (w *PoolSelectionWorkspace) clear() {
 	clear(w.route)
 	clear(w.array)
 	clear(w.encoded)
+	w.route, w.array, w.encoded = nil, nil, nil
 	clear(w.members)
 	clear(w.indices)
 }
@@ -176,6 +179,11 @@ func (w *PoolSelectionWorkspace) deriveLocked(artifact *SignedMap, indices []uin
 		return nil, CBORFailure("artifact_owner")
 	}
 	candidates := artifact.document.Root().Named("Artifact", "candidates")
+	if w.route == nil {
+		w.route = make([]byte, w.routeLimit)
+	}
+	w.array = make([]byte, w.selectionLimit)
+	w.encoded = make([]byte, w.selectionLimit)
 	offset, err := cborHead(w.array, 4, uint64(len(indices)))
 	if err != nil {
 		return nil, err
@@ -231,6 +239,13 @@ func (w *PoolSelectionWorkspace) deriveLocked(artifact *SignedMap, indices []uin
 	}
 	clear(w.route)
 	clear(w.array)
+	w.route, w.array = nil, nil
+	// The two original selection arrays already reserve enough for both the
+	// full encoding buffer and this exact retained copy. No charge is refunded.
+	retained := make([]byte, len(encoded))
+	copy(retained, encoded)
+	clear(w.encoded)
+	w.encoded = retained
 	p := &PoolSelection{workspace: w, count: len(indices), size: len(encoded), artifactDigest: digest, candidateSetDigest: candidateDigest, routeSetDigest: routeDigest}
 	w.current = p
 	return p, nil

@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ordinalbits"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
@@ -138,18 +139,61 @@ func TestOpenAdmissionChargeMatchesAllocatedBacking(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// Inspect the real constructor's allocated capacities, including the
-			// index's power-of-two jump and the arena's odd-byte truncation.
+			// Inspect the original complete reservation, including the index's
+			// power-of-two jump and the logical arena's odd-byte truncation.
 			bytes := uint64(unsafe.Sizeof(*a)) + uint64(cap(a.slots))*uint64(unsafe.Sizeof(openSlot{})) +
-				uint64(cap(a.index))*uint64(unsafe.Sizeof(int(0))) + uint64(cap(a.metadata)) +
-				uint64(cap(a.metadataUsed))*uint64(unsafe.Sizeof(bool(false))) +
-				uint64(cap(a.stable[0])+cap(a.stable[1]))*8 + uint64(cap(a.encode)) + decoder +
+				uint64(cap(a.index))*uint64(unsafe.Sizeof(int(0))) + 2*uint64(a.metadata.capacity) +
+				ordinalbits.BackingBytes(a.roleOrdinals[0]) + ordinalbits.BackingBytes(a.roleOrdinals[1]) + uint64(cap(a.encode)) + decoder +
 				uint64(len(a.slots))*uint64(unsafe.Sizeof(CarrierAssociation{})) +
 				uint64(cap(a.outcomeWake))*uint64(unsafe.Sizeof((chan struct{})(nil)))
 			if charge != (resourcev4.Vector{resourcev4.SDKBytes: bytes, resourcev4.Items: 2 + 3*uint64(len(a.slots))}) {
 				t.Fatal("charge differs from actual OPEN backing", terminal, extra, charge, bytes)
 			}
+			maximumBacking := uint64(cap(a.metadata.pages))*(uint64(unsafe.Sizeof((*[openMetadataPageBytes]byte)(nil)))+openMetadataPageBytes) + uint64(cap(a.metadata.used))*uint64(unsafe.Sizeof(uint64(0)))
+			if maximumBacking > 2*uint64(a.metadata.capacity) {
+				t.Fatal("all pages, padding, directory and bitmap exceeded the original reservation", maximumBacking)
+			}
+			for _, page := range a.metadata.pages {
+				if page != nil {
+					t.Fatal("constructor allocated unused metadata pages")
+				}
+			}
+			if start, ok := a.metadata.reserve("k", make([]byte, a.metadata.capacity-1)); !ok || start != 0 {
+				t.Fatal("deferred pages reduced the original logical capacity", start, ok)
+			}
+			for _, page := range a.metadata.pages {
+				if page == nil {
+					t.Fatal("maximum logical occupancy omitted a prepaid data page")
+				}
+			}
+			a.metadata.clear()
 		}
+	}
+}
+
+func TestReservedOpenAdmissionDeferredPagesRequireOriginalFullArenaCharge(t *testing.T) {
+	limits := openResourceLimits()
+	charge, err := OpenAdmissionCharge(limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingressOverhead := uint64(limits.IngressItems) * (uint64(unsafe.Sizeof(openSlot{})) + 4*uint64(unsafe.Sizeof(int(0))))
+	arena := (limits.IngressBytes - ingressOverhead) / 2
+	maximumBacking := openMetadataBackingBytes(int(arena))
+	if maximumBacking >= 2*arena {
+		t.Fatal("fixture did not exercise deferred backing below the original reservation")
+	}
+	// Even enough bytes for every physical page cannot replace the original
+	// logical data/occupancy reservation. Page allocation grants no new budget.
+	short := charge
+	short[resourcev4.SDKBytes] -= 2*arena - maximumBacking
+	root, engine, ref, environment, _ := openResourceReservations(t, short, 1)
+	before := root.Snapshot()
+	if owner, err := NewReservedOpenAdmission(engine, protocolv4.ClientToServer, limits, ref, environment); owner != nil || !errors.Is(err, resourcev4.ErrCapacity) {
+		t.Fatal("physical-only metadata charge admitted the OPEN owner", owner, err)
+	}
+	if ref.Check() != nil || root.Snapshot().Charged != before.Charged {
+		t.Fatal("deferred-page capacity refusal consumed or changed the original claim")
 	}
 }
 
@@ -262,6 +306,18 @@ func TestReservedOpenAdmissionOwnsClaimThroughCleanupAndRetire(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cleanupOpenResource(t, a) })
+	assertUnusedOutcomeWakes := func() {
+		t.Helper()
+		if len(a.outcomeWake) != int(limits.Terminal+limits.IngressItems) {
+			t.Fatal("unused notification directory lost its original capacity")
+		}
+		for _, wake := range a.outcomeWake {
+			if wake != nil {
+				t.Fatal("unused OPEN slot allocated a notification channel")
+			}
+		}
+	}
+	assertUnusedOutcomeWakes()
 	before := root.Snapshot()
 	ref.Release()
 	if root.Snapshot().Charged != before.Charged || a.reservation.Check() != nil {
@@ -274,6 +330,7 @@ func TestReservedOpenAdmissionOwnsClaimThroughCleanupAndRetire(t *testing.T) {
 		t.Fatal("live OPEN graph retired", err)
 	}
 	a.Close()
+	assertUnusedOutcomeWakes()
 	if root.Snapshot().Charged != before.Charged {
 		t.Fatal("close refunded the unjoined OPEN graph")
 	}
@@ -285,11 +342,16 @@ func TestReservedOpenAdmissionOwnsClaimThroughCleanupAndRetire(t *testing.T) {
 	if err := a.WaitCleanup(ctx); err != nil || root.Snapshot().Charged != before.Charged {
 		t.Fatal("cleanup bypassed explicit retirement", err)
 	}
+	assertUnusedOutcomeWakes()
 	if err := a.Retire(); err != nil {
 		t.Fatal(err)
 	}
 	after := root.Snapshot()
-	if after.Reservations != before.Reservations-1 || after.Charged[resourcev4.SDKBytes] != before.Charged[resourcev4.SDKBytes]-charge[resourcev4.SDKBytes] {
+	wantCharged := before.Charged
+	for dimension, value := range charge {
+		wantCharged[dimension] -= value
+	}
+	if after.Reservations != before.Reservations-1 || after.Charged != wantCharged || a.outcomeWake != nil {
 		t.Fatal("retirement did not return original metadata charge", before, after)
 	}
 	if err := a.Retire(); err != nil || root.Snapshot().Charged != after.Charged {

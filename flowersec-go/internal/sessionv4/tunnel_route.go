@@ -152,7 +152,7 @@ func NewTunnelRoute(c TunnelRouteConfig, reservation, dependencies resourcev4.Re
 			if e != nil {
 				return nil, e
 			}
-			r.codecs[side][i], err = protocolv4.NewSignedMapCodec(schema, limit, c.Hops[side].MapNodes)
+			r.codecs[side][i], err = protocolv4.NewImmutableSignedMapCodec(schema, limit, c.Hops[side].MapNodes)
 			if err != nil {
 				return nil, err
 			}

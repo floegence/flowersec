@@ -56,6 +56,8 @@ type ProductDirectEndpoint struct {
 	closeErr                                                        error
 	preparationMu                                                   sync.Mutex
 	prepared                                                        []*preparedProductDirectConnection
+	capacityClient                                                  *interopharness.Client
+	capacityReporter                                                *interopharness.Reporter
 	capacityPrepared                                                bool
 	diagnosticMu                                                    sync.Mutex
 	upgradeDiagnostic, admissionDiagnostic                          func(error)
@@ -118,11 +120,11 @@ func OpenProductDirectBrowserEndpointAt(ctx context.Context, host, origin string
 	}
 	return openProductDirectEndpoint(ctx, carrier.KindWebTransport, host, host, origin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, nil)
 }
-func OpenProductDirectBrowserStreamCapacityEndpointAt(ctx context.Context, host, origin string) (*ProductDirectEndpoint, error) {
+func OpenProductDirectBrowserStreamCapacityEndpointAt(ctx context.Context, host, origin string) (*ProductDirectCapacityEndpoint, error) {
 	if err := validateBrowserOrigin(origin); err != nil {
 		return nil, err
 	}
-	return openProductDirectEndpoint(ctx, carrier.KindWebTransport, host, host, origin, protocolv4.DHProfileX25519, 128, nil)
+	return openProductDirectCapacityEndpoint(ctx, carrier.KindWebTransport, host, origin, 100, 128, 100, 0)
 }
 func OpenProductDirectBrowserEndpointAtWithTLS(ctx context.Context, host, candidateHost, origin string, serverTLS *tls.Config) (*ProductDirectEndpoint, error) {
 	if err := validateBrowserOrigin(origin); err != nil {
@@ -137,15 +139,15 @@ func OpenProductDirectBrowserEndpointAtWithTLS(ctx context.Context, host, candid
 	return openProductDirectEndpoint(ctx, carrier.KindWebTransport, host, candidateHost, origin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, serverTLS)
 }
 func openProductDirectEndpoint(ctx context.Context, kind carrier.Kind, host, candidateHost, origin, profile string, maximum uint16, externalTLS *tls.Config, installedReporters ...*interopharness.Reporter) (*ProductDirectEndpoint, error) {
-	return openProductDirectEndpointWithHandlers(ctx, kind, host, candidateHost, origin, profile, maximum, externalTLS, nil, installedReporters...)
+	return openProductDirectEndpointWithHandlers(ctx, kind, host, candidateHost, origin, profile, maximum, externalTLS, nil, nil, installedReporters...)
 }
 func OpenProductDirectEndpointWithHandlers(ctx context.Context, kind carrier.Kind, handlers interopharness.HandlerConfig) (*ProductDirectEndpoint, error) {
 	if handlers == nil {
 		return nil, errors.New("original application handler declarations are required")
 	}
-	return openProductDirectEndpointWithHandlers(ctx, kind, "127.0.0.1", "127.0.0.1", releaseRunnerOrigin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, nil, handlers)
+	return openProductDirectEndpointWithHandlers(ctx, kind, "127.0.0.1", "127.0.0.1", releaseRunnerOrigin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, nil, handlers, nil)
 }
-func openProductDirectEndpointWithHandlers(ctx context.Context, kind carrier.Kind, host, candidateHost, origin, profile string, maximum uint16, externalTLS *tls.Config, handlers interopharness.HandlerConfig, installedReporters ...*interopharness.Reporter) (result *ProductDirectEndpoint, resultErr error) {
+func openProductDirectEndpointWithHandlers(ctx context.Context, kind carrier.Kind, host, candidateHost, origin, profile string, maximum uint16, externalTLS *tls.Config, handlers interopharness.HandlerConfig, installedTLS *productDirectTLS, installedReporters ...*interopharness.Reporter) (result *ProductDirectEndpoint, resultErr error) {
 	if ctx == nil || maximum == 0 || maximum > 128 {
 		return nil, errors.New("original context and finite stream envelope are required")
 	}
@@ -221,6 +223,15 @@ func openProductDirectEndpointWithHandlers(ctx context.Context, kind carrier.Kin
 	}
 	if reporter.AcceptedRoutePositions != 0 {
 		options.AcceptedRouteCapacity = reporter.AcceptedRoutePositions
+	}
+	if installedTLS != nil {
+		if externalTLS != nil {
+			return nil, errors.New("one original listener TLS installation is permitted")
+		}
+		options.Certificate = &installedTLS.certificate
+		options.Roots = installedTLS.roots
+		options.TrustPEM = installedTLS.trustPEM
+		options.TLSPolicy = installedTLS.policy
 	}
 	if externalTLS != nil {
 		roots, err := x509.SystemCertPool()
@@ -509,10 +520,14 @@ type preparedProductDirectConnection struct {
 
 func (p *preparedProductDirectConnection) close() error {
 	p.cancel(context.Canceled)
-	return errors.Join(p.reporter.Close(), p.record.Close())
+	var err error
+	if p.reporter != nil {
+		err = p.reporter.Close()
+	}
+	return errors.Join(err, p.record.Close())
 }
 
-func (endpoint *ProductDirectEndpoint) prepareConnection(parent context.Context) (prepared *preparedProductDirectConnection, resultErr error) {
+func (endpoint *ProductDirectEndpoint) prepareConnection(parent context.Context, capacity bool) (prepared *preparedProductDirectConnection, resultErr error) {
 	if err := context.Cause(parent); err != nil {
 		return nil, err
 	}
@@ -549,16 +564,51 @@ func (endpoint *ProductDirectEndpoint) prepareConnection(parent context.Context)
 	if err != nil {
 		return nil, err
 	}
+	p := &preparedProductDirectConnection{record: record, cancel: cancel}
+	if capacity {
+		// A capacity group is one installed client deployment. Its unused base
+		// material supplies the original root, namespaces, store and executor;
+		// each actual position still owns its distinct lease, scope and plan.
+		if endpoint.capacityClient == nil {
+			reporter, err := interopharness.NewPeerReporter()
+			if err != nil {
+				return nil, errors.Join(err, p.close())
+			}
+			reporter.ApplicationProfile = "services"
+			if endpoint.reporter.Capacity != nil {
+				declared := *endpoint.reporter.Capacity
+				reporter.Capacity = &declared
+			}
+			wire, err := material.JSON()
+			if err != nil {
+				return nil, errors.Join(err, reporter.Close(), p.close())
+			}
+			client, err := interopharness.NewClient(endpoint.ctx, reporter, wire, endpoint.nativeServer().TrustPEM, endpoint.allowedOrigin, productHandlers(nil))
+			if err != nil {
+				return nil, errors.Join(err, reporter.Close(), p.close())
+			}
+			endpoint.capacityClient, endpoint.capacityReporter = client, reporter
+		}
+		p.client, err = endpoint.capacityClient.PrepareMaterial(ctx, material, endpoint.allowedOrigin, productHandlers(&p.definition))
+		if err != nil {
+			return nil, errors.Join(err, p.close())
+		}
+		p.reporter = p.client.Runtime.Reporter
+		return p, nil
+	}
 	reporter, err := interopharness.NewPeerReporter()
 	if err != nil {
 		return nil, errors.Join(err, record.Close())
 	}
 	reporter.ApplicationProfile = "services"
+	if endpoint.reporter.Capacity != nil {
+		reporter.Capacity = &sessionv4.EngineeringHostCapacity{Sessions: 1, Materials: 1, BusinessStreams: endpoint.reporter.Capacity.BusinessStreams}
+	}
 	wire, err := material.JSON()
 	if err != nil {
 		return nil, errors.Join(err, reporter.Close(), record.Close())
 	}
-	p := &preparedProductDirectConnection{reporter: reporter, record: record, cancel: cancel}
+	p.reporter = reporter
 	p.client, err = interopharness.NewClient(ctx, reporter, wire, endpoint.nativeServer().TrustPEM, endpoint.allowedOrigin, productHandlers(&p.definition))
 	if err != nil {
 		return nil, errors.Join(err, p.close())
@@ -566,9 +616,9 @@ func (endpoint *ProductDirectEndpoint) prepareConnection(parent context.Context)
 	return p, nil
 }
 
-// PrepareCapacity creates finite independent authority and runtime positions
-// before the measured ramp. Each Connect still performs its original spend,
-// carrier establishment, Noise exchange and READY before binding the service.
+// PrepareCapacity creates finite independent material and Session positions
+// before the measured ramp. Declared groups share their original deployment;
+// each Connect still performs its own spend, carrier, Noise and READY.
 func (endpoint *ProductDirectEndpoint) PrepareCapacity(ctx context.Context, sessions int) (resultErr error) {
 	if endpoint == nil || ctx == nil || sessions < 1 || sessions > 1000 {
 		return errors.New("original direct capacity preparation is invalid")
@@ -587,10 +637,13 @@ func (endpoint *ProductDirectEndpoint) PrepareCapacity(ctx context.Context, sess
 			for _, p := range prepared {
 				resultErr = errors.Join(resultErr, p.close())
 			}
+			if endpoint.capacityReporter != nil {
+				resultErr = errors.Join(resultErr, endpoint.capacityReporter.Close())
+			}
 		}
 	}()
 	for index := range sessions {
-		p, err := endpoint.prepareConnection(ctx)
+		p, err := endpoint.prepareConnection(ctx, endpoint.reporter.Capacity != nil)
 		if err != nil {
 			return fmt.Errorf("prepare direct capacity position %d/%d: %w", index+1, sessions, err)
 		}
@@ -621,7 +674,7 @@ func (endpoint *ProductDirectEndpoint) Connect(ctx context.Context) (*ProductDir
 			return nil, errors.New("original direct capacity positions exhausted")
 		}
 		var err error
-		p, err = endpoint.prepareConnection(ctx)
+		p, err = endpoint.prepareConnection(ctx, false)
 		if err != nil {
 			return nil, err
 		}
@@ -846,6 +899,9 @@ func (endpoint *ProductDirectEndpoint) Close() error {
 		for _, p := range prepared {
 			endpoint.closeErr = errors.Join(endpoint.closeErr, p.close())
 		}
+		if endpoint.capacityReporter != nil {
+			endpoint.closeErr = errors.Join(endpoint.closeErr, endpoint.capacityReporter.Close())
+		}
 		endpoint.transportMu.Lock()
 		defer endpoint.transportMu.Unlock()
 		endpoint.closeErr = errors.Join(endpoint.closeErr, endpoint.registry.Close())
@@ -964,21 +1020,14 @@ func (a *ProductDirectBrowserArtifact) OriginalBrowserRunnerDeclaration(ctx cont
 // OpenProductDirectBrowserBatchEndpointAt captures the complete original batch
 // and its concurrent native positions before issuance. These are trusted local
 // profile declarations; acquisition requests cannot change either bound.
-func OpenProductDirectBrowserBatchEndpointAt(ctx context.Context, host, origin string, plan ProfilePlan, positions int) (*ProductDirectEndpoint, error) {
+func OpenProductDirectBrowserBatchEndpointAt(ctx context.Context, host, origin string, plan ProfilePlan, positions int) (*ProductDirectCapacityEndpoint, error) {
 	if ctx == nil || positions < 1 || positions > 1000 || plan.Cold.MaxInflight < 1 || plan.Cold.MaxInflight > 128 || plan.Cold.OperationDeadlineSeconds < 1 || plan.Cold.OperationDeadlineSeconds > 90 {
 		return nil, errors.New("finite original browser batch profile is required")
 	}
 	if err := validateBrowserOrigin(origin); err != nil {
 		return nil, err
 	}
-	reporter, err := interopharness.NewPeerReporter()
-	if err != nil {
-		return nil, err
-	}
-	reporter.OperationDeadlineMS = uint64(plan.Cold.OperationDeadlineSeconds) * 1000
-	reporter.ListenerConnections = uint16(plan.Cold.MaxInflight)
-	reporter.AcceptedRoutePositions = uint16(positions + 1)
-	return openProductDirectEndpoint(ctx, carrier.KindWebTransport, host, host, origin, protocolv4.DHProfileX25519, defaultMaxInboundStreams, nil, reporter)
+	return openProductDirectCapacityEndpoint(ctx, carrier.KindWebTransport, host, origin, positions, defaultMaxInboundStreams, plan.Cold.MaxInflight, uint64(plan.Cold.OperationDeadlineSeconds)*1000)
 }
 
 // CloseOriginalBrowser retires this exact accepted record and joins its real

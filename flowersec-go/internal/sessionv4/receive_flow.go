@@ -92,10 +92,11 @@ func (p *ReceivePool) Close() {
 	}
 }
 
-// ReceiveFlow allocates its own ring only after reserving physical capacity
-// from the pool. Zero credit does not make a ring free. It retains a real root
-// reference until Cleanup, independently of consumed/revoked credit. Creation
-// does not authorize OPEN: a bootstrap or accepted Stream owner installs it.
+// ReceiveFlow reserves its full ring capacity from the pool before publication
+// and allocates storage only while actual data needs it. Zero credit does not
+// make a ring free. It retains a real root reference until Cleanup, independently
+// of consumed/revoked credit. Creation does not authorize OPEN: a bootstrap or
+// accepted Stream owner installs it.
 type ReceiveFlow struct {
 	streamSend                             *SendFlow // Immutable association, installed before acceptance.
 	consumerSaturationObserved             bool
@@ -105,6 +106,7 @@ type ReceiveFlow struct {
 	scope                                  uint64
 	direction                              protocolv4.Direction
 	storage                                []byte
+	capacity                               uint64
 	reservation                            resourcev4.Reference
 	head, size                             int
 	limit, released                        uint64
@@ -157,7 +159,27 @@ func NewReceiveFlow(pool *ReceivePool, scope uint64, direction protocolv4.Direct
 }
 
 func newReceiveFlow(pool *ReceivePool, scope uint64, direction protocolv4.Direction, initialLimit uint64, frontier TerminalTuple, capacity uint64, ref resourcev4.Reference) *ReceiveFlow {
-	return &ReceiveFlow{pool: pool, scope: scope, direction: direction, storage: make([]byte, int(capacity)), reservation: ref, limit: initialLimit, observed: frontier, lastObserved: frontier, readWake: make(chan struct{}, 1), cleanupWake: make(chan struct{}, 1)}
+	return &ReceiveFlow{pool: pool, scope: scope, direction: direction, capacity: capacity, reservation: ref, limit: initialLimit, observed: frontier, lastObserved: frontier, readWake: make(chan struct{}, 1), cleanupWake: make(chan struct{}, 1)}
+}
+
+// The original pool lock and data owner protect the entire admitted ring.
+// Reserving or granting credit never allocates data storage or another owner.
+func (f *ReceiveFlow) ensureStorageLocked() {
+	if f.storage == nil {
+		f.storage = make([]byte, int(f.capacity))
+	}
+}
+
+// Releasing an empty ring preserves its original capacity and charged owner.
+// Native input keeps the ring through actual reads and authentication, including
+// the interval after ciphertext is cleared but before plaintext is committed.
+// A reader waiting for its next prefix borrows only the separate header.
+func (f *ReceiveFlow) releaseEmptyStorageLocked() {
+	if f.size != 0 || f.assembly != nil && (f.assembly.ringBytes != 0 || f.assembly.phase == nativeDataAuthenticating) {
+		return
+	}
+	clear(f.storage)
+	f.storage = nil
 }
 
 // Grant returns an absolute limit for a credit ACK after reserving its delta.
@@ -183,7 +205,7 @@ func (f *ReceiveFlow) Grant(newLimit uint64) error {
 	}
 	delta := newLimit - f.limit
 	credit, _, _ := p.availableLocked(f.protection)
-	if newLimit-f.released > uint64(len(f.storage)) || delta > credit {
+	if newLimit-f.released > f.capacity || delta > credit {
 		return ErrCredit
 	}
 	p.used += delta
@@ -263,7 +285,7 @@ func (f *ReceiveFlow) applyDataLocked(frame *protocolv4.Frame, assembly *NativeD
 	if fin && f.hasTerminal && next != f.terminal {
 		return ErrTerminal
 	}
-	if !f.abandoned && len(data) > len(f.storage)-f.size {
+	if !f.abandoned && uint64(len(data)) > f.capacity-uint64(f.size) {
 		return ErrCredit
 	}
 	if !commit {
@@ -291,6 +313,7 @@ func (f *ReceiveFlow) applyDataLocked(frame *protocolv4.Frame, assembly *NativeD
 		return nil
 	}
 	if len(data) > 0 {
+		f.ensureStorageLocked()
 		tail := (f.head + f.size) % len(f.storage)
 		n := copy(f.storage[tail:], data)
 		copy(f.storage, data[n:])
@@ -369,6 +392,7 @@ func (f *ReceiveFlow) readCopyLocked(dst []byte) (int, protocolv4.V4ReadTerminal
 		f.released += uint64(n)
 		f.delivered += uint64(n)
 		f.pool.used -= uint64(n)
+		f.releaseEmptyStorageLocked()
 		if err := f.replenishCreditLocked(); err != nil {
 			return n, protocolv4.V4ReadTerminalUnknown, err
 		}
@@ -411,6 +435,7 @@ func (f *ReceiveFlow) abandon() {
 	f.released += uint64(f.size)
 	f.size = 0
 	f.head = 0
+	f.releaseEmptyStorageLocked()
 	f.signalReadLocked()
 }
 
@@ -554,10 +579,11 @@ func (f *ReceiveFlow) Cleanup() error {
 }
 
 func (f *ReceiveFlow) releaseBackingLocked() {
-	f.pool.backingUsed -= uint64(len(f.storage))
+	f.pool.backingUsed -= f.capacity
 	f.pool.flows--
 	clear(f.storage)
 	f.storage = nil
+	f.capacity = 0
 	f.cleaned = true
 	if f.protection != nil {
 		f.protection.returnLocked(f)

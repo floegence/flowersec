@@ -215,8 +215,10 @@ func TestWriteOperationPreparedExpiryRunsBehindBlockedProvider(t *testing.T) {
 	}
 	<-w.entered
 	op := prepareWrite(t, f, q, []byte("never-started"), 100)
+	request, staging := preparedWriteStaging(t, q, op, len("never-started"))
 	before := f.root.Snapshot().Charged
 	p := awaitWriteTerminal(t, op)
+	retiredWriteStaging(t, q, op, request, staging)
 	if p.AcceptedBytes != 0 || p.TerminalReason != protocolv4.V4WriteTerminalReasonDeadlineExceeded || p.CleanupStatus.Status != protocolv4.V4CleanupStateComplete {
 		t.Fatal(p)
 	}

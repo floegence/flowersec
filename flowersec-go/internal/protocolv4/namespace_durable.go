@@ -44,7 +44,7 @@ func NamespaceDurabilityCharge(l NamespaceContinuityLimits) (resourcev4.Vector, 
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	d, err := DecoderBackingBytes(h, h)
+	d, err := schemaDecoderBackingBytes("FreshnessHead", h, h)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}

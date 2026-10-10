@@ -7,7 +7,16 @@ import (
 )
 
 func TestRuntimeFrameVariants(t *testing.T) {
-	d, err := NewDecoder(32768, 5000)
+	for _, constructor := range []struct {
+		name       string
+		newDecoder func(int, int) (*Decoder, error)
+	}{{"generic", NewDecoder}, {"record", NewRecordDecoder}} {
+		t.Run(constructor.name, func(t *testing.T) { testRuntimeFrameVariants(t, constructor.newDecoder) })
+	}
+}
+
+func testRuntimeFrameVariants(t *testing.T, newDecoder func(int, int) (*Decoder, error)) {
+	d, err := newDecoder(32768, 5000)
 	if err != nil {
 		t.Fatal(err)
 	}

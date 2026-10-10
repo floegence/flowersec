@@ -179,6 +179,17 @@ func (e *ApplicationExecutor) fillSDKQueryReadyLocked() {
 // cannot purchase more scheduling turns. Already queued entries keep their
 // order; a newly eligible owner sees at most four previously selected entries.
 func (q *sdkQueryLane) choose() int {
+	eligible := false
+	for i := range q.slots {
+		s := &q.slots[i]
+		if s.registration != nil && s.group != nil && !s.ready && !s.active && (s.pending || s.closing) {
+			eligible = true
+			break
+		}
+	}
+	if !eligible {
+		return -1
+	}
 	for step := 1; step <= len(q.slots); step++ {
 		anchor := (q.lastGroup + step) % len(q.slots)
 		group := q.slots[anchor].group

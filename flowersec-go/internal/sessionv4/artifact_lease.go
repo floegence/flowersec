@@ -285,11 +285,14 @@ func newArtifactLease(c ArtifactLeaseConfig, wire [6][]byte, keys [6][32]byte, t
 		}
 	}()
 	for index, schema := range leaseSchemas {
+		if len(wire[index]) == 0 {
+			continue
+		}
 		limit, e := protocolv4.SchemaByteLimit(schema)
 		if e != nil {
 			return nil, e
 		}
-		l.codecs[index], err = protocolv4.NewSignedMapCodec(schema, min(limit, c.MapBytes), c.MapNodes)
+		l.codecs[index], err = protocolv4.NewImmutableSignedMapCodec(schema, min(limit, c.MapBytes), c.MapNodes)
 		if err != nil {
 			return nil, err
 		}

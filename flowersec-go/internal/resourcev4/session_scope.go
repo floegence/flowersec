@@ -29,7 +29,7 @@ func (ref Reference) CheckSessionScope(tenant, session Account) error {
 		kind    AccountKind
 	}{{tenant, TenantAccount}, {session, SessionAccount}} {
 		account := required.account.slotLocked(r)
-		if account == nil || account.key.Kind != required.kind || accountIndex(s.accounts[:s.count], required.account) < 0 {
+		if account == nil || account.key.Kind != required.kind || accountIndex(s.accounts[:s.count], required.account.slotKey()) < 0 {
 			return ErrOwner
 		}
 		if account.closed {

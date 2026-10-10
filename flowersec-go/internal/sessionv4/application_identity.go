@@ -135,7 +135,7 @@ func newApplicationIdentity(c ApplicationIdentityConfig, wire []byte, trust *pro
 	if err != nil {
 		return nil, err
 	}
-	i.codec, err = protocolv4.NewSignedMapCodec("IdentityCertificate", limit, c.MapNodes)
+	i.codec, err = protocolv4.NewImmutableSignedMapCodec("IdentityCertificate", limit, c.MapNodes)
 	if err != nil {
 		return nil, err
 	}

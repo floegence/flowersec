@@ -24,6 +24,7 @@ type RecordReceiver struct {
 	direction       protocolv4.Direction
 	context         protocolv4.DecodeContext
 	maxFrame        uint32
+	nodeCap         int
 	storage         []byte
 	storageUsed     int // Written only by the single active input owner.
 	reservation     resourcev4.Reference
@@ -75,6 +76,17 @@ func RecordReceiverCharge(maxFrame uint32, nodeCap int, decodeContext protocolv4
 }
 
 func NewRecordReceiver(engine *cryptov4.Engine, direction protocolv4.Direction, maxFrame uint32, nodeCap int, decodeContext protocolv4.DecodeContext, reservation resourcev4.Reference) (*RecordReceiver, error) {
+	return newRecordReceiver(engine, direction, maxFrame, nodeCap, decodeContext, reservation, false)
+}
+
+// Unbound native readers reserve their complete original decoder and storage
+// before publication. Their stable receiver/context owners are ready for every
+// admitted parallel input; only backing arrays wait for the first real read.
+func newLazyRecordReceiver(engine *cryptov4.Engine, direction protocolv4.Direction, maxFrame uint32, nodeCap int, decodeContext protocolv4.DecodeContext, reservation resourcev4.Reference) (*RecordReceiver, error) {
+	return newRecordReceiver(engine, direction, maxFrame, nodeCap, decodeContext, reservation, true)
+}
+
+func newRecordReceiver(engine *cryptov4.Engine, direction protocolv4.Direction, maxFrame uint32, nodeCap int, decodeContext protocolv4.DecodeContext, reservation resourcev4.Reference, lazy bool) (*RecordReceiver, error) {
 	if engine == nil || direction > protocolv4.ServerToClient || maxFrame < engine.MaxFrame() || maxFrame > protocolv4.MaxPayloadLength {
 		return nil, cryptov4.ErrConfiguration
 	}
@@ -94,11 +106,6 @@ func NewRecordReceiver(engine *cryptov4.Engine, direction protocolv4.Direction, 
 	if err != nil {
 		return nil, err
 	}
-	decoder, err := protocolv4.NewRecordDecoder(int(maxFrame), nodeCap)
-	if err != nil {
-		owned.Release()
-		return nil, err
-	}
 	// Capture immutable local limits; callers cannot change admission bounds
 	// while a record is being authenticated or a returned frame is still owned.
 	captured := protocolv4.DecodeContext{Limits: make(map[string]uint64, len(decodeContext.Limits)), Selectors: make(map[string]string, len(decodeContext.Selectors))}
@@ -112,7 +119,48 @@ func NewRecordReceiver(engine *cryptov4.Engine, direction protocolv4.Direction, 
 	}
 	captured.Selectors["crypto_profile_id"] = strings.Clone(profile)
 	idle := make(chan struct{})
-	return &RecordReceiver{engine: engine, decoder: decoder, direction: direction, maxFrame: maxFrame, context: captured, storage: make([]byte, protocolv4.EnvelopePrefixSize+int(maxFrame)), reservation: owned, idle: idle, stop: make(chan struct{})}, nil
+	r := &RecordReceiver{engine: engine, direction: direction, maxFrame: maxFrame, nodeCap: nodeCap, context: captured, reservation: owned, idle: idle, stop: make(chan struct{})}
+	if !lazy {
+		if err = r.allocateBackingLocked(); err != nil {
+			owned.Release()
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+// The receiver is unpublished or owns its lock and active input position.
+// RecordReceiverCharge has already checked these exact frame/node capacities
+// and admitted all arrays; allocation never obtains another reservation.
+func (r *RecordReceiver) allocateBackingLocked() error {
+	if r.decoder != nil {
+		return nil
+	}
+	decoder, err := protocolv4.NewRecordDecoder(int(r.maxFrame), r.nodeCap)
+	if err != nil {
+		return err
+	}
+	r.decoder = decoder
+	return nil
+}
+
+// The active input owns this exact envelope through physical I/O and any
+// no-attempt authentication wait. The complete original maximum stays charged.
+func (r *RecordReceiver) prepareStorage(size int) ([]byte, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if size < 0 || size > protocolv4.EnvelopePrefixSize+int(r.maxFrame) {
+		return nil, protocolv4.ErrPayloadTooLarge
+	}
+	if err := r.checkLocked(); err != nil {
+		return nil, err
+	}
+	if !r.active || r.storage != nil || r.storageUsed != 0 {
+		return nil, cryptov4.ErrCapacity
+	}
+	r.storage = make([]byte, size)
+	r.storageUsed = size
+	return r.storage, nil
 }
 
 type ReceivedRecord struct {
@@ -255,12 +303,17 @@ func (r *RecordReceiver) begin(ctx context.Context) error {
 		return cryptov4.ErrCapacity
 	}
 	r.active = true
+	if err := r.allocateBackingLocked(); err != nil {
+		r.active = false
+		return err
+	}
 	return nil
 }
 func (r *RecordReceiver) finish() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	clear(r.storage[:r.storageUsed])
+	r.storage = nil
 	r.storageUsed = 0
 	r.active = false
 	r.signalCleanupLocked()
@@ -298,13 +351,10 @@ func (r *RecordReceiver) readShared(ctx context.Context, reader io.Reader, gate 
 	if messages, ok := reader.(*SessionMessageInput); ok {
 		// This canonical message owner validates the entire frame before
 		// exposing any bytes; it need not enter two byte-read ownership gates.
-		var n int
-		n, err = messages.readRecordMessage(r.storage)
-		r.storageUsed = n
+		wire, err = messages.readRecordMessage(r)
 		if controllerNetworkRetry(err) {
 			input.failure = err
 		}
-		wire = r.storage[:n]
 	} else {
 		var prefix RecordPrefix
 		prefix, err = ReadRecordPrefix(input, r.maxFrame)
@@ -316,8 +366,11 @@ func (r *RecordReceiver) readShared(ctx context.Context, reader io.Reader, gate 
 		if err == nil {
 			// Include the entire provider view before I/O, including a failed
 			// partial read. Prior input was erased at its original owner's exit.
-			r.storageUsed = prefix.RequiredBytes()
-			wire, err = prefix.ReadBody(input, r.storage)
+			var storage []byte
+			storage, err = r.prepareStorage(prefix.RequiredBytes())
+			if err == nil {
+				wire, err = prefix.ReadBody(input, storage)
+			}
 		}
 	}
 	if err != nil {
@@ -413,8 +466,11 @@ func (r *RecordReceiver) read(ctx context.Context, reader io.Reader, incoming bo
 	if err != nil {
 		return nil, err
 	}
-	r.storageUsed = prefix.RequiredBytes()
-	wire, err := prefix.ReadBody(reader, r.storage)
+	storage, err := r.prepareStorage(prefix.RequiredBytes())
+	if err != nil {
+		return nil, err
+	}
+	wire, err := prefix.ReadBody(reader, storage)
 	if err != nil {
 		return nil, err
 	}
@@ -444,11 +500,14 @@ func (r *RecordReceiver) receiveMaintenance(ctx context.Context, wire []byte) (_
 			r.finish()
 		}
 	}()
-	if len(wire) > len(r.storage) {
+	if len(wire) > protocolv4.EnvelopePrefixSize+int(r.maxFrame) {
 		return nil, protocolv4.ErrPayloadTooLarge
 	}
-	r.storageUsed = len(wire)
-	n := copy(r.storage, wire)
+	storage, err := r.prepareStorage(len(wire))
+	if err != nil {
+		return nil, err
+	}
+	n := copy(storage, wire)
 	_, header, _, err := protocolv4.ParseRecord(r.storage[:n], r.context.Selectors["crypto_profile_id"], r.maxFrame)
 	if err != nil {
 		return nil, err
@@ -473,11 +532,18 @@ func (r *RecordReceiver) receiveNativeSegments(ctx context.Context, scope uint64
 	}()
 	size := 0
 	for _, part := range [][]byte{first, second, third} {
-		if len(part) > len(r.storage)-size {
+		if len(part) > protocolv4.EnvelopePrefixSize+int(r.maxFrame)-size {
 			return nil, protocolv4.ErrPayloadTooLarge
 		}
-		r.storageUsed = size + len(part)
-		size += copy(r.storage[size:], part)
+		size += len(part)
+	}
+	storage, err := r.prepareStorage(size)
+	if err != nil {
+		return nil, err
+	}
+	offset := 0
+	for _, part := range [][]byte{first, second, third} {
+		offset += copy(storage[offset:], part)
 	}
 	if err = ctx.Err(); err != nil {
 		return nil, err

@@ -2,8 +2,10 @@ package protocolv4
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -249,4 +251,75 @@ func TestSignedMapCopyRetainsIndependentOriginalSignatureFact(t *testing.T) {
 		t.Fatal("copy changed exact signature bytes", err)
 	}
 	defer verified.Release()
+}
+
+func TestSignedMapReusableArenaPreservesIndependentIssuerJobs(t *testing.T) {
+	f := newRuntimeAdmissionFixture(t, "live_authority", 5)
+	large := f.mutate(t, f.certificate, "IdentityCertificate", func(root *cborRefValue) {
+		oracleField(t, f.r.cborReference, "IdentityCertificate", root, "subject_id").data = []byte(strings.Repeat("a", 128))
+	})
+	codec, err := NewSignedMapCodec("IdentityCertificate", 65536, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codec.decoder.byteLimit != 65536 || codec.decoder.input != nil || codec.decoder.nodeLimit != 4096 || codec.decoder.nodes != nil || len(codec.encoded) != 65536 || len(codec.message) != 65536+len(codec.domain.label)+4 {
+		t.Fatal("reusable issuer lost complete backing or allocated idle nodes")
+	}
+	seed := [32]byte{71, 23, 4}
+	signer := &admissionTestSigner{key: ed25519.NewKeyFromSeed(seed[:])}
+	guard := func() error { return nil }
+	// These are independent bounded issuer jobs. Admission's once gate remains
+	// responsible for refusing another signature for the same original request.
+	for _, original := range []*SignedMap{f.certificate, large, f.certificate} {
+		wire, err := original.Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fields := unsignedFixtureFields(t, original.document, original.codec.signatureID)
+		signer.bad = true
+		if signed, err := codec.SignWith(fields, original.Key(), signer, DecodeContext{}, guard); signed != nil || err != errSignatureGeneration {
+			t.Fatal("invalid provider signature produced an issuer fact", err)
+		}
+		if codec.current != nil || codec.decoder.active || codec.decoder.input != nil || codec.decoder.nodes != nil || codec.decoder.used != 0 || codec.decoder.size != 0 {
+			t.Fatal("failed signing retained its original decoder arena")
+		}
+		signer.bad = false
+		signed, err := codec.SignWith(fields, original.Key(), signer, DecodeContext{}, guard)
+		if err != nil {
+			t.Fatal("failed signing reduced a later independent job's capacity", err)
+		}
+		actual, err := signed.Bytes()
+		if err != nil || !bytes.Equal(actual, wire) || len(codec.decoder.input) != len(wire) || len(codec.decoder.nodes) != codec.decoder.used {
+			t.Fatal("issuer changed the original canonical map or current arena", err)
+		}
+		if _, err := codec.Verify(wire, original.Key(), DecodeContext{}); err != CBORFailure("decoder_busy") || !bytes.Equal(actual, wire) {
+			t.Fatal("verification replaced the live issuer document", err)
+		}
+		view := signed.Field(codec.signatureName)
+		signed.Release()
+		if _, ok := view.ByteString(); ok || codec.decoder.input != nil || codec.decoder.nodes != nil || codec.decoder.active || !bytes.Equal(actual, make([]byte, len(actual))) {
+			t.Fatal("Release retained live issuer views, nodes or signed bytes")
+		}
+		wrong := original.Key()
+		wrong[0] ^= 1
+		if _, err := codec.Verify(wire, wrong, DecodeContext{}); err != CBORFailure("signature_invalid") {
+			t.Fatal("wrong verifier key was accepted", err)
+		}
+		if codec.current != nil || codec.decoder.active || codec.decoder.input != nil || codec.decoder.nodes != nil || codec.decoder.used != 0 || codec.decoder.size != 0 {
+			t.Fatal("failed verification retained its original decoder arena")
+		}
+		verified, err := codec.Verify(wire, original.Key(), DecodeContext{})
+		if err != nil {
+			t.Fatal("failed verification reduced the original reusable capacity", err)
+		}
+		signed.Release()
+		actual, err = verified.Bytes()
+		if err != nil || !bytes.Equal(actual, wire) {
+			t.Fatal("stale issuer cleanup reclaimed the next verification", err)
+		}
+		verified.Release()
+		if codec.decoder.byteLimit != 65536 || codec.decoder.input != nil || len(codec.encoded) != 65536 || len(codec.message) != 65536+len(codec.domain.label)+4 || len(codec.decoder.nodes) != 0 {
+			t.Fatal("reusable signed-map exit lost complete next-job capacities")
+		}
+	}
 }

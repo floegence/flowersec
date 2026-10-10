@@ -19,7 +19,7 @@ func (o *StreamOwnership) protectReceiveCredit(minimum uint64) error {
 	p := f.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if f.limit > math.MaxInt64 || minimum == 0 || minimum > uint64(len(f.storage)) || f.minimumPromise != 0 || f.delivered != 0 || f.readPending || f.readTails != 0 || f.termination.service == nil {
+	if f.limit > math.MaxInt64 || minimum == 0 || minimum > f.capacity || f.minimumPromise != 0 || f.delivered != 0 || f.readPending || f.readTails != 0 || f.termination.service == nil {
 		return ErrCredit
 	}
 	if err := f.readOwnershipLocked(o); err != nil {

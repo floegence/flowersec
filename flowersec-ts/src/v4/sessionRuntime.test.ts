@@ -1900,8 +1900,12 @@ describe("original v4 reliable Session assembly", () => {
       const service = await session.bindService(definition, { target, maximumOfferWindowMS: 10000n, initialMethods: [method] }); services.push(service); return service;
     };
     const call = async (service: typeof services[number], value: string, expected: string) => {
-      const result = await service.call(method, value); expect(result).toMatchObject({ kind: "value", value: expected });
-      if ("release" in result) result.release();
+      const started = performance.now(), result = await service.call(method, value);
+      const diagnostic = result.kind === "metadata" ? JSON.stringify({ call: value, result,
+        elapsedMS: performance.now() - started, fixtureElapsedMS: performance.now() - origin,
+        calls, controller: controller.status() }, (_key, item: unknown) => typeof item === "bigint" ? item.toString() : item) : undefined;
+      try { expect(result, diagnostic).toMatchObject({ kind: "value", value: expected }); }
+      finally { if ("release" in result) result.release(); }
     };
     try {
       // Both Controllers share the same original Environment. A rejected local

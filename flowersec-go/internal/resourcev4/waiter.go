@@ -123,7 +123,7 @@ func (w *ReservationWaiter) reserve(ctx context.Context, result Reference, reque
 			return ErrOwner
 		}
 		for index, account := range request.Accounts {
-			if accountIndex(scope.accounts[:scope.count], account) < 0 || accountIndex(request.Accounts[:index], account) >= 0 {
+			if account.slotLocked(r) == nil || accountIndex(scope.accounts[:scope.count], account.slotKey()) < 0 || accountIndex(request.Accounts[:index], account) >= 0 {
 				w.clearLocked()
 				r.mu.Unlock()
 				return ErrOwner

@@ -62,7 +62,7 @@ type sessionEstablishment struct {
 	session                           protocolv4.ArtifactSessionParameters
 	codecs                            [9]*protocolv4.SignedMapCodec
 	fsb, fsa                          *protocolv4.SignedMap
-	fsbCopy, fsaCopy                  []byte
+	mapBytes                          int
 	reservation, shared               resourcev4.Reference
 	admission                         *SessionAdmissionReservation
 	entrance                          *AcceptedEntrance
@@ -217,7 +217,7 @@ func newSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits
 	if err != nil {
 		return nil, err
 	}
-	p := &sessionEstablishment{material: m, reservation: held, shared: shared}
+	p := &sessionEstablishment{material: m, mapBytes: limits.MapBytes, reservation: held, shared: shared}
 	p.material.Artifact, p.material.Proof, p.material.ClientCertificate, p.material.ServerCertificate = nil, nil, nil, nil
 	p.material.Grant, p.material.RelayCertificate = nil, nil
 	p.material.Hello.Policy.Exporter, p.material.Hello.IdentityHint = nil, nil
@@ -238,11 +238,23 @@ func newSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits
 	p.material.Artifact, p.material.Proof, p.material.ClientCertificate, p.material.ServerCertificate = nil, nil, nil, nil
 	targets := [...]**protocolv4.SignedMap{&p.material.Artifact, &p.material.Proof, &p.material.ClientCertificate, &p.material.ServerCertificate, &p.fsb, &p.fsa, &p.material.Grant, &p.material.RelayCertificate}
 	for i, schema := range establishmentSchemas {
+		if i == 6 && m.Grant == nil && !pendingGrant || i == 7 && m.RelayCertificate == nil ||
+			i == 8 && (m.Role != protocolv4.ClientToServer || m.Source != "preauthorized_pool" || m.Grant == nil) {
+			continue
+		}
 		limit, e := protocolv4.SchemaByteLimit(schema)
 		if e != nil {
 			return nil, e
 		}
-		p.codecs[i], err = protocolv4.NewSignedMapCodec(schema, min(limit, limits.MapBytes), limits.MapNodes)
+		if i == 4 && m.Role == protocolv4.ClientToServer || i == 5 && m.Role == protocolv4.ServerToClient {
+			// The original Initial flight signs once and retains that exact map
+			// through FSA/Noise, under the complete original signing allowance.
+			p.codecs[i], err = protocolv4.NewOnceSigningMapCodec(schema, min(limit, limits.MapBytes), limits.MapNodes)
+		} else {
+			// Pending live proof/grant slots retain full decode capacity until
+			// their first verification, then keep only that immutable fact.
+			p.codecs[i], err = protocolv4.NewImmutableSignedMapCodec(schema, min(limit, limits.MapBytes), limits.MapNodes)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -323,7 +335,6 @@ func newSessionEstablishment(m EstablishmentMaterial, limits EstablishmentLimits
 	p.material.Hello.Artifact, p.material.Hello.Workspace = p.material.Artifact, p.hello
 	p.material.Hello.Policy.Exporter = bytes.Clone(m.Hello.Policy.Exporter)
 	p.material.Hello.IdentityHint = bytes.Clone(m.Hello.IdentityHint)
-	p.fsbCopy, p.fsaCopy = make([]byte, limits.MapBytes), make([]byte, limits.MapBytes)
 	adopted = true
 	return result, nil
 }
@@ -645,12 +656,43 @@ func (p *SessionEstablishment) authenticate(a *SessionAdmissionReservation, hell
 	_, end := p.material.Activation.Deadlines()
 	c := a.config
 	keys := cryptov4.AdmissionKeyConfig{Role: p.material.Role, LocalDH: p.material.LocalDH, Signer: p.material.Signer, Deadline: c.Initial.Deadline, Clock: c.Core.Clock, SessionDeadlineMS: end, LocalIdleDurationMS: c.Core.LocalIdleDurationMS, Authorization: a.authorization}
-	config, err := cryptov4.AdmissionHandshakeConfig(material, keys, p.fsbCopy, p.fsaCopy)
+	config, err := p.admissionHandshakeConfig(material, keys)
 	if err != nil {
 		return nil, err
 	}
 	defer clear(config.PSK[:])
+	// Initial compares these original bytes before NewHandshake consumes them.
+	// Keep both copies through the synchronous authentication's actual provider
+	// exit, including cancellation; retained Handshake config holds no aliases.
+	defer clear(config.FSB)
+	defer clear(config.FSA)
 	return a.Authenticate(config)
+}
+
+// The complete two-map allowance stays charged to this establishment. Only the
+// original bound maps' actual bytes need copying for this authentication. A map
+// beyond the declared limit still reaches Material.Read's original refusal,
+// after AdmissionHandshakeConfig has checked the original local key inputs.
+// Success transfers only these scoped copies; the caller clears them after the
+// original authentication returns. Failure erases both allocations here.
+func (p *SessionEstablishment) admissionHandshakeConfig(material *protocolv4.HandshakeMaterial, keys cryptov4.AdmissionKeyConfig) (config cryptov4.HandshakeConfig, err error) {
+	fsb, err := p.fsb.Bytes()
+	if err != nil {
+		return config, err
+	}
+	fsa, err := p.fsa.Bytes()
+	if err != nil {
+		return config, err
+	}
+	fsbCopy := make([]byte, min(len(fsb), p.mapBytes))
+	fsaCopy := make([]byte, min(len(fsa), p.mapBytes))
+	defer func() {
+		if err != nil {
+			clear(fsbCopy)
+			clear(fsaCopy)
+		}
+	}()
+	return cryptov4.AdmissionHandshakeConfig(material, keys, fsbCopy, fsaCopy)
 }
 
 func (p *SessionEstablishment) Close() {
@@ -694,8 +736,6 @@ func (p *SessionEstablishment) cleanup() error {
 	if p.serverAllow.grant != nil {
 		p.serverAllow.grant.Release()
 	}
-	clear(p.fsbCopy)
-	clear(p.fsaCopy)
 	clear(p.material.Hello.Policy.Exporter)
 	clear(p.material.Hello.IdentityHint)
 	clear(p.material.Live.Delegation)
@@ -704,7 +744,8 @@ func (p *SessionEstablishment) cleanup() error {
 	p.hop = hopAuthentication{}
 	p.serverAllow = tunnelServerPublication{}
 	p.fsb, p.fsa, p.hello, p.selection = nil, nil, nil, nil
-	p.fsbCopy, p.fsaCopy, p.admission, p.entrance = nil, nil, nil, nil
+	p.mapBytes = 0
+	p.admission, p.entrance = nil, nil
 	p.host = nil
 	p.reservation.Release()
 	p.shared.Release()

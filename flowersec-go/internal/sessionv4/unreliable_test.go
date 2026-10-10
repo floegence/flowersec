@@ -35,6 +35,14 @@ func TestNativeDatagramSessionBothProfilesAndRekey(t *testing.T) {
 				if channels[i].MaxMessageBytes() != 949 {
 					t.Fatal(channels[i].MaxMessageBytes())
 				}
+				channels[i].mu.Lock()
+				for _, slot := range channels[i].slots {
+					if slot.input != nil {
+						channels[i].mu.Unlock()
+						t.Fatal("idle datagram slot allocated payload backing")
+					}
+				}
+				channels[i].mu.Unlock()
 			}
 			transfer := func(role, size int) {
 				t.Helper()
@@ -87,13 +95,14 @@ func TestDatagramPendingBudgetKeepsCancelledOriginalJobs(t *testing.T) {
 	// existing authenticated Engine supplies the original trusted expiry clock.
 	dctx, cancel := context.WithCancel(context.Background())
 	d := &UnreliableMessages{engine: actual.engine, maximum: actual.maximum, slots: make([]datagramSendSlot, 64),
-		sends: make([]byte, 64*actual.maximum), jobs: make(chan int, 64), stop: make(chan struct{}), cleanup: make(chan struct{}), context: dctx, cancel: cancel}
+		jobs: make(chan int, 64), stop: make(chan struct{}), cleanup: make(chan struct{}), context: dctx, cancel: cancel}
 	defer d.Close()
 	callCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	results := make(chan error, 64)
+	input := []byte("pending")
 	for range 64 {
-		go func() { _, err := d.Send(callCtx, []byte("pending"), datagramExpiry(t, cores[0])); results <- err }()
+		go func() { _, err := d.Send(callCtx, input, datagramExpiry(t, cores[0])); results <- err }()
 	}
 	for {
 		d.mu.Lock()
@@ -109,6 +118,20 @@ func TestDatagramPendingBudgetKeepsCancelledOriginalJobs(t *testing.T) {
 			runtime.Gosched()
 		}
 	}
+	// Admission has copied every original payload before incrementing active.
+	// Caller reuse cannot alter queued work; cancellation cannot return any of
+	// its physical backing before the original sender is retired.
+	copy(input, "changed")
+	var staging [64][]byte
+	d.mu.Lock()
+	for i := range d.slots {
+		staging[i] = d.slots[i].input
+		if len(staging[i]) != len(input) || cap(staging[i]) != len(input) || !bytes.Equal(staging[i], []byte("pending")) || &staging[i][0] == &input[0] {
+			d.mu.Unlock()
+			t.Fatal("admitted datagram did not retain its exact immutable input")
+		}
+	}
+	d.mu.Unlock()
 	if status, err := d.Send(ctx, []byte("expired"), time.UnixMilli(1)); err != nil || status != UnreliableDroppedExpired {
 		t.Fatal(status, err)
 	}
@@ -127,11 +150,24 @@ func TestDatagramPendingBudgetKeepsCancelledOriginalJobs(t *testing.T) {
 	if retained != 64 {
 		t.Fatal("cancelled original jobs released before worker exit", retained)
 	}
+	for _, original := range staging {
+		if !bytes.Equal(original, []byte("pending")) {
+			t.Fatal("observer cancellation erased a retained sender payload")
+		}
+	}
 	if status, err := d.Send(ctx, []byte("reuse"), datagramExpiry(t, cores[0])); err != nil || status != UnreliableDroppedBudget {
 		t.Fatal(status, err)
 	}
 	d.Close()
 	if err := d.WaitCleanup(ctx); err != nil {
 		t.Fatal(err)
+	}
+	for _, original := range staging {
+		if !bytes.Equal(original, make([]byte, len(original))) {
+			t.Fatal("actual sender exit retained datagram payload bytes")
+		}
+	}
+	if string(input) != "changed" || d.slots != nil || d.active != 0 {
+		t.Fatal("datagram cleanup changed caller input or kept staged owners")
 	}
 }

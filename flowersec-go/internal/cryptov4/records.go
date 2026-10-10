@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ordinalbits"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
@@ -185,7 +186,7 @@ type Engine struct {
 	rekey                                 *RekeyRound
 	switching                             *epochSwitch
 	staging                               bool
-	used                                  [2][]uint64
+	used                                  [2]ordinalbits.Set
 	ordinal                               [2]uint64
 	counts                                [2]usage
 	reliableCounts                        [2]usage
@@ -273,10 +274,13 @@ func NewEngine(config Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	e.used[0] = make([]uint64, (streams.Client+63)/64)
-	e.used[1] = make([]uint64, (streams.Server+63)/64)
+	e.used[0] = ordinalbits.New(streams.Client)
+	e.used[1] = ordinalbits.New(streams.Server)
 	for i := uint32(0); i < config.WorkSlots+2; i++ {
-		w := &workspace{input: make([]byte, int(config.MaxFrame)+protocolv4.EnvelopePrefixSize), output: make([]byte, int(config.MaxFrame)+protocolv4.EnvelopePrefixSize), maintenance: i >= config.WorkSlots}
+		// Every position's complete input/output capacity is already included
+		// in EngineCharge. Key derivation and an idle service position need no
+		// record bytes; allocate those arrays only on its first actual record.
+		w := &workspace{maintenance: i >= config.WorkSlots}
 		if w.maintenance {
 			w.direction = protocolv4.Direction(i - config.WorkSlots)
 			e.maintenance[w.direction] = w
@@ -430,8 +434,7 @@ func (e *Engine) openScope(scope uint64, opening bool) error {
 		e.mu.Unlock()
 		return ErrScope
 	}
-	word, bit := ordinal/64, uint64(1)<<(ordinal%64)
-	if e.used[role][word]&bit != 0 || e.current.keys.get(scope) != nil {
+	if e.used[role].Has(ordinal) || e.current.keys.get(scope) != nil {
 		e.mu.Unlock()
 		return ErrScope
 	}
@@ -453,7 +456,7 @@ func (e *Engine) openScope(scope uint64, opening bool) error {
 		e.mu.Unlock()
 		return err
 	}
-	e.used[role][word] |= bit
+	e.used[role].Add(ordinal)
 	e.active++
 	e.mu.Unlock()
 	defer job.release()
@@ -570,6 +573,15 @@ func (e *Engine) inputLive() error {
 		return e.live()
 	}
 	return e.initialLive(e.initial)
+}
+
+// The caller exclusively owns this workspace through its original job/Packet.
+// Its complete maximum arrays remain prepaid, while this invocation allocates
+// only its validated input/output bounds. No backing changes during crypto or
+// publication; Close cannot reclaim it before the real owner releases it.
+func (e *Engine) prepareRecordBacking(w *workspace, inputBytes, outputBytes int) {
+	w.input = make([]byte, inputBytes)
+	w.output = make([]byte, outputBytes)
 }
 
 func (e *Engine) workspace(maintenance bool, direction protocolv4.Direction) (*workspace, error) {
@@ -774,6 +786,7 @@ func (e *Engine) release(w *workspace) {
 	clear(w.input[:w.inputUsed])
 	clear(w.output[:w.outputUsed])
 	w.inputUsed, w.outputUsed = 0, 0
+	w.input, w.output = nil, nil
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.borrowedWork--
@@ -1057,6 +1070,7 @@ func (e *Engine) sealBuild(frame protocolv4.FrameType, scope uint64, maxPlaintex
 		e.release(w)
 		return nil, err
 	}
+	e.prepareRecordBacking(w, maxPlaintext, len(prefix)+maxPlaintext+key.aead.Overhead())
 	var ticketErr error
 	if ticket != nil {
 		ticketErr = ticket()
@@ -1280,6 +1294,7 @@ func (e *Engine) openReservedDatagram(input []byte, validate func(protocolv4.Fra
 		e.release(w)
 		return nil, frame, header, err
 	}
+	e.prepareRecordBacking(w, len(input), len(ciphertext))
 	w.inputUsed = len(input)
 	copy(w.input, input)
 	if datagram {

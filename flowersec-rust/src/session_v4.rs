@@ -59,14 +59,15 @@ impl TerminalPublicationProbe {
             .and_then(std::sync::Weak::upgrade)
             .is_some_and(|target| std::ptr::eq(Arc::as_ptr(&target), owner as *const Owner))
     }
-    pub(crate) fn wait_entered(&self) {
+    pub(crate) fn wait_entered(&self) -> bool {
         let mut state = self.state.lock().expect("terminal publication probe");
-        while !state.0 {
+        while !state.0 && !state.1 {
             state = self
                 .changed
                 .wait(state)
                 .expect("terminal publication probe wait");
         }
+        state.0
     }
     pub(crate) fn release(&self) {
         let mut state = self.state.lock().expect("terminal publication probe");
@@ -5382,6 +5383,27 @@ mod tests {
     use crate::api_v4::{ReaderCursorOptions, StreamExt, TransportEnvironment};
     use crate::crypto_v4::tests::record_pair_for_limits;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn terminal_probe_guard_release_ends_unentered_observation() {
+        let probe = TerminalPublicationProbe::new();
+        let guard = TerminalPublicationProbeGuard {
+            probe: probe.clone(),
+        };
+        let (finished, result) = std::sync::mpsc::channel();
+        let observer = std::thread::spawn(move || {
+            finished.send(probe.wait_entered()).unwrap();
+        });
+        drop(guard);
+        assert!(
+            !result
+                .recv_timeout(Duration::from_secs(1))
+                .expect("released terminal observation must exit"),
+            "release must not manufacture publication entry"
+        );
+        observer.join().unwrap();
+    }
+
     struct LinkPublication {
         scope: u64,
         first_record: Option<mpsc::OwnedPermit<Vec<u8>>>,

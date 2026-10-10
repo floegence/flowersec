@@ -11,7 +11,7 @@ func (e *Engine) finishCleanupLocked() {
 		return
 	}
 	for i := range e.used {
-		clear(e.used[i])
+		e.used[i].Clear()
 		e.used[i] = nil
 	}
 	e.staged = nil

@@ -321,6 +321,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	watchdogAt := started.Add(contract.Watchdog)
 
 	type connectResult struct {
+		ordinal int
 		session capacitySession
 		err     error
 	}
@@ -337,6 +338,9 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		for unclaimed := range connected {
+			if unclaimed.err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("capacity session %d connect: %w", unclaimed.ordinal+1, unclaimed.err))
+			}
 			if unclaimed.session != nil {
 				resultErr = errors.Join(resultErr, unclaimed.session.Close(cleanupCtx))
 			}
@@ -352,7 +356,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 		go func() {
 			defer rampWG.Done()
 			if waitErr := waitCapacityUntil(rampCtx, due, watchdogAt); waitErr != nil {
-				connected <- connectResult{err: waitErr}
+				connected <- connectResult{ordinal: ordinal, err: waitErr}
 				return
 			}
 			connectCtx, cancel := context.WithDeadline(rampCtx, sessionRampEnd)
@@ -362,7 +366,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 			connectLatencyMu.Lock()
 			connectLatencies = append(connectLatencies, time.Since(connectStarted))
 			connectLatencyMu.Unlock()
-			connected <- connectResult{session: session, err: connectErr}
+			connected <- connectResult{ordinal: ordinal, session: session, err: connectErr}
 		}()
 	}
 	ids := make(map[string]struct{}, contract.Sessions)
@@ -379,7 +383,7 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 			result.Attempted++
 			if connectedResult.err != nil || connectedResult.session == nil {
 				result.Failed++
-				return result, fmt.Errorf("capacity session %d connect: %w", result.Attempted, connectedResult.err)
+				return result, fmt.Errorf("capacity session %d connect: %w", connectedResult.ordinal+1, connectedResult.err)
 			}
 			if connectedResult.session.ID() == "" {
 				return result, errors.New("capacity workload returned an empty production session ID")
@@ -444,10 +448,27 @@ func runCapacityCase(ctx context.Context, definition capacityCaseDefinition, con
 	}
 
 	terminated := make(chan string, len(sessions))
+	observerCtx, stopObservers := context.WithCancel(ctx)
+	var observers sync.WaitGroup
+	// These local observers belong to this case, even if real cleanup fails
+	// without closing Termination. Stop and join them before returning; the
+	// original Session and endpoint cleanup still report their own results.
+	defer func() {
+		stopObservers()
+		observers.Wait()
+	}()
 	for _, session := range sessions {
+		observers.Add(1)
 		go func() {
-			<-session.Termination()
-			terminated <- session.ID()
+			defer observers.Done()
+			select {
+			case <-session.Termination():
+				select {
+				case terminated <- session.ID():
+				case <-observerCtx.Done():
+				}
+			case <-observerCtx.Done():
+			}
 		}()
 	}
 	holdEnd := rampEnd.Add(contract.Hold)
@@ -922,7 +943,7 @@ func openProductionCapacityEndpoint(ctx context.Context, definition capacityCase
 	}
 	switch definition.Kind {
 	case capacityDirect:
-		endpoint, err := transporttest.OpenProductDirectEndpoint(ctx, definition.Carrier)
+		endpoint, err := transporttest.OpenProductDirectCapacityEndpoint(ctx, definition.Carrier, sessions)
 		if err != nil {
 			return nil, err
 		}
@@ -941,7 +962,11 @@ func openProductionCapacityEndpoint(ctx context.Context, definition capacityCase
 }
 
 type directCapacityEndpoint struct {
-	endpoint *transporttest.ProductDirectEndpoint
+	endpoint interface {
+		PrepareCapacity(context.Context, int) error
+		Connect(context.Context) (*transporttest.ProductDirectPair, error)
+		Close() error
+	}
 }
 
 func (endpoint *directCapacityEndpoint) PrepareCapacity(ctx context.Context, sessions int) error {

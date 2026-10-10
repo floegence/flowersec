@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -93,7 +94,7 @@ func NamespaceBootstrapCharge(l NamespaceBootstrapLimits) (resourcev4.Vector, er
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	decoder, err := DecoderBackingBytes(headLimit, headLimit)
+	decoder, err := schemaDecoderBackingBytes("FreshnessHead", headLimit, headLimit)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
@@ -163,7 +164,7 @@ func newNamespaceBootstrap(environment context.Context, trust *NamespaceTrustSto
 	if err != nil {
 		return nil, err
 	}
-	b.headDecoder, err = NewDecoder(headLimit, headLimit)
+	b.headDecoder, err = newSchemaDecoder("FreshnessHead", headLimit, headLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -581,6 +582,9 @@ func (b *NamespaceOnlineBootstrap) run(provider NamespaceBootstrapProvider) (_ *
 	}
 	if err == nil {
 		err = now.Interval.LowerBound(issued, true)
+		if err == timev4.ErrFutureTimestamp {
+			return nil, nil, refs, fmt.Errorf("namespace bootstrap response issued=%d outside local interval [%d,%d]: %w", issued, now.Interval.LowerMS, now.Interval.UpperMS, err)
+		}
 	}
 	pendingTarget := uint64(0)
 	if err == timev4.ErrPending {

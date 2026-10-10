@@ -13,7 +13,9 @@ afterEach(async () => {
 });
 
 describe("Node ProxyServer real Session integration", () => {
-  test("forwards HTTP over a real WebSocket Session with bounded policy and cleanup", async () => {
+  test("forwards HTTP over a real WebSocket Session with bounded policy and cleanup", async (context) => {
+    let stage = "upstream setup";
+    context.onTestFailed(() => { console.error(`proxy integration failed during ${stage}`); });
     const observed: Array<Readonly<{ body: string; authorization?: string; host?: string }>> = [];
     let slowStartedResolve: (() => void) | undefined;
     const slowStarted = new Promise<void>((resolve) => { slowStartedResolve = resolve; });
@@ -53,6 +55,7 @@ describe("Node ProxyServer real Session integration", () => {
       maxConcurrentEventStreams: 1,
     });
     cleanups.push(async () => await proxy.close());
+    stage = "original Session setup";
     const fixture = await createCurrentNodeSession(environment => proxy.register(environment, { authorize: () => true, applicationBytes: 1024n }));
     cleanups.push(() => fixture.close());
     const client = fixture.session;
@@ -60,6 +63,7 @@ describe("Node ProxyServer real Session integration", () => {
 
     const runtime = createProxyRuntime({ session: client, externalOrigin: "https://app.example", maxBodyBytes: 32 });
     cleanups.push(() => runtime.dispose());
+    stage = "authorized request";
     const success = await dispatch(runtime, {
       id: "success",
       method: "POST",
@@ -80,6 +84,7 @@ describe("Node ProxyServer real Session integration", () => {
     expect(new TextDecoder().decode(new Uint8Array(success[1]!.data as ArrayBuffer))).toBe("proxied");
     expect(observed).toEqual([{ body: "request", host: `127.0.0.1:${address.port}` }]);
 
+    stage = "origin and body rejection";
     const wrongOrigin = createProxyRuntime({ session: client, externalOrigin: "https://other.example" });
     cleanups.push(() => wrongOrigin.dispose());
     await expect(dispatch(wrongOrigin, { id: "origin", method: "GET", path: "/", headers: [] }))
@@ -93,19 +98,23 @@ describe("Node ProxyServer real Session integration", () => {
     })).resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error", code: "operation_failed" }));
     expect(observed).toHaveLength(1);
 
+    stage = "pending upstream request";
     const slowDispatch = dispatch(runtime, { id: "slow", method: "GET", path: "/slow", headers: [] });
     await slowStarted;
     expect(proxy.activeCount).toBe(1);
+    stage = "proxy Close";
     const closing = proxy.close();
     expect(proxy.activeCount).toBe(1);
     await closing;
     expect(proxy.activeCount).toBe(0);
+    stage = "canceled and closed responses";
     await expect(slowDispatch).resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error" }));
     await expect(dispatch(runtime, { id: "closed", method: "GET", path: "/", headers: [] }))
       .resolves.toContainEqual(expect.objectContaining({ type: "flowersec-proxy:response_error" }));
 
     runtime.dispose();
     await proxy.close();
+    stage = "Session cleanup";
     await client.close();
     await expect(serving).resolves.toBeUndefined();
   });

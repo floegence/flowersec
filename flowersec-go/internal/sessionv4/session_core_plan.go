@@ -249,37 +249,101 @@ func (c SessionCoreConfig) validateTime() error {
 	return err
 }
 
-func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourcev4.Vector, total resourcev4.Vector, count uint32, err error) {
+// sessionCoreGeometry freezes charge values without constructing Requests or
+// repeating the uniform delegated service envelope at every possible position.
+// Original owner numbers remain the lookup keys for reservation and adoption.
+type sessionCoreGeometry struct {
+	prefix       [coreStreamServiceStart]resourcev4.Vector
+	services     [streamServiceOwners]resourcev4.Vector
+	serviceSlots uint32
+	total        resourcev4.Vector
+	owners       uint32
+	references   uint32
+}
+
+func (g *sessionCoreGeometry) charge(position int) resourcev4.Vector {
+	if position < 0 || position >= coreOwnerCapacity {
+		return resourcev4.Vector{}
+	}
+	if position < coreStreamServiceStart {
+		return g.prefix[position]
+	}
+	index := position - coreStreamServiceStart
+	if index/streamServiceOwners >= int(g.serviceSlots) {
+		return resourcev4.Vector{}
+	}
+	return g.services[index%streamServiceOwners]
+}
+
+func (g *sessionCoreGeometry) summarize(c SessionCoreConfig) (err error) {
+	g.total, g.owners, g.references = resourcev4.Vector{}, 0, 2
+	if c.MessageCarrier || c.MixedCarrier {
+		g.references++
+	}
+	for _, charge := range g.prefix {
+		if charge == (resourcev4.Vector{}) {
+			continue
+		}
+		g.total, err = g.total.Add(charge)
+		if err != nil {
+			return err
+		}
+		g.owners++
+	}
+	// Add in original owner order. Repetition is bounded by the signed floor
+	// count and preserves both overflow rejection and exact partial totals.
+	for slot := uint32(0); slot < g.serviceSlots; slot++ {
+		for component, charge := range g.services {
+			if charge == (resourcev4.Vector{}) {
+				continue
+			}
+			g.total, err = g.total.Add(charge)
+			if err != nil {
+				return err
+			}
+			g.owners++
+			g.references += uint32(streamServiceBorrows(component))
+			if component == streamFactoryMetadata {
+				g.references++ // ReceiveProtection retains its actual pool reference.
+			}
+		}
+	}
+	g.references += g.owners
+	return nil
+}
+
+func sessionCoreChargeGeometry(c SessionCoreConfig) (geometry sessionCoreGeometry, err error) {
+	charges := &geometry.prefix
 	if c.MixedCarrier {
 		if c.Native == c.MessageCarrier {
-			return charges, total, count, cryptov4.ErrConfiguration
+			return geometry, cryptov4.ErrConfiguration
 		}
 		native, shared := coreCarrierMode(c, false), coreCarrierMode(c, true)
 		native.MixedCarrier, shared.MixedCarrier = false, false
-		// Shared carriers negotiate no datagrams. Keep the captured capability on
-		// the mixed configuration so later selection preserves the same union.
+		// Shared carriers negotiate no datagrams. Both modes retain the same
+		// immutable service registrations and therefore the same floor count.
 		shared.Datagrams = false
-		nc, _, _, e := sessionCoreCharges(native)
+		nc, e := sessionCoreChargeGeometry(native)
 		if e != nil {
-			return charges, total, count, e
+			return geometry, e
 		}
-		sc, _, _, e := sessionCoreCharges(shared)
+		sc, e := sessionCoreChargeGeometry(shared)
 		if e != nil {
-			return charges, total, count, e
+			return geometry, e
 		}
-		for owner := range charges {
-			for dimension := range charges[owner] {
-				charges[owner][dimension] = max(nc[owner][dimension], sc[owner][dimension])
-			}
-			if charges[owner] != (resourcev4.Vector{}) {
-				total, e = total.Add(charges[owner])
-				if e != nil {
-					return charges, total, count, e
-				}
-				count++
+		for owner := range geometry.prefix {
+			for dimension := range geometry.prefix[owner] {
+				geometry.prefix[owner][dimension] = max(nc.prefix[owner][dimension], sc.prefix[owner][dimension])
 			}
 		}
-		return charges, total, count, nil
+		geometry.serviceSlots = nc.serviceSlots
+		for component := range geometry.services {
+			for dimension := range geometry.services[component] {
+				geometry.services[component][dimension] = max(nc.services[component][dimension], sc.services[component][dimension])
+			}
+		}
+		err = geometry.summarize(c)
+		return
 	}
 	if c.Handlers != (SessionStreamHandlerConfig{}) {
 		if c.Handlers.Plan != nil && c.Streams == (SessionStreamConfig{}) || uint64(c.Handlers.Concurrency) > uint64(c.Open.Opening)+uint64(c.Open.IngressItems) {
@@ -476,24 +540,15 @@ func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourc
 			return
 		}
 	}
-	serviceSlots, e := appendStreamServiceFloorCharges(c, &charges)
-	if e != nil {
-		err = e
-		return
-	}
-	charges[corePlanOwner], err = charges[corePlanOwner].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(serviceSlots) * uint64(unsafe.Sizeof(streamServiceFloor{})), resourcev4.Items: uint64(serviceSlots)})
+	geometry.serviceSlots, geometry.services, err = protectedStreamServiceFloorCharges(c)
 	if err != nil {
 		return
 	}
-	for _, charge := range charges {
-		if charge != (resourcev4.Vector{}) {
-			total, err = total.Add(charge)
-			if err != nil {
-				return
-			}
-			count++
-		}
+	charges[corePlanOwner], err = charges[corePlanOwner].Add(resourcev4.Vector{resourcev4.SDKBytes: uint64(geometry.serviceSlots) * uint64(unsafe.Sizeof(streamServiceFloor{})), resourcev4.Items: uint64(geometry.serviceSlots)})
+	if err != nil {
+		return
 	}
+	err = geometry.summarize(c)
 	return
 }
 
@@ -503,8 +558,8 @@ func sessionCoreCharges(c SessionCoreConfig) (charges [coreOwnerCapacity]resourc
 // Root slab, existing Environment/registration owners and other compositions
 // retain their separate charges.
 func SessionCoreRequirements(c SessionCoreConfig) (resourcev4.Vector, uint32, error) {
-	_, total, count, err := sessionCoreCharges(c)
-	return total, count, err
+	geometry, err := sessionCoreChargeGeometry(c)
+	return geometry.total, geometry.owners, err
 }
 
 // SessionCoreReferenceSlots is the additional number of root reference
@@ -512,25 +567,11 @@ func SessionCoreRequirements(c SessionCoreConfig) (resourcev4.Vector, uint32, er
 // later ordinary Stream/RPC allocations. Delegated service floors include all
 // aliases and their original receive-pool borrow, even while idle.
 func SessionCoreReferenceSlots(c SessionCoreConfig) (uint32, error) {
-	charges, _, count, err := sessionCoreCharges(c)
+	geometry, err := sessionCoreChargeGeometry(c)
 	if err != nil {
 		return 0, err
 	}
-	count += 2
-	if c.MessageCarrier || c.MixedCarrier {
-		count++
-	}
-	for position := coreStreamServiceStart; position < len(charges); position++ {
-		if charges[position] == (resourcev4.Vector{}) {
-			continue
-		}
-		component := (position - coreStreamServiceStart) % streamServiceOwners
-		count += uint32(streamServiceBorrows(component))
-		if component == streamFactoryMetadata {
-			count++ // ReceiveProtection keeps one actual pool reference.
-		}
-	}
-	return count, nil
+	return geometry.references, nil
 }
 
 // sessionCoreBatch is scratch on the original admitted construction stack. It
@@ -547,7 +588,7 @@ type sessionCoreBatch struct {
 	owner            resourcev4.OwnerKey
 	environment      resourcev4.Reference
 	scope            SessionResourceScope
-	charges          [coreOwnerCapacity]resourcev4.Vector
+	geometry         sessionCoreGeometry
 	positions        [coreOwnerCapacity]int
 	accounts         [resourcev4.MaxAccountsPerCharge]resourcev4.Account
 	borrows          [3]resourcev4.Reference
@@ -570,7 +611,7 @@ func describeSessionCoreBatch(b *sessionCoreBatch, c SessionCoreConfig, root *re
 	if b == nil || b.prepared || b.used || owner.Backing == ([16]byte{}) || len(accounts) > resourcev4.MaxAccountsPerCharge-2 {
 		return resourcev4.ErrOwner
 	}
-	charges, _, _, err := sessionCoreCharges(c)
+	geometry, err := sessionCoreChargeGeometry(c)
 	if err != nil {
 		return err
 	}
@@ -579,11 +620,11 @@ func describeSessionCoreBatch(b *sessionCoreBatch, c SessionCoreConfig, root *re
 			return err
 		}
 	}
-	*b = sessionCoreBatch{config: c, root: root, owner: owner, environment: environment, scope: scope, charges: charges, accountCount: len(accounts) + 2}
+	*b = sessionCoreBatch{config: c, root: root, owner: owner, environment: environment, scope: scope, geometry: geometry, accountCount: len(accounts) + 2}
 	b.accounts[0], b.accounts[1] = scope.Tenant, scope.Session
 	copy(b.accounts[2:], accounts)
-	for position, charge := range charges {
-		if charge != (resourcev4.Vector{}) {
+	for position := 0; position < coreStreamServiceStart+int(geometry.serviceSlots)*streamServiceOwners; position++ {
+		if geometry.charge(position) != (resourcev4.Vector{}) {
 			b.positions[b.count] = position
 			b.count++
 		}
@@ -626,7 +667,7 @@ func (b *sessionCoreBatch) request(index int) (resourcev4.Request, error) {
 	binary.BigEndian.PutUint32(identity[16:], uint32(position))
 	digest := sha256.Sum256(identity[:])
 	copy(key.Backing[:], digest[:16])
-	return resourcev4.Request{Owner: key, Charge: b.charges[position], Accounts: b.accounts[:b.accountCount]}, nil
+	return resourcev4.Request{Owner: key, Charge: b.geometry.charge(position), Accounts: b.accounts[:b.accountCount]}, nil
 }
 
 // release ends this construction and returns its Environment borrows and any
@@ -722,7 +763,7 @@ func (b *sessionCoreBatch) adopt(refs []resourcev4.Reference) (_ *SessionCorePla
 		if err = ref.CheckSameEnvironment(b.environment); err != nil {
 			return nil, err
 		}
-		taken[position], err = ref.Take(b.charges[position])
+		taken[position], err = ref.Take(b.geometry.charge(position))
 		if err != nil {
 			return nil, err
 		}

@@ -54,9 +54,10 @@ type WriteOperation struct {
 // Write/WriteAll keep their existing segmented behavior for larger inputs.
 func (q *SendQueue) MaxWriteOperationBytes() uint64 { return uint64(q.maxOperationBytes) }
 
-// PrepareWrite takes a slot and its already reserved immutable backing before
-// copying input. It accepts no bytes. The original running send coordinator
-// owns expiration, including for objects whose Start and Wait are never called.
+// PrepareWrite takes a slot with its maximum staging already reserved before
+// allocating and copying only this input. It accepts no bytes. The original
+// running send coordinator owns expiration, including for objects whose Start
+// and Wait are never called.
 func (q *SendQueue) PrepareWrite(input []byte, options WriteOptions) (*WriteOperation, error) {
 	return q.prepareWriteOwned(input, options, nil)
 }
@@ -91,7 +92,7 @@ func (q *SendQueue) prepareWriteOwned(input []byte, options WriteOptions, owner 
 		q.removeWaitLocked(index)
 		return nil, err
 	}
-	storage := q.operationStorage[index*q.maxOperationBytes : index*q.maxOperationBytes+len(input)]
+	storage := make([]byte, len(input))
 	copy(storage, input)
 	diagnosticOperation := beginApplicationDiagnosticForSink(q.flow.diagnosticSink)
 	op := &WriteOperation{slot: index, done: make(chan struct{}), diagnosticOperation: diagnosticOperation, progress: protocolv4.V4WriteProgress{

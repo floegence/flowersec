@@ -394,10 +394,10 @@ func (o *StreamOwnership) AsTypedMessages(config TypedMessageConfig) (_ *TypedMe
 	s, lookupErr := a.slot(o.handle)
 	var local bool
 	if lookupErr == nil {
-		if string(a.metadata[s.metadataStart:s.metadataStart+s.kindSize]) != config.Definition.Kind() {
+		if !a.metadata.equals(s.metadataStart, s.metadataStart+s.kindSize, config.Definition.Kind()) {
 			lookupErr = protocolv4.CBORFailure("typed_definition_mismatch")
 		} else {
-			m.openMetadataBytes = copy(m.openMetadata[:], a.metadata[s.metadataStart+s.kindSize:s.metadataStart+s.metadataSize])
+			m.openMetadataBytes = a.metadata.copyRange(m.openMetadata[:], s.metadataStart+s.kindSize, s.metadataStart+s.metadataSize)
 			local = s.local
 		}
 	}

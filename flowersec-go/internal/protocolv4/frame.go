@@ -170,7 +170,7 @@ func (d *Decoder) DecodeRecordBody(input []byte, frame FrameType, header RecordH
 	}
 	// Closed variant selection happens only in this already bounded canonical
 	// map. No discriminator causes a second parse or allocates another owner.
-	doc, err := d.DecodeShape(input, "", context)
+	doc, err := d.decodeShape(input, "", context)
 	if err != nil {
 		return nil, err
 	}
@@ -237,6 +237,7 @@ func (d *Decoder) DecodeRecordBody(input []byte, frame FrameType, header RecordH
 			return nil, CBORFailure("open_digest")
 		}
 	}
+	doc.compactPrivateNodes()
 	return result, nil
 }
 

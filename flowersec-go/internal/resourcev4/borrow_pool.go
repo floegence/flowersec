@@ -118,25 +118,14 @@ func newBorrowPool(source, metadata Reference, capacity uint32, flexible, shared
 		} else if err := r.checkCharge(m, mc); err != nil {
 			return err
 		}
-		nextIndex := 0
 		for range capacity {
-			index := -1
-			for nextIndex < len(r.refs) {
-				i := nextIndex
-				nextIndex++
-				// Admission and the first checkout each invalidate the former
-				// handle. A slot with no checkout generation is not capacity.
-				if !r.refs[i].active && r.refs[i].generation < math.MaxUint64-1 {
-					index = i
-					break
-				}
-			}
+			index := r.freeReferenceBefore(math.MaxUint64 - 1)
 			if index < 0 || c.refs == math.MaxUint32 {
 				return ErrCapacity
 			}
 			ref := &r.refs[index]
 			*ref = referenceSlot{borrowPool: p, protectedIdle: true, generation: ref.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: s.owner, accounts: s.accounts, count: s.count, active: true}
-			r.referenceExtent = max(r.referenceExtent, index+1)
+			r.activateReference(uint32(index))
 			r.attachScopes(c, s.accounts[:s.count])
 			c.refs++
 			r.referenceCount++
@@ -243,7 +232,9 @@ func (p *BorrowPool) Borrow(source Reference) (Reference, error) {
 			_, parked := p.metadata.slotsLocked()
 			r.releaseScopes(parked, alias.accounts[:alias.count])
 			parked.refs--
+			r.unregisterReferenceOwner(index)
 			*alias = referenceSlot{borrowPool: p, generation: alias.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: s.owner, accounts: s.accounts, count: s.count, active: true}
+			r.registerReferenceOwner(index)
 			r.attachScopes(c, s.accounts[:s.count])
 			c.refs++
 			return Reference{r, index, alias.generation}, nil
@@ -268,6 +259,7 @@ func (p *BorrowPool) releaseLocked(ref Reference, slot *referenceSlot, _ *charge
 			ref.releaseLocked()
 			m, mc := p.metadata.slotsLocked()
 			*slot = referenceSlot{borrowPool: p, protectedIdle: true, generation: slot.generation, charge: m.charge, chargeGeneration: mc.generation, owner: m.owner, accounts: m.accounts, count: m.count, active: true}
+			p.root.activateReference(ref.index)
 			p.root.attachScopes(mc, m.accounts[:m.count])
 			mc.refs++
 			p.root.referenceCount++

@@ -139,7 +139,7 @@ func (g *ReceiveProtection) returnLocked(f *ReceiveFlow) {
 // another flow. The pool's original per-flow metadata covers this descriptor;
 // no additional buffer, promise or manager is created.
 func (f *ReceiveFlow) protectCurrentCreditLocked() error {
-	if f.minimumPromise == 0 || f.minimumPromise > f.limit-f.released || f.minimumPromise > uint64(len(f.storage)) {
+	if f.minimumPromise == 0 || f.minimumPromise > f.limit-f.released || f.minimumPromise > f.capacity {
 		return ErrCredit
 	}
 	if f.protection != nil {
@@ -148,7 +148,7 @@ func (f *ReceiveFlow) protectCurrentCreditLocked() error {
 		}
 		return nil
 	}
-	g := &ReceiveProtection{pool: f.pool, next: f.pool.protections, capacity: uint64(len(f.storage)), promise: f.minimumPromise, flow: f, retireWithFlow: true}
+	g := &ReceiveProtection{pool: f.pool, next: f.pool.protections, capacity: f.capacity, promise: f.minimumPromise, flow: f, retireWithFlow: true}
 	f.protection, f.pool.protections = g, g
 	return nil
 }

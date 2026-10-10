@@ -32,7 +32,7 @@ type signedDomain struct {
 type signedMapRegistry struct {
 	signatures map[string]signedDomain
 	digests    map[string]signedDomain
-	textCap    int
+	textCaps   map[string]int
 }
 
 var runtimeSignedMaps = sync.OnceValues(func() (*signedMapRegistry, error) {
@@ -40,7 +40,7 @@ var runtimeSignedMaps = sync.OnceValues(func() (*signedMapRegistry, error) {
 	if json.Unmarshal([]byte(DomainRegistryJSON), &domains) != nil {
 		return nil, CBORFailure("registry_unresolved")
 	}
-	r := &signedMapRegistry{signatures: map[string]signedDomain{}, digests: map[string]signedDomain{}}
+	r := &signedMapRegistry{signatures: map[string]signedDomain{}, digests: map[string]signedDomain{}, textCaps: map[string]int{}}
 	maps, err := runtimeSchema()
 	if err != nil {
 		return nil, err
@@ -67,19 +67,20 @@ var runtimeSignedMaps = sync.OnceValues(func() (*signedMapRegistry, error) {
 			r.signatures[part.Schema] = domain
 		}
 	}
-	var schemas []string
 	for name := range r.signatures {
-		schemas = append(schemas, name)
-	}
-	r.textCap, err = schemaTextCapacity(maps, schemas)
-	if err != nil {
-		return nil, err
+		// Include every reachable nested schema and variant while avoiding
+		// normalization capacity needed only by an unrelated signed map.
+		r.textCaps[name], err = schemaTextCapacity(maps, []string{name})
+		if err != nil {
+			return nil, err
+		}
 	}
 	return r, nil
 })
 
 // SignedMapCodec reserves one decoder, signing-input buffer and encoding buffer
-// for one fixed schema. It admits no waiter queue or second retained document.
+// for one fixed schema. Nodes are allocated once for each original input under
+// the full declared reservation. It admits no queue or second retained document.
 // Limits/shape precede crypto. Signatures alone do not establish issuer trust,
 // permissions, time, revocation, complete cross-field rules or activation rights.
 type SignedMapCodec struct {
@@ -91,7 +92,17 @@ type SignedMapCodec struct {
 	signatureName    string
 	message, encoded []byte
 	current          *SignedMap
+	retention        signedMapRetention
+	sealed           bool
 }
+
+type signedMapRetention uint8
+
+const (
+	signedMapReusable signedMapRetention = iota
+	signedMapVerifiedOnce
+	signedMapSignedOnce
+)
 
 // SignedMap is only a canonical-map/signature fact over exact original bytes.
 // The trusted admission owner must independently resolve and authorize Key,
@@ -112,7 +123,7 @@ func SignedMapBackingBytes(schema string, byteCap, nodeCap int) (uint64, error) 
 	if !ok || byteCap <= 0 || byteCap > math.MaxInt-len(domain.label)-4 {
 		return 0, CBORFailure("signature_schema")
 	}
-	decoder, err := decoderBackingBytes(byteCap, nodeCap, min(byteCap, r.textCap))
+	decoder, err := decoderBackingBytes(byteCap, nodeCap, min(byteCap, r.textCaps[schema]))
 	if err != nil {
 		return 0, err
 	}
@@ -124,6 +135,28 @@ func SignedMapBackingBytes(schema string, byteCap, nodeCap int) (uint64, error) 
 }
 
 func NewSignedMapCodec(schema string, byteCap, nodeCap int) (*SignedMapCodec, error) {
+	return newSignedMapCodec(schema, byteCap, nodeCap, signedMapReusable)
+}
+
+// NewOnceSigningMapCodec retains one successfully issued map. Signing uses the
+// original complete backing and limits; failed jobs leave the codec available
+// for the caller's next independently authorized job. A successful Sign or
+// SignWith compacts before publishing any views and permanently seals the codec.
+// The caller retains the full SignedMapBackingBytes charge until real cleanup.
+func NewOnceSigningMapCodec(schema string, byteCap, nodeCap int) (*SignedMapCodec, error) {
+	return newSignedMapCodec(schema, byteCap, nodeCap, signedMapSignedOnce)
+}
+
+// NewImmutableSignedMapCodec retains one verified signature fact. It checks the
+// original decode limits before privately compacting backing storage, and keeps
+// projection scratch for that document. Release permanently retires the codec;
+// issuers and other reusable owners must use NewSignedMapCodec instead. The
+// caller reserves the complete SignedMapBackingBytes charge until real cleanup.
+func NewImmutableSignedMapCodec(schema string, byteCap, nodeCap int) (*SignedMapCodec, error) {
+	return newSignedMapCodec(schema, byteCap, nodeCap, signedMapVerifiedOnce)
+}
+
+func newSignedMapCodec(schema string, byteCap, nodeCap int, retention signedMapRetention) (*SignedMapCodec, error) {
 	if _, err := SignedMapBackingBytes(schema, byteCap, nodeCap); err != nil {
 		return nil, err
 	}
@@ -135,16 +168,30 @@ func NewSignedMapCodec(schema string, byteCap, nodeCap int) (*SignedMapCodec, er
 	if !ok || byteCap <= 0 || byteCap > math.MaxInt-len(domain.label)-4 {
 		return nil, CBORFailure("signature_schema")
 	}
-	decoder, err := newDecoder(byteCap, nodeCap, min(byteCap, r.textCap))
+	// SignedMapBackingBytes checked the complete declared input/node charge.
+	// Keep original text capacity; private input/nodes follow one wire map and
+	// retire with its document, under the original reusable decode limits.
+	decoder, err := newDecoderWorkspace(byteCap, nodeCap, min(byteCap, r.textCaps[schema]))
 	if err != nil {
 		return nil, err
 	}
+	decoder.byteLimit = byteCap
+	decoder.nodeLimit = nodeCap
+	decoder.fixedSchema = schema
 	m := decoder.registry.Maps[schema]
-	return &SignedMapCodec{decoder: decoder, schema: schema, domain: domain, signatureID: *m.SignatureField, signatureName: m.byID[*m.SignatureField].Name, message: make([]byte, len(domain.label)+4+byteCap), encoded: make([]byte, byteCap)}, nil
+	c := &SignedMapCodec{decoder: decoder, schema: schema, domain: domain, signatureID: *m.SignatureField, signatureName: m.byID[*m.SignatureField].Name, retention: retention}
+	if retention != signedMapVerifiedOnce {
+		c.message = make([]byte, len(domain.label)+4+byteCap)
+		c.encoded = make([]byte, byteCap)
+	}
+	return c, nil
 }
 
 func (c *SignedMapCodec) signingInput(doc *Document) ([]byte, error) {
 	offset := len(c.domain.label) + 4
+	if c.retention == signedMapVerifiedOnce {
+		c.message = make([]byte, offset+len(doc.Bytes()))
+	}
 	unsigned, err := doc.copyWithout(c.message[offset:], c.signatureID)
 	if err != nil || uint64(len(unsigned)) > math.MaxUint32 {
 		return nil, CBORFailure("signature_projection")
@@ -157,8 +204,11 @@ func (c *SignedMapCodec) signingInput(doc *Document) ([]byte, error) {
 func (c *SignedMapCodec) Verify(input []byte, key [32]byte, context DecodeContext) (*SignedMap, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.current != nil {
+	if c.current != nil || c.sealed {
 		return nil, CBORFailure("decoder_busy")
+	}
+	if c.retention == signedMapSignedOnce {
+		return nil, CBORFailure("signature_owner")
 	}
 	doc, err := c.decoder.DecodeShape(input, c.schema, context)
 	if err != nil {
@@ -189,16 +239,17 @@ func (c *SignedMapCodec) CopyVerified(original *SignedMap, context DecodeContext
 		return nil, CBORFailure("decoder_busy")
 	}
 	defer c.mu.Unlock()
-	if c.current != nil {
+	if c.current != nil || c.sealed {
 		return nil, CBORFailure("decoder_busy")
+	}
+	if c.retention == signedMapSignedOnce {
+		return nil, CBORFailure("signature_owner")
 	}
 	doc, err := c.decoder.DecodeShape(original.document.Bytes(), c.schema, context)
 	if err != nil {
 		return nil, err
 	}
-	v := &SignedMap{codec: c, document: doc, key: original.key, activationSourceProfile: context.Selectors["activation_source_profile"]}
-	c.current = v
-	return v, nil
+	return c.retainDocument(doc, original.key, context), nil
 }
 
 // VerifyCredential resolves an untrusted issuer identifier only inside the
@@ -211,8 +262,11 @@ func (c *SignedMapCodec) VerifyCredential(input []byte, trust *NamespaceTrustSto
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.current != nil {
+	if c.current != nil || c.sealed {
 		return nil, CBORFailure("decoder_busy")
+	}
+	if c.retention == signedMapSignedOnce {
+		return nil, CBORFailure("signature_owner")
 	}
 	doc, err := c.decoder.DecodeShape(input, c.schema, DecodeContext{})
 	if err != nil {
@@ -237,12 +291,31 @@ func (c *SignedMapCodec) verifyDocument(doc *Document, key [32]byte, context Dec
 	valid := err == nil && ok && VerifyEd25519(signature, message, key[:])
 	clear(c.message)
 	if !valid {
+		if c.retention == signedMapVerifiedOnce {
+			c.message = nil
+		}
 		doc.Release()
 		return nil, CBORFailure("signature_invalid")
 	}
+	return c.retainDocument(doc, key, context), nil
+}
+
+func (c *SignedMapCodec) retainDocument(doc *Document, key [32]byte, context DecodeContext) *SignedMap {
+	if c.retention == signedMapVerifiedOnce {
+		// The original full message/encoding reservation covers both the
+		// retained projection buffer and every transient compact allocation.
+		// Count the live signing buffer even though it is cleared already, using
+		// declared bytes rather than the current private input length. Shape's
+		// node replacement fits its separate original node allowance.
+		spare := uint64(c.decoder.byteLimit)*2 + uint64(len(c.domain.label)+4) - uint64(len(c.message)) - uint64(len(doc.Bytes()))
+		c.encoded = make([]byte, len(doc.Bytes()))
+		doc.compactImmutableBacking(spare)
+		c.message = nil
+		c.sealed = true
+	}
 	v := &SignedMap{codec: c, document: doc, key: key, activationSourceProfile: context.Selectors["activation_source_profile"]}
 	c.current = v
-	return v, nil
+	return v
 }
 
 // Sign is for the trusted issuer's bounded synchronous signing job. Callers
@@ -301,11 +374,14 @@ func (c *SignedMapCodec) SignWith(fields []Field, key [32]byte, signer MapSigner
 }
 
 func (c *SignedMapCodec) sign(fields []Field, context DecodeContext, rules bool, sign func([]byte) ([32]byte, []byte, error)) (*SignedMap, error) {
+	if c.retention == signedMapVerifiedOnce {
+		return nil, CBORFailure("signature_owner")
+	}
 	if !c.mu.TryLock() {
 		return nil, CBORFailure("decoder_busy")
 	}
 	defer c.mu.Unlock()
-	if c.current != nil {
+	if c.current != nil || c.sealed {
 		return nil, CBORFailure("decoder_busy")
 	}
 	var complete [128]Field
@@ -345,6 +421,7 @@ func (c *SignedMapCodec) sign(fields []Field, context DecodeContext, rules bool,
 	public, signature, signErr := sign(message)
 	valid := signErr == nil && VerifyEd25519(signature, message, public[:])
 	clear(c.message)
+	message = nil
 	if !valid {
 		clear(signature)
 		doc.Release()
@@ -358,6 +435,17 @@ func (c *SignedMapCodec) sign(fields []Field, context DecodeContext, rules bool,
 	target, _ := doc.Root().Field(c.signatureID).ByteString()
 	copy(target, signature)
 	clear(signature)
+	if c.retention == signedMapSignedOnce {
+		// The provider has returned without a message alias, and the local
+		// signing slice was dropped above. Retire its cleared original array
+		// before allocating replacements; their complete overlap fits that
+		// same prepaid allowance. Keep the existing encoding array as projection
+		// scratch, so no second codec or encoding buffer is constructed.
+		spare := uint64(len(c.message))
+		c.message = nil
+		doc.compactImmutableBacking(spare)
+		c.sealed = true
+	}
 	v := &SignedMap{codec: c, document: doc, key: public, activationSourceProfile: context.Selectors["activation_source_profile"]}
 	c.current = v
 	return v, nil

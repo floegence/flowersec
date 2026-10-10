@@ -58,7 +58,7 @@ func (r *NamespaceRules) StateBackingBytes() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	headDecoder, err := DecoderBackingBytes(headBytes, headBytes)
+	headDecoder, err := schemaDecoderBackingBytes("FreshnessHead", headBytes, headBytes)
 	if err != nil {
 		return 0, err
 	}
@@ -82,11 +82,17 @@ func NewRevocationWorkspace(rules *NamespaceRules, reservation resourcev4.Refere
 	if err != nil {
 		return nil, err
 	}
-	d, err := newDecoder(int(rules.stateBytes), int(rules.stateBytes), min(128, int(rules.stateBytes)))
+	// Complete State input/nodes are already reserved. Private backing follows
+	// the original input at decode time and retires with that document; original
+	// byte/node limits and the complete text workspace remain unchanged.
+	d, err := newDecoder(int(rules.stateBytes), 1, min(128, int(rules.stateBytes)))
 	if err != nil {
 		owned.Release()
 		return nil, err
 	}
+	d.input, d.nodes = nil, nil
+	d.byteLimit = int(rules.stateBytes)
+	d.nodeLimit = int(rules.stateBytes)
 	w := &RevocationWorkspace{rules: rules, decoder: d, reservation: owned}
 	for class := range w.segments {
 		w.segments[class] = make([]cohortSegment, 0, int(rules.limits["max_cohort_policy_segments"]))

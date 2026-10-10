@@ -47,7 +47,7 @@ func (c *Client) PrepareMaterial(ctx context.Context, material Material, origin 
 		if _, err := rand.Read(id[:]); err != nil {
 			reporter.Fatal(err)
 		}
-		limit := h.Root.Snapshot().Limit
+		limit := h.SessionLimit
 		limit[resourcev4.Sessions] = 1
 		scope, err := h.Root.Account(resourcev4.AccountKey{Kind: resourcev4.SessionAccount, ID: id}, limit)
 		if err != nil {
@@ -71,6 +71,7 @@ func (c *Client) PrepareMaterial(ctx context.Context, material Material, origin 
 		h.Admission[0].Initial.Deadline = deadline
 		h.Generation = fs.MaterialGeneration{Source: [16]byte(material.Generation.Source), Generation: material.Generation.Generation}
 		runtime := &Runtime{Reporter: reporter, Authority: &h, Executor: c.Runtime.Executor, PoolSpend: &ledgerv4.PoolSpendObservation{}}
+		reporter.Owner(runtime.CloseOwners, runtime.WaitOwners)
 		h.Pool.Observation = runtime.PoolSpend
 		if err = runtime.initialize(ctx, []uint8{0}, handlers, c.Runtime.Environment); err != nil {
 			reporter.Fatal(err)

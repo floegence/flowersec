@@ -100,11 +100,11 @@ func TestBrowserStreamCapacityContractIsFrozen(t *testing.T) {
 		t.Fatalf("browser stream capacity contract = %+v", contract)
 	}
 	definition, ok := lookupCapacityCase("CAP-STREAM-WT-DIRECT-100X128")
-	if !ok || capacityCaseTimeout(definition) != 180*time.Second {
+	if !ok || capacityCaseTimeout(definition) != 330*time.Second {
 		t.Fatalf("browser stream capacity case timeout = %v, found=%t", capacityCaseTimeout(definition), ok)
 	}
 	regular, ok := lookupCapacityCase("CAP-DIRECT-WSS-1000")
-	if !ok || capacityCaseTimeout(regular) != 150*time.Second {
+	if !ok || capacityCaseTimeout(regular) != 300*time.Second {
 		t.Fatalf("regular capacity case timeout = %v, found=%t", capacityCaseTimeout(regular), ok)
 	}
 }
@@ -393,15 +393,20 @@ func TestRawQUICCapacityPathsCleanEveryShortSampleSession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// This ordinary-user race regression checks real session identity,
+			// liveness and physical cleanup, including FULL-synchronous SQLite.
+			// Its fourth Connect gets 875 ms; the frozen 1000-session production
+			// contract separately measures throughput and latency without race
+			// instrumentation. Do not scale that performance contract here.
 			contract := capacityContract{
-				Sessions: 4, Ramp: 400 * time.Millisecond, Hold: 100 * time.Millisecond, Cleanup: 400 * time.Millisecond, Watchdog: 900 * time.Millisecond,
+				Sessions: 4, Ramp: 2 * time.Second, Hold: 500 * time.Millisecond, Cleanup: time.Second, Watchdog: 3500 * time.Millisecond,
 				MaxRSS: 1 << 30, MaxCPU: 10 * time.Second, MaxOpenFDs: 4096, MaxGoroutines: 4096, MaxTasks: 4096,
 			}
 			result, err := runCapacityCase(ctx, capacityCaseDefinition{ID: "raw-quic-short", Profile: "raw-quic-short"}, contract, endpoint, monotonicSnapshots())
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("%v (original ramp result: %+v)", err, result)
 			}
-			if result.Succeeded != 4 || result.UniqueActivePeak != 4 || result.HoldDisconnects != 0 || result.ResidualSessions != 0 {
+			if result.Succeeded != 4 || result.UniqueActivePeak != 4 || result.LivenessSweeps != capacityLivenessSweepCount || result.LivenessFailures != 0 || result.HoldDisconnects != 0 || result.ResidualSessions != 0 {
 				t.Fatalf("raw QUIC short capacity result = %+v", result)
 			}
 		})
@@ -558,10 +563,81 @@ func TestRunCapacityCaseCancellationClosesEndpointBeforeSessions(t *testing.T) {
 	}
 }
 
+func TestRunCapacityCaseRetainsCanceledConnectErrorAndJoinsOriginalTail(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 1, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond,
+		Cleanup: 20 * time.Millisecond, Watchdog: 60 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+	}
+	want := errors.New("original admission COMMIT failed; establishment_stages=admission_commit")
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	endpoint := &delayedErrorCapacityEndpoint{
+		fakeCapacityEndpoint: &fakeCapacityEndpoint{},
+		entered:              make(chan struct{}), canceled: make(chan struct{}), exited: make(chan struct{}),
+		release: release, originalError: want,
+	}
+	parent, cancelParent := context.WithCancel(context.Background())
+	defer cancelParent()
+	observed := &capacityTailParentContext{Context: parent, stopped: make(chan struct{})}
+	type outcome struct {
+		result capacityCaseResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := runCapacityCase(observed, capacityCaseDefinition{ID: "canceled-connect-tail"}, contract, endpoint, monotonicSnapshots())
+		done <- outcome{result: result, err: err}
+	}()
+	for _, event := range []<-chan struct{}{endpoint.entered, endpoint.canceled, observed.stopped} {
+		select {
+		case <-event:
+		case <-time.After(time.Second):
+			t.Fatal("original Connect did not reach cancellation")
+		}
+	}
+	select {
+	case <-done:
+		t.Fatal("capacity case returned before its original Connect tail exited")
+	default:
+	}
+	endpoint.mu.Lock()
+	closes, disconnects, inflight := endpoint.closes, endpoint.disconnects, endpoint.inflightConnects
+	endpoint.mu.Unlock()
+	if closes != 0 || disconnects != 0 || inflight != 1 {
+		t.Fatalf("held Connect tail lost original ownership: closes=%d disconnects=%d inflight=%d", closes, disconnects, inflight)
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case got := <-done:
+		if !errors.Is(got.err, errCapacityWatchdog) || !errors.Is(got.err, want) || !strings.HasPrefix(got.err.Error(), errCapacityWatchdog.Error()) || !strings.Contains(got.err.Error(), "capacity session 1 connect:") {
+			t.Fatalf("capacity timeout lost original cause or ordinal: %v", got.err)
+		}
+		if got.result.Attempted != 0 || got.result.Succeeded != 0 || got.result.Failed != 0 || got.result.WatchdogTimeouts != 1 {
+			t.Fatalf("late Connect result changed original ramp facts: %+v", got.result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("capacity case did not join its released Connect tail")
+	}
+	select {
+	case <-endpoint.exited:
+	default:
+		t.Fatal("capacity cleanup preceded the original Connect return")
+	}
+	endpoint.mu.Lock()
+	defer endpoint.mu.Unlock()
+	if endpoint.closeWhileConnecting || endpoint.closes != 1 || endpoint.disconnects != 1 || !slices.Equal(endpoint.closeOrder, []string{"session", "endpoint"}) {
+		t.Fatalf("original late-session cleanup = closes:%d disconnects:%d inflight:%t order:%v", endpoint.closes, endpoint.disconnects, endpoint.closeWhileConnecting, endpoint.closeOrder)
+	}
+}
+
 func TestRunCapacityCaseProvesStreamPeakAndZeroResidual(t *testing.T) {
 	contract := capacityContract{
-		Sessions: 2, StreamsPerSession: 3, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond,
-		Cleanup: 20 * time.Millisecond, Watchdog: 60 * time.Millisecond,
+		// This checks stream accounting, not millisecond scheduler latency.
+		// Deadline failure behavior has separate slow-sweep regressions.
+		Sessions: 2, StreamsPerSession: 3, Ramp: 100 * time.Millisecond, Hold: 100 * time.Millisecond,
+		Cleanup: 100 * time.Millisecond, Watchdog: 300 * time.Millisecond,
 		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
 	}
 	endpoint := &fakeCapacityEndpoint{}
@@ -569,12 +645,66 @@ func TestRunCapacityCaseProvesStreamPeakAndZeroResidual(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.CompletedStreams != 6 || result.ActiveStreamPeak != 6 || result.ResidualStreams != 0 || endpoint.openedStreams != 6 {
+	if result.CompletedStreams != 6 || result.ActiveStreamPeak != 6 || result.ResidualStreams != 0 || endpoint.openedStreams != 6 || result.LivenessSweeps != capacityLivenessSweepCount || result.LivenessFailures != 0 {
 		t.Fatalf("stream capacity result = %+v endpoint=%+v", result, endpoint)
 	}
 	if result.Resources[0].ActiveStreams != 6 || result.Resources[1].ActiveStreams != 6 ||
 		result.Resources[2].ResidualStreams == nil || *result.Resources[2].ResidualStreams != 0 {
 		t.Fatalf("stream resource timeline = %+v", result.Resources)
+	}
+}
+
+func TestRunCapacityCaseJoinsObserversWhenCleanupCannotTerminateSession(t *testing.T) {
+	contract := capacityContract{
+		Sessions: 1, Ramp: 20 * time.Millisecond, Hold: 20 * time.Millisecond,
+		Cleanup: 20 * time.Millisecond, Watchdog: 60 * time.Millisecond,
+		MaxRSS: 1 << 30, MaxCPU: time.Second, MaxOpenFDs: 100, MaxGoroutines: 100, MaxTasks: 100,
+	}
+	probeErr := errors.New("original hold probe failed")
+	sessionCloseErr := errors.New("original Session cleanup failed")
+	endpointCloseErr := errors.New("original endpoint cleanup failed")
+	session := &heldTerminationCapacitySession{
+		termination: make(chan struct{}), observerEntered: make(chan struct{}),
+		probeErr: probeErr, closeErr: sessionCloseErr,
+	}
+	// Release even a regressed observer after the test; the failure path itself
+	// must finish while this original Termination signal is still open.
+	defer close(session.termination)
+	endpoint := &heldTerminationCapacityEndpoint{session: session, closeErr: endpointCloseErr}
+	type outcome struct {
+		result capacityCaseResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := runCapacityCase(context.Background(), capacityCaseDefinition{ID: "held-termination"}, contract, endpoint, monotonicSnapshots())
+		done <- outcome{result: result, err: err}
+	}()
+	select {
+	case <-session.observerEntered:
+	case <-time.After(time.Second):
+		t.Fatal("original termination observer did not enter")
+	}
+	select {
+	case got := <-done:
+		// Returning includes the local observer WaitGroup. Neither cancelling
+		// observation nor joining it may turn real cleanup failures into success.
+		if !errors.Is(got.err, probeErr) || !errors.Is(got.err, sessionCloseErr) || !errors.Is(got.err, endpointCloseErr) {
+			t.Fatalf("observer cleanup lost original failures: %v", got.err)
+		}
+		if got.result.LivenessFailures != 1 || got.result.LivenessSweeps != 0 || got.result.HoldDisconnects != 0 || got.result.CleanupDisconnects != 0 {
+			t.Fatalf("local observer cancellation changed original capacity facts: %+v", got.result)
+		}
+		if session.closes != 1 || endpoint.closes != 1 {
+			t.Fatalf("original cleanup was skipped or repeated: Session=%d endpoint=%d", session.closes, endpoint.closes)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("failed cleanup stranded the original local termination observer")
+	}
+	select {
+	case <-session.termination:
+		t.Fatal("local observer cleanup fabricated original Session termination")
+	default:
 	}
 }
 
@@ -615,6 +745,45 @@ type fakeCapacitySession struct {
 	closeDelay time.Duration
 	probeDelay time.Duration
 	probeErr   error
+}
+
+type heldTerminationCapacitySession struct {
+	termination, observerEntered chan struct{}
+	observerOnce                 sync.Once
+	probeErr, closeErr           error
+	closes                       int
+}
+
+func (*heldTerminationCapacitySession) ID() string { return "held-termination" }
+func (session *heldTerminationCapacitySession) Termination() <-chan struct{} {
+	session.observerOnce.Do(func() { close(session.observerEntered) })
+	return session.termination
+}
+func (session *heldTerminationCapacitySession) ProbeLiveness(ctx context.Context) error {
+	select {
+	case <-session.observerEntered:
+		return session.probeErr
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
+}
+func (session *heldTerminationCapacitySession) Close(context.Context) error {
+	session.closes++
+	return session.closeErr
+}
+
+type heldTerminationCapacityEndpoint struct {
+	session  *heldTerminationCapacitySession
+	closeErr error
+	closes   int
+}
+
+func (endpoint *heldTerminationCapacityEndpoint) Connect(context.Context) (capacitySession, error) {
+	return endpoint.session, nil
+}
+func (endpoint *heldTerminationCapacityEndpoint) Close(context.Context) error {
+	endpoint.closes++
+	return endpoint.closeErr
 }
 
 func (session *fakeCapacitySession) ID() string                   { return session.id }
@@ -692,6 +861,50 @@ type fakeCapacityEndpoint struct {
 	closeOrder           []string
 	sessionCloseDelay    time.Duration
 	sessionProbeDelay    time.Duration
+}
+
+type delayedErrorCapacityEndpoint struct {
+	*fakeCapacityEndpoint
+	entered, canceled, exited chan struct{}
+	release                   <-chan struct{}
+	originalError             error
+}
+
+// The parent cancellation registration stops only when the case seals its
+// ramp. Observe that boundary before releasing the canceled original call,
+// independently of which goroutine first notices the shared deadline.
+type capacityTailParentContext struct {
+	context.Context
+	stopped  chan struct{}
+	stopOnce sync.Once
+}
+
+func (*capacityTailParentContext) Value(any) any { return nil }
+func (ctx *capacityTailParentContext) AfterFunc(callback func()) func() bool {
+	stop := context.AfterFunc(ctx.Context, callback)
+	return func() bool {
+		stopped := stop()
+		ctx.stopOnce.Do(func() { close(ctx.stopped) })
+		return stopped
+	}
+}
+
+func (endpoint *delayedErrorCapacityEndpoint) Connect(ctx context.Context) (capacitySession, error) {
+	endpoint.mu.Lock()
+	endpoint.inflightConnects++
+	endpoint.mu.Unlock()
+	defer func() {
+		endpoint.mu.Lock()
+		endpoint.inflightConnects--
+		endpoint.mu.Unlock()
+		close(endpoint.exited)
+	}()
+	session, err := endpoint.fakeCapacityEndpoint.Connect(ctx)
+	close(endpoint.entered)
+	<-ctx.Done()
+	close(endpoint.canceled)
+	<-endpoint.release
+	return session, errors.Join(err, context.Cause(ctx), endpoint.originalError)
 }
 
 type fakeQuiescingCapacityEndpoint struct {

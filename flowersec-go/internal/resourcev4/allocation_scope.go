@@ -18,7 +18,10 @@ func (ref Reference) CopyAllocationScope(root *Root, dst []Account) (OwnerKey, i
 	if len(dst) < s.count {
 		return OwnerKey{}, 0, ErrCapacity
 	}
-	return s.owner, copy(dst, s.accounts[:s.count]), nil
+	for i, account := range s.accounts[:s.count] {
+		dst[i] = account.account(root)
+	}
+	return s.owner, s.count, nil
 }
 
 // CopyResultAccounts projects the exact remaining scope generations of an
@@ -41,7 +44,10 @@ func (ref Reference) CopyResultAccounts(dst []Account) (int, error) {
 	if len(dst) < s.count {
 		return 0, ErrCapacity
 	}
-	return copy(dst, s.accounts[:s.count]), nil
+	for i, account := range s.accounts[:s.count] {
+		dst[i] = account.account(r)
+	}
+	return s.count, nil
 }
 
 // CheckAllocationScope fixes dynamic children to the exact original root,
@@ -65,7 +71,7 @@ func (ref Reference) CheckAllocationScope(root *Root, owner OwnerKey, accounts [
 		return ErrOwner
 	}
 	for index, account := range accounts {
-		if account.slotLocked(root) == nil || accountIndex(s.accounts[:s.count], account) < 0 {
+		if account.slotLocked(root) == nil || accountIndex(s.accounts[:s.count], account.slotKey()) < 0 {
 			return ErrOwner
 		}
 		for _, earlier := range accounts[:index] {

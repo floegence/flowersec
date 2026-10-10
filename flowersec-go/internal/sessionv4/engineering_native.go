@@ -21,6 +21,7 @@ import (
 type PublicQUICTestHarness struct {
 	Tunnel                        *PublicTunnelAuthority
 	Root                          *resourcev4.Root
+	SessionLimit                  resourcev4.Vector
 	Environment, Preauth          resourcev4.Reference
 	Clock                         *timev4.Clock
 	Verification                  *protocolv4.NamespaceRegistry
@@ -73,6 +74,7 @@ func (h *PublicQUICTestHarness) DetachIssuedAuthority() PublicQUICTestHarness {
 	d.Root, d.Clock, d.Verification, d.Store = nil, nil, nil, nil
 	d.Environment, d.Preauth = resourcev4.Reference{}, resourcev4.Reference{}
 	d.Scope = [2]SessionResourceScope{}
+	d.SessionLimit = resourcev4.Vector{}
 	for role := range d.Admission {
 		profile := d.Admission[role].Initial.Profile
 		d.Admission[role] = SessionAdmissionConfig{}
@@ -92,6 +94,7 @@ func (h *PublicQUICTestHarness) DetachIssuedAuthority() PublicQUICTestHarness {
 	switch original := d.Authority.(type) {
 	case poolSQLiteAuthority:
 		original.parent = nil
+		original.admissionGate = nil
 		d.Authority = original
 	case liveSQLiteAuthority:
 		original.parent = nil
@@ -140,12 +143,12 @@ func newPublicNativeTestHarness(t AuthorityReporter, source, profile string, add
 	if localLoopback {
 		carrierKind = "websocket"
 	}
-	f := newAuthorityFixture(t, source)
+	f := newAuthorityFixture(t, source, engineeringCapacityRoot(t, source, profile, carrierKind, datagrams))
 	for _, subscriptions := range f.trust.subscriptions {
 		subscriptions.Close()
 	}
-	q := &PublicQUICTestHarness{LocalLoopback: localLoopback, Root: f.root, Environment: f.environment, Preauth: f.preauth, Clock: f.trust.clock,
-		Generation: MaterialGeneration{Source: [16]byte{1}, Generation: 1}, Scope: [2]SessionResourceScope{f.scope, corePlanTestScope(t, f.root, f.root.Snapshot().Limit, 2)}}
+	q := &PublicQUICTestHarness{LocalLoopback: localLoopback, Root: f.root, SessionLimit: engineeringSessionLimit(), Environment: f.environment, Preauth: f.preauth, Clock: f.trust.clock,
+		Generation: MaterialGeneration{Source: [16]byte{1}, Generation: 1}, Scope: [2]SessionResourceScope{f.scope, engineeringScope(t, f.root, f.root.Snapshot().Limit, engineeringSessionLimit(), 2)}}
 	// The harness owns these raw seed projections even if its construction
 	// fails later. All consumers registered below join before this callback.
 	t.Cleanup(func() {
@@ -398,16 +401,19 @@ func newPublicNativeTestHarness(t AuthorityReporter, source, profile string, add
 		}
 		candidates = make([][]byte, len(routes))
 		for index, wire := range routes {
-			route := admissionDocument(t, "Route", wire)
-			kind, ok := route.Root().Named("Route", "path_kind").Uint()
-			if !ok || kind != 0 {
-				t.Fatal("engineering candidate route set requires original direct routes")
-			}
-			id, ok := route.Root().Named("Route", "candidate_id").ByteString()
-			if !ok || len(id) != 16 {
-				t.Fatal("engineering route candidate identity is missing")
-			}
-			candidates[index] = admissionMap(t, "Candidate", candidate, map[string]protocolv4.Field{"candidate_id": admissionBytes(id), "path_kind": {}, "direct_leg": {Kind: protocolv4.EncodedMap, Bytes: route.Root().Named("Route", "direct_leg").Encoded()}})
+			candidates[index] = func() []byte {
+				route := admissionOwnedDocument(t, "Route", wire)
+				defer route.Release()
+				kind, ok := route.Root().Named("Route", "path_kind").Uint()
+				if !ok || kind != 0 {
+					t.Fatal("engineering candidate route set requires original direct routes")
+				}
+				id, ok := route.Root().Named("Route", "candidate_id").ByteString()
+				if !ok || len(id) != 16 {
+					t.Fatal("engineering route candidate identity is missing")
+				}
+				return admissionMap(t, "Candidate", candidate, map[string]protocolv4.Field{"candidate_id": admissionBytes(id), "path_kind": {}, "direct_leg": {Kind: protocolv4.EncodedMap, Bytes: route.Root().Named("Route", "direct_leg").Encoded()}})
+			}()
 		}
 	}
 	indices := make([]uint64, len(candidates))
@@ -583,66 +589,7 @@ func newPublicNativeTestHarness(t AuthorityReporter, source, profile string, add
 				t.Fatal("engineering tunnel carrier is unsupported")
 			}
 		}
-		c.Core.Session, c.Core.Native, c.Core.MessageCarrier = f.trust.session, roleCarrier != "websocket", roleCarrier == "websocket"
-		if roleCarrier == "websocket" {
-			c.Core.MessageRuntimeBytes = 65536
-			c.Core.NativeAuthWorkers = 0
-		}
-		if roleCarrier != "websocket" {
-			c.Core.NativeAuthWorkers = 1
-		}
-		c.Core.SendWorkers = [3]uint32{2}
-		if features != 0 {
-			c.Core.Datagrams = true
-			c.Core.WorkSlots = 6
-		}
-		c.Core.Streams = factoryStreamConfig()
-		if _, engineering := t.(EngineeringAuthorityTime); engineering {
-			maximum := f.trust.session.Contract.Limits().MaxStreams
-			registry, err := openAdmissionRegistry()
-			if err != nil {
-				t.Fatal(err)
-			}
-			geometry, _, err := internalChannelGeometry(f.trust.session.Contract.Limits().ApplicationProfile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			internal := geometry.RPC + geometry.Notify
-			fixed := internal + geometry.Management
-			if maximum < fixed || internal%2 != 0 {
-				t.Fatal("engineering active capacity cannot cover its original profile")
-			}
-			classes := [3]uint32{maximum - fixed, internal, geometry.Management}
-			opener := [2][3]uint32{{classes[0], internal / 2, geometry.Management}, {classes[0], internal / 2, 0}}
-			protected := [2][3]uint32{{0, internal / 2, geometry.Management}, {0, internal / 2, 0}}
-			lifetime := [2][3]uint64{{registry.Streams.Business, registry.Streams.Internal, 0}, {registry.Streams.Business, registry.Streams.Internal, 0}}
-			if geometry.Management != 0 {
-				lifetime[0][ManagementStream] = registry.Streams.Management
-			}
-			pending := min(maximum, registry.Streams.Pending)
-			c.Core.MaxScopes, c.Core.PendingScopes = maximum, pending
-			c.Core.Open = OpenLimits{Active: maximum, Opening: pending, Terminal: maximum*2 + 2, RejectionReserve: 2, IngressItems: pending, IngressBytes: registry.Records.Caps.Ingress.Bytes, PerClass: classes, PerOpener: opener, Protected: protected, Lifetime: lifetime}
-			c.Core.WorkSlots = 6
-			// A barrier contains one map and two key/value pairs per signed scope.
-			// Keep the fixed record allowance for the enclosing phase and other frames.
-			c.Core.DecoderNodes = 128 + 5*int(maximum)
-			c.Core.Maintenance = engineeringRekeyReserve(t, c.Core.Session.Profile, maximum, c.Core.Session.Contract.Limits().MaxFrame)
-			if c.Core.Native {
-				c.Core.SendWorkers = classes
-			} else {
-				c.Core.SendWorkers = [3]uint32{min(classes[0], 2), min(classes[1], 1), min(classes[2], 1)}
-			}
-			// Decode every DATA payload allowed by the signed frame. The local
-			// publication chunk is independent of the peer's legal frame size;
-			// its send ring and plaintext backing are charged before admission.
-			c.Core.MaxDataPayloadBytes = uint64(c.Core.Session.Contract.Limits().MaxFrame)
-			c.Core.Streams = SessionStreamConfig{ReceivePoolBytes: uint64(maximum) * (128 << 10), ReceiveBytes: 128 << 10, InitialReceiveLimit: engineeringInitialReceiveLimit, SendBytes: 4096, QueueBytes: 16384, WriteWaiters: 4, MaxPlaintext: 4224, Chunk: 4096, RuntimeBytes: 65536}
-
-		}
-		c.Core.Messages = MaintenanceMessagePolicy{256, 1, 10000}
-		c.Core.Termination = StreamTerminationPolicy{10000, 1000, 8}
-		c.Core.NativeIngress = MaintenanceIngressPolicy{10000, 1, 256}
-		c.Core.DrainTimeoutMS = 1000
+		c.Core = engineeringNativeCore(t, c.Core, f.trust.session, roleCarrier, features != 0)
 		c.Features = f.trust.features
 		c.Initial.Role, c.Initial.Profile = protocolv4.Direction(role), profile
 		q.Admission[role] = c
@@ -839,6 +786,8 @@ func (h *PublicQUICTestHarness) UseEngineeringPeerMaterial(t AuthorityReporter, 
 		t.Fatal("pool consumer authority is unavailable")
 	}
 	local.original = fields
+	// Rebinding this position's signed facts retains the original deployment's
+	// shared durable scheduler, rather than creating an independent store gate.
 	h.Authority = local
 	h.Pool.Authority = local
 	h.Lease = config
@@ -893,4 +842,70 @@ func (h *PublicQUICTestHarness) PreparationNamespaces(clock *timev4.Clock, envir
 		namespaces[i] = namespace
 	}
 	return namespaces, nil
+}
+
+// engineeringNativeCore retains the original signed stream, receive and crypto
+// geometry for both construction and trusted local capacity declarations.
+func engineeringNativeCore(t AuthorityReporter, c SessionCoreConfig, parameters protocolv4.ArtifactSessionParameters, roleCarrier string, datagrams bool) SessionCoreConfig {
+	c.Session, c.Native, c.MessageCarrier = parameters, roleCarrier != "websocket", roleCarrier == "websocket"
+	if roleCarrier == "websocket" {
+		c.MessageRuntimeBytes = 65536
+		c.NativeAuthWorkers = 0
+	}
+	if roleCarrier != "websocket" {
+		c.NativeAuthWorkers = 1
+	}
+	c.SendWorkers = [3]uint32{2}
+	if datagrams {
+		c.Datagrams = true
+		c.WorkSlots = 6
+	}
+	c.Streams = factoryStreamConfig()
+	if _, engineering := t.(EngineeringAuthorityTime); engineering {
+		maximum := parameters.Contract.Limits().MaxStreams
+		registry, err := openAdmissionRegistry()
+		if err != nil {
+			t.Fatal(err)
+		}
+		geometry, _, err := internalChannelGeometry(parameters.Contract.Limits().ApplicationProfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		internal := geometry.RPC + geometry.Notify
+		fixed := internal + geometry.Management
+		if maximum < fixed || internal%2 != 0 {
+			t.Fatal("engineering active capacity cannot cover its original profile")
+		}
+		classes := [3]uint32{maximum - fixed, internal, geometry.Management}
+		opener := [2][3]uint32{{classes[0], internal / 2, geometry.Management}, {classes[0], internal / 2, 0}}
+		protected := [2][3]uint32{{0, internal / 2, geometry.Management}, {0, internal / 2, 0}}
+		lifetime := [2][3]uint64{{registry.Streams.Business, registry.Streams.Internal, 0}, {registry.Streams.Business, registry.Streams.Internal, 0}}
+		if geometry.Management != 0 {
+			lifetime[0][ManagementStream] = registry.Streams.Management
+		}
+		pending := min(maximum, registry.Streams.Pending)
+		c.MaxScopes, c.PendingScopes = maximum, pending
+		c.Open = OpenLimits{Active: maximum, Opening: pending, Terminal: maximum*2 + 2, RejectionReserve: 2, IngressItems: pending, IngressBytes: registry.Records.Caps.Ingress.Bytes, PerClass: classes, PerOpener: opener, Protected: protected, Lifetime: lifetime}
+		c.WorkSlots = 6
+		// A barrier contains one map and two key/value pairs per signed scope.
+		// Keep the fixed record allowance for the enclosing phase and other frames.
+		c.DecoderNodes = 128 + 5*int(maximum)
+		c.Maintenance = engineeringRekeyReserve(t, c.Session.Profile, maximum, c.Session.Contract.Limits().MaxFrame)
+		if c.Native {
+			c.SendWorkers = classes
+		} else {
+			c.SendWorkers = [3]uint32{min(classes[0], 2), min(classes[1], 1), min(classes[2], 1)}
+		}
+		// Decode every DATA payload allowed by the signed frame. The local
+		// publication chunk is independent of the peer's legal frame size;
+		// its send ring and plaintext backing are charged before admission.
+		c.MaxDataPayloadBytes = uint64(c.Session.Contract.Limits().MaxFrame)
+		c.Streams = SessionStreamConfig{ReceivePoolBytes: uint64(maximum) * (128 << 10), ReceiveBytes: 128 << 10, InitialReceiveLimit: engineeringInitialReceiveLimit, SendBytes: 4096, QueueBytes: 16384, WriteWaiters: 4, MaxPlaintext: 4224, Chunk: 4096, RuntimeBytes: 65536}
+
+	}
+	c.Messages = MaintenanceMessagePolicy{256, 1, 10000}
+	c.Termination = StreamTerminationPolicy{10000, 1000, 8}
+	c.NativeIngress = MaintenanceIngressPolicy{10000, 1, 256}
+	c.DrainTimeoutMS = 1000
+	return c
 }

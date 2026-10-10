@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ordinalbits"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
@@ -39,7 +40,8 @@ var openAdmissionRegistry = sync.OnceValues(func() (*openAdmissionRegistryData, 
 })
 
 // OpenAdmissionCharge covers the fixed OPEN ownership graph, including both
-// complete lifetime bitmaps. IngressBytes determines the metadata arena after
+// complete lifetime bitmaps, including every deferred page and its directory.
+// IngressBytes determines the metadata arena after
 // its descriptor allowance; it is not an additional allocation. The admitted
 // runtime profile separately accounts for allocator and channel overhead.
 // One dispatcher and one outcome observer per fixed slot have fixed notification
@@ -112,6 +114,9 @@ func OpenAdmissionCharge(limits OpenLimits) (resourcev4.Vector, error) {
 	if kind <= 0 || metadata < 0 || uint64(kind) > maxInt-256 || uint64(metadata) > maxInt-256-uint64(kind) || arena > maxInt || arena < uint64(kind)+uint64(metadata) {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
 	}
+	if openMetadataBackingBytes(int(arena)) > 2*arena {
+		return resourcev4.Vector{}, cryptov4.ErrConfiguration
+	}
 	encode := uint64(kind) + uint64(metadata) + 256
 	decoder, err := protocolv4.RecordDecoderBackingBytes(int(encode), 64)
 	if err != nil {
@@ -128,10 +133,12 @@ func OpenAdmissionCharge(limits OpenLimits) (resourcev4.Vector, error) {
 			return resourcev4.Vector{}, err
 		}
 	}
+	// Keep the complete original data/occupancy reservation. The bitmap,
+	// directory and all padded data pages fit inside its two bytes per position.
 	for _, allocation := range [][2]uint64{
 		{slots, slotBytes}, {index, indexBytes}, {arena, 1}, {arena, uint64(unsafe.Sizeof(bool(false)))},
 		{slots, uint64(unsafe.Sizeof(CarrierAssociation{}))}, {slots, uint64(unsafe.Sizeof((chan struct{})(nil)))},
-		{(streams.Client + 63) / 64, 8}, {(streams.Server + 63) / 64, 8}, {encode, 1}, {decoder, 1},
+		{1, ordinalbits.BackingBytes(streams.Client)}, {1, ordinalbits.BackingBytes(streams.Server)}, {encode, 1}, {decoder, 1},
 	} {
 		count, width := allocation[0], allocation[1]
 		if count > maxInt/width {

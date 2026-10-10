@@ -29,7 +29,7 @@ func (ref Reference) DetachSessionScope() error {
 			return ErrClosed
 		}
 	}
-	var removed [MaxAccountsPerCharge]Account
+	var removed [MaxAccountsPerCharge]accountSlotKey
 	n, kept := 0, 0
 	for _, account := range s.accounts[:s.count] {
 		kind := account.slotLocked(r).key.Kind
@@ -73,7 +73,7 @@ func (ref Reference) RestoreOriginalScopes(anchor Reference) error {
 }
 
 func (r *Root) restoreScopesLocked(s *referenceSlot, c *chargeSlot, a *referenceSlot) {
-	var added [MaxAccountsPerCharge]Account
+	var added [MaxAccountsPerCharge]accountSlotKey
 	n := 0
 	for _, scope := range a.accounts[:a.count] {
 		if accountIndex(s.accounts[:s.count], scope) < 0 {

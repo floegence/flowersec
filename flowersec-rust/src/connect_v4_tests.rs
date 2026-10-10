@@ -476,6 +476,7 @@ struct TappedPeer {
     published: mpsc::Receiver<Vec<u8>>,
     committed: mpsc::Receiver<()>,
     publication_gate: Arc<Semaphore>,
+    publication_pending: Arc<std::sync::Mutex<Option<(u8, u64)>>>,
     task: tokio::task::JoinHandle<()>,
 }
 fn tapped_peer_session(
@@ -490,6 +491,7 @@ fn tapped_peer_session(
     let cancel = CancellationToken::new();
     let done = Arc::new(AtomicBool::new(false));
     let publication_gate = Arc::new(Semaphore::new(0));
+    let publication_pending = Arc::new(std::sync::Mutex::new(None));
     let session = environment
         .adopt_ready_session(
             engine,
@@ -503,6 +505,7 @@ fn tapped_peer_session(
         .unwrap();
     let receiver = session.receiver();
     let writer_gate = publication_gate.clone();
+    let writer_pending = publication_pending.clone();
     let task = tokio::spawn(async move {
         let (mut sink, mut stream) = socket.split();
         let write_cancel = cancel.clone();
@@ -519,6 +522,7 @@ fn tapped_peer_session(
                             };
                             let Published { wire: _, done } =
                                 pending.take().expect("pending publication");
+                            *writer_pending.lock().expect("peer publication diagnostic") = None;
                             std::mem::forget(permit);
                             let _ = done.send(());
                             if committed.send(()).await.is_err() {
@@ -531,7 +535,14 @@ fn tapped_peer_session(
                 tokio::select! {
                     _ = write_cancel.cancelled() => break,
                     message = input.recv() => match message {
-                        Some(publication) => pending = Some(publication),
+                        Some(publication) => {
+                            let scope = u64::from_be_bytes(
+                                publication.wire[12..20].try_into().expect("published record scope"),
+                            );
+                            *writer_pending.lock().expect("peer publication diagnostic") =
+                                Some((publication.wire[4], scope));
+                            pending = Some(publication);
+                        },
                         None => break,
                     },
                     injected = injected.recv() => match injected {
@@ -542,6 +553,7 @@ fn tapped_peer_session(
                     },
                 }
             }
+            *writer_pending.lock().expect("peer publication diagnostic") = None;
             write_cancel.cancel();
         });
         loop {
@@ -564,12 +576,24 @@ fn tapped_peer_session(
         published,
         committed: committed_rx,
         publication_gate,
+        publication_pending,
         task,
     }
 }
 impl TappedPeer {
     fn release_publication(&self) {
         self.publication_gate.add_permits(1);
+    }
+    fn publication_diagnostic(&self) -> String {
+        format!(
+            "pending_frame_scope={:?}, inject_available={}, gate_permits={}",
+            *self
+                .publication_pending
+                .lock()
+                .expect("peer publication diagnostic"),
+            self.inject.capacity(),
+            self.publication_gate.available_permits(),
+        )
     }
 }
 async fn wss_phase<T>(
@@ -782,16 +806,19 @@ async fn real_wss_connect_reader_retains_tail_during_terminal_publication() {
     let _receive_probe_guard = install_maintenance_receive_probe(&client, receive_probe.clone());
     let drain = client.drain(Duration::from_secs(2)).unwrap();
     let drain_wait = tokio::spawn(async move { drain.wait().await });
-    tokio::time::timeout(
-        Duration::from_secs(2),
-        tokio::task::spawn_blocking({
-            let probe = probe.clone();
-            move || probe.wait_entered()
-        }),
-    )
-    .await
-    .expect("terminal publication entered")
-    .expect("terminal publication probe task");
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::task::spawn_blocking({
+                let probe = probe.clone();
+                move || probe.wait_entered()
+            }),
+        )
+        .await
+        .expect("terminal publication entered")
+        .expect("terminal publication probe task"),
+        "terminal publication probe released before entry"
+    );
     assert!(client.termination_cause().is_none());
     assert!(!client.cleanup_status().complete);
 
@@ -807,7 +834,12 @@ async fn real_wss_connect_reader_retains_tail_during_terminal_publication() {
         }),
     )
     .await
-    .expect("first maintenance frame reached reader")
+    .unwrap_or_else(|_| {
+        panic!(
+            "first maintenance frame reached reader: {}",
+            peer.publication_diagnostic()
+        )
+    })
     .expect("first maintenance receive probe task");
     assert!(client.termination_cause().is_none());
     assert!(!client.cleanup_status().complete);
@@ -824,7 +856,12 @@ async fn real_wss_connect_reader_retains_tail_during_terminal_publication() {
         }),
     )
     .await
-    .expect("second maintenance frame reached reader")
+    .unwrap_or_else(|_| {
+        panic!(
+            "second maintenance frame reached reader: {}",
+            peer.publication_diagnostic()
+        )
+    })
     .expect("second maintenance receive probe task");
     assert!(client.termination_cause().is_none());
     assert!(!client.cleanup_status().complete);
@@ -1112,6 +1149,15 @@ fn ordinary_pool_source(
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_source_connect_and_acquired_material_share_original_native_pool_flow() {
+    async fn phase<T>(
+        profile: Profile,
+        name: &str,
+        future: std::pin::Pin<Box<impl std::future::Future<Output = T>>>,
+    ) -> T {
+        tokio::time::timeout(Duration::from_secs(10), future)
+            .await
+            .unwrap_or_else(|_| panic!("original source {profile:?}: {name} exceeded 10 seconds"))
+    }
     for (profile, pin, acquire_before_close) in
         [(Profile::X25519, true, false), (Profile::P256, false, true)]
     {
@@ -1201,27 +1247,34 @@ async fn default_source_connect_and_acquired_material_share_original_native_pool
             },
             ..crate::ConnectionRequest::default()
         };
-        let (peer, client) = if acquire_before_close {
-            let material = source
-                .acquire(&environment, &request, &CancellationToken::new())
-                .unwrap();
-            source.close();
-            assert_eq!(
-                source
-                    .acquire(&environment, &request, &CancellationToken::new())
-                    .unwrap_err(),
-                crate::MaterialSourceError::SourceUnavailable
-            );
-            tokio::join!(
-                server.handshake(),
-                environment.connect_material(material, CancellationToken::new())
-            )
-        } else {
-            tokio::join!(
-                server.handshake(),
-                environment.connect(&source, request, CancellationToken::new())
-            )
-        };
+        let (peer, client) = phase(
+            profile,
+            "handshake and Connect",
+            Box::pin(async {
+                if acquire_before_close {
+                    let material = source
+                        .acquire(&environment, &request, &CancellationToken::new())
+                        .unwrap();
+                    source.close();
+                    assert_eq!(
+                        source
+                            .acquire(&environment, &request, &CancellationToken::new())
+                            .unwrap_err(),
+                        crate::MaterialSourceError::SourceUnavailable
+                    );
+                    tokio::join!(
+                        server.handshake(),
+                        environment.connect_material(material, CancellationToken::new())
+                    )
+                } else {
+                    tokio::join!(
+                        server.handshake(),
+                        environment.connect(&source, request, CancellationToken::new())
+                    )
+                }
+            }),
+        )
+        .await;
         let client = client.unwrap();
         assert_eq!(pool.rows(), 1);
         source.close();
@@ -1236,32 +1289,53 @@ async fn default_source_connect_and_acquired_material_share_original_native_pool
                 .unwrap_err(),
             crate::MaterialSourceError::SourceUnavailable
         );
-        let (opened, accepted) = tokio::join!(
-            client.open_stream("example.source", Metadata::empty(), 65536),
-            async { server.next_open().await.unwrap().accept(65536).unwrap() }
-        );
+        let (opened, accepted) = phase(
+            profile,
+            "OPEN and accept",
+            Box::pin(async {
+                tokio::join!(
+                    client.open_stream("example.source", Metadata::empty(), 65536),
+                    async { server.next_open().await.unwrap().accept(65536).unwrap() }
+                )
+            }),
+        )
+        .await;
         let opened = opened.unwrap();
-        opened
-            .write(Bytes::from_static(b"source-owned-pair"))
-            .await
-            .unwrap();
-        assert_eq!(
-            accepted.read().await.unwrap().unwrap().as_ref(),
-            b"source-owned-pair"
-        );
-        opened.close_write().await.unwrap();
-        assert!(accepted.read().await.unwrap().is_none());
-        accepted.close_write().await.unwrap();
-        assert!(opened.read().await.unwrap().is_none());
-        let (first, second) = tokio::join!(opened.finish(), accepted.finish());
-        first.unwrap();
-        second.unwrap();
+        phase(
+            profile,
+            "payload and dual FIN",
+            Box::pin(async {
+                opened
+                    .write(Bytes::from_static(b"source-owned-pair"))
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    accepted.read().await.unwrap().unwrap().as_ref(),
+                    b"source-owned-pair"
+                );
+                opened.close_write().await.unwrap();
+                assert!(accepted.read().await.unwrap().is_none());
+                accepted.close_write().await.unwrap();
+                assert!(opened.read().await.unwrap().is_none());
+                let (first, second) = tokio::join!(opened.finish(), accepted.finish());
+                first.unwrap();
+                second.unwrap();
+            }),
+        )
+        .await;
         client.probe_liveness(Duration::from_secs(1)).await.unwrap();
         client.close();
         server.close();
-        task.await.unwrap();
+        phase(profile, "peer task exit", Box::pin(task))
+            .await
+            .unwrap();
         drop(source);
-        let _ = environment.close().await;
+        let _ = phase(
+            profile,
+            "Environment cleanup",
+            Box::pin(environment.close()),
+        )
+        .await;
     }
 }
 

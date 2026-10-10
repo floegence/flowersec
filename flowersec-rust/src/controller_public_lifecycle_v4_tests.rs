@@ -1163,11 +1163,97 @@ impl Drop for ReleaseDecoder {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_drain_replacement_keeps_original_stream_and_notification_source() {
-    let mut test = Harness::new(2, MaterialSourceOwnership::Borrowed).await;
-    test.initialized().await;
+    struct Phase<'a> {
+        stage: std::cell::Cell<&'static str>,
+        controller: &'a MaterialConnectionController,
+        original: Option<&'a Session>,
+    }
+    impl Phase<'_> {
+        async fn wait<T>(
+            &self,
+            name: &'static str,
+            budget: Duration,
+            future: std::pin::Pin<Box<impl std::future::Future<Output = T>>>,
+        ) -> T {
+            self.stage.set(name);
+            tokio::time::timeout(budget, future)
+                .await
+                .unwrap_or_else(|error| {
+                    let original = self.original.map(|session| {
+                        (
+                            session.cleanup_status(),
+                            session.core_cleanup_status(),
+                            session.termination_cause(),
+                        )
+                    });
+                    let current = self.controller.current().map(|current| {
+                        (
+                            current.generation,
+                            current.session.cleanup_status(),
+                            current.session.core_cleanup_status(),
+                            current.session.termination_cause(),
+                        )
+                    });
+                    panic!(
+                        "controller drain replacement {} exceeded {budget:?}: {error}; original={original:?}; current={current:?}; controller={:?}; cleanup={:?}",
+                        self.stage.get(),
+                        self.controller.progress(),
+                        self.controller.cleanup_status(),
+                    );
+                })
+        }
+        async fn until(&self, name: &'static str, predicate: impl Fn() -> bool) {
+            self.wait(
+                name,
+                Duration::from_secs(3),
+                Box::pin(async {
+                    while !predicate() {
+                        tokio::task::yield_now().await;
+                    }
+                }),
+            )
+            .await;
+        }
+    }
+    let mut test = tokio::time::timeout(
+        Duration::from_secs(10),
+        Box::pin(Harness::new(2, MaterialSourceOwnership::Borrowed)),
+    )
+    .await
+    .expect("controller drain replacement Harness setup exceeded 10 seconds");
+    let controller = test.controller.clone();
+    let phase = Phase {
+        stage: std::cell::Cell::new("initial initializer"),
+        controller: &controller,
+        original: None,
+    };
+    phase
+        .wait(
+            "initial initializer",
+            Duration::from_secs(10),
+            Box::pin(test.initialized()),
+        )
+        .await;
     test.initializer.release.add_permits(1);
-    let first = test.current(0).await;
-    let first_remote = test.remote().await;
+    let first = phase
+        .wait(
+            "initial current",
+            Duration::from_secs(10),
+            Box::pin(test.current(0)),
+        )
+        .await;
+    let phase = Phase {
+        stage: std::cell::Cell::new("first remote"),
+        controller: &controller,
+        original: Some(&first.session),
+    };
+    let first_remote = phase
+        .wait(
+            "first remote",
+            Duration::from_secs(10),
+            Box::pin(test.remote()),
+        )
+        .await;
     let service = test.controller.service("example/lock-order").unwrap();
     let observer = Arc::new(Events::default());
     let decoder = Arc::new(DrainDecoder {
@@ -1189,26 +1275,48 @@ async fn public_controller_drain_replacement_keeps_original_stream_and_notificat
             },
         )
         .unwrap();
-    until(|| subscription.snapshot().attached).await;
-    let (opened, accepted) = tokio::join!(
-        first
-            .session
-            .open_stream("example.drain", Metadata::empty(), 65536),
-        async {
-            first_remote
-                .session
-                .next_open()
-                .await
-                .unwrap()
-                .accept(65536)
-                .unwrap()
-        }
-    );
+    phase
+        .until("notification attachment", || {
+            subscription.snapshot().attached
+        })
+        .await;
+    let (opened, accepted) = phase
+        .wait(
+            "original OPEN and accept",
+            Duration::from_secs(10),
+            Box::pin(async {
+                tokio::join!(
+                    first
+                        .session
+                        .open_stream("example.drain", Metadata::empty(), 65536),
+                    async {
+                        first_remote
+                            .session
+                            .next_open()
+                            .await
+                            .unwrap()
+                            .accept(65536)
+                            .unwrap()
+                    }
+                )
+            }),
+        )
+        .await;
     let opened = opened.unwrap();
-    first_remote.publish(&test.contract, 8).await;
-    tokio::time::timeout(Duration::from_secs(3), decoder.entered.acquire())
+    phase
+        .wait(
+            "original notification publication",
+            Duration::from_secs(10),
+            Box::pin(first_remote.publish(&test.contract, 8)),
+        )
+        .await;
+    phase
+        .wait(
+            "original decoder entry",
+            Duration::from_secs(3),
+            Box::pin(decoder.entered.acquire()),
+        )
         .await
-        .unwrap()
         .unwrap()
         .forget();
     let cancel = CancellationToken::new();
@@ -1216,39 +1324,138 @@ async fn public_controller_drain_replacement_keeps_original_stream_and_notificat
         test.controller
             .replace_session_with_options(MaterialSessionReplaceOptions::default(), &cancel),
     );
-    tokio::select! { _ = test.initialized() => {}, result = &mut replacement => panic!("premature {result:?}") }
+    phase
+        .wait(
+            "replacement initializer",
+            Duration::from_secs(10),
+            Box::pin(async {
+                tokio::select! { _ = test.initialized() => {}, result = &mut replacement => panic!("premature {result:?}") }
+            }),
+        )
+        .await;
     test.initializer.release.add_permits(1);
-    let replacement = replacement.await.unwrap();
+    let replacement = phase
+        .wait(
+            "replacement publication",
+            Duration::from_secs(10),
+            replacement,
+        )
+        .await
+        .unwrap();
     assert_eq!(replacement.retirement, MaterialSessionRetirement::Drain);
     assert_eq!(replacement.current.generation, 2);
     assert!(!replacement.previous_cleanup_status().complete);
-    let second_remote = test.remote().await;
-    until(|| subscription.snapshot().generation == 2).await;
-    opened
-        .write(Bytes::from_static(b"original stream after replacement"))
+    let second_remote = phase
+        .wait(
+            "second remote",
+            Duration::from_secs(10),
+            Box::pin(test.remote()),
+        )
+        .await;
+    phase
+        .until("notification generation handoff", || {
+            subscription.snapshot().generation == 2
+        })
+        .await;
+    phase
+        .wait(
+            "original stream payload write",
+            Duration::from_secs(10),
+            Box::pin(opened.write(Bytes::from_static(b"original stream after replacement"))),
+        )
         .await
         .unwrap();
     assert_eq!(
-        accepted.read().await.unwrap().unwrap().as_ref(),
+        phase
+            .wait(
+                "original stream payload read",
+                Duration::from_secs(10),
+                Box::pin(accepted.read()),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .as_ref(),
         b"original stream after replacement"
     );
-    until(|| first.session.application_draining()).await;
+    phase
+        .until("original application drain", || {
+            first.session.application_draining()
+        })
+        .await;
     decoder.release();
-    second_remote.publish(&test.contract, 9).await;
-    until(|| observer.values.lock().unwrap().len() == 2).await;
+    phase
+        .wait(
+            "current notification publication",
+            Duration::from_secs(10),
+            Box::pin(second_remote.publish(&test.contract, 9)),
+        )
+        .await;
+    phase
+        .until("original and current notification delivery", || {
+            observer.values.lock().unwrap().len() == 2
+        })
+        .await;
     let values = observer.values.lock().unwrap().clone();
     assert!(values.contains(&(8, 1, ControllerNotificationSourcePhase::Draining)));
     assert!(values.contains(&(9, 2, ControllerNotificationSourcePhase::Current)));
-    opened.close_write().await.unwrap();
-    assert!(accepted.read().await.unwrap().is_none());
-    accepted.close_write().await.unwrap();
-    assert!(opened.read().await.unwrap().is_none());
-    let (opened, accepted) = tokio::join!(opened.finish(), accepted.finish());
+    phase
+        .wait(
+            "original stream outgoing FIN",
+            Duration::from_secs(10),
+            Box::pin(opened.close_write()),
+        )
+        .await
+        .unwrap();
+    assert!(
+        phase
+            .wait(
+                "original stream remote EOF",
+                Duration::from_secs(10),
+                Box::pin(accepted.read()),
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    phase
+        .wait(
+            "original stream incoming FIN",
+            Duration::from_secs(10),
+            Box::pin(accepted.close_write()),
+        )
+        .await
+        .unwrap();
+    assert!(
+        phase
+            .wait(
+                "original stream local EOF",
+                Duration::from_secs(10),
+                Box::pin(opened.read()),
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let (opened, accepted) = phase
+        .wait(
+            "original stream dual finish",
+            Duration::from_secs(10),
+            Box::pin(async { tokio::join!(opened.finish(), accepted.finish()) }),
+        )
+        .await;
     opened.unwrap();
     accepted.unwrap();
     // The test owns the remote transport lifetime; retire it after its original
     // stream finishes before asserting both sides' physical cleanup.
-    first_remote.close().await;
+    phase
+        .wait(
+            "original remote close",
+            Duration::from_secs(3),
+            Box::pin(first_remote.close()),
+        )
+        .await;
+    phase.stage.set("original retained Session cleanup");
     tokio::time::timeout(Duration::from_secs(3), async {
         while test.controller.progress().retained_session { tokio::task::yield_now().await; }
     }).await.unwrap_or_else(|error| {
@@ -1259,8 +1466,12 @@ async fn public_controller_drain_replacement_keeps_original_stream_and_notificat
     });
     assert!(replacement.previous_cleanup_status().complete);
     assert_eq!(
-        test.controller
-            .replace_session(&CancellationToken::new())
+        phase
+            .wait(
+                "exhausted source replacement",
+                Duration::from_secs(10),
+                Box::pin(test.controller.replace_session(&CancellationToken::new())),
+            )
             .await
             .unwrap_err(),
         MaterialControllerError::ConnectionFailed
@@ -1268,13 +1479,29 @@ async fn public_controller_drain_replacement_keeps_original_stream_and_notificat
     assert_eq!(test.controller.current().unwrap().generation, 2);
     subscription.close();
     assert!(
-        subscription
-            .wait_cleanup(Duration::from_secs(3))
+        phase
+            .wait(
+                "notification subscription cleanup",
+                Duration::from_secs(3),
+                Box::pin(subscription.wait_cleanup(Duration::from_secs(3))),
+            )
             .await
             .complete
     );
-    second_remote.close().await;
-    test.close().await;
+    phase
+        .wait(
+            "current remote close",
+            Duration::from_secs(3),
+            Box::pin(second_remote.close()),
+        )
+        .await;
+    phase
+        .wait(
+            "Harness close",
+            Duration::from_secs(10),
+            Box::pin(test.close()),
+        )
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

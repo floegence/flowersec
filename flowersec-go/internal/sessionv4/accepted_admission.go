@@ -247,7 +247,7 @@ func (a *SessionAdmissionReservation) AdmitSQLite(store *ledgerv4.SQLiteStore, a
 	}()
 	guard := func() error { a.mu.Lock(); defer a.mu.Unlock(); return a.checkLocked() }
 	if scheduler, ok := authority.(ledgerv4.SQLiteAdmissionScheduler); ok {
-		release, scheduleErr := scheduler.ScheduleAdmission(a.ctx)
+		release, scheduleErr := scheduler.ScheduleAdmission(sqliteAdmissionScheduleContext{Context: a.ctx, deadline: a.config.Initial.Deadline, guard: guard, wake: a.wake})
 		if scheduleErr != nil {
 			return nil, response, scheduleErr
 		}

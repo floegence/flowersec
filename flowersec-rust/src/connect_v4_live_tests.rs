@@ -427,12 +427,26 @@ impl LiveAuthority {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn original_live_mtls_txa_prepare_txb_native_ready_and_lost_confirmation() {
+    async fn within_phase<T>(
+        case: &str,
+        phase: &str,
+        future: std::pin::Pin<Box<dyn std::future::Future<Output = T> + '_>>,
+    ) -> T {
+        tokio::time::timeout(Duration::from_secs(10), future)
+            .await
+            .unwrap_or_else(|_| panic!("{case}: {phase} exceeded 10 seconds"))
+    }
+
     for (profile, lose_confirmation, replace_generation) in [
         (Profile::X25519, false, false),
         (Profile::P256, false, false),
         (Profile::X25519, true, false),
         (Profile::X25519, false, true),
     ] {
+        let case = format!(
+            "original-live profile={} lose_confirmation={lose_confirmation} replace_generation={replace_generation}",
+            profile.name()
+        );
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .await
             .unwrap();
@@ -587,32 +601,39 @@ async fn original_live_mtls_txa_prepare_txb_native_ready_and_lost_confirmation()
             "unavailable guarantees must not issue an Artifact"
         );
         assert_eq!(authority.txb.load(Ordering::Acquire), 0);
-        let result = if replace_generation {
-            let material = source
-                .acquire_async(
-                    &environment,
-                    &crate::ConnectionRequest::default(),
-                    &CancellationToken::new(),
-                )
-                .await
-                .unwrap();
-            let mut replacement = configuration();
-            replacement.activation.base_path = "/next-generation".into();
-            source.replace_live_generation(replacement).unwrap();
-            // TxB belongs to the already acquired generation. The authority
-            // accepts only the original path and sees one issuance/activation.
-            environment
-                .connect_material(material, CancellationToken::new())
-                .await
-        } else {
-            environment
-                .connect(
-                    &source,
-                    crate::ConnectionRequest::default(),
-                    CancellationToken::new(),
-                )
-                .await
-        };
+        let result = within_phase(
+            &case,
+            "connect",
+            Box::pin(async {
+                if replace_generation {
+                    let material = source
+                        .acquire_async(
+                            &environment,
+                            &crate::ConnectionRequest::default(),
+                            &CancellationToken::new(),
+                        )
+                        .await
+                        .unwrap();
+                    let mut replacement = configuration();
+                    replacement.activation.base_path = "/next-generation".into();
+                    source.replace_live_generation(replacement).unwrap();
+                    // TxB belongs to the already acquired generation. The authority
+                    // accepts only the original path and sees one issuance/activation.
+                    environment
+                        .connect_material(material, CancellationToken::new())
+                        .await
+                } else {
+                    environment
+                        .connect(
+                            &source,
+                            crate::ConnectionRequest::default(),
+                            CancellationToken::new(),
+                        )
+                        .await
+                }
+            }),
+        )
+        .await;
         tokio::time::timeout(Duration::from_secs(10), authority_task)
             .await
             .unwrap()
@@ -641,34 +662,53 @@ async fn original_live_mtls_txa_prepare_txb_native_ready_and_lost_confirmation()
                 .unwrap()
                 .unwrap();
             let (server, pump) = peer_session(&environment, socket, engine);
-            let (stream, incoming) = tokio::join!(
-                client.open_stream("example.original-live", Metadata::empty(), 65536),
-                async { server.next_open().await.unwrap().accept(65536).unwrap() }
-            );
+            let (stream, incoming) = within_phase(
+                &case,
+                "OPEN",
+                Box::pin(async {
+                    tokio::join!(
+                        client.open_stream("example.original-live", Metadata::empty(), 65536),
+                        async { server.next_open().await.unwrap().accept(65536).unwrap() }
+                    )
+                }),
+            )
+            .await;
             let stream = stream.unwrap();
-            stream
-                .write(Bytes::from_static(b"original-live-ready"))
-                .await
-                .unwrap();
-            assert_eq!(
-                incoming.read().await.unwrap().unwrap().as_ref(),
-                b"original-live-ready"
-            );
-            stream.close_write().await.unwrap();
-            assert!(incoming.read().await.unwrap().is_none());
-            incoming.close_write().await.unwrap();
-            assert!(stream.read().await.unwrap().is_none());
-            let (sent, received) = tokio::join!(stream.finish(), incoming.finish());
+            within_phase(
+                &case,
+                "transfer+FIN",
+                Box::pin(async {
+                    stream
+                        .write(Bytes::from_static(b"original-live-ready"))
+                        .await
+                        .unwrap();
+                    assert_eq!(
+                        incoming.read().await.unwrap().unwrap().as_ref(),
+                        b"original-live-ready"
+                    );
+                    stream.close_write().await.unwrap();
+                    assert!(incoming.read().await.unwrap().is_none());
+                    incoming.close_write().await.unwrap();
+                    assert!(stream.read().await.unwrap().is_none());
+                }),
+            )
+            .await;
+            let (sent, received) = within_phase(
+                &case,
+                "finish",
+                Box::pin(async { tokio::join!(stream.finish(), incoming.finish()) }),
+            )
+            .await;
             sent.unwrap();
             received.unwrap();
             client.close();
             server.close();
-            pump.await.unwrap();
+            within_phase(&case, "pump", Box::pin(pump)).await.unwrap();
         }
         source.close();
         drop(source);
         drop(authority);
-        let _ = environment.close().await;
+        let _ = within_phase(&case, "environment cleanup", Box::pin(environment.close())).await;
     }
 }
 

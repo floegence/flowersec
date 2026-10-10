@@ -31,12 +31,12 @@ const (
 )
 
 type datagramSendSlot struct {
+	input                    []byte
 	ctx                      context.Context
 	deadline                 *timev4.Deadline
 	result                   UnreliableSendStatus
 	err                      error
 	done                     chan struct{}
-	size                     int
 	active, waiter, complete bool
 }
 
@@ -51,7 +51,7 @@ type UnreliableMessages struct {
 	reservation                                           resourcev4.Reference
 	queue                                                 *cryptov4.DatagramQueue
 	decoder                                               *protocolv4.Decoder
-	input, sends                                          []byte
+	input                                                 []byte
 	slots                                                 []datagramSendSlot
 	jobs                                                  chan int
 	context                                               context.Context
@@ -111,7 +111,7 @@ func newUnreliableMessages(admission *OpenAdmission, connection native.Connectio
 		}
 	}()
 	d := &UnreliableMessages{admission: admission, engine: engine, connection: connection, reservation: owned, envelope: envelope, maximum: maximum,
-		input: make([]byte, carrier.MaxUnreliableWireBytes), sends: make([]byte, maximum*pending), slots: make([]datagramSendSlot, pending), jobs: make(chan int, pending), stop: make(chan struct{}), cleanup: make(chan struct{})}
+		input: make([]byte, carrier.MaxUnreliableWireBytes), slots: make([]datagramSendSlot, pending), jobs: make(chan int, pending), stop: make(chan struct{}), cleanup: make(chan struct{})}
 	d.decoder, err = protocolv4.NewRecordDecoder(envelope, 32)
 	if err != nil {
 		return nil, err
@@ -194,8 +194,11 @@ func (d *UnreliableMessages) Send(ctx context.Context, payload []byte, expires t
 		return "", err
 	}
 	s := &d.slots[index]
-	*s = datagramSendSlot{ctx: ctx, deadline: deadline, done: make(chan struct{}), size: len(payload), active: true, waiter: true}
-	copy(d.sends[index*d.maximum:(index+1)*d.maximum], payload)
+	// The original maximum payload remains charged for every slot. Allocate
+	// only after all admission gates, and retain this immutable copy until the
+	// actual sender and original observer have both exited.
+	*s = datagramSendSlot{input: make([]byte, len(payload)), ctx: ctx, deadline: deadline, done: make(chan struct{}), active: true, waiter: true}
+	copy(s.input, payload)
 	d.active++
 	done := s.done
 	d.jobs <- index
@@ -223,7 +226,7 @@ func (d *UnreliableMessages) Send(ctx context.Context, payload []byte, expires t
 func (d *UnreliableMessages) releaseSlotLocked(index int) {
 	s := &d.slots[index]
 	if s.complete && !s.waiter {
-		clear(d.sends[index*d.maximum : (index+1)*d.maximum])
+		clear(s.input)
 		*s = datagramSendSlot{}
 		d.active--
 	}
@@ -262,14 +265,13 @@ func (d *UnreliableMessages) publish(index int) (UnreliableSendStatus, error) {
 	guard := datagramTicket{d, s}
 	d.mu.Lock()
 	err := guard.checkLocked()
-	size := s.size
+	payload := s.input
 	d.mu.Unlock()
 	if err != nil {
 		return unreliableSendFailure(err)
 	}
-	payload := d.sends[index*d.maximum : index*d.maximum+size]
 	fields := protocolv4.DatagramFields(protocolv4.RecordHeader{Epoch: ^uint32(0), Scope: protocolv4.DatagramScope(), Sequence: ^uint64(0)}, payload)
-	n, err := protocolv4.MeasureMapByteString("DATAGRAM", fields[:], "data", size)
+	n, err := protocolv4.MeasureMapByteString("DATAGRAM", fields[:], "data", len(payload))
 	if err != nil {
 		return "", err
 	}
@@ -466,8 +468,7 @@ func (d *UnreliableMessages) finishLocked() {
 		return
 	}
 	clear(d.input)
-	clear(d.sends)
-	d.input, d.sends, d.slots = nil, nil, nil
+	d.input, d.slots = nil, nil
 	d.cleaned = true
 	close(d.cleanup)
 }

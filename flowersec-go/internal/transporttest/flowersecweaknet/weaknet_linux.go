@@ -285,6 +285,13 @@ func runDirectWorker(ctx context.Context, kind carrier.Kind, clientNamespace, se
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, pair.Close()) }()
+	defer func() {
+		if resultErr != nil && scenario.expectOutage {
+			// Observe the original sockets before Close removes their TCP state.
+			// Diagnostic reads do not publish packets or alter the failed probe.
+			resultErr = observeOutageFailure(resultErr, pair, clientNamespace, serverNamespace)
+		}
+	}()
 	if err := linuxnetlab.ResetFaultObservation(ctx, clientNamespace, serverNamespace); err != nil {
 		return err
 	}
@@ -515,32 +522,49 @@ func observePeerReset(ctx context.Context, stream peerResetReader) error {
 }
 
 func verifyOutageBehavior(ctx context.Context, pair *transporttest.ProductDirectPair) error {
-	failedDuringOutage := [2]bool{}
-	outageDeadline := time.Now().Add(3500 * time.Millisecond)
+	started := time.Now()
 	probes := [2]func(context.Context, uint64) (flowersec.LivenessResult, error){pair.Client.ProbeLiveness, pair.Server.ProbeLiveness}
-	// Recovery can deliver queued probes together. Keep the original window
-	// within the admitted maintenance burst, including the final recovery probe.
 	probeInterval := time.NewTicker(time.Second)
 	defer probeInterval.Stop()
-	for time.Now().Before(outageDeadline) {
-		for direction, outcome := range probeOutageDirections(ctx, probes, 250, 300*time.Millisecond) {
-			failedDuringOutage[direction] = failedDuringOutage[direction] || outcome.qualified
-		}
+	observation, err := observeOutageWindow(ctx, func(ctx context.Context) [2]outageProbeOutcome {
+		return probeOutageDirections(ctx, probes, 250, 300*time.Millisecond)
+	}, time.Now, func(ctx context.Context) error {
 		select {
 		case <-probeInterval.C:
+			return nil
 		case <-ctx.Done():
 			return context.Cause(ctx)
 		}
+	})
+	if err != nil {
+		return err
 	}
-	if !failedDuringOutage[0] || !failedDuringOutage[1] {
-		return fmt.Errorf("Flowersec outage did not interrupt both liveness directions: client=%t server=%t", failedDuringOutage[0], failedDuringOutage[1])
+	lastOutcome := [2]string{}
+	for direction, outcome := range observation.last {
+		lastOutcome[direction] = describeControllerProbeOutcome(outcome.result, outcome.err)
+	}
+	if !observation.qualified[0] || !observation.qualified[1] {
+		return fmt.Errorf("Flowersec outage did not interrupt both liveness directions: client=%t server=%t probes=%d elapsed=%s (client: %s; server: %s)", observation.qualified[0], observation.qualified[1], observation.samples, time.Since(started), lastOutcome[0], lastOutcome[1])
 	}
 	for direction, probe := range probes {
-		if _, err := probe(ctx, 5000); err != nil {
-			return fmt.Errorf("Flowersec session direction %d did not recover after outage: %w", direction, err)
+		if result, err := probe(ctx, 5000); err != nil {
+			return fmt.Errorf("Flowersec session direction %d did not recover after outage: %w (recovery: %s; outage probes=%d elapsed=%s client: %s; server: %s)", direction, err, describeControllerProbeOutcome(result, err), observation.samples, time.Since(started), lastOutcome[0], lastOutcome[1])
 		}
 	}
 	return nil
+}
+
+func observeOutageFailure(cause error, pair *transporttest.ProductDirectPair, clientNamespace, serverNamespace string) error {
+	client, server := pair.Client.ConnectionDiagnostic(), pair.Server.ConnectionDiagnostic()
+	diagnosticCtx, diagnosticCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer diagnosticCancel()
+	observation, observationErr := linuxnetlab.ReadFaultObservation(diagnosticCtx, clientNamespace, serverNamespace)
+	sockets := [2]string{}
+	for direction, namespace := range [2]string{clientNamespace, serverNamespace} {
+		output, err := exec.CommandContext(diagnosticCtx, "ip", "netns", "exec", namespace, "ss", "--tcp", "--info", "--numeric", "--oneline", "--no-header", "--options").CombinedOutput()
+		sockets[direction] = fmt.Sprintf("%s (read_error=%v)", bytes.TrimSpace(output), err)
+	}
+	return fmt.Errorf("%w; original outage owners: client_state=%s client_failure=%+v client_cleanup=%+v server_state=%s server_failure=%+v server_cleanup=%+v; kernel=%+v (read_error=%v); TCP client=%s; TCP server=%s", cause, client.State, client.Failure, client.Cleanup, server.State, server.Failure, server.Cleanup, observation, observationErr, sockets[0], sockets[1])
 }
 
 func verifyControllerOutage(ctx context.Context, pair *transporttest.ProductDirectPair) error {

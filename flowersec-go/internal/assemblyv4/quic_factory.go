@@ -124,11 +124,7 @@ func NewQUICCarrierFactory(c QUICFactoryConfig, reservation, environment resourc
 	if err != nil {
 		return nil, err
 	}
-	decoder, err := protocolv4.NewDecoder(quicFactoryRouteBytes, quicFactoryRouteNodes)
-	if err != nil {
-		return nil, err
-	}
-	factory.document, err = decoder.DecodeMap(c.Route, "Route", protocolv4.DecodeContext{})
+	factory.document, err = protocolv4.NewOnceDocument(c.Route, "Route", quicFactoryRouteBytes, quicFactoryRouteNodes, protocolv4.DecodeContext{})
 	if err != nil {
 		return nil, err
 	}

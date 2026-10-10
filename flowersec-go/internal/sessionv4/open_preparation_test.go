@@ -82,7 +82,7 @@ func TestOpenDecisionProofRefusalDoesNotWakeItsOwnRetry(t *testing.T) {
 	}
 	_, second, _, _ := startTestOpen(t, client, server, 8)
 	a.mu.Lock()
-	wake := a.outcomeWake[a.find(second.scope)]
+	wake := a.outcomeWakeLocked(a.find(second.scope))
 	a.mu.Unlock()
 	select {
 	case <-wake:
@@ -145,6 +145,7 @@ func TestOpenPreparationTransfersSameProofToEitherOutcome(t *testing.T) {
 			a.mu.Lock()
 			s, err := a.slot(peer)
 			retained := err == nil && a.find(peer.scope) == target && s.preparationActive && s.retirementReferences == 1 && s.metadataSize != 0 && s.accepted == accepted
+			retained = retained && a.metadata.equals(s.metadataStart, s.metadataStart+s.kindSize, "example/raw")
 			a.mu.Unlock()
 			if !retained || a.Usage().PositiveProofs != 1 || a.Usage().RejectionProofs != 0 || string(kind) != "example/raw" || !bytes.Equal(metadata, []byte{0xff}) {
 				t.Fatal("decision replaced proof ownership or cleared a live callback snapshot")
@@ -175,6 +176,11 @@ func TestOpenPreparationTransfersSameProofToEitherOutcome(t *testing.T) {
 			alias.Release()
 			if !bytes.Equal(kind, make([]byte, len(kind))) || !bytes.Equal(metadata, make([]byte, len(metadata))) {
 				t.Fatal("callback snapshot remained live after its actual exit")
+			}
+			for _, page := range a.metadata.pages {
+				if page != nil {
+					t.Fatal("completed callback retained its metadata pages")
+				}
 			}
 			wantProofs := uint32(0)
 			if accepted {
@@ -215,6 +221,7 @@ func TestOpenPreparationCloseRetainsActualCallbackAndMetadata(t *testing.T) {
 	a.mu.Lock()
 	s, err := a.slot(peer)
 	retained := err == nil && s.preparationActive && s.metadataSize != 0 && s.retirementReferences == 1 && a.methodTails == 1 && !a.cleaned
+	retained = retained && a.metadata.equals(s.metadataStart, s.metadataStart+s.kindSize, "example/raw")
 	a.mu.Unlock()
 	if !retained || a.Usage().PositiveProofs != 1 || !errors.Is(a.Retire(), cryptov4.ErrCapacity) {
 		t.Fatal("Close refunded original authorization callback responsibility")
@@ -232,6 +239,9 @@ func TestOpenPreparationCloseRetainsActualCallbackAndMetadata(t *testing.T) {
 	}
 	if !bytes.Equal(kind, make([]byte, len(kind))) || !bytes.Equal(metadata, make([]byte, len(metadata))) {
 		t.Fatal("actual callback exit did not clear captured metadata")
+	}
+	if len(a.metadata.pages) != 0 || len(a.metadata.used) != 0 {
+		t.Fatal("retirement retained the completed metadata arena")
 	}
 }
 

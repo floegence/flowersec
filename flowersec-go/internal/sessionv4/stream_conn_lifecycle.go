@@ -248,6 +248,7 @@ func (f *ReceiveFlow) drainConnBuffered() bool {
 		return false
 	}
 	if f.cleaned || f.abandoned || f.size == 0 {
+		f.releaseEmptyStorageLocked()
 		return true
 	}
 	first := min(f.size, len(f.storage)-f.head)
@@ -256,6 +257,7 @@ func (f *ReceiveFlow) drainConnBuffered() bool {
 	f.released += uint64(f.size)
 	f.pool.used -= uint64(f.size)
 	f.size, f.head = 0, 0
+	f.releaseEmptyStorageLocked()
 	// These bytes were retired by the closing owner, never delivered to an
 	// external reader. Do not increase the public delivered-byte observation.
 	if f.termination.service != nil {

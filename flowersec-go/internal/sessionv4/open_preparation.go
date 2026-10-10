@@ -123,7 +123,7 @@ func (p OpenPreparation) CopyRequest(dst []byte) (kind, metadata []byte, peerLim
 	if len(dst) < s.metadataSize {
 		return nil, nil, 0, cryptov4.ErrCapacity
 	}
-	copy(dst, a.metadata[s.metadataStart:s.metadataStart+s.metadataSize])
+	a.metadata.copyRange(dst, s.metadataStart, s.metadataStart+s.metadataSize)
 	s.preparationSnapshot = dst[:s.metadataSize:s.metadataSize]
 	s.preparationCaptured = true
 	return dst[:s.kindSize:s.kindSize], dst[s.kindSize:s.metadataSize:s.metadataSize], s.peerLimit, nil

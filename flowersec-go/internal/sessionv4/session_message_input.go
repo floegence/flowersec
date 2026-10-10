@@ -378,17 +378,17 @@ func (m *sessionMessageInput) readValidatedMessage(provider InitialMessages, cal
 // envelope in one synchronous read ownership gate. The provider still borrows
 // only this input's precharged buffer, and the same framing checks precede any
 // copy. Byte readers continue to use Read when a whole-message owner is absent.
-func (m *SessionMessageInput) readRecordMessage(dst []byte) (int, error) {
+func (m *SessionMessageInput) readRecordMessage(receiver *RecordReceiver) ([]byte, error) {
 	m.mu.Lock()
 	ctx := m.parent
 	m.mu.Unlock()
 	provider, call, err := m.beginRead(ctx)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer m.endRead()
 	if m.offset != 0 {
-		return 0, ErrSessionMessageFraming
+		return nil, ErrSessionMessageFraming
 	}
 	if m.length == 0 {
 		m.readValidatedMessage(provider, call)
@@ -396,15 +396,18 @@ func (m *SessionMessageInput) readRecordMessage(dst []byte) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkLocked(ctx); err != nil {
-		return 0, err
+		return nil, err
 	}
-	if m.length > len(dst) {
-		return 0, protocolv4.ErrPayloadTooLarge
+	// Complete-message validation precedes this receiver-owned allocation.
+	// The provider buffer and its whole-message read gate stay independent.
+	dst, err := receiver.prepareStorage(m.length)
+	if err != nil {
+		return nil, err
 	}
 	n := copy(dst, m.buffer[:m.length])
 	clear(m.buffer[:m.length])
 	m.offset, m.length = 0, 0
-	return n, nil
+	return dst[:n:n], nil
 }
 
 func (m *sessionMessageInput) validate(wire []byte) error {

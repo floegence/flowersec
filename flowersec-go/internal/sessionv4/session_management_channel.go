@@ -321,7 +321,7 @@ func (r *RPCServices) dispatchManagementOpen(h OpenHandle, writer *RecordWriter)
 		a.mu.Unlock()
 		return false, err
 	}
-	matched := string(a.metadata[s.metadataStart:s.metadataStart+s.kindSize]) == spec.Kind
+	matched := a.metadata.equals(s.metadataStart, s.metadataStart+s.kindSize, spec.Kind)
 	valid := a.direction == protocolv4.ServerToClient && s.metadataSize == s.kindSize && s.peerLimit >= spec.ReceiveLimit
 	a.mu.Unlock()
 	if !matched {

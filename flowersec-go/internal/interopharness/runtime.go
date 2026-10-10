@@ -11,9 +11,11 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/ledgerv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
 )
 
-// Runtime owns the normal public Environment, executor and application plans.
+// Runtime owns its application plans and Sessions, and may own or borrow the
+// normal public Environment and executor from one original deployment.
 // Authority contains only material and real resource/trust/store recipes. Both
 // peers run the original verification, durable admission, Noise and READY.
 type Runtime struct {
@@ -38,6 +40,9 @@ type Runtime struct {
 	PoolSpend            *ledgerv4.PoolSpendObservation
 	ServerAllow          fs.TunnelServerAllowConfig
 	mu                   sync.Mutex
+	ownsEnvironment      bool
+	ownsExecutor         bool
+	ownersClosed         bool
 }
 
 type HandlerConfig func(*Runtime, uint8) (fs.StreamHandlerPlanConfig, error)
@@ -49,6 +54,15 @@ type HandlerConfig func(*Runtime, uint8) (fs.StreamHandlerPlanConfig, error)
 func (r *Runtime) CloseOwners() {
 	if r == nil {
 		return
+	}
+	r.mu.Lock()
+	r.ownersClosed = true
+	sessions := r.Sessions
+	r.mu.Unlock()
+	for _, session := range sessions {
+		if session != nil {
+			_ = session.Close()
+		}
 	}
 	for _, plan := range r.Plans {
 		if plan != nil {
@@ -75,10 +89,10 @@ func (r *Runtime) CloseOwners() {
 			lease.Close()
 		}
 	}
-	if r.Environment != nil {
+	if r.ownsEnvironment && r.Environment != nil {
 		r.Environment.Close()
 	}
-	if r.Executor != nil {
+	if r.ownsExecutor && r.Executor != nil {
 		r.Executor.Close()
 	}
 }
@@ -90,6 +104,14 @@ func (r *Runtime) WaitOwners(ctx context.Context) error {
 		return nil
 	}
 	var result error
+	r.mu.Lock()
+	sessions := r.Sessions
+	r.mu.Unlock()
+	for _, session := range sessions {
+		if session != nil {
+			result = errors.Join(result, session.WaitCleanup(ctx))
+		}
+	}
 	for _, handler := range r.Handlers {
 		if handler != nil {
 			result = errors.Join(result, handler.WaitCleanup(ctx))
@@ -110,24 +132,29 @@ func (r *Runtime) WaitOwners(ctx context.Context) error {
 			result = errors.Join(result, lease.WaitCleanup(ctx))
 		}
 	}
-	if r.Environment != nil {
+	if r.ownsEnvironment && r.Environment != nil {
 		result = errors.Join(result, r.Environment.WaitCleanup(ctx))
 	}
 	if result != nil {
 		return result
 	}
 	// An unused SessionPlan retains its completion reservation until Retire.
-	// Retire only after the original callbacks and Environment have exited,
-	// before waiting for the executor that owns that reservation.
+	// Retire only after this position's original callbacks and Sessions have
+	// exited. A borrowed deployment remains live for its independent siblings.
 	for _, plan := range r.Plans {
 		if plan != nil {
 			result = errors.Join(result, plan.Retire())
 		}
 	}
+	for _, handler := range r.Handlers {
+		if handler != nil {
+			result = errors.Join(result, handler.Retire())
+		}
+	}
 	if result != nil {
 		return result
 	}
-	if r.Executor != nil {
+	if r.ownsExecutor && r.Executor != nil {
 		select {
 		case <-r.Executor.Done():
 		case <-ctx.Done():
@@ -167,15 +194,27 @@ func (r *Runtime) reserve(cost fs.ResourceVector, err error) fs.ResourceReferenc
 func (r *Runtime) initialize(ctx context.Context, roles []uint8, configure HandlerConfig, sharedEnvironment ...*fs.TransportEnvironment) (err error) {
 	_, err = construct(r.Reporter, func() bool {
 		h := r.Authority
-		const sessionPositions = 8
+		sessionPositions, materialPositions := uint32(8), uint32(8)
+		if capacity := r.Reporter.Capacity; capacity != nil {
+			if err := capacity.Validate(); err != nil {
+				r.Reporter.Fatal(err)
+			}
+			sessionPositions, materialPositions = max(capacity.Sessions, 1), capacity.Materials
+		}
 		if r.Executor == nil {
 			// Each live, retained or candidate Session reserves both contract
 			// query directions before acquisition in this shared Environment.
 			executorConfig := fs.ApplicationExecutorConfig{QueryOwners: 2 * sessionPositions, Running: 132, ResidentRunning: 128, Ready: 32, ResidentReady: 16, CompletionRunning: 2, CompletionReserved: 32, RuntimeBytes: 16384, RuntimeBytesPerTask: 131072}
+			if r.Reporter.Capacity != nil {
+				// Every original plan and live short-result floor keeps its own
+				// Completion index. Worker/ready caps remain the original service.
+				executorConfig.CompletionReserved = max(32, 2*materialPositions+8*sessionPositions)
+			}
 			r.Executor, err = fs.NewApplicationExecutor(executorConfig, r.reserve(fs.ApplicationExecutorCharge(executorConfig)))
 			if err != nil {
 				r.Reporter.Fatal(err)
 			}
+			r.ownsExecutor = true
 			r.Reporter.Cleanup(func() {
 				r.Executor.Close()
 				select {
@@ -191,11 +230,21 @@ func (r *Runtime) initialize(ctx context.Context, roles []uint8, configure Handl
 		if len(sharedEnvironment) == 1 && sharedEnvironment[0] != nil {
 			r.Environment = sharedEnvironment[0]
 		} else {
-			environmentConfig := fs.EnvironmentConfig{Services: true, Positions: sessionPositions, Materials: 8, MaterialCreateMS: r.Reporter.operationMS(10000), Clock: h.Clock, Verification: h.Verification, RuntimeBytes: 131072}
+			environmentConfig := fs.EnvironmentConfig{Services: true, Positions: sessionPositions, Materials: materialPositions, MaterialCreateMS: r.Reporter.operationMS(10000), Clock: h.Clock, Verification: h.Verification, RuntimeBytes: 131072}
+			if r.Reporter.Capacity != nil {
+				// The installed capacity workload retains eight service positions
+				// and both an active and completed result per position. Declare
+				// their finite local bounds instead of installing the ordinary
+				// 256-method/4096-result host separately for every single peer.
+				// Signed contracts and ordinary host defaults remain authoritative.
+				environmentConfig.MaxBoundMethods = uint16(min(256, 8*sessionPositions))
+				environmentConfig.ResultOwners = min(4096, 16*sessionPositions)
+			}
 			r.Environment, err = fs.NewTransportEnvironment(fs.TransportEnvironmentOptions{Config: environmentConfig, Reservation: r.reserve(fs.EnvironmentCharge(environmentConfig)), Dependencies: h.Environment})
 			if err != nil {
 				r.Reporter.Fatal(err)
 			}
+			r.ownsEnvironment = true
 			r.Reporter.Cleanup(func() {
 				r.Environment.Close()
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -271,6 +320,13 @@ func (r *Runtime) initialize(ctx context.Context, roles []uint8, configure Handl
 				concurrency = min(concurrency, 128, h.Admission[role].Core.Open.Opening+h.Admission[role].Core.Open.IngressItems)
 				h.Admission[role].Core.Handlers = fs.SessionStreamHandlerConfig{Plan: handler, Concurrency: concurrency, TimeoutMS: timeout, RuntimeBytes: 16384, RuntimeBytesPerInvocation: 65536}
 			}
+			if r.Reporter.Capacity != nil {
+				// Validate this actual complete application/Core/RPC recipe before
+				// material preparation, native acquisition or durable admission.
+				if _, _, err = sessionv4.SessionAdmissionRequirements(h.Admission[role]); err != nil {
+					r.Reporter.Fatal(err)
+				}
+			}
 			lease, err := fs.NewArtifactLeaseFromBytes(h.Lease, r.reserve(fs.ArtifactLeaseCharge(h.Lease.MapBytes, h.Lease.MapNodes, h.Lease.RuntimeBytes, len(h.Lease.Tunnels))), h.Preauth)
 			if err != nil {
 				r.Reporter.Fatal(err)
@@ -325,6 +381,7 @@ func (r *Runtime) retainSession(role uint8, session *fs.Session) error {
 		return errors.New("runtime Session position is already occupied")
 	}
 	r.Sessions[role] = session
+	closed := r.ownersClosed
 	r.mu.Unlock()
 	r.Reporter.Cleanup(func() {
 		_ = session.Close()
@@ -332,6 +389,10 @@ func (r *Runtime) retainSession(role uint8, session *fs.Session) error {
 		defer cancel()
 		r.Reporter.ErrorIf(session.WaitCleanup(cleanup))
 	})
+	if closed {
+		_ = session.Close()
+		return errors.New("runtime owners are already closed")
+	}
 	return nil
 }
 
@@ -381,7 +442,22 @@ func (r *Runtime) ConnectCandidates(ctx context.Context, carrier fs.ConsumerCarr
 	if parallel < 1 || parallel > 2 {
 		return nil, errors.New("original candidate parallelism exceeds its fixed envelope")
 	}
+	r.mu.Lock()
+	closed := r.ownersClosed
+	r.mu.Unlock()
+	if closed {
+		return nil, errors.New("runtime owners are already closed")
+	}
 	h := r.Authority
+	// Provisioning installs unused material, not an admitted connection. Pin
+	// this operation's original deadline at the public Connect call and keep
+	// it unchanged through source acquisition, spend, establishment and READY.
+	admission := h.Admission[r.Role]
+	deadline, err := timev4.NewAge(h.Clock, r.Reporter.operationMS(10000), admission.Core.Session.SessionNotAfterMS)
+	if err != nil {
+		return nil, err
+	}
+	admission.Initial.Deadline = deadline
 	pool := h.Pool
 	if pool != nil {
 		original := *pool
@@ -392,7 +468,7 @@ func (r *Runtime) ConnectCandidates(ctx context.Context, carrier fs.ConsumerCarr
 	session, err := fs.Connect(ctx, source, fs.ConnectorOptions{Environment: r.Environment, ConnectOptions: fs.ConnectOptions{Pool: pool, Live: h.Live,
 		Preparation: fs.SourceConnectConfig{Generation: h.Generation, Identity: r.Identities[r.Role], MaterialRuntimeBytes: 8192, LocalCapabilities: h.Hello.Offered,
 			Requirements: fs.MaterialRequirements{ApplicationProfile: r.Reporter.AuthorityApplicationProfile(), RPCMaxGeneralOutstanding: h.Admission[r.Role].Core.Session.Contract.Limits().RPCMaxGeneralOutstanding, Connection: r.connectionRequirements()},
-			Carrier:      carrier, Hello: h.Hello, Limits: h.Limits, Admission: h.Admission[r.Role], Root: h.Root, Owner: h.Owner(), Environment: h.Environment, Preauth: h.Preauth, Dependencies: h.Environment,
+			Carrier:      carrier, Hello: h.Hello, Limits: h.Limits, Admission: admission, Root: h.Root, Owner: h.Owner(), Environment: h.Environment, Preauth: h.Preauth, Dependencies: h.Environment,
 			Scope: h.Scope[r.Role], RuntimeBytes: 8192, CarrierRuntimeBytes: 8192, ParallelCandidates: parallel, CandidateStartIntervalConfigured: parallel > 1, AddressAttempts: 1, AttemptBudget: fs.CarrierAttemptBudget{PreauthBytes: 131072, WorkUnits: 128}, LiveIssuance: h.LiveIssuance}}})
 	if err != nil {
 		return nil, err

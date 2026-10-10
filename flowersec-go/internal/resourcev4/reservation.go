@@ -21,7 +21,7 @@ type referenceSlot struct {
 	charge           uint32
 	chargeGeneration uint64
 	owner            OwnerKey
-	accounts         [MaxAccountsPerCharge]Account
+	accounts         [MaxAccountsPerCharge]accountSlotKey
 	count            int
 	active, primary  bool
 	transferID       [16]byte
@@ -38,28 +38,7 @@ func (r *Root) validOwner(key OwnerKey) bool {
 	return key.ProfileRevision == r.profile && key.Environment != [16]byte{} && key.Instance != [16]byte{} && key.Backing != [16]byte{} && key.Kind != 0 && key.Direction <= 2
 }
 
-func (r *Root) freeReference() int {
-	for i := range r.refs {
-		if !r.refs[i].active && r.refs[i].generation < math.MaxUint64 {
-			r.referenceExtent = max(r.referenceExtent, i+1)
-			return i
-		}
-	}
-	return -1
-}
-
-func (r *Root) ownerExists(owner OwnerKey) bool {
-	// Untouched prepaid slots cannot contain an owner. Keep every initialized
-	// position in the search, including idle protection and borrowed tails.
-	for i := range r.refs[:r.referenceExtent] {
-		if r.refs[i].active && r.refs[i].owner == owner {
-			return true
-		}
-	}
-	return false
-}
-
-func accountIndex(accounts []Account, a Account) int {
+func accountIndex[A comparable](accounts []A, a A) int {
 	for i, existing := range accounts {
 		if existing == a {
 			return i
@@ -68,33 +47,18 @@ func accountIndex(accounts []Account, a Account) int {
 	return -1
 }
 
-func (r *Root) scopeSet(owner OwnerKey, value Vector, input []Account, existing *chargeSlot) (scopes [MaxAccountsPerCharge]Account, count int, err error) {
+func (r *Root) scopeSet(owner OwnerKey, value Vector, input []Account, existing *chargeSlot) (scopes [MaxAccountsPerCharge]accountSlotKey, count int, err error) {
 	if len(input) > MaxAccountsPerCharge {
 		return scopes, 0, ErrConfiguration
 	}
 	additions := 0
 	for _, a := range input {
-		s := a.slotLocked(r)
-		if s == nil || s.key.Kind == EnvironmentAccount && s.key.ID != owner.Environment {
+		if a.root != r {
 			return scopes, 0, ErrOwner
 		}
-		if s.closed {
-			return scopes, 0, ErrClosed
+		if err := r.addScope(owner, value, a.slotKey(), existing, &scopes, &count, &additions); err != nil {
+			return scopes, 0, err
 		}
-		if accountIndex(scopes[:count], a) >= 0 {
-			continue
-		}
-		alreadyCharged := existing != nil && (accountIndex(existing.accounts[:existing.count], a) >= 0 || r.protectedScopeHeld(existing, a, nil))
-		if existing == nil || accountIndex(existing.accounts[:existing.count], a) < 0 {
-			additions++
-		}
-		if !alreadyCharged {
-			if !fits(s.used, s.limit, value) {
-				return scopes, 0, ErrCapacity
-			}
-		}
-		scopes[count] = a
-		count++
 	}
 	if existing != nil && existing.count+additions > MaxAccountsPerCharge {
 		return scopes, 0, ErrCapacity
@@ -102,9 +66,48 @@ func (r *Root) scopeSet(owner OwnerKey, value Vector, input []Account, existing 
 	return scopes, count, nil
 }
 
+func (r *Root) scopeKeySet(owner OwnerKey, value Vector, input []accountSlotKey, existing *chargeSlot) (scopes [MaxAccountsPerCharge]accountSlotKey, count int, err error) {
+	if len(input) > MaxAccountsPerCharge {
+		return scopes, 0, ErrConfiguration
+	}
+	additions := 0
+	for _, a := range input {
+		if err := r.addScope(owner, value, a, existing, &scopes, &count, &additions); err != nil {
+			return scopes, 0, err
+		}
+	}
+	if existing != nil && existing.count+additions > MaxAccountsPerCharge {
+		return scopes, 0, ErrCapacity
+	}
+	return scopes, count, nil
+}
+
+func (r *Root) addScope(owner OwnerKey, value Vector, a accountSlotKey, existing *chargeSlot, scopes *[MaxAccountsPerCharge]accountSlotKey, count, additions *int) error {
+	s := a.slotLocked(r)
+	if s == nil || s.key.Kind == EnvironmentAccount && s.key.ID != owner.Environment {
+		return ErrOwner
+	}
+	if s.closed {
+		return ErrClosed
+	}
+	if accountIndex(scopes[:*count], a) >= 0 {
+		return nil
+	}
+	alreadyCharged := existing != nil && (accountIndex(existing.accounts[:existing.count], a) >= 0 || r.protectedScopeHeld(existing, a, nil))
+	if existing == nil || accountIndex(existing.accounts[:existing.count], a) < 0 {
+		*additions = *additions + 1
+	}
+	if !alreadyCharged && !fits(s.used, s.limit, value) {
+		return ErrCapacity
+	}
+	scopes[*count] = a
+	*count = *count + 1
+	return nil
+}
+
 // Same backing is charged once per actual scope, even while old and new
 // owners overlap. Each scope retains the charge until its own final ref exits.
-func (r *Root) attachScopes(c *chargeSlot, scopes []Account) {
+func (r *Root) attachScopes(c *chargeSlot, scopes []accountSlotKey) {
 	for _, a := range scopes {
 		i := accountIndex(c.accounts[:c.count], a)
 		if i < 0 {
@@ -121,7 +124,7 @@ func (r *Root) attachScopes(c *chargeSlot, scopes []Account) {
 	}
 }
 
-func (r *Root) releaseScopes(c *chargeSlot, scopes []Account) {
+func (r *Root) releaseScopes(c *chargeSlot, scopes []accountSlotKey) {
 	for _, a := range scopes {
 		i := accountIndex(c.accounts[:c.count], a)
 		c.accountRefs[i]--
@@ -138,7 +141,7 @@ func (r *Root) releaseScopes(c *chargeSlot, scopes []Account) {
 		}
 		c.count--
 		c.accounts[i], c.accountRefs[i] = c.accounts[c.count], c.accountRefs[c.count]
-		c.accounts[c.count], c.accountRefs[c.count] = Account{}, 0
+		c.accounts[c.count], c.accountRefs[c.count] = accountSlotKey{}, 0
 	}
 }
 
@@ -173,21 +176,17 @@ func (r *Root) reserveLocked(owner OwnerKey, value Vector, accounts []Account) (
 	if !fits(r.used, r.limit, value) {
 		return Reference{}, ErrCapacity
 	}
-	chargeIndex := -1
-	for i := range r.charges {
-		if !r.charges[i].active && r.charges[i].generation < math.MaxUint64 {
-			chargeIndex = i
-			break
-		}
-	}
+	chargeIndex := r.freeCharge()
 	refIndex := r.freeReference()
 	if chargeIndex < 0 || refIndex < 0 {
 		return Reference{}, ErrCapacity
 	}
 	c := &r.charges[chargeIndex]
+	r.freeChargeFirst = c.freeNext
 	*c = chargeSlot{generation: c.generation + 1, value: value, refs: 1, active: true}
 	s := &r.refs[refIndex]
 	*s = referenceSlot{generation: s.generation + 1, charge: uint32(chargeIndex), chargeGeneration: c.generation, owner: owner, accounts: scopes, count: count, active: true, primary: true}
+	r.activateReference(uint32(refIndex))
 	r.used, _ = r.used.Add(value)
 	for i, value := range r.used {
 		r.peak[i] = max(r.peak[i], value)
@@ -412,6 +411,7 @@ func (ref Reference) Borrow() (Reference, error) {
 	}
 	borrow := &r.refs[index]
 	*borrow = referenceSlot{generation: borrow.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: s.owner, accounts: s.accounts, count: s.count, active: true}
+	r.activateReference(uint32(index))
 	r.attachScopes(c, s.accounts[:s.count])
 	c.refs++
 	r.referenceCount++
@@ -452,7 +452,7 @@ func (ref Reference) BorrowInScopesOf(other Reference) (Reference, error) {
 			}
 		}
 	}
-	var accounts [MaxAccountsPerCharge]Account
+	var accounts [MaxAccountsPerCharge]accountSlotKey
 	count := copy(accounts[:], s.accounts[:s.count])
 	for _, account := range input.accounts[:input.count] {
 		if accountIndex(accounts[:count], account) >= 0 {
@@ -463,7 +463,7 @@ func (ref Reference) BorrowInScopesOf(other Reference) (Reference, error) {
 		}
 		accounts[count], count = account, count+1
 	}
-	scopes, count, err := r.scopeSet(s.owner, c.value, accounts[:count], c)
+	scopes, count, err := r.scopeKeySet(s.owner, c.value, accounts[:count], c)
 	if err != nil {
 		return Reference{}, err
 	}
@@ -473,6 +473,7 @@ func (ref Reference) BorrowInScopesOf(other Reference) (Reference, error) {
 	}
 	borrow := &r.refs[index]
 	*borrow = referenceSlot{generation: borrow.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: s.owner, accounts: scopes, count: count, active: true}
+	r.activateReference(uint32(index))
 	r.attachScopes(c, scopes[:count])
 	c.refs++
 	r.referenceCount++
@@ -501,7 +502,7 @@ func (ref Reference) BorrowApplicationService(invocation Reference) (Reference, 
 	if err := r.checkCharge(input, inputCharge); err != nil {
 		return Reference{}, err
 	}
-	var accounts [MaxAccountsPerCharge]Account
+	var accounts [MaxAccountsPerCharge]accountSlotKey
 	count := copy(accounts[:], s.accounts[:s.count])
 	for _, account := range input.accounts[:input.count] {
 		kind := account.slotLocked(r).key.Kind
@@ -513,7 +514,7 @@ func (ref Reference) BorrowApplicationService(invocation Reference) (Reference, 
 		}
 		accounts[count], count = account, count+1
 	}
-	scopes, count, err := r.scopeSet(input.owner, c.value, accounts[:count], c)
+	scopes, count, err := r.scopeKeySet(input.owner, c.value, accounts[:count], c)
 	if err != nil {
 		return Reference{}, err
 	}
@@ -523,6 +524,7 @@ func (ref Reference) BorrowApplicationService(invocation Reference) (Reference, 
 	}
 	borrow := &r.refs[index]
 	*borrow = referenceSlot{generation: borrow.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: input.owner, accounts: scopes, count: count, active: true}
+	r.activateReference(uint32(index))
 	r.attachScopes(c, scopes[:count])
 	c.refs++
 	r.referenceCount++
@@ -550,10 +552,14 @@ func (ref Reference) Transfer(owner OwnerKey, id [16]byte, accounts ...Account) 
 	if err := r.checkCharge(s, c); err != nil {
 		return Reference{}, err
 	}
+	var scopes [MaxAccountsPerCharge]accountSlotKey
+	var count int
+	var err error
 	if len(accounts) == 0 {
-		accounts = s.accounts[:s.count]
+		scopes, count, err = r.scopeKeySet(owner, c.value, s.accounts[:s.count], c)
+	} else {
+		scopes, count, err = r.scopeSet(owner, c.value, accounts, c)
 	}
-	scopes, count, err := r.scopeSet(owner, c.value, accounts, c)
 	if err != nil {
 		return Reference{}, err
 	}
@@ -587,6 +593,7 @@ func (ref Reference) Transfer(owner OwnerKey, id [16]byte, accounts ...Account) 
 	}
 	target := &r.refs[index]
 	*target = referenceSlot{generation: target.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: owner, accounts: scopes, count: count, active: true, primary: true}
+	r.activateReference(uint32(index))
 	r.attachScopes(c, scopes[:count])
 	s.primary = false
 	s.transferID, s.transferredTo = id, Reference{r, uint32(index), target.generation}
@@ -641,7 +648,7 @@ func (ref Reference) releaseLocked() {
 		c.protected.restoreScopesLocked(s, c)
 		s.protectedIdle = true
 		s.primary = false
-		s.owner = r.refs[c.protected.index].owner
+		r.changeReferenceOwner(ref.index, r.refs[c.protected.index].owner)
 		r.finishProtectedLocked(c)
 		return
 	}
@@ -650,10 +657,11 @@ func (ref Reference) releaseLocked() {
 	} else {
 		r.releaseScopes(c, s.accounts[:s.count])
 	}
+	r.retireReference(ref.index)
 	s.active = false
 	s.owner = OwnerKey{}
 	s.transferredTo = Reference{}
-	s.accounts, s.count = [MaxAccountsPerCharge]Account{}, 0
+	s.accounts, s.count = [MaxAccountsPerCharge]accountSlotKey{}, 0
 	c.refs--
 	r.referenceCount--
 	if c.refs != 0 {
@@ -665,5 +673,9 @@ func (ref Reference) releaseLocked() {
 		r.resultCount--
 	}
 	*c = chargeSlot{generation: c.generation}
+	if c.generation < math.MaxUint64 {
+		c.freeNext = r.freeChargeFirst
+		r.freeChargeFirst = s.charge + 1
+	}
 	r.chargeCount--
 }

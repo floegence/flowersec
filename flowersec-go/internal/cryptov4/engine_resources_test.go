@@ -187,6 +187,15 @@ func TestReservedEngineRetainsChargeThroughRealTailsAndRetirement(t *testing.T) 
 			if ref.Check() == nil || e.CheckEnvironment(environment) != nil || e.Activate() != nil {
 				t.Fatal("constructor did not transfer its original owner")
 			}
+			for _, w := range e.free {
+				if w.input != nil || w.output != nil {
+					t.Fatal("idle workspace allocated record arrays")
+				}
+			}
+			preRecordCharge := root.Snapshot().Charged
+			if preRecordCharge[resourcev4.SDKBytes] < charge[resourcev4.SDKBytes] {
+				t.Fatal("lazy backing was not fully reserved")
+			}
 			if err := e.OpenScope(1); err != nil {
 				t.Fatal(err)
 			}
@@ -195,6 +204,9 @@ func TestReservedEngineRetainsChargeThroughRealTailsAndRetirement(t *testing.T) 
 				t.Fatal(err)
 			}
 			t.Cleanup(packet.Release)
+			if root.Snapshot().Charged != preRecordCharge {
+				t.Fatal("first record changed prepaid backing reservation")
+			}
 			data, err := packet.Bytes()
 			if err != nil {
 				t.Fatal(err)

@@ -66,7 +66,7 @@ func NamespaceRefreshCharge(l NamespaceRefreshLimits, configBytes int) (resource
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
-	decoder, err := DecoderBackingBytes(limit, limit)
+	decoder, err := schemaDecoderBackingBytes("FreshnessHead", limit, limit)
 	if err != nil {
 		return resourcev4.Vector{}, err
 	}
@@ -110,7 +110,7 @@ func newNamespaceRefreshOwned(n *LiveNamespace, trust *NamespaceTrustStore, limi
 		return nil, err
 	}
 	r.input = make([]byte, max(limit, trust.limits.ConfigBytes))
-	r.decoder, err = NewDecoder(limit, limit)
+	r.decoder, err = newSchemaDecoder("FreshnessHead", limit, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -199,8 +199,12 @@ func TestNativeAssemblyRingWrapPreservesUnreadPlaintext(t *testing.T) {
 		t.Fatal(err)
 	}
 	unblock, done := holdNativeRead(t, f.assemblies[0], f.data(t, 0, 400, true, bytes.Repeat([]byte("b"), 300)))
+	storage := f.flows[0].storage
 	if n, _, err := f.flows[0].TryRead(dst[:]); n != 50 || err != nil || !bytes.Equal(dst[:n], bytes.Repeat([]byte("a"), 50)) {
 		t.Fatal("ciphertext overlapped unread plaintext", n, err)
+	}
+	if len(f.flows[0].storage) != 512 || &f.flows[0].storage[0] != &storage[0] {
+		t.Fatal("empty plaintext queue released the actual native provider's ring")
 	}
 	unblock()
 	if err := <-done; err != nil {
@@ -213,6 +217,9 @@ func TestNativeAssemblyRingWrapPreservesUnreadPlaintext(t *testing.T) {
 	if n, terminal, err := f.flows[0].TryRead(dst[:]); n != 300 || terminal != protocolv4.V4ReadTerminalEof || err != nil || !bytes.Equal(dst[:n], bytes.Repeat([]byte("b"), 300)) {
 		t.Fatal("input cleanup erased committed plaintext/EOF", n, terminal, err)
 	}
+	if f.flows[0].storage != nil || !bytes.Equal(storage, make([]byte, len(storage))) || f.flows[0].capacity != 512 || f.pool.backingUsed != 1024 {
+		t.Fatal("native EOF retained an empty ring or released its full backing responsibility")
+	}
 }
 
 func TestNativeAssemblyCloseRetainsActualProviderBacking(t *testing.T) {
@@ -221,12 +228,16 @@ func TestNativeAssemblyCloseRetainsActualProviderBacking(t *testing.T) {
 			f := newNativeAssemblyFixture(t, 512)
 			x := f.assemblies[0]
 			unblock, done := holdNativeRead(t, x, f.data(t, 0, 0, false, bytes.Repeat([]byte("x"), 300)))
+			storage := f.flows[0].storage
 			before := f.root.Snapshot().Charged
 			if rootClose {
 				f.root.Close()
 			}
 			x.Close()
 			f.pool.Close()
+			if len(f.flows[0].storage) != 512 || &f.flows[0].storage[0] != &storage[0] {
+				t.Fatal("Close released a ring still borrowed by the actual provider")
+			}
 			canceled, cancel := context.WithCancel(context.Background())
 			cancel()
 			if err := x.WaitCleanup(canceled); !errors.Is(err, context.Canceled) || f.root.Snapshot().Charged != before {
@@ -248,6 +259,9 @@ func TestNativeAssemblyCloseRetainsActualProviderBacking(t *testing.T) {
 			if err := x.WaitCleanup(context.Background()); err != nil || f.root.Snapshot().Charged != before {
 				t.Fatal("cleanup refunded unretired metadata", err)
 			}
+			if f.flows[0].storage != nil || !bytes.Equal(storage, make([]byte, len(storage))) || f.flows[0].capacity != 512 {
+				t.Fatal("actual provider exit retained unverified bytes or changed the declared ring")
+			}
 			observed, _, _, _ := f.flows[0].Snapshot()
 			if observed != (TerminalTuple{}) {
 				t.Fatal("late input advanced frontier", observed)
@@ -261,8 +275,14 @@ func TestNativeAssemblyNoCapacityRetainsOriginalCandidate(t *testing.T) {
 		t.Run(map[bool]string{false: "receiver", true: "crypto"}[crypto], func(t *testing.T) {
 			f := newNativeAssemblyFixture(t, 512)
 			x := f.assemblies[0]
-			if err := x.Read(context.Background(), bytes.NewReader(f.data(t, 0, 0, true, []byte("once")))); err != nil {
+			body := bytes.Repeat([]byte("once"), 75)
+			if err := x.Read(context.Background(), bytes.NewReader(f.data(t, 0, 0, true, body))); err != nil {
 				t.Fatal(err)
+			}
+			storage := f.flows[0].storage
+			original := bytes.Clone(storage)
+			if x.ringBytes == 0 || len(storage) != 512 {
+				t.Fatal("candidate fixture did not enter the original native ring")
 			}
 			var release func()
 			if crypto {
@@ -285,13 +305,21 @@ func TestNativeAssemblyNoCapacityRetainsOriginalCandidate(t *testing.T) {
 				release()
 				t.Fatal("no-attempt refusal discarded candidate", err)
 			}
+			if len(f.flows[0].storage) != 512 || &f.flows[0].storage[0] != &storage[0] || !bytes.Equal(storage, original) {
+				release()
+				t.Fatal("no-attempt refusal released or replaced the original candidate ring")
+			}
 			release()
 			if err := x.Authenticate(context.Background(), f.receiver); err != nil {
 				t.Fatal(err)
 			}
 			observed, _, _, _ := f.flows[0].Snapshot()
-			if observed != (TerminalTuple{NextSequence: 1, Offset: 4}) {
+			if observed != (TerminalTuple{NextSequence: 1, Offset: uint64(len(body))}) {
 				t.Fatal("candidate committed more than once", observed)
+			}
+			var out [512]byte
+			if n, terminal, err := f.flows[0].TryRead(out[:]); n != len(body) || terminal != protocolv4.V4ReadTerminalEof || err != nil || !bytes.Equal(out[:n], body) || f.flows[0].storage != nil {
+				t.Fatal("retried original candidate lost payload or retained an empty ring", n, terminal, err)
 			}
 		})
 	}
@@ -372,6 +400,7 @@ func TestNativeAssemblyStoppedContractsPromiseWithoutDroppingOriginalRead(t *tes
 	x, flow := f.assemblies[0], f.flows[0]
 	wire := f.data(t, 0, 0, false, bytes.Repeat([]byte("s"), 300))
 	unblock, done := holdNativeRead(t, x, wire)
+	storage := flow.storage
 	before := f.root.Snapshot().Charged
 	terminal := TerminalTuple{NextSequence: 1, Offset: 300}
 	if err := flow.ApplyStopped(terminal); err != nil {
@@ -379,6 +408,9 @@ func TestNativeAssemblyStoppedContractsPromiseWithoutDroppingOriginalRead(t *tes
 	}
 	if f.root.Snapshot().Charged != before || f.pool.Outstanding() != 812 {
 		t.Fatal("contracted logical promise returned physical native backing")
+	}
+	if len(flow.storage) != 512 || &flow.storage[0] != &storage[0] {
+		t.Fatal("STOPPED released the actual native provider's original ring")
 	}
 	unblock()
 	if err := <-done; err != nil {
@@ -392,6 +424,66 @@ func TestNativeAssemblyStoppedContractsPromiseWithoutDroppingOriginalRead(t *tes
 	}
 	if f.pool.Outstanding() != 512 {
 		t.Fatal("abandoned payload promise not settled exactly once")
+	}
+	if flow.storage != nil || !bytes.Equal(storage, make([]byte, len(storage))) || flow.capacity != 512 || f.root.Snapshot().Charged != before {
+		t.Fatal("abandoned native exit retained physical bytes or refunded the original owner")
+	}
+}
+
+func TestNativeAssemblyPrefixWaitAllowsEmptyRingReleaseAndFullCapacityReuse(t *testing.T) {
+	f := newNativeAssemblyFixture(t, 512)
+	flow, assembly := f.flows[0], f.assemblies[0]
+	first := bytes.Repeat([]byte{'a'}, 300)
+	f.accept(t, 0, f.data(t, 0, 0, false, first))
+	storage := flow.storage
+	before := f.root.Snapshot()
+	body := bytes.Repeat([]byte("01234567"), 64)
+	reader := &nativeHeldReader{source: bytes.NewReader(f.data(t, 0, 300, true, body)), entered: make(chan struct{}), release: make(chan struct{})}
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(reader.release) }) }
+	t.Cleanup(unblock)
+	done := make(chan error, 1)
+	go func() { done <- assembly.Read(context.Background(), reader) }()
+	select {
+	case <-reader.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("native reader did not wait for the next prefix")
+	}
+	f.pool.mu.Lock()
+	prefixOnly := assembly.phase == nativeDataReading && assembly.ringBytes == 0
+	f.pool.mu.Unlock()
+	if !prefixOnly {
+		t.Fatal("prefix wait borrowed the payload ring")
+	}
+	var out [512]byte
+	if n, terminal, err := flow.TryRead(out[:]); n != len(first) || terminal != protocolv4.V4ReadTerminalOpen || err != nil || !bytes.Equal(out[:n], first) {
+		t.Fatal("prefix wait changed original queued plaintext", n, terminal, err)
+	}
+	if flow.storage != nil || !bytes.Equal(storage, make([]byte, len(storage))) || flow.head != 300 || flow.capacity != 512 || f.pool.backingUsed != 1024 || f.root.Snapshot() != before {
+		t.Fatal("prefix wait retained an empty ring or lost its original head and backing charge")
+	}
+	if err := flow.Grant(812); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(flow.storage) != 512 || flow.head != 300 || f.root.Snapshot() != before {
+		t.Fatal("next native body lost the original full ring capacity")
+	}
+	storage = flow.storage
+	if err := assembly.Authenticate(context.Background(), f.receiver); err != nil {
+		t.Fatal(err)
+	}
+	if len(flow.storage) != 512 || &flow.storage[0] != &storage[0] {
+		t.Fatal("authentication replaced the original full ring before plaintext transfer")
+	}
+	if n, terminal, err := flow.TryRead(out[:]); n != len(body) || terminal != protocolv4.V4ReadTerminalEof || err != nil || !bytes.Equal(out[:n], body) {
+		t.Fatal("recreated native ring lost full-capacity wrapped data or EOF", n, terminal, err)
+	}
+	if flow.storage != nil || !bytes.Equal(storage, make([]byte, len(storage))) || flow.head != 300 || flow.capacity != 512 || f.pool.backingUsed != 1024 || f.root.Snapshot() != before {
+		t.Fatal("native EOF retained an empty ring or returned the live owner's full charge")
 	}
 }
 

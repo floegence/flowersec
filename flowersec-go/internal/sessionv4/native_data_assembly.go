@@ -218,6 +218,7 @@ func (x *NativeDataAssembly) read(ctx context.Context, reader io.Reader, service
 		if (err == io.EOF || err == native.ErrNormalDrained) && input.read == 0 && x.cause == nil && !x.closed && !x.pool.closed && !flow.fenced && flow.hasTerminal && flow.observed == flow.terminal && ctx.Err() == nil {
 			err = errNativeDataTerminal
 			x.phase, x.closed = nativeDataIdle, true
+			flow.releaseEmptyStorageLocked()
 			x.signalStateLocked()
 			x.cleanupLocked()
 			x.pool.mu.Unlock()
@@ -231,6 +232,7 @@ func (x *NativeDataAssembly) read(ctx context.Context, reader io.Reader, service
 		}
 		if err == nil {
 			x.phase = nativeDataReady
+			flow.releaseEmptyStorageLocked()
 			if x.service != nil {
 				x.service.notify()
 			}
@@ -239,6 +241,7 @@ func (x *NativeDataAssembly) read(ctx context.Context, reader io.Reader, service
 			flow.fenceLocked()
 			x.clearInputLocked()
 			x.phase, x.closed = nativeDataIdle, true
+			flow.releaseEmptyStorageLocked()
 			x.cleanupLocked()
 		}
 		x.pool.mu.Unlock()
@@ -265,12 +268,13 @@ func (x *NativeDataAssembly) read(ctx context.Context, reader io.Reader, service
 	length, claim := prefix.RequiredBytes(), min(promise, upper)
 	headerBytes := min(length, len(x.header))
 	ringBytes := length - headerBytes
-	if uint64(ringBytes) > claim || ringBytes > len(flow.storage)-flow.size {
+	if uint64(ringBytes) > claim || uint64(ringBytes) > flow.capacity-uint64(flow.size) {
 		x.pool.mu.Unlock()
 		return ErrCredit
 	}
 	x.length, x.claim, x.headerBytes, x.ringBytes = length, claim, headerBytes, ringBytes
 	if x.ringBytes != 0 {
+		flow.ensureStorageLocked()
 		x.ringStart = (flow.head + flow.size) % len(flow.storage)
 	}
 	copy(x.header, prefix.bytes[:])
@@ -333,6 +337,7 @@ func (x *NativeDataAssembly) authenticate(ctx context.Context, receiver *RecordR
 		}
 		x.clearInputLocked()
 		x.phase = nativeDataIdle
+		flow.releaseEmptyStorageLocked()
 		if err != nil {
 			x.failLocked(err)
 			flow.fenceLocked()
@@ -409,6 +414,7 @@ func (x *NativeDataAssembly) cleanupLocked() {
 	}
 	x.clearInputLocked()
 	x.flow.assembly = nil
+	x.flow.releaseEmptyStorageLocked()
 	x.flow.notifyCleanupLocked()
 	x.flow = nil
 	x.header = nil

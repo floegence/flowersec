@@ -53,6 +53,13 @@ func boundedMap(input []byte, schema string) (*Document, error) {
 	if len(input) == 0 || len(input) > maximum {
 		return nil, CBORFailure("map_size")
 	}
+	if schema == "FreshnessHead" || schema == "HeadSignerDelegation" {
+		d, err := newSchemaDecoder(schema, maximum, maximum)
+		if err != nil {
+			return nil, err
+		}
+		return d.DecodeMap(input, schema, DecodeContext{})
+	}
 	d, err := NewDecoder(maximum, maximum)
 	if err != nil {
 		return nil, err
@@ -190,7 +197,7 @@ func NamespaceHeadBackingBytes() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	workspace, err := DecoderBackingBytes(d, d)
+	workspace, err := schemaDecoderBackingBytes("HeadSignerDelegation", d, d)
 	// The detached schema text is an additional copy bounded by the Head map.
 	return workspace + uint64(d+2*h) + uint64(unsafe.Sizeof(NamespaceHead{})), err
 }

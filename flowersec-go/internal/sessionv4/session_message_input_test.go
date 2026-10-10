@@ -239,15 +239,22 @@ func TestSessionMessageInputWholeRecordKeepsFramingAndOriginalBuffer(t *testing.
 				return copy(dst, wire), nil
 			}}
 			input, _, _ := messageInputFixture(t, context.Background(), provider)
+			receiver, _, _ := resourceRecordReceiver(t)
 			for range 2 {
-				dst := bytes.Repeat([]byte{0x55}, 136)
-				n, err := input.readRecordMessage(dst)
+				if err := receiver.begin(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				dst, err := input.readRecordMessage(receiver)
 				if malformed {
-					if n != 0 || err == nil || !bytes.Equal(dst, bytes.Repeat([]byte{0x55}, len(dst))) {
-						t.Fatal("invalid whole message exposed bytes", n, err)
+					if dst != nil || err == nil || receiver.storage != nil {
+						t.Fatal("invalid whole message exposed or allocated receiver bytes", err)
 					}
-				} else if err != nil || n != len(wire) || !bytes.Equal(dst[:n], wire) || input.length != 0 || input.offset != 0 {
-					t.Fatal("whole envelope did not release its original read gate", n, err)
+				} else if err != nil || len(dst) != len(wire) || cap(dst) != len(wire) || !bytes.Equal(dst, wire) || input.length != 0 || input.offset != 0 || !bytes.Equal(input.buffer, make([]byte, len(input.buffer))) {
+					t.Fatal("whole envelope did not release its original read gate", len(dst), err)
+				}
+				receiver.finish()
+				if receiver.storage != nil || !bytes.Equal(dst, make([]byte, len(dst))) {
+					t.Fatal("receiver retained the independent message copy after exit")
 				}
 			}
 			if malformed && provider.reads.Load() != 1 || !malformed && provider.reads.Load() != 2 {

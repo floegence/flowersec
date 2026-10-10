@@ -121,23 +121,21 @@ func streamServiceFloorCharges(c SessionCoreConfig) (count uint32, vectors [stre
 	return
 }
 
-func appendStreamServiceFloorCharges(c SessionCoreConfig, charges *[coreOwnerCapacity]resourcev4.Vector) (uint32, error) {
+func protectedStreamServiceFloorCharges(c SessionCoreConfig) (count uint32, charges [streamServiceOwners]resourcev4.Vector, err error) {
 	count, vectors, err := streamServiceFloorCharges(c)
-	if err != nil {
-		return 0, err
+	if err != nil || count == 0 {
+		return count, charges, err
 	}
-	for slot := 0; slot < int(count); slot++ {
-		for i, vector := range vectors {
-			if vector == (resourcev4.Vector{}) {
-				continue
-			}
-			charges[coreStreamServiceStart+slot*streamServiceOwners+i], err = resourcev4.ProtectedCharge(vector)
-			if err != nil {
-				return 0, err
-			}
+	for component, vector := range vectors {
+		if vector == (resourcev4.Vector{}) {
+			continue
+		}
+		charges[component], err = resourcev4.ProtectedCharge(vector)
+		if err != nil {
+			return 0, charges, err
 		}
 	}
-	return count, nil
+	return count, charges, nil
 }
 
 func streamServiceBorrows(position int) int {
@@ -250,11 +248,10 @@ func (a *OpenAdmission) pendingDelegatedKind(h OpenHandle, plan *StreamHandlerPl
 	if s.phase != openPending || s.local || s.cancelled {
 		return false, nil
 	}
-	kind := a.metadata[s.metadataStart : s.metadataStart+s.kindSize]
 	plan.mu.Lock()
 	defer plan.mu.Unlock()
 	for _, r := range plan.registrations {
-		if r.config.Kind == string(kind) {
+		if a.metadata.equals(s.metadataStart, s.metadataStart+s.kindSize, r.config.Kind) {
 			return r.config.HTTP != nil || r.config.Delegated != nil || r.config.ControlledHTTP != nil, nil
 		}
 	}

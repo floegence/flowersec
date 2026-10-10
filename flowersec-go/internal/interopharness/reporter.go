@@ -35,6 +35,7 @@ type Reporter struct {
 	rootPin                                     *protocolv4.NamespaceTrustRoot
 	ApplicationProfile                          string
 	MaxStreams                                  uint32
+	Capacity                                    *sessionv4.EngineeringHostCapacity
 	ListenerConnections, AcceptedRoutePositions uint16
 	OperationDeadlineMS                         uint64
 	ActivationWindowMS                          uint64
@@ -291,8 +292,14 @@ func (r *Reporter) AuthorityBootstrapProvider() protocolv4.NamespaceBootstrapPro
 
 // The shared namespace admits both endpoints' eight concurrent RPC results,
 // their independent delivery floors and the source/Session subscriptions.
-func (r *Reporter) AuthorityNamespaceSubscribers() uint32                  { return 64 }
-func (r *Reporter) AuthorityNamespaceRoot() *protocolv4.NamespaceTrustRoot { return r.rootPin }
+func (r *Reporter) AuthorityNamespaceSubscribers() uint32 {
+	if r.Capacity != nil {
+		return 64 * max(r.Capacity.Sessions, 1)
+	}
+	return 64
+}
+func (r *Reporter) AuthorityHostCapacity() *sessionv4.EngineeringHostCapacity { return r.Capacity }
+func (r *Reporter) AuthorityNamespaceRoot() *protocolv4.NamespaceTrustRoot    { return r.rootPin }
 
 func (r *Reporter) AuthorityApplicationProfile() string {
 	if r.ApplicationProfile == "" {
@@ -319,6 +326,10 @@ func (r *Reporter) detachedAuthority() (*Reporter, error) {
 		return nil, errors.New("original authority reporter is closed")
 	}
 	child := &Reporter{epoch: r.epoch, clock: r.clock, artifactDir: r.artifactDir, ApplicationProfile: r.ApplicationProfile, MaxStreams: r.MaxStreams, ListenerConnections: r.ListenerConnections, AcceptedRoutePositions: r.AcceptedRoutePositions, OperationDeadlineMS: r.OperationDeadlineMS, ActivationWindowMS: r.ActivationWindowMS, RouteHost: r.RouteHost, candidateID: r.candidateID, directRoutes: r.directRoutes, tunnel: r.tunnel}
+	if r.Capacity != nil {
+		capacity := *r.Capacity
+		child.Capacity = &capacity
+	}
 	if _, err := rand.Read(child.lease[:]); err != nil {
 		return nil, err
 	}

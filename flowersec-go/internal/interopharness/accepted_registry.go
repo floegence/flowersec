@@ -277,6 +277,13 @@ func (s *Server) forkAcceptedAuthority() (*Reporter, *sessionv4.PublicQUICTestHa
 	if err != nil {
 		return nil, nil, err
 	}
+	if reporter.Capacity != nil {
+		// This accepted position owns one Environment and borrows the original
+		// host executor/root. Closing it must not close those shared owners.
+		capacity := *reporter.Capacity
+		capacity.Sessions, capacity.Materials, capacity.Parents, capacity.Legs = 1, 1, 0, 0
+		reporter.Capacity = &capacity
+	}
 	h := *s.Runtime.Authority
 	deadline, err := timev4.NewAge(h.Clock, reporter.operationMS(10000), math.MaxUint64)
 	if err != nil {
@@ -295,7 +302,10 @@ func (s *Server) forkAcceptedAuthority() (*Reporter, *sessionv4.PublicQUICTestHa
 	if _, err = rand.Read(sessionID[:]); err != nil {
 		return nil, nil, errors.Join(err, reporter.Close())
 	}
-	limit := h.Root.Snapshot().Limit
+	limit := h.SessionLimit
+	if limit == (resourcev4.Vector{}) {
+		limit = h.Root.Snapshot().Limit
+	}
 	limit[resourcev4.Sessions] = 1
 	scope, err := h.Root.Account(resourcev4.AccountKey{Kind: resourcev4.SessionAccount, ID: sessionID}, limit)
 	if err != nil {
@@ -320,6 +330,7 @@ func (s *Server) NewAcceptedPosition(registry *AcceptedRegistry, handlers Handle
 		}
 	}()
 	runtime := &Runtime{Reporter: reporter, Authority: h, Role: 1, Executor: s.Runtime.Executor}
+	reporter.Owner(runtime.CloseOwners, runtime.WaitOwners)
 	err = runtime.initialize(s.context, []uint8{1}, handlers)
 	if err != nil {
 		return nil, err

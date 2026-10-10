@@ -156,6 +156,9 @@ func TestOpenWaitOutcomeMovesWithOriginalSlotAndDelaysCollection(t *testing.T) {
 	source := a.find(peer.scope)
 	wake := a.outcomeWake[source]
 	a.mu.Unlock()
+	if wake == nil || cap(wake) != 1 {
+		t.Fatal("original observer did not acquire its bounded notification channel")
+	}
 	if _, err := a.Decide(context.Background(), peer, BusinessStream, "kind_unavailable", StreamReservation{}, server.maintenance); err != nil {
 		t.Fatal(err)
 	}
@@ -318,4 +321,66 @@ func TestOpenDecisionOpportunityNotifiesEachOriginalPendingOwner(t *testing.T) {
 	if got := a.Usage(); got.Pending != 2 || got.RejectionProofs != 0 {
 		t.Fatal("notification itself selected an outcome or reserved capacity", got)
 	}
+}
+
+func TestOpenDecisionOpportunityRetainsRecoveryBeforeOriginalWait(t *testing.T) {
+	client := newOpenEndpoint(t, protocolv4.ClientToServer, 2, 2, 1)
+	server := newOpenEndpoint(t, protocolv4.ServerToClient, 2, 2, 1)
+	local, rejected := rejectTestOpen(t, client, server)
+	_, pending, _, _ := startTestOpen(t, client, server, 8)
+	a := server.admission
+	if _, err := a.Decide(context.Background(), pending, BusinessStream, "kind_unavailable", StreamReservation{}, server.maintenance); !errors.Is(err, ErrOpenPending) {
+		t.Fatal("exhausted rejection reserve did not retain pending OPEN", err)
+	}
+	a.mu.Lock()
+	wake := a.outcomeWake[a.find(pending.scope)]
+	a.mu.Unlock()
+	if wake != nil {
+		t.Fatal("unobserved pending OPEN allocated a channel without a real notification")
+	}
+	// Recover the original rejection reserve before the dispatcher starts its
+	// wait. No additional capacity change occurs during that observation.
+	if err := a.CarrierClosed(rejected); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.admission.CarrierClosed(local); err != nil {
+		t.Fatal(err)
+	}
+	cr, sr := testRetirement(t, client, client.maintenance), testRetirement(t, server, server.maintenance)
+	if _, err := cr.Start(context.Background(), 1, streamTestDeadline(t, client.engine)); err != nil {
+		t.Fatal(err)
+	}
+	receiveRetirement(t, server, sr, client.control.Bytes())
+	client.control.Reset()
+	if _, err := sr.Acknowledge(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	receiveRetirement(t, client, cr, server.control.Bytes())
+	server.control.Reset()
+	a.mu.Lock()
+	wake = a.outcomeWake[a.find(pending.scope)]
+	a.mu.Unlock()
+	if wake == nil || cap(wake) != 1 || len(wake) != 1 {
+		t.Fatal("capacity recovery before observation lost its bounded hint")
+	}
+	before := a.Usage()
+	if before.Pending != 1 || before.RejectionProofs != 0 {
+		t.Fatal("capacity recovery changed the original pending outcome", before)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := a.WaitDecisionOpportunity(ctx, pending); err != nil {
+		t.Fatal("original dispatcher missed recovery that preceded its wait", err)
+	}
+	a.mu.Lock()
+	s, err := a.slot(pending)
+	preserved := err == nil && s.phase == openPending && !s.deciding && !s.outcomeWaiting && s.retirementReferences == 0 && a.methodTails == 0 && a.outcomeWake[a.find(pending.scope)] == wake
+	a.mu.Unlock()
+	if !preserved || a.Usage() != before || len(wake) != 0 {
+		t.Fatal("capacity observation changed pending ownership or retained its method tail")
+	}
+	if _, err := a.Decide(context.Background(), pending, BusinessStream, "kind_unavailable", StreamReservation{}, server.maintenance); err != nil {
+		t.Fatal("original dispatcher could not use recovered rejection capacity", err)
+	}
+	applyTestOutcome(t, server, client)
 }

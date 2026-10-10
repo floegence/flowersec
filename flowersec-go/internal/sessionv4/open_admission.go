@@ -10,6 +10,7 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/diagnosticv4"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ordinalbits"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
@@ -134,15 +135,14 @@ type OpenAdmission struct {
 	slots                                                     []openSlot
 	slotExtents                                               [3]int
 	index                                                     []int
-	metadata                                                  []byte
-	metadataUsed                                              []bool
+	metadata                                                  openMetadataArena
 	active, opening, pending, positiveProofs, rejectionProofs uint32
 	byOpener                                                  [2][3]uint32
 	lifetime                                                  [2][3]uint64
 	nextOrdinal                                               uint64
 	protectionGeneration                                      uint64
 	roleOrdinals                                              [2]uint64
-	stable                                                    [2][]uint64
+	stable                                                    [2]ordinalbits.Set
 	closed, draining                                          bool
 	openGate                                                  localOpenGate
 	highestAccepted                                           [2]uint64
@@ -218,8 +218,8 @@ func NewOpenAdmission(engine *cryptov4.Engine, direction protocolv4.Direction, l
 		return nil, cryptov4.ErrConfiguration
 	}
 	// Descriptor and fixed index costs are charged before assigning metadata
-	// capacity. The byte arena has one occupancy byte per owned byte; this
-	// conservative layout makes fragmentation and cleanup accounting explicit.
+	// capacity. One data and one occupancy byte remain reserved per logical
+	// position; the prepaid pages retain that exact fragmentation/capacity bound.
 	ingressOverhead := uint64(limits.IngressItems) * (uint64(unsafe.Sizeof(openSlot{})) + 4*uint64(unsafe.Sizeof(int(0))))
 	if limits.IngressBytes <= ingressOverhead {
 		return nil, cryptov4.ErrConfiguration
@@ -236,6 +236,10 @@ func NewOpenAdmission(engine *cryptov4.Engine, direction protocolv4.Direction, l
 	if arenaBytes < kind+metadata {
 		return nil, cryptov4.ErrConfiguration
 	}
+	metadataArena, err := newOpenMetadataArena(arenaBytes)
+	if err != nil {
+		return nil, err
+	}
 	// This workspace covers one complete maximum OPEN at uint64 field maxima.
 	// Actual frame/route admission still checks the complete encrypted record.
 	encodeBytes := kind + metadata + 256
@@ -247,10 +251,7 @@ func NewOpenAdmission(engine *cryptov4.Engine, direction protocolv4.Direction, l
 	for indexSize < 2*int(limits.Terminal+limits.IngressItems) {
 		indexSize *= 2
 	}
-	a := &OpenAdmission{pendingWake: make(chan struct{}, 1), outcomeWake: make([]chan struct{}, int(limits.Terminal+limits.IngressItems)), cleanupWake: make(chan struct{}, 1), cleanupDone: make(chan struct{}), engine: engine, direction: direction, limits: limits, slots: make([]openSlot, int(limits.Terminal+limits.IngressItems)), index: make([]int, indexSize), metadata: make([]byte, arenaBytes), metadataUsed: make([]bool, arenaBytes), nextOrdinal: 1, roleOrdinals: [2]uint64{streams.Client, streams.Server}, stable: [2][]uint64{make([]uint64, (streams.Client+63)/64), make([]uint64, (streams.Server+63)/64)}, decoder: decoder, encode: make([]byte, encodeBytes)}
-	for i := range a.outcomeWake {
-		a.outcomeWake[i] = make(chan struct{}, 1)
-	}
+	a := &OpenAdmission{pendingWake: make(chan struct{}, 1), outcomeWake: make([]chan struct{}, int(limits.Terminal+limits.IngressItems)), cleanupWake: make(chan struct{}, 1), cleanupDone: make(chan struct{}), engine: engine, direction: direction, limits: limits, slots: make([]openSlot, int(limits.Terminal+limits.IngressItems)), index: make([]int, indexSize), metadata: metadataArena, nextOrdinal: 1, roleOrdinals: [2]uint64{streams.Client, streams.Server}, stable: [2]ordinalbits.Set{ordinalbits.New(streams.Client), ordinalbits.New(streams.Server)}, decoder: decoder, encode: make([]byte, encodeBytes)}
 	return a, nil
 }
 
@@ -346,31 +347,13 @@ func (a *OpenAdmission) slot(h OpenHandle) (*openSlot, error) {
 	return &a.slots[i], nil
 }
 func (a *OpenAdmission) metadataReserve(kind string, metadata []byte) (int, bool) {
-	size, run := len(kind)+len(metadata), 0
-	for i, used := range a.metadataUsed {
-		if used {
-			run = 0
-		} else {
-			run++
-		}
-		if run == size {
-			start := i + 1 - size
-			for j := start; j <= i; j++ {
-				a.metadataUsed[j] = true
-			}
-			copy(a.metadata[start:], kind)
-			copy(a.metadata[start+len(kind):], metadata)
-			return start, true
-		}
-	}
-	return 0, false
+	return a.metadata.reserve(kind, metadata)
 }
 func (a *OpenAdmission) releaseMetadata(s *openSlot) {
 	if s.metadataSize == 0 || s.preparationActive {
 		return
 	}
-	clear(a.metadata[s.metadataStart : s.metadataStart+s.metadataSize])
-	clear(a.metadataUsed[s.metadataStart : s.metadataStart+s.metadataSize])
+	a.metadata.release(s.metadataStart, s.metadataSize)
 	s.metadataSize, s.kindSize = 0, 0
 }
 func (a *OpenAdmission) freeSlot(ingress bool, rejection bool) int {
@@ -488,7 +471,7 @@ func (a *OpenAdmission) CopyRequest(h OpenHandle, dst []byte) (kind, metadata []
 	if s.phase != openPending || len(dst) < s.metadataSize {
 		return nil, nil, 0, cryptov4.ErrCapacity
 	}
-	copy(dst, a.metadata[s.metadataStart:s.metadataStart+s.metadataSize])
+	a.metadata.copyRange(dst, s.metadataStart, s.metadataStart+s.metadataSize)
 	return dst[:s.kindSize:s.kindSize], dst[s.kindSize:s.metadataSize:s.metadataSize], s.peerLimit, nil
 }
 
@@ -538,11 +521,11 @@ func (a *OpenAdmission) isStable(scope uint64) bool {
 		return false
 	}
 	role, ordinal := (scope+1)%2, (scope-1)/2
-	return ordinal < a.roleOrdinals[role] && a.stable[role][ordinal/64]&(uint64(1)<<(ordinal%64)) != 0
+	return ordinal < a.roleOrdinals[role] && a.stable[role].Has(ordinal)
 }
 func (a *OpenAdmission) makeStable(s *openSlot) {
 	role, ordinal := (s.scope+1)%2, (s.scope-1)/2
-	a.stable[role][ordinal/64] |= uint64(1) << (ordinal % 64)
+	a.stable[role].Add(ordinal)
 	s.phase = openHeld
 	// The detail index is retained privately while real references exist; the
 	// stable bitmap already rejects every new barrier/OPEN association.

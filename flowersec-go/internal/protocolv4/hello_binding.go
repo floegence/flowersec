@@ -110,18 +110,22 @@ func HelloBackingBytes(limits HelloLimits) (uint64, error) {
 	if limits.RouteBytes <= 0 || limits.ContextBytes <= 0 || uint64(limits.RouteBytes) > uint64(MaxPayloadLength) || uint64(limits.ContextBytes) > uint64(MaxPayloadLength) {
 		return 0, CBORFailure("configuration_capacity")
 	}
-	parsed, err := InitialDecoderBackingBytes(limits.HelloBytes, limits.HelloNodes)
+	client, err := schemaDecoderBackingBytes("ClientHello", limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return 0, err
 	}
-	context, err := InitialDecoderBackingBytes(limits.ContextBytes, limits.HelloNodes)
+	server, err := schemaDecoderBackingBytes("ServerHello", limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return 0, err
 	}
-	if parsed > (^uint64(0)-context)/2 {
+	context, err := schemaDecoderBackingBytes("TransportContext", limits.ContextBytes, limits.HelloNodes)
+	if err != nil {
+		return 0, err
+	}
+	if client > ^uint64(0)-server || client+server > ^uint64(0)-context {
 		return 0, CBORFailure("configuration_capacity")
 	}
-	base := parsed*2 + context
+	base := client + server + context
 	// Detached tenant/audience/profile strings are bounded by the original
 	// Artifact; only that public projection, never its PSK, survives this call.
 	artifactCap, err := SchemaByteLimit("Artifact")
@@ -138,15 +142,15 @@ func NewHelloWorkspace(limits HelloLimits) (*HelloWorkspace, error) {
 	if _, err := HelloBackingBytes(limits); err != nil {
 		return nil, err
 	}
-	client, err := NewInitialDecoder(limits.HelloBytes, limits.HelloNodes)
+	client, err := newSchemaDecoder("ClientHello", limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return nil, err
 	}
-	server, err := NewInitialDecoder(limits.HelloBytes, limits.HelloNodes)
+	server, err := newSchemaDecoder("ServerHello", limits.HelloBytes, limits.HelloNodes)
 	if err != nil {
 		return nil, err
 	}
-	context, err := NewInitialDecoder(limits.ContextBytes, limits.HelloNodes)
+	context, err := newSchemaDecoder("TransportContext", limits.ContextBytes, limits.HelloNodes)
 	if err != nil {
 		return nil, err
 	}

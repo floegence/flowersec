@@ -166,7 +166,7 @@ func (o *StreamOwnership) asConn(ctx context.Context, options StreamConnOptions,
 	if minimum == 0 && f.termination.service != nil {
 		minimum = f.limit - f.released
 	}
-	if f.pool.closed || minimum > f.limit-f.released || minimum > uint64(len(f.storage)) || minimum != 0 && f.protection != nil && (f.protection.closed || f.protection.promise < minimum) {
+	if f.pool.closed || minimum > f.limit-f.released || minimum > f.capacity || minimum != 0 && f.protection != nil && (f.protection.closed || f.protection.promise < minimum) {
 		return nil, ErrCredit
 	}
 	if err := selectConnTermination(&o.flow.send.termination, &f.termination, options.FinishTimeoutMS); err != nil {

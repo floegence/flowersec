@@ -289,16 +289,19 @@ async fn production_listener_durable_admission_and_original_serve_children() {
                 assert!(outgoing.read().await.unwrap().is_none());
                 stage.set("finish stream");
                 outgoing.finish().await.unwrap();
-                tokio::time::timeout(
-                    Duration::from_secs(2),
-                    tokio::task::spawn_blocking({
-                        let terminal_probe = terminal_probe.clone();
-                        move || terminal_probe.wait_entered()
-                    }),
-                )
-                .await
-                .expect("Serve terminal publication entered")
-                .expect("Serve terminal publication probe task");
+                assert!(
+                    tokio::time::timeout(
+                        Duration::from_secs(2),
+                        tokio::task::spawn_blocking({
+                            let terminal_probe = terminal_probe.clone();
+                            move || terminal_probe.wait_entered()
+                        }),
+                    )
+                    .await
+                    .expect("Serve terminal publication entered")
+                    .expect("Serve terminal publication probe task"),
+                    "Serve terminal publication probe released before entry"
+                );
                 // Arm the maintenance receive probe only after terminal
                 // publication has entered its pre-provider hook. Earlier
                 // liveness traffic is outside the closing window and must not

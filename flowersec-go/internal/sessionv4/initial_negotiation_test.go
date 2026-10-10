@@ -157,12 +157,16 @@ func TestInitialNegotiationBuildsSignedAdmissionAndReady(t *testing.T) {
 					return err
 				})
 			}()
-			codec, _ := protocolv4.NewSignedMapCodec("FSB4", 65536, 4096)
+			codec, _ := protocolv4.NewOnceSigningMapCodec("FSB4", 65536, 4096)
+			if signed, refused, err := exchanges[0].SendAdmission(activation, proof, certificates[0], codec, signers[0], nil); signed != nil || refused.Started || err != cryptov4.ErrConfiguration {
+				t.Fatal("missing original FSB guard consumed a signing flight", refused, err)
+			}
 			fsb, _, err = exchanges[0].SendAdmission(activation, proof, certificates[0], codec, signers[0], func() error { return nil })
 			if err != nil {
 				t.Fatal("FSB send", err)
 			}
 			defer fsb.Release()
+			assertOnceInitialSigningRetained(t, codec, fsb, 65536, 4096)
 			if err := <-received; err != nil {
 				t.Fatal("FSB receive", err)
 			}
@@ -181,12 +185,16 @@ func TestInitialNegotiationBuildsSignedAdmissionAndReady(t *testing.T) {
 				})
 			}()
 			response := protocolv4.AdmissionResponse{Admitted: true, ServerEpoch: 1, ReservationKey: [32]byte{4}, AdmissionBinding: admission, ServerIdentityDigest: identities[1]}
-			sc, _ := protocolv4.NewSignedMapCodec("FSA4", 16384, 4096)
+			sc, _ := protocolv4.NewOnceSigningMapCodec("FSA4", 16384, 4096)
+			if signed, refused, err := exchanges[1].SendAdmissionResponse(sc, certificates[1], response, signers[1], nil); signed != nil || refused.Started || err != cryptov4.ErrConfiguration {
+				t.Fatal("missing original FSA guard consumed a signing flight", refused, err)
+			}
 			fsa, _, err = exchanges[1].SendAdmissionResponse(sc, certificates[1], response, signers[1], func() error { return nil })
 			if err != nil {
 				t.Fatal("FSA send", err)
 			}
 			defer fsa.Release()
+			assertOnceInitialSigningRetained(t, sc, fsa, 16384, 4096)
 			if err := <-received; err != nil {
 				t.Fatal("FSA receive", err)
 			}

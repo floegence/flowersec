@@ -122,7 +122,7 @@ func TestClosedAdmissionJoinsReceiveCursorBeforeReleasingFlow(t *testing.T) {
 	done := startAdmissionCleanup(t, a)
 	assertAdmissionCleanupPending(t, a)
 	f.receive.pool.mu.Lock()
-	retained := f.receive.readPending && !f.receive.cleaned && f.receive.storage != nil
+	retained := f.receive.readPending && !f.receive.cleaned && f.receive.capacity == 64 && f.receive.pool.backingUsed >= f.receive.capacity
 	f.receive.pool.mu.Unlock()
 	if !retained {
 		t.Fatal("closed Session forgot the cursor advancement claim")

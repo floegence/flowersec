@@ -66,7 +66,7 @@ func (r *Root) checkRequestLocked(s *referenceSlot, c *chargeSlot, request Reque
 		return ErrCapacity
 	}
 	for i, a := range request.Accounts {
-		if accountIndex(s.accounts[:s.count], a) < 0 {
+		if a.slotLocked(r) == nil || accountIndex(s.accounts[:s.count], a.slotKey()) < 0 {
 			return ErrOwner
 		}
 		for _, prior := range request.Accounts[:i] {

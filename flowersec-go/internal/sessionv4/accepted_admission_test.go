@@ -109,7 +109,7 @@ func TestAcceptedAdmissionRejectsChangedFSABeforeSigningAndPublication(t *testin
 
 func TestAcceptedAdmissionSignedRejectionNeverGrantsNoise(t *testing.T) {
 	f, e, client, a, _ := acceptedAdmissionFixture(t)
-	serverCodec, err := protocolv4.NewSignedMapCodec("FSA4", 16384, 4096)
+	serverCodec, err := protocolv4.NewOnceSigningMapCodec("FSA4", 16384, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,6 +138,7 @@ func TestAcceptedAdmissionSignedRejectionNeverGrantsNoise(t *testing.T) {
 	}()
 	fsa, result, err := e.initial.SendAdmissionResponse(serverCodec, f.trust.certificates[1], protocolv4.AdmissionResponse{Code: 1}, f.trust.signers[1], func() error { return nil })
 	if fsa != nil {
+		assertOnceInitialSigningRetained(t, serverCodec, fsa, 16384, 4096)
 		fsa.Release()
 	}
 	if !errors.Is(err, ErrAdmissionRejected) || !result.Complete {
@@ -206,7 +207,7 @@ func TestAcceptedAdmissionInvalidFSBBindingDoesNotAcquireSession(t *testing.T) {
 func TestAcceptedAdmissionOriginalFSAToNoiseAndDualReady(t *testing.T) {
 	f, e, client, a, fsb := acceptedAdmissionFixture(t)
 	server, response := admitAcceptedSQLite(t, f, a)
-	serverCodec, err := protocolv4.NewSignedMapCodec("FSA4", 16384, 4096)
+	serverCodec, err := protocolv4.NewOnceSigningMapCodec("FSA4", 16384, 4096)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,6 +230,7 @@ func TestAcceptedAdmissionOriginalFSAToNoiseAndDualReady(t *testing.T) {
 	fsa, _, err := server.SendAdmissionResponse(serverCodec, f.trust.certificates[1], response, f.trust.signers[1], func() error { return e.guard.checkAdmitted() })
 	if fsa != nil {
 		defer fsa.Release()
+		assertOnceInitialSigningRetained(t, serverCodec, fsa, 16384, 4096)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -257,12 +259,16 @@ func TestAcceptedAdmissionOriginalFSAToNoiseAndDualReady(t *testing.T) {
 	}
 	var cores [2]*SessionCore
 	finished := make(chan error, 2)
+	establishment := &SessionEstablishment{&sessionEstablishment{mapBytes: 65536, fsb: fsb, fsa: fsa, material: EstablishmentMaterial{
+		Artifact: f.trust.artifact, Activation: f.trust.activation, ClientCertificate: f.trust.certificates[0], ServerCertificate: f.trust.certificates[1],
+		Role: protocolv4.ServerToClient, LocalDH: f.trust.keys[1], Signer: f.trust.signers[1],
+	}}}
 	go func() {
 		var err error
 		cores[0], err = client.AuthenticateCore(configs[0], clientPlan)
 		finished <- err
 	}()
-	go func() { var err error; cores[1], err = a.Authenticate(configs[1]); finished <- err }()
+	go func() { var err error; cores[1], err = establishment.authenticate(a, client.hello); finished <- err }()
 	for range 2 {
 		if err := waitRuntime(t, finished); err != nil {
 			t.Fatal(err)
@@ -275,6 +281,11 @@ func TestAcceptedAdmissionOriginalFSAToNoiseAndDualReady(t *testing.T) {
 	}
 	if !a.delivered || !server.transferred {
 		t.Fatal("dual READY did not transfer original owner")
+	}
+	for _, original := range []*protocolv4.SignedMap{fsb, fsa} {
+		if wire, err := original.Bytes(); err != nil || len(wire) == 0 || wire[0]>>5 != 5 {
+			t.Fatal("scoped handshake cleanup erased a retained original map", err)
+		}
 	}
 	if _, err := a.Authenticate(configs[1]); !errors.Is(err, cryptov4.ErrTransition) {
 		t.Fatal("duplicate Session delivery", err)

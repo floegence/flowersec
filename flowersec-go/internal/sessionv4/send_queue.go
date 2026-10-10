@@ -48,7 +48,6 @@ type SendQueue struct {
 	methodTails           int
 	methodWaiters         int
 	storage               []byte
-	operationStorage      []byte
 	maxOperationBytes     int
 	head, size            int
 	chunk                 int
@@ -64,10 +63,11 @@ type SendQueue struct {
 }
 
 // SendQueueCharge includes the application ring, all fixed FIFO/wait slots,
-// immutable operation staging for each slot, deadline/result metadata, and
-// one original pump task. Stable requests share these slots with ordinary
-// writers and observers; terminal compact metadata transfers to the caller. Runtime channels/stacks/allocator overhead and
-// the separate SendFlow/record/crypto/provider copy remain profile costs.
+// the maximum immutable operation staging for each slot, deadline/result
+// metadata, and one original pump task. Stable requests share these slots with
+// ordinary writers and observers; terminal compact metadata transfers to the
+// caller. Runtime channels/stacks/allocator overhead and the separate
+// SendFlow/record/crypto/provider copy remain profile costs.
 func SendQueueCharge(capacity uint64, waiters uint32) (resourcev4.Vector, error) {
 	if capacity == 0 || capacity > uint64(math.MaxInt) || waiters == 0 || uint64(waiters) > uint64(math.MaxInt) {
 		return resourcev4.Vector{}, cryptov4.ErrConfiguration
@@ -100,7 +100,7 @@ func NewSendQueue(flow *SendFlow, capacity uint64, waiters uint32, chunk int, re
 	if err != nil {
 		return nil, err
 	}
-	q := &SendQueue{flow: flow, completion: flow.completion, reservation: owned, storage: make([]byte, int(capacity)), operationStorage: make([]byte, int(capacity)*int(waiters)), maxOperationBytes: int(capacity), chunk: chunk, accepted: flow.frontier.Offset, published: flow.frontier.Offset, slots: make([]sendWaitSlot, int(waiters)), first: -1, last: -1, wake: make(chan struct{}, 1), writeDone: make(chan struct{}), done: make(chan struct{})}
+	q := &SendQueue{flow: flow, completion: flow.completion, reservation: owned, storage: make([]byte, int(capacity)), maxOperationBytes: int(capacity), chunk: chunk, accepted: flow.frontier.Offset, published: flow.frontier.Offset, slots: make([]sendWaitSlot, int(waiters)), first: -1, last: -1, wake: make(chan struct{}, 1), writeDone: make(chan struct{}), done: make(chan struct{})}
 	for i := range q.slots {
 		q.slots[i].wake = make(chan struct{}, 1)
 	}
@@ -605,8 +605,6 @@ func (q *SendQueue) cleanupLocked() {
 	}
 	clear(q.storage)
 	q.storage = nil
-	clear(q.operationStorage)
-	q.operationStorage = nil
 	q.size = 0
 	q.cleaned = true
 	close(q.done)

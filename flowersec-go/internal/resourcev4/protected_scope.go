@@ -62,6 +62,7 @@ func (p *ProtectedReservation) BorrowScope(owner Reference) (Reference, error) {
 	}
 	ref := &r.refs[index]
 	*ref = referenceSlot{generation: ref.generation + 1, charge: s.charge, chargeGeneration: c.generation, owner: s.owner, accounts: o.accounts, count: o.count, active: true, protectedScope: true, protectedNext: p.scopeFirst}
+	r.activateReference(uint32(index))
 	for _, a := range ref.accounts[:ref.count] {
 		if accountIndex(c.accounts[:c.count], a) < 0 && !r.protectedScopeHeld(c, a, nil) {
 			scope := a.slotLocked(r)
@@ -76,7 +77,7 @@ func (p *ProtectedReservation) BorrowScope(owner Reference) (Reference, error) {
 	return Reference{r, uint32(index), ref.generation}, nil
 }
 
-func (r *Root) protectedScopeHeld(c *chargeSlot, a Account, except *referenceSlot) bool {
+func (r *Root) protectedScopeHeld(c *chargeSlot, a accountSlotKey, except *referenceSlot) bool {
 	if c.protected == nil {
 		return false
 	}

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/ordinalbits"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/timev4"
@@ -126,8 +127,8 @@ func EngineCharge(config Config, options EngineResourceOptions) (resourcev4.Vect
 		{2 * w, uint64(unsafe.Sizeof((*workspace)(nil)))}, // Outgoing/native input indexes.
 		{2 * uint64(slots), uint64(unsafe.Sizeof(scopeBucket{}))},
 		{2 * c, uint64(unsafe.Sizeof(epochKeyJob{}))},
-		{(r.streams.Client + 63) / 64, 8},
-		{(r.streams.Server + 63) / 64, 8},
+		{1, ordinalbits.BackingBytes(r.streams.Client)},
+		{1, ordinalbits.BackingBytes(r.streams.Server)},
 		{scopes, uint64(unsafe.Sizeof(scopeKeys{}))},
 		{keys, uint64(unsafe.Sizeof(recordKey{})) + 1024},
 		{epochs, uint64(unsafe.Sizeof(epochState{})) + uint64(unsafe.Sizeof(timev4.Deadline{}))},
