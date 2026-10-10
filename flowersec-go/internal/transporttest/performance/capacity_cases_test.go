@@ -100,11 +100,11 @@ func TestBrowserStreamCapacityContractIsFrozen(t *testing.T) {
 		t.Fatalf("browser stream capacity contract = %+v", contract)
 	}
 	definition, ok := lookupCapacityCase("CAP-STREAM-WT-DIRECT-100X128")
-	if !ok || capacityCaseTimeout(definition) != 330*time.Second {
+	if !ok || capacityCaseTimeout(definition) != 180*time.Second {
 		t.Fatalf("browser stream capacity case timeout = %v, found=%t", capacityCaseTimeout(definition), ok)
 	}
 	regular, ok := lookupCapacityCase("CAP-DIRECT-WSS-1000")
-	if !ok || capacityCaseTimeout(regular) != 300*time.Second {
+	if !ok || capacityCaseTimeout(regular) != 150*time.Second {
 		t.Fatalf("regular capacity case timeout = %v, found=%t", capacityCaseTimeout(regular), ok)
 	}
 }
@@ -393,13 +393,8 @@ func TestRawQUICCapacityPathsCleanEveryShortSampleSession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// This ordinary-user race regression checks real session identity,
-			// liveness and physical cleanup, including FULL-synchronous SQLite.
-			// Its fourth Connect gets 875 ms; the frozen 1000-session production
-			// contract separately measures throughput and latency without race
-			// instrumentation. Do not scale that performance contract here.
 			contract := capacityContract{
-				Sessions: 4, Ramp: 2 * time.Second, Hold: 500 * time.Millisecond, Cleanup: time.Second, Watchdog: 3500 * time.Millisecond,
+				Sessions: 4, Ramp: 400 * time.Millisecond, Hold: 100 * time.Millisecond, Cleanup: 400 * time.Millisecond, Watchdog: 900 * time.Millisecond,
 				MaxRSS: 1 << 30, MaxCPU: 10 * time.Second, MaxOpenFDs: 4096, MaxGoroutines: 4096, MaxTasks: 4096,
 			}
 			result, err := runCapacityCase(ctx, capacityCaseDefinition{ID: "raw-quic-short", Profile: "raw-quic-short"}, contract, endpoint, monotonicSnapshots())
