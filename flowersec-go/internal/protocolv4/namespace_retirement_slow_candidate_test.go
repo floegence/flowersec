@@ -20,9 +20,29 @@ import (
 // join its entry so retirement cannot close the candidate before it starts.
 type retirementCandidateTailClock struct {
 	operation              atomic.Pointer[NamespaceOnlineRetirement]
+	recovery               atomic.Pointer[retirementRecoveryClockTail]
 	entered, resume        chan struct{}
 	enteredAt              time.Time
 	enterOnce, releaseOnce sync.Once
+}
+
+type retirementRecoveryClockTail struct {
+	entered, resume chan struct{}
+	enterOnce       sync.Once
+}
+
+func retirementClockSamplingCaller() bool {
+	var pcs [24]uintptr
+	frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs[:])])
+	for {
+		frame, more := frames.Next()
+		if strings.HasSuffix(frame.Function, ".(*LiveNamespace).sampleCurrent") {
+			return true
+		}
+		if !more {
+			return false
+		}
+	}
 }
 
 func (c *retirementCandidateTailClock) release() {
@@ -33,25 +53,16 @@ func (c *retirementCandidateTailClock) release() {
 }
 
 func (c *retirementCandidateTailClock) read() (timev4.Tick, error) {
+	if recovery := c.recovery.Load(); recovery != nil && retirementClockSamplingCaller() {
+		recovery.enterOnce.Do(func() { close(recovery.entered) })
+		<-recovery.resume
+	}
 	if operation := c.operation.Load(); operation != nil {
 		operation.next.mu.Lock()
 		candidate := operation.next.namespace
 		operation.next.mu.Unlock()
 		if candidate != nil {
-			var pcs [24]uintptr
-			frames := runtime.CallersFrames(pcs[:runtime.Callers(2, pcs[:])])
-			sampling := false
-			for {
-				frame, more := frames.Next()
-				if strings.HasSuffix(frame.Function, ".(*LiveNamespace).sampleCurrent") {
-					sampling = true
-					break
-				}
-				if !more {
-					break
-				}
-			}
-			if sampling {
+			if retirementClockSamplingCaller() {
 				c.enterOnce.Do(func() { c.enteredAt = time.Now(); close(c.entered) })
 				<-c.resume
 			} else {
@@ -75,14 +86,24 @@ type retirementCandidateTailFactory struct {
 	clock    *retirementCandidateTailClock
 	prepared chan *NamespaceOnlineRetirement
 	calls    atomic.Uint32
+	admitted atomic.Uint32
+	refused  atomic.Pointer[error]
+	refusals chan error
 }
 
 func (f *retirementCandidateTailFactory) PrepareNamespaceRetirement(ctx context.Context, registry *NamespaceRegistry, previous *NamespaceTrustStore) (*NamespaceOnlineRetirement, NamespaceBootstrapProvider, error) {
 	f.calls.Add(1)
 	operation, provider, err := f.factory.PrepareNamespaceRetirement(ctx, registry, previous)
 	if err == nil {
+		f.admitted.Add(1)
 		f.clock.operation.Store(operation)
 		f.prepared <- operation
+	} else {
+		f.refused.Store(&err)
+		select {
+		case f.refusals <- err:
+		default:
+		}
 	}
 	return operation, provider, err
 }
@@ -126,7 +147,7 @@ func TestRetirementServiceRetainsSlowCandidateBeyondCleanupBudget(t *testing.T) 
 			factory.slots[0].config.Provider = provider
 			factory.slots[0].config.Bootstrap.DurationMS = 500
 			factory.mu.Unlock()
-			prepared := &retirementCandidateTailFactory{factory: factory, clock: adapter, prepared: make(chan *NamespaceOnlineRetirement, 1)}
+			prepared := &retirementCandidateTailFactory{factory: factory, clock: adapter, prepared: make(chan *NamespaceOnlineRetirement, 1), refusals: make(chan error, 1)}
 			config := NamespaceRetirementServiceConfig{CleanupMS: 20, RuntimeBytes: 4096}
 			charge, err := NamespaceRetirementServiceCharge(config)
 			if err != nil {
@@ -304,11 +325,53 @@ func TestRetirementServiceRetainsSlowCandidateBeyondCleanupBudget(t *testing.T) 
 			}
 			// A later explicit capacity request may consider the independently
 			// recovered baseline; completing old cleanup alone could not.
+			// Hold its real sampling callback to prove that a refused claim is
+			// neither an admitted replacement nor a repeated provider proof.
+			recoveryTail := &retirementRecoveryClockTail{entered: make(chan struct{}), resume: make(chan struct{})}
+			var releaseRecovery sync.Once
+			releaseRecovered := func() {
+				adapter.recovery.Store(nil)
+				releaseRecovery.Do(func() { close(recoveryTail.resume) })
+			}
+			defer releaseRecovered()
+			adapter.recovery.Store(recoveryTail)
+			samplingExited := make(chan struct{})
+			go func() {
+				_, _ = owner.namespace.Pending()
+				close(samplingExited)
+			}()
+			select {
+			case <-recoveryTail.entered:
+			case <-ctx.Done():
+				t.Fatal("recovered owner's actual sampling callback did not enter", ctx.Err())
+			}
+			service.RequestPressure()
+			select {
+			case err := <-prepared.refusals:
+				if !errors.Is(err, CBORFailure("revocation_namespace_owner")) || prepared.admitted.Load() != 1 || queries.Load() != 1 {
+					t.Fatalf("sampling refusal created another proof: err=%v admitted=%d queries=%d", err, prepared.admitted.Load(), queries.Load())
+				}
+			case <-ctx.Done():
+				t.Fatal("new pressure did not observe the actual sampling owner", ctx.Err())
+			}
+			releaseRecovered()
+			select {
+			case <-samplingExited:
+			case <-ctx.Done():
+				t.Fatal("recovered owner's sampling caller did not actually exit", ctx.Err())
+			}
 			service.RequestPressure()
 			select {
 			case next := <-prepared.prepared:
-				if next == operation || next.previous != owner || prepared.calls.Load() != 2 {
-					t.Fatal("new pressure did not use the recovered original owner")
+				// A live recovered owner can refuse a factory claim while its
+				// watchdog is sampling. Count the actual admitted proof jobs here;
+				// the earlier assertions still forbid any attempt before new demand.
+				if next == operation || next.previous != owner || prepared.admitted.Load() != 2 {
+					refusal := "none"
+					if refused := prepared.refused.Load(); refused != nil {
+						refusal = (*refused).Error()
+					}
+					t.Fatalf("new pressure did not use the recovered original owner: repeated=%t wrong_owner=%t admitted_jobs=%d factory_calls=%d refusal=%s status=%+v", next == operation, next.previous != owner, prepared.admitted.Load(), prepared.calls.Load(), refusal, service.Status())
 				}
 				if err := next.WaitCleanup(ctx); err != nil {
 					t.Fatal("new pressure operation did not finish", err)
