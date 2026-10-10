@@ -148,7 +148,11 @@ func (a *OpenAdmission) newFlow(scope, peerLimit uint64, class StreamClass, rese
 		send.Stop()
 		_ = send.WaitCleanup(context.Background())
 		_ = send.retire()
-		_ = receive.releaseUnpublished(false)
+		if flow != nil {
+			_ = flow.releaseUnpublished(false)
+		} else {
+			_ = receive.releaseUnpublished(false)
+		}
 	}
 	return flow, err
 }
@@ -417,7 +421,7 @@ func (a *OpenAdmission) discardLocalPreparation(h OpenHandle, keysPrepared bool)
 	if s.flow != nil {
 		s.flow.send.Stop()
 		_ = s.flow.send.retire()
-		_ = s.flow.receive.releaseUnpublished(true)
+		_ = s.flow.releaseUnpublished(true)
 	}
 	if keysPrepared {
 		a.engine.RetireScope(s.scope)
@@ -596,7 +600,7 @@ func (a *OpenAdmission) decideWithGate(ctx context.Context, h OpenHandle, class 
 						return 0, encodeErr
 					}
 					flow.send.Stop()
-					if err := flow.receive.releaseUnpublished(false); err != nil {
+					if err := flow.releaseUnpublished(false); err != nil {
 						return 0, err
 					}
 					// The original send worker may still hold this empty queue.
@@ -657,7 +661,7 @@ func (a *OpenAdmission) decideWithGate(ctx context.Context, h OpenHandle, class 
 			if accepted {
 				flow.send.Stop()
 				_ = flow.send.retire()
-				_ = flow.receive.releaseUnpublished(false)
+				_ = flow.releaseUnpublished(false)
 				a.active--
 				a.byOpener[role][class]--
 				if !prepared {
@@ -791,7 +795,7 @@ func (a *OpenAdmission) ApplyOutcome(record *ReceivedRecord) (err error) {
 			s.flow.receive.Abandon()
 		}
 	} else {
-		if err := s.flow.receive.releaseUnpublished(true); err != nil {
+		if err := s.flow.releaseUnpublished(true); err != nil {
 			return err
 		}
 		s.flow.send.Stop()

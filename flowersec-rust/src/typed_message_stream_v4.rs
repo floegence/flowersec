@@ -631,6 +631,12 @@ impl<I: Send + Sync + 'static, O: Send + Sync + 'static> TypedMessageStream<I, O
         context: Option<ApplicationInvocationContext>,
         cancellation: &CancellationToken,
     ) -> Result<TypedMessage<I>> {
+        enum ReceiveAction<I> {
+            Decoded(Result<Decoded<I>>),
+            Decode,
+            Terminal(MessageReceiveTerminal),
+        }
+
         if self.0.closed.load(Ordering::Acquire) {
             if cancellation.is_cancelled() {
                 return Err(failure(ServiceFailure::Canceled));
@@ -690,18 +696,33 @@ impl<I: Send + Sync + 'static, O: Send + Sync + 'static> TypedMessageStream<I, O
                     input.started = false;
                     input.scheduled = false;
                     input.demand = false;
-                    return Ok(Some(Ok(value)));
+                    return Ok(Some(ReceiveAction::Decoded(value)));
                 }
                 if input.ready.is_some() && !input.scheduled && !input.started {
-                    return Ok(Some(Err(())));
+                    return Ok(Some(ReceiveAction::Decode));
                 }
-                if input.terminal != MessageReceiveTerminal::Open && input.ready.is_none() {
-                    return Err(failure(ServiceFailure::Closed));
+                // EOF can arrive after the terminal fast path above. Observe
+                // it under the same input lock as decoded-message selection,
+                // after the original decoder has physically returned.
+                if input.terminal != MessageReceiveTerminal::Open
+                    && input.ready.is_none()
+                    && !input.started
+                {
+                    return Ok(Some(ReceiveAction::Terminal(input.terminal)));
                 }
                 Ok(None)
             })??;
             match action {
-                Some(Ok(value)) => {
+                Some(ReceiveAction::Terminal(terminal)) => {
+                    self.0.complete_receive_diagnostics(terminal, None);
+                    return Ok(TypedMessage {
+                        value: None,
+                        definition: self.0.incoming.clone(),
+                        terminal,
+                        _custody: None,
+                    });
+                }
+                Some(ReceiveAction::Decoded(value)) => {
                     if let Err(error) = &value {
                         self.0.complete_receive_diagnostics(
                             MessageReceiveTerminal::Aborted,
@@ -726,7 +747,7 @@ impl<I: Send + Sync + 'static, O: Send + Sync + 'static> TypedMessageStream<I, O
                         _custody: Some(value._charge),
                     });
                 }
-                Some(Err(())) => {
+                Some(ReceiveAction::Decode) => {
                     let codec = self.0.inbound.clone();
                     let charge = self.0.account.reserve(ResourceLimits {
                         sdk_bytes: codec.application_bytes()

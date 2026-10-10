@@ -393,13 +393,18 @@ func TestRawQUICCapacityPathsCleanEveryShortSampleSession(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Keep paced admission separate from connection latency: the final
+			// connection needs its complete budget under race/coverage too.
+			// Cleanup still has its own fixed window and requires physical exit.
 			contract := capacityContract{
-				Sessions: 4, Ramp: 400 * time.Millisecond, Hold: 100 * time.Millisecond, Cleanup: 400 * time.Millisecond, Watchdog: 900 * time.Millisecond,
+				Sessions: 4, Ramp: time.Second, Hold: 100 * time.Millisecond, Cleanup: 400 * time.Millisecond, Watchdog: 1500 * time.Millisecond,
 				MaxRSS: 1 << 30, MaxCPU: 10 * time.Second, MaxOpenFDs: 4096, MaxGoroutines: 4096, MaxTasks: 4096,
+				MaxConnectP95: 300 * time.Millisecond, MaxLivenessP99: 50 * time.Millisecond,
 			}
 			result, err := runCapacityCase(ctx, capacityCaseDefinition{ID: "raw-quic-short", Profile: "raw-quic-short"}, contract, endpoint, monotonicSnapshots())
+			t.Logf("raw QUIC sample: attempted=%d succeeded=%d connect_p95=%s connect_max=%s liveness_p99=%s residual=%d watchdogs=%d", result.Attempted, result.Succeeded, result.ConnectP95, result.ConnectMax, result.LivenessP99, result.ResidualSessions, result.WatchdogTimeouts)
 			if err != nil {
-				t.Fatalf("%v (original ramp result: %+v)", err, result)
+				t.Fatalf("%v (short capacity result: %+v)", err, result)
 			}
 			if result.Succeeded != 4 || result.UniqueActivePeak != 4 || result.LivenessSweeps != capacityLivenessSweepCount || result.LivenessFailures != 0 || result.HoldDisconnects != 0 || result.ResidualSessions != 0 {
 				t.Fatalf("raw QUIC short capacity result = %+v", result)

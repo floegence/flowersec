@@ -25,6 +25,20 @@ func NewStreamFlow(send *SendFlow, receive *ReceiveFlow) (*StreamFlow, error) {
 	return &StreamFlow{send: send, receive: receive}, nil
 }
 
+// A closed receive direction can have relinquished its active assembly link
+// before an unpublished OPEN is discarded. The Stream still owns that exact
+// native assembly until its real reader/authentication tails permit retirement.
+func (s *StreamFlow) releaseUnpublished(requireEmptySequence bool) error {
+	if err := s.receive.releaseUnpublished(requireEmptySequence); err != nil {
+		return err
+	}
+	if s.nativeReceive != nil {
+		s.nativeReceive.Close()
+		return s.nativeReceive.retire()
+	}
+	return nil
+}
+
 func tupleValue(value protocolv4.Value) (TerminalTuple, error) {
 	epoch, a := value.Named("terminal_tuple", "epoch").Uint()
 	sequence, b := value.Named("terminal_tuple", "next_sequence").Uint()

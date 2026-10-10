@@ -8,9 +8,7 @@ import (
 	"time"
 )
 
-// Build through the configured factory's current allocation policy while
-// leaving the work slot free for the explicit recovery observer under test.
-func retirementRecoveryOperation(t *testing.T, factory *NamespaceReferenceFactory, registry *NamespaceRegistry, previous *NamespaceTrustStore) *NamespaceOnlineRetirement {
+func closeRetirementRecoveryOwner(t *testing.T, previous *NamespaceTrustStore) {
 	t.Helper()
 	// Recovery starts from retained closed history. Join its real watchdog
 	// before requesting exclusivity; an in-flight clock read is still an owner.
@@ -25,6 +23,13 @@ func retirementRecoveryOperation(t *testing.T, factory *NamespaceReferenceFactor
 			t.Fatal(err)
 		}
 	}
+}
+
+// Build through the configured factory's current allocation policy while
+// leaving the work slot free for the explicit recovery observer under test.
+func retirementRecoveryOperation(t *testing.T, factory *NamespaceReferenceFactory, registry *NamespaceRegistry, previous *NamespaceTrustStore) *NamespaceOnlineRetirement {
+	t.Helper()
+	closeRetirementRecoveryOwner(t, previous)
 	factory.mu.Lock()
 	config := factory.slots[0].config
 	factory.mu.Unlock()
@@ -149,6 +154,7 @@ func TestReferenceFactoryFailedProofPreservesBeforeReleasingWorkSlot(t *testing.
 		},
 	}
 	factory.mu.Unlock()
+	closeRetirementRecoveryOwner(t, f.owner)
 	operation, provider, err := factory.PrepareNamespaceRetirement(context.Background(), registry, f.owner)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +175,7 @@ func TestReferenceFactoryFailedProofPreservesBeforeReleasingWorkSlot(t *testing.
 	registry.mu.Lock()
 	entry := registry.entries[0]
 	registry.mu.Unlock()
-	if registry.used != 1 || entry.retirement != nil || entry.trust != operation.next || entry.historyCount != 1 || !entry.retirementFailed {
+	if registry.used != 1 || entry.retirement != nil || entry.trust != operation.next || entry.historyCount != 1 || entry.history[0].trust != f.owner || !entry.retirementFailed {
 		t.Fatal("factory released its slot without preserving same-job history")
 	}
 	factory.mu.Lock()

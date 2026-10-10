@@ -360,6 +360,10 @@ func TestRetirementServiceRetainsSlowCandidateBeyondCleanupBudget(t *testing.T) 
 			case <-ctx.Done():
 				t.Fatal("recovered owner's sampling caller did not actually exit", ctx.Err())
 			}
+			// The watchdog can share the same clock callback with Pending.
+			// Join all actual sampling tails before this recovery fixture
+			// requires successful exclusive admission from retained history.
+			closeRetirementRecoveryOwner(t, owner)
 			service.RequestPressure()
 			select {
 			case next := <-prepared.prepared:
@@ -377,7 +381,11 @@ func TestRetirementServiceRetainsSlowCandidateBeyondCleanupBudget(t *testing.T) 
 					t.Fatal("new pressure operation did not finish", err)
 				}
 			case <-ctx.Done():
-				t.Fatal("new capacity pressure could not reconsider independent recovery", ctx.Err())
+				refusal := "none"
+				if refused := prepared.refused.Load(); refused != nil {
+					refusal = (*refused).Error()
+				}
+				t.Fatalf("new capacity pressure could not reconsider independent recovery: err=%v admitted_jobs=%d factory_calls=%d refusal=%s status=%+v", ctx.Err(), prepared.admitted.Load(), prepared.calls.Load(), refusal, service.Status())
 			}
 		})
 	}

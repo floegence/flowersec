@@ -101,7 +101,7 @@ func (a *OpenAdmission) prepareBootstrap(reservation BootstrapReservation, share
 	if err = a.engine.BindBootstrapResources(); err != nil {
 		flow.send.Stop()
 		_ = flow.send.retire()
-		_ = flow.receive.releaseUnpublished(true)
+		_ = flow.releaseUnpublished(true)
 		return nil, err
 	}
 	b := &Bootstrap{admission: a, spec: spec, handle: OpenHandle{a, spec.Scope}, reader: reservation.Receiver, provider: provider, prefixMax: len(wire), shared: shared, output: output, carrier: CarrierAssociation{shared: shared}}

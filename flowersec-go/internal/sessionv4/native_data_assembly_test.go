@@ -222,6 +222,40 @@ func TestNativeAssemblyRingWrapPreservesUnreadPlaintext(t *testing.T) {
 	}
 }
 
+func TestUnpublishedStreamRetiresClosedNativeAssembly(t *testing.T) {
+	for _, receiveCleaned := range []bool{false, true} {
+		t.Run(map[bool]string{false: "closed_assembly", true: "cleaned_receive"}[receiveCleaned], func(t *testing.T) {
+			f := newNativeAssemblyFixture(t, 512)
+			x := f.assemblies[0]
+			flow := &StreamFlow{receive: f.flows[0], nativeReceive: x}
+			x.Close()
+			if receiveCleaned {
+				f.pool.Close()
+				if err := flow.receive.Cleanup(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := f.root.Snapshot()
+			charge, err := NativeDataAssemblyCharge(1, protocolv4.ClientToServer, protocolv4.DHProfileX25519, 4096)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := flow.releaseUnpublished(true); err != nil {
+				t.Fatal("unpublished Stream lost its original native owner", err)
+			}
+			after := f.root.Snapshot()
+			if after.Reservations+1 != before.Reservations {
+				t.Fatal("unpublished Stream retained native assembly metadata", before.Reservations, after.Reservations)
+			}
+			for dimension, amount := range charge {
+				if after.Charged[dimension]+amount != before.Charged[dimension] {
+					t.Fatal("native assembly did not return its complete original charge", dimension, before.Charged, after.Charged)
+				}
+			}
+		})
+	}
+}
+
 func TestNativeAssemblyCloseRetainsActualProviderBacking(t *testing.T) {
 	for _, rootClose := range []bool{false, true} {
 		t.Run(map[bool]string{false: "direction", true: "root"}[rootClose], func(t *testing.T) {
@@ -248,6 +282,9 @@ func TestNativeAssemblyCloseRetainsActualProviderBacking(t *testing.T) {
 			}
 			if err := f.flows[0].releaseUnpublished(false); !errors.Is(err, ErrReadInProgress) {
 				t.Fatal("unpublished cleanup bypassed native alias", err)
+			}
+			if err := (&StreamFlow{receive: f.flows[0], nativeReceive: x}).releaseUnpublished(false); !errors.Is(err, ErrReadInProgress) || f.root.Snapshot().Charged != before {
+				t.Fatal("unpublished Stream refunded its actual provider tail", err)
 			}
 			if err := x.retire(); !errors.Is(err, cryptov4.ErrCapacity) {
 				t.Fatal("native owner retired before actual return", err)

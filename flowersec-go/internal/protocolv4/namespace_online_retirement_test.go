@@ -180,6 +180,7 @@ func TestReferenceFactoryRevisitUsesCompleteIndependentBootstrap(t *testing.T) {
 	f, r, _ := retirementFixture(t)
 	root := f.owner.root
 	factory := referenceFactoryFixture(t, f, r)
+	closeRetirementRecoveryOwner(t, f.owner)
 	operation, provider, err := factory.PrepareNamespaceRetirement(context.Background(), r, f.owner)
 	if err != nil {
 		t.Fatal(err)

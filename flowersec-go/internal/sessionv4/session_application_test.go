@@ -40,6 +40,36 @@ func applicationTestPlan(t *testing.T, f *executorFixture, config SessionPlanCon
 			return
 		}
 		if err := p.Retire(); err != nil {
+			p.mu.Lock()
+			t.Logf("application retirement state: closed=%t running=%t rpc_preparing=%t registration_preparing=%t started=%t", p.closed, p.running, p.rpcPreparing, p.registrationPreparing, p.started)
+			rpc := p.rpc
+			p.mu.Unlock()
+			if rpc != nil {
+				rpc.mu.Lock()
+				if !rpc.retired {
+					var first, future, caller int
+					for _, owner := range rpc.firstFuture.owners {
+						if !owner.CleanupComplete() {
+							first++
+						}
+					}
+					for channelIndex, channel := range rpc.futureChannels {
+						for ownerIndex, owner := range channel.owners {
+							if !owner.CleanupComplete() {
+								future++
+								t.Logf("RPC pending future: channel=%d owner=%d", channelIndex, ownerIndex)
+							}
+						}
+					}
+					for _, owner := range rpc.shortCaller {
+						if !owner.CleanupComplete() {
+							caller++
+						}
+					}
+					t.Logf("RPC retirement state: closed=%t first_binding=%t management=%t management_calls=%d first_owners=%d future_owners=%d caller_owners=%d completion=%t inputs=%t routes=%t incoming=%t outgoing=%t", rpc.closed, rpc.firstBinding, rpc.management != nil, rpc.managementCalls, first, future, caller, rpc.completionFloor.CleanupComplete(), rpc.inputs.CleanupComplete(), rpc.routes.CleanupComplete(), rpc.incoming.CleanupComplete(), rpc.outgoing.CleanupComplete())
+				}
+				rpc.mu.Unlock()
+			}
 			t.Error(err)
 		}
 	})
