@@ -5,20 +5,25 @@ package flowersecweaknet
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/netip"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"time"
 
 	flowersec "github.com/floegence/flowersec/flowersec-go/v6"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrier"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/rawquic"
+	"github.com/floegence/flowersec/flowersec-go/v6/internal/interopharness"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/linuxnetlab"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/transporttest/tunnelworkload"
+	quic "github.com/quic-go/quic-go"
 	"golang.org/x/sys/unix"
 )
 
@@ -345,12 +350,30 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 	defer func() { resultErr = errors.Join(resultErr, endpoint.Close()) }()
 	plans := []transporttest.ControllerArtifactPlan{transporttest.ControllerPlanCurrentPin}
 	switch scenarioName {
-	case "pin-rotation-refresh-backoff-lease":
-		plans = []transporttest.ControllerArtifactPlan{transporttest.ControllerPlanUnavailable, transporttest.ControllerPlanStalePin, transporttest.ControllerPlanCurrentPin}
 	case "outage-reconnect":
 		plans = []transporttest.ControllerArtifactPlan{transporttest.ControllerPlanCurrentPin, transporttest.ControllerPlanCurrentPin}
 	}
-	source, err := transporttest.NewProductControllerArtifactSource(endpoint, plans)
+	var source *transporttest.ProductControllerArtifactSource
+	var err error
+	var refused *atomic.Uint32
+	if scenarioName == "pin-rotation-refresh-backoff-lease" && kind == carrier.KindRawQUIC {
+		listener, observations, openErr := openControllerQUICRefusal(ctx, serverNamespace, serverAddress)
+		if openErr != nil {
+			return openErr
+		}
+		defer func() { resultErr = errors.Join(resultErr, listener.Close()) }()
+		refused = observations
+		unavailable, parseErr := netip.ParseAddrPort(listener.Addr().String())
+		if parseErr != nil {
+			return parseErr
+		}
+		source, err = transporttest.NewProductControllerUnavailableAddressSource(endpoint, unavailable)
+	} else {
+		if scenarioName == "pin-rotation-refresh-backoff-lease" {
+			plans = []transporttest.ControllerArtifactPlan{transporttest.ControllerPlanUnavailable, transporttest.ControllerPlanStalePin, transporttest.ControllerPlanCurrentPin}
+		}
+		source, err = transporttest.NewProductControllerArtifactSource(endpoint, plans)
+	}
 	if err != nil {
 		return err
 	}
@@ -370,12 +393,12 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 	}()
 	client, err := waitForControllerCurrent(ctx, controller, source, scenarioName == "pin-rotation-refresh-backoff-lease")
 	if err != nil {
-		return err
+		return fmt.Errorf("wait for current Controller Session: %w (snapshot=%+v acquisitions=%d)", err, controller.Snapshot(), source.AcquisitionCount())
 	}
 	serverIndex := source.AcquisitionCount() - 1
 	server, err := source.WaitServer(ctx, serverIndex)
 	if err != nil {
-		return err
+		return fmt.Errorf("wait for accepted Controller Session: %w (acquisition=%d)", err, serverIndex)
 	}
 	defer func() { resultErr = errors.Join(resultErr, server.Close()) }()
 	if client == nil {
@@ -387,6 +410,9 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 		return err
 	}
 	if scenarioName == "pin-rotation-refresh-backoff-lease" {
+		if refused != nil && refused.Load() == 0 {
+			return errors.New("controller QUIC unavailable attempt did not reach the rejecting listener")
+		}
 		times := source.AcquisitionTimes()
 		if len(times) < 3 || times[1].Sub(times[0]) < 200*time.Millisecond {
 			return fmt.Errorf("controller refresh backoff was not observed: %v", times)
@@ -397,7 +423,7 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 	}
 	pair, err := source.NewPair(ctx, client, server)
 	if err != nil {
-		return err
+		return fmt.Errorf("bind Controller pair service: %w (client=%+v server=%+v)", err, client.ConnectionDiagnostic(), server.ConnectionDiagnostic())
 	}
 	defer func() { resultErr = errors.Join(resultErr, pair.Close()) }()
 	if scenarioName == "periodic-loss" {
@@ -439,9 +465,43 @@ func runControllerDirectWorker(ctx context.Context, kind carrier.Kind, clientNam
 			return err
 		}
 	} else if err := pair.RoundTrip(ctx, bytes.Repeat([]byte("controller-weaknet"), 1024), []byte("controller-response")); err != nil {
-		return err
+		return fmt.Errorf("Controller payload round trip: %w (client=%+v server=%+v)", err, client.ConnectionDiagnostic(), server.ConnectionDiagnostic())
 	}
 	return nil
+}
+
+func openControllerQUICRefusal(ctx context.Context, namespace, address string) (*quic.Listener, *atomic.Uint32, error) {
+	// A silent UDP destination can only consume the original attempt deadline.
+	// This one owned listener instead emits a real QUIC CONNECTION_REFUSED
+	// before TLS authentication, preserving the network-only retry contract.
+	host, err := netip.ParseAddr(address)
+	if err != nil {
+		return nil, nil, err
+	}
+	certificate, _, _, _, err := interopharness.TLSMaterial(host.String())
+	if err != nil {
+		return nil, nil, err
+	}
+	refused := new(atomic.Uint32)
+	var listener *quic.Listener
+	err = linuxnetlab.InNamespace(namespace, func() error {
+		var listenErr error
+		listener, listenErr = quic.ListenAddr(netip.AddrPortFrom(host, 0).String(),
+			&tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS13,
+				MaxVersion: tls.VersionTLS13, NextProtos: []string{rawquic.ALPNDirect}, SessionTicketsDisabled: true},
+			&quic.Config{GetConfigForClient: func(*quic.ClientInfo) (*quic.Config, error) {
+				refused.Add(1)
+				return nil, errors.New("controller fixture refuses original unavailable connection")
+			}})
+		return listenErr
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := context.Cause(ctx); err != nil {
+		return nil, nil, errors.Join(err, listener.Close())
+	}
+	return listener, refused, nil
 }
 
 func waitForControllerCurrent(ctx context.Context, controller *flowersec.ConnectionController, source *transporttest.ProductControllerArtifactSource, refreshPin bool) (*flowersec.Session, error) {

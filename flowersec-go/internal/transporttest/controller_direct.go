@@ -53,6 +53,14 @@ type ProductControllerArtifactSource struct {
 func NewProductControllerArtifactSource(endpoint *ProductDirectEndpoint, plans []ControllerArtifactPlan, handlers ...interopharness.HandlerConfig) (*ProductControllerArtifactSource, error) {
 	return newProductControllerArtifactSource(endpoint, plans, nil, handlers...)
 }
+func NewProductControllerUnavailableAddressSource(endpoint *ProductDirectEndpoint, address netip.AddrPort) (*ProductControllerArtifactSource, error) {
+	if !address.IsValid() || address.Port() == 0 || address.Addr().Zone() != "" {
+		return nil, errors.New("unavailable controller destination must be a fixed numeric endpoint")
+	}
+	return newProductControllerArtifactSource(endpoint,
+		[]ControllerArtifactPlan{ControllerPlanUnavailable, ControllerPlanStalePin, ControllerPlanCurrentPin},
+		map[ControllerArtifactPlan]netip.AddrPort{ControllerPlanUnavailable: address})
+}
 func NewProductControllerTLSInterruptionSource(endpoint *ProductDirectEndpoint, address netip.AddrPort, handlers ...interopharness.HandlerConfig) (*ProductControllerArtifactSource, error) {
 	if !address.IsValid() || address.Port() == 0 || !address.Addr().IsLoopback() {
 		return nil, errors.New("TLS interruption requires an explicitly owned numeric loopback endpoint")
@@ -115,6 +123,9 @@ func newProductControllerArtifactSource(endpoint *ProductDirectEndpoint, plans [
 			install = false
 		case ControllerPlanUnavailable:
 			address = netip.AddrPortFrom(endpoint.nativeServer().Address.Addr(), 1)
+			if unavailable := addresses[ControllerPlanUnavailable]; unavailable.IsValid() {
+				address = unavailable
+			}
 			install = false
 		case ControllerPlanTLSInterruption:
 			address = addresses[plan]
