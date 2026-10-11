@@ -553,6 +553,9 @@ func TestRetirementRegistersCancellationBeforeRegistryPublication(t *testing.T) 
 
 func TestRetirementRunCanceledBeforeProviderAdmission(t *testing.T) {
 	f, r, _ := retirementFixture(t)
+	// Test Run cancellation after exclusive admission, without a live
+	// watchdog's clock read competing for the retained history owner.
+	closeRetirementRecoveryOwner(t, f.owner)
 	next := registryAnchor(t, f, f.owner.root.Authority)
 	operation, err := retirementOperation(t, f, r, next)
 	if err != nil {

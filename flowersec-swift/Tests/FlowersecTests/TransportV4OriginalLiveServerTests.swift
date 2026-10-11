@@ -694,8 +694,15 @@ private final class V4OriginalServerFixture: @unchecked Sendable {
     if let preparedPeer { try await preparedPeer.value }
     else { try await original.peer.establish(roots: [tls.rootPEM]) }
     let session = try await connection.value
-    let materialCleanup = try await material.waitCleanup()
+    let boundedCleanup = try await material.waitCleanup()
+    XCTAssertTrue(boundedCleanup.complete || boundedCleanup.cleanupIncomplete)
+    if !boundedCleanup.complete { XCTAssertGreaterThan(boundedCleanup.pendingCallbacks, 0) }
+    // The bounded observer can expire while its original physical join exits.
+    // Join those tails before proving they exclude the still-live Session.
+    let owner = try XCTUnwrap(material.owner as? V4DirectPoolMaterial)
+    let materialCleanup = await owner.waitPhysicalCleanup()
     XCTAssertTrue(materialCleanup.complete, "A handed-off Session must not remain in material cleanup")
+    XCTAssertEqual(materialCleanup.pendingCallbacks, 0)
     material.close()
     XCTAssertTrue(original.peer.fsbSubmitted)
     XCTAssertTrue(original.peer.fsaReceived)
