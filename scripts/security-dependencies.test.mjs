@@ -20,6 +20,25 @@ test("native title results accept exact leaf and qualified names but reject unce
   validateSuccessfulResult(report([assertion]), "native title", title);
   validateSuccessfulResult(report([assertion]), "native title", assertion.fullName);
   validateSuccessfulResult(report([{ ...assertion, fullName: title }]), "native title", title);
+  const parameterized = "Node current production raw QUIC runtime > rejects %s on the authenticated WSS hop";
+  const variants = [
+    { title: "rejects unknown DATA on the authenticated WSS hop", fullName: "Node current production raw QUIC runtime rejects unknown DATA on the authenticated WSS hop", status: "passed" },
+    { title: "rejects duplicate OPEN on the authenticated WSS hop", fullName: "Node current production raw QUIC runtime rejects duplicate OPEN on the authenticated WSS hop", status: "passed" },
+  ];
+  validateSuccessfulResult(report(variants), "native parameterized title", parameterized);
+  for (const status of ["skipped", "pending"]) {
+    assert.throws(() => validateSuccessfulResult(report([
+      variants[0], { ...variants[1], status },
+    ]), "native parameterized title", parameterized), /all reported parameterized variants/);
+  }
+  assert.throws(() => validateSuccessfulResult(report([]), "native parameterized title", parameterized), /all reported parameterized variants/);
+  assert.throws(() => validateSuccessfulResult(report([
+    ...variants, { ...variants[0], title: "unrelated test", fullName: "Another suite unrelated test" },
+  ]), "native parameterized title", parameterized), /all reported parameterized variants/);
+  // Selecting one concrete variant still permits its unselected sibling.
+  validateSuccessfulResult(report([
+    variants[0], { ...variants[1], status: "skipped" },
+  ]), "native concrete parameterized title", variants[0].title);
   assert.throws(() => validateSuccessfulResult(report([]), "native title", title), /exactly one passing test/);
   assert.throws(() => validateSuccessfulResult(report([{ ...assertion, status: "skipped" }]), "native title", title), /exactly one passing test/);
   assert.throws(() => validateSuccessfulResult(report([{ ...assertion, status: "failed" }]), "native title", title), /failed assertions/);
@@ -39,6 +58,7 @@ test("coverage artifacts stay owned through an incomplete lane join and preserve
   const finalizer = /\} finally \{([\s\S]*)\n  \}\n\}/u.exec(gate);
   assert.ok(finalizer);
   const finalize = new (async function () {}).constructor("fixture", "failure", "cleanupParityArtifact", "rm", "scratchRoot", finalizer[1]);
+  fs.mkdirSync(path.join(sourceRoot, ".flowersec"), { recursive: true });
   const base = fs.mkdtempSync(path.join(sourceRoot, ".flowersec", "coverage-cleanup-test-"));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const addon = path.join(base, "addon"), scratch = path.join(base, "scratch");
@@ -109,7 +129,7 @@ test("coverage lanes preserve external cancellation and never start after cancel
 
 test("Node peer coverage preserves original denominators and refuses uncertain source positions", () => {
   const require = createRequire(path.join(sourceRoot, "flowersec-ts/package.json"));
-  const { createCoverageMap } = require("istanbul-lib-coverage");
+  const { createCoverageMap } = require("@vitest/istanbul-lib-coverage");
   const position = line => ({ start: { line, column: 0 }, end: { line, column: 12 } });
   const file = path.join(sourceRoot, "coverage-fixture.ts");
   const original = {

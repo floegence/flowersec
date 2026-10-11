@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:99309d05-dcb8-52e8-8530-8f6e3a2ed556",
+  "serialNumber": "urn:uuid:c051559c-a628-59f3-866c-ae0182c5ce0e",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651"
+        "value": "898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4"
       }
     ]
   },
@@ -134,9 +134,9 @@
     {
       "type": "library",
       "name": "swift-nio",
-      "version": "2.101.3",
-      "purl": "pkg:swift/swift-nio@2.101.3",
-      "bom-ref": "pkg:swift/swift-nio@2.101.3",
+      "version": "2.103.0",
+      "purl": "pkg:swift/swift-nio@2.103.0",
+      "bom-ref": "pkg:swift/swift-nio@2.103.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -162,9 +162,9 @@
     {
       "type": "library",
       "name": "swift-nio-ssl",
-      "version": "2.37.2",
-      "purl": "pkg:swift/swift-nio-ssl@2.37.2",
-      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "version": "2.37.5",
+      "purl": "pkg:swift/swift-nio-ssl@2.37.5",
+      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.5",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -249,8 +249,8 @@
       "ref": "pkg:swift/Flowersec@6.0.0",
       "dependsOn": [
         "pkg:swift/swift-crypto@4.5.1",
-        "pkg:swift/swift-nio-ssl@2.37.2",
-        "pkg:swift/swift-nio@2.101.3",
+        "pkg:swift/swift-nio-ssl@2.37.5",
+        "pkg:swift/swift-nio@2.103.0",
         "pkg:swift/swift-sodium@0.11.0"
       ]
     },
@@ -273,7 +273,7 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio@2.101.3",
+      "ref": "pkg:swift/swift-nio@2.103.0",
       "dependsOn": [
         "pkg:swift/swift-atomics@1.3.1",
         "pkg:swift/swift-collections@1.6.0",
@@ -281,9 +281,9 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "ref": "pkg:swift/swift-nio-ssl@2.37.5",
       "dependsOn": [
-        "pkg:swift/swift-nio@2.101.3"
+        "pkg:swift/swift-nio@2.103.0"
       ]
     },
     {

@@ -36,6 +36,7 @@ fn cleanup_incomplete_preserves_original_authorization_and_ready_facts() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actual_wss_receiver_tail_remains_charged_after_original_connect_cleanup_bound() {
     let Setup {
@@ -176,6 +177,7 @@ async fn failed_candidate_cleanup_does_not_wait_for_an_unfinished_alternative() 
     assert!(cleanup.complete());
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn accepted_wss_tail_retires_without_another_public_cleanup_probe() {
     let Setup {
@@ -311,6 +313,7 @@ async fn accepted_wss_tail_retires_without_another_public_cleanup_probe() {
     assert!(sink.wait_cleanup().await.complete);
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dropped_public_connect_future_closes_its_original_diagnostic_after_native_exit() {
     let Setup {

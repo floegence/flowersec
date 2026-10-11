@@ -601,7 +601,7 @@ impl Capture {
                 result = &mut completion => result.unwrap_or(Err(ConnectError::Carrier)),
                 _ = operation_cancel.cancelled() => {
                     if let Some(cleanup) = &cleanup { cleanup.start(); }
-                    Err(ConnectError::Canceled)
+                    resolve_original_preparation_cancellation(&mut completion, &caller)
                 },
                 _ = tokio::time::sleep_until(deadline) => {
                     if let Some(cleanup) = &cleanup { cleanup.start(); }
@@ -624,6 +624,21 @@ impl Capture {
         Ok((prepared.provider, prepared.incoming))
     }
 }
+
+fn resolve_original_preparation_cancellation<T>(
+    completion: &mut tokio::sync::oneshot::Receiver<ConnectResult<T>>,
+    caller: &CancellationToken,
+) -> ConnectResult<T> {
+    // Publication can occur between the completion and cancellation polls.
+    // Read it without waiting, and drop any success after withdrawal.
+    let failure = if caller.is_cancelled() {
+        None
+    } else {
+        completion.try_recv().ok().and_then(|result| result.err())
+    };
+    Err(failure.unwrap_or(ConnectError::Canceled))
+}
+
 struct OriginalPreparationWithdrawal {
     cancel: CancellationToken,
     cleanup: Option<Arc<ConnectCleanup>>,

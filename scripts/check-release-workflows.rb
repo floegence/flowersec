@@ -590,6 +590,7 @@ validate_step_contracts(precommit_steps, [
     "with" => { "toolchain" => rust_version, "components" => "rustfmt,clippy" },
   } },
   { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime go node rust swift" } },
+  { name: "Build native addon before concurrent test lanes", keys: ["name", "run"], values: { "run" => "cargo build --manifest-path flowersec-node-native/Cargo.toml --locked" } },
   { name: "Run precommit quality gate", keys: ["name", "run"], values: { "run" => "make precommit" } },
 ], "the hosted CI precommit job")
 validate_step_contracts(node_minimum_steps, [
@@ -599,6 +600,15 @@ validate_step_contracts(node_minimum_steps, [
     "with" => { "node-version" => node_minimum, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
   } },
   { name: "Validate minimum runtime", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node-minimum" } },
+  { name: "Setup Go for native interoperability tests", keys: ["name", "uses", "with"], values: {
+    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
+    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache-dependency-path" => "flowersec-go/go.sum" },
+  } },
+  { name: "Setup Rust for native interoperability tests", keys: ["name", "uses", "with"], values: {
+    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
+    "with" => { "toolchain" => rust_version },
+  } },
+  { name: "Build native addon before compatibility tests", keys: ["name", "run"], values: { "run" => "cargo build --manifest-path flowersec-node-native/Cargo.toml --locked" } },
   { name: "Run TypeScript language lane", keys: ["name", "run"], values: { "run" => "make ts-ci ts-build ts-test-short" } },
 ], "the hosted CI Node minimum job")
 validate_step_contracts(rust_msrv_steps, [
@@ -673,9 +683,9 @@ validate_step_contracts(codeql_steps, [
       "cache-dependency-path" => "flowersec-go/go.sum\ntools/releasenotes/go.sum\ntools/stabilitycheck/go.sum\n",
     },
   } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
-  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@cdf488f595d80d6e07e03d4674febd5ab45fa938" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938" } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd", "with" => { "languages" => "${{ matrix.language }}", "build-mode" => "${{ matrix.build-mode }}", "queries" => "security-extended" } } },
+  { name: "Autobuild Go", keys: ["name", "if", "uses"], values: { "if" => "matrix.language == 'go'", "uses" => "github/codeql-action/autobuild@1c5b675653bb5c22dbe9b12b556ec555138e09fd" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd" } },
 ], "the CodeQL analyze job")
 validate_step_contracts(codeql_swift_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
@@ -687,9 +697,9 @@ validate_step_contracts(codeql_swift_steps, [
   { name: "Resolve Swift cache key", keys: ["name", "id", "run"], values: { "id" => "swift-cache-key", "run" => "swift --version | shasum -a 256 | awk '{ print \"toolchain=\" $1 }' >> \"$GITHUB_OUTPUT\"\n" } },
   { name: "Restore Swift build cache", keys: ["name", "uses", "with"], values: { "uses" => "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", "with" => { "path" => ".build", "key" => "swift-codeql-${{ runner.os }}-${{ steps.swift-cache-key.outputs.toolchain }}-${{ hashFiles('Package.swift', 'Package.resolved') }}" } } },
   { name: "Prepare Swift build cache", keys: ["name", "run"], values: { "run" => "swift package --skip-update --only-use-versions-from-resolved-file resolve\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938", "with" => { "languages" => "swift", "build-mode" => "manual", "queries" => "security-extended" } } },
+  { name: "Initialize CodeQL", keys: ["name", "uses", "with"], values: { "uses" => "github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd", "with" => { "languages" => "swift", "build-mode" => "manual", "queries" => "security-extended" } } },
   { name: "Build Swift library", keys: ["name", "run"], values: { "run" => "find flowersec-swift/Sources/Flowersec -type f -name '*.swift' -exec touch {} +\nswift build --skip-update --only-use-versions-from-resolved-file --target Flowersec -j 8\n" } },
-  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938" } },
+  { name: "Analyze", keys: ["name", "uses"], values: { "uses" => "github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd" } },
 ], "the CodeQL Swift analyze job")
 validate_step_contracts(codeql_plan_steps, [
   { name: "Check for new main commits", keys: ["name", "id", "env", "run"], values: {
@@ -717,7 +727,7 @@ validate_step_contracts(scorecard_steps, [
     "with" => { "name" => "scorecard-results", "path" => "results.sarif", "retention-days" => 5 },
   } },
   { name: "Upload Scorecard results", keys: ["name", "uses", "with"], values: {
-    "uses" => "github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938",
+    "uses" => "github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd",
     "with" => { "sarif_file" => "results.sarif" },
   } },
 ], "the Scorecard analysis job")
@@ -730,7 +740,7 @@ validate_step_contracts(container_security_steps, [
     "with" => { "driver-opts" => "image=moby/buildkit:buildx-stable-1@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8" },
   } },
   { name: "Build runtime image", keys: ["name", "uses", "with"], values: {
-    "uses" => "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+    "uses" => "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc",
     "with" => {
       "context" => ".",
       "file" => "docker/flowersec-runtime/Dockerfile",
@@ -806,7 +816,7 @@ validate_step_contracts(release_steps, [
       "IMAGE_VERSION" => "${{ steps.vars.outputs.version }}",
     },
   }, run_sha256: "fe22930a59140dc9a193cf7651adeaef1e3cad8cf2b62039c604264f14276d02" },
-  { name: "Build and push runtime image by digest", keys: ["name", "id", "if", "uses", "with"], values: { "id" => "runtime-image", "if" => "steps.runtime-state.outputs.exists == 'false'", "uses" => "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a", "with" => {
+  { name: "Build and push runtime image by digest", keys: ["name", "id", "if", "uses", "with"], values: { "id" => "runtime-image", "if" => "steps.runtime-state.outputs.exists == 'false'", "uses" => "docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc", "with" => {
     "context" => ".",
     "file" => "docker/flowersec-runtime/Dockerfile",
     "platforms" => "linux/amd64,linux/arm64",

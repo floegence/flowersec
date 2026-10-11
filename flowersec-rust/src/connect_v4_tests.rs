@@ -616,6 +616,7 @@ async fn wss_phase<T>(
             )
         })
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_wss_pool_connect_dual_ready_stream_rekey_probe_and_cleanup() {
     for (profile, pin) in [(Profile::X25519, true), (Profile::P256, false)] {
@@ -744,6 +745,7 @@ async fn real_wss_pool_connect_dual_ready_stream_rekey_probe_and_cleanup() {
         .await;
     }
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_wss_connect_reader_retains_tail_during_terminal_publication() {
     let Setup {
@@ -887,6 +889,7 @@ async fn real_wss_connect_reader_retains_tail_during_terminal_publication() {
         baseline.connections
     );
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_wss_connect_drop_last_session_releases_owner_and_carrier() {
     let Setup {
@@ -975,6 +978,7 @@ async fn real_wss_connect_drop_last_session_releases_owner_and_carrier() {
     // cleanup is asserted above on the dimensions owned by this test.
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn invalid_actual_tls_pin_fails_before_pool_spend() {
     let Setup {
@@ -1002,6 +1006,7 @@ async fn invalid_actual_tls_pin_fails_before_pool_spend() {
     assert_eq!(pool.rows(), 0);
     peer.await.unwrap();
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancellation_after_client_hello_preserves_consumed_classification() {
     let Setup {
@@ -1030,6 +1035,7 @@ async fn cancellation_after_client_hello_preserves_consumed_classification() {
     peer.await.unwrap();
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn production_pool_connect_keeps_the_exact_post_commit_failure_and_spend_fact() {
     let Setup {
@@ -1087,6 +1093,7 @@ async fn production_pool_connect_keeps_the_exact_post_commit_failure_and_spend_f
     let _ = environment.close().await;
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_record_geometry_is_reserved_before_irreversible_spend() {
     let Setup {
@@ -1147,6 +1154,7 @@ fn ordinary_pool_source(
     )
     .unwrap()
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn default_source_connect_and_acquired_material_share_original_native_pool_flow() {
     async fn phase<T>(
@@ -1378,6 +1386,7 @@ fn native_controller_options(
         drain_timeout: Duration::from_secs(1),
     }
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn material_controller_publishes_only_initialized_native_ready_candidate() {
     let Setup {
@@ -1519,6 +1528,7 @@ async fn material_controller_publishes_only_initialized_native_ready_candidate()
     drop(pool);
     let _ = environment.close().await;
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn controller_parent_close_retains_actual_initializer_exit_and_closes_owned_source() {
     let Setup {
@@ -1691,6 +1701,7 @@ fn controller_notification_lock_order_service(
     (contract, definition, binding, registration, codec, query)
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn real_controller_notification_lock_order_three_way_regression() {
     let Setup {

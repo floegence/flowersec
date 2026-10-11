@@ -501,6 +501,7 @@ fn queued_options() -> crate::UnaryPrepareOptions {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_pool_generation_capture_refusal_preserves_new_route() {
     let mut test = Harness::new(2, MaterialSourceOwnership::Borrowed).await;
@@ -584,6 +585,7 @@ async fn public_controller_pool_generation_capture_refusal_preserves_new_route()
     test.close().await;
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_queued_unary_reselects_once_and_fixed_capture_keeps_original() {
     let mut test = Harness::new(2, MaterialSourceOwnership::Borrowed).await;
@@ -734,6 +736,7 @@ impl crate::AsyncMessageCodec<Vec<u8>> for ControllerAsyncBytes {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_mapped_async_unary_tracks_secondary_generation_and_cleanup() {
     let mut test = Harness::new(3, MaterialSourceOwnership::Borrowed).await;
@@ -853,6 +856,7 @@ async fn public_controller_mapped_async_unary_tracks_secondary_generation_and_cl
     test.close().await;
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_retained_replacement_reports_original_notification_generations() {
     let mut test = Harness::new(2, MaterialSourceOwnership::Borrowed).await;
@@ -978,6 +982,7 @@ async fn public_controller_retained_replacement_reports_original_notification_ge
     ));
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_canceled_initializer_disables_dispatch_and_owned_cleanup_waits_for_exit()
 {
@@ -1045,6 +1050,7 @@ impl crate::ServiceNotificationObserver<u8> for HeldObserver {
         Err(ServiceError(ServiceFailure::Canceled))
     }
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_notification_cleanup_keeps_original_application_callback() {
     let mut test = Harness::new(1, MaterialSourceOwnership::Borrowed).await;
@@ -1161,6 +1167,7 @@ impl Drop for ReleaseDecoder {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_drain_replacement_keeps_original_stream_and_notification_source() {
     struct Phase<'a> {
@@ -1504,6 +1511,7 @@ async fn public_controller_drain_replacement_keeps_original_stream_and_notificat
         .await;
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_current_only_handoff_keeps_finite_old_decoder_until_exit() {
     for maximum in [1, 2] {
@@ -1630,6 +1638,7 @@ impl ControllerNotificationObserver<u8> for FailingEvents {
         }
     }
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn public_controller_notification_gaps_preserve_later_delivery_after_application_failures() {
     let mut test = Harness::new(1, MaterialSourceOwnership::Borrowed).await;

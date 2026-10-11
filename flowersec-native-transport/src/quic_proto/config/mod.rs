@@ -181,7 +181,7 @@ impl Default for EndpointConfig {
     fn default() -> Self {
         #[cfg(all(any(), not(all())))]
         use aws_lc_rs::hmac;
-        use rand::RngCore;
+        use rand::Rng;
         #[cfg(all())]
         use ring::hmac;
 
@@ -401,7 +401,7 @@ impl ServerConfig {
     pub(crate) fn with_crypto(crypto: Arc<dyn crypto::ServerConfig>) -> Self {
         #[cfg(all(any(), not(all())))]
         use aws_lc_rs::hkdf;
-        use rand::RngCore;
+        use rand::Rng;
         #[cfg(all())]
         use ring::hkdf;
 

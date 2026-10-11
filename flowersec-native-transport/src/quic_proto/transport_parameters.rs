@@ -12,7 +12,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
-use rand::{Rng as _, RngCore, seq::SliceRandom as _};
+use rand::{Rng, RngExt as _, seq::SliceRandom as _};
 use thiserror::Error;
 
 use crate::quic_proto::{
@@ -154,7 +154,7 @@ impl TransportParameters {
         cid_gen: &dyn ConnectionIdGenerator,
         initial_src_cid: ConnectionId,
         server_config: Option<&ServerConfig>,
-        rng: &mut impl RngCore,
+        rng: &mut impl Rng,
     ) -> Self {
         Self {
             initial_src_cid: Some(initial_src_cid),
@@ -588,7 +588,7 @@ impl ReservedTransportParameter {
     /// The implementation is inspired by quic-go and quiche:
     /// 1. <https://github.com/quic-go/quic-go/blob/3e0a67b2476e1819752f04d75968de042b197b56/internal/wire/transport_parameters.go#L338-L344>
     /// 2. <https://github.com/google/quiche/blob/cb1090b20c40e2f0815107857324e99acf6ec567/quiche/quic/core/crypto/transport_parameters.cc#L843-L860>
-    fn random(rng: &mut impl RngCore) -> Self {
+    fn random(rng: &mut impl Rng) -> Self {
         let id = Self::generate_reserved_id(rng);
 
         let payload_len = rng.random_range(0..Self::MAX_PAYLOAD_LEN);
@@ -616,7 +616,7 @@ impl ReservedTransportParameter {
     /// Reserved transport parameter identifiers are used to test compliance with the requirement
     /// that unknown transport parameters must be ignored by peers.
     /// See: <https://www.rfc-editor.org/rfc/rfc9000.html#section-18.1> and <https://www.rfc-editor.org/rfc/rfc9000.html#section-22.3>
-    fn generate_reserved_id(rng: &mut impl RngCore) -> VarInt {
+    fn generate_reserved_id(rng: &mut impl Rng) -> VarInt {
         let id = {
             let rand = rng.random_range(0u64..(1 << 62) - 27);
             let n = rand / 31;
@@ -849,21 +849,23 @@ mod test {
 
     struct StepRng(u64);
 
-    impl RngCore for StepRng {
+    impl rand::TryRng for StepRng {
+        type Error = std::convert::Infallible;
+
         #[inline]
-        fn next_u32(&mut self) -> u32 {
-            self.next_u64() as u32
+        fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
+            Ok(self.next_u64() as u32)
         }
 
         #[inline]
-        fn next_u64(&mut self) -> u64 {
+        fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
             let res = self.0;
             self.0 = self.0.wrapping_add(1);
-            res
+            Ok(res)
         }
 
         #[inline]
-        fn fill_bytes(&mut self, dst: &mut [u8]) {
+        fn try_fill_bytes(&mut self, dst: &mut [u8]) -> Result<(), Self::Error> {
             let mut left = dst;
             while left.len() >= 8 {
                 let (l, r) = left.split_at_mut(8);
@@ -872,8 +874,9 @@ mod test {
             }
             let n = left.len();
             if n > 0 {
-                left.copy_from_slice(&self.next_u32().to_le_bytes()[..n]);
+                left.copy_from_slice(&self.next_u64().to_le_bytes()[..n]);
             }
+            Ok(())
         }
     }
 

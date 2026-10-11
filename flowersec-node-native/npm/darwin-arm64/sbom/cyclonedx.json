@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:2f44440f-0626-5a83-88ef-bd3992700e89",
+  "serialNumber": "urn:uuid:27e6d531-398f-5798-8773-5d8a1d701cc9",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651"
+        "value": "898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4"
       }
     ]
   },
@@ -301,6 +301,34 @@
     },
     {
       "type": "library",
+      "name": "chacha20",
+      "version": "0.10.2",
+      "purl": "pkg:cargo/chacha20@0.10.2",
+      "bom-ref": "pkg:cargo/chacha20@0.10.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/RustCrypto/stream-ciphers"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "const-oid",
       "version": "0.10.2",
       "purl": "pkg:cargo/const-oid@0.10.2",
@@ -330,9 +358,9 @@
     {
       "type": "library",
       "name": "convert_case",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/convert_case@0.11.0",
-      "bom-ref": "pkg:cargo/convert_case@0.11.0",
+      "version": "0.12.0",
+      "purl": "pkg:cargo/convert_case@0.12.0",
+      "bom-ref": "pkg:cargo/convert_case@0.12.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -918,9 +946,9 @@
     {
       "type": "library",
       "name": "getrandom",
-      "version": "0.3.4",
-      "purl": "pkg:cargo/getrandom@0.3.4",
-      "bom-ref": "pkg:cargo/getrandom@0.3.4",
+      "version": "0.4.3",
+      "purl": "pkg:cargo/getrandom@0.4.3",
+      "bom-ref": "pkg:cargo/getrandom@0.4.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -1422,9 +1450,9 @@
     {
       "type": "library",
       "name": "lru-slab",
-      "version": "0.1.2",
-      "purl": "pkg:cargo/lru-slab@0.1.2",
-      "bom-ref": "pkg:cargo/lru-slab@0.1.2",
+      "version": "0.1.3",
+      "purl": "pkg:cargo/lru-slab@0.1.3",
+      "bom-ref": "pkg:cargo/lru-slab@0.1.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -1562,9 +1590,9 @@
     {
       "type": "library",
       "name": "napi-build",
-      "version": "2.4.1",
-      "purl": "pkg:cargo/napi-build@2.4.1",
-      "bom-ref": "pkg:cargo/napi-build@2.4.1",
+      "version": "2.6.0",
+      "purl": "pkg:cargo/napi-build@2.6.0",
+      "bom-ref": "pkg:cargo/napi-build@2.6.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -1590,9 +1618,9 @@
     {
       "type": "library",
       "name": "napi-derive",
-      "version": "3.6.3",
-      "purl": "pkg:cargo/napi-derive@3.6.3",
-      "bom-ref": "pkg:cargo/napi-derive@3.6.3",
+      "version": "3.6.11",
+      "purl": "pkg:cargo/napi-derive@3.6.11",
+      "bom-ref": "pkg:cargo/napi-derive@3.6.11",
       "licenses": [
         {
           "expression": "MIT"
@@ -1618,9 +1646,9 @@
     {
       "type": "library",
       "name": "napi-derive-backend",
-      "version": "6.1.2",
-      "purl": "pkg:cargo/napi-derive-backend@6.1.2",
-      "bom-ref": "pkg:cargo/napi-derive-backend@6.1.2",
+      "version": "6.1.5",
+      "purl": "pkg:cargo/napi-derive-backend@6.1.5",
+      "bom-ref": "pkg:cargo/napi-derive-backend@6.1.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -2037,34 +2065,6 @@
     },
     {
       "type": "library",
-      "name": "ppv-lite86",
-      "version": "0.2.21",
-      "purl": "pkg:cargo/ppv-lite86@0.2.21",
-      "bom-ref": "pkg:cargo/ppv-lite86@0.2.21",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/cryptocorrosion/cryptocorrosion"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "prettyplease",
       "version": "0.2.37",
       "purl": "pkg:cargo/prettyplease@0.2.37",
@@ -2206,9 +2206,9 @@
     {
       "type": "library",
       "name": "r-efi",
-      "version": "5.3.0",
-      "purl": "pkg:cargo/r-efi@5.3.0",
-      "bom-ref": "pkg:cargo/r-efi@5.3.0",
+      "version": "6.0.0",
+      "purl": "pkg:cargo/r-efi@6.0.0",
+      "bom-ref": "pkg:cargo/r-efi@6.0.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -2234,37 +2234,9 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.9.3",
-      "purl": "pkg:cargo/rand@0.9.3",
-      "bom-ref": "pkg:cargo/rand@0.9.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rand_chacha",
-      "version": "0.9.0",
-      "purl": "pkg:cargo/rand_chacha@0.9.0",
-      "bom-ref": "pkg:cargo/rand_chacha@0.9.0",
+      "version": "0.10.3",
+      "purl": "pkg:cargo/rand@0.10.3",
+      "bom-ref": "pkg:cargo/rand@0.10.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -2290,9 +2262,9 @@
     {
       "type": "library",
       "name": "rand_core",
-      "version": "0.9.5",
-      "purl": "pkg:cargo/rand_core@0.9.5",
-      "bom-ref": "pkg:cargo/rand_core@0.9.5",
+      "version": "0.10.1",
+      "purl": "pkg:cargo/rand_core@0.10.1",
+      "bom-ref": "pkg:cargo/rand_core@0.10.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -2301,7 +2273,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
+          "url": "https://github.com/rust-random/rand_core"
         }
       ],
       "properties": [
@@ -2498,6 +2470,34 @@
         {
           "type": "distribution",
           "url": "https://github.com/dtolnay/semver"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "serde",
+      "version": "1.0.229",
+      "purl": "pkg:cargo/serde@1.0.229",
+      "bom-ref": "pkg:cargo/serde@1.0.229",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/serde-rs/serde"
         }
       ],
       "properties": [
@@ -3046,9 +3046,9 @@
     {
       "type": "library",
       "name": "tinyvec",
-      "version": "1.12.0",
-      "purl": "pkg:cargo/tinyvec@1.12.0",
-      "bom-ref": "pkg:cargo/tinyvec@1.12.0",
+      "version": "1.13.3",
+      "purl": "pkg:cargo/tinyvec@1.13.3",
+      "bom-ref": "pkg:cargo/tinyvec@1.13.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -3064,34 +3064,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "Zlib OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tinyvec_macros",
-      "version": "0.1.1",
-      "purl": "pkg:cargo/tinyvec_macros@0.1.1",
-      "bom-ref": "pkg:cargo/tinyvec_macros@0.1.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/Soveu/tinyvec_macros"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0 OR Zlib"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -3382,9 +3354,9 @@
     {
       "type": "library",
       "name": "url",
-      "version": "2.5.4",
-      "purl": "pkg:cargo/url@2.5.4",
-      "bom-ref": "pkg:cargo/url@2.5.4",
+      "version": "2.5.8",
+      "purl": "pkg:cargo/url@2.5.8",
+      "bom-ref": "pkg:cargo/url@2.5.8",
       "licenses": [
         {
           "expression": "MIT"
@@ -3478,34 +3450,6 @@
         {
           "type": "distribution",
           "url": "https://github.com/bytecodealliance/wasi"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "wasip2",
-      "version": "1.0.4+wasi-0.2.12",
-      "purl": "pkg:cargo/wasip2@1.0.4+wasi-0.2.12",
-      "bom-ref": "pkg:cargo/wasip2@1.0.4+wasi-0.2.12",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/bytecodealliance/wasi-rs"
         }
       ],
       "properties": [
@@ -3857,34 +3801,6 @@
     },
     {
       "type": "library",
-      "name": "wit-bindgen",
-      "version": "0.57.1",
-      "purl": "pkg:cargo/wit-bindgen@0.57.1",
-      "bom-ref": "pkg:cargo/wit-bindgen@0.57.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/bytecodealliance/wit-bindgen"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "writeable",
       "version": "0.6.4",
       "purl": "pkg:cargo/writeable@0.6.4",
@@ -3988,62 +3904,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "Unicode-3.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "zerocopy",
-      "version": "0.8.59",
-      "purl": "pkg:cargo/zerocopy@0.8.59",
-      "bom-ref": "pkg:cargo/zerocopy@0.8.59",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "zerocopy-derive",
-      "version": "0.8.59",
-      "purl": "pkg:cargo/zerocopy-derive@0.8.59",
-      "bom-ref": "pkg:cargo/zerocopy-derive@0.8.59",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -4226,14 +4086,14 @@
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/libsqlite3-sys@0.38.2",
-        "pkg:cargo/lru-slab@0.1.2",
-        "pkg:cargo/napi-build@2.4.1",
-        "pkg:cargo/napi-derive@3.6.3",
+        "pkg:cargo/lru-slab@0.1.3",
+        "pkg:cargo/napi-build@2.6.0",
+        "pkg:cargo/napi-derive@3.6.11",
         "pkg:cargo/napi@3.12.2",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/qpack@0.1.0",
         "pkg:cargo/quinn-udp@0.5.15",
-        "pkg:cargo/rand@0.9.3",
+        "pkg:cargo/rand@0.10.3",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rustc-hash@2.1.3",
         "pkg:cargo/rustls@0.23.45",
@@ -4242,11 +4102,11 @@
         "pkg:cargo/socket2@0.6.5",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/thiserror@2.0.21",
-        "pkg:cargo/tinyvec@1.12.0",
+        "pkg:cargo/tinyvec@1.13.3",
         "pkg:cargo/tokio-util@0.7.19",
         "pkg:cargo/tokio@1.53.2",
         "pkg:cargo/tracing@0.1.44",
-        "pkg:cargo/url@2.5.4",
+        "pkg:cargo/url@2.5.8",
         "pkg:cargo/x509-parser@0.18.1"
       ]
     },
@@ -4314,11 +4174,19 @@
       "dependsOn": []
     },
     {
+      "ref": "pkg:cargo/chacha20@0.10.2",
+      "dependsOn": [
+        "pkg:cargo/cfg-if@1.0.5",
+        "pkg:cargo/cpufeatures@0.3.1",
+        "pkg:cargo/rand_core@0.10.1"
+      ]
+    },
+    {
       "ref": "pkg:cargo/const-oid@0.10.2",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/convert_case@0.11.0",
+      "ref": "pkg:cargo/convert_case@0.12.0",
       "dependsOn": [
         "pkg:cargo/unicode-segmentation@1.13.3"
       ]
@@ -4458,12 +4326,12 @@
       ]
     },
     {
-      "ref": "pkg:cargo/getrandom@0.3.4",
+      "ref": "pkg:cargo/getrandom@0.4.3",
       "dependsOn": [
         "pkg:cargo/cfg-if@1.0.5",
         "pkg:cargo/libc@0.2.190",
-        "pkg:cargo/r-efi@5.3.0",
-        "pkg:cargo/wasip2@1.0.4+wasi-0.2.12"
+        "pkg:cargo/r-efi@6.0.0",
+        "pkg:cargo/rand_core@0.10.1"
       ]
     },
     {
@@ -4592,7 +4460,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/lru-slab@0.1.2",
+      "ref": "pkg:cargo/lru-slab@0.1.3",
       "dependsOn": []
     },
     {
@@ -4618,7 +4486,7 @@
         "pkg:cargo/ctor@1.0.13",
         "pkg:cargo/futures@0.3.34",
         "pkg:cargo/libc@0.2.190",
-        "pkg:cargo/napi-build@2.4.1",
+        "pkg:cargo/napi-build@2.6.0",
         "pkg:cargo/napi-sys@3.3.0",
         "pkg:cargo/nohash-hasher@0.2.0",
         "pkg:cargo/rustc-hash@2.1.3",
@@ -4626,28 +4494,28 @@
       ]
     },
     {
-      "ref": "pkg:cargo/napi-build@2.4.1",
+      "ref": "pkg:cargo/napi-build@2.6.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/napi-derive@3.6.3",
+      "ref": "pkg:cargo/napi-derive@3.6.11",
       "dependsOn": [
-        "pkg:cargo/convert_case@0.11.0",
+        "pkg:cargo/convert_case@0.12.0",
         "pkg:cargo/ctor@1.0.13",
-        "pkg:cargo/napi-derive-backend@6.1.2",
+        "pkg:cargo/napi-derive-backend@6.1.5",
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
+        "pkg:cargo/syn@3.0.6"
       ]
     },
     {
-      "ref": "pkg:cargo/napi-derive-backend@6.1.2",
+      "ref": "pkg:cargo/napi-derive-backend@6.1.5",
       "dependsOn": [
-        "pkg:cargo/convert_case@0.11.0",
+        "pkg:cargo/convert_case@0.12.0",
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/semver@1.0.28",
-        "pkg:cargo/syn@2.0.119"
+        "pkg:cargo/syn@3.0.6"
       ]
     },
     {
@@ -4723,12 +4591,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/ppv-lite86@0.2.21",
-      "dependsOn": [
-        "pkg:cargo/zerocopy@0.8.59"
-      ]
-    },
-    {
       "ref": "pkg:cargo/prettyplease@0.2.37",
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
@@ -4765,28 +4627,20 @@
       ]
     },
     {
-      "ref": "pkg:cargo/r-efi@5.3.0",
+      "ref": "pkg:cargo/r-efi@6.0.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/rand@0.9.3",
+      "ref": "pkg:cargo/rand@0.10.3",
       "dependsOn": [
-        "pkg:cargo/rand_chacha@0.9.0",
-        "pkg:cargo/rand_core@0.9.5"
+        "pkg:cargo/chacha20@0.10.2",
+        "pkg:cargo/getrandom@0.4.3",
+        "pkg:cargo/rand_core@0.10.1"
       ]
     },
     {
-      "ref": "pkg:cargo/rand_chacha@0.9.0",
-      "dependsOn": [
-        "pkg:cargo/ppv-lite86@0.2.21",
-        "pkg:cargo/rand_core@0.9.5"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/rand_core@0.9.5",
-      "dependsOn": [
-        "pkg:cargo/getrandom@0.3.4"
-      ]
+      "ref": "pkg:cargo/rand_core@0.10.1",
+      "dependsOn": []
     },
     {
       "ref": "pkg:cargo/ring@0.17.14",
@@ -4837,6 +4691,12 @@
     {
       "ref": "pkg:cargo/semver@1.0.28",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:cargo/serde@1.0.229",
+      "dependsOn": [
+        "pkg:cargo/serde_core@1.0.229"
+      ]
     },
     {
       "ref": "pkg:cargo/serde_core@1.0.229",
@@ -4963,13 +4823,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/tinyvec@1.12.0",
-      "dependsOn": [
-        "pkg:cargo/tinyvec_macros@0.1.1"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/tinyvec_macros@0.1.1",
+      "ref": "pkg:cargo/tinyvec@1.13.3",
       "dependsOn": []
     },
     {
@@ -5042,11 +4896,12 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/url@2.5.4",
+      "ref": "pkg:cargo/url@2.5.8",
       "dependsOn": [
         "pkg:cargo/form_urlencoded@1.2.2",
         "pkg:cargo/idna@1.1.0",
-        "pkg:cargo/percent-encoding@2.3.2"
+        "pkg:cargo/percent-encoding@2.3.2",
+        "pkg:cargo/serde@1.0.229"
       ]
     },
     {
@@ -5060,12 +4915,6 @@
     {
       "ref": "pkg:cargo/wasi@0.11.1+wasi-snapshot-preview1",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/wasip2@1.0.4+wasi-0.2.12",
-      "dependsOn": [
-        "pkg:cargo/wit-bindgen@0.57.1"
-      ]
     },
     {
       "ref": "pkg:cargo/windows_aarch64_gnullvm@0.52.6",
@@ -5129,10 +4978,6 @@
       ]
     },
     {
-      "ref": "pkg:cargo/wit-bindgen@0.57.1",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:cargo/writeable@0.6.4",
       "dependsOn": []
     },
@@ -5165,20 +5010,6 @@
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/syn@3.0.6",
         "pkg:cargo/synstructure@0.14.0"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/zerocopy@0.8.59",
-      "dependsOn": [
-        "pkg:cargo/zerocopy-derive@0.8.59"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/zerocopy-derive@0.8.59",
-      "dependsOn": [
-        "pkg:cargo/proc-macro2@1.0.107",
-        "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
       ]
     },
     {

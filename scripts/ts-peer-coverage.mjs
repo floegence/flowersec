@@ -76,7 +76,7 @@ export async function readNodePeerCoverage(directory, expectedRoles) {
   const require = createRequire(path.join(repositoryRoot, "flowersec-ts/package.json"));
   const { default: convert } = await import(require.resolve("ast-v8-to-istanbul"));
   const { parseAstAsync } = await import(require.resolve("vitest/node"));
-  const { createCoverageMap } = require("istanbul-lib-coverage");
+  const { createCoverageMap } = require("@vitest/istanbul-lib-coverage");
   const merged = createCoverageMap({}), roles = [];
   const names = (await readdir(directory)).filter(name => /^peer-\d+\.json$/u.test(name));
   if (names.length !== expectedRoles.length) throw new Error(`Expected ${expectedRoles.length} successful Node peer profiles, received ${names.length}`);

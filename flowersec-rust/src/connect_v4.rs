@@ -2976,7 +2976,9 @@ async fn connect_original(
         settled: false,
     };
     let mut work_owner = None;
-    let result = connect_original_attempt(
+    // The original attempt contains every provider preparation branch. Keep
+    // that state out of each source/controller caller's inline future.
+    let result = Box::pin(connect_original_attempt(
         environment,
         input,
         options,
@@ -2991,7 +2993,7 @@ async fn connect_original(
         &mut outcome.session,
         &mut work_owner,
         &cleanup,
-    )
+    ))
     .await;
     let result = match result {
         Ok(session) => {

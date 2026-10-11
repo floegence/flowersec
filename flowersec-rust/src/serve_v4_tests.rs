@@ -76,6 +76,7 @@ fn credential_bytes(f: &Fixture) -> PoolCredentialBytes {
         activation: f.activation.clone(),
     }
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn production_listener_durable_admission_and_original_serve_children() {
     for (profile, pin, pending_only, binding_mode) in [

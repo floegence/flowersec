@@ -27,7 +27,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - @noble/ciphers 2.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.4.0.tgz)
 - @noble/curves 2.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/curves/-/curves-2.4.0.tgz)
 - @noble/hashes 2.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@noble/hashes/-/hashes-2.4.0.tgz)
-- @types/node 26.4.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@types/node/-/node-26.4.0.tgz)
+- @types/node 26.6.3 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@types/node/-/node-26.6.3.tgz)
 - @types/ws 8.18.1 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/@types/ws/-/ws-8.18.1.tgz)
 - brotli-dec-wasm 2.3.2 (Declared: MIT OR Apache-2.0; selected: MIT; source: https://registry.npmjs.org/brotli-dec-wasm/-/brotli-dec-wasm-2.3.2.tgz)
 - punycode 2.3.1 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz)
@@ -35,7 +35,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - tldts-core 7.4.16 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/tldts-core/-/tldts-core-7.4.16.tgz)
 - tough-cookie 6.0.2 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.2.tgz)
 - tr46 6.0.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz)
-- undici-types 8.3.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz)
+- undici-types 8.9.0 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/undici-types/-/undici-types-8.9.0.tgz)
 - ws 8.21.3 (Declared: MIT; selected: MIT; source: https://registry.npmjs.org/ws/-/ws-8.21.3.tgz)
 ## Distributed Dependency License Materials
 

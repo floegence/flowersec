@@ -774,6 +774,7 @@ impl serve::ServeCallbacks for LiveServeCallbacks {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_original_mtls_publication_enters_production_serve_admission_and_dual_ready() {
     use crate::pool_v4::{

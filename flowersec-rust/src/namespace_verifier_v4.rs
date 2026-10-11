@@ -2885,7 +2885,7 @@ mod tests {
         namespace.refresh(None, &head, &state).unwrap();
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn pending_bootstrap_local_deadline_does_not_become_signed_material_expiry() {
         let (environment, _) = bootstrap_environment(1010);
         let verifier = bootstrap_verifier(&environment, 40);
@@ -2910,7 +2910,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn pending_material_and_local_deadlines_cannot_extend_on_retry_or_new_anchor() {
         for material_first in [false, true] {
             let (environment, clock) = bootstrap_environment(1010);

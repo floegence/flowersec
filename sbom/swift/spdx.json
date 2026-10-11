@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-swift",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-swift/b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-swift/898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4",
   "creationInfo": {
     "created": "2026-09-17T15:04:20Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651",
+      "comment": "Flowersec source inventory SHA-256: 898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -99,8 +99,8 @@
     },
     {
       "name": "swift-nio",
-      "SPDXID": "SPDXRef-Package-c0d4b20277ee969bbef6",
-      "versionInfo": "2.101.3",
+      "SPDXID": "SPDXRef-Package-0e36490fc5abd00c9d2f",
+      "versionInfo": "2.103.0",
       "downloadLocation": "https://github.com/apple/swift-nio.git",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -110,14 +110,14 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:swift/swift-nio@2.101.3"
+          "referenceLocator": "pkg:swift/swift-nio@2.103.0"
         }
       ]
     },
     {
       "name": "swift-nio-ssl",
-      "SPDXID": "SPDXRef-Package-0ffde91adf1f9a16bb0f",
-      "versionInfo": "2.37.2",
+      "SPDXID": "SPDXRef-Package-b9d96d6f3379df4d9bd4",
+      "versionInfo": "2.37.5",
       "downloadLocation": "https://github.com/apple/swift-nio-ssl.git",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -127,7 +127,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:swift/swift-nio-ssl@2.37.2"
+          "referenceLocator": "pkg:swift/swift-nio-ssl@2.37.5"
         }
       ]
     },
@@ -180,12 +180,12 @@
     {
       "spdxElementId": "SPDXRef-Package-c74ffd1baf2c5d9f3983",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-0ffde91adf1f9a16bb0f"
+      "relatedSpdxElement": "SPDXRef-Package-b9d96d6f3379df4d9bd4"
     },
     {
       "spdxElementId": "SPDXRef-Package-c74ffd1baf2c5d9f3983",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
+      "relatedSpdxElement": "SPDXRef-Package-0e36490fc5abd00c9d2f"
     },
     {
       "spdxElementId": "SPDXRef-Package-c74ffd1baf2c5d9f3983",
@@ -198,22 +198,22 @@
       "relatedSpdxElement": "SPDXRef-Package-1141aad31780b67cd845"
     },
     {
-      "spdxElementId": "SPDXRef-Package-0ffde91adf1f9a16bb0f",
+      "spdxElementId": "SPDXRef-Package-b9d96d6f3379df4d9bd4",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-c0d4b20277ee969bbef6"
+      "relatedSpdxElement": "SPDXRef-Package-0e36490fc5abd00c9d2f"
     },
     {
-      "spdxElementId": "SPDXRef-Package-c0d4b20277ee969bbef6",
+      "spdxElementId": "SPDXRef-Package-0e36490fc5abd00c9d2f",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-c733df779db813c17c27"
     },
     {
-      "spdxElementId": "SPDXRef-Package-c0d4b20277ee969bbef6",
+      "spdxElementId": "SPDXRef-Package-0e36490fc5abd00c9d2f",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-eb2ed1954ef203d42537"
     },
     {
-      "spdxElementId": "SPDXRef-Package-c0d4b20277ee969bbef6",
+      "spdxElementId": "SPDXRef-Package-0e36490fc5abd00c9d2f",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-9f49307d34bc574d280e"
     }

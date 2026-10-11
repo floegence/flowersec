@@ -251,6 +251,7 @@ fn ready_pair(mut client: Handshake, mut server: Handshake) -> (RecordEngine, Re
         server.into_records().unwrap(),
     )
 }
+#[cfg(unix)]
 #[test]
 fn real_credentials_random_noise_dual_ready_and_bidirectional_records() {
     for profile in [Profile::X25519, Profile::P256] {
@@ -335,6 +336,7 @@ fn ready_requires_both_independent_proof_and_actual_local_submission() {
     assert!(client.submit_ready(&mut reject).is_err());
     assert!(client.into_records().is_err());
 }
+#[cfg(unix)]
 #[test]
 fn pool_handshake_requires_original_commit_and_rechecks_it_at_ready() {
     let exchange = Exchange::new(Profile::X25519, ActivationSource::PreauthorizedPool);

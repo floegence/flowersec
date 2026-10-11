@@ -2246,6 +2246,7 @@ mod observation_tests {
         next
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn detached_late_ack_is_projected_before_next_journal_replaces_original() {
         let (_environment, _store, pool, original, handle) = detached_fixture();
@@ -2290,6 +2291,7 @@ mod observation_tests {
         pool.close();
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn detached_io_panic_still_projects_committed_ack_before_slot_release() {
         let (_environment, _store, pool, original, handle) = detached_fixture();
@@ -2309,6 +2311,7 @@ mod observation_tests {
         pool.close();
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn transient_detached_refresh_keeps_owner_open_without_erasing_known_facts() {
         let (_environment, store, pool, original, handle) = detached_fixture();
@@ -2347,6 +2350,7 @@ mod observation_tests {
         pool.close();
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn recovered_transient_refresh_projects_terminal_before_new_intent() {
         let (_environment, store, pool, original, handle) = detached_fixture();
@@ -2376,6 +2380,7 @@ mod observation_tests {
         pool.close();
     }
 
+    #[cfg(unix)]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn panicking_detached_refresh_seals_owner_before_slot_release() {
         let (_environment, _store, pool, original, handle) = detached_fixture();

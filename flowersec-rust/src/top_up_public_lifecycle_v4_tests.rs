@@ -265,6 +265,7 @@ async fn entered(gate: &Semaphore) {
         .forget();
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn public_top_up_installs_once_then_late_ack_finishes_original_pending_handle() {
     let test = TestPool::new(None, Duration::from_millis(150));
@@ -357,6 +358,7 @@ async fn public_top_up_installs_once_then_late_ack_finishes_original_pending_han
     assert!(material_source.is_closed());
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn public_top_up_observer_cancel_keeps_one_original_proof_and_durable_terminal() {
     let test = TestPool::new(
@@ -403,6 +405,7 @@ async fn public_top_up_observer_cancel_keeps_one_original_proof_and_durable_term
     test.close().await;
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn public_top_up_recovery_is_finite_and_close_waits_for_original_provider() {
     let test = TestPool::new(
@@ -448,6 +451,7 @@ async fn public_top_up_recovery_is_finite_and_close_waits_for_original_provider(
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn public_top_up_rejects_invalid_authority_and_foreign_observation_without_control_io() {
     let test = TestPool::new(

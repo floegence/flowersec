@@ -183,7 +183,7 @@ async function runNativeIntegration(repositoryRoot, title, signal) {
   let resultDirectory;
   let resultFile;
   if (title !== undefined) {
-    arguments_.push("-t", `(^|\\s)${escapeRegex(title)}$`, "--reporter=json");
+    arguments_.push("-t", escapeRegex(vitestFilterTitle(title)), "--reporter=json");
     resultDirectory = await mkdtemp(path.join(repositoryRoot, ".flowersec", "native-integration-result-"));
     resultFile = path.join(resultDirectory, "result.json");
     arguments_.push("--outputFile", resultFile);
@@ -247,7 +247,7 @@ async function runCoverageTitle(repositoryRoot, file, title, shard, config, sign
   const resultFile = path.join(shard, "test-result.json");
   try {
     await runVitestWithNativeAddon(repositoryRoot, [
-      "run", file, "-t", `(^|\\s)${escapeRegex(title)}$`, "--config", config,
+      "run", file, "-t", escapeRegex(vitestFilterTitle(title)), "--config", config,
       "--coverage", "--coverage.reportsDirectory", shard, "--coverage.reporter", "json",
       "--reporter=default", "--reporter=json", "--outputFile", resultFile,
     ], signal);
@@ -450,14 +450,17 @@ export function validateSuccessfulResult(result, label, expectedTitle) {
   if (expectedTitle !== undefined) {
     const executed = assertions.filter(assertion => assertion.status === "passed" || assertion.status === "failed");
     // Vitest's fullName includes suite ancestors; title is the exact leaf name.
-    // Accept either explicit name while still requiring one executed test.
-    const matching = assertions.filter(assertion => assertion.status === "passed"
-      && (assertion.fullName === expectedTitle || assertion.title === expectedTitle));
-    if (executed.length !== 1 || matching.length !== 1) {
-      throw new Error(`${label} did not execute exactly one passing test: ${JSON.stringify({
+    // Require one ordinary test or all parameterized variants listed in the
+    // report. The template alone cannot prove variants absent from the report.
+    const matching = assertions.filter(assertion =>
+      vitestTitleMatches(assertion.fullName, expectedTitle) || vitestTitleMatches(assertion.title, expectedTitle));
+    const parameterized = vitestLeafTitle(expectedTitle).includes("%s");
+    if (executed.length === 0 || (!parameterized && executed.length !== 1) || matching.length !== executed.length
+        || matching.some(assertion => assertion.status !== "passed")) {
+      throw new Error(`${label} did not execute ${parameterized ? "all reported parameterized variants" : "exactly one passing test"}: ${JSON.stringify({
         title: expectedTitle,
         executed: executed.map(assertion => ({ fullName: assertion.fullName, status: assertion.status })),
-        matching: matching.map(assertion => assertion.fullName),
+        matching: matching.map(assertion => ({ fullName: assertion.fullName, status: assertion.status })),
       })}`);
     }
   }
@@ -508,9 +511,8 @@ async function validateUnitCoverage(unitShard, resultFile) {
 
 async function mergeCoverage(repositoryRoot, coverageFiles, peerCoverage) {
   const requireFromTS = createRequire(path.join(repositoryRoot, "flowersec-ts", "package.json"));
-  const { createCoverageMap } = requireFromTS("istanbul-lib-coverage");
-  const libReport = requireFromTS("istanbul-lib-report");
-  const reports = requireFromTS("istanbul-reports");
+  const { createCoverageMap } = requireFromTS("@vitest/istanbul-lib-coverage");
+  const libReport = requireFromTS("@vitest/istanbul-lib-report");
   if (coverageFiles.length === 0) throw new Error("coverage shards produced no coverage-final.json");
   const coverageMap = createCoverageMap({});
   for (const file of coverageFiles) coverageMap.merge(await readCoverageFile(file));
@@ -519,7 +521,7 @@ async function mergeCoverage(repositoryRoot, coverageFiles, peerCoverage) {
   await rm(outputDirectory, { recursive: true, force: true });
   await mkdir(outputDirectory, { recursive: true });
   const context = libReport.createContext({ dir: outputDirectory, coverageMap, projectRoot: path.join(repositoryRoot, "flowersec-ts") });
-  for (const reporter of ["text-summary", "json-summary", "json"]) reports.create(reporter).execute(context);
+  for (const reporter of ["text-summary", "json-summary", "json"]) libReport.create(reporter).execute(context);
   const originalConfig = await import(`${pathToFileURL(path.join(repositoryRoot, "flowersec-ts", "vitest.config.ts")).href}?coverage-merge=${Date.now()}`);
   const thresholds = originalConfig.default?.test?.coverage?.thresholds;
   if (thresholds === undefined || typeof thresholds !== "object") throw new Error("vitest coverage thresholds are missing");
@@ -558,6 +560,25 @@ async function runWithNativeAddon(repositoryRoot, runner, arguments_, signal, in
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function vitestLeafTitle(title) {
+  const separator = " > ";
+  const index = title.lastIndexOf(separator);
+  return index === -1 ? title : title.slice(index + separator.length);
+}
+
+function vitestFilterTitle(title) {
+  const leaf = vitestLeafTitle(title);
+  if (!leaf.includes("%s")) return leaf;
+  return leaf.split("%s").map(part => part.trim()).sort((left, right) => right.length - left.length)[0] ?? leaf;
+}
+
+function vitestTitleMatches(actual, expected) {
+  const leaf = vitestLeafTitle(expected);
+  if (!leaf.includes("%s")) return actual === expected || actual === leaf || actual === leaf.replaceAll(" > ", " ");
+  const pattern = new RegExp(`^${leaf.split("%s").map(escapeRegex).join(".+?")}$`);
+  return pattern.test(actual);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

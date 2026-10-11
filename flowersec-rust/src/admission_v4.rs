@@ -643,6 +643,7 @@ mod tests {
             StoreFixture::with_authority(f, Some(name)),
         )
     }
+    #[cfg(unix)]
     #[test]
     fn same_parent_same_record_and_restart_never_adopt_original_admission() {
         let f = fixture();
@@ -677,6 +678,7 @@ mod tests {
         );
         reopened.close();
     }
+    #[cfg(unix)]
     #[test]
     fn current_admission_and_winner_reject_changed_original_projections() {
         for winner in [false, true] {
@@ -712,6 +714,7 @@ mod tests {
             assert_eq!(fs::read(&target.backing.inner.path).unwrap(), before);
         }
     }
+    #[cfg(unix)]
     #[test]
     fn winner_is_shared_before_different_service_admission() {
         let f = fixture();
@@ -739,6 +742,7 @@ mod tests {
             0
         );
     }
+    #[cfg(unix)]
     #[test]
     fn cancel_before_commit_does_not_claim_parent_or_admission() {
         let f = fixture();
@@ -762,6 +766,7 @@ mod tests {
             0
         );
     }
+    #[cfg(unix)]
     #[test]
     fn late_cancellation_after_admitted_commit_preserves_durable_consumption() {
         let f = fixture();
@@ -792,6 +797,7 @@ mod tests {
             PoolStoreFailure::AdmissionConflict
         );
     }
+    #[cfg(unix)]
     #[test]
     fn tampered_admission_version_cannot_reopen_as_unused() {
         let f = fixture();

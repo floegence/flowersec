@@ -301,8 +301,7 @@ impl SQLitePoolBacking {
         limits: SQLitePoolLimits,
     ) -> Result<Self> {
         limits.check()?;
-        #[cfg(not(unix))]
-        {
+        if !cfg!(unix) {
             return Err(fail(PoolStoreFailure::Configuration));
         }
         if !path.is_absolute() || path.as_os_str().len() > 4096 || path.file_name().is_none() {

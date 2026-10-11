@@ -479,6 +479,7 @@ impl Running {
         );
     }
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_callbacks_reject_before_cas_and_release_original_lease_after_panic() {
     for mode in [
@@ -517,6 +518,7 @@ async fn application_callbacks_reject_before_cas_and_release_original_lease_afte
         );
     }
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_late_authorization_is_cleaned_without_cas_or_session_publication() {
     let mut running = Running::new(Mode::HoldAuthorization).await;
@@ -543,6 +545,7 @@ async fn application_late_authorization_is_cleaned_without_cas_or_session_public
     assert!(!callbacks.releases.lock().unwrap()[0].published);
     assert!(!callbacks.events.lock().unwrap().contains(&"session"));
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_lease_registered_after_cancellation_is_closed_while_authorizer_still_runs() {
     let mut running = Running::new(Mode::ReserveAfterCancellation).await;
@@ -570,6 +573,7 @@ async fn application_lease_registered_after_cancellation_is_closed_while_authori
     assert_eq!(running.local.admission_rows(), 0);
     assert_eq!(callbacks.lease.closes.load(Ordering::Acquire), 1);
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_request_deadline_cancels_original_callback_without_discarding_its_tail() {
     let mut running = Running::new(Mode::WaitRequestCancellation).await;
@@ -592,6 +596,7 @@ async fn application_request_deadline_cancels_original_callback_without_discardi
     assert_eq!(callbacks.releases.lock().unwrap().len(), 1);
     assert!(callbacks.releases.lock().unwrap()[0].cleanup.complete);
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_parent_cancellation_closes_idle_listener_without_a_new_socket() {
     let running = Running::new(Mode::Normal).await;
@@ -610,6 +615,7 @@ async fn application_parent_cancellation_closes_idle_listener_without_a_new_sock
             .is_err()
     );
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_publication_claim_survives_close_during_original_on_session() {
     let mut running = Running::new(Mode::HoldPublication).await;
@@ -646,6 +652,7 @@ async fn application_publication_claim_survives_close_during_original_on_session
     client.close();
     assert!(client.wait_cleanup().await.complete);
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_release_waits_for_real_provider_and_preserves_original_budget() {
     let mut running = Running::new(Mode::HoldRelease).await;
@@ -668,6 +675,7 @@ async fn application_release_waits_for_real_provider_and_preserves_original_budg
     client.close();
     assert!(client.wait_cleanup().await.complete);
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_unknown_release_never_retries_or_refunds_original_responsibility() {
     let mut running = Running::new(Mode::UnknownRelease).await;
@@ -691,6 +699,7 @@ async fn application_unknown_release_never_retries_or_refunds_original_responsib
     assert_eq!(running.environment.resource_usage(), held);
     assert!(!server.cleanup_status().complete && !running.handle.cleanup_status().complete);
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_registered_handler_plan_dispatches_real_io_and_drains_callbacks() {
     let mut running = Running::new(Mode::Registered).await;
@@ -741,6 +750,7 @@ async fn application_registered_handler_plan_dispatches_real_io_and_drains_callb
     client.close();
     assert!(client.wait_cleanup().await.complete);
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn connect_uses_serve_handler_plan_for_authenticated_inbound_streams() {
     let mut running = Running::new(Mode::Normal).await;
@@ -860,6 +870,7 @@ impl crate::MessageStreamHandler<Vec<u8>, String> for TypedRegisteredHandler {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn registered_typed_stream_dispatch_preserves_authorization_metadata_fin_and_cleanup() {
     let mut running = Running::new(Mode::Normal).await;
@@ -982,6 +993,7 @@ async fn registered_typed_stream_dispatch_preserves_authorization_metadata_fin_a
     assert!(server.cleanup_status().complete);
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn closed_connect_handler_plan_fails_before_pool_spend() {
     let mut running = Running::new(Mode::Normal).await;
@@ -1001,6 +1013,7 @@ async fn closed_connect_handler_plan_fails_before_pool_spend() {
     running.clean().await;
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn connect_manual_handler_plan_preserves_explicit_accept_and_cleanup() {
     let mut running = Running::new(Mode::Normal).await;
@@ -1044,6 +1057,7 @@ async fn connect_manual_handler_plan_preserves_explicit_accept_and_cleanup() {
     running.clean().await;
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn connect_close_retains_running_handler_until_callback_exit() {
     let mut running = Running::new(Mode::Normal).await;
@@ -1088,6 +1102,7 @@ async fn connect_close_retains_running_handler_until_callback_exit() {
     let _ = stream.close().await;
     running.clean().await;
 }
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn application_incomplete_lease_observation_reuses_owner_without_repeating_release() {
     let mut running = Running::new(Mode::Normal).await;

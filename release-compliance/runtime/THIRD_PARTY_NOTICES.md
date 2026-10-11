@@ -10,12 +10,12 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - github.com/google/uuid v1.6.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/google/uuid)
 - github.com/gorilla/websocket v1.5.3 (Declared: BSD-2-Clause; selected: BSD-2-Clause; source: https://github.com/gorilla/websocket)
 - github.com/quic-go/qpack v0.6.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/qpack)
-- github.com/quic-go/quic-go v0.62.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/quic-go)
+- github.com/quic-go/quic-go v0.63.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/quic-go)
 - github.com/quic-go/webtransport-go v0.13.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/webtransport-go)
 - github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/remyoudompheng/bigfft)
 - golang.org/x/crypto v0.57.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/crypto)
 - golang.org/x/net v0.60.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/net)
-- golang.org/x/sys v0.48.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/sys)
+- golang.org/x/sys v0.49.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/sys)
 - golang.org/x/text v0.42.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://golang.org/x/text)
 - modernc.org/libc v1.75.7 (Declared: BSD-3-Clause AND MIT AND BSD-2-Clause; selected: BSD-3-Clause AND MIT AND BSD-2-Clause; source: https://modernc.org/libc)
 - modernc.org/mathutil v1.7.1 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://modernc.org/mathutil)
@@ -221,7 +221,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-### github.com/quic-go/quic-go v0.62.0
+### github.com/quic-go/quic-go v0.63.0
 
 #### LICENSE
 
@@ -405,7 +405,7 @@ infringement, or inducement of patent infringement, then any patent
 rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
-### golang.org/x/sys v0.48.0
+### golang.org/x/sys v0.49.0
 
 #### LICENSE
 

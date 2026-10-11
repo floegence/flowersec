@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:1d4e8635-a1e5-500a-8c7d-b8c176738211",
+  "serialNumber": "urn:uuid:cd92f7a5-796a-5c98-8cc2-8c68428b5e99",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651"
+        "value": "898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4"
       }
     ]
   },
@@ -694,9 +694,9 @@
     {
       "type": "library",
       "name": "@types/node",
-      "version": "26.4.0",
-      "purl": "pkg:npm/%40types/node@26.4.0",
-      "bom-ref": "pkg:npm/%40types/node@26.4.0",
+      "version": "26.6.3",
+      "purl": "pkg:npm/%40types/node@26.6.3",
+      "bom-ref": "pkg:npm/%40types/node@26.6.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -705,7 +705,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@types/node/-/node-26.4.0.tgz"
+          "url": "https://registry.npmjs.org/@types/node/-/node-26.6.3.tgz"
         }
       ],
       "properties": [
@@ -918,9 +918,9 @@
     {
       "type": "library",
       "name": "undici-types",
-      "version": "8.3.0",
-      "purl": "pkg:npm/undici-types@8.3.0",
-      "bom-ref": "pkg:npm/undici-types@8.3.0",
+      "version": "8.9.0",
+      "purl": "pkg:npm/undici-types@8.9.0",
+      "bom-ref": "pkg:npm/undici-types@8.9.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -929,7 +929,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz"
+          "url": "https://registry.npmjs.org/undici-types/-/undici-types-8.9.0.tgz"
         }
       ],
       "properties": [
@@ -980,7 +980,7 @@
         "pkg:npm/%40noble/ciphers@2.4.0",
         "pkg:npm/%40noble/curves@2.4.0",
         "pkg:npm/%40noble/hashes@2.4.0",
-        "pkg:npm/%40types/node@26.4.0",
+        "pkg:npm/%40types/node@26.6.3",
         "pkg:npm/%40types/ws@8.18.1",
         "pkg:npm/brotli-dec-wasm@2.3.2",
         "pkg:npm/tough-cookie@6.0.2",
@@ -1125,15 +1125,15 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40types/node@26.4.0",
+      "ref": "pkg:npm/%40types/node@26.6.3",
       "dependsOn": [
-        "pkg:npm/undici-types@8.3.0"
+        "pkg:npm/undici-types@8.9.0"
       ]
     },
     {
       "ref": "pkg:npm/%40types/ws@8.18.1",
       "dependsOn": [
-        "pkg:npm/%40types/node@26.4.0"
+        "pkg:npm/%40types/node@26.6.3"
       ]
     },
     {
@@ -1171,7 +1171,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/undici-types@8.3.0",
+      "ref": "pkg:npm/undici-types@8.9.0",
       "dependsOn": []
     },
     {

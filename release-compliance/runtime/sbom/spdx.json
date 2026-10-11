@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-runtime",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-runtime/b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-runtime/898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4",
   "creationInfo": {
     "created": "2026-09-17T15:04:20Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651",
+      "comment": "Flowersec source inventory SHA-256: 898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -150,8 +150,8 @@
     },
     {
       "name": "github.com/quic-go/quic-go",
-      "SPDXID": "SPDXRef-Package-47cb9046c82be0daff05",
-      "versionInfo": "v0.62.0",
+      "SPDXID": "SPDXRef-Package-99228797af464ac74e78",
+      "versionInfo": "v0.63.0",
       "downloadLocation": "https://github.com/quic-go/quic-go",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -161,7 +161,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:golang/github.com/quic-go/quic-go@v0.62.0"
+          "referenceLocator": "pkg:golang/github.com/quic-go/quic-go@v0.63.0"
         }
       ]
     },
@@ -235,8 +235,8 @@
     },
     {
       "name": "golang.org/x/sys",
-      "SPDXID": "SPDXRef-Package-387d84bec26bca6f6632",
-      "versionInfo": "v0.48.0",
+      "SPDXID": "SPDXRef-Package-c1334d3e574ac11c14a4",
+      "versionInfo": "v0.49.0",
       "downloadLocation": "https://golang.org/x/sys",
       "filesAnalyzed": false,
       "licenseConcluded": "BSD-3-Clause",
@@ -246,7 +246,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:golang/golang.org/x/sys@v0.48.0"
+          "referenceLocator": "pkg:golang/golang.org/x/sys@v0.49.0"
         }
       ]
     },
@@ -365,7 +365,7 @@
     {
       "spdxElementId": "SPDXRef-Package-2ac6c6707152578203f4",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-47cb9046c82be0daff05"
+      "relatedSpdxElement": "SPDXRef-Package-99228797af464ac74e78"
     },
     {
       "spdxElementId": "SPDXRef-Package-2ac6c6707152578203f4",
@@ -385,7 +385,7 @@
     {
       "spdxElementId": "SPDXRef-Package-2ac6c6707152578203f4",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-387d84bec26bca6f6632"
+      "relatedSpdxElement": "SPDXRef-Package-c1334d3e574ac11c14a4"
     },
     {
       "spdxElementId": "SPDXRef-Package-2ac6c6707152578203f4",
@@ -403,24 +403,24 @@
       "relatedSpdxElement": "SPDXRef-Package-e4985560df140203b2c6"
     },
     {
-      "spdxElementId": "SPDXRef-Package-47cb9046c82be0daff05",
+      "spdxElementId": "SPDXRef-Package-99228797af464ac74e78",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-27e2d4651628d1d8bff5"
     },
     {
-      "spdxElementId": "SPDXRef-Package-47cb9046c82be0daff05",
+      "spdxElementId": "SPDXRef-Package-99228797af464ac74e78",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-b6c88095bb61bf705109"
     },
     {
-      "spdxElementId": "SPDXRef-Package-47cb9046c82be0daff05",
+      "spdxElementId": "SPDXRef-Package-99228797af464ac74e78",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-e4985560df140203b2c6"
     },
     {
-      "spdxElementId": "SPDXRef-Package-47cb9046c82be0daff05",
+      "spdxElementId": "SPDXRef-Package-99228797af464ac74e78",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-387d84bec26bca6f6632"
+      "relatedSpdxElement": "SPDXRef-Package-c1334d3e574ac11c14a4"
     },
     {
       "spdxElementId": "SPDXRef-Package-5d9220225f5f24a45259",
@@ -430,17 +430,17 @@
     {
       "spdxElementId": "SPDXRef-Package-5d9220225f5f24a45259",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-47cb9046c82be0daff05"
+      "relatedSpdxElement": "SPDXRef-Package-99228797af464ac74e78"
     },
     {
       "spdxElementId": "SPDXRef-Package-b6c88095bb61bf705109",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-387d84bec26bca6f6632"
+      "relatedSpdxElement": "SPDXRef-Package-c1334d3e574ac11c14a4"
     },
     {
       "spdxElementId": "SPDXRef-Package-e4985560df140203b2c6",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-387d84bec26bca6f6632"
+      "relatedSpdxElement": "SPDXRef-Package-c1334d3e574ac11c14a4"
     },
     {
       "spdxElementId": "SPDXRef-Package-e4985560df140203b2c6",
@@ -460,7 +460,7 @@
     {
       "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-387d84bec26bca6f6632"
+      "relatedSpdxElement": "SPDXRef-Package-c1334d3e574ac11c14a4"
     },
     {
       "spdxElementId": "SPDXRef-Package-d2117bf392ec8888e1b7",
@@ -480,7 +480,7 @@
     {
       "spdxElementId": "SPDXRef-Package-093ceeb28565fbe3268c",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-387d84bec26bca6f6632"
+      "relatedSpdxElement": "SPDXRef-Package-c1334d3e574ac11c14a4"
     },
     {
       "spdxElementId": "SPDXRef-Package-50ca97c55861d19d0a84",

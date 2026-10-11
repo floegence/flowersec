@@ -23,7 +23,7 @@ use crate::quic_proto::{RandomConnectionIdGenerator, crypto::rustls::QuicClientC
 use crate::quic_provider::runtime::TokioRuntime;
 use crate::quic_provider::{Duration, Instant};
 use bytes::Bytes;
-use rand::{RngCore, SeedableRng, rngs::StdRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustls::{
     RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},

@@ -106,6 +106,11 @@ impl SQLiteOperationReferenceStore {
         {
             return Err(failure(ServiceFailure::ConfigurationCapacity));
         }
+        // File identity and private-permission checks require the Unix provider.
+        // Refuse before allocating persistent backing or creating a file.
+        if !cfg!(unix) {
+            return Err(failure(ServiceFailure::ConfigurationCapacity));
+        }
         let runtime =
             Handle::try_current().map_err(|_| failure(ServiceFailure::ConfigurationCapacity))?;
         let parent = options

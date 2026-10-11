@@ -90,6 +90,9 @@ jobs:
       - name: Validate runtime toolchains
         run: node scripts/toolchains.mjs --check-runtime go node rust swift
 
+      - name: Build native addon before concurrent test lanes
+        run: cargo build --manifest-path flowersec-node-native/Cargo.toml --locked
+
       - name: Run precommit quality gate
         run: make precommit
 
@@ -111,6 +114,20 @@ jobs:
 
       - name: Validate minimum runtime
         run: node scripts/toolchains.mjs --check-runtime node-minimum
+
+      - name: Setup Go for native interoperability tests
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: flowersec-go/go.mod
+          cache-dependency-path: flowersec-go/go.sum
+
+      - name: Setup Rust for native interoperability tests
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.98.0
+
+      - name: Build native addon before compatibility tests
+        run: cargo build --manifest-path flowersec-node-native/Cargo.toml --locked
 
       - name: Run TypeScript language lane
         run: make ts-ci ts-build ts-test-short

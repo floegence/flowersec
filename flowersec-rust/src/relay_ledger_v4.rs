@@ -879,6 +879,7 @@ mod tests {
             None,
         )
     }
+    #[cfg(unix)]
     #[test]
     fn relay_format_refusals_preserve_the_original_manifest_and_epoch() {
         for future in [false, true] {
@@ -989,6 +990,7 @@ mod tests {
             cancellation: CancellationToken::new(),
         }
     }
+    #[cfg(unix)]
     #[test]
     fn registration_does_not_choose_winner_or_claim_and_both_original_legs_are_once_only() {
         let f = fixture();
@@ -1032,6 +1034,7 @@ mod tests {
             PoolStoreFailure::RelayPublicationConflict
         );
     }
+    #[cfg(unix)]
     #[test]
     fn registered_alternative_remains_public_only_and_cannot_create_a_second_parent_root() {
         let f = fixture();
@@ -1058,6 +1061,7 @@ mod tests {
         assert_eq!(h.count("relay_claim"), 1);
         assert_eq!(h.parent.winner_count(), 1);
     }
+    #[cfg(unix)]
     #[test]
     fn reopen_fences_original_handles_and_registration_rows_never_recreate_them() {
         let f = fixture();
@@ -1096,6 +1100,7 @@ mod tests {
         drop(state);
         reopened.close();
     }
+    #[cfg(unix)]
     #[test]
     fn current_relay_history_refuses_public_record_and_claim_mismatches() {
         for claim in [false, true] {
@@ -1164,6 +1169,7 @@ mod tests {
             );
         }
     }
+    #[cfg(unix)]
     #[test]
     fn no_local_claim_capability_after_capacity_failure_or_cancel() {
         let f = fixture();
@@ -1187,6 +1193,7 @@ mod tests {
                 .is_err()
         );
     }
+    #[cfg(unix)]
     #[test]
     fn post_commit_continuity_failure_keeps_publication_tombstone_without_returning_handle() {
         let f = fixture();
@@ -1218,6 +1225,7 @@ mod tests {
         );
         reopened.close();
     }
+    #[cfg(unix)]
     #[test]
     fn claim_commit_without_original_continuity_receipt_never_returns_forwarding_right() {
         let f = fixture();

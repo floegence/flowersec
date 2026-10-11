@@ -254,7 +254,7 @@ function endpoint(role: "client" | "server", transport: MemoryTransport, profile
     close: async () => { await applicationReady.catch(() => undefined); await environment.close(); expect((await environment.waitCleanup()).status).toBe("complete"); expect(root.snapshot().reservations).toBe(0); }
   };
 }
-async function controllerNotificationFixture(count = 1, holdDecode?: (value: string) => Promise<void>) {
+async function controllerNotificationFixture(count = 1, holdDecode?: (value: string) => Promise<void>, originalTransportCloseTail?: Promise<void>) {
   const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
   const decoded: string[] = [];
   const schema = { schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 };
@@ -278,6 +278,10 @@ async function controllerNotificationFixture(count = 1, holdDecode?: (value: str
   const origin = performance.now();
   for (let index = 0; index < count; index++) {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    if (index === 0 && originalTransportCloseTail !== undefined) {
+      const close = a.close.bind(a);
+      a.close = async () => { await close(); await originalTransportCloseTail; };
+    }
     const config = { sessions: 4, connectionSeed: 100 + index, clockOriginMS: origin };
     const client = endpoint("client", a, profile, "live_authority", 10000n, () => ({ ...common,
       notificationMethods: [{ namespace: definition.namespace, method, contract, permission: "allowed" }] }),
@@ -696,11 +700,12 @@ describe("original v4 reliable Session assembly", () => {
   }, 15000);
   for (const phase of ["current", "retained"] as const) for (const stage of ["decoder", "project"] as const)
     it(`projects original ${phase} Controller source Drain after an entered ${stage}`, async () => {
-      let release!: () => void, entered!: () => void;
+      let release!: () => void, entered!: () => void, releaseClose!: () => void;
       const held = new Promise<void>(resolve => { release = resolve; });
       const entering = new Promise<void>(resolve => { entered = resolve; });
+      const closeTail = new Promise<void>(resolve => { releaseClose = resolve; });
       const block = async (value: string): Promise<void> => { if (value === "held") { entered(); await held; } };
-      const fixture = await controllerNotificationFixture(phase === "retained" ? 2 : 1, stage === "decoder" ? block : undefined);
+      const fixture = await controllerNotificationFixture(phase === "retained" ? 2 : 1, stage === "decoder" ? block : undefined, closeTail);
       const values: { value: string; generation: bigint; phase: string }[] = [];
       const token = fixture.controller.Notifications.Subscribe(fixture.method, (_context, event) => {
         if (event.kind === "notification") values.push({ value: event.value, generation: event.sourceGeneration, phase: event.sourcePhase });
@@ -722,8 +727,18 @@ describe("original v4 reliable Session assembly", () => {
         await expect.poll(() => values.find(value => value.value === "held")).toEqual({ value: "held", generation: 1n, phase: "draining" });
         await expect.poll(() => token.observationStatus().callbackActive).toBe(false);
         token.close(); expect(await token.waitClosed()).toMatchObject({ wait: "complete", cleanupStatus: { status: "complete" } });
-        await original.close(); expect((await original.waitCleanup()).status).toBe("complete");
-      } finally { release(); token.close(); await token.waitClosed(); await fixture.close(); }
+        // Close is a bounded observation, not proof that the provider has
+        // exited. Hold its real tail through the unchanged cleanup window.
+        expect(await original.close()).toMatchObject({ cleanup_status: { status: "cleanup_incomplete", core_cleanup: "pending" } });
+        expect((await original.waitCleanup()).status).toBe("cleanup_incomplete");
+        expect(original.cleanupStatus().pending_callbacks).toBeGreaterThan(0n);
+        const heldReservations = fixture.environment.resources.root.snapshot().reservations;
+        expect(heldReservations).toBeGreaterThan(0);
+        releaseClose();
+        await expect.poll(() => original.cleanupStatus()).toEqual({ status: "complete", core_cleanup: "complete", pending_callbacks: 0n });
+        expect((await original.waitCleanup()).status).toBe("complete");
+        expect(fixture.environment.resources.root.snapshot().reservations).toBeLessThan(heldReservations);
+      } finally { release(); releaseClose(); token.close(); await token.waitClosed(); await fixture.close(); }
     });
   it("bounds Controller roots and passive waits without a current Session", async () => {
     const fixture = await controllerNotificationFixture();

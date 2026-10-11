@@ -404,11 +404,13 @@ async fn controller_with_held_tls_tail(cancel_parent: bool) {
     assert!(environment.close().await.unwrap().complete);
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancellation_preserves_original_controller_cleanup_incomplete() {
     controller_with_held_tls_tail(true).await;
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn incomplete_native_connect_prevents_controller_retry_and_replacement() {
     controller_with_held_tls_tail(false).await;

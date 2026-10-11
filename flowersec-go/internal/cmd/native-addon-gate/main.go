@@ -184,7 +184,7 @@ func discoverIntegrationTests(ctx context.Context, root, node string, files []st
 		if _, ok := expected[matched]; !ok {
 			continue
 		}
-		name := strings.TrimSpace(strings.ReplaceAll(listedTest.Name, " > ", " "))
+		name := strings.TrimSpace(listedTest.Name)
 		if name == "" {
 			return nil, errors.New("vitest list integration tests returned an empty test name")
 		}

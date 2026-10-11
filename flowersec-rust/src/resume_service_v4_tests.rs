@@ -119,10 +119,12 @@ mod registered_resume_regressions {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn registered_resume_transfers_one_active_slot_and_preserves_raw_target_after_result_close() {
         resume_after_result_close(false).await;
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn registered_resume_keeps_original_deadline_after_result_close() {
         resume_after_result_close(true).await;
@@ -240,6 +242,7 @@ mod registered_resume_regressions {
         client_session.close(); server_session.close(); c_task.abort(); s_task.abort();
         drop(service); let _ = fixture.environment.close().await; drop(fixture); drop(directory);
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn lost_confirmation_reissuance_is_idempotent_and_refuses_entry_of_a_consumed_generation() {
         let (fixture, c, s) = crate::crypto_v4::tests::record_pair_for_recovery(Profile::X25519);
@@ -480,10 +483,12 @@ mod registered_resume_regressions {
             .map(|row| codec.import(&row.unwrap()).unwrap()).collect::<Vec<_>>();
         assert!(references.contains(reference), "the original canonical reference must be committed before Start is returned");
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn public_streaming_resume_and_save_preserves_original_items_reference_and_target() {
         saved_streaming_resume(false).await;
     }
+    #[cfg(unix)]
     #[tokio::test]
     async fn public_async_streaming_save_preserves_commit_after_observer_cancellation() {
         saved_streaming_resume(true).await;

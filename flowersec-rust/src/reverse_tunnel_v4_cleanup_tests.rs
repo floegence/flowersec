@@ -139,9 +139,9 @@ async fn native_original_accept_retires_autonomously(cancel: bool) {
         .unwrap()
         .unwrap();
     if cancel {
-        assert!(matches!(result, Err(ConnectError::Canceled)));
+        assert!(matches!(result, Err(ConnectError::Canceled)), "{result:?}");
     } else {
-        assert!(matches!(result, Err(ConnectError::Deadline)));
+        assert!(matches!(result, Err(ConnectError::Deadline)), "{result:?}");
     }
     let first_close = cleanup.start();
     diagnostic.fail(
@@ -185,4 +185,59 @@ async fn canceled_native_original_accept_returns_and_retires_autonomously() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn expired_native_original_accept_returns_and_retires_autonomously() {
     native_original_accept_retires_autonomously(false).await;
+}
+
+fn poll_preparation_pending<T>(completion: &mut tokio::sync::oneshot::Receiver<ConnectResult<T>>) {
+    use std::future::Future;
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(
+        std::pin::Pin::new(completion)
+            .poll(&mut context)
+            .is_pending()
+    );
+}
+
+#[test]
+fn published_deadline_survives_worker_cancellation_between_observer_polls() {
+    let caller = CancellationToken::new();
+    let operation_cancel = caller.child_token();
+    let (sender, mut completion) = tokio::sync::oneshot::channel();
+    poll_preparation_pending(&mut completion);
+    sender.send(Err::<(), _>(ConnectError::Deadline)).unwrap();
+    operation_cancel.cancel();
+    let result = resolve_original_preparation_cancellation(&mut completion, &caller);
+    assert!(matches!(result, Err(ConnectError::Deadline)), "{result:?}");
+}
+
+#[test]
+fn caller_withdrawal_wins_over_published_failure() {
+    let caller = CancellationToken::new();
+    let (sender, mut completion) = tokio::sync::oneshot::channel();
+    poll_preparation_pending(&mut completion);
+    sender.send(Err::<(), _>(ConnectError::Deadline)).unwrap();
+    caller.cancel();
+    let result = resolve_original_preparation_cancellation(&mut completion, &caller);
+    assert!(matches!(result, Err(ConnectError::Canceled)), "{result:?}");
+}
+
+#[test]
+fn published_success_retires_after_withdrawal() {
+    #[derive(Debug)]
+    struct PreparationGuard(Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for PreparationGuard {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    let caller = CancellationToken::new();
+    let operation_cancel = caller.child_token();
+    let retired = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (sender, mut completion) = tokio::sync::oneshot::channel();
+    poll_preparation_pending(&mut completion);
+    sender.send(Ok(PreparationGuard(retired.clone()))).unwrap();
+    operation_cancel.cancel();
+    let result = resolve_original_preparation_cancellation(&mut completion, &caller);
+    assert!(matches!(result, Err(ConnectError::Canceled)), "{result:?}");
+    assert_eq!(retired.load(Ordering::Acquire), 1);
 }

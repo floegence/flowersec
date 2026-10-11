@@ -3319,6 +3319,8 @@ mod tests {
     #[tokio::test]
     async fn http_proxy_delivers_native_request_and_response_trailers() {
         for body in ["", "hello"] {
+            // Trailer framing uses this exact listener; DNS and address-family
+            // fallback have separate network policy coverage.
             let listener = TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("bind upstream");
@@ -3341,23 +3343,14 @@ mod tests {
                     text.starts_with("POST //fixed/path? HTTP/1.1\r\n"),
                     "{text}"
                 );
-                assert!(
-                    text.contains(&format!("host: localhost:{}\r\n", address.port())),
-                    "{text}"
-                );
+                assert!(text.contains(&format!("host: {address}\r\n")), "{text}");
                 assert!(text.contains("transfer-encoding: chunked\r\n"), "{text}");
                 assert!(text.contains("trailer: x-check\r\n"), "{text}");
                 assert!(text.contains("x-check: one\r\nx-check: two\r\n"), "{text}");
                 assert!(!text.contains("content-length:"), "{text}");
                 socket.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nTrailer: X-Check\r\nConnection: close\r\n\r\n2\r\nok\r\n0\r\nX-Check: first\r\nX-Check: last\r\n\r\n").await.expect("response");
             });
-            let mut options = test_options(
-                format!("http://localhost:{}", address.port())
-                    .parse()
-                    .expect("URL"),
-            );
-            options.allowed_upstream_hosts = vec!["localhost".into()];
-            options.allowed_upstream_addresses = vec!["127.0.0.1".into(), "::1".into()];
+            let mut options = test_options(format!("http://{address}").parse().expect("URL"));
             options.extra_request_headers.push("x-check".into());
             options.extra_response_headers.push("x-check".into());
             let server = ProxyServer::new(options).expect("proxy");
@@ -3375,7 +3368,12 @@ mod tests {
                 .await
                 .expect("proxy HTTP");
             let output = stream.output();
-            assert_eq!(response_meta(&output)["ok"], true);
+            assert_eq!(
+                response_meta(&output)["ok"],
+                true,
+                "{}",
+                response_meta(&output)
+            );
             upstream.await.expect("upstream task");
             let mut at = 4 + u32::from_be_bytes(output[..4].try_into().unwrap()) as usize;
             loop {

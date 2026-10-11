@@ -1,6 +1,6 @@
 use std::hash::Hasher;
 
-use rand::{Rng, RngCore};
+use rand::{Rng, RngExt};
 
 use crate::quic_proto::Duration;
 use crate::quic_proto::MAX_CID_SIZE;

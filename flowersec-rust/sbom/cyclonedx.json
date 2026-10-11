@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:512dfdb2-c596-51d2-838d-088baede06e8",
+  "serialNumber": "urn:uuid:18f0669c-d5fe-56a8-8e3e-fc2db3ef9de2",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651"
+        "value": "898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4"
       }
     ]
   },
@@ -2486,9 +2486,9 @@
     {
       "type": "library",
       "name": "hyper-util",
-      "version": "0.1.20",
-      "purl": "pkg:cargo/hyper-util@0.1.20",
-      "bom-ref": "pkg:cargo/hyper-util@0.1.20",
+      "version": "0.1.21",
+      "purl": "pkg:cargo/hyper-util@0.1.21",
+      "bom-ref": "pkg:cargo/hyper-util@0.1.21",
       "licenses": [
         {
           "expression": "MIT"
@@ -3018,9 +3018,9 @@
     {
       "type": "library",
       "name": "lru-slab",
-      "version": "0.1.2",
-      "purl": "pkg:cargo/lru-slab@0.1.2",
-      "bom-ref": "pkg:cargo/lru-slab@0.1.2",
+      "version": "0.1.3",
+      "purl": "pkg:cargo/lru-slab@0.1.3",
+      "bom-ref": "pkg:cargo/lru-slab@0.1.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -3717,34 +3717,6 @@
     },
     {
       "type": "library",
-      "name": "ppv-lite86",
-      "version": "0.2.21",
-      "purl": "pkg:cargo/ppv-lite86@0.2.21",
-      "bom-ref": "pkg:cargo/ppv-lite86@0.2.21",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/cryptocorrosion/cryptocorrosion"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "primefield",
       "version": "0.14.0",
       "purl": "pkg:cargo/primefield@0.14.0",
@@ -4054,65 +4026,9 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/rand@0.10.2",
-      "bom-ref": "pkg:cargo/rand@0.10.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rand",
-      "version": "0.9.3",
-      "purl": "pkg:cargo/rand@0.9.3",
-      "bom-ref": "pkg:cargo/rand@0.9.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rand_chacha",
-      "version": "0.9.0",
-      "purl": "pkg:cargo/rand_chacha@0.9.0",
-      "bom-ref": "pkg:cargo/rand_chacha@0.9.0",
+      "version": "0.10.3",
+      "purl": "pkg:cargo/rand@0.10.3",
+      "bom-ref": "pkg:cargo/rand@0.10.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -4169,34 +4085,6 @@
       "version": "0.6.4",
       "purl": "pkg:cargo/rand_core@0.6.4",
       "bom-ref": "pkg:cargo/rand_core@0.6.4",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rand_core",
-      "version": "0.9.5",
-      "purl": "pkg:cargo/rand_core@0.9.5",
-      "bom-ref": "pkg:cargo/rand_core@0.9.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -5202,9 +5090,9 @@
     {
       "type": "library",
       "name": "thiserror",
-      "version": "2.0.20",
-      "purl": "pkg:cargo/thiserror@2.0.20",
-      "bom-ref": "pkg:cargo/thiserror@2.0.20",
+      "version": "2.0.21",
+      "purl": "pkg:cargo/thiserror@2.0.21",
+      "bom-ref": "pkg:cargo/thiserror@2.0.21",
       "licenses": [
         {
           "expression": "MIT"
@@ -5230,9 +5118,9 @@
     {
       "type": "library",
       "name": "thiserror-impl",
-      "version": "2.0.20",
-      "purl": "pkg:cargo/thiserror-impl@2.0.20",
-      "bom-ref": "pkg:cargo/thiserror-impl@2.0.20",
+      "version": "2.0.21",
+      "purl": "pkg:cargo/thiserror-impl@2.0.21",
+      "bom-ref": "pkg:cargo/thiserror-impl@2.0.21",
       "licenses": [
         {
           "expression": "MIT"
@@ -5370,9 +5258,9 @@
     {
       "type": "library",
       "name": "tinyvec",
-      "version": "1.12.0",
-      "purl": "pkg:cargo/tinyvec@1.12.0",
-      "bom-ref": "pkg:cargo/tinyvec@1.12.0",
+      "version": "1.13.3",
+      "purl": "pkg:cargo/tinyvec@1.13.3",
+      "bom-ref": "pkg:cargo/tinyvec@1.13.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -5397,38 +5285,10 @@
     },
     {
       "type": "library",
-      "name": "tinyvec_macros",
-      "version": "0.1.1",
-      "purl": "pkg:cargo/tinyvec_macros@0.1.1",
-      "bom-ref": "pkg:cargo/tinyvec_macros@0.1.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/Soveu/tinyvec_macros"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0 OR Zlib"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "tokio",
-      "version": "1.53.1",
-      "purl": "pkg:cargo/tokio@1.53.1",
-      "bom-ref": "pkg:cargo/tokio@1.53.1",
+      "version": "1.53.2",
+      "purl": "pkg:cargo/tokio@1.53.2",
+      "bom-ref": "pkg:cargo/tokio@1.53.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -5482,9 +5342,9 @@
     {
       "type": "library",
       "name": "tokio-rustls",
-      "version": "0.26.4",
-      "purl": "pkg:cargo/tokio-rustls@0.26.4",
-      "bom-ref": "pkg:cargo/tokio-rustls@0.26.4",
+      "version": "0.26.6",
+      "purl": "pkg:cargo/tokio-rustls@0.26.6",
+      "bom-ref": "pkg:cargo/tokio-rustls@0.26.6",
       "licenses": [
         {
           "expression": "MIT"
@@ -5902,9 +5762,9 @@
     {
       "type": "library",
       "name": "url",
-      "version": "2.5.4",
-      "purl": "pkg:cargo/url@2.5.4",
-      "bom-ref": "pkg:cargo/url@2.5.4",
+      "version": "2.5.8",
+      "purl": "pkg:cargo/url@2.5.8",
+      "bom-ref": "pkg:cargo/url@2.5.8",
       "licenses": [
         {
           "expression": "MIT"
@@ -6629,62 +6489,6 @@
     },
     {
       "type": "library",
-      "name": "zerocopy",
-      "version": "0.8.56",
-      "purl": "pkg:cargo/zerocopy@0.8.56",
-      "bom-ref": "pkg:cargo/zerocopy@0.8.56",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "zerocopy-derive",
-      "version": "0.8.56",
-      "purl": "pkg:cargo/zerocopy-derive@0.8.56",
-      "bom-ref": "pkg:cargo/zerocopy-derive@0.8.56",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "zerofrom",
       "version": "0.1.8",
       "purl": "pkg:cargo/zerofrom@0.1.8",
@@ -6923,19 +6727,18 @@
         "pkg:cargo/hmac@0.13.0",
         "pkg:cargo/http-body-util@0.1.5",
         "pkg:cargo/http@1.5.0",
-        "pkg:cargo/hyper-util@0.1.20",
+        "pkg:cargo/hyper-util@0.1.21",
         "pkg:cargo/hyper@1.11.1",
         "pkg:cargo/idna@1.1.0",
         "pkg:cargo/idna_adapter@1.2.2",
         "pkg:cargo/idna_mapping@1.1.0",
-        "pkg:cargo/lru-slab@0.1.2",
+        "pkg:cargo/lru-slab@0.1.3",
         "pkg:cargo/p256@0.14.0",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/psl@2.1.238",
         "pkg:cargo/qpack@0.1.0",
         "pkg:cargo/quinn-udp@0.5.15",
-        "pkg:cargo/rand@0.10.2",
-        "pkg:cargo/rand@0.9.3",
+        "pkg:cargo/rand@0.10.3",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rusqlite@0.40.2",
         "pkg:cargo/rustc-hash@2.1.3",
@@ -6947,16 +6750,16 @@
         "pkg:cargo/snow@0.10.0",
         "pkg:cargo/socket2@0.6.5",
         "pkg:cargo/subtle@2.6.1",
-        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/thiserror@2.0.21",
         "pkg:cargo/time@0.3.55",
-        "pkg:cargo/tinyvec@1.12.0",
-        "pkg:cargo/tokio-rustls@0.26.4",
+        "pkg:cargo/tinyvec@1.13.3",
+        "pkg:cargo/tokio-rustls@0.26.6",
         "pkg:cargo/tokio-tungstenite@0.30.0",
         "pkg:cargo/tokio-util@0.7.19",
-        "pkg:cargo/tokio@1.53.1",
+        "pkg:cargo/tokio@1.53.2",
         "pkg:cargo/tracing@0.1.44",
         "pkg:cargo/unicode-normalization@0.1.25",
-        "pkg:cargo/url@2.5.4",
+        "pkg:cargo/url@2.5.8",
         "pkg:cargo/x25519-dalek@3.0.0",
         "pkg:cargo/x509-parser@0.18.1",
         "pkg:cargo/zeroize@1.9.0"
@@ -7004,7 +6807,7 @@
         "pkg:cargo/nom@7.1.3",
         "pkg:cargo/num-traits@0.2.19",
         "pkg:cargo/rusticata-macros@4.1.0",
-        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/thiserror@2.0.21",
         "pkg:cargo/time@0.3.55"
       ]
     },
@@ -7594,19 +7397,19 @@
         "pkg:cargo/itoa@1.0.18",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/smallvec@1.15.2",
-        "pkg:cargo/tokio@1.53.1",
+        "pkg:cargo/tokio@1.53.2",
         "pkg:cargo/want@0.3.1"
       ]
     },
     {
-      "ref": "pkg:cargo/hyper-util@0.1.20",
+      "ref": "pkg:cargo/hyper-util@0.1.21",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/http-body@1.1.0",
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/hyper@1.11.1",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tokio@1.53.1"
+        "pkg:cargo/tokio@1.53.2"
       ]
     },
     {
@@ -7735,7 +7538,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/lru-slab@0.1.2",
+      "ref": "pkg:cargo/lru-slab@0.1.3",
       "dependsOn": []
     },
     {
@@ -7882,12 +7685,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/ppv-lite86@0.2.21",
-      "dependsOn": [
-        "pkg:cargo/zerocopy@0.8.56"
-      ]
-    },
-    {
       "ref": "pkg:cargo/primefield@0.14.0",
       "dependsOn": [
         "pkg:cargo/crypto-bigint@0.7.5",
@@ -7944,7 +7741,7 @@
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/socket2@0.6.5",
-        "pkg:cargo/windows-sys@0.61.2"
+        "pkg:cargo/windows-sys@0.52.0"
       ]
     },
     {
@@ -7962,25 +7759,11 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/rand@0.10.2",
+      "ref": "pkg:cargo/rand@0.10.3",
       "dependsOn": [
         "pkg:cargo/chacha20@0.10.2",
         "pkg:cargo/getrandom@0.4.3",
         "pkg:cargo/rand_core@0.10.1"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/rand@0.9.3",
-      "dependsOn": [
-        "pkg:cargo/rand_chacha@0.9.0",
-        "pkg:cargo/rand_core@0.9.5"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/rand_chacha@0.9.0",
-      "dependsOn": [
-        "pkg:cargo/ppv-lite86@0.2.21",
-        "pkg:cargo/rand_core@0.9.5"
       ]
     },
     {
@@ -7991,12 +7774,6 @@
       "ref": "pkg:cargo/rand_core@0.6.4",
       "dependsOn": [
         "pkg:cargo/getrandom@0.2.17"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/rand_core@0.9.5",
-      "dependsOn": [
-        "pkg:cargo/getrandom@0.3.4"
       ]
     },
     {
@@ -8257,13 +8034,13 @@
       ]
     },
     {
-      "ref": "pkg:cargo/thiserror@2.0.20",
+      "ref": "pkg:cargo/thiserror@2.0.21",
       "dependsOn": [
-        "pkg:cargo/thiserror-impl@2.0.20"
+        "pkg:cargo/thiserror-impl@2.0.21"
       ]
     },
     {
-      "ref": "pkg:cargo/thiserror-impl@2.0.20",
+      "ref": "pkg:cargo/thiserror-impl@2.0.21",
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
@@ -8300,17 +8077,11 @@
       ]
     },
     {
-      "ref": "pkg:cargo/tinyvec@1.12.0",
-      "dependsOn": [
-        "pkg:cargo/tinyvec_macros@0.1.1"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/tinyvec_macros@0.1.1",
+      "ref": "pkg:cargo/tinyvec@1.13.3",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/tokio@1.53.1",
+      "ref": "pkg:cargo/tokio@1.53.2",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
         "pkg:cargo/libc@0.2.189",
@@ -8330,10 +8101,10 @@
       ]
     },
     {
-      "ref": "pkg:cargo/tokio-rustls@0.26.4",
+      "ref": "pkg:cargo/tokio-rustls@0.26.6",
       "dependsOn": [
         "pkg:cargo/rustls@0.23.45",
-        "pkg:cargo/tokio@1.53.1"
+        "pkg:cargo/tokio@1.53.2"
       ]
     },
     {
@@ -8341,7 +8112,7 @@
       "dependsOn": [
         "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/log@0.4.34",
-        "pkg:cargo/tokio@1.53.1",
+        "pkg:cargo/tokio@1.53.2",
         "pkg:cargo/tungstenite@0.30.0"
       ]
     },
@@ -8354,7 +8125,7 @@
         "pkg:cargo/futures-sink@0.3.34",
         "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tokio@1.53.1"
+        "pkg:cargo/tokio@1.53.2"
       ]
     },
     {
@@ -8391,9 +8162,9 @@
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/httparse@1.10.1",
         "pkg:cargo/log@0.4.34",
-        "pkg:cargo/rand@0.10.2",
+        "pkg:cargo/rand@0.10.3",
         "pkg:cargo/sha1@0.11.0",
-        "pkg:cargo/thiserror@2.0.20"
+        "pkg:cargo/thiserror@2.0.21"
       ]
     },
     {
@@ -8411,7 +8182,7 @@
     {
       "ref": "pkg:cargo/unicode-normalization@0.1.25",
       "dependsOn": [
-        "pkg:cargo/tinyvec@1.12.0"
+        "pkg:cargo/tinyvec@1.13.3"
       ]
     },
     {
@@ -8433,12 +8204,13 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/url@2.5.4",
+      "ref": "pkg:cargo/url@2.5.8",
       "dependsOn": [
         "pkg:cargo/form_urlencoded@1.2.2",
         "pkg:cargo/idna@1.1.0",
         "pkg:cargo/percent-encoding@2.3.2",
-        "pkg:cargo/serde@1.0.229"
+        "pkg:cargo/serde@1.0.229",
+        "pkg:cargo/serde_derive@1.0.229"
       ]
     },
     {
@@ -8566,7 +8338,7 @@
         "pkg:cargo/oid-registry@0.8.1",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rusticata-macros@4.1.0",
-        "pkg:cargo/thiserror@2.0.20",
+        "pkg:cargo/thiserror@2.0.21",
         "pkg:cargo/time@0.3.55"
       ]
     },
@@ -8585,20 +8357,6 @@
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/syn@2.0.119",
         "pkg:cargo/synstructure@0.13.2"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/zerocopy@0.8.56",
-      "dependsOn": [
-        "pkg:cargo/zerocopy-derive@0.8.56"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/zerocopy-derive@0.8.56",
-      "dependsOn": [
-        "pkg:cargo/proc-macro2@1.0.107",
-        "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
       ]
     },
     {

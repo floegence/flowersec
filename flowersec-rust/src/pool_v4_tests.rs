@@ -182,6 +182,33 @@ fn owner() -> PoolSpendOwner {
     )
     .unwrap()
 }
+#[cfg(not(unix))]
+#[test]
+fn unsupported_platform_refuses_protected_pool_before_creating_backing() {
+    let f = fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let path = fs::canonicalize(directory.path())
+        .unwrap()
+        .join("pool.sqlite");
+    let before = f.environment.resource_usage();
+    let error = f
+        .environment
+        .sqlite_pool_backing(
+            &path,
+            SQLitePoolLimits {
+                max_pages: 64,
+                max_records: 8,
+                max_record_bytes: 8192,
+                provider_runtime_bytes: 262_144,
+                disk_overhead_bytes: 65_536,
+            },
+        )
+        .unwrap_err();
+    assert_eq!(error.code, PoolStoreFailure::Configuration);
+    assert_eq!(f.environment.resource_usage(), before);
+    assert!(snapshot(directory.path()).is_empty());
+}
+#[cfg(unix)]
 #[test]
 fn real_transaction_persists_exact_pool_binding_and_reopen_never_activates() {
     let f = fixture();
@@ -226,6 +253,7 @@ fn real_transaction_persists_exact_pool_binding_and_reopen_never_activates() {
     assert!(activation.check().is_err());
     reopened.close();
 }
+#[cfg(unix)]
 #[test]
 fn concurrent_claims_have_one_original_successful_commit() {
     let f = fixture();
@@ -242,6 +270,7 @@ fn concurrent_claims_have_one_original_successful_commit() {
     let error = if let Err(e) = a { e } else { b.unwrap_err() };
     assert_eq!(error.code, PoolStoreFailure::SpendConflict);
 }
+#[cfg(unix)]
 #[test]
 fn original_cancel_after_commit_burns_lease_without_continuation() {
     let f = fixture();
@@ -285,6 +314,7 @@ fn original_cancel_after_commit_burns_lease_without_continuation() {
         PoolStoreFailure::SpendConflict
     );
 }
+#[cfg(unix)]
 #[test]
 fn actual_commit_failure_preserves_unknown_spend_without_a_continuation() {
     let f = fixture();
@@ -338,6 +368,7 @@ fn actual_commit_failure_preserves_unknown_spend_without_a_continuation() {
         PoolStoreFailure::Closed
     );
 }
+#[cfg(unix)]
 #[test]
 fn missing_independent_history_and_mismatched_owner_refuse_before_consume() {
     let f = fixture();
@@ -376,6 +407,7 @@ fn missing_independent_history_and_mismatched_owner_refuse_before_consume() {
     );
     assert!(store.store.consume(f.reserve().unwrap(), owner()).is_ok());
 }
+#[cfg(unix)]
 #[test]
 fn format_refusals_keep_bounded_header_evidence_without_changing_the_group() {
     for variant in ["older", "future", "identity", "hint", "schema", "corrupt"] {
@@ -469,6 +501,7 @@ fn format_refusals_keep_bounded_header_evidence_without_changing_the_group() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn rollback_snapshot_and_schema_substitution_fail_closed() {
     let f = fixture();
@@ -493,6 +526,7 @@ fn rollback_snapshot_and_schema_substitution_fail_closed() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn current_pool_record_preserves_full_width_owner_generation() {
     let f = fixture();
@@ -511,6 +545,7 @@ fn current_pool_record_preserves_full_width_owner_generation() {
     reopened.close();
 }
 
+#[cfg(unix)]
 #[test]
 fn current_pool_record_refuses_detached_projection_changes_without_writing() {
     use crate::codec_v4::tests::{b, t, u};
@@ -575,6 +610,7 @@ fn current_pool_record_refuses_detached_projection_changes_without_writing() {
         );
     }
 }
+#[cfg(unix)]
 #[test]
 fn persistent_allocation_survives_close_and_environment_closes_real_database() {
     let f = fixture();
@@ -604,6 +640,7 @@ fn persistent_allocation_survives_close_and_environment_closes_real_database() {
     assert!(activation.pool_activation.unwrap().check().is_err());
     assert!(store.backing.retained_disk_bytes() > 0);
 }
+#[cfg(unix)]
 #[test]
 fn wrong_manifest_limits_and_symlink_are_never_reinterpreted_as_empty_history() {
     let f = fixture();

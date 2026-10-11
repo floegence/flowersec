@@ -212,6 +212,7 @@ async fn shared_wss_cleanup(
     assert_eq!(usage.connections, 0);
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn production_wss_authenticated_data_errors_isolate_original_stream() {
     for profile in [Profile::X25519, Profile::P256] {
@@ -295,6 +296,7 @@ async fn production_wss_authenticated_data_errors_isolate_original_stream() {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn production_wss_closed_data_discard_is_one_lifetime_allowance() {
     for profile in [Profile::X25519, Profile::P256] {
@@ -414,6 +416,7 @@ async fn production_wss_closed_data_discard_is_one_lifetime_allowance() {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn production_wss_unattributable_data_errors_fail_session() {
     for profile in [Profile::X25519, Profile::P256] {

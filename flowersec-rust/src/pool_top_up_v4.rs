@@ -523,6 +523,7 @@ pub(crate) mod terminal_tests {
         original
     }
 
+    #[cfg(unix)]
     #[test]
     fn installed_authority_reset_persists_without_erasing_applied_material() {
         let (_environment, fixture) = fixture();
@@ -601,6 +602,7 @@ pub(crate) mod terminal_tests {
         reopened.close();
     }
 
+    #[cfg(unix)]
     #[test]
     fn pending_authoritative_terminal_reopens_without_applied_fields() {
         for code in ["top_up_request_expired", "source_reset_required"] {
@@ -647,6 +649,7 @@ pub(crate) mod terminal_tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn terminal_applied_reopen_rejects_missing_or_inconsistent_history() {
         for corruption in [

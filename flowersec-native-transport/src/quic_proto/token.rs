@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut, Bytes};
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 use crate::quic_proto::{
     Duration, RESET_TOKEN_SIZE, ServerConfig, SystemTime, UNIX_EPOCH,
@@ -412,7 +412,6 @@ mod test {
     use super::*;
     #[cfg(all(any(), not(all())))]
     use aws_lc_rs::hkdf;
-    use rand::prelude::*;
     #[cfg(all())]
     use ring::hkdf;
 
@@ -488,7 +487,7 @@ mod test {
     #[test]
     fn invalid_token_returns_err() {
         use super::*;
-        use rand::RngCore;
+        use rand::Rng;
 
         let rng = &mut rand::rng();
 

@@ -3,7 +3,7 @@
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
   "name": "flowersec-ts",
-  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651",
+  "documentNamespace": "https://github.com/floegence/flowersec/sbom/flowersec-ts/898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4",
   "creationInfo": {
     "created": "2026-09-17T15:04:20Z",
     "creators": [
@@ -20,7 +20,7 @@
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION",
-      "comment": "Flowersec source inventory SHA-256: b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651",
+      "comment": "Flowersec source inventory SHA-256: 898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4",
       "externalRefs": [
         {
           "referenceCategory": "PACKAGE-MANAGER",
@@ -439,9 +439,9 @@
     },
     {
       "name": "@types/node",
-      "SPDXID": "SPDXRef-Package-f155265b0db97b607227",
-      "versionInfo": "26.4.0",
-      "downloadLocation": "https://registry.npmjs.org/@types/node/-/node-26.4.0.tgz",
+      "SPDXID": "SPDXRef-Package-a644ebcf6f33b62d7897",
+      "versionInfo": "26.6.3",
+      "downloadLocation": "https://registry.npmjs.org/@types/node/-/node-26.6.3.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -450,7 +450,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/%40types/node@26.4.0"
+          "referenceLocator": "pkg:npm/%40types/node@26.6.3"
         }
       ]
     },
@@ -575,9 +575,9 @@
     },
     {
       "name": "undici-types",
-      "SPDXID": "SPDXRef-Package-16154e3019600e56754e",
-      "versionInfo": "8.3.0",
-      "downloadLocation": "https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz",
+      "SPDXID": "SPDXRef-Package-4831d996bfa595e55f23",
+      "versionInfo": "8.9.0",
+      "downloadLocation": "https://registry.npmjs.org/undici-types/-/undici-types-8.9.0.tgz",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -586,7 +586,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:npm/undici-types@8.3.0"
+          "referenceLocator": "pkg:npm/undici-types@8.9.0"
         }
       ]
     },
@@ -752,7 +752,7 @@
     {
       "spdxElementId": "SPDXRef-Package-d50a2c628641537b85f9",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-f155265b0db97b607227"
+      "relatedSpdxElement": "SPDXRef-Package-a644ebcf6f33b62d7897"
     },
     {
       "spdxElementId": "SPDXRef-Package-d50a2c628641537b85f9",
@@ -805,14 +805,14 @@
       "relatedSpdxElement": "SPDXRef-Package-2e6e3840217975457b7a"
     },
     {
-      "spdxElementId": "SPDXRef-Package-f155265b0db97b607227",
+      "spdxElementId": "SPDXRef-Package-a644ebcf6f33b62d7897",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-16154e3019600e56754e"
+      "relatedSpdxElement": "SPDXRef-Package-4831d996bfa595e55f23"
     },
     {
       "spdxElementId": "SPDXRef-Package-9b32fe06cd752e0372f8",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-f155265b0db97b607227"
+      "relatedSpdxElement": "SPDXRef-Package-a644ebcf6f33b62d7897"
     },
     {
       "spdxElementId": "SPDXRef-Package-4c0c0c856766a10b2911",

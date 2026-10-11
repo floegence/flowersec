@@ -338,6 +338,19 @@ pub(crate) mod tests {
             })
             .collect()
     }
+    #[cfg(not(unix))]
+    #[tokio::test]
+    async fn unsupported_platform_refuses_protected_stores_before_creating_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let parent = fs::canonicalize(directory.path()).unwrap();
+        for kind in [Kind::Execution, Kind::Reference] {
+            let path = parent.join("store.sqlite3");
+            let error = open(&path, kind).await.unwrap_err();
+            assert_eq!(error.0, ServiceFailure::ConfigurationCapacity);
+            assert!(snapshot(&parent).is_empty());
+        }
+    }
+    #[cfg(unix)]
     #[tokio::test]
     async fn current_store_recovers_committed_wal_before_format_admission() {
         let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -412,6 +425,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn recovery_policy_is_admitted_before_restart_writes() {
         use crate::checkpoint_v4::{
@@ -510,6 +524,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn public_open_refuses_untrusted_or_unsupported_headers_before_writes() {
         let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))

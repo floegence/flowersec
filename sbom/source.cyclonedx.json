@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:5fcf4b78-45be-5ddf-8955-c8542550885e",
+  "serialNumber": "urn:uuid:8e5334fb-dbf7-5d45-8029-87769b57b424",
   "version": 1,
   "metadata": {
     "component": {
@@ -14,7 +14,7 @@
     "properties": [
       {
         "name": "flowersec:source-inventory-sha256",
-        "value": "b541f879948cfd9e93a9f9561df29da057ee94fc06cfeecd9d7214ad935bb651"
+        "value": "898dfd0cd446c0e8145db107228d5db15e51d03ffd811b0ce5190a3813b1ecb4"
       }
     ]
   },
@@ -81,34 +81,6 @@
       "version": "0.9.2",
       "purl": "pkg:cargo/aes@0.9.2",
       "bom-ref": "pkg:cargo/aes@0.9.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/RustCrypto/block-ciphers"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "aes",
-      "version": "0.9.3",
-      "purl": "pkg:cargo/aes@0.9.3",
-      "bom-ref": "pkg:cargo/aes@0.9.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -1282,9 +1254,9 @@
     {
       "type": "library",
       "name": "convert_case",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/convert_case@0.11.0",
-      "bom-ref": "pkg:cargo/convert_case@0.11.0",
+      "version": "0.12.0",
+      "purl": "pkg:cargo/convert_case@0.12.0",
+      "bom-ref": "pkg:cargo/convert_case@0.12.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -3270,34 +3242,6 @@
     {
       "type": "library",
       "name": "hyper-util",
-      "version": "0.1.20",
-      "purl": "pkg:cargo/hyper-util@0.1.20",
-      "bom-ref": "pkg:cargo/hyper-util@0.1.20",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/hyperium/hyper-util"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "hyper-util",
       "version": "0.1.21",
       "purl": "pkg:cargo/hyper-util@0.1.21",
       "bom-ref": "pkg:cargo/hyper-util@0.1.21",
@@ -3998,9 +3942,9 @@
     {
       "type": "library",
       "name": "lru-slab",
-      "version": "0.1.2",
-      "purl": "pkg:cargo/lru-slab@0.1.2",
-      "bom-ref": "pkg:cargo/lru-slab@0.1.2",
+      "version": "0.1.3",
+      "purl": "pkg:cargo/lru-slab@0.1.3",
+      "bom-ref": "pkg:cargo/lru-slab@0.1.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -4194,9 +4138,9 @@
     {
       "type": "library",
       "name": "napi-build",
-      "version": "2.4.1",
-      "purl": "pkg:cargo/napi-build@2.4.1",
-      "bom-ref": "pkg:cargo/napi-build@2.4.1",
+      "version": "2.6.0",
+      "purl": "pkg:cargo/napi-build@2.6.0",
+      "bom-ref": "pkg:cargo/napi-build@2.6.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -4222,9 +4166,9 @@
     {
       "type": "library",
       "name": "napi-derive",
-      "version": "3.6.3",
-      "purl": "pkg:cargo/napi-derive@3.6.3",
-      "bom-ref": "pkg:cargo/napi-derive@3.6.3",
+      "version": "3.6.11",
+      "purl": "pkg:cargo/napi-derive@3.6.11",
+      "bom-ref": "pkg:cargo/napi-derive@3.6.11",
       "licenses": [
         {
           "expression": "MIT"
@@ -4250,9 +4194,9 @@
     {
       "type": "library",
       "name": "napi-derive-backend",
-      "version": "6.1.2",
-      "purl": "pkg:cargo/napi-derive-backend@6.1.2",
-      "bom-ref": "pkg:cargo/napi-derive-backend@6.1.2",
+      "version": "6.1.5",
+      "purl": "pkg:cargo/napi-derive-backend@6.1.5",
+      "bom-ref": "pkg:cargo/napi-derive-backend@6.1.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -5510,34 +5454,6 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/rand@0.10.2",
-      "bom-ref": "pkg:cargo/rand@0.10.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rand",
       "version": "0.10.3",
       "purl": "pkg:cargo/rand@0.10.3",
       "bom-ref": "pkg:cargo/rand@0.10.3",
@@ -5706,9 +5622,9 @@
     {
       "type": "library",
       "name": "rand_pcg",
-      "version": "0.9.0",
-      "purl": "pkg:cargo/rand_pcg@0.9.0",
-      "bom-ref": "pkg:cargo/rand_pcg@0.9.0",
+      "version": "0.10.2",
+      "purl": "pkg:cargo/rand_pcg@0.10.2",
+      "bom-ref": "pkg:cargo/rand_pcg@0.10.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -5717,7 +5633,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/rust-random/rand"
+          "url": "https://github.com/rust-random/rngs"
         }
       ],
       "properties": [
@@ -7106,65 +7022,9 @@
     {
       "type": "library",
       "name": "thiserror",
-      "version": "2.0.20",
-      "purl": "pkg:cargo/thiserror@2.0.20",
-      "bom-ref": "pkg:cargo/thiserror@2.0.20",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/dtolnay/thiserror"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "thiserror",
       "version": "2.0.21",
       "purl": "pkg:cargo/thiserror@2.0.21",
       "bom-ref": "pkg:cargo/thiserror@2.0.21",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/dtolnay/thiserror"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "thiserror-impl",
-      "version": "2.0.20",
-      "purl": "pkg:cargo/thiserror-impl@2.0.20",
-      "bom-ref": "pkg:cargo/thiserror-impl@2.0.20",
       "licenses": [
         {
           "expression": "MIT"
@@ -7358,9 +7218,9 @@
     {
       "type": "library",
       "name": "tinyvec",
-      "version": "1.12.0",
-      "purl": "pkg:cargo/tinyvec@1.12.0",
-      "bom-ref": "pkg:cargo/tinyvec@1.12.0",
+      "version": "1.13.3",
+      "purl": "pkg:cargo/tinyvec@1.13.3",
+      "bom-ref": "pkg:cargo/tinyvec@1.13.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -7376,62 +7236,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "Zlib OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tinyvec_macros",
-      "version": "0.1.1",
-      "purl": "pkg:cargo/tinyvec_macros@0.1.1",
-      "bom-ref": "pkg:cargo/tinyvec_macros@0.1.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/Soveu/tinyvec_macros"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0 OR Zlib"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tokio",
-      "version": "1.53.1",
-      "purl": "pkg:cargo/tokio@1.53.1",
-      "bom-ref": "pkg:cargo/tokio@1.53.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/tokio-rs/tokio"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -7488,34 +7292,6 @@
         {
           "name": "flowersec:declared-license",
           "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tokio-rustls",
-      "version": "0.26.4",
-      "purl": "pkg:cargo/tokio-rustls@0.26.4",
-      "bom-ref": "pkg:cargo/tokio-rustls@0.26.4",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/rustls/tokio-rustls"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT OR Apache-2.0"
         },
         {
           "name": "flowersec:source-offer-required",
@@ -8114,9 +7890,9 @@
     {
       "type": "library",
       "name": "url",
-      "version": "2.5.4",
-      "purl": "pkg:cargo/url@2.5.4",
-      "bom-ref": "pkg:cargo/url@2.5.4",
+      "version": "2.5.8",
+      "purl": "pkg:cargo/url@2.5.8",
+      "bom-ref": "pkg:cargo/url@2.5.8",
       "licenses": [
         {
           "expression": "MIT"
@@ -9093,66 +8869,10 @@
     },
     {
       "type": "library",
-      "name": "zerocopy",
-      "version": "0.8.59",
-      "purl": "pkg:cargo/zerocopy@0.8.59",
-      "bom-ref": "pkg:cargo/zerocopy@0.8.59",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "zerocopy-derive",
       "version": "0.8.56",
       "purl": "pkg:cargo/zerocopy-derive@0.8.56",
       "bom-ref": "pkg:cargo/zerocopy-derive@0.8.56",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/google/zerocopy"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-2-Clause OR Apache-2.0 OR MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "zerocopy-derive",
-      "version": "0.8.59",
-      "purl": "pkg:cargo/zerocopy-derive@0.8.59",
-      "bom-ref": "pkg:cargo/zerocopy-derive@0.8.59",
       "licenses": [
         {
           "expression": "MIT"
@@ -9710,9 +9430,9 @@
     {
       "type": "library",
       "name": "github.com/quic-go/quic-go",
-      "version": "v0.62.0",
-      "purl": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
-      "bom-ref": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
+      "version": "v0.63.0",
+      "purl": "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
+      "bom-ref": "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -9850,9 +9570,9 @@
     {
       "type": "library",
       "name": "golang.org/x/sys",
-      "version": "v0.48.0",
-      "purl": "pkg:golang/golang.org/x/sys@v0.48.0",
-      "bom-ref": "pkg:golang/golang.org/x/sys@v0.48.0",
+      "version": "v0.49.0",
+      "purl": "pkg:golang/golang.org/x/sys@v0.49.0",
+      "bom-ref": "pkg:golang/golang.org/x/sys@v0.49.0",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
@@ -10018,9 +9738,9 @@
     {
       "type": "library",
       "name": "@babel/helper-string-parser",
-      "version": "7.27.1",
-      "purl": "pkg:npm/%40babel/helper-string-parser@7.27.1",
-      "bom-ref": "pkg:npm/%40babel/helper-string-parser@7.27.1",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-string-parser@7.29.7",
+      "bom-ref": "pkg:npm/%40babel/helper-string-parser@7.29.7",
       "licenses": [
         {
           "expression": "MIT"
@@ -10029,7 +9749,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-7.27.1.tgz"
+          "url": "https://registry.npmjs.org/@babel/helper-string-parser/-/helper-string-parser-7.29.7.tgz"
         }
       ],
       "properties": [
@@ -10046,9 +9766,9 @@
     {
       "type": "library",
       "name": "@babel/helper-validator-identifier",
-      "version": "7.28.5",
-      "purl": "pkg:npm/%40babel/helper-validator-identifier@7.28.5",
-      "bom-ref": "pkg:npm/%40babel/helper-validator-identifier@7.28.5",
+      "version": "7.29.7",
+      "purl": "pkg:npm/%40babel/helper-validator-identifier@7.29.7",
+      "bom-ref": "pkg:npm/%40babel/helper-validator-identifier@7.29.7",
       "licenses": [
         {
           "expression": "MIT"
@@ -10057,7 +9777,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.28.5.tgz"
+          "url": "https://registry.npmjs.org/@babel/helper-validator-identifier/-/helper-validator-identifier-7.29.7.tgz"
         }
       ],
       "properties": [
@@ -10074,9 +9794,9 @@
     {
       "type": "library",
       "name": "@babel/parser",
-      "version": "7.29.2",
-      "purl": "pkg:npm/%40babel/parser@7.29.2",
-      "bom-ref": "pkg:npm/%40babel/parser@7.29.2",
+      "version": "7.29.9",
+      "purl": "pkg:npm/%40babel/parser@7.29.9",
+      "bom-ref": "pkg:npm/%40babel/parser@7.29.9",
       "licenses": [
         {
           "expression": "MIT"
@@ -10085,7 +9805,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@babel/parser/-/parser-7.29.2.tgz"
+          "url": "https://registry.npmjs.org/@babel/parser/-/parser-7.29.9.tgz"
         }
       ],
       "properties": [
@@ -10102,9 +9822,9 @@
     {
       "type": "library",
       "name": "@babel/types",
-      "version": "7.29.0",
-      "purl": "pkg:npm/%40babel/types@7.29.0",
-      "bom-ref": "pkg:npm/%40babel/types@7.29.0",
+      "version": "7.29.8",
+      "purl": "pkg:npm/%40babel/types@7.29.8",
+      "bom-ref": "pkg:npm/%40babel/types@7.29.8",
       "licenses": [
         {
           "expression": "MIT"
@@ -10113,7 +9833,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@babel/types/-/types-7.29.0.tgz"
+          "url": "https://registry.npmjs.org/@babel/types/-/types-7.29.8.tgz"
         }
       ],
       "properties": [
@@ -10142,6 +9862,62 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/@bcoe/v8-coverage/-/v8-coverage-1.0.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@cacheable/memory",
+      "version": "2.2.0",
+      "purl": "pkg:npm/%40cacheable/memory@2.2.0",
+      "bom-ref": "pkg:npm/%40cacheable/memory@2.2.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@cacheable/memory/-/memory-2.2.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@cacheable/utils",
+      "version": "2.5.0",
+      "purl": "pkg:npm/%40cacheable/utils@2.5.0",
+      "bom-ref": "pkg:npm/%40cacheable/utils@2.5.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@cacheable/utils/-/utils-2.5.0.tgz"
         }
       ],
       "properties": [
@@ -11054,9 +10830,9 @@
     {
       "type": "library",
       "name": "@eslint/plugin-kit",
-      "version": "0.7.2",
-      "purl": "pkg:npm/%40eslint/plugin-kit@0.7.2",
-      "bom-ref": "pkg:npm/%40eslint/plugin-kit@0.7.2",
+      "version": "0.7.3",
+      "purl": "pkg:npm/%40eslint/plugin-kit@0.7.3",
+      "bom-ref": "pkg:npm/%40eslint/plugin-kit@0.7.3",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -11065,7 +10841,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.7.2.tgz"
+          "url": "https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.7.3.tgz"
         }
       ],
       "properties": [
@@ -11390,9 +11166,9 @@
     {
       "type": "library",
       "name": "@jridgewell/sourcemap-codec",
-      "version": "1.5.5",
-      "purl": "pkg:npm/%40jridgewell/sourcemap-codec@1.5.5",
-      "bom-ref": "pkg:npm/%40jridgewell/sourcemap-codec@1.5.5",
+      "version": "1.6.0",
+      "purl": "pkg:npm/%40jridgewell/sourcemap-codec@1.6.0",
+      "bom-ref": "pkg:npm/%40jridgewell/sourcemap-codec@1.6.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -11401,7 +11177,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.5.5.tgz"
+          "url": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.6.0.tgz"
         }
       ],
       "properties": [
@@ -11430,6 +11206,62 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@keyv/bigmap",
+      "version": "1.3.1",
+      "purl": "pkg:npm/%40keyv/bigmap@1.3.1",
+      "bom-ref": "pkg:npm/%40keyv/bigmap@1.3.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@keyv/bigmap/-/bigmap-1.3.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@keyv/serialize",
+      "version": "1.1.1",
+      "purl": "pkg:npm/%40keyv/serialize@1.1.1",
+      "bom-ref": "pkg:npm/%40keyv/serialize@1.1.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@keyv/serialize/-/serialize-1.1.1.tgz"
         }
       ],
       "properties": [
@@ -12033,34 +11865,6 @@
     },
     {
       "type": "library",
-      "name": "@standard-schema/spec",
-      "version": "1.1.0",
-      "purl": "pkg:npm/%40standard-schema/spec@1.1.0",
-      "bom-ref": "pkg:npm/%40standard-schema/spec@1.1.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "@types/chai",
       "version": "5.2.3",
       "purl": "pkg:npm/%40types/chai@5.2.3",
@@ -12202,9 +12006,9 @@
     {
       "type": "library",
       "name": "@types/node",
-      "version": "26.4.0",
-      "purl": "pkg:npm/%40types/node@26.4.0",
-      "bom-ref": "pkg:npm/%40types/node@26.4.0",
+      "version": "26.6.3",
+      "purl": "pkg:npm/%40types/node@26.6.3",
+      "bom-ref": "pkg:npm/%40types/node@26.6.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -12213,7 +12017,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@types/node/-/node-26.4.0.tgz"
+          "url": "https://registry.npmjs.org/@types/node/-/node-26.6.3.tgz"
         }
       ],
       "properties": [
@@ -12258,9 +12062,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/eslint-plugin",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/eslint-plugin@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/eslint-plugin@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/eslint-plugin@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/eslint-plugin@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12269,7 +12073,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/eslint-plugin/-/eslint-plugin-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/eslint-plugin/-/eslint-plugin-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -12286,9 +12090,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/parser",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/parser@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/parser@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/parser@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/parser@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12297,7 +12101,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/parser/-/parser-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/parser/-/parser-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -12314,9 +12118,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/project-service",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/project-service@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/project-service@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/project-service@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/project-service@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12325,7 +12129,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/project-service/-/project-service-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/project-service/-/project-service-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -12342,9 +12146,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/scope-manager",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/scope-manager@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/scope-manager@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12353,7 +12157,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/scope-manager/-/scope-manager-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/scope-manager/-/scope-manager-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -12370,9 +12174,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/tsconfig-utils",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12381,7 +12185,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/tsconfig-utils/-/tsconfig-utils-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/tsconfig-utils/-/tsconfig-utils-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -12398,9 +12202,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/type-utils",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/type-utils@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/type-utils@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/type-utils@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/type-utils@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12409,7 +12213,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/type-utils/-/type-utils-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/type-utils/-/type-utils-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -12426,9 +12230,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/types",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/types@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/types@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/types@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/types@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12437,7 +12241,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/types/-/types-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/types/-/types-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -12454,9 +12258,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/typescript-estree",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/typescript-estree@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/typescript-estree@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12465,7 +12269,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -12482,9 +12286,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/utils",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/utils@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/utils@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/utils@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/utils@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12493,7 +12297,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/utils/-/utils-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/utils/-/utils-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -12510,9 +12314,9 @@
     {
       "type": "library",
       "name": "@typescript-eslint/visitor-keys",
-      "version": "8.68.0",
-      "purl": "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
-      "bom-ref": "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
+      "version": "8.70.1",
+      "purl": "pkg:npm/%40typescript-eslint/visitor-keys@8.70.1",
+      "bom-ref": "pkg:npm/%40typescript-eslint/visitor-keys@8.70.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -12521,7 +12325,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@typescript-eslint/visitor-keys/-/visitor-keys-8.68.0.tgz"
+          "url": "https://registry.npmjs.org/@typescript-eslint/visitor-keys/-/visitor-keys-8.70.1.tgz"
         }
       ],
       "properties": [
@@ -13154,9 +12958,9 @@
     {
       "type": "library",
       "name": "@vitest/coverage-v8",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/coverage-v8@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/coverage-v8@4.1.11",
+      "version": "5.0.2",
+      "purl": "pkg:npm/%40vitest/coverage-v8@5.0.2",
+      "bom-ref": "pkg:npm/%40vitest/coverage-v8@5.0.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -13165,7 +12969,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/coverage-v8/-/coverage-v8-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/coverage-v8/-/coverage-v8-5.0.2.tgz"
         }
       ],
       "properties": [
@@ -13181,10 +12985,10 @@
     },
     {
       "type": "library",
-      "name": "@vitest/expect",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/expect@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/expect@4.1.11",
+      "name": "@vitest/istanbul-lib-coverage",
+      "version": "1.0.2",
+      "purl": "pkg:npm/%40vitest/istanbul-lib-coverage@1.0.2",
+      "bom-ref": "pkg:npm/%40vitest/istanbul-lib-coverage@1.0.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -13193,7 +12997,35 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/istanbul-lib-coverage/-/istanbul-lib-coverage-1.0.2.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "@vitest/istanbul-lib-report",
+      "version": "1.0.2",
+      "purl": "pkg:npm/%40vitest/istanbul-lib-report@1.0.2",
+      "bom-ref": "pkg:npm/%40vitest/istanbul-lib-report@1.0.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@vitest/istanbul-lib-report/-/istanbul-lib-report-1.0.2.tgz"
         }
       ],
       "properties": [
@@ -13210,9 +13042,9 @@
     {
       "type": "library",
       "name": "@vitest/mocker",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/mocker@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/mocker@4.1.11",
+      "version": "5.0.2",
+      "purl": "pkg:npm/%40vitest/mocker@5.0.2",
+      "bom-ref": "pkg:npm/%40vitest/mocker@5.0.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -13221,91 +13053,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.11.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@vitest/pretty-format",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/pretty-format@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/pretty-format@4.1.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.11.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@vitest/runner",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/runner@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/runner@4.1.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.11.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@vitest/snapshot",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/snapshot@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/snapshot@4.1.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-5.0.2.tgz"
         }
       ],
       "properties": [
@@ -13322,9 +13070,9 @@
     {
       "type": "library",
       "name": "@vitest/spy",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/spy@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/spy@4.1.11",
+      "version": "5.0.2",
+      "purl": "pkg:npm/%40vitest/spy@5.0.2",
+      "bom-ref": "pkg:npm/%40vitest/spy@5.0.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -13333,35 +13081,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.11.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "@vitest/utils",
-      "version": "4.1.11",
-      "purl": "pkg:npm/%40vitest/utils@4.1.11",
-      "bom-ref": "pkg:npm/%40vitest/utils@4.1.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/@vitest/spy/-/spy-5.0.2.tgz"
         }
       ],
       "properties": [
@@ -13574,9 +13294,9 @@
     {
       "type": "library",
       "name": "ast-v8-to-istanbul",
-      "version": "1.0.3",
-      "purl": "pkg:npm/ast-v8-to-istanbul@1.0.3",
-      "bom-ref": "pkg:npm/ast-v8-to-istanbul@1.0.3",
+      "version": "1.0.7",
+      "purl": "pkg:npm/ast-v8-to-istanbul@1.0.7",
+      "bom-ref": "pkg:npm/ast-v8-to-istanbul@1.0.7",
       "licenses": [
         {
           "expression": "MIT"
@@ -13585,7 +13305,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/ast-v8-to-istanbul/-/ast-v8-to-istanbul-1.0.3.tgz"
+          "url": "https://registry.npmjs.org/ast-v8-to-istanbul/-/ast-v8-to-istanbul-1.0.7.tgz"
         }
       ],
       "properties": [
@@ -13685,10 +13405,10 @@
     },
     {
       "type": "library",
-      "name": "chai",
-      "version": "6.2.2",
-      "purl": "pkg:npm/chai@6.2.2",
-      "bom-ref": "pkg:npm/chai@6.2.2",
+      "name": "cacheable",
+      "version": "2.5.0",
+      "purl": "pkg:npm/cacheable@2.5.0",
+      "bom-ref": "pkg:npm/cacheable@2.5.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -13697,7 +13417,35 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/chai/-/chai-6.2.2.tgz"
+          "url": "https://registry.npmjs.org/cacheable/-/cacheable-2.5.0.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "chai",
+      "version": "6.3.0",
+      "purl": "pkg:npm/chai@6.3.0",
+      "bom-ref": "pkg:npm/chai@6.3.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/chai/-/chai-6.3.0.tgz"
         }
       ],
       "properties": [
@@ -13726,34 +13474,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "convert-source-map",
-      "version": "2.0.0",
-      "purl": "pkg:npm/convert-source-map@2.0.0",
-      "bom-ref": "pkg:npm/convert-source-map@2.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz"
         }
       ],
       "properties": [
@@ -13910,9 +13630,9 @@
     {
       "type": "library",
       "name": "es-module-lexer",
-      "version": "2.1.0",
-      "purl": "pkg:npm/es-module-lexer@2.1.0",
-      "bom-ref": "pkg:npm/es-module-lexer@2.1.0",
+      "version": "2.3.2",
+      "purl": "pkg:npm/es-module-lexer@2.3.2",
+      "bom-ref": "pkg:npm/es-module-lexer@2.3.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -13921,7 +13641,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.1.0.tgz"
+          "url": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.3.2.tgz"
         }
       ],
       "properties": [
@@ -13994,9 +13714,9 @@
     {
       "type": "library",
       "name": "eslint",
-      "version": "10.9.1",
-      "purl": "pkg:npm/eslint@10.9.1",
-      "bom-ref": "pkg:npm/eslint@10.9.1",
+      "version": "10.11.0",
+      "purl": "pkg:npm/eslint@10.11.0",
+      "bom-ref": "pkg:npm/eslint@10.11.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -14005,7 +13725,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/eslint/-/eslint-10.9.1.tgz"
+          "url": "https://registry.npmjs.org/eslint/-/eslint-10.11.0.tgz"
         }
       ],
       "properties": [
@@ -14274,9 +13994,9 @@
     {
       "type": "library",
       "name": "expect-type",
-      "version": "1.3.0",
-      "purl": "pkg:npm/expect-type@1.3.0",
-      "bom-ref": "pkg:npm/expect-type@1.3.0",
+      "version": "1.4.0",
+      "purl": "pkg:npm/expect-type@1.4.0",
+      "bom-ref": "pkg:npm/expect-type@1.4.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -14285,7 +14005,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/expect-type/-/expect-type-1.3.0.tgz"
+          "url": "https://registry.npmjs.org/expect-type/-/expect-type-1.4.0.tgz"
         }
       ],
       "properties": [
@@ -14470,9 +14190,9 @@
     {
       "type": "library",
       "name": "file-entry-cache",
-      "version": "8.0.0",
-      "purl": "pkg:npm/file-entry-cache@8.0.0",
-      "bom-ref": "pkg:npm/file-entry-cache@8.0.0",
+      "version": "11.1.5",
+      "purl": "pkg:npm/file-entry-cache@11.1.5",
+      "bom-ref": "pkg:npm/file-entry-cache@11.1.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -14481,7 +14201,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/file-entry-cache/-/file-entry-cache-8.0.0.tgz"
+          "url": "https://registry.npmjs.org/file-entry-cache/-/file-entry-cache-11.1.5.tgz"
         }
       ],
       "properties": [
@@ -14526,9 +14246,9 @@
     {
       "type": "library",
       "name": "flat-cache",
-      "version": "4.0.1",
-      "purl": "pkg:npm/flat-cache@4.0.1",
-      "bom-ref": "pkg:npm/flat-cache@4.0.1",
+      "version": "6.1.23",
+      "purl": "pkg:npm/flat-cache@6.1.23",
+      "bom-ref": "pkg:npm/flat-cache@6.1.23",
       "licenses": [
         {
           "expression": "MIT"
@@ -14537,7 +14257,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/flat-cache/-/flat-cache-4.0.1.tgz"
+          "url": "https://registry.npmjs.org/flat-cache/-/flat-cache-6.1.23.tgz"
         }
       ],
       "properties": [
@@ -14554,9 +14274,9 @@
     {
       "type": "library",
       "name": "flatted",
-      "version": "3.4.2",
-      "purl": "pkg:npm/flatted@3.4.2",
-      "bom-ref": "pkg:npm/flatted@3.4.2",
+      "version": "3.4.4",
+      "purl": "pkg:npm/flatted@3.4.4",
+      "bom-ref": "pkg:npm/flatted@3.4.4",
       "licenses": [
         {
           "expression": "ISC"
@@ -14565,7 +14285,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/flatted/-/flatted-3.4.2.tgz"
+          "url": "https://registry.npmjs.org/flatted/-/flatted-3.4.4.tgz"
         }
       ],
       "properties": [
@@ -14665,10 +14385,10 @@
     },
     {
       "type": "library",
-      "name": "has-flag",
-      "version": "4.0.0",
-      "purl": "pkg:npm/has-flag@4.0.0",
-      "bom-ref": "pkg:npm/has-flag@4.0.0",
+      "name": "hashery",
+      "version": "1.5.1",
+      "purl": "pkg:npm/hashery@1.5.1",
+      "bom-ref": "pkg:npm/hashery@1.5.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -14677,7 +14397,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/has-flag/-/has-flag-4.0.0.tgz"
+          "url": "https://registry.npmjs.org/hashery/-/hashery-1.5.1.tgz"
         }
       ],
       "properties": [
@@ -14693,10 +14413,10 @@
     },
     {
       "type": "library",
-      "name": "html-escaper",
-      "version": "2.0.2",
-      "purl": "pkg:npm/html-escaper@2.0.2",
-      "bom-ref": "pkg:npm/html-escaper@2.0.2",
+      "name": "hookified",
+      "version": "1.15.1",
+      "purl": "pkg:npm/hookified@1.15.1",
+      "bom-ref": "pkg:npm/hookified@1.15.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -14705,7 +14425,35 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/html-escaper/-/html-escaper-2.0.2.tgz"
+          "url": "https://registry.npmjs.org/hookified/-/hookified-1.15.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hookified",
+      "version": "2.2.0",
+      "purl": "pkg:npm/hookified@2.2.0",
+      "bom-ref": "pkg:npm/hookified@2.2.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/hookified/-/hookified-2.2.0.tgz"
         }
       ],
       "properties": [
@@ -14889,90 +14637,6 @@
     },
     {
       "type": "library",
-      "name": "istanbul-lib-coverage",
-      "version": "3.2.2",
-      "purl": "pkg:npm/istanbul-lib-coverage@3.2.2",
-      "bom-ref": "pkg:npm/istanbul-lib-coverage@3.2.2",
-      "licenses": [
-        {
-          "expression": "BSD-3-Clause"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/istanbul-lib-coverage/-/istanbul-lib-coverage-3.2.2.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-3-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "istanbul-lib-report",
-      "version": "3.0.1",
-      "purl": "pkg:npm/istanbul-lib-report@3.0.1",
-      "bom-ref": "pkg:npm/istanbul-lib-report@3.0.1",
-      "licenses": [
-        {
-          "expression": "BSD-3-Clause"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/istanbul-lib-report/-/istanbul-lib-report-3.0.1.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-3-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "istanbul-reports",
-      "version": "3.2.0",
-      "purl": "pkg:npm/istanbul-reports@3.2.0",
-      "bom-ref": "pkg:npm/istanbul-reports@3.2.0",
-      "licenses": [
-        {
-          "expression": "BSD-3-Clause"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/istanbul-reports/-/istanbul-reports-3.2.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "BSD-3-Clause"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "js-tokens",
       "version": "10.0.0",
       "purl": "pkg:npm/js-tokens@10.0.0",
@@ -14986,34 +14650,6 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/js-tokens/-/js-tokens-10.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "json-buffer",
-      "version": "3.0.1",
-      "purl": "pkg:npm/json-buffer@3.0.1",
-      "bom-ref": "pkg:npm/json-buffer@3.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz"
         }
       ],
       "properties": [
@@ -15114,9 +14750,9 @@
     {
       "type": "library",
       "name": "keyv",
-      "version": "4.5.4",
-      "purl": "pkg:npm/keyv@4.5.4",
-      "bom-ref": "pkg:npm/keyv@4.5.4",
+      "version": "5.6.0",
+      "purl": "pkg:npm/keyv@5.6.0",
+      "bom-ref": "pkg:npm/keyv@5.6.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -15125,7 +14761,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz"
+          "url": "https://registry.npmjs.org/keyv/-/keyv-5.6.0.tgz"
         }
       ],
       "properties": [
@@ -15534,9 +15170,9 @@
     {
       "type": "library",
       "name": "magic-string",
-      "version": "0.30.21",
-      "purl": "pkg:npm/magic-string@0.30.21",
-      "bom-ref": "pkg:npm/magic-string@0.30.21",
+      "version": "1.4.3",
+      "purl": "pkg:npm/magic-string@1.4.3",
+      "bom-ref": "pkg:npm/magic-string@1.4.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -15545,7 +15181,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/magic-string/-/magic-string-0.30.21.tgz"
+          "url": "https://registry.npmjs.org/magic-string/-/magic-string-1.4.3.tgz"
         }
       ],
       "properties": [
@@ -15562,9 +15198,9 @@
     {
       "type": "library",
       "name": "magicast",
-      "version": "0.5.2",
-      "purl": "pkg:npm/magicast@0.5.2",
-      "bom-ref": "pkg:npm/magicast@0.5.2",
+      "version": "0.5.5",
+      "purl": "pkg:npm/magicast@0.5.5",
+      "bom-ref": "pkg:npm/magicast@0.5.5",
       "licenses": [
         {
           "expression": "MIT"
@@ -15573,35 +15209,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/magicast/-/magicast-0.5.2.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "make-dir",
-      "version": "4.0.0",
-      "purl": "pkg:npm/make-dir@4.0.0",
-      "bom-ref": "pkg:npm/make-dir@4.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/make-dir/-/make-dir-4.0.0.tgz"
+          "url": "https://registry.npmjs.org/magicast/-/magicast-0.5.5.tgz"
         }
       ],
       "properties": [
@@ -15786,9 +15394,9 @@
     {
       "type": "library",
       "name": "obug",
-      "version": "2.1.1",
-      "purl": "pkg:npm/obug@2.1.1",
-      "bom-ref": "pkg:npm/obug@2.1.1",
+      "version": "2.2.1",
+      "purl": "pkg:npm/obug@2.2.1",
+      "bom-ref": "pkg:npm/obug@2.2.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -15797,7 +15405,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/obug/-/obug-2.1.1.tgz"
+          "url": "https://registry.npmjs.org/obug/-/obug-2.2.1.tgz"
         }
       ],
       "properties": [
@@ -15953,34 +15561,6 @@
     },
     {
       "type": "library",
-      "name": "pathe",
-      "version": "2.0.3",
-      "purl": "pkg:npm/pathe@2.0.3",
-      "bom-ref": "pkg:npm/pathe@2.0.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/pathe/-/pathe-2.0.3.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "picocolors",
       "version": "1.1.1",
       "purl": "pkg:npm/picocolors@1.1.1",
@@ -16010,9 +15590,9 @@
     {
       "type": "library",
       "name": "picomatch",
-      "version": "4.0.5",
-      "purl": "pkg:npm/picomatch@4.0.5",
-      "bom-ref": "pkg:npm/picomatch@4.0.5",
+      "version": "4.0.7",
+      "purl": "pkg:npm/picomatch@4.0.7",
+      "bom-ref": "pkg:npm/picomatch@4.0.7",
       "licenses": [
         {
           "expression": "MIT"
@@ -16021,7 +15601,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.5.tgz"
+          "url": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz"
         }
       ],
       "properties": [
@@ -16162,6 +15742,34 @@
         {
           "type": "distribution",
           "url": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz"
+        }
+      ],
+      "properties": [
+        {
+          "name": "flowersec:declared-license",
+          "value": "MIT"
+        },
+        {
+          "name": "flowersec:source-offer-required",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "qified",
+      "version": "0.10.1",
+      "purl": "pkg:npm/qified@0.10.1",
+      "bom-ref": "pkg:npm/qified@0.10.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/qified/-/qified-0.10.1.tgz"
         }
       ],
       "properties": [
@@ -16346,9 +15954,9 @@
     {
       "type": "library",
       "name": "semver",
-      "version": "7.7.3",
-      "purl": "pkg:npm/semver@7.7.3",
-      "bom-ref": "pkg:npm/semver@7.7.3",
+      "version": "7.8.5",
+      "purl": "pkg:npm/semver@7.8.5",
+      "bom-ref": "pkg:npm/semver@7.8.5",
       "licenses": [
         {
           "expression": "ISC"
@@ -16357,7 +15965,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/semver/-/semver-7.7.3.tgz"
+          "url": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz"
         }
       ],
       "properties": [
@@ -16429,34 +16037,6 @@
     },
     {
       "type": "library",
-      "name": "siginfo",
-      "version": "2.0.0",
-      "purl": "pkg:npm/siginfo@2.0.0",
-      "bom-ref": "pkg:npm/siginfo@2.0.0",
-      "licenses": [
-        {
-          "expression": "ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/siginfo/-/siginfo-2.0.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "ISC"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "smtp-address-parser",
       "version": "1.1.0",
       "purl": "pkg:npm/smtp-address-parser@1.1.0",
@@ -16513,38 +16093,10 @@
     },
     {
       "type": "library",
-      "name": "stackback",
-      "version": "0.0.2",
-      "purl": "pkg:npm/stackback@0.0.2",
-      "bom-ref": "pkg:npm/stackback@0.0.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/stackback/-/stackback-0.0.2.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "std-env",
-      "version": "4.1.0",
-      "purl": "pkg:npm/std-env@4.1.0",
-      "bom-ref": "pkg:npm/std-env@4.1.0",
+      "version": "4.3.0",
+      "purl": "pkg:npm/std-env@4.3.0",
+      "bom-ref": "pkg:npm/std-env@4.3.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -16553,35 +16105,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/std-env/-/std-env-4.1.0.tgz"
-        }
-      ],
-      "properties": [
-        {
-          "name": "flowersec:declared-license",
-          "value": "MIT"
-        },
-        {
-          "name": "flowersec:source-offer-required",
-          "value": "false"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "supports-color",
-      "version": "7.2.0",
-      "purl": "pkg:npm/supports-color@7.2.0",
-      "bom-ref": "pkg:npm/supports-color@7.2.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://registry.npmjs.org/supports-color/-/supports-color-7.2.0.tgz"
+          "url": "https://registry.npmjs.org/std-env/-/std-env-4.3.0.tgz"
         }
       ],
       "properties": [
@@ -16598,9 +16122,9 @@
     {
       "type": "library",
       "name": "tinybench",
-      "version": "2.9.0",
-      "purl": "pkg:npm/tinybench@2.9.0",
-      "bom-ref": "pkg:npm/tinybench@2.9.0",
+      "version": "6.2.2",
+      "purl": "pkg:npm/tinybench@6.2.2",
+      "bom-ref": "pkg:npm/tinybench@6.2.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -16609,7 +16133,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/tinybench/-/tinybench-2.9.0.tgz"
+          "url": "https://registry.npmjs.org/tinybench/-/tinybench-6.2.2.tgz"
         }
       ],
       "properties": [
@@ -16626,9 +16150,9 @@
     {
       "type": "library",
       "name": "tinyexec",
-      "version": "1.0.2",
-      "purl": "pkg:npm/tinyexec@1.0.2",
-      "bom-ref": "pkg:npm/tinyexec@1.0.2",
+      "version": "1.3.1",
+      "purl": "pkg:npm/tinyexec@1.3.1",
+      "bom-ref": "pkg:npm/tinyexec@1.3.1",
       "licenses": [
         {
           "expression": "MIT"
@@ -16637,7 +16161,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.0.2.tgz"
+          "url": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.3.1.tgz"
         }
       ],
       "properties": [
@@ -16682,9 +16206,9 @@
     {
       "type": "library",
       "name": "tinyrainbow",
-      "version": "3.1.0",
-      "purl": "pkg:npm/tinyrainbow@3.1.0",
-      "bom-ref": "pkg:npm/tinyrainbow@3.1.0",
+      "version": "3.2.0",
+      "purl": "pkg:npm/tinyrainbow@3.2.0",
+      "bom-ref": "pkg:npm/tinyrainbow@3.2.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -16693,7 +16217,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.1.0.tgz"
+          "url": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.2.0.tgz"
         }
       ],
       "properties": [
@@ -16934,9 +16458,9 @@
     {
       "type": "library",
       "name": "undici-types",
-      "version": "8.3.0",
-      "purl": "pkg:npm/undici-types@8.3.0",
-      "bom-ref": "pkg:npm/undici-types@8.3.0",
+      "version": "8.9.0",
+      "purl": "pkg:npm/undici-types@8.9.0",
+      "bom-ref": "pkg:npm/undici-types@8.9.0",
       "licenses": [
         {
           "expression": "MIT"
@@ -16945,7 +16469,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/undici-types/-/undici-types-8.3.0.tgz"
+          "url": "https://registry.npmjs.org/undici-types/-/undici-types-8.9.0.tgz"
         }
       ],
       "properties": [
@@ -17018,9 +16542,9 @@
     {
       "type": "library",
       "name": "vitest",
-      "version": "4.1.11",
-      "purl": "pkg:npm/vitest@4.1.11",
-      "bom-ref": "pkg:npm/vitest@4.1.11",
+      "version": "5.0.2",
+      "purl": "pkg:npm/vitest@5.0.2",
+      "bom-ref": "pkg:npm/vitest@5.0.2",
       "licenses": [
         {
           "expression": "MIT"
@@ -17029,7 +16553,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/vitest/-/vitest-4.1.11.tgz"
+          "url": "https://registry.npmjs.org/vitest/-/vitest-5.0.2.tgz"
         }
       ],
       "properties": [
@@ -17074,9 +16598,9 @@
     {
       "type": "library",
       "name": "why-is-node-running",
-      "version": "2.3.0",
-      "purl": "pkg:npm/why-is-node-running@2.3.0",
-      "bom-ref": "pkg:npm/why-is-node-running@2.3.0",
+      "version": "3.2.3",
+      "purl": "pkg:npm/why-is-node-running@3.2.3",
+      "bom-ref": "pkg:npm/why-is-node-running@3.2.3",
       "licenses": [
         {
           "expression": "MIT"
@@ -17085,7 +16609,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-2.3.0.tgz"
+          "url": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-3.2.3.tgz"
         }
       ],
       "properties": [
@@ -17298,9 +16822,9 @@
     {
       "type": "library",
       "name": "swift-nio",
-      "version": "2.101.3",
-      "purl": "pkg:swift/swift-nio@2.101.3",
-      "bom-ref": "pkg:swift/swift-nio@2.101.3",
+      "version": "2.103.0",
+      "purl": "pkg:swift/swift-nio@2.103.0",
+      "bom-ref": "pkg:swift/swift-nio@2.103.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -17326,9 +16850,9 @@
     {
       "type": "library",
       "name": "swift-nio-ssl",
-      "version": "2.37.2",
-      "purl": "pkg:swift/swift-nio-ssl@2.37.2",
-      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "version": "2.37.5",
+      "purl": "pkg:swift/swift-nio-ssl@2.37.5",
+      "bom-ref": "pkg:swift/swift-nio-ssl@2.37.5",
       "licenses": [
         {
           "expression": "Apache-2.0"
@@ -17425,7 +16949,6 @@
         "pkg:cargo/hmac@0.13.0",
         "pkg:cargo/http-body-util@0.1.5",
         "pkg:cargo/http@1.5.0",
-        "pkg:cargo/hyper-util@0.1.20",
         "pkg:cargo/hyper-util@0.1.21",
         "pkg:cargo/hyper@1.11.1",
         "pkg:cargo/idna@1.1.0",
@@ -17434,9 +16957,9 @@
         "pkg:cargo/lazy_static@1.5.1",
         "pkg:cargo/libfuzzer-sys@0.4.13",
         "pkg:cargo/libsqlite3-sys@0.38.2",
-        "pkg:cargo/lru-slab@0.1.2",
-        "pkg:cargo/napi-build@2.4.1",
-        "pkg:cargo/napi-derive@3.6.3",
+        "pkg:cargo/lru-slab@0.1.3",
+        "pkg:cargo/napi-build@2.6.0",
+        "pkg:cargo/napi-derive@3.6.11",
         "pkg:cargo/napi@3.12.2",
         "pkg:cargo/p256@0.14.0",
         "pkg:cargo/pin-project-lite@0.2.17",
@@ -17444,10 +16967,8 @@
         "pkg:cargo/psl@2.1.238",
         "pkg:cargo/qpack@0.1.0",
         "pkg:cargo/quinn-udp@0.5.15",
-        "pkg:cargo/rand@0.10.2",
         "pkg:cargo/rand@0.10.3",
-        "pkg:cargo/rand@0.9.3",
-        "pkg:cargo/rand_pcg@0.9.0",
+        "pkg:cargo/rand_pcg@0.10.2",
         "pkg:cargo/rcgen@0.14.10",
         "pkg:cargo/regex-lite@0.1.9",
         "pkg:cargo/ring@0.17.14",
@@ -17462,21 +16983,18 @@
         "pkg:cargo/socket2@0.6.5",
         "pkg:cargo/subtle@2.6.1",
         "pkg:cargo/tempfile@3.27.0",
-        "pkg:cargo/thiserror@2.0.20",
         "pkg:cargo/thiserror@2.0.21",
         "pkg:cargo/time@0.3.55",
-        "pkg:cargo/tinyvec@1.12.0",
-        "pkg:cargo/tokio-rustls@0.26.4",
+        "pkg:cargo/tinyvec@1.13.3",
         "pkg:cargo/tokio-rustls@0.26.6",
         "pkg:cargo/tokio-tungstenite@0.30.0",
         "pkg:cargo/tokio-util@0.7.19",
-        "pkg:cargo/tokio@1.53.1",
         "pkg:cargo/tokio@1.53.2",
         "pkg:cargo/tracing-futures@0.2.5",
         "pkg:cargo/tracing-subscriber@0.3.23",
         "pkg:cargo/tracing@0.1.44",
         "pkg:cargo/unicode-normalization@0.1.25",
-        "pkg:cargo/url@2.5.4",
+        "pkg:cargo/url@2.5.8",
         "pkg:cargo/x25519-dalek@3.0.0",
         "pkg:cargo/x509-parser@0.18.1",
         "pkg:cargo/zeroize@1.9.0",
@@ -17490,12 +17008,12 @@
         "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
         "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
+        "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
         "pkg:golang/github.com/quic-go/webtransport-go@v0.13.0",
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
         "pkg:golang/golang.org/x/crypto@v0.57.0",
         "pkg:golang/golang.org/x/net@v0.60.0",
-        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/sys@v0.49.0",
         "pkg:golang/golang.org/x/text@v0.42.0",
         "pkg:golang/modernc.org/libc@v1.75.7",
         "pkg:golang/modernc.org/mathutil@v1.7.1",
@@ -17506,27 +17024,27 @@
         "pkg:npm/%40noble/curves@2.4.0",
         "pkg:npm/%40noble/hashes@2.4.0",
         "pkg:npm/%40playwright/test@1.62.1",
-        "pkg:npm/%40types/node@26.4.0",
+        "pkg:npm/%40types/node@26.6.3",
         "pkg:npm/%40types/ws@8.18.1",
-        "pkg:npm/%40typescript-eslint/eslint-plugin@8.68.0",
-        "pkg:npm/%40typescript-eslint/parser@8.68.0",
+        "pkg:npm/%40typescript-eslint/eslint-plugin@8.70.1",
+        "pkg:npm/%40typescript-eslint/parser@8.70.1",
         "pkg:npm/%40typescript/native@7.0.2",
-        "pkg:npm/%40vitest/coverage-v8@4.1.11",
+        "pkg:npm/%40vitest/coverage-v8@5.0.2",
         "pkg:npm/ajv-formats-draft2019@1.6.1",
         "pkg:npm/ajv-formats@3.0.1",
         "pkg:npm/ajv@8.20.0",
         "pkg:npm/brotli-dec-wasm@2.3.2",
-        "pkg:npm/eslint@10.9.1",
+        "pkg:npm/eslint@10.11.0",
         "pkg:npm/tough-cookie@6.0.2",
         "pkg:npm/tr46@6.0.0",
         "pkg:npm/tsx@4.23.13",
         "pkg:npm/typescript@6.0.2",
         "pkg:npm/vite@8.2.1",
-        "pkg:npm/vitest@4.1.11",
+        "pkg:npm/vitest@5.0.2",
         "pkg:npm/ws@8.21.3",
         "pkg:swift/swift-crypto@4.5.1",
-        "pkg:swift/swift-nio-ssl@2.37.2",
-        "pkg:swift/swift-nio@2.101.3",
+        "pkg:swift/swift-nio-ssl@2.37.5",
+        "pkg:swift/swift-nio@2.103.0",
         "pkg:swift/swift-sodium@0.11.0"
       ]
     },
@@ -17555,19 +17073,10 @@
       ]
     },
     {
-      "ref": "pkg:cargo/aes@0.9.3",
-      "dependsOn": [
-        "pkg:cargo/cipher@0.5.2",
-        "pkg:cargo/cpubits@0.1.1",
-        "pkg:cargo/cpufeatures@0.3.1"
-      ]
-    },
-    {
       "ref": "pkg:cargo/aes-gcm@0.11.1",
       "dependsOn": [
         "pkg:cargo/aead@0.6.1",
         "pkg:cargo/aes@0.9.2",
-        "pkg:cargo/aes@0.9.3",
         "pkg:cargo/cipher@0.5.2",
         "pkg:cargo/ctr@0.10.1",
         "pkg:cargo/ctutils@0.4.2",
@@ -17603,7 +17112,6 @@
         "pkg:cargo/nom@7.1.3",
         "pkg:cargo/num-traits@0.2.19",
         "pkg:cargo/rusticata-macros@4.1.0",
-        "pkg:cargo/thiserror@2.0.20",
         "pkg:cargo/thiserror@2.0.21",
         "pkg:cargo/time@0.3.55"
       ]
@@ -17814,7 +17322,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/convert_case@0.11.0",
+      "ref": "pkg:cargo/convert_case@0.12.0",
       "dependsOn": [
         "pkg:cargo/unicode-segmentation@1.13.3"
       ]
@@ -18079,7 +17587,7 @@
       "ref": "pkg:cargo/errno@0.3.14",
       "dependsOn": [
         "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/windows-sys@0.61.2"
+        "pkg:cargo/windows-sys@0.52.0"
       ]
     },
     {
@@ -18361,20 +17869,8 @@
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/smallvec@1.15.2",
         "pkg:cargo/smallvec@1.16.2",
-        "pkg:cargo/tokio@1.53.1",
         "pkg:cargo/tokio@1.53.2",
         "pkg:cargo/want@0.3.1"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/hyper-util@0.1.20",
-      "dependsOn": [
-        "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/http-body@1.1.0",
-        "pkg:cargo/http@1.5.0",
-        "pkg:cargo/hyper@1.11.1",
-        "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tokio@1.53.1"
       ]
     },
     {
@@ -18555,7 +18051,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/lru-slab@0.1.2",
+      "ref": "pkg:cargo/lru-slab@0.1.3",
       "dependsOn": []
     },
     {
@@ -18595,7 +18091,7 @@
         "pkg:cargo/ctor@1.0.13",
         "pkg:cargo/futures@0.3.34",
         "pkg:cargo/libc@0.2.190",
-        "pkg:cargo/napi-build@2.4.1",
+        "pkg:cargo/napi-build@2.6.0",
         "pkg:cargo/napi-sys@3.3.0",
         "pkg:cargo/nohash-hasher@0.2.0",
         "pkg:cargo/rustc-hash@2.1.3",
@@ -18603,28 +18099,28 @@
       ]
     },
     {
-      "ref": "pkg:cargo/napi-build@2.4.1",
+      "ref": "pkg:cargo/napi-build@2.6.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/napi-derive@3.6.3",
+      "ref": "pkg:cargo/napi-derive@3.6.11",
       "dependsOn": [
-        "pkg:cargo/convert_case@0.11.0",
+        "pkg:cargo/convert_case@0.12.0",
         "pkg:cargo/ctor@1.0.13",
-        "pkg:cargo/napi-derive-backend@6.1.2",
+        "pkg:cargo/napi-derive-backend@6.1.5",
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
+        "pkg:cargo/syn@3.0.6"
       ]
     },
     {
-      "ref": "pkg:cargo/napi-derive-backend@6.1.2",
+      "ref": "pkg:cargo/napi-derive-backend@6.1.5",
       "dependsOn": [
-        "pkg:cargo/convert_case@0.11.0",
+        "pkg:cargo/convert_case@0.12.0",
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
         "pkg:cargo/semver@1.0.28",
-        "pkg:cargo/syn@2.0.119"
+        "pkg:cargo/syn@3.0.6"
       ]
     },
     {
@@ -18795,8 +18291,7 @@
     {
       "ref": "pkg:cargo/ppv-lite86@0.2.21",
       "dependsOn": [
-        "pkg:cargo/zerocopy@0.8.56",
-        "pkg:cargo/zerocopy@0.8.59"
+        "pkg:cargo/zerocopy@0.8.56"
       ]
     },
     {
@@ -18891,6 +18386,7 @@
         "pkg:cargo/libc@0.2.190",
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/socket2@0.6.5",
+        "pkg:cargo/windows-sys@0.52.0",
         "pkg:cargo/windows-sys@0.61.2"
       ]
     },
@@ -18913,14 +18409,6 @@
     {
       "ref": "pkg:cargo/r-efi@6.0.0",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/rand@0.10.2",
-      "dependsOn": [
-        "pkg:cargo/chacha20@0.10.2",
-        "pkg:cargo/getrandom@0.4.3",
-        "pkg:cargo/rand_core@0.10.1"
-      ]
     },
     {
       "ref": "pkg:cargo/rand@0.10.3",
@@ -18961,9 +18449,9 @@
       ]
     },
     {
-      "ref": "pkg:cargo/rand_pcg@0.9.0",
+      "ref": "pkg:cargo/rand_pcg@0.10.2",
       "dependsOn": [
-        "pkg:cargo/rand_core@0.9.5"
+        "pkg:cargo/rand_core@0.10.1"
       ]
     },
     {
@@ -19062,7 +18550,7 @@
         "pkg:cargo/errno@0.3.14",
         "pkg:cargo/libc@0.2.189",
         "pkg:cargo/linux-raw-sys@0.12.1",
-        "pkg:cargo/windows-sys@0.61.2"
+        "pkg:cargo/windows-sys@0.52.0"
       ]
     },
     {
@@ -19332,16 +18820,10 @@
       "ref": "pkg:cargo/tempfile@3.27.0",
       "dependsOn": [
         "pkg:cargo/fastrand@2.5.0",
-        "pkg:cargo/getrandom@0.4.3",
+        "pkg:cargo/getrandom@0.3.4",
         "pkg:cargo/once_cell@1.21.4",
         "pkg:cargo/rustix@1.1.4",
-        "pkg:cargo/windows-sys@0.61.2"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/thiserror@2.0.20",
-      "dependsOn": [
-        "pkg:cargo/thiserror-impl@2.0.20"
+        "pkg:cargo/windows-sys@0.52.0"
       ]
     },
     {
@@ -19351,18 +18833,11 @@
       ]
     },
     {
-      "ref": "pkg:cargo/thiserror-impl@2.0.20",
-      "dependsOn": [
-        "pkg:cargo/proc-macro2@1.0.107",
-        "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@3.0.4"
-      ]
-    },
-    {
       "ref": "pkg:cargo/thiserror-impl@2.0.21",
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
+        "pkg:cargo/syn@3.0.4",
         "pkg:cargo/syn@3.0.6"
       ]
     },
@@ -19402,32 +18877,16 @@
       ]
     },
     {
-      "ref": "pkg:cargo/tinyvec@1.12.0",
-      "dependsOn": [
-        "pkg:cargo/tinyvec_macros@0.1.1"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/tinyvec_macros@0.1.1",
+      "ref": "pkg:cargo/tinyvec@1.13.3",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:cargo/tokio@1.53.1",
-      "dependsOn": [
-        "pkg:cargo/bytes@1.12.1",
-        "pkg:cargo/libc@0.2.189",
-        "pkg:cargo/mio@1.2.2",
-        "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/socket2@0.6.5",
-        "pkg:cargo/tokio-macros@2.7.2",
-        "pkg:cargo/windows-sys@0.61.2"
-      ]
     },
     {
       "ref": "pkg:cargo/tokio@1.53.2",
       "dependsOn": [
         "pkg:cargo/bytes@1.12.1",
+        "pkg:cargo/libc@0.2.189",
         "pkg:cargo/libc@0.2.190",
+        "pkg:cargo/mio@1.2.2",
         "pkg:cargo/mio@1.2.3",
         "pkg:cargo/pin-project-lite@0.2.17",
         "pkg:cargo/socket2@0.6.5",
@@ -19445,13 +18904,6 @@
       ]
     },
     {
-      "ref": "pkg:cargo/tokio-rustls@0.26.4",
-      "dependsOn": [
-        "pkg:cargo/rustls@0.23.45",
-        "pkg:cargo/tokio@1.53.1"
-      ]
-    },
-    {
       "ref": "pkg:cargo/tokio-rustls@0.26.6",
       "dependsOn": [
         "pkg:cargo/rustls@0.23.45",
@@ -19463,7 +18915,6 @@
       "dependsOn": [
         "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/log@0.4.34",
-        "pkg:cargo/tokio@1.53.1",
         "pkg:cargo/tokio@1.53.2",
         "pkg:cargo/tungstenite@0.30.0"
       ]
@@ -19477,7 +18928,6 @@
         "pkg:cargo/futures-sink@0.3.34",
         "pkg:cargo/futures-util@0.3.34",
         "pkg:cargo/pin-project-lite@0.2.17",
-        "pkg:cargo/tokio@1.53.1",
         "pkg:cargo/tokio@1.53.2"
       ]
     },
@@ -19546,10 +18996,8 @@
         "pkg:cargo/http@1.5.0",
         "pkg:cargo/httparse@1.10.1",
         "pkg:cargo/log@0.4.34",
-        "pkg:cargo/rand@0.10.2",
         "pkg:cargo/rand@0.10.3",
         "pkg:cargo/sha1@0.11.0",
-        "pkg:cargo/thiserror@2.0.20",
         "pkg:cargo/thiserror@2.0.21"
       ]
     },
@@ -19576,7 +19024,7 @@
     {
       "ref": "pkg:cargo/unicode-normalization@0.1.25",
       "dependsOn": [
-        "pkg:cargo/tinyvec@1.12.0"
+        "pkg:cargo/tinyvec@1.13.3"
       ]
     },
     {
@@ -19603,12 +19051,13 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:cargo/url@2.5.4",
+      "ref": "pkg:cargo/url@2.5.8",
       "dependsOn": [
         "pkg:cargo/form_urlencoded@1.2.2",
         "pkg:cargo/idna@1.1.0",
         "pkg:cargo/percent-encoding@2.3.2",
-        "pkg:cargo/serde@1.0.229"
+        "pkg:cargo/serde@1.0.229",
+        "pkg:cargo/serde_derive@1.0.229"
       ]
     },
     {
@@ -19781,7 +19230,6 @@
         "pkg:cargo/oid-registry@0.8.1",
         "pkg:cargo/ring@0.17.14",
         "pkg:cargo/rusticata-macros@4.1.0",
-        "pkg:cargo/thiserror@2.0.20",
         "pkg:cargo/thiserror@2.0.21",
         "pkg:cargo/time@0.3.55"
       ]
@@ -19827,21 +19275,7 @@
       ]
     },
     {
-      "ref": "pkg:cargo/zerocopy@0.8.59",
-      "dependsOn": [
-        "pkg:cargo/zerocopy-derive@0.8.59"
-      ]
-    },
-    {
       "ref": "pkg:cargo/zerocopy-derive@0.8.56",
-      "dependsOn": [
-        "pkg:cargo/proc-macro2@1.0.107",
-        "pkg:cargo/quote@1.0.47",
-        "pkg:cargo/syn@2.0.119"
-      ]
-    },
-    {
-      "ref": "pkg:cargo/zerocopy-derive@0.8.59",
       "dependsOn": [
         "pkg:cargo/proc-macro2@1.0.107",
         "pkg:cargo/quote@1.0.47",
@@ -19951,7 +19385,7 @@
     {
       "ref": "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
       "dependsOn": [
-        "pkg:golang/golang.org/x/sys@v0.48.0"
+        "pkg:golang/golang.org/x/sys@v0.49.0"
       ]
     },
     {
@@ -19965,12 +19399,12 @@
       ]
     },
     {
-      "ref": "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
+      "ref": "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
       "dependsOn": [
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
         "pkg:golang/golang.org/x/crypto@v0.57.0",
         "pkg:golang/golang.org/x/net@v0.60.0",
-        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/sys@v0.49.0",
         "pkg:golang/golang.org/x/text@v0.42.0"
       ]
     },
@@ -19979,10 +19413,10 @@
       "dependsOn": [
         "pkg:golang/github.com/dunglas/httpsfv@v1.1.1",
         "pkg:golang/github.com/quic-go/qpack@v0.6.0",
-        "pkg:golang/github.com/quic-go/quic-go@v0.62.0",
+        "pkg:golang/github.com/quic-go/quic-go@v0.63.0",
         "pkg:golang/golang.org/x/crypto@v0.57.0",
         "pkg:golang/golang.org/x/net@v0.60.0",
-        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/sys@v0.49.0",
         "pkg:golang/golang.org/x/text@v0.42.0"
       ]
     },
@@ -19994,7 +19428,7 @@
       "ref": "pkg:golang/golang.org/x/crypto@v0.57.0",
       "dependsOn": [
         "pkg:golang/golang.org/x/net@v0.60.0",
-        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/sys@v0.49.0",
         "pkg:golang/golang.org/x/text@v0.42.0"
       ]
     },
@@ -20002,12 +19436,12 @@
       "ref": "pkg:golang/golang.org/x/net@v0.60.0",
       "dependsOn": [
         "pkg:golang/golang.org/x/crypto@v0.57.0",
-        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/sys@v0.49.0",
         "pkg:golang/golang.org/x/text@v0.42.0"
       ]
     },
     {
-      "ref": "pkg:golang/golang.org/x/sys@v0.48.0",
+      "ref": "pkg:golang/golang.org/x/sys@v0.49.0",
       "dependsOn": []
     },
     {
@@ -20022,7 +19456,7 @@
         "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
         "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
-        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/sys@v0.49.0",
         "pkg:golang/modernc.org/mathutil@v1.7.1",
         "pkg:golang/modernc.org/memory@v1.12.1"
       ]
@@ -20037,7 +19471,7 @@
       "ref": "pkg:golang/modernc.org/memory@v1.12.1",
       "dependsOn": [
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
-        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/sys@v0.49.0",
         "pkg:golang/modernc.org/mathutil@v1.7.1"
       ]
     },
@@ -20049,36 +19483,52 @@
         "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
         "pkg:golang/github.com/ncruces/go-strftime@v1.0.0",
         "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
-        "pkg:golang/golang.org/x/sys@v0.48.0",
+        "pkg:golang/golang.org/x/sys@v0.49.0",
         "pkg:golang/modernc.org/libc@v1.75.7",
         "pkg:golang/modernc.org/mathutil@v1.7.1",
         "pkg:golang/modernc.org/memory@v1.12.1"
       ]
     },
     {
-      "ref": "pkg:npm/%40babel/helper-string-parser@7.27.1",
+      "ref": "pkg:npm/%40babel/helper-string-parser@7.29.7",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40babel/helper-validator-identifier@7.28.5",
+      "ref": "pkg:npm/%40babel/helper-validator-identifier@7.29.7",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40babel/parser@7.29.2",
+      "ref": "pkg:npm/%40babel/parser@7.29.9",
       "dependsOn": [
-        "pkg:npm/%40babel/types@7.29.0"
+        "pkg:npm/%40babel/types@7.29.8"
       ]
     },
     {
-      "ref": "pkg:npm/%40babel/types@7.29.0",
+      "ref": "pkg:npm/%40babel/types@7.29.8",
       "dependsOn": [
-        "pkg:npm/%40babel/helper-string-parser@7.27.1",
-        "pkg:npm/%40babel/helper-validator-identifier@7.28.5"
+        "pkg:npm/%40babel/helper-string-parser@7.29.7",
+        "pkg:npm/%40babel/helper-validator-identifier@7.29.7"
       ]
     },
     {
       "ref": "pkg:npm/%40bcoe/v8-coverage@1.0.2",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40cacheable/memory@2.2.0",
+      "dependsOn": [
+        "pkg:npm/%40cacheable/utils@2.5.0",
+        "pkg:npm/%40keyv/bigmap@1.3.1",
+        "pkg:npm/hookified@1.15.1",
+        "pkg:npm/keyv@5.6.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40cacheable/utils@2.5.0",
+      "dependsOn": [
+        "pkg:npm/hashery@1.5.1",
+        "pkg:npm/keyv@5.6.0"
+      ]
     },
     {
       "ref": "pkg:npm/%40esbuild/aix-ppc64@0.28.2",
@@ -20188,7 +19638,7 @@
       "ref": "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
       "dependsOn": [
         "pkg:npm/eslint-visitor-keys@3.4.3",
-        "pkg:npm/eslint@10.9.1"
+        "pkg:npm/eslint@10.11.0"
       ]
     },
     {
@@ -20220,7 +19670,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40eslint/plugin-kit@0.7.2",
+      "ref": "pkg:npm/%40eslint/plugin-kit@0.7.3",
       "dependsOn": [
         "pkg:npm/%40eslint/core@1.2.1",
         "pkg:npm/levn@0.4.1"
@@ -20282,15 +19732,27 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40jridgewell/sourcemap-codec@1.5.5",
+      "ref": "pkg:npm/%40jridgewell/sourcemap-codec@1.6.0",
       "dependsOn": []
     },
     {
       "ref": "pkg:npm/%40jridgewell/trace-mapping@0.3.31",
       "dependsOn": [
         "pkg:npm/%40jridgewell/resolve-uri@3.1.2",
-        "pkg:npm/%40jridgewell/sourcemap-codec@1.5.5"
+        "pkg:npm/%40jridgewell/sourcemap-codec@1.6.0"
       ]
+    },
+    {
+      "ref": "pkg:npm/%40keyv/bigmap@1.3.1",
+      "dependsOn": [
+        "pkg:npm/hashery@1.5.1",
+        "pkg:npm/hookified@1.15.1",
+        "pkg:npm/keyv@5.6.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/%40keyv/serialize@1.1.1",
+      "dependsOn": []
     },
     {
       "ref": "pkg:npm/%40noble/ciphers@2.4.0",
@@ -20381,10 +19843,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40standard-schema/spec@1.1.0",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/%40types/chai@5.2.3",
       "dependsOn": [
         "pkg:npm/%40types/deep-eql@4.0.2",
@@ -20408,27 +19866,27 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40types/node@26.4.0",
+      "ref": "pkg:npm/%40types/node@26.6.3",
       "dependsOn": [
-        "pkg:npm/undici-types@8.3.0"
+        "pkg:npm/undici-types@8.9.0"
       ]
     },
     {
       "ref": "pkg:npm/%40types/ws@8.18.1",
       "dependsOn": [
-        "pkg:npm/%40types/node@26.4.0"
+        "pkg:npm/%40types/node@26.6.3"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/eslint-plugin@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/eslint-plugin@8.70.1",
       "dependsOn": [
         "pkg:npm/%40eslint-community/regexpp@4.12.2",
-        "pkg:npm/%40typescript-eslint/parser@8.68.0",
-        "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
-        "pkg:npm/%40typescript-eslint/type-utils@8.68.0",
-        "pkg:npm/%40typescript-eslint/utils@8.68.0",
-        "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
-        "pkg:npm/eslint@10.9.1",
+        "pkg:npm/%40typescript-eslint/parser@8.70.1",
+        "pkg:npm/%40typescript-eslint/scope-manager@8.70.1",
+        "pkg:npm/%40typescript-eslint/type-utils@8.70.1",
+        "pkg:npm/%40typescript-eslint/utils@8.70.1",
+        "pkg:npm/%40typescript-eslint/visitor-keys@8.70.1",
+        "pkg:npm/eslint@10.11.0",
         "pkg:npm/ignore@7.0.5",
         "pkg:npm/natural-compare@1.4.0",
         "pkg:npm/ts-api-utils@2.5.0",
@@ -20436,85 +19894,85 @@
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/parser@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/parser@8.70.1",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
-        "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
+        "pkg:npm/%40typescript-eslint/scope-manager@8.70.1",
+        "pkg:npm/%40typescript-eslint/types@8.70.1",
+        "pkg:npm/%40typescript-eslint/typescript-estree@8.70.1",
+        "pkg:npm/%40typescript-eslint/visitor-keys@8.70.1",
         "pkg:npm/debug@4.4.3",
-        "pkg:npm/eslint@10.9.1",
+        "pkg:npm/eslint@10.11.0",
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/project-service@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/project-service@8.70.1",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
+        "pkg:npm/%40typescript-eslint/tsconfig-utils@8.70.1",
+        "pkg:npm/%40typescript-eslint/types@8.70.1",
         "pkg:npm/debug@4.4.3",
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/scope-manager@8.70.1",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0"
+        "pkg:npm/%40typescript-eslint/types@8.70.1",
+        "pkg:npm/%40typescript-eslint/visitor-keys@8.70.1"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/tsconfig-utils@8.70.1",
       "dependsOn": [
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/type-utils@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/type-utils@8.70.1",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
-        "pkg:npm/%40typescript-eslint/utils@8.68.0",
+        "pkg:npm/%40typescript-eslint/types@8.70.1",
+        "pkg:npm/%40typescript-eslint/typescript-estree@8.70.1",
+        "pkg:npm/%40typescript-eslint/utils@8.70.1",
         "pkg:npm/debug@4.4.3",
-        "pkg:npm/eslint@10.9.1",
+        "pkg:npm/eslint@10.11.0",
         "pkg:npm/ts-api-utils@2.5.0",
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/types@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/types@8.70.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/typescript-estree@8.70.1",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/project-service@8.68.0",
-        "pkg:npm/%40typescript-eslint/tsconfig-utils@8.68.0",
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
+        "pkg:npm/%40typescript-eslint/project-service@8.70.1",
+        "pkg:npm/%40typescript-eslint/tsconfig-utils@8.70.1",
+        "pkg:npm/%40typescript-eslint/types@8.70.1",
+        "pkg:npm/%40typescript-eslint/visitor-keys@8.70.1",
         "pkg:npm/debug@4.4.3",
         "pkg:npm/minimatch@10.2.6",
-        "pkg:npm/semver@7.7.3",
+        "pkg:npm/semver@7.8.5",
         "pkg:npm/tinyglobby@0.2.17",
         "pkg:npm/ts-api-utils@2.5.0",
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/utils@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/utils@8.70.1",
       "dependsOn": [
         "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
-        "pkg:npm/%40typescript-eslint/scope-manager@8.68.0",
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
-        "pkg:npm/%40typescript-eslint/typescript-estree@8.68.0",
-        "pkg:npm/eslint@10.9.1",
+        "pkg:npm/%40typescript-eslint/scope-manager@8.70.1",
+        "pkg:npm/%40typescript-eslint/types@8.70.1",
+        "pkg:npm/%40typescript-eslint/typescript-estree@8.70.1",
+        "pkg:npm/eslint@10.11.0",
         "pkg:npm/typescript@6.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40typescript-eslint/visitor-keys@8.68.0",
+      "ref": "pkg:npm/%40typescript-eslint/visitor-keys@8.70.1",
       "dependsOn": [
-        "pkg:npm/%40typescript-eslint/types@8.68.0",
+        "pkg:npm/%40typescript-eslint/types@8.70.1",
         "pkg:npm/eslint-visitor-keys@5.0.1"
       ]
     },
@@ -20628,74 +20086,42 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/%40vitest/coverage-v8@4.1.11",
+      "ref": "pkg:npm/%40vitest/coverage-v8@5.0.2",
       "dependsOn": [
         "pkg:npm/%40bcoe/v8-coverage@1.0.2",
-        "pkg:npm/%40vitest/utils@4.1.11",
-        "pkg:npm/ast-v8-to-istanbul@1.0.3",
-        "pkg:npm/istanbul-lib-coverage@3.2.2",
-        "pkg:npm/istanbul-lib-report@3.0.1",
-        "pkg:npm/istanbul-reports@3.2.0",
-        "pkg:npm/magicast@0.5.2",
-        "pkg:npm/obug@2.1.1",
-        "pkg:npm/std-env@4.1.0",
-        "pkg:npm/tinyrainbow@3.1.0",
-        "pkg:npm/vitest@4.1.11"
+        "pkg:npm/%40vitest/istanbul-lib-coverage@1.0.2",
+        "pkg:npm/%40vitest/istanbul-lib-report@1.0.2",
+        "pkg:npm/ast-v8-to-istanbul@1.0.7",
+        "pkg:npm/magicast@0.5.5",
+        "pkg:npm/obug@2.2.1",
+        "pkg:npm/std-env@4.3.0",
+        "pkg:npm/tinyrainbow@3.2.0",
+        "pkg:npm/vitest@5.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/expect@4.1.11",
+      "ref": "pkg:npm/%40vitest/istanbul-lib-coverage@1.0.2",
+      "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/%40vitest/istanbul-lib-report@1.0.2",
       "dependsOn": [
-        "pkg:npm/%40standard-schema/spec@1.1.0",
-        "pkg:npm/%40types/chai@5.2.3",
-        "pkg:npm/%40vitest/spy@4.1.11",
-        "pkg:npm/%40vitest/utils@4.1.11",
-        "pkg:npm/chai@6.2.2",
-        "pkg:npm/tinyrainbow@3.1.0"
+        "pkg:npm/%40vitest/istanbul-lib-coverage@1.0.2"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/mocker@4.1.11",
+      "ref": "pkg:npm/%40vitest/mocker@5.0.2",
       "dependsOn": [
-        "pkg:npm/%40vitest/spy@4.1.11",
+        "pkg:npm/%40jridgewell/trace-mapping@0.3.31",
+        "pkg:npm/%40vitest/spy@5.0.2",
         "pkg:npm/estree-walker@3.0.3",
-        "pkg:npm/magic-string@0.30.21",
+        "pkg:npm/magic-string@1.4.3",
         "pkg:npm/vite@8.2.1"
       ]
     },
     {
-      "ref": "pkg:npm/%40vitest/pretty-format@4.1.11",
-      "dependsOn": [
-        "pkg:npm/tinyrainbow@3.1.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/%40vitest/runner@4.1.11",
-      "dependsOn": [
-        "pkg:npm/%40vitest/utils@4.1.11",
-        "pkg:npm/pathe@2.0.3"
-      ]
-    },
-    {
-      "ref": "pkg:npm/%40vitest/snapshot@4.1.11",
-      "dependsOn": [
-        "pkg:npm/%40vitest/pretty-format@4.1.11",
-        "pkg:npm/%40vitest/utils@4.1.11",
-        "pkg:npm/magic-string@0.30.21",
-        "pkg:npm/pathe@2.0.3"
-      ]
-    },
-    {
-      "ref": "pkg:npm/%40vitest/spy@4.1.11",
+      "ref": "pkg:npm/%40vitest/spy@5.0.2",
       "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/%40vitest/utils@4.1.11",
-      "dependsOn": [
-        "pkg:npm/%40vitest/pretty-format@4.1.11",
-        "pkg:npm/convert-source-map@2.0.0",
-        "pkg:npm/tinyrainbow@3.1.0"
-      ]
     },
     {
       "ref": "pkg:npm/acorn@8.18.0",
@@ -20746,7 +20172,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/ast-v8-to-istanbul@1.0.3",
+      "ref": "pkg:npm/ast-v8-to-istanbul@1.0.7",
       "dependsOn": [
         "pkg:npm/%40jridgewell/trace-mapping@0.3.31",
         "pkg:npm/estree-walker@3.0.3",
@@ -20772,15 +20198,21 @@
       ]
     },
     {
-      "ref": "pkg:npm/chai@6.2.2",
+      "ref": "pkg:npm/cacheable@2.5.0",
+      "dependsOn": [
+        "pkg:npm/%40cacheable/memory@2.2.0",
+        "pkg:npm/%40cacheable/utils@2.5.0",
+        "pkg:npm/hookified@1.15.1",
+        "pkg:npm/keyv@5.6.0",
+        "pkg:npm/qified@0.10.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/chai@6.3.0",
       "dependsOn": []
     },
     {
       "ref": "pkg:npm/commander@2.20.3",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/convert-source-map@2.0.0",
       "dependsOn": []
     },
     {
@@ -20810,7 +20242,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/es-module-lexer@2.1.0",
+      "ref": "pkg:npm/es-module-lexer@2.3.2",
       "dependsOn": []
     },
     {
@@ -20849,14 +20281,14 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/eslint@10.9.1",
+      "ref": "pkg:npm/eslint@10.11.0",
       "dependsOn": [
         "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
         "pkg:npm/%40eslint-community/regexpp@4.12.2",
         "pkg:npm/%40eslint/config-array@0.23.5",
         "pkg:npm/%40eslint/config-helpers@0.7.0",
         "pkg:npm/%40eslint/core@1.2.1",
-        "pkg:npm/%40eslint/plugin-kit@0.7.2",
+        "pkg:npm/%40eslint/plugin-kit@0.7.3",
         "pkg:npm/%40humanfs/node@0.16.8",
         "pkg:npm/%40humanwhocodes/module-importer@1.0.1",
         "pkg:npm/%40humanwhocodes/retry@0.4.3",
@@ -20871,7 +20303,7 @@
         "pkg:npm/esquery@1.7.0",
         "pkg:npm/esutils@2.0.3",
         "pkg:npm/fast-deep-equal@3.1.3",
-        "pkg:npm/file-entry-cache@8.0.0",
+        "pkg:npm/file-entry-cache@11.1.5",
         "pkg:npm/find-up@5.0.0",
         "pkg:npm/glob-parent@6.0.2",
         "pkg:npm/ignore@5.3.2",
@@ -20935,7 +20367,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/expect-type@1.3.0",
+      "ref": "pkg:npm/expect-type@1.4.0",
       "dependsOn": []
     },
     {
@@ -20961,13 +20393,13 @@
     {
       "ref": "pkg:npm/fdir@6.5.0",
       "dependsOn": [
-        "pkg:npm/picomatch@4.0.5"
+        "pkg:npm/picomatch@4.0.7"
       ]
     },
     {
-      "ref": "pkg:npm/file-entry-cache@8.0.0",
+      "ref": "pkg:npm/file-entry-cache@11.1.5",
       "dependsOn": [
-        "pkg:npm/flat-cache@4.0.1"
+        "pkg:npm/flat-cache@6.1.23"
       ]
     },
     {
@@ -20978,14 +20410,15 @@
       ]
     },
     {
-      "ref": "pkg:npm/flat-cache@4.0.1",
+      "ref": "pkg:npm/flat-cache@6.1.23",
       "dependsOn": [
-        "pkg:npm/flatted@3.4.2",
-        "pkg:npm/keyv@4.5.4"
+        "pkg:npm/cacheable@2.5.0",
+        "pkg:npm/flatted@3.4.4",
+        "pkg:npm/hookified@1.15.1"
       ]
     },
     {
-      "ref": "pkg:npm/flatted@3.4.2",
+      "ref": "pkg:npm/flatted@3.4.4",
       "dependsOn": []
     },
     {
@@ -21003,11 +20436,17 @@
       ]
     },
     {
-      "ref": "pkg:npm/has-flag@4.0.0",
+      "ref": "pkg:npm/hashery@1.5.1",
+      "dependsOn": [
+        "pkg:npm/hookified@1.15.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/hookified@1.15.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/html-escaper@2.0.2",
+      "ref": "pkg:npm/hookified@2.2.0",
       "dependsOn": []
     },
     {
@@ -21037,30 +20476,7 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/istanbul-lib-coverage@3.2.2",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/istanbul-lib-report@3.0.1",
-      "dependsOn": [
-        "pkg:npm/istanbul-lib-coverage@3.2.2",
-        "pkg:npm/make-dir@4.0.0",
-        "pkg:npm/supports-color@7.2.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/istanbul-reports@3.2.0",
-      "dependsOn": [
-        "pkg:npm/html-escaper@2.0.2",
-        "pkg:npm/istanbul-lib-report@3.0.1"
-      ]
-    },
-    {
       "ref": "pkg:npm/js-tokens@10.0.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/json-buffer@3.0.1",
       "dependsOn": []
     },
     {
@@ -21076,9 +20492,9 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/keyv@4.5.4",
+      "ref": "pkg:npm/keyv@5.6.0",
       "dependsOn": [
-        "pkg:npm/json-buffer@3.0.1"
+        "pkg:npm/%40keyv/serialize@1.1.1"
       ]
     },
     {
@@ -21156,23 +20572,17 @@
       ]
     },
     {
-      "ref": "pkg:npm/magic-string@0.30.21",
+      "ref": "pkg:npm/magic-string@1.4.3",
       "dependsOn": [
-        "pkg:npm/%40jridgewell/sourcemap-codec@1.5.5"
+        "pkg:npm/%40jridgewell/sourcemap-codec@1.6.0"
       ]
     },
     {
-      "ref": "pkg:npm/magicast@0.5.2",
+      "ref": "pkg:npm/magicast@0.5.5",
       "dependsOn": [
-        "pkg:npm/%40babel/parser@7.29.2",
-        "pkg:npm/%40babel/types@7.29.0",
+        "pkg:npm/%40babel/parser@7.29.9",
+        "pkg:npm/%40babel/types@7.29.8",
         "pkg:npm/source-map-js@1.2.2"
-      ]
-    },
-    {
-      "ref": "pkg:npm/make-dir@4.0.0",
-      "dependsOn": [
-        "pkg:npm/semver@7.7.3"
       ]
     },
     {
@@ -21207,7 +20617,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/obug@2.1.1",
+      "ref": "pkg:npm/obug@2.2.1",
       "dependsOn": []
     },
     {
@@ -21242,15 +20652,11 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/pathe@2.0.3",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/picocolors@1.1.1",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/picomatch@4.0.5",
+      "ref": "pkg:npm/picomatch@4.0.7",
       "dependsOn": []
     },
     {
@@ -21279,6 +20685,12 @@
     {
       "ref": "pkg:npm/punycode@2.3.1",
       "dependsOn": []
+    },
+    {
+      "ref": "pkg:npm/qified@0.10.1",
+      "dependsOn": [
+        "pkg:npm/hookified@2.2.0"
+      ]
     },
     {
       "ref": "pkg:npm/railroad-diagrams@1.0.0",
@@ -21328,7 +20740,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/semver@7.7.3",
+      "ref": "pkg:npm/semver@7.8.5",
       "dependsOn": []
     },
     {
@@ -21342,10 +20754,6 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/siginfo@2.0.0",
-      "dependsOn": []
-    },
-    {
       "ref": "pkg:npm/smtp-address-parser@1.1.0",
       "dependsOn": [
         "pkg:npm/nearley@2.20.1"
@@ -21356,36 +20764,26 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/stackback@0.0.2",
+      "ref": "pkg:npm/std-env@4.3.0",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/std-env@4.1.0",
+      "ref": "pkg:npm/tinybench@6.2.2",
       "dependsOn": []
     },
     {
-      "ref": "pkg:npm/supports-color@7.2.0",
-      "dependsOn": [
-        "pkg:npm/has-flag@4.0.0"
-      ]
-    },
-    {
-      "ref": "pkg:npm/tinybench@2.9.0",
-      "dependsOn": []
-    },
-    {
-      "ref": "pkg:npm/tinyexec@1.0.2",
+      "ref": "pkg:npm/tinyexec@1.3.1",
       "dependsOn": []
     },
     {
       "ref": "pkg:npm/tinyglobby@0.2.17",
       "dependsOn": [
         "pkg:npm/fdir@6.5.0",
-        "pkg:npm/picomatch@4.0.5"
+        "pkg:npm/picomatch@4.0.7"
       ]
     },
     {
-      "ref": "pkg:npm/tinyrainbow@3.1.0",
+      "ref": "pkg:npm/tinyrainbow@3.2.0",
       "dependsOn": []
     },
     {
@@ -21436,7 +20834,7 @@
       ]
     },
     {
-      "ref": "pkg:npm/undici-types@8.3.0",
+      "ref": "pkg:npm/undici-types@8.9.0",
       "dependsOn": []
     },
     {
@@ -21448,11 +20846,11 @@
     {
       "ref": "pkg:npm/vite@8.2.1",
       "dependsOn": [
-        "pkg:npm/%40types/node@26.4.0",
+        "pkg:npm/%40types/node@26.6.3",
         "pkg:npm/esbuild@0.28.2",
         "pkg:npm/fsevents@2.3.3",
         "pkg:npm/lightningcss@1.33.0",
-        "pkg:npm/picomatch@4.0.5",
+        "pkg:npm/picomatch@4.0.7",
         "pkg:npm/postcss@8.5.23",
         "pkg:npm/rolldown@1.2.5",
         "pkg:npm/tinyglobby@0.2.17",
@@ -21460,30 +20858,24 @@
       ]
     },
     {
-      "ref": "pkg:npm/vitest@4.1.11",
+      "ref": "pkg:npm/vitest@5.0.2",
       "dependsOn": [
-        "pkg:npm/%40types/node@26.4.0",
-        "pkg:npm/%40vitest/coverage-v8@4.1.11",
-        "pkg:npm/%40vitest/expect@4.1.11",
-        "pkg:npm/%40vitest/mocker@4.1.11",
-        "pkg:npm/%40vitest/pretty-format@4.1.11",
-        "pkg:npm/%40vitest/runner@4.1.11",
-        "pkg:npm/%40vitest/snapshot@4.1.11",
-        "pkg:npm/%40vitest/spy@4.1.11",
-        "pkg:npm/%40vitest/utils@4.1.11",
-        "pkg:npm/es-module-lexer@2.1.0",
-        "pkg:npm/expect-type@1.3.0",
-        "pkg:npm/magic-string@0.30.21",
-        "pkg:npm/obug@2.1.1",
-        "pkg:npm/pathe@2.0.3",
-        "pkg:npm/picomatch@4.0.5",
-        "pkg:npm/std-env@4.1.0",
-        "pkg:npm/tinybench@2.9.0",
-        "pkg:npm/tinyexec@1.0.2",
+        "pkg:npm/%40types/chai@5.2.3",
+        "pkg:npm/%40types/node@26.6.3",
+        "pkg:npm/%40vitest/coverage-v8@5.0.2",
+        "pkg:npm/%40vitest/mocker@5.0.2",
+        "pkg:npm/chai@6.3.0",
+        "pkg:npm/es-module-lexer@2.3.2",
+        "pkg:npm/expect-type@1.4.0",
+        "pkg:npm/magic-string@1.4.3",
+        "pkg:npm/obug@2.2.1",
+        "pkg:npm/picomatch@4.0.7",
+        "pkg:npm/std-env@4.3.0",
+        "pkg:npm/tinybench@6.2.2",
+        "pkg:npm/tinyexec@1.3.1",
         "pkg:npm/tinyglobby@0.2.17",
-        "pkg:npm/tinyrainbow@3.1.0",
         "pkg:npm/vite@8.2.1",
-        "pkg:npm/why-is-node-running@2.3.0"
+        "pkg:npm/why-is-node-running@3.2.3"
       ]
     },
     {
@@ -21493,11 +20885,8 @@
       ]
     },
     {
-      "ref": "pkg:npm/why-is-node-running@2.3.0",
-      "dependsOn": [
-        "pkg:npm/siginfo@2.0.0",
-        "pkg:npm/stackback@0.0.2"
-      ]
+      "ref": "pkg:npm/why-is-node-running@3.2.3",
+      "dependsOn": []
     },
     {
       "ref": "pkg:npm/word-wrap@1.2.5",
@@ -21530,7 +20919,7 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio@2.101.3",
+      "ref": "pkg:swift/swift-nio@2.103.0",
       "dependsOn": [
         "pkg:swift/swift-atomics@1.3.1",
         "pkg:swift/swift-collections@1.6.0",
@@ -21538,9 +20927,9 @@
       ]
     },
     {
-      "ref": "pkg:swift/swift-nio-ssl@2.37.2",
+      "ref": "pkg:swift/swift-nio-ssl@2.37.5",
       "dependsOn": [
-        "pkg:swift/swift-nio@2.101.3"
+        "pkg:swift/swift-nio@2.103.0"
       ]
     },
     {

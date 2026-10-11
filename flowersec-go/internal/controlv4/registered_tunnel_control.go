@@ -329,6 +329,11 @@ func (p *RegisteredControlTransport) call(ctx context.Context, payload Registere
 	if err == nil {
 		content, err = json.Marshal(payload)
 	}
+	// The signing input is bounded before adding its domain or invoking the
+	// key provider. The outer envelope cannot fit an oversized inner payload.
+	if err == nil && len(content) > registeredControlBodyLimit-len(registeredControlDomain) {
+		err = ErrResponse
+	}
 	if err == nil {
 		message = make([]byte, len(registeredControlDomain)+len(content))
 		copy(message, registeredControlDomain)
