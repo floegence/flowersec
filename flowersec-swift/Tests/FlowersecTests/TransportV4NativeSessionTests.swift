@@ -687,6 +687,7 @@
           _ = try await test.environment.connectMaterial(material)
           XCTFail("original consumed material replayed")
         } catch {}
+        try await test.peer.waitClosed()
         try await test.environment.close()
         XCTAssertNil(test.peer.error)
       }
@@ -879,6 +880,9 @@
         let cleanup = try await messages.waitCleanup()
         XCTAssertTrue(cleanup.complete)
         try await session.close()
+        // Both endpoints borrow this fixture's foundation. Join the server
+        // reader before Environment Close can fence its queued cleanup frames.
+        try await test.peer.waitClosed()
         try await test.environment.close()
         XCTAssertNil(test.peer.error)
       }
@@ -938,6 +942,7 @@
       try await messages.close()
       _ = try await messages.waitCleanup()
       try await session.close()
+      try await test.peer.waitClosed()
       try await test.environment.close()
       XCTAssertNil(test.peer.error)
     }
@@ -1010,6 +1015,7 @@
         XCTFail("accepted typed handler must be claimed once")
       } catch { XCTAssertEqual(error as? SessionError, .closed) }
       try await session.close()
+      try await test.peer.waitClosed()
       try await test.environment.close()
       XCTAssertNil(test.peer.error)
     }
@@ -1036,6 +1042,7 @@
       XCTAssertEqual(echo, Data([7]))
       try await incoming.stream.close()
       try await session.close()
+      try await test.peer.waitClosed()
       try await test.environment.close()
       XCTAssertNil(test.peer.error)
     }
@@ -1314,6 +1321,7 @@
       registry.close()
       await store.close()
       try await session.close()
+      try await test.peer.waitClosed()
       try await test.environment.close()
       XCTAssertNil(test.peer.error)
     }
@@ -1697,6 +1705,7 @@
       try await incoming.stream.close()
       try await stream.close()
       try await session.close()
+      try await test.peer.waitClosed()
       try await test.environment.close()
       XCTAssertNil(test.peer.error)
     }
