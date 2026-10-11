@@ -183,12 +183,8 @@ async fn retained_closed_connect_handle_leaves_the_next_utc_bucket_available() {
     // Closing the activity does not refund an ID issued in the current bucket.
     assert_eq!(sink.begin().unwrap_err(), DiagnosticSinkError::Capacity);
     drop(old_bucket);
-    {
-        // Use the same bucket control as the sink's existing expiry coverage.
-        // The next real begin/maintenance call performs the UTC refresh.
-        let mut state = sink.inner.state.lock().unwrap();
-        state.bucket = current_bucket().saturating_sub(1);
-    }
+    // The next real begin/maintenance call performs the sink's UTC refresh.
+    sink.advance_bucket_for_test();
 
     // The genuinely live observation retains one position. Holding the closed
     // activity must leave every other position available in the refreshed bucket.
@@ -268,4 +264,101 @@ async fn successful_outcome_closes_once_when_request_races_the_final_physical_ex
     assert!(sink.wait_cleanup().await.complete);
     assert!(environment.close().await.unwrap().complete);
     drop(activity);
+}
+
+#[tokio::test]
+async fn sink_local_bucket_rotation_preserves_physical_tail_and_other_sink_correlation() {
+    let rotating_environment = TransportEnvironment::new();
+    let independent_environment = TransportEnvironment::new();
+    let (rotating_sink, rotating_capture) = capture_for_test(rotating_environment.root());
+    let (independent_sink, independent_capture) = capture_for_test(independent_environment.root());
+    let rotating = rotating_environment
+        .root()
+        .diagnostic_activity(DiagnosticPhase::Connect, 1);
+    let independent = independent_environment
+        .root()
+        .diagnostic_activity(DiagnosticPhase::Connect, 1);
+    let rotating_tail = rotating.retain_physical();
+    let independent_tail = independent.retain_physical();
+    let started = drain_capture(&rotating_sink, &rotating_capture).await;
+    let independent_started = drain_capture(&independent_sink, &independent_capture).await;
+    assert_eq!(started.len(), 1);
+    assert_eq!(independent_started.len(), 1);
+    let original_id = started[0].correlation_id;
+    let independent_id = independent_started[0].correlation_id;
+
+    rotating_sink.advance_bucket_for_test();
+    rotating.fail(
+        DiagnosticCode::Timeout,
+        DiagnosticRetryDisposition::DoNotRetry,
+    );
+    independent.fail(
+        DiagnosticCode::Timeout,
+        DiagnosticRetryDisposition::DoNotRetry,
+    );
+    rotating.closed();
+    independent.closed();
+    let rotated = drain_capture(&rotating_sink, &rotating_capture).await;
+    let unchanged = drain_capture(&independent_sink, &independent_capture).await;
+    let rotated_failures: Vec<_> = rotated
+        .iter()
+        .filter(|event| event.state == DiagnosticState::Failed)
+        .collect();
+    assert_eq!(rotated_failures.len(), 1);
+    let rotated_id = rotated_failures[0].correlation_id;
+    assert_ne!(rotated_id, original_id);
+    for (events, id) in [(&rotated, rotated_id), (&unchanged, independent_id)] {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.correlation_id == id
+                    && event.state == DiagnosticState::Failed
+                    && event.phase == DiagnosticPhase::Connect
+                    && event.code == DiagnosticCode::Timeout)
+                .count(),
+            1
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| event.state == DiagnosticState::Closed)
+        );
+    }
+
+    drop(rotating_tail);
+    drop(independent_tail);
+    let retired = drain_capture(&rotating_sink, &rotating_capture).await;
+    let independent_retired = drain_capture(&independent_sink, &independent_capture).await;
+    for (events, id) in [
+        (&retired, rotated_id),
+        (&independent_retired, independent_id),
+    ] {
+        assert_eq!(events.iter().filter(|event| event.correlation_id == id
+            && event.state == DiagnosticState::Failed).count(), 1);
+        assert_eq!(events.iter().filter(|event| event.correlation_id == id
+            && event.state == DiagnosticState::Closed).count(), 1);
+    }
+    assert_eq!(
+        retired
+            .iter()
+            .filter(|event| event.correlation_id == original_id
+                && event.state == DiagnosticState::Started)
+            .count(),
+        1
+    );
+    assert!(
+        !retired
+            .iter()
+            .any(|event| event.correlation_id == original_id
+                && matches!(
+                    event.state,
+                    DiagnosticState::Failed | DiagnosticState::Closed
+                ))
+    );
+    rotating_sink.close();
+    independent_sink.close();
+    assert!(rotating_sink.wait_cleanup().await.complete);
+    assert!(independent_sink.wait_cleanup().await.complete);
+    assert!(rotating_environment.close().await.unwrap().complete);
+    assert!(independent_environment.close().await.unwrap().complete);
 }

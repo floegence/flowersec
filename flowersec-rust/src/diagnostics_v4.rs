@@ -448,6 +448,8 @@ pub(crate) struct Inner {
     charge: Mutex<Option<EnvironmentCharge>>,
     #[cfg(test)]
     random: Mutex<Option<RandomSource>>,
+    #[cfg(test)]
+    test_bucket: AtomicU64,
 }
 struct Handle(Arc<Inner>);
 impl Drop for Handle {
@@ -504,6 +506,8 @@ impl DiagnosticSink {
             charge: Mutex::new(Some(charge)),
             #[cfg(test)]
             random: Mutex::new(None),
+            #[cfg(test)]
+            test_bucket: AtomicU64::new(0),
         });
         let worker = inner.clone();
         thread::Builder::new()
@@ -608,7 +612,7 @@ impl DiagnosticObservation {
         // Refresh and read the ID under the same queue lock. A boundary event
         // can never enqueue an ID from the preceding UTC bucket.
         let mut queue = sink.state.lock().expect("diagnostic state");
-        refresh_bucket(&sink, &mut queue, current_bucket());
+        refresh_bucket(&sink, &mut queue, sink.current_bucket());
         if queue.closed {
             return false;
         }
@@ -654,6 +658,16 @@ impl DiagnosticObservation {
     }
 }
 impl Inner {
+    fn current_bucket(&self) -> u64 {
+        #[cfg(test)]
+        {
+            let bucket = self.test_bucket.load(Ordering::Acquire);
+            if bucket != 0 {
+                return bucket;
+            }
+        }
+        current_bucket()
+    }
     fn random_bytes(&self, bytes: &mut [u8]) -> bool {
         #[cfg(test)]
         if let Some(random) = self.random.lock().expect("diagnostic test random").as_ref() {
@@ -664,7 +678,7 @@ impl Inner {
     }
     fn begin(self: &Arc<Self>) -> Result<DiagnosticObservation, DiagnosticSinkError> {
         let mut state = self.state.lock().expect("diagnostic state");
-        refresh_bucket(self, &mut state, current_bucket());
+        refresh_bucket(self, &mut state, self.current_bucket());
         if state.closed {
             return Err(DiagnosticSinkError::Closed);
         }
@@ -761,7 +775,7 @@ fn diagnostic_worker(inner: Arc<Inner>) {
         let next = {
             let mut state = inner.state.lock().expect("diagnostic state");
             loop {
-                refresh_bucket(&inner, &mut state, current_bucket());
+                refresh_bucket(&inner, &mut state, inner.current_bucket());
                 if state.closed {
                     break None;
                 }
@@ -799,7 +813,7 @@ fn diagnostic_maintenance(inner: Arc<Inner>) {
             inner.finish_lane(true);
             return;
         }
-        refresh_bucket(&inner, &mut state, current_bucket());
+        refresh_bucket(&inner, &mut state, inner.current_bucket());
         let (state, _) = inner
             .wake
             .wait_timeout(state, Duration::from_millis(100))
@@ -1134,6 +1148,9 @@ pub(crate) fn capture_for_test(
         )
         .unwrap();
     let next = Arc::new(AtomicU64::new(1));
+    // Lifecycle captures keep one sink-local UTC bucket. Explicit rotation
+    // coverage advances it; unrelated tests cannot cross a real wall boundary.
+    sink.inner.test_bucket.store(1, Ordering::Release);
     *sink.inner.random.lock().unwrap() = Some(Arc::new(move |bytes| {
         bytes.fill(0);
         if bytes.len() == 16 {
@@ -1142,6 +1159,14 @@ pub(crate) fn capture_for_test(
     }));
     root.install_test_diagnostics(sink.clone());
     (sink, events)
+}
+
+#[cfg(test)]
+impl DiagnosticSink {
+    pub(crate) fn advance_bucket_for_test(&self) {
+        assert_ne!(self.inner.test_bucket.load(Ordering::Acquire), 0);
+        self.inner.test_bucket.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 #[cfg(test)]
