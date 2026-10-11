@@ -6,7 +6,7 @@ import { request as httpsRequest } from "node:https";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import {
-  ClockRate, MethodDefinition, ServiceDefinition, ResourceRoot, ResourceVector,
+  MethodDefinition, ServiceDefinition, ResourceRoot, ResourceVector,
   configureNodeWSS, configureNodeRawQUIC, connect, createTransportEnvironment, createSQLitePoolBacking,
   openSQLitePoolStore, bytesMessageCodec, createNodeLiveHTTPS, createRegisteredLiveTunnelClientAuthorization,
   createNodePoolServerAllow, type NodePoolServerAllowOptions, type PoolServerAllowBinding,
@@ -19,6 +19,7 @@ import { wireMaps } from "../v4/runtime/schemaRegistry.js";
 import { originalEnvironment, type V4CredentialPolicy } from "../v4/runtime/environment.js";
 import { credentialDigest } from "../v4/runtime/credentialSupport.js";
 import { currentPeerContract } from "./currentContracts.js";
+import { createCurrentPeerClock } from "./currentClock.js";
 import type { V4LiveAuthorizationConfig } from "../v4/runtime/liveAuthorization.js";
 
 /** Explicit engineering peer application contract; never a production key
@@ -368,12 +369,12 @@ async function createPeerClient(material: CurrentPeerMaterial, options: Readonly
   const rootLimit = new ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 5000n, 5000n, 5000n, 5000n, 5000n, 5000n]);
   const root = new ResourceRoot({ profileRevision: "1".repeat(64), limit: rootLimit, accounts: 2048, reservations: 4096, references: 8192,
     rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
-  const beginning = performance.now(), now = BigInt(Date.now());
-  const environment = createTransportEnvironment({ root, limit: rootLimit, tenantLimit: rootLimit, tenantID: "1".repeat(32), environmentID: randomBytes(16).toString("hex"),
+  let environment: TransportEnvironment;
+  try { environment = createTransportEnvironment({ root, limit: rootLimit, tenantLimit: rootLimit, tenantID: "1".repeat(32), environmentID: randomBytes(16).toString("hex"),
     runtimeBytes: 1024n, namespaces: material.namespaces.length, sources: 1, acquisitions: 1, materials: material.role === 0 ? 1 : 4, sessions: material.role === 0 ? 1 : 4, dependencies: material.role === 0 ? 8 : 24, acquireMS: 10000n, cleanupMS: 10000,
     random: output => { crypto.getRandomValues(output); },
-    clock: { profile: { rate: new ClockRate(100n, 1000000n, 1n), maxWidthMS: 200n, maxAgeMS: 60000n, maxRoundTripMS: 10000n },
-      tick: () => ({ milliseconds: BigInt(Math.floor(performance.now() - beginning)), incarnation: "3".repeat(32) }), initial: () => ({ lowerMS: now - 50n, upperMS: now + 50n }) } });
+    clock: createCurrentPeerClock() }); }
+  catch (error) { root.close(); throw error; }
   let directory: string | undefined, databasePath: string | undefined;
   let backing: ReturnType<typeof createSQLitePoolBacking> | undefined, poolStore: SQLitePoolStore | undefined;
   const identitySeed = peerBytes(material.identity_seed, 32, 32), dhSeed = peerBytes(material.dh_seed, 32, 32);

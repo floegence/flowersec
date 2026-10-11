@@ -331,16 +331,17 @@ func (p *RegisteredControlTransport) call(ctx context.Context, payload Registere
 	}
 	// The signing input is bounded before adding its domain or invoking the
 	// key provider. The outer envelope cannot fit an oversized inner payload.
-	if err == nil && len(content) > registeredControlBodyLimit-len(registeredControlDomain) {
-		err = ErrResponse
-	}
 	if err == nil {
-		message = make([]byte, len(registeredControlDomain)+len(content))
-		copy(message, registeredControlDomain)
-		copy(message[len(registeredControlDomain):], content)
-		proof, err = signer.Sign(message)
-		if err == nil && (len(proof) != ed25519.SignatureSize || !ed25519.Verify(ed25519.PublicKey(signer.PublicKey()), message, proof)) {
+		if len(content) > registeredControlBodyLimit-len(registeredControlDomain) {
 			err = ErrResponse
+		} else {
+			message = make([]byte, len(registeredControlDomain)+len(content))
+			copy(message, registeredControlDomain)
+			copy(message[len(registeredControlDomain):], content)
+			proof, err = signer.Sign(message)
+			if err == nil && (len(proof) != ed25519.SignatureSize || !ed25519.Verify(ed25519.PublicKey(signer.PublicKey()), message, proof)) {
+				err = ErrResponse
+			}
 		}
 	}
 	if err == nil {

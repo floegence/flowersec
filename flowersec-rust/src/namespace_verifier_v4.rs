@@ -2795,8 +2795,8 @@ mod tests {
         (response, state)
     }
 
-    #[test]
-    fn pending_bootstrap_preserves_original_nonce_bytes_and_rejects_independent_invalidity() {
+    #[tokio::test(start_paused = true)]
+    async fn pending_bootstrap_preserves_original_nonce_bytes_and_rejects_independent_invalidity() {
         let (environment, _) = bootstrap_environment(1500);
         let mut verifier = bootstrap_verifier(&environment, 5000);
         let nonce = verifier.bootstrap_nonce();

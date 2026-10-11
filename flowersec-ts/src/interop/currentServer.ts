@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { Socket } from "node:net";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import {
-  ClockRate, ResourceRoot, ResourceVector, createAcceptor, createSQLitePoolBacking,
+  ResourceRoot, ResourceVector, createAcceptor, createSQLitePoolBacking,
   createTransportEnvironment, openSQLiteAdmissionStore,
   type Acceptor, type AcceptorOptions, type AuthenticatedRequestContext, type HandlerPlan, type SQLiteAdmissionStore, type SQLitePoolBacking, type TransportEnvironment,
 } from "../node/index.js";
@@ -16,6 +16,7 @@ import { credentialFixture, fill, map, text, u, bytes, digest, array, encode, ge
 import { testCertificatePEM, testPrivateKeyPEM } from "../testSupport/tlsFixture.js";
 import { peerBytes, peerLimits, peerRawQUICCapacity, type CurrentPeerMaterial } from "./currentPeer.js";
 import type { Value } from "../v4/testSupport/cbor.js";
+import { createCurrentServerClock } from "./currentClock.js";
 
 const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
 const cleaned = Object.freeze({ status: "complete" as const, core_cleanup: "complete" as const, pending_callbacks: 0n });
@@ -44,15 +45,14 @@ export interface CurrentPeerServerOptions {
 }
 export async function createCurrentPeerServer(buildPlan: (environment: TransportEnvironment) => HandlerPlan,
   origin = "https://app.example", options: CurrentPeerServerOptions = {}) {
-  const timeOrigin = BigInt(Date.now()) - 1000n, beginning = performance.now();
   const limit = new ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 5000n, 5000n, 5000n, 5000n, 5000n, 5000n]);
   const root = new ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: 2048, reservations: 4096, references: 8192,
     rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
-  const environment = createTransportEnvironment({ root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: randomBytes(16).toString("hex"),
+  let environment: TransportEnvironment;
+  try { environment = createTransportEnvironment({ root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: randomBytes(16).toString("hex"),
     runtimeBytes: 1024n, namespaces: 1, sources: 1, acquisitions: 1, materials: 4, sessions: 4, dependencies: 16, acquireMS: 10000n, cleanupMS: 10000,
-    clock: { profile: { rate: new ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 60000n, maxRoundTripMS: 100n },
-      tick: () => ({ milliseconds: BigInt(Math.floor(performance.now() - beginning)), incarnation: "3".repeat(32) }),
-      initial: () => ({ lowerMS: timeOrigin + 1000n, upperMS: timeOrigin + 1000n }) }, random: output => { crypto.getRandomValues(output); } });
+    clock: createCurrentServerClock(), random: output => { crypto.getRandomValues(output); } }); }
+  catch (error) { root.close(); throw error; }
   const owner = originalEnvironment(environment), publicRoot = ed25519.getPublicKey(fill(7));
   const directory = mkdtempSync(join(dirname(fileURLToPath(new URL("../../..", import.meta.url))), "flowersec-ts-peer-server-"));
   const stores: SQLiteAdmissionStore[] = [], backings: SQLitePoolBacking[] = [];
@@ -66,6 +66,7 @@ export async function createCurrentPeerServer(buildPlan: (environment: Transport
     for (const backing of backings) backing.releaseRemoved(); root.close();
   })();
   try {
+    const timeOrigin = owner.clock.sample().requireInterval().lowerMS - 1000n;
     const namespace = owner.namespace({ tenant: "tenant", authority: "authority", rootKeyID: fill(1, 16), rootPublicKey: publicRoot,
       maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 8192, stateNodes: 16384 });
     const authority = credentialFixture(owner.resources, owner.clock, (name, charge) => owner.reserveConnectionWork(name, charge),

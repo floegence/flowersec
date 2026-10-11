@@ -4394,6 +4394,9 @@ describe("original v4 reliable Session assembly", () => {
   });
   it.each(["fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1", "fs4-kkpsk0-p256-aes256gcm-ed25519-sha256-1"] as const)("joins one volatile execution and retains its result independently of the response (%s)", async profile => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    // Save receipts, execution joins, and management retirement advance through
+    // explicit barriers at one shared logical instant on every Session.
+    const clockMS = () => 0n;
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
     const method = new V4MethodDefinition({
       typeID: 42, shape: "unary", unarySemantics: "execution", request: codec, response: codec,
@@ -4413,7 +4416,7 @@ describe("original v4 reliable Session assembly", () => {
         peers: [{ subject: "server", identityDigest: Buffer.from(digest("certificate_digest", material.server)).toString("hex") }]
       }]
     }),
-      { profile: "execution", operationEntropy: fill(48, 24), authorizedClientSubjects });
+      { profile: "execution", clockMS, operationEntropy: fill(48, 24), authorizedClientSubjects });
     const server = endpoint("server", b, profile, "live_authority", 1000n, (environment, material) => {
       const resources = environment.resources, offerConfig = { bytes: 256, nodes: 16, textBytes: 128, arrayItems: 8, runtimeBytes: 1024n };
       const references = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n), cborDecoderCharge(offerConfig)].map((charge, index) => ({
@@ -4444,7 +4447,7 @@ describe("original v4 reliable Session assembly", () => {
           }]
         };
       } finally { decoder?.close(); for (const reference of references) reference.release(); }
-    }, { profile: "execution", authorizedClientSubjects });
+    }, { profile: "execution", clockMS, authorizedClientSubjects });
     let c: V4Session | undefined, s: V4Session | undefined, referenceStore: V4OperationReferenceStore | undefined;
     let adminClient: ReturnType<typeof endpoint> | undefined, adminSession: V4Session | undefined, adminServerSession: V4Session | undefined;
     let referenceDirectory: string | undefined, referenceDB: DatabaseSync | undefined, releaseStore: (() => void) | undefined;
@@ -4642,7 +4645,7 @@ describe("original v4 reliable Session assembly", () => {
         const nextA = new MemoryTransport("client", "message"), nextB = new MemoryTransport("server", "message"); nextA.peer = nextB; nextB.peer = nextA;
         const nextOptions = {
           profile: "execution" as const, authorizedClientSubjects, clientSubject: "administrator", connectionSeed: cancelAllowed ? 70 : 60,
-          clockOriginMS: Math.min(a.createdAtMS, b.createdAtMS)
+          clockMS
         };
         adminClient = endpoint("client", nextA, profile, "live_authority", 1000n, (_environment, material) => ({
           ...common,

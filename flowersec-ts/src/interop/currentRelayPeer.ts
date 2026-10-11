@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   createRegisteredLiveTunnelControlAuthority, type RegisteredLiveTunnelControlAuthority, type RegisteredLiveTunnelControlAuthorityOptions,
-  ClockRate, ResourceRoot, ResourceVector, createTransportEnvironment, createGrantIssuer, createTunnelRuntime,
+  ResourceRoot, ResourceVector, createTransportEnvironment, createGrantIssuer, createTunnelRuntime,
   createSQLitePoolBacking, openSQLiteAdmissionStore, type GrantIssuer, type SQLiteAdmissionStore,
   type SQLitePoolBacking, type TunnelRuntime, type TunnelCarrierOptions, type TransportEnvironment,
   createRegisteredPoolTunnelAuthority, createRegisteredTunnelControlAuthority, type RegisteredTunnelControlAuthority, type RegisteredTunnelControlAuthorityOptions, type RegisteredPoolTunnelAuthority, type RegisteredPoolTunnelAuthorityOptions, type GrantIssuanceInput,
@@ -16,6 +16,7 @@ import { Reference, type Value } from "../v4/testSupport/cbor.js";
 import { bootstrapBody, readCurrentPeerMaterial, peerBytes, peerField, type CurrentPoolPeerMaterial, type CurrentLivePeerMaterial } from "./currentPeer.js";
 import type { RelayLimits } from "../v4/runtime/relayCredentials.js";
 import type { RelayNativePairLimits } from "../node/relayNativePair.js";
+import { createCurrentPeerClock } from "./currentClock.js";
 
 /** Trusted engineering installation input. It contains the signed parent
  * registration and signer installation, never imported authorization decisions
@@ -107,12 +108,10 @@ async function installCurrentRelayPeer(deployment: CurrentRelayPeerDeployment, o
   // registered B Session in one root, including their prepaid task positions.
   const limit = new ResourceVector([768n << 20n, 256n << 20n, 64n << 20n, 5000000n, 5000000n, 8192n, 5000n, 5000n, 5000n, 5000n, 5000n]);
   const root = new ResourceRoot({ profileRevision: "1".repeat(64), limit, accounts: 2048, reservations: 4096, references: 8192, rootRuntimeBytes: 128n, accountRuntimeBytes: 128n, reservationRuntimeBytes: 128n, referenceRuntimeBytes: 128n });
-  const beginning = performance.now(), now = BigInt(Date.now());
   let environment: TransportEnvironment;
   try { environment = createTransportEnvironment({ root, limit, tenantLimit: limit, tenantID: "1".repeat(32), environmentID: randomBytes(16).toString("hex"), runtimeBytes: 1024n,
     namespaces: registration.namespaces.length, sources: 1, acquisitions: 1, materials: 4, sessions: 4, dependencies: 24, acquireMS: 10000n, cleanupMS: 10000,
-    random: destination => { crypto.getRandomValues(destination); }, clock: { profile: { rate: new ClockRate(100n, 1000000n, 1n), maxWidthMS: 200n, maxAgeMS: 60000n, maxRoundTripMS: 10000n },
-      tick: () => ({ milliseconds: BigInt(Math.floor(performance.now() - beginning)), incarnation: "3".repeat(32) }), initial: () => ({ lowerMS: now - 50n, upperMS: now + 50n }) } }); }
+    random: destination => { crypto.getRandomValues(destination); }, clock: createCurrentPeerClock() }); }
   catch (error) { root.close(); throw error; }
   let directory: string | undefined, backing: SQLitePoolBacking | undefined, store: SQLiteAdmissionStore | undefined, issuer: GrantIssuer | undefined, poolAuthority: RegisteredPoolTunnelAuthority | undefined, controlAuthority: RegisteredTunnelControlAuthority | undefined, liveControlAuthority: RegisteredLiveTunnelControlAuthority | undefined, runtime: TunnelRuntime | undefined, closing: Promise<void> | undefined;
   const close = (): Promise<void> => closing ??= (async () => {
