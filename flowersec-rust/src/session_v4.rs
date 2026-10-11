@@ -773,6 +773,8 @@ struct Drive {
 }
 struct Owner {
     drive: Mutex<Drive>,
+    #[cfg(test)]
+    after_state_gate: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     transport: Mutex<Box<dyn SessionTransport>>,
     // A fallback transport without an independent close signal may be busy
     // publishing when Session::close runs. Keep the close intent until the
@@ -836,6 +838,17 @@ impl Owner {
             );
         }
         drop(drive);
+        #[cfg(test)]
+        {
+            let hook = self
+                .after_state_gate
+                .lock()
+                .expect("state completion test hook")
+                .take();
+            if let Some(hook) = hook {
+                hook();
+            }
+        }
         if !closed && let Err(cause) = self.complete_rekey_crypto() {
             result = Err(cause);
         }
@@ -2225,6 +2238,8 @@ impl Session {
         let crypto = session.engine.crypto.clone();
         let owner = Arc::new(Owner {
             authentication_waiters: AtomicUsize::new(0),
+            #[cfg(test)]
+            after_state_gate: Mutex::new(None),
             drive: Mutex::new(Drive {
                 session: Some(session),
                 closing: None,
@@ -3670,6 +3685,43 @@ impl std::fmt::Debug for Stream {
 }
 type StreamReadClaim = (Stream, crate::api_v4::StreamReadPermit);
 
+// Once bytes leave the authenticated queue, a failed handoff must not retain
+// normal EOF. Reuse the original reset owner to revoke private cursor results
+// and settle any remaining direction work, including after Session Close.
+struct ReadTransfer<'a> {
+    stream: &'a Stream,
+    pending: bool,
+}
+impl<'a> ReadTransfer<'a> {
+    fn new(stream: &'a Stream) -> Self {
+        Self {
+            stream,
+            pending: false,
+        }
+    }
+    fn record(&mut self, count: usize) {
+        self.pending |= count != 0;
+    }
+    fn commit(&mut self) {
+        self.pending = false;
+    }
+}
+impl Drop for ReadTransfer<'_> {
+    fn drop(&mut self) {
+        if self.pending {
+            self.stream
+                .inner
+                .handle
+                .view
+                .end
+                .store(2, Ordering::Release);
+            if let Err(cause) = self.stream.reset_owner() {
+                self.stream.inner.owner.close(cause);
+            }
+        }
+    }
+}
+
 impl Stream {
     pub(crate) fn management_cleanup_complete(&self) -> bool {
         if !self.cleanup_status().complete {
@@ -4424,6 +4476,22 @@ impl Stream {
             .expect("v4 Session owner lock");
         drive.termination.is_some() && self.inner.handle.view.end.load(Ordering::Acquire) == 1
     }
+    fn reset_owner(&self) -> std::result::Result<(), SessionError> {
+        self.inner.read.revoke_delivery();
+        let result = self.inner.owner.run_state(|session| {
+            if session
+                .engine
+                .streams
+                .index(self.inner.handle.scope())
+                .is_none()
+            {
+                return Ok(());
+            }
+            session.reset(&self.inner.handle).map_err(error)
+        });
+        self.inner.owner.changed.notify_waiters();
+        result
+    }
     fn eof_result(offset: u64) -> ReadResult {
         ReadResult {
             data: Bytes::new(),
@@ -4494,6 +4562,9 @@ impl Stream {
         if self.retained_eof() {
             return Ok(Self::eof_result(permit.start_offset()));
         }
+        if !permit.can_advance(max_bytes) {
+            return Err(SessionError::OperationFailed);
+        }
         let _wait = self.inner.owner.wait_charge()?;
         let account = self
             .inner
@@ -4511,17 +4582,22 @@ impl Stream {
         out.try_reserve_exact(max_bytes)
             .map_err(|_| SessionError::ResourceExhausted)?;
         out.resize(max_bytes, 0);
+        let mut transfer = ReadTransfer::new(self);
+        let mut offset = permit.start_offset();
         loop {
             let notified = self.inner.owner.changed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            let read = match self
-                .inner
-                .owner
-                .run_state(|session| session.read(&self.inner.handle, &mut out).map_err(error))
-            {
+            let read = match self.inner.owner.run_state(|session| {
+                let read = session.read(&self.inner.handle, &mut out).map_err(error)?;
+                if let ReadState::Data(count) = read {
+                    transfer.record(count);
+                    offset = permit.advance(count)?;
+                }
+                Ok(read)
+            }) {
                 Ok(read) => read,
-                Err(_) if self.retained_eof() => {
+                Err(_) if !transfer.pending && self.retained_eof() => {
                     return Ok(Self::eof_result(permit.start_offset()));
                 }
                 Err(cause) => return Err(cause),
@@ -4535,15 +4611,14 @@ impl Stream {
                 ReadState::Eof => (0, ReadStreamStatus::Eof),
                 ReadState::Aborted => (0, ReadStreamStatus::Aborted),
             };
-            let offset = account
-                .with_security(|| permit.advance(count))
-                .map_err(environment_error)??;
+            account.with_security(|| ()).map_err(environment_error)?;
             out.truncate(count);
             account.detach_result();
             let data = Bytes::from_owner(Payload {
                 data: out,
                 _charge: charge,
             });
+            transfer.commit();
             self.inner.owner.changed.notify_waiters();
             return Ok(ReadResult {
                 data,
@@ -4835,17 +4910,24 @@ impl Stream {
         if self.retained_eof() {
             return Ok(None);
         }
+        if !permit.can_advance(buffer.len()) {
+            return Err(SessionError::OperationFailed);
+        }
+        let mut transfer = ReadTransfer::new(self);
         loop {
             let notified = self.inner.owner.changed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            let read = match self
-                .inner
-                .owner
-                .run_state(|session| session.read(&self.inner.handle, buffer).map_err(error))
-            {
+            let read = match self.inner.owner.run_state(|session| {
+                let read = session.read(&self.inner.handle, buffer).map_err(error)?;
+                if let ReadState::Data(count) = read {
+                    transfer.record(count);
+                    permit.advance(count)?;
+                }
+                Ok(read)
+            }) {
                 Ok(read) => read,
-                Err(_) if self.retained_eof() => return Ok(None),
+                Err(_) if !transfer.pending && self.retained_eof() => return Ok(None),
                 Err(cause) => return Err(cause),
             };
             let count = match read {
@@ -4860,8 +4942,9 @@ impl Stream {
             self.inner
                 .owner
                 .account
-                .with_security(|| permit.advance(count))
-                .map_err(environment_error)??;
+                .with_security(|| ())
+                .map_err(environment_error)?;
+            transfer.commit();
             self.inner.owner.changed.notify_waiters();
             return Ok(Some(count));
         }
@@ -5212,6 +5295,7 @@ impl ByteStream for Stream {
             return Ok(());
         }
         let _wait = self.inner.owner.wait_charge()?;
+        let mut transfer = ReadTransfer::new(self);
         loop {
             let notified = self.inner.owner.changed.notified();
             tokio::pin!(notified);
@@ -5252,6 +5336,7 @@ impl ByteStream for Stream {
                 }
                 let (front, _) = slot.queue.as_slices();
                 let count = cursor.transfer_from(front)?;
+                transfer.record(count);
                 slot.queue.drain(..count);
                 if count != 0 {
                     slot.receive_progress = (!slot.queue.is_empty()).then_some(now);
@@ -5263,13 +5348,14 @@ impl ByteStream for Stream {
             });
             let progressed = match progressed {
                 Ok(progressed) => progressed,
-                Err(_) if self.retained_eof() => {
+                Err(_) if !transfer.pending && self.retained_eof() => {
                     cursor.terminate_input(ReadStreamStatus::Eof, None);
                     return Ok(());
                 }
                 Err(cause) => return Err(cause),
             };
             if progressed {
+                transfer.commit();
                 self.inner.owner.changed.notify_waiters();
                 return Ok(());
             }
@@ -5357,20 +5443,7 @@ impl ByteStream for Stream {
         if !mode.allows(self) {
             return Err(SessionError::OperationFailed);
         }
-        self.inner.read.revoke_delivery();
-        let result = self.inner.owner.run_state(|session| {
-            if session
-                .engine
-                .streams
-                .index(self.inner.handle.scope())
-                .is_none()
-            {
-                return Ok(());
-            }
-            session.reset(&self.inner.handle).map_err(error)
-        });
-        self.inner.owner.changed.notify_waiters();
-        result
+        self.reset_owner()
     }
     async fn close(&self) -> std::result::Result<(), SessionError> {
         self.reset().await
@@ -6113,6 +6186,102 @@ mod tests {
         let _ = c_task.await;
         let _ = s_task.await;
     }
+    #[tokio::test]
+    async fn close_after_read_transfer_cannot_turn_lost_payload_into_eof() {
+        for reader in ["raw", "rpc", "cursor"] {
+            let (fixture, c, s) = record_pair_for_limits(Profile::X25519);
+            let (client, server, c_task, s_task) = link(&fixture.environment, c, s);
+            let (outgoing, incoming) = tokio::join!(
+                client.open_stream("example.eof", Metadata::empty(), 32),
+                async { server.next_open().await.unwrap().accept(32).unwrap() }
+            );
+            let outgoing = outgoing.unwrap();
+            outgoing.write(Bytes::from_static(b"world")).await.unwrap();
+            outgoing.close_write().await.unwrap();
+            outgoing.finish().await.unwrap();
+            c_task.abort();
+            s_task.abort();
+            let _ = c_task.await;
+            let _ = s_task.await;
+            let wait = incoming.inner.owner.wait_charge().unwrap();
+            let cursor = (reader == "cursor").then(|| {
+                ReaderCursor::new(
+                    Arc::new(incoming.clone()),
+                    ReaderCursorOptions {
+                        exact: Some(6),
+                        delimiter: None,
+                        max_bytes: 32,
+                    },
+                )
+                .unwrap()
+            });
+            let original = server.clone();
+            *server.owner.after_state_gate.lock().unwrap() =
+                Some(Box::new(move || original.close()));
+            match reader {
+                "raw" => assert_eq!(incoming.read().await, Err(SessionError::Closed)),
+                "rpc" => assert_eq!(
+                    incoming.read_rpc_prepared(&mut [0; 32], &wait).await,
+                    Err(SessionError::Closed)
+                ),
+                "cursor" => {
+                    let cursor = cursor.as_ref().unwrap();
+                    assert_eq!(
+                        incoming.read_cursor_piece(cursor).await,
+                        Err(SessionError::Closed)
+                    );
+                    assert_ne!(cursor.snapshot().stream_status, ReadStreamStatus::Eof);
+                    assert_eq!(
+                        cursor.take_prefix().await.unwrap_err().reason,
+                        crate::api_v4::ReadMethodFailureReason::AuthorizationDenied
+                    );
+                }
+                _ => unreachable!(),
+            }
+            drop(cursor);
+            assert_eq!(incoming.inner.read.acquire().unwrap().start_offset(), 5);
+            assert_eq!(incoming.read_state().0, ReadStreamStatus::Aborted);
+            assert_eq!(incoming.read().await, Err(SessionError::Closed));
+            client.close();
+        }
+    }
+
+    #[tokio::test]
+    async fn revoked_result_after_read_transfer_preserves_failure_and_frontier() {
+        for reader in ["raw", "rpc"] {
+            let (fixture, c, s) = record_pair_for_limits(Profile::X25519);
+            let (client, server, c_task, s_task) = link(&fixture.environment, c, s);
+            let (outgoing, incoming) = tokio::join!(
+                client.open_stream("example.eof", Metadata::empty(), 32),
+                async { server.next_open().await.unwrap().accept(32).unwrap() }
+            );
+            let outgoing = outgoing.unwrap();
+            outgoing.write(Bytes::from_static(b"world")).await.unwrap();
+            outgoing.close_write().await.unwrap();
+            outgoing.finish().await.unwrap();
+            c_task.abort();
+            s_task.abort();
+            let _ = c_task.await;
+            let _ = s_task.await;
+            let wait = incoming.inner.owner.wait_charge().unwrap();
+            let root = server.owner.account.environment_root().clone();
+            *server.owner.after_state_gate.lock().unwrap() = Some(Box::new(move || root.close()));
+            match reader {
+                "raw" => assert_eq!(incoming.read().await, Err(SessionError::Closed)),
+                "rpc" => assert_eq!(
+                    incoming.read_rpc_prepared(&mut [0; 32], &wait).await,
+                    Err(SessionError::Closed)
+                ),
+                _ => unreachable!(),
+            }
+            assert_eq!(incoming.inner.read.acquire().unwrap().start_offset(), 5);
+            server.close();
+            assert_eq!(incoming.read_state().0, ReadStreamStatus::Aborted);
+            assert_eq!(incoming.read().await, Err(SessionError::Closed));
+            client.close();
+        }
+    }
+
     #[tokio::test]
     async fn authenticated_empty_eof_survives_close_without_hiding_discarded_data() {
         for unread in [false, true] {
