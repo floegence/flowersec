@@ -48,6 +48,7 @@ const releasePolicyFixtureFiles = [
   "scripts/release.sh",
   "scripts/push-main.sh",
   "scripts/release.test.mjs",
+  "scripts/verify-release-main.sh",
 ];
 const repositoryLocalEnvironmentVariables = [
   "GIT_ALTERNATE_OBJECT_DIRECTORIES",
@@ -1502,16 +1503,74 @@ test("npm release readback verifies published tarballs and platform package meta
   assert.doesNotMatch(workflow, /npm-consumer-smoke:/);
 });
 
+test("main recovery preserves the tagged product source and rejects untrusted or changed inputs", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "flowersec-release-ref-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  const origin = path.join(root, "origin.git");
+  runGit(["init", "--bare", origin]);
+  runGit(["init", "--initial-branch=main", repo]);
+  runGit(["-C", repo, "config", "user.name", "Release Ref Fixture"]);
+  runGit(["-C", repo, "config", "user.email", "fixture@example.invalid"]);
+  fs.mkdirSync(path.join(repo, "scripts"));
+  fs.mkdirSync(path.join(repo, "flowersec-rust", "src"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "flowersec-rust", "src", "lib.rs"), "pub fn existing() {}\n");
+  fs.writeFileSync(path.join(repo, "scripts", "verify-crates-release-consumer.mjs"), "// original tooling\n");
+  runGit(["-C", repo, "add", "."]);
+  runGit(["-C", repo, "commit", "-m", "feat: product source"]);
+  const releaseSHA = runGit(["-C", repo, "rev-parse", "HEAD"]);
+  runGit(["-C", repo, "remote", "add", "origin", origin]);
+  runGit(["-C", repo, "push", "origin", "main"]);
+  const invoke = (overrides = {}) => spawnSync("bash", [path.join(sourceRoot, "scripts/verify-release-main.sh")], {
+    cwd: repo,
+    encoding: "utf8",
+    env: isolatedEnvironment({
+      GITHUB_EVENT_NAME: "workflow_dispatch",
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_SHA: runGit(["--git-dir", origin, "rev-parse", "refs/heads/main"]),
+      GITHUB_REPOSITORY: "floegence/flowersec",
+      GITHUB_WORKFLOW_REF: "floegence/flowersec/.github/workflows/release.yml@refs/heads/main",
+      ...overrides,
+    }),
+  });
+  assert.equal(invoke({ GITHUB_EVENT_NAME: "push" }).status, 0, "new releases require the exact main tip");
+  fs.writeFileSync(path.join(repo, "scripts", "verify-crates-release-consumer.mjs"), "// repaired publication tooling\n");
+  runGit(["-C", repo, "add", "."]);
+  runGit(["-C", repo, "commit", "-m", "fix: publication tooling"]);
+  runGit(["-C", repo, "push", "origin", "main"]);
+  runGit(["-C", repo, "checkout", "--detach", releaseSHA]);
+  const recovered = invoke();
+  assert.equal(recovered.status, 0, recovered.stderr);
+  for (const overrides of [
+    { GITHUB_EVENT_NAME: "push" },
+    { GITHUB_REF: "refs/heads/recovery" },
+    { GITHUB_SHA: releaseSHA },
+    { GITHUB_WORKFLOW_REF: "floegence/flowersec/.github/workflows/release.yml@refs/heads/recovery" },
+  ]) assert.notEqual(invoke(overrides).status, 0, JSON.stringify(overrides));
+  runGit(["-C", repo, "checkout", "main"]);
+  fs.appendFileSync(path.join(repo, "flowersec-rust", "src", "lib.rs"), "pub fn changed() {}\n");
+  runGit(["-C", repo, "add", "."]);
+  runGit(["-C", repo, "commit", "-m", "feat: different product source"]);
+  runGit(["-C", repo, "push", "origin", "main"]);
+  runGit(["-C", repo, "checkout", "--detach", releaseSHA]);
+  const rejected = invoke();
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /cannot cross a product change/);
+});
+
 test("release recovery restores readback scripts from the reviewed workflow SHA after immutable tag checkout", () => {
   const releaseWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/release.yml"), "utf8");
   const rustWorkflow = fs.readFileSync(path.join(sourceRoot, ".github/workflows/rust-release.yml"), "utf8");
   const npmRecovery = releaseWorkflow.slice(releaseWorkflow.indexOf("\n  npm-recovery:"));
-  for (const [workflow, files, invocation] of [[npmRecovery, ["scripts/release-readback.mjs", "scripts/verify-npm-release-package.mjs", "scripts/verify-npm-release-consumer.mjs", "scripts/native-addon-smoke.mjs", "scripts/fixtures/npm-release-go-node-raw-quic/main.go"], "node scripts/verify-npm-release-package.mjs"], [rustWorkflow, ["scripts/release-readback.mjs", "scripts/verify-crates-release-package.mjs", "scripts/verify-crates-release-consumer.mjs"], "node scripts/verify-crates-release-package.mjs"]]) {
+  for (const [workflow, files, invocation] of [[npmRecovery, ["scripts/release-readback.mjs", "scripts/verify-npm-release-package.mjs"], "node scripts/verify-npm-release-package.mjs"], [rustWorkflow, ["scripts/release-readback.mjs", "scripts/verify-crates-release-package.mjs", "scripts/verify-crates-release-consumer.mjs", "scripts/verify-release-main.sh"], "node scripts/verify-crates-release-package.mjs"]]) {
     const restore = workflow.indexOf("git checkout \"$GITHUB_SHA\" --");
     assert.ok(restore >= 0);
     const checkout = workflow.lastIndexOf("refs/tags/flowersec-", restore);
     assert.ok(checkout >= 0);
-    for (const file of files) assert.match(workflow.slice(restore, restore + 700), new RegExp(file.replaceAll(".", "\\.")));
+    for (const file of files) {
+      assert.match(workflow.slice(restore, restore + 700), new RegExp(file.replaceAll(".", "\\.")));
+      assert.ok(fs.existsSync(path.join(sourceRoot, file)), `restored release script is missing: ${file}`);
+    }
     assert.ok(workflow.indexOf(invocation) > restore);
   }
 });
@@ -1530,10 +1589,8 @@ test("standalone npm recovery restores only registry readback scripts", () => {
   assert.deepEqual(copiedFiles, [
     "scripts/release-readback.mjs",
     "scripts/verify-npm-release-package.mjs",
-    "scripts/verify-npm-release-consumer.mjs",
-    "scripts/native-addon-smoke.mjs",
-    "scripts/fixtures/npm-release-go-node-raw-quic/main.go",
   ]);
+  assert.doesNotMatch(recovery, /verify-npm-release-consumer|native-addon-smoke|npm-release-go-node-raw-quic/);
 });
 
 test("release recovery preserves immutable assets and publishes npm from those exact archives", () => {

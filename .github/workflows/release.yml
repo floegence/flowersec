@@ -348,15 +348,9 @@ jobs:
           RELEASE_SHA: ${{ steps.vars.outputs.sha }}
         run: |
           set -euo pipefail
-          git fetch --no-tags origin main
-          local_main_sha="$(git rev-parse refs/remotes/origin/main)"
-          remote_main_sha="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
-          test -n "$remote_main_sha"
-          if [[ "$RELEASE_SHA" != "$local_main_sha" || "$RELEASE_SHA" != "$remote_main_sha" ]]; then
-            echo "release tag must point at the current remote main tip" >&2
-            echo "tag=$RELEASE_SHA local_main=$local_main_sha remote_main=$remote_main_sha" >&2
-            exit 1
-          fi
+          test "$RELEASE_SHA" = "$(git rev-parse HEAD)"
+          git checkout "$GITHUB_SHA" -- scripts/verify-release-main.sh
+          bash scripts/verify-release-main.sh
 
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -982,10 +976,7 @@ jobs:
           SHA="$(git rev-parse HEAD)"
           git checkout "$GITHUB_SHA" -- \
             scripts/release-readback.mjs \
-            scripts/verify-npm-release-package.mjs \
-            scripts/verify-npm-release-consumer.mjs \
-            scripts/native-addon-smoke.mjs \
-            scripts/fixtures/npm-release-go-node-raw-quic/main.go
+            scripts/verify-npm-release-package.mjs
           scripts/verify-release-tags.sh "$VERSION" "$SHA"
 
           mkdir npm-release-assets
@@ -1183,8 +1174,3 @@ jobs:
           publish_archive_if_missing \
             "@floegence/flowersec-core" \
             "npm-release-assets/floegence-flowersec-core-${VERSION}.tgz"
-
-      - name: Verify npm registry consumers
-        env:
-          RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
-        run: node scripts/verify-npm-release-consumer.mjs "$RELEASE_VERSION"
