@@ -165,6 +165,8 @@ jobs:
     name: Rust 1.98 stable
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.flowersec/rust-ci-target
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -182,7 +184,6 @@ jobs:
 
       - name: Build, test, and lint
         run: |
-          cargo check --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features
           cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features
           cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings
       - name: Test shared native transport
@@ -192,6 +193,8 @@ jobs:
     name: Rust 1.98 Windows
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.flowersec/rust-ci-target
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

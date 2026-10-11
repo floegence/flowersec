@@ -2613,6 +2613,36 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       to: "",
     },
     {
+      name: "Rust stable omits SDK tests",
+      file: "ci.yml",
+      from: "          cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\n",
+      to: "",
+    },
+    {
+      name: "Rust stable omits lint and type checking",
+      file: "ci.yml",
+      from: "          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
+      to: "",
+    },
+    {
+      name: "Rust stable weakens lint target coverage",
+      file: "ci.yml",
+      from: "          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
+      to: "          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --lib --all-features -- -D warnings\n",
+    },
+    {
+      name: "Rust stable build directory escapes the job workspace",
+      file: "ci.yml",
+      from: "CARGO_TARGET_DIR: ${{ github.workspace }}/.flowersec/rust-ci-target",
+      to: "CARGO_TARGET_DIR: /tmp/shared-rust-target",
+    },
+    {
+      name: "Rust Windows build directory escapes the job workspace",
+      file: "ci.yml",
+      from: `  rust-windows:\n    name: Rust ${toolchains.rust.version.split(".").slice(0, 2).join(".")} Windows\n    runs-on: windows-latest\n    timeout-minutes: 30\n    env:\n      CARGO_TARGET_DIR: \${{ github.workspace }}/.flowersec/rust-ci-target`,
+      to: `  rust-windows:\n    name: Rust ${toolchains.rust.version.split(".").slice(0, 2).join(".")} Windows\n    runs-on: windows-latest\n    timeout-minutes: 30\n    env:\n      CARGO_TARGET_DIR: C:/shared-rust-target`,
+    },
+    {
       name: "Node minimum compatibility validates the primary runtime",
       file: "ci.yml",
       from: "        run: node scripts/toolchains.mjs --check-runtime node-minimum\n",

@@ -349,8 +349,10 @@ require_exact_keys(rust_publish_job, ["runs-on", "timeout-minutes", "permissions
 require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
 require_exact_keys(node_minimum_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Node minimum job")
-require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Rust stable job")
-require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Rust Windows job")
+require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust stable job")
+require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust Windows job")
+require_exact_value(rust_stable_job["env"], { "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target" }, "the hosted CI Rust stable build directory")
+require_exact_value(rust_windows_job["env"], { "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target" }, "the hosted CI Rust Windows build directory")
 require_exact_keys(rust_msrv_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust MSRV job")
 require_exact_value(rust_msrv_job["env"], { "RUSTUP_TOOLCHAIN" => rust_msrv }, "the hosted CI Rust MSRV selection")
 require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")
@@ -639,7 +641,7 @@ validate_step_contracts(rust_stable_steps, [
     "with" => { "toolchain" => rust_version, "components" => "rustfmt,clippy" },
   } },
   { name: "Build, test, and lint", keys: ["name", "run"], values: {
-    "run" => "cargo check --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features\ncargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\ncargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
+    "run" => "cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\ncargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
   } },
   { name: "Test shared native transport", keys: ["name", "run"], values: {
     "run" => "cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features",
