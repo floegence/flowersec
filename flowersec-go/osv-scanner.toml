@@ -1,0 +1,3 @@
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "Flowersec does not import golang.org/x/crypto/openpgp; no affected package is reachable from this module, and OSV reports no fixed version."

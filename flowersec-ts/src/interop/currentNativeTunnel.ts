@@ -86,6 +86,8 @@ export async function createCurrentNativeTunnel(kind: string, handle: (stream: S
         void clientPreparation.catch(failed);
         await readiness;
       },
+      deferPoolPreparation: true,
+      onBeforePoolPreparation: activateRoute => { activateRoute(); },
       async prepareServer({ environment, parentWinnerStore, material, policy }) {
         const parent = decode(material.artifact), issuer = peerField(parent, "Artifact", "issuer_key_id");
         if (issuer.kind !== "bytes" || issuer.value.length !== 16) throw new Error("original native tunnel issuer is invalid");

@@ -67,6 +67,10 @@ export interface CurrentRelayPeerOptions {
   /** Complete unrelated consumer setup before B begins its finite original
    * physical preparation. This hook receives registration, never a Grant. */
   readonly onBeforeServerPrepare?: (registration: string) => Promise<void>;
+  /** Keep Grant issuance ahead of B's physical preparation for deployments
+   * whose route is intentionally activated between those two phases. */
+  readonly deferPoolPreparation?: boolean;
+  readonly onBeforePoolPreparation?: (activateRoute: () => void) => void | Promise<void>;
   readonly prepareServer?: (installation: Readonly<{ environment: TransportEnvironment; parentWinnerStore: SQLiteAdmissionStore; material: GrantIssuanceInput; policy: V4CredentialPolicy }>) => Promise<RegisteredPoolTunnelAuthorityOptions["server"]>;
   readonly serverAllow?: RegisteredPoolTunnelAuthorityOptions["serverAllow"];
   /** Joins the original local B store owners after its Acceptor has closed. */
@@ -201,8 +205,13 @@ async function installCurrentRelayPeer(deployment: CurrentRelayPeerDeployment, o
       await options.onBeforeServerPrepare?.(deployment.registration_json);
       const serverOptions = await options.prepareServer(Object.freeze({ environment, parentWinnerStore: store, material: original, policy }));
       if (options.serverAllow === undefined) throw new Error("original server Allow installation required");
-      poolAuthority = await createRegisteredPoolTunnelAuthority({ issuer: issuerOptions, material: original, server: serverOptions, publicationMS: 10000n, serverAllow: options.serverAllow });
+      poolAuthority = await createRegisteredPoolTunnelAuthority({ issuer: issuerOptions, material: original, server: serverOptions, publicationMS: 10000n, serverAllow: options.serverAllow,
+        ...(options.deferPoolPreparation === true ? { deferPreparation: true } : {}) });
       const issued = await poolAuthority.issue();
+      if (options.deferPoolPreparation === true) {
+        await options.onBeforePoolPreparation?.(() => runtime!.activateRoute());
+        await poolAuthority.startPreparation();
+      }
       grants = { clientGrant: issued.clientGrant, serverGrant: issued.serverGrant };
       for (const bytes of [issued.artifact, issued.activation, issued.clientCertificate, issued.serverCertificate, issued.relayCertificate]) bytes.fill(0);
     }

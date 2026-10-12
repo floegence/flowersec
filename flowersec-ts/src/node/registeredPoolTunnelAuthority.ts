@@ -24,6 +24,10 @@ export interface RegisteredPoolTunnelAuthorityOptions {
   }>;
   readonly publicationMS: bigint;
   readonly serverAllow: NodePoolServerAllowReceiverOptions;
+  /** Keep the original Grant issuance transaction separate from the physical
+   * B preparation. Trusted local fixtures use this when route activation must
+   * precede the finite physical admission window. */
+  readonly deferPreparation?: boolean;
 }
 export interface RegisteredPoolTunnelMaterial extends GrantIssuanceInput {
   readonly clientGrant: Uint8Array;
@@ -53,6 +57,7 @@ export class RegisteredPoolTunnelAuthority {
   #deadline: TrustedDeadline | undefined;
   #timer: ReturnType<typeof setTimeout> | undefined;
   #grantLength = 0; #issued = false; #published = false; #consumed = false; #started = false;
+  readonly #deferPreparation: boolean;
   #busy = false; #closed = false; #released = false; #closing: Promise<void> | undefined;
   constructor(token: symbol, options: RegisteredPoolTunnelAuthorityOptions) {
     requireCredential(token === capability && options.material.source === "preauthorized_pool" && options.server.policy.tunnel?.role === 1 &&
@@ -76,6 +81,7 @@ export class RegisteredPoolTunnelAuthority {
       this.#serverOptions = Object.freeze({ ...options.server, policy: Object.freeze({ ...policy, authorities: Object.freeze([...policy.authorities]), cryptoProfiles: Object.freeze([...policy.cryptoProfiles]),
         ...(policy.tunnel === undefined ? {} : { tunnel: Object.freeze({ ...policy.tunnel }) }) }), listener: Object.freeze({ ...options.server.listener }) });
       this.#publicationMS = options.publicationMS;
+      this.#deferPreparation = options.deferPreparation === true;
       this.#done = new Promise(resolve => { this.#resolve = resolve; });
       this.#allowReceiver = new NodePoolServerAllowReceiver(this.#environment, options.serverAllow, (request, grant) => {
         this.#check(); requireCredential(this.#issued && !this.#published && !this.#consumed && this.#prepared !== undefined && this.#publication !== undefined, "credential_binding");
@@ -118,12 +124,15 @@ export class RegisteredPoolTunnelAuthority {
       await this.#allowReceiver.listen();
     } finally { work?.close(); reference?.release(); this.#busy = false; if (this.#closed) void this.close(); }
   }
+  /** Start the deferred physical B preparation after the caller has made the
+   * original route available. The same one-shot ownership checks apply. */
+  async startPreparation(): Promise<void> { await this.prepare(capability); }
   acceptor(): Acceptor { this.#check(); requireCredential(this.#acceptor !== undefined); return this.#acceptor; }
   poolServerAllowBinding(): PoolServerAllowBinding { this.#check(); return this.#allowReceiver.binding(); }
   /** Returning completes issuance and verified installation. B's activation
    * remains closed until A publishes after its own original TxA-P success. */
   async issue(): Promise<RegisteredPoolTunnelMaterial> {
-    this.#check(); requireCredential(this.#acceptor !== undefined && !this.#busy && !this.#issued && !this.#consumed, "credential_binding"); this.#busy = true; this.#issued = true;
+    this.#check(); requireCredential((this.#acceptor !== undefined || this.#deferPreparation) && !this.#busy && !this.#issued && !this.#consumed, "credential_binding"); this.#busy = true; this.#issued = true;
     let grants: Awaited<ReturnType<GrantIssuer["issue"]>> | undefined;
     try {
       this.#publication = this.#runtime.reserveConnectionWork("registered_pool_server_publication", new ResourceVector([65536n + this.#runtime.resources.runtimeBytes, 0n, 0n, 8n, 1n, 0n, 0n, 0n, 0n, 0n, 0n]));
@@ -178,6 +187,6 @@ export class RegisteredPoolTunnelAuthority {
 }
 export async function createRegisteredPoolTunnelAuthority(options: RegisteredPoolTunnelAuthorityOptions): Promise<RegisteredPoolTunnelAuthority> {
   const owner = new RegisteredPoolTunnelAuthority(capability, options);
-  try { await owner.prepare(capability); return owner; } catch (error) { await owner.close(); throw error; }
+  try { if (options.deferPreparation !== true) await owner.prepare(capability); return owner; } catch (error) { await owner.close(); throw error; }
 }
 Object.freeze(RegisteredPoolTunnelAuthority.prototype); Object.freeze(RegisteredPoolTunnelAuthority);
