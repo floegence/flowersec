@@ -36,6 +36,8 @@ import { DiagnosticActivity } from "../v4/runtime/diagnosticObservation.js";
 import { wire } from "../v4/runtime/wireRegistry.js";
 import { NodeWSSCarrier } from "./wssV4.js";
 import type { RelayHopByteMeter, RelayNativePairPreparation } from "./relayNativePair.js";
+import { SQLiteWorkerDatabase } from "./sqliteWorkerV4.js";
+import { ServeIngress } from "../v4/runtime/serveGroup.js";
 
 type RelayBufferWrite = Readonly<{ position: number; side: 0 | 1; scope: bigint; sequence: bigint; frameType: number; buffer: Uint8Array }>;
 type RelayMeterSettlement = Readonly<{ meter: number; requested: number; actual: number | undefined; charged: number }>;
@@ -371,25 +373,31 @@ describe("Node current production raw QUIC runtime", () => {
     let rejectPayload!: (reason: unknown) => void;
     const payload = new Promise<Uint8Array>((resolve, reject) => { resolvePayload = resolve; rejectPayload = reject; });
     void payload.catch(() => undefined);
+    const failureObservation = observeOriginalConnectionFailures(performance.now(), true);
+    failureObservation.stage("tunnel fixture begin");
     const tunnel = await createCurrentNativeTunnel("node-v4-raw-tunnel", async (stream, signal) => {
       try {
         const value = await readCurrentNativePayload(stream, signal);
         await stream.closeWrite({ signal }); resolvePayload(value);
         const result = await stream.finish({ signal }); if (!result.send_drained) throw new Error("native tunnel FIN did not drain");
       } catch (error) { rejectPayload(error); throw error; }
-    });
+    }).catch(error => { failureObservation.close(); throw error; });
+    failureObservation.stage("tunnel fixture ready");
     let fixture: CurrentPeerClient | undefined, client: Session | undefined, accepted: AcceptedSession | undefined, outgoing: Stream | undefined;
     let poolServerAllow: ReturnType<typeof installCurrentPoolServerAllow> | undefined;
-    const failureObservation = observeOriginalConnectionFailures();
     const signal = AbortSignal.timeout(15000);
     try {
+      failureObservation.stage("client fixture begin");
       fixture = await createCurrentPeerClient(tunnel.relay.endpointAArtifactJSON, { trustPEM: tunnel.trustPEM });
+      failureObservation.stage("client fixture ready");
       poolServerAllow = installCurrentPoolServerAllow(fixture, tunnel.poolClientInstallation, tunnel.serverAllow);
+      failureObservation.stage("server Allow installed");
       const connector = configureCurrentPeerRawQUIC(fixture, tunnel.trustPEM, undefined, tunnel.listenerTLS, poolServerAllow);
       const acceptor = tunnel.acceptor;
       if (acceptor === null || typeof acceptor !== "object" || !("accept" in acceptor) || typeof acceptor.accept !== "function") throw new Error("original tunnel acceptor unavailable");
       const accepting = acceptor.accept({ signal }) as Promise<AcceptedSession>; void accepting.catch(() => undefined);
       tunnel.relay.start();
+      failureObservation.stage("forwarding started");
       try { client = await connect(fixture.environment, fixture.registerSource(connector), peerRequirements, { signal }); }
       catch (error) { throw new Error(`raw QUIC tunnel connect failed: ${failureObservation.describe(error)}`, { cause: error }); }
       accepted = await accepting;
@@ -1043,8 +1051,9 @@ describe("Node current production raw QUIC runtime", () => {
   }, 20_000);
 });
 
-function observeOriginalConnectionFailures(started = performance.now()) {
+function observeOriginalConnectionFailures(started = performance.now(), admission = false) {
   const failures: string[] = [], stages: string[] = [], originalFailure = DiagnosticActivity.prototype.failure;
+  const owners: string[] = [];
   const elapsed = () => Math.round(performance.now() - started);
   // Copy only failure text before the public connection boundary redacts it.
   // The original observer still runs and no provider or exception is retained.
@@ -1052,10 +1061,76 @@ function observeOriginalConnectionFailures(started = performance.now()) {
     if (connection === true && failures.length < 8) failures.push(`${elapsed()}ms: ${inspect(error, { depth: 4 })}`);
     originalFailure.call(this, error, connection);
   });
+  const closeAdmission = admission ? observeOriginalAdmissionSources(fact => { if (owners.length < 12) owners.push(`${elapsed()}ms: ${fact}`); }) : undefined;
   return {
     stage: (name: string) => { if (stages.length < 12) stages.push(`${elapsed()}ms: ${name}`); },
-    describe: (error: unknown) => `${inspect(error, { depth: 4 })}\nConnection stages:\n${stages.join("\n")}\nOriginal connection failures:\n${failures.join("\n")}`,
-    close: () => observation.mockRestore(),
+    describe: (error: unknown) => `${inspect(error, { depth: 4 })}\nConnection stages:\n${stages.join("\n")}\nOriginal admission owners:\n${owners.join("\n")}\nOriginal connection failures:\n${failures.join("\n")}`,
+    close: () => { closeAdmission?.(); observation.mockRestore(); },
+  };
+}
+
+/** Failure-only fixture evidence: retain finite names/codes and repository
+ * caller locations, never a database path, credential, exception or owner. */
+function observeOriginalAdmissionSources(emit: (fact: string) => void): () => void {
+  const identities = new WeakMap<object, number>(), seen = new Set<string>(), abortCleanup = new Set<() => void>();
+  let nextIdentity = 0, closed = false;
+  const identity = (owner: object): number => {
+    let value = identities.get(owner);
+    if (value === undefined) { value = ++nextIdentity; identities.set(owner, value); }
+    return value;
+  };
+  const callers = (): string => (new Error().stack ?? "").split("\n").slice(2, 12)
+    .flatMap(line => {
+      const name = /^\s*at ([A-Za-z0-9_$.[\]#<>]+)(?:\s|$)/u.exec(line)?.[1];
+      const location = /[/\\]flowersec-ts[/\\]src[/\\]([A-Za-z0-9_./\\-]+):(\d+):\d+/u.exec(line);
+      if (location !== null) return [`${name ?? "<anonymous>"}@${location[1]!.replaceAll("\\", "/")}:${location[2]}`];
+      return name === undefined ? [] : [name];
+    }).slice(0, 5).join(" <- ");
+  const failure = (error: unknown): string => {
+    const code: unknown = error !== null && typeof error === "object" ? Object.getOwnPropertyDescriptor(error, "code")?.value : undefined;
+    const name = error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,63}$/u.test(error.name) ? error.name : "Error";
+    return `${name}${typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/u.test(code) ? `(${code})` : ""}`;
+  };
+  const record = (fact: string): void => {
+    if (closed || seen.size >= 12 || seen.has(fact)) return;
+    seen.add(fact); emit(fact);
+  };
+  const originalStart = ServeIngress.prototype.startDeadline, originalCheck = ServeIngress.prototype.check, originalAbort = ServeIngress.prototype.abort;
+  const originalObserve = SQLiteWorkerDatabase.prototype.observe, originalClose = SQLiteWorkerDatabase.prototype.close;
+  const start = vi.spyOn(ServeIngress.prototype, "startDeadline").mockImplementation(function (this: ServeIngress<object>) {
+    record(`ingress ${identity(this)} start handshakeMS=${this.group.limits.handshakeMS}`);
+    return originalStart.call(this);
+  });
+  const check = vi.spyOn(ServeIngress.prototype, "check").mockImplementation(function (this: ServeIngress<object>) {
+    try { return originalCheck.call(this); }
+    catch (error) { record(`ingress ${identity(this)} check ${failure(error)}: ${callers()}`); throw error; }
+  });
+  const abort = vi.spyOn(ServeIngress.prototype, "abort").mockImplementation(function (this: ServeIngress<object>) {
+    if (!this.signal.aborted) record(`ingress ${identity(this)} abort: ${callers()}`);
+    return originalAbort.call(this);
+  });
+  const observe = vi.spyOn(SQLiteWorkerDatabase.prototype, "observe").mockImplementation(function (this: SQLiteWorkerDatabase, signal, remainingMS) {
+    const owner = identity(this);
+    const aborted = (): void => record(`SQLite ${owner} owner abort ${failure(signal?.reason)}: ${callers()}`);
+    const cleanup = (): void => { signal?.removeEventListener("abort", aborted); abortCleanup.delete(cleanup); };
+    signal?.addEventListener("abort", aborted, { once: true }); abortCleanup.add(cleanup);
+    if (signal?.aborted) aborted();
+    let unobserve: () => void;
+    try {
+      unobserve = originalObserve.call(this, signal, () => {
+        try { return remainingMS(); }
+        catch (error) { record(`SQLite ${owner} observation ${failure(error)}: ${callers()}`); throw error; }
+      });
+    } catch (error) { cleanup(); throw error; }
+    return () => { try { unobserve(); } finally { cleanup(); } };
+  });
+  const close = vi.spyOn(SQLiteWorkerDatabase.prototype, "close").mockImplementation(function (this: SQLiteWorkerDatabase) {
+    if (!this.closed()) record(`SQLite ${identity(this)} close: ${callers()}`);
+    return originalClose.call(this);
+  });
+  return () => {
+    closed = true; for (const cleanup of abortCleanup) cleanup();
+    start.mockRestore(); check.mockRestore(); abort.mockRestore(); observe.mockRestore(); close.mockRestore();
   };
 }
 

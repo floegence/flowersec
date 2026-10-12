@@ -318,6 +318,11 @@ impl RecordWork {
             )
             .min();
         if deadline.is_some_and(|deadline| now.monotonic_sample >= deadline) {
+            #[cfg(test)]
+            eprintln!(
+                "original record crypto deadline: deadline={deadline:?} now={:?}",
+                now.monotonic_sample,
+            );
             return Err(CryptoError::Deadline);
         }
         if now.clock_incarnation != self.born.clock_incarnation
@@ -813,6 +818,13 @@ impl RecordEngine {
             self.check_age(candidate.born, now)?;
         }
         if let Err(error) = self.rekey.check_deadline(now) {
+            #[cfg(test)]
+            eprintln!(
+                "original rekey deadline: role={} deadline={:?} now={:?}",
+                self.role,
+                self.rekey.work_deadline(),
+                now.monotonic_sample
+            );
             self.rekey.record_timeout(&self.account);
             return Err(error);
         }

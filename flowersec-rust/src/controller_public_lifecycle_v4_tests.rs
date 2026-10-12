@@ -1300,7 +1300,16 @@ async fn public_controller_drain_replacement_keeps_original_stream_and_notificat
             }),
         )
         .await;
-    let opened = opened.unwrap();
+    let opened = opened.unwrap_or_else(|error| {
+        panic!(
+            "original OPEN failed: {error:?}; original={:?}; remote={:?}; current={:?}; controller={:?}; notification={:?}",
+            (first.session.termination_cause(), first.session.cleanup_status()),
+            (first_remote.session.termination_cause(), first_remote.session.cleanup_status()),
+            test.controller.current().map(|current| (current.generation, current.session.termination_cause(), current.session.cleanup_status())),
+            test.controller.progress(),
+            subscription.snapshot(),
+        )
+    });
     phase
         .wait(
             "original notification publication",

@@ -992,6 +992,52 @@ impl State {
         }) || self.outgoing.as_ref().is_some_and(|b| now >= b.deadline)
             || self.incoming.as_ref().is_some_and(|b| now >= b.deadline)
         {
+            #[cfg(test)]
+            {
+                for slot in &self.slots {
+                    if let Some(deadline) =
+                        slot.opening_deadline.filter(|deadline| now >= *deadline)
+                    {
+                        eprintln!(
+                            "original OPEN deadline: role={} scope={} kind={} phase={:?} overdue={:?}",
+                            self.role,
+                            slot.scope,
+                            slot.kind,
+                            slot.phase,
+                            now.duration_since(deadline),
+                        );
+                    }
+                    for (direction, state) in slot.directions.iter().enumerate() {
+                        if !state.complete()
+                            && let Some(deadline) =
+                                state.deadline.filter(|deadline| now >= *deadline)
+                        {
+                            eprintln!(
+                                "original direction deadline: role={} scope={} kind={} direction={} phase={:?} overdue={:?}",
+                                self.role,
+                                slot.scope,
+                                slot.kind,
+                                direction,
+                                slot.phase,
+                                now.duration_since(deadline),
+                            );
+                        }
+                    }
+                }
+                for (direction, batch) in
+                    [("outgoing", &self.outgoing), ("incoming", &self.incoming)]
+                {
+                    if let Some(batch) = batch.as_ref().filter(|batch| now >= batch.deadline) {
+                        eprintln!(
+                            "original retirement batch deadline: role={} direction={} sequence={} overdue={:?}",
+                            self.role,
+                            direction,
+                            batch.sequence,
+                            now.duration_since(batch.deadline),
+                        );
+                    }
+                }
+            }
             return Err(CryptoError::Deadline);
         }
         Ok(())
@@ -1311,6 +1357,12 @@ impl ReliableSession {
         if let Some(drain) = &self.engine.streams.controls.drain
             && self.engine.account.security_time()?.monotonic_sample >= drain.deadline()
         {
+            #[cfg(test)]
+            eprintln!(
+                "original Drain deadline: role={} deadline={:?}",
+                self.engine.role,
+                drain.deadline()
+            );
             drain.finish(DrainOutcome::DeadlineAborted);
             self.engine.fail();
             return Err(CryptoError::Deadline);

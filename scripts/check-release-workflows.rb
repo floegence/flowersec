@@ -350,7 +350,11 @@ require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI reposito
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
 require_exact_keys(node_minimum_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Node minimum job")
 require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust stable job")
-require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust Windows job")
+require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "strategy", "env", "steps"], "the hosted CI Rust Windows job")
+require_exact_value(rust_windows_job["strategy"], {
+  "fail-fast" => false,
+  "matrix" => { "suite" => ["runtime", "contracts", "public-api"] },
+}, "the complete bounded Windows test roles")
 require_exact_value(rust_stable_job["env"], {
   "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
   "CARGO_PROFILE_DEV_DEBUG" => "0",
@@ -376,7 +380,7 @@ require_exact_value(node_minimum_job["timeout-minutes"], 10, "the hosted CI Node
 require_exact_value(rust_stable_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} stable", "the hosted CI Rust stable job name")
 require_exact_value(rust_stable_job["runs-on"], "ubuntu-latest", "the hosted CI Rust stable runner")
 require_exact_value(rust_stable_job["timeout-minutes"], 30, "the hosted CI Rust stable timeout")
-require_exact_value(rust_windows_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} Windows", "the hosted CI Rust Windows job name")
+require_exact_value(rust_windows_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} Windows (${{ matrix.suite }})", "the hosted CI Rust Windows job name")
 require_exact_value(rust_windows_job["runs-on"], "windows-latest", "the hosted CI Rust Windows runner")
 require_exact_value(rust_windows_job["timeout-minutes"], 30, "the hosted CI Rust Windows timeout")
 require_exact_value(rust_msrv_job["name"], "Rust #{rust_msrv} MSRV", "the hosted CI Rust MSRV job name")
@@ -655,6 +659,37 @@ validate_step_contracts(rust_stable_steps, [
     "run" => "cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features",
   } },
 ], "the hosted CI Rust stable job")
+windows_test_roles = <<~'POWERSHELL'
+  switch ($env:FLOWERSEC_WINDOWS_SUITE) {
+    "runtime" {
+      cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --lib --examples
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --doc
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    "contracts" {
+      $metadata = cargo metadata --manifest-path flowersec-rust/Cargo.toml --locked --no-deps --format-version 1
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      $packages = @(($metadata | ConvertFrom-Json).packages | Where-Object { $_.name -eq "flowersec" })
+      if ($packages.Count -ne 1) { throw "Expected exactly one Flowersec SDK package" }
+      $tests = @($packages[0].targets | Where-Object { $_.kind -contains "test" })
+      $api = @($tests | Where-Object { $_.name -eq "public_api_design" })
+      $contracts = @($tests | Where-Object { $_.name -ne "public_api_design" } | Sort-Object name)
+      if ($api.Count -ne 1 -or $contracts.Count -eq 0) { throw "Incomplete Windows integration test partition" }
+      $cargoArguments = @("test", "--manifest-path", "flowersec-rust/Cargo.toml", "--locked", "--all-features")
+      foreach ($target in $contracts) { $cargoArguments += @("--test", $target.name) }
+      cargo @cargoArguments
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    "public-api" {
+      cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --test public_api_design
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+    default { throw "Unknown Windows test role" }
+  }
+POWERSHELL
 validate_step_contracts(rust_windows_steps, [
   { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
   { name: "Setup Go for protocol interoperability tests", keys: ["name", "uses", "with"], values: {
@@ -665,11 +700,8 @@ validate_step_contracts(rust_windows_steps, [
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
     "with" => { "toolchain" => rust_version },
   } },
-  { name: "Build and test", keys: ["name", "run"], values: {
-    "run" => "cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features",
-  } },
-  { name: "Test shared native transport", keys: ["name", "run"], values: {
-    "run" => "cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features",
+  { name: "Run complete Windows test role", keys: ["name", "shell", "env", "run"], values: {
+    "shell" => "pwsh", "env" => { "FLOWERSEC_WINDOWS_SUITE" => "${{ matrix.suite }}" }, "run" => windows_test_roles,
   } },
 ], "the hosted CI Rust Windows job")
 validate_step_contracts(dependency_review_steps, [

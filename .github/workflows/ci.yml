@@ -193,9 +193,13 @@ jobs:
         run: cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
 
   rust-windows:
-    name: Rust 1.98 Windows
+    name: Rust 1.98 Windows (${{ matrix.suite }})
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [runtime, contracts, public-api]
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/.flowersec/rust-ci-target
       # These disposable builds and nested API probes do not need debug symbols.
@@ -215,10 +219,40 @@ jobs:
         with:
           toolchain: 1.98.0
 
-      - name: Build and test
-        run: cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features
-      - name: Test shared native transport
-        run: cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
+      - name: Run complete Windows test role
+        shell: pwsh
+        env:
+          FLOWERSEC_WINDOWS_SUITE: ${{ matrix.suite }}
+        run: |
+          switch ($env:FLOWERSEC_WINDOWS_SUITE) {
+            "runtime" {
+              cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --lib --examples
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --doc
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+            "contracts" {
+              $metadata = cargo metadata --manifest-path flowersec-rust/Cargo.toml --locked --no-deps --format-version 1
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              $packages = @(($metadata | ConvertFrom-Json).packages | Where-Object { $_.name -eq "flowersec" })
+              if ($packages.Count -ne 1) { throw "Expected exactly one Flowersec SDK package" }
+              $tests = @($packages[0].targets | Where-Object { $_.kind -contains "test" })
+              $api = @($tests | Where-Object { $_.name -eq "public_api_design" })
+              $contracts = @($tests | Where-Object { $_.name -ne "public_api_design" } | Sort-Object name)
+              if ($api.Count -ne 1 -or $contracts.Count -eq 0) { throw "Incomplete Windows integration test partition" }
+              $cargoArguments = @("test", "--manifest-path", "flowersec-rust/Cargo.toml", "--locked", "--all-features")
+              foreach ($target in $contracts) { $cargoArguments += @("--test", $target.name) }
+              cargo @cargoArguments
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+            "public-api" {
+              cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --test public_api_design
+              if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            }
+            default { throw "Unknown Windows test role" }
+          }
 
   dependency-review:
     name: Dependency review

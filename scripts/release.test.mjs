@@ -2576,6 +2576,83 @@ test("Rust recovery rejects non-canonical versions before invoking git", (t) => 
   assert.equal(fs.existsSync(gitLog), false, "invalid versions must fail before git");
 });
 
+test("Windows test roles preserve the complete bounded test partition", { concurrency: releaseMutationConcurrency }, async (t) => {
+  const mutations = [
+    ...["runtime", "contracts", "public-api"].map(role => ({
+      name: `missing ${role} role`,
+      from: "        suite: [runtime, contracts, public-api]\n",
+      to: `        suite: [${["runtime", "contracts", "public-api"].filter(value => value !== role).join(", ")}]\n`,
+    })),
+    { name: "sibling roles canceled on failure", from: "      fail-fast: false\n", to: "      fail-fast: true\n" },
+    { name: "increased per-role timeout", from: "    timeout-minutes: 30\n", to: "    timeout-minutes: 60\n" },
+    {
+      name: "matrix role bypassed through a fixed environment value",
+      from: "          FLOWERSEC_WINDOWS_SUITE: ${{ matrix.suite }}\n",
+      to: "          FLOWERSEC_WINDOWS_SUITE: runtime\n",
+    },
+    {
+      name: "matrix expression interpolated into shell source",
+      from: "          switch ($env:FLOWERSEC_WINDOWS_SUITE) {\n",
+      to: '          switch ("${{ matrix.suite }}") {\n',
+    },
+    {
+      name: "documentation combined with incompatible target flags",
+      from: "--all-features --doc\n",
+      to: "--all-features --lib --examples --doc\n",
+    },
+    {
+      name: "documentation omitted",
+      from: "              cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --doc\n",
+      to: "",
+    },
+    {
+      name: "native transport omitted",
+      from: "              cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features\n",
+      to: "",
+    },
+    {
+      name: "only first discovered protocol target executed",
+      from: "foreach ($target in $contracts)",
+      to: "foreach ($target in ($contracts | Select-Object -First 1))",
+    },
+    {
+      name: "empty integration partition accepted",
+      from: '              if ($api.Count -ne 1 -or $contracts.Count -eq 0) { throw "Incomplete Windows integration test partition" }\n',
+      to: "",
+    },
+    {
+      name: "public API assertions omitted",
+      from: "--all-features --test public_api_design\n",
+      to: "--all-features --test notification_api\n",
+    },
+    {
+      name: "unknown role accepted",
+      from: '            default { throw "Unknown Windows test role" }\n',
+      to: "            default { exit 0 }\n",
+    },
+  ];
+  await Promise.all([
+    t.test("current policy passes", () => {
+      const result = runReleasePolicy(createReleasePolicyFixture(t));
+      assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+    }),
+    ...mutations.map(mutation => t.test(`rejects ${mutation.name}`, { concurrency: true }, () => {
+      const root = createReleasePolicyFixture(t);
+      const workflowPath = path.join(root, ".github/workflows/ci.yml");
+      const source = fs.readFileSync(workflowPath, "utf8");
+      const start = source.indexOf("  rust-windows:\n");
+      const end = source.indexOf("  dependency-review:\n", start);
+      assert.ok(start !== -1 && end !== -1, "Windows job boundary must exist");
+      const windows = source.slice(start, end);
+      assert.ok(windows.includes(mutation.from), `missing Windows policy marker for ${mutation.name}`);
+      fs.writeFileSync(workflowPath, `${source.slice(0, start)}${windows.replace(mutation.from, mutation.to)}${source.slice(end)}`);
+      const result = runReleasePolicy(root);
+      assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
+      assert.match(result.stderr, /reviewed value|step sequence/);
+    })),
+  ]);
+});
+
 test("release policy rejects disconnected or commented-out gates", { concurrency: releaseMutationConcurrency }, async (t) => {
   const policyMutations = [];
   const schedulePolicyTest = (name, fn) => {
@@ -2639,8 +2716,8 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
     {
       name: "Rust Windows build directory escapes the job workspace",
       file: "ci.yml",
-      from: `  rust-windows:\n    name: Rust ${toolchains.rust.version.split(".").slice(0, 2).join(".")} Windows\n    runs-on: windows-latest\n    timeout-minutes: 30\n    env:\n      CARGO_TARGET_DIR: \${{ github.workspace }}/.flowersec/rust-ci-target`,
-      to: `  rust-windows:\n    name: Rust ${toolchains.rust.version.split(".").slice(0, 2).join(".")} Windows\n    runs-on: windows-latest\n    timeout-minutes: 30\n    env:\n      CARGO_TARGET_DIR: C:/shared-rust-target`,
+      from: "        suite: [runtime, contracts, public-api]\n    env:\n      CARGO_TARGET_DIR: ${{ github.workspace }}/.flowersec/rust-ci-target",
+      to: "        suite: [runtime, contracts, public-api]\n    env:\n      CARGO_TARGET_DIR: C:/shared-rust-target",
     },
     {
       name: "Node minimum compatibility validates the primary runtime",

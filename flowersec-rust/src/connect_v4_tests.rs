@@ -191,7 +191,12 @@ async fn setup_with_application(
     }
 }
 async fn receive(socket: &mut Socket, kind: u8) -> Vec<u8> {
-    let wire = socket.next().await.unwrap().unwrap().into_data();
+    let wire = socket
+        .next()
+        .await
+        .unwrap_or_else(|| panic!("peer handshake ended before kind {kind}"))
+        .unwrap_or_else(|error| panic!("peer handshake receive kind {kind}: {error:?}"))
+        .into_data();
     payload(&wire, kind, 65536).unwrap().to_vec()
 }
 async fn send(socket: &mut Socket, kind: u8, body: &[u8]) {
