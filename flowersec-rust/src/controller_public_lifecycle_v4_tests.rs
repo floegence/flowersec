@@ -68,6 +68,7 @@ fn copy_pool_credential(value: &PoolCredentialBytes) -> PoolCredentialBytes {
 
 struct Remote {
     session: Session,
+    management: crate::ExecutionManagement,
     services: crate::ServicePeer,
     notifications: NotificationPeer,
     echo: Arc<ControllerEcho>,
@@ -88,13 +89,17 @@ impl Remote {
     }
     async fn close(self) {
         self.echo.release.add_permits(8);
+        self.management.close();
         self.notifications.close();
         self.services.close();
         self.session.close();
-        tokio::time::timeout(Duration::from_secs(3), self.pump)
-            .await
-            .unwrap()
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let (pump, management) = tokio::join!(self.pump, self.management.wait_cleanup());
+            pump.unwrap();
+            assert!(management.complete);
+        })
+        .await
+        .unwrap();
     }
 }
 struct Harness {
@@ -227,6 +232,9 @@ impl Harness {
                 tokio::spawn(async move {
                     let (socket, engine) = peer.handshake().await;
                     let (session, pump) = peer_session(&environment, socket, engine);
+                    // Manual READY adoption must install the same fixed manager
+                    // that production execution-profile admission prepares.
+                    let management = session.execution_management(Vec::new()).await.unwrap();
                     let echo = Arc::new(ControllerEcho::default());
                     let services = session
                         .services(
@@ -247,6 +255,7 @@ impl Harness {
                     services.attach_notifications(&notifications).unwrap();
                     Remote {
                         session,
+                        management,
                         services,
                         notifications,
                         echo,

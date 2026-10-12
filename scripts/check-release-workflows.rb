@@ -361,12 +361,18 @@ require_exact_value(rust_stable_job["env"], {
   "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
   "CARGO_PROFILE_DEV_DEBUG" => "0",
   "CARGO_PROFILE_TEST_DEBUG" => "0",
+  "RUST_TEST_THREADS" => "2",
 }, "the hosted CI Rust stable build profile")
-require_exact_value(rust_lint_job["env"], rust_stable_job["env"], "the hosted CI Rust lint build profile")
+require_exact_value(rust_lint_job["env"], {
+  "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
+  "CARGO_PROFILE_DEV_DEBUG" => "0",
+  "CARGO_PROFILE_TEST_DEBUG" => "0",
+}, "the hosted CI Rust lint build profile")
 require_exact_value(rust_windows_job["env"], {
   "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
   "CARGO_PROFILE_DEV_DEBUG" => "0",
   "CARGO_PROFILE_TEST_DEBUG" => "0",
+  "RUST_TEST_THREADS" => "2",
 }, "the hosted CI Rust Windows build profile")
 require_exact_keys(rust_msrv_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust MSRV job")
 require_exact_value(rust_msrv_job["env"], { "RUSTUP_TOOLCHAIN" => rust_msrv }, "the hosted CI Rust MSRV selection")
@@ -376,7 +382,12 @@ require_exact_value(precommit_job["runs-on"], "macos-26", "the hosted CI precomm
 require_exact_value(precommit_job["timeout-minutes"], 60, "the hosted CI precommit timeout")
 require_exact_value(precommit_job["env"], {
   "DEVELOPER_DIR" => xcode_directory,
-}, "the hosted CI precommit Xcode selection")
+  "GOMAXPROCS" => "2",
+  "CARGO_BUILD_JOBS" => "2",
+  "RUST_TEST_THREADS" => "2",
+  "CARGO_PROFILE_DEV_DEBUG" => "0",
+  "CARGO_PROFILE_TEST_DEBUG" => "0",
+}, "the hosted CI precommit runtime and build resources")
 require_exact_value(node_minimum_job["name"], "Node #{node_minimum.split('.').first} minimum compatibility", "the hosted CI Node minimum job name")
 require_exact_value(node_minimum_job["runs-on"], "ubuntu-latest", "the hosted CI Node minimum runner")
 require_exact_value(node_minimum_job["timeout-minutes"], 10, "the hosted CI Node minimum timeout")

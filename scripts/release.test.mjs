@@ -2585,6 +2585,7 @@ test("Windows test roles preserve the complete bounded test partition", { concur
     })),
     { name: "sibling roles canceled on failure", from: "      fail-fast: false\n", to: "      fail-fast: true\n" },
     { name: "increased per-role timeout", from: "    timeout-minutes: 30\n", to: "    timeout-minutes: 60\n" },
+    { name: "independent tests lose their resource bound", from: '      RUST_TEST_THREADS: "2"\n', to: "" },
     {
       name: "matrix role bypassed through a fixed environment value",
       from: "          FLOWERSEC_WINDOWS_SUITE: ${{ matrix.suite }}\n",
@@ -2725,6 +2726,18 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       file: "ci.yml",
       from: "CARGO_TARGET_DIR: ${{ github.workspace }}/.flowersec/rust-ci-target",
       to: "CARGO_TARGET_DIR: /tmp/shared-rust-target",
+    },
+    ...["GOMAXPROCS", "CARGO_BUILD_JOBS", "RUST_TEST_THREADS"].map(name => ({
+      name: `precommit removes its ${name} resource bound`,
+      file: "ci.yml",
+      from: `      ${name}: "2"\n`,
+      to: "",
+    })),
+    {
+      name: "Rust stable removes its independent test bound",
+      file: "ci.yml",
+      from: '      CARGO_PROFILE_TEST_DEBUG: "0"\n      RUST_TEST_THREADS: "2"\n',
+      to: '      CARGO_PROFILE_TEST_DEBUG: "0"\n',
     },
     {
       name: "Rust Windows build directory escapes the job workspace",

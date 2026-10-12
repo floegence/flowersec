@@ -449,8 +449,8 @@ test("security dependency checks stay wired into local gates", () => {
     makefile,
     /^precommit:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n\t\$\(MAKE\) precommit-source$/m,
   );
-  assert.match(makefile, /^precommit-source:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n(?:\tnode scripts\/run-precommit-wave\.mjs .*\n){3}(?:\t#.*\n)*\t\$\(MAKE\) native-addon-test\n\tnode scripts\/run-precommit-wave\.mjs languages \$\(MAKE\) precommit-go precommit-ts precommit-swift precommit-rust$/m,
-    "native cold-start admission must run separately before all four concurrent language gates");
+  assert.match(makefile, /^precommit-source:\n\tnode scripts\/toolchains\.mjs --check-runtime go node rust swift\n(?:\tnode scripts\/run-precommit-wave\.mjs .*\n){3}(?:\t#.*\n)*\t\$\(MAKE\) native-addon-test\n\tnode scripts\/run-precommit-wave\.mjs languages \$\(MAKE\) precommit-go precommit-ts precommit-swift\n(?:\t#.*\n)*\t\$\(MAKE\) precommit-rust$/m,
+    "native admission and Rust compilation must stay separate from the timed Go/TypeScript/Swift wave without omitting a language gate");
   assert.match(makefile, /^\tnode scripts\/run-precommit-wave\.mjs static \$\(MAKE\) security-makefile-check security-dependency-check /m);
   assert.match(
     makefile,
