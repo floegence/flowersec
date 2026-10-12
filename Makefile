@@ -525,7 +525,10 @@ precommit-source:
 	node scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps
 	node scripts/run-precommit-wave.mjs static $(MAKE) flowersec-test-contract security-makefile-check
 	node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check example-source-check
-	node scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust native-addon-test
+	# Native admission retains its short protocol windows on hosted runners.
+	# Run its cold-start integration before concurrent compiler/test processes.
+	$(MAKE) native-addon-test
+	node scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift precommit-rust
 
 stability-source-check:
 	cd tools/stabilitycheck && go run . verify-source
