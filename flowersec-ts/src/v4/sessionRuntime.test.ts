@@ -3161,6 +3161,10 @@ describe("original v4 reliable Session assembly", () => {
     a.peer = b;
     b.peer = a;
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
+    // Fanout and cleanup use explicit handler barriers. Only the passive wait
+    // advances the shared clock, independently of encryption or host scheduling.
+    let tick = 0n;
+    const clockMS = () => tick;
     let decodes = 0;
     const codec = v4ApplicationMessageCodec<string>({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 }, {
       execution: "sync", applicationBytes: 1024n,
@@ -3177,11 +3181,11 @@ describe("original v4 reliable Session assembly", () => {
       8: u(0), 9: u(0), 10: u(0), 11: u(30000), 21: { kind: "bool", value: false }, 23: u(128), 27: array()
     }));
     const common = { query: { typeID: 43, contractDigest: fill(32) }, definitions: [definition], maxMethods: 1, maxCaptureBytes: 128 };
-    const client = endpoint("client", a, profile, "live_authority", 3000n, () => common);
+    const client = endpoint("client", a, profile, "live_authority", 3000n, () => common, { clockMS });
     const server = endpoint("server", b, profile, "live_authority", 3000n, () => ({
       ...common,
       notificationMethods: [{ namespace: definition.namespace, method, contract, permission: "allowed" }]
-    }));
+    }), { clockMS });
     let c: V4Session | undefined, s: V4Session | undefined, source: V4StaticServiceContracts | undefined;
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
@@ -3215,7 +3219,9 @@ describe("original v4 reliable Session assembly", () => {
       expect(latestValues).toEqual(["one"]);
       const late = s.notifications.subscribe(method, (_context, value) => { lateValues.push(value); }, options);
       tokens.push(late);
-      const passive = await late.waitClosed({ timeoutMS: 1n });
+      const waiting = late.waitClosed({ timeoutMS: 1n });
+      tick += 1n;
+      const passive = await waiting;
       expect(passive).toMatchObject({ closed: false, wait: "deadline_exceeded", cleanupStatus: { status: "pending" } });
       expect(late.observationStatus().closed).toBe(false);
       expect(lateValues).toEqual([]);

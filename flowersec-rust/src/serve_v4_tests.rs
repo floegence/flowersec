@@ -102,7 +102,14 @@ async fn production_listener_durable_admission_and_original_serve_children() {
         (Profile::P256, false, false, BindingMode::DirectExporter),
         (Profile::X25519, true, true, BindingMode::DirectExporter),
     ] {
+        let started = Instant::now();
         let stage = std::cell::Cell::new("setup");
+        let stages = std::cell::RefCell::new(vec![("setup", Duration::ZERO)]);
+        let last_io = std::cell::RefCell::new(None);
+        let mark_stage = |name| {
+            stage.set(name);
+            stages.borrow_mut().push((name, started.elapsed()));
+        };
         let scenario = async {
             let generated = LocalKeys::generate(profile).unwrap();
             let ed = generated.ed_public();
@@ -153,7 +160,7 @@ async fn production_listener_durable_admission_and_original_serve_children() {
             let source = Arc::new(Source(Mutex::new(Some(server_bytes))));
             let namespace = Arc::new(Namespace::new(f.verifier));
             let environment = f.environment;
-            stage.set("start listener");
+            mark_stage("start listener");
             let handle = environment
                 .serve_wss(
                     vec![namespace.clone()],
@@ -195,9 +202,9 @@ async fn production_listener_durable_admission_and_original_serve_children() {
                 let pending = tokio::net::TcpStream::connect(address).await.unwrap();
                 // Closing the shared Environment also wakes an otherwise idle
                 // accept pump; it must retain the pending TLS socket until exit.
-                stage.set("close Environment with pending TLS");
+                mark_stage("close Environment with pending TLS");
                 environment.close().await.unwrap();
-                stage.set("Serve cleanup");
+                mark_stage("Serve cleanup");
                 assert!(handle.wait_cleanup().await.unwrap().complete);
                 assert_eq!(environment.resource_usage().connections, 0);
                 drop(pending);
@@ -206,7 +213,7 @@ async fn production_listener_durable_admission_and_original_serve_children() {
             let material = environment
                 .pool_connection_material(vec![namespace], client_keys, client_bytes)
                 .unwrap();
-            stage.set("connect client");
+            mark_stage("connect client");
             let client = environment
                 .connect_pool_wss(
                     material,
@@ -226,12 +233,12 @@ async fn production_listener_durable_admission_and_original_serve_children() {
                 )
                 .await
                 .unwrap();
-            stage.set("accept Session");
+            mark_stage("accept Session");
             let server = tokio::time::timeout(Duration::from_secs(2), handle.accept())
                 .await
                 .unwrap()
                 .unwrap();
-            stage.set("probe");
+            mark_stage("probe");
             assert_eq!(
                 client
                     .probe_liveness(Duration::from_secs(2))
@@ -240,30 +247,48 @@ async fn production_listener_durable_admission_and_original_serve_children() {
                     .outcome,
                 ProbeOutcome::Responsive
             );
-            stage.set("open stream");
+            mark_stage("open stream");
             let (outgoing, incoming) = tokio::join!(
                 client.open_stream("serve.test", Metadata::empty(), 128),
                 async { server.next_open().await.unwrap().accept(128).unwrap() }
             );
             let outgoing = outgoing.unwrap();
-            stage.set("write request");
-            outgoing
+            mark_stage("write request");
+            let request_accepted = outgoing
                 .write(Bytes::from_static(b"actual accepted server"))
                 .await
                 .unwrap();
-            stage.set("read request");
+            // Retain only scalar observations; diagnostic handles must not
+            // extend the original Session or Stream cleanup lifetimes.
+            last_io.replace(Some((
+                "before request read",
+                request_accepted,
+                client.termination_cause(),
+                client.cleanup_status(),
+                server.termination_cause(),
+                server.cleanup_status(),
+            )));
+            mark_stage("read request");
             assert_eq!(
                 incoming.read().await.unwrap().unwrap(),
                 Bytes::from_static(b"actual accepted server")
             );
-            stage.set("rekey");
+            mark_stage("rekey");
             client.rekey().await.unwrap();
-            stage.set("write response");
-            incoming
+            mark_stage("write response");
+            let response_accepted = incoming
                 .write(Bytes::from_static(b"new epoch"))
                 .await
                 .unwrap();
-            stage.set("read response");
+            last_io.replace(Some((
+                "before response read",
+                response_accepted,
+                client.termination_cause(),
+                client.cleanup_status(),
+                server.termination_cause(),
+                server.cleanup_status(),
+            )));
+            mark_stage("read response");
             assert_eq!(
                 outgoing.read().await.unwrap().unwrap(),
                 Bytes::from_static(b"new epoch")
@@ -274,7 +299,7 @@ async fn production_listener_durable_admission_and_original_serve_children() {
                 let terminal_probe = crate::TerminalPublicationProbe::new();
                 let _terminal_probe_guard =
                     crate::install_terminal_publication_probe(&server, terminal_probe.clone());
-                stage.set("drain");
+                mark_stage("drain");
                 handle.drain(Duration::from_secs(2)).unwrap();
                 outgoing
                     .write(Bytes::from_static(b"draining child"))
@@ -288,7 +313,7 @@ async fn production_listener_durable_admission_and_original_serve_children() {
                 assert!(incoming.read().await.unwrap().is_none());
                 incoming.close_write().await.unwrap();
                 assert!(outgoing.read().await.unwrap().is_none());
-                stage.set("finish stream");
+                mark_stage("finish stream");
                 outgoing.finish().await.unwrap();
                 assert!(
                     tokio::time::timeout(
@@ -348,7 +373,7 @@ async fn production_listener_durable_admission_and_original_serve_children() {
             } else {
                 handle.close();
             }
-            stage.set("Serve cleanup");
+            mark_stage("Serve cleanup");
             assert!(handle.wait_cleanup().await.unwrap().complete);
             let drained = handle.wait_drain().await.unwrap();
             assert_eq!(
@@ -360,10 +385,10 @@ async fn production_listener_durable_admission_and_original_serve_children() {
                 }
             );
             assert!(drained.cleanup.complete);
-            stage.set("server Session cleanup");
+            mark_stage("server Session cleanup");
             assert!(server.wait_cleanup().await.complete);
             client.close();
-            stage.set("client Session cleanup");
+            mark_stage("client Session cleanup");
             assert!(client.wait_cleanup().await.complete);
             assert!(!environment.is_closed());
             assert_eq!(environment.resource_usage().connections, 0);
@@ -371,7 +396,13 @@ async fn production_listener_durable_admission_and_original_serve_children() {
         tokio::time::timeout(Duration::from_secs(15), scenario)
             .await
             .unwrap_or_else(|_| {
-                panic!("Serve {profile:?} pin={pin} pending={pending_only} binding={binding_mode:?} timed out during {}", stage.get())
+                panic!(
+                    "Serve {profile:?} pin={pin} pending={pending_only} binding={binding_mode:?} timed out during {}; elapsed={:?}; stages={:?}; last_io={:?}",
+                    stage.get(),
+                    started.elapsed(),
+                    stages.borrow(),
+                    last_io.borrow(),
+                )
             });
     }
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 	"time"
 
@@ -85,6 +86,22 @@ func factoryCorePair(t *testing.T, framing string, stream SessionStreamConfig, r
 type factoryStreamResult struct {
 	stream *StreamOwnership
 	err    error
+}
+
+func waitFactoryReceiveWindow(ctx context.Context, stream *StreamOwnership) error {
+	f := stream.flow.receive
+	for {
+		f.pool.mu.Lock()
+		filled := uint64(f.size) == f.capacity && f.observed.Offset == f.limit
+		f.pool.mu.Unlock()
+		if filled {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		runtime.Gosched()
+	}
 }
 
 func factoryOpenPair(t *testing.T, cores [2]*SessionCore, ctx context.Context) [2]*StreamOwnership {

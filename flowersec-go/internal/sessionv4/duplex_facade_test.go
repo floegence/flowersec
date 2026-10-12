@@ -197,9 +197,6 @@ func TestOwnedNativeDuplexBridgeUsesSealedTCPAndHalfClose(t *testing.T) {
 	if err := alias.Close(); !errors.Is(err, ErrStreamOwned) {
 		t.Fatal("native alias bypassed claim", err)
 	}
-	if err := bridge.Start(); err != nil {
-		t.Fatal(err)
-	}
 	sent := make(chan error, 1)
 	request := bytes.Repeat([]byte("native"), 32)
 	go func() {
@@ -209,6 +206,14 @@ func TestOwnedNativeDuplexBridgeUsesSealedTCPAndHalfClose(t *testing.T) {
 		}
 		sent <- err
 	}()
+	// The peer may fill its original window before either bridge pump gets
+	// scheduled. First raw use must wake maintenance for that queued input.
+	if err := waitFactoryReceiveWindow(ctx, bridge.owners[0]); err != nil {
+		t.Fatal("peer did not fill the original window", err)
+	}
+	if err := bridge.Start(); err != nil {
+		t.Fatal(err)
+	}
 	received, err := io.ReadAll(peer)
 	if err != nil || !bytes.Equal(received, request) {
 		t.Fatal("TCP write half", len(received), err)

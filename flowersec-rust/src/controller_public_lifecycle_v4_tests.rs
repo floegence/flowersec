@@ -44,6 +44,19 @@ fn signed_field(raw: &[u8], schema: &str, field: u64, value: Vec<u8>, seed: u8) 
     )
 }
 
+fn retain_options(controller: &MaterialConnectionController) -> MaterialSessionReplaceOptions {
+    // Capture this fixture's 2990 ms retain interval at the replacement action.
+    // Credential time continues to advance during setup and acquisition.
+    let retain_until_ms = controller
+        .capture_session()
+        .unwrap()
+        .controller_retain_until(Duration::from_millis(2990))
+        .unwrap();
+    MaterialSessionReplaceOptions {
+        retirement: MaterialSessionRetirement::Retain { retain_until_ms },
+    }
+}
+
 fn copy_pool_credential(value: &PoolCredentialBytes) -> PoolCredentialBytes {
     PoolCredentialBytes {
         artifact: value.artifact.clone(),
@@ -534,14 +547,7 @@ async fn public_controller_pool_generation_capture_refusal_preserves_new_route()
     test.initializer.release.add_permits(1);
     let replaced = test
         .controller
-        .replace_session_with_options(
-            MaterialSessionReplaceOptions {
-                retirement: MaterialSessionRetirement::Retain {
-                    retain_until_ms: 4000,
-                },
-            },
-            &CancellationToken::new(),
-        )
+        .replace_session_with_options(retain_options(&test.controller), &CancellationToken::new())
         .await
         .unwrap();
     assert_eq!(replaced.current.generation, 2);
@@ -623,14 +629,10 @@ async fn public_controller_queued_unary_reselects_once_and_fixed_capture_keeps_o
     assert_eq!(queued.status(), crate::OperationStatus::NotStarted);
     assert!(first_remote.echo.requests.lock().unwrap().is_empty());
     let cancellation = CancellationToken::new();
-    let mut replacing = Box::pin(test.controller.replace_session_with_options(
-        MaterialSessionReplaceOptions {
-            retirement: MaterialSessionRetirement::Retain {
-                retain_until_ms: 4000,
-            },
-        },
-        &cancellation,
-    ));
+    let mut replacing = Box::pin(
+        test.controller
+            .replace_session_with_options(retain_options(&test.controller), &cancellation),
+    );
     tokio::select! { _ = test.initialized() => {}, result = &mut replacing => panic!("premature {result:?}") }
     assert_eq!(
         service
@@ -793,14 +795,7 @@ async fn public_controller_mapped_async_unary_tracks_secondary_generation_and_cl
     assert_eq!(codec.encodes.load(Ordering::Acquire), 1);
     assert!(old_remote.echo.requests.lock().unwrap().is_empty());
     secondary
-        .replace_session_with_options(
-            MaterialSessionReplaceOptions {
-                retirement: MaterialSessionRetirement::Retain {
-                    retain_until_ms: 4000,
-                },
-            },
-            &CancellationToken::new(),
-        )
+        .replace_session_with_options(retain_options(&secondary), &CancellationToken::new())
         .await
         .unwrap_or_else(|error| {
             panic!(
@@ -893,14 +888,10 @@ async fn public_controller_retained_replacement_reports_original_notification_ge
     first_remote.publish(&test.contract, 1).await;
     until(|| observer.values.lock().unwrap().len() == 1).await;
     let cancellation = CancellationToken::new();
-    let mut replacement = Box::pin(test.controller.replace_session_with_options(
-        MaterialSessionReplaceOptions {
-            retirement: MaterialSessionRetirement::Retain {
-                retain_until_ms: 4000,
-            },
-        },
-        &cancellation,
-    ));
+    let mut replacement = Box::pin(
+        test.controller
+            .replace_session_with_options(retain_options(&test.controller), &cancellation),
+    );
     tokio::select! { _ = test.initialized() => {}, result = &mut replacement => panic!("premature {result:?}") }
     assert!(
         test.controller
@@ -1549,14 +1540,10 @@ async fn public_controller_current_only_handoff_keeps_finite_old_decoder_until_e
             .unwrap()
             .forget();
         let cancellation = CancellationToken::new();
-        let mut replacement = Box::pin(test.controller.replace_session_with_options(
-            MaterialSessionReplaceOptions {
-                retirement: MaterialSessionRetirement::Retain {
-                    retain_until_ms: 4000,
-                },
-            },
-            &cancellation,
-        ));
+        let mut replacement = Box::pin(
+            test.controller
+                .replace_session_with_options(retain_options(&test.controller), &cancellation),
+        );
         tokio::select! { _ = test.initialized() => {}, result = &mut replacement => panic!("premature {result:?}") }
         test.initializer.release.add_permits(1);
         assert_eq!(replacement.await.unwrap().current.generation, 2);

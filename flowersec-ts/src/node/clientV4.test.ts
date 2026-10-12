@@ -158,7 +158,7 @@ class ServerTransport implements V4AuthenticatedTransport {
   close(): Promise<void> { this.ws.terminate(); return this.done; }
   waitTermination(): Promise<void> { return this.done; }
 }
-function environment(timeOrigin: bigint, services = false, sessions = 1) {
+function environment(timeOrigin: bigint, services = false, sessions = 1, clockMS?: () => bigint) {
   const limit = new ResourceVector([512n << 20n, 128n << 20n, 64n << 20n, 5000000n, 5000000n, 2000n, 2000n, 2000n, 2000n, 2000n, 2000n]);
   const root = new ResourceRoot({
     profileRevision: "1".repeat(64), limit, accounts: services ? 2048 : 32 * sessions, reservations: services ? 4096 : 256, references: services ? 8192 : 512,
@@ -170,7 +170,7 @@ function environment(timeOrigin: bigint, services = false, sessions = 1) {
     namespaces: 1, sources: 1, acquisitions: sessions, materials: sessions, sessions, dependencies: 8, acquireMS: 10000n, cleanupMS: 50,
     clock: {
       profile: { rate: new ClockRate(0n, 1n, 0n), maxWidthMS: 100n, maxAgeMS: 1000000n, maxRoundTripMS: 100n },
-      tick: () => ({ milliseconds: BigInt(Math.floor(performance.now() - start)) + clockAdvance, incarnation: "3".repeat(32) }), initial: () => ({ lowerMS: timeOrigin + 1000n, upperMS: timeOrigin + 1000n })
+      tick: () => ({ milliseconds: (clockMS?.() ?? BigInt(Math.floor(performance.now() - start))) + clockAdvance, incarnation: "3".repeat(32) }), initial: () => ({ lowerMS: timeOrigin + 1000n, upperMS: timeOrigin + 1000n })
     },
     random: bytes => { crypto.getRandomValues(bytes); }
   });
@@ -227,7 +227,7 @@ describe("Node v4 original WSS pool connection", () => {
   afterAll(() => rmSync(directory, { recursive: true, force: true }));
   let serial = 0;
   async function setup(profile: NoiseProfile, mode: "ca" | "pin", behavior: "ready" | "reject" | "bad_echo" | "pause" | "bad_exporter" | "downgrade" | "production" | "production_cancel_sign" | "production_bad_endpoint" | "production_pressure" | "production_public" = "ready", origin = "https://app.example.com", badPin = false,
-    bindingMode: "direct_exporter" | "authenticated_context" = "authenticated_context", publicCallbacks: Partial<ServeCallbacks<HandlerPlan>> = {}, publicSignal?: AbortSignal, rpc = false, hooks: { startup?: (environment: V4TransportEnvironment) => void; stream?: V4RawStreamHandler; authorize?: V4StreamOpenAuthorizer } = {}) {
+    bindingMode: "direct_exporter" | "authenticated_context" = "authenticated_context", publicCallbacks: Partial<ServeCallbacks<HandlerPlan>> = {}, publicSignal?: AbortSignal, rpc = false, hooks: { startup?: (environment: V4TransportEnvironment) => void; stream?: V4RawStreamHandler; authorize?: V4StreamOpenAuthorizer; clockMS?: () => bigint } = {}) {
     let startupFailure: unknown;
     const limits = rpc ? { ...transportLimits, maxStreams: 18, receiveQueueBytes: 16384, maxWriteBytes: 16384, maxGeneralOutstanding: 4 } : transportLimits;
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
@@ -244,7 +244,7 @@ describe("Node v4 original WSS pool connection", () => {
       wss.handleUpgrade(request, socket, head, ws => wss.emit("connection", ws, request));
     });
     server.listen(0, "127.0.0.1"); await once(server, "listening"); const address = server.address(); if (address === null || typeof address === "string") throw new Error("listen");
-    const timeOrigin = BigInt(Date.now()) - 1000n, a = environment(timeOrigin, rpc), b = environment(timeOrigin, rpc);
+    const timeOrigin = BigInt(Date.now()) - 1000n, a = environment(timeOrigin, rpc, 1, hooks.clockMS), b = environment(timeOrigin, rpc, 1, hooks.clockMS);
     const tls = mode === "ca" ? map({ 0: u(0), 1: { kind: "bool", value: true } }) : map({
       0: u(1), 1: { kind: "bool", value: true }, 2: u(0), 3: array(map({
         0: bytes(badPin ? fill(99) : createHash("sha256").update(cert.raw).digest()), 1: u(BigInt(cert.validFromDate.getTime())), 2: u(BigInt(cert.validToDate.getTime())), 3: text("x509v3-p256-14d")
@@ -1014,7 +1014,10 @@ describe("Node v4 original WSS pool connection", () => {
       upstream: origin, upstreamOrigin: origin, maxBodyBytes: 4096,
       maxChunkBytes: 2048, maxWebSocketFrameBytes: 4096, onError: error => failures.push(error)
     });
-    const f = await setup(profile, "pin");
+    // This flow checks framing, FIN, authorization and physical cleanup across
+    // real sockets. Host scheduling does not advance its protocol test clock.
+    const clockMS = () => 0n;
+    const f = await setup(profile, "pin", "ready", "https://app.example.com", false, "authenticated_context", {}, undefined, false, { clockMS });
     let io: ReturnType<typeof currentProxyStream> | undefined;
     let handle: ProxyBrowserHandle | undefined;
     const registrations: Array<ReturnType<Awaited<typeof f.accepted>["registerStream"]>> = [];

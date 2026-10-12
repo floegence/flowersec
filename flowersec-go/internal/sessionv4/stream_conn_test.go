@@ -1,6 +1,7 @@
 package sessionv4
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -14,6 +15,62 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
 )
+
+func TestStreamConnBindingRenewsAlreadyAuthenticatedWindow(t *testing.T) {
+	cores, fixtures, ctx := factoryCorePair(t, "stream", factoryStreamConfig())
+	streams := factoryOpenPair(t, cores, ctx)
+	payload := bytes.Repeat([]byte("conn"), 48)
+	sent := make(chan error, 1)
+	go func() {
+		_, err := streams[1].WriteAll(ctx, payload)
+		if err == nil {
+			err = streams[1].CloseWrite(ctx)
+		}
+		sent <- err
+	}()
+	if err := waitFactoryReceiveWindow(ctx, streams[0]); err != nil {
+		t.Fatal("peer did not fill the original window", err)
+	}
+	options := StreamConnOptions{TimeoutMS: 3000, FinishTimeoutMS: 10000, CleanupTimeoutMS: 1000, RuntimeBytes: 32768,
+		HardDeadline: streamTestDeadline(t, cores[0].Engine())}
+	charge, err := StreamConnCharge(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := streams[0].AsConn(ctx, options, fixtures[0].reserve(t, charge))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		c.Abort()
+		if _, err := c.WaitCleanup(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	received, err := io.ReadAll(c)
+	if err != nil || !bytes.Equal(received, payload) {
+		t.Fatal("queued input stalled after Conn binding", len(received), err)
+	}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if received, err := readFacadeEOF(ctx, streams[1]); err != nil || len(received) != 0 {
+		t.Fatal("Conn close lost its empty sending half", received, err)
+	}
+	if err := streams[1].Finish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.WaitCleanup(ctx)
+	if err != nil || !result.SendDrained || result.ReadTerminal != protocolv4.V4ReadTerminalEof || result.CleanupStatus.Status != protocolv4.V4CleanupStateComplete {
+		t.Fatal(result, err)
+	}
+	if used := cores[0].plan.receivePool.Outstanding(); used != 0 {
+		t.Fatal("Conn retained its original receive promise", used)
+	}
+}
 
 func connFixture(t *testing.T, capacity uint64) (*serviceFixture, *SendQueue, *StreamFlow, OpenHandle, *StreamOwnership, *StreamConn) {
 	t.Helper()

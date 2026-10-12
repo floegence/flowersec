@@ -179,6 +179,9 @@ func (o *StreamOwnership) asConn(ctx context.Context, options StreamConnOptions,
 	if minimum != 0 {
 		_ = f.protectCurrentCreditLocked()
 	} // Preflight above used this same pool gate.
+	if f.creditReadyLocked() {
+		f.termination.service.notify()
+	}
 	c.signal.wake = c.wake
 	o.conn = c
 	o.connAbort = c.aborting

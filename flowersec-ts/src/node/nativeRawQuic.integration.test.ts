@@ -18,6 +18,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspect } from "node:util";
 import {
   MethodDefinition, ServiceDefinition, bytesMessageCodec, connect, createHandlerPlan,
   type AcceptedSession, type HandlerPlan, type Session, type Stream,
@@ -943,7 +944,8 @@ describe("Node current production raw QUIC runtime", () => {
       const owner = configureCurrentPeerRawQUIC(fixture, server.trustPEM, clientPlan);
       const accepting = server.acceptor.accept();
       void accepting.catch(() => undefined);
-      client = await connect(fixture.environment, fixture.registerSource(owner), peerRequirements);
+      try { client = await connect(fixture.environment, fixture.registerSource(owner), peerRequirements); }
+      catch (error) { throw new Error(`raw QUIC connect failed: ${inspect(error, { depth: 4 })}`, { cause: error }); }
       accepted = await accepting;
       expect(fixture.spentCount()).toBe(1);
       const serving = accepted.serve();
@@ -953,7 +955,7 @@ describe("Node current production raw QUIC runtime", () => {
         peers: [{ subject: fixture.policy.serverSubject, identityDigest: fixture.serverIdentity }] }, maximumOfferWindowMS: 10000n });
       releaseService = () => service.close();
       const response = await service.call(method, peerJSONBytes({ carrier: "raw_quic" }), { responseLimitBytes: 4096 });
-      expect(response.kind).toBe("value");
+      expect(response.kind, response.kind === "metadata" ? `raw QUIC RPC metadata: ${inspect(response.progress)}` : undefined).toBe("value");
       if (response.kind !== "value" || response.encoding !== "typed") throw new Error("raw QUIC RPC did not return typed bytes");
       try { expect(peerJSONValue(response.value)).toEqual({ raw: { carrier: "raw_quic" } }); }
       finally { response.release(); }

@@ -358,6 +358,11 @@ func (o *StreamOwnership) beginCapabilityMethod(messages *StreamMessages, ending
 						return nil, OpenHandle{}, nil, nil, err
 					}
 					f.creditAck, f.creditLimit = f.released, f.limit
+					// Input can authenticate before first raw use installs this
+					// promise. Publish that new ready edge to the idle worker.
+					if f.creditReadyLocked() {
+						f.termination.service.notify()
+					}
 				}
 			}
 			f.pool.mu.Unlock()

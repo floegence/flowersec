@@ -352,7 +352,11 @@ require_exact_keys(node_minimum_job, ["name", "runs-on", "timeout-minutes", "ste
 require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust stable job")
 require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust Windows job")
 require_exact_value(rust_stable_job["env"], { "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target" }, "the hosted CI Rust stable build directory")
-require_exact_value(rust_windows_job["env"], { "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target" }, "the hosted CI Rust Windows build directory")
+require_exact_value(rust_windows_job["env"], {
+  "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
+  "CARGO_PROFILE_DEV_DEBUG" => "0",
+  "CARGO_PROFILE_TEST_DEBUG" => "0",
+}, "the hosted CI Rust Windows build profile")
 require_exact_keys(rust_msrv_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust MSRV job")
 require_exact_value(rust_msrv_job["env"], { "RUSTUP_TOOLCHAIN" => rust_msrv }, "the hosted CI Rust MSRV selection")
 require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")

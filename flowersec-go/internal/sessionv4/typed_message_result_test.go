@@ -38,6 +38,73 @@ func typedResultConfig(t *testing.T) TypedMessageConfig {
 		AssemblyTimeoutMS: 3000, SendTimeoutMS: 3000, CleanupTimeoutMS: 3000, RuntimeBytes: 8192}
 }
 
+func TestTypedMessageBindingRenewsAlreadyAuthenticatedWindow(t *testing.T) {
+	config := typedResultConfig(t)
+	payload := bytes.Repeat([]byte("typed"), 32)
+	reports := make(chan error, 1)
+	var ctx context.Context
+	cores, _, _, ctx := handlerCorePair(t, "stream", func(role int) RawStreamHandlerConfig {
+		return RawStreamHandlerConfig{Kind: config.Definition.Kind(), Slots: 1, WorkClass: ApplicationResident,
+			Handler: func(call context.Context, _ any, _ []byte, stream *StreamOwnership) (failure error) {
+				defer func() { reports <- failure }()
+				if err := waitFactoryReceiveWindow(call, stream); err != nil {
+					return err
+				}
+				messages, err := stream.AsTypedMessages(config)
+				if err != nil {
+					return err
+				}
+				defer messages.Close()
+				result, err := messages.ReceiveEncoded(call)
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(result.Payload, payload) {
+					return errors.New("queued message changed after typed binding")
+				}
+				if _, err := messages.ReceiveEncoded(call); !errors.Is(err, io.EOF) {
+					return errors.New("typed binding lost authenticated EOF")
+				}
+				if err := messages.Finish(call); err != nil {
+					return err
+				}
+				messages.Close()
+				// Normal I/O retirement ends the original callback authority;
+				// its real cleanup is still joined within the fixture's deadline.
+				return messages.WaitCleanup(ctx)
+			}}
+	}, nil, true)
+	messages, err := cores[0].OpenMessageStream(ctx, config, nil, streamTestDeadline(t, cores[0].Engine()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(messages.Close)
+	if _, err := messages.Send(ctx, payload, MessageSendOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := messages.CloseWrite(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := messages.ReceiveEncoded(ctx); !errors.Is(err, io.EOF) {
+		t.Fatal("typed binding lost its empty sending half", err)
+	}
+	if err := messages.Finish(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-reports:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	messages.Close()
+	if err := messages.WaitCleanup(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTypedMessageResultsCarryDetachedCodecFactsOnBothOpenerRoles(t *testing.T) {
 	for _, framing := range []string{"stream", "messages"} {
 		t.Run(framing, func(t *testing.T) {

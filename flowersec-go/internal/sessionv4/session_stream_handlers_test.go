@@ -11,11 +11,11 @@ import (
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 )
 
-func handlerCorePair(t *testing.T, framing string, handler func(role int) RawStreamHandlerConfig, configure func(role int, c *SessionStreamHandlerConfig)) ([2]*SessionCore, *[2]initialCoreFixture, [2]*ApplicationExecutor, context.Context) {
-	return handlerCorePairBeforeRun(t, framing, handler, configure, nil)
+func handlerCorePair(t *testing.T, framing string, handler func(role int) RawStreamHandlerConfig, configure func(role int, c *SessionStreamHandlerConfig), rawTypedProjection ...bool) ([2]*SessionCore, *[2]initialCoreFixture, [2]*ApplicationExecutor, context.Context) {
+	return handlerCorePairBeforeRun(t, framing, handler, configure, nil, rawTypedProjection...)
 }
 
-func handlerCorePairBeforeRun(t *testing.T, framing string, handler func(role int) RawStreamHandlerConfig, configure func(role int, c *SessionStreamHandlerConfig), beforeRun func([2]*SessionCore)) ([2]*SessionCore, *[2]initialCoreFixture, [2]*ApplicationExecutor, context.Context) {
+func handlerCorePairBeforeRun(t *testing.T, framing string, handler func(role int) RawStreamHandlerConfig, configure func(role int, c *SessionStreamHandlerConfig), beforeRun func([2]*SessionCore), rawTypedProjection ...bool) ([2]*SessionCore, *[2]initialCoreFixture, [2]*ApplicationExecutor, context.Context) {
 	t.Helper()
 	var fixtures [2]initialCoreFixture
 	var executors [2]*ApplicationExecutor
@@ -24,7 +24,7 @@ func handlerCorePairBeforeRun(t *testing.T, framing string, handler func(role in
 		f := &fixtures[role]
 		registration := handler(role)
 		executorConfig := ApplicationExecutorConfig{Running: 4, ResidentRunning: 3, RuntimeBytes: 8192, RuntimeBytesPerTask: 16384}
-		if registration.Messages != nil {
+		if registration.Messages != nil || len(rawTypedProjection) != 0 && rawTypedProjection[0] {
 			// Typed external sends use the ordinary ready service; typed receive
 			// owns a dormant future and only then uses protected Completion.
 			executorConfig.Ready, executorConfig.ResidentReady = 8, 6
@@ -69,7 +69,7 @@ func handlerCorePairBeforeRun(t *testing.T, framing string, handler func(role in
 	})
 	pair, configs := initialTestPairPrepared(t, protocolv4.DHProfileX25519, framing, 4, func(h *cryptov4.HandshakeConfig, initial *InitialConfig) {
 		prepare(h, initial)
-		if fixtures[h.Role].plan.config.Handlers.Plan != nil && fixtures[h.Role].plan.config.Handlers.Plan.registrations[0].config.Messages != nil {
+		if fixtures[h.Role].plan.config.Handlers.Plan != nil && (fixtures[h.Role].plan.config.Handlers.Plan.registrations[0].config.Messages != nil || len(rawTypedProjection) != 0 && rawTypedProjection[0]) {
 			installCoreDeliveryAuthority(t, &fixtures[h.Role], h, initial)
 		}
 	})

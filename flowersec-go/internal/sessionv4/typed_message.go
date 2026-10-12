@@ -353,6 +353,9 @@ func (m *TypedMessageStream) bindTypedMessages(o *StreamOwnership) error {
 	if err := f.protectCurrentCreditLocked(); err != nil {
 		return err
 	}
+	if f.creditReadyLocked() {
+		f.termination.service.notify()
+	}
 	o.typed, m.owner, m.bound = m, o, true
 	o.messageAbort = m.abortSignal
 	m.clock = o.admission.engine.Clock()
