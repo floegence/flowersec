@@ -8,6 +8,7 @@ use flowersec::{
     TypedUnaryValue, UnaryPrepareOptions, UnaryRequestContext, UnaryResponse, UnaryServiceHandler,
     UnaryServiceRegistration,
 };
+use futures_util::FutureExt;
 use std::sync::atomic::Ordering;
 use tokio::sync::Semaphore;
 
@@ -339,7 +340,17 @@ async fn bind(session: &flowersec::Session, application: &Arc<Application>) -> B
             CancellationToken::new(),
         )
         .await
-        .expect("query original notification contract");
+        .unwrap_or_else(|failure| {
+            let termination = session.wait_termination().now_or_never();
+            let cleanup = session.cleanup_status();
+            panic!(
+                "query original notification contract: {failure:?}; Session termination: {:?}; cleanup: complete={}, cleanup_incomplete={}, pending_callbacks={}",
+                termination.map(|result| result.error),
+                cleanup.complete,
+                cleanup.cleanup_incomplete,
+                cleanup.pending_callbacks,
+            );
+        });
     let notification = snapshot[0]
         .contract
         .clone()
