@@ -185,12 +185,33 @@ jobs:
           toolchain: 1.98.0
           components: rustfmt,clippy
 
-      - name: Build, test, and lint
+      - name: Test Rust SDK
         run: |
           cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features
-          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings
       - name: Test shared native transport
         run: cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
+
+  rust-lint:
+    name: Rust 1.98 lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.flowersec/rust-ci-target
+      # Lint compilation runs independently of runtime and API tests.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.98.0
+          components: clippy
+
+      - name: Lint Rust SDK
+        run: |
+          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings
 
   rust-windows:
     name: Rust 1.98 Windows (${{ matrix.suite }})

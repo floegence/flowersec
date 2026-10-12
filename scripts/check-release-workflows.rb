@@ -316,7 +316,7 @@ scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflo
 container_security_jobs = require_hash(container_security_workflow["jobs"], "the container security workflow jobs")
 require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-recovery"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
-require_exact_keys(ci_jobs, ["repository", "precommit", "node-minimum", "rust-msrv", "rust-stable", "rust-windows", "dependency-review"], "the hosted CI workflow jobs")
+require_exact_keys(ci_jobs, ["repository", "precommit", "node-minimum", "rust-msrv", "rust-stable", "rust-lint", "rust-windows", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze", "analyze-swift"], "the CodeQL workflow jobs")
 require_exact_keys(scorecard_jobs, ["analysis"], "the Scorecard workflow jobs")
 require_exact_keys(container_security_jobs, ["trivy"], "the container security workflow jobs")
@@ -331,6 +331,7 @@ repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow"
 precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
 node_minimum_job = require_job(ci_workflow, "node-minimum", "the hosted CI workflow")
 rust_stable_job = require_job(ci_workflow, "rust-stable", "the hosted CI workflow")
+rust_lint_job = require_job(ci_workflow, "rust-lint", "the hosted CI workflow")
 rust_windows_job = require_job(ci_workflow, "rust-windows", "the hosted CI workflow")
 rust_msrv_job = require_job(ci_workflow, "rust-msrv", "the hosted CI workflow")
 dependency_review_job = require_job(ci_workflow, "dependency-review", "the hosted CI workflow")
@@ -350,6 +351,7 @@ require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI reposito
 require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
 require_exact_keys(node_minimum_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Node minimum job")
 require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust stable job")
+require_exact_keys(rust_lint_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust lint job")
 require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "strategy", "env", "steps"], "the hosted CI Rust Windows job")
 require_exact_value(rust_windows_job["strategy"], {
   "fail-fast" => false,
@@ -360,6 +362,7 @@ require_exact_value(rust_stable_job["env"], {
   "CARGO_PROFILE_DEV_DEBUG" => "0",
   "CARGO_PROFILE_TEST_DEBUG" => "0",
 }, "the hosted CI Rust stable build profile")
+require_exact_value(rust_lint_job["env"], rust_stable_job["env"], "the hosted CI Rust lint build profile")
 require_exact_value(rust_windows_job["env"], {
   "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
   "CARGO_PROFILE_DEV_DEBUG" => "0",
@@ -380,6 +383,9 @@ require_exact_value(node_minimum_job["timeout-minutes"], 10, "the hosted CI Node
 require_exact_value(rust_stable_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} stable", "the hosted CI Rust stable job name")
 require_exact_value(rust_stable_job["runs-on"], "ubuntu-latest", "the hosted CI Rust stable runner")
 require_exact_value(rust_stable_job["timeout-minutes"], 30, "the hosted CI Rust stable timeout")
+require_exact_value(rust_lint_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} lint", "the hosted CI Rust lint job name")
+require_exact_value(rust_lint_job["runs-on"], "ubuntu-latest", "the hosted CI Rust lint runner")
+require_exact_value(rust_lint_job["timeout-minutes"], 30, "the hosted CI Rust lint timeout")
 require_exact_value(rust_windows_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} Windows (${{ matrix.suite }})", "the hosted CI Rust Windows job name")
 require_exact_value(rust_windows_job["runs-on"], "windows-latest", "the hosted CI Rust Windows runner")
 require_exact_value(rust_windows_job["timeout-minutes"], 30, "the hosted CI Rust Windows timeout")
@@ -500,6 +506,7 @@ require_exact_value(npm_recovery_job["permissions"], {
   [precommit_job, "the hosted CI precommit job"],
   [node_minimum_job, "the hosted CI Node minimum job"],
   [rust_stable_job, "the hosted CI Rust stable job"],
+  [rust_lint_job, "the hosted CI Rust lint job"],
   [rust_windows_job, "the hosted CI Rust Windows job"],
   [rust_msrv_job, "the hosted CI Rust MSRV job"],
   [codeql_plan_job, "the CodeQL plan job"],
@@ -528,6 +535,7 @@ ci_steps = require_steps(repository_job, "the hosted CI repository job")
 precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
 node_minimum_steps = require_steps(node_minimum_job, "the hosted CI Node minimum job")
 rust_stable_steps = require_steps(rust_stable_job, "the hosted CI Rust stable job")
+rust_lint_steps = require_steps(rust_lint_job, "the hosted CI Rust lint job")
 rust_windows_steps = require_steps(rust_windows_job, "the hosted CI Rust Windows job")
 rust_msrv_steps = require_steps(rust_msrv_job, "the hosted CI Rust MSRV job")
 dependency_review_steps = require_steps(dependency_review_job, "the hosted CI dependency review job")
@@ -652,13 +660,23 @@ validate_step_contracts(rust_stable_steps, [
     "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
     "with" => { "toolchain" => rust_version, "components" => "rustfmt,clippy" },
   } },
-  { name: "Build, test, and lint", keys: ["name", "run"], values: {
-    "run" => "cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\ncargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
+  { name: "Test Rust SDK", keys: ["name", "run"], values: {
+    "run" => "cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\n",
   } },
   { name: "Test shared native transport", keys: ["name", "run"], values: {
     "run" => "cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features",
   } },
 ], "the hosted CI Rust stable job")
+validate_step_contracts(rust_lint_steps, [
+  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
+  { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
+    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
+    "with" => { "toolchain" => rust_version, "components" => "clippy" },
+  } },
+  { name: "Lint Rust SDK", keys: ["name", "run"], values: {
+    "run" => "cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
+  } },
+], "the hosted CI Rust lint job")
 windows_test_roles = <<~'POWERSHELL'
   switch ($env:FLOWERSEC_WINDOWS_SUITE) {
     "runtime" {

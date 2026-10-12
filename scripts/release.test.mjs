@@ -2696,16 +2696,29 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       to: "",
     },
     {
-      name: "Rust stable omits lint and type checking",
+      name: "Rust lint omits lint and type checking",
       file: "ci.yml",
       from: "          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
       to: "",
     },
     {
-      name: "Rust stable weakens lint target coverage",
+      name: "Rust lint weakens lint target coverage",
       file: "ci.yml",
       from: "          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
       to: "          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --lib --all-features -- -D warnings\n",
+    },
+    {
+      name: "Rust lint serializes behind runtime tests",
+      file: "ci.yml",
+      from: "  rust-lint:\n",
+      to: "  rust-lint:\n    needs: rust-stable\n",
+      expectedError: /job fields must be exactly/,
+    },
+    {
+      name: "Rust lint increases its bounded timeout",
+      file: "ci.yml",
+      from: `  rust-lint:\n    name: Rust ${toolchains.rust.version.split(".").slice(0, 2).join(".")} lint\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n`,
+      to: `  rust-lint:\n    name: Rust ${toolchains.rust.version.split(".").slice(0, 2).join(".")} lint\n    runs-on: ubuntu-latest\n    timeout-minutes: 60\n`,
     },
     {
       name: "Rust stable build directory escapes the job workspace",
@@ -2764,7 +2777,7 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       fs.writeFileSync(file, source.replace(mutation.from, mutation.to));
       const result = runReleasePolicy(root);
       assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-      assert.match(result.stderr, /environment|reviewed value|step sequence/);
+      assert.match(result.stderr, mutation.expectedError ?? /environment|reviewed value|step sequence/);
     });
   }
 
