@@ -116,6 +116,17 @@ func waitBridge(t *testing.T, d *DuplexBridge) (DuplexObservation, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	r, err := d.Wait(ctx)
+	if !r.Final && r.Result == nil && r.CleanupStatus.Status == protocolv4.V4CleanupStateCleanupIncomplete {
+		// The cleanup window can expire before both pumps actually exit. Wait
+		// for the original frozen result within the same observer watchdog;
+		// incomplete progress must not expose a still-owned mutable chunk.
+		select {
+		case <-d.ready:
+			r, err = d.Wait(ctx)
+		case <-ctx.Done():
+			t.Fatal("bridge pumps did not publish stable result", d.Progress(), ctx.Err())
+		}
+	}
 	if !r.Final || r.Result == nil {
 		t.Fatal("bridge did not publish stable result", r, err)
 	}
