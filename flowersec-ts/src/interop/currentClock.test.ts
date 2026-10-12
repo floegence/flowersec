@@ -38,6 +38,42 @@ describe("current engineering clock installation", () => {
     expect(shared.root.snapshot().reservations).toBe(0); shared.root.close();
   });
 
+  it.each([createCurrentPeerClock, createCurrentServerClock])("advances its original anchor without resampling wall time with %s", async createClock => {
+    let monotonicMS = 1000;
+    const wall = vi.spyOn(Date, "now").mockReturnValue(100000);
+    vi.spyOn(performance, "now").mockImplementation(() => monotonicMS);
+    const shared = fixture(createClock()), environment = new V4EnvironmentRuntime(shared.config);
+    try {
+      const installed = environment.clock.sample().requireInterval(), wallReads = wall.mock.calls.length;
+      // A host wall sample can become unavailable after installation. It is
+      // not a new trusted anchor and must not invalidate a monotonic tick.
+      wall.mockImplementation(() => { throw new Error("unexpected wall resampling"); });
+      monotonicMS += 120;
+      const advanced = environment.clock.sample().requireInterval();
+      expect(advanced.lowerMS).toBeGreaterThan(installed.lowerMS);
+      expect(advanced.lowerMS).toBeLessThanOrEqual(100120n);
+      expect(advanced.upperMS).toBeGreaterThanOrEqual(100120n);
+      expect(wall.mock.calls).toHaveLength(wallReads);
+      monotonicMS += 60001;
+      expect(environment.clock.sample().error).toBe("time_unavailable");
+    } finally { await environment.close(); }
+    expect(shared.root.snapshot().reservations).toBe(0); shared.root.close();
+  });
+
+  it.each([createCurrentPeerClock, createCurrentServerClock])("rejects monotonic backtracking after installation with %s", async createClock => {
+    let monotonicMS = 1000;
+    vi.spyOn(Date, "now").mockReturnValue(100000);
+    vi.spyOn(performance, "now").mockImplementation(() => monotonicMS);
+    const shared = fixture(createClock()), environment = new V4EnvironmentRuntime(shared.config);
+    try {
+      monotonicMS += 25;
+      environment.clock.sample().requireInterval();
+      monotonicMS -= 1;
+      expect(environment.clock.sample().error).toBe("time_continuity");
+    } finally { await environment.close(); }
+    expect(shared.root.snapshot().reservations).toBe(0); shared.root.close();
+  });
+
   it.each([
     { createClock: createCurrentPeerClock, bracketMS: 96, expectedWidth: 200n },
     { createClock: createCurrentServerClock, bracketMS: 100, expectedWidth: 100n },

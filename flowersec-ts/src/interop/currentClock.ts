@@ -6,15 +6,23 @@ import { ClockRate, type TimeInterval } from "../v4/runtime/timeArithmetic.js";
  * tick requested by Environment, after its resource construction has finished. */
 function pairedClock(profile: ClockProfile, uncertaintyMS: bigint): V4EnvironmentClockConfig {
   const beginning = performance.now();
+  const monotonic = () => BigInt(Math.floor(performance.now() - beginning));
   let paired: TimeInterval | undefined;
   return Object.freeze({
     profile: Object.freeze(profile),
     tick: () => {
-      const before = BigInt(Date.now());
-      const milliseconds = BigInt(Math.floor(performance.now() - beginning));
-      const after = BigInt(Date.now());
-      if (after < before || after - before > 100n) throw new Error("unavailable engineering clock sample");
-      paired = Object.freeze({ lowerMS: before - uncertaintyMS, upperMS: after + uncertaintyMS });
+      let milliseconds: bigint;
+      if (paired === undefined) {
+        const before = BigInt(Date.now());
+        milliseconds = monotonic();
+        const after = BigInt(Date.now());
+        if (after < before || after - before > 100n) throw new Error("unavailable engineering clock sample");
+        paired = Object.freeze({ lowerMS: before - uncertaintyMS, upperMS: after + uncertaintyMS });
+      } else {
+        // Environment consumes the wall envelope once. Later ticks neither
+        // resample the wall clock nor extend that original anchor's freshness.
+        milliseconds = monotonic();
+      }
       return { milliseconds, incarnation: "3".repeat(32) };
     },
     initial: () => {

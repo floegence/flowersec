@@ -290,6 +290,46 @@ describe("v4 original Environment ownership", () => {
     expect((await environment.waitCleanup()).status).toBe("complete"); expect(buffers.artifact.every(byte => byte === 0)).toBe(true);
     expect(configuration.root.snapshot().reservations).toBe(0);
   });
+  it("reports the original acquisition deadline while retaining its aborted provider tail", async () => {
+    vi.useFakeTimers();
+    let now = 0n, buffers!: V4CredentialBuffers, requestSignal!: AbortSignal, lengths!: V4CredentialLengths, settled = false;
+    const configuration = config(fixtureRoot(), "2", () => now), environment = new V4EnvironmentRuntime(configuration), fixture = credentials(environment), returned = deferred<V4CredentialLengths>();
+    const connect = vi.fn(async () => { throw new Error("must not connect expired material"); });
+    environment.installClientConnector({ applicationProfile: "transport", checkRequirements: () => undefined, connect });
+    const source = environment.registerSource(policy, "live_authority", (request, destination) => {
+      buffers = destination; requestSignal = request.signal; lengths = install(buffers, fixture.input()); return returned.promise;
+    });
+    const baseline = configuration.root.snapshot();
+    const failure = environment.connect(wrapCredentialSource(source), requirements).catch(error => { settled = true; return error as unknown; });
+    const held = configuration.root.snapshot();
+    try {
+      now = 9999n; await vi.advanceTimersByTimeAsync(9999);
+      expect(settled).toBe(false); expect(requestSignal.aborted).toBe(false);
+      now = 10000n; await vi.advanceTimersByTimeAsync(1);
+      const error = await failure;
+      expect(error).toBeInstanceOf(ConnectionError);
+      if (!(error instanceof ConnectionError)) throw new Error("missing acquisition failure facts");
+      expect(error.code).toBe("deadline_exceeded");
+      expect(error.connection).toMatchObject({ phase: "not_started", spent: false, spendState: "unspent", admissionState: "not_started" });
+      expect(error.cleanup).toEqual({ status: "pending", core_cleanup: "pending", pending_callbacks: 1n });
+      expect(requestSignal.aborted).toBe(true); expect(buffers.artifact.some(byte => byte !== 0)).toBe(true);
+      expect(held.reservations).toBeGreaterThan(baseline.reservations);
+      expect(configuration.root.snapshot().charged.values()).toEqual(held.charged.values());
+      await expect(source.acquire(requirements)).rejects.toThrow("resource_exhausted");
+      source.close();
+      expect(configuration.root.snapshot().charged.values()).toEqual(held.charged.values());
+      returned.resolve(lengths); await vi.advanceTimersByTimeAsync(0);
+      expect(connect).not.toHaveBeenCalled();
+      expect(buffers.artifact.every(byte => byte === 0)).toBe(true);
+      expect(configuration.root.snapshot().reservations).toBe(baseline.reservations - 1);
+      expect(environment.cleanupStatus().pending_callbacks).toBe(0n);
+    } finally {
+      returned.resolve(lengths); await vi.advanceTimersByTimeAsync(0);
+      await environment.close(); vi.useRealTimers();
+    }
+    expect((await environment.waitCleanup()).status).toBe("complete");
+    expect(configuration.root.snapshot().reservations).toBe(0);
+  });
   it("Environment Close cancels an acquisition wait without erasing its original tail", async () => {
     const configuration = config(fixtureRoot(), "2", () => BigInt(Math.floor(performance.now()))), environment = new V4EnvironmentRuntime(configuration), fixture = credentials(environment), returned = deferred<V4CredentialLengths>();
     let lengths!: V4CredentialLengths;

@@ -351,7 +351,11 @@ require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", 
 require_exact_keys(node_minimum_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Node minimum job")
 require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust stable job")
 require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust Windows job")
-require_exact_value(rust_stable_job["env"], { "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target" }, "the hosted CI Rust stable build directory")
+require_exact_value(rust_stable_job["env"], {
+  "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
+  "CARGO_PROFILE_DEV_DEBUG" => "0",
+  "CARGO_PROFILE_TEST_DEBUG" => "0",
+}, "the hosted CI Rust stable build profile")
 require_exact_value(rust_windows_job["env"], {
   "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
   "CARGO_PROFILE_DEV_DEBUG" => "0",

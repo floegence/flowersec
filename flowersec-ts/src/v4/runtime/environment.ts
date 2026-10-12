@@ -623,7 +623,11 @@ export class V4EnvironmentRuntime implements V4EnvironmentOwner {
       options?.signal?.addEventListener("abort", onAbort, { once: true });
       const timeout = (): void => {
         try { original.check(); job.timer = setTimeout(timeout, timerChunk(original.remainingMS())); }
-        catch { abort.abort(); rejectCanceled(new Error("deadline_exceeded")); }
+        catch {
+          // Abort synchronously notifies cancellation observers, so preserve
+          // the original deadline outcome before fencing the provider.
+          rejectCanceled(new Error("deadline_exceeded")); abort.abort();
+        }
       };
       timeout();
       // The original job is entered synchronously and remains paid until the

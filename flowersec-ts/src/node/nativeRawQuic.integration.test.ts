@@ -32,6 +32,7 @@ import { createCurrentNativeTunnel } from "../interop/currentNativeTunnel.js";
 import { startInvalidProofPeer } from "../interop/invalidProofPeer.js";
 import { array, bytes, encode, fill, map, text, u } from "../v4/testSupport/credentials.js";
 import { inspectEnvelopePrefix } from "../v4/runtime/envelope.js";
+import { DiagnosticActivity } from "../v4/runtime/diagnosticObservation.js";
 import { wire } from "../v4/runtime/wireRegistry.js";
 import { NodeWSSCarrier } from "./wssV4.js";
 import type { RelayHopByteMeter, RelayNativePairPreparation } from "./relayNativePair.js";
@@ -379,6 +380,7 @@ describe("Node current production raw QUIC runtime", () => {
     });
     let fixture: CurrentPeerClient | undefined, client: Session | undefined, accepted: AcceptedSession | undefined, outgoing: Stream | undefined;
     let poolServerAllow: ReturnType<typeof installCurrentPoolServerAllow> | undefined;
+    const failureObservation = observeOriginalConnectionFailures();
     const signal = AbortSignal.timeout(15000);
     try {
       fixture = await createCurrentPeerClient(tunnel.relay.endpointAArtifactJSON, { trustPEM: tunnel.trustPEM });
@@ -388,7 +390,8 @@ describe("Node current production raw QUIC runtime", () => {
       if (acceptor === null || typeof acceptor !== "object" || !("accept" in acceptor) || typeof acceptor.accept !== "function") throw new Error("original tunnel acceptor unavailable");
       const accepting = acceptor.accept({ signal }) as Promise<AcceptedSession>; void accepting.catch(() => undefined);
       tunnel.relay.start();
-      client = await connect(fixture.environment, fixture.registerSource(connector), peerRequirements, { signal });
+      try { client = await connect(fixture.environment, fixture.registerSource(connector), peerRequirements, { signal }); }
+      catch (error) { throw new Error(`raw QUIC tunnel connect failed: ${failureObservation.describe(error)}`, { cause: error }); }
       accepted = await accepting;
       expect(fixture.spentCount()).toBe(1);
       outgoing = await client.openStream("node-v4-raw-tunnel", { signal });
@@ -403,6 +406,7 @@ describe("Node current production raw QUIC runtime", () => {
       await tunnel.relay.runtime.close();
       expect(tunnel.relay.runtime.status().activePairs).toBe(0);
     } finally {
+      failureObservation.close();
       await outgoing?.close(); await client?.close(); await accepted?.close(); await poolServerAllow?.close(); await fixture?.close(); await tunnel.close();
     }
   }, 30000);
@@ -842,6 +846,7 @@ describe("Node current production raw QUIC runtime", () => {
   }, 30000);
 
   test.each([false, true])("admits direct raw QUIC with original stores, typed RPC, stream FIN, and cleanup (hold DRAINED: %s)", async (holdDrained) => {
+    const started = performance.now();
     const codec = bytesMessageCodec({ schemaDigest: new Uint8Array(32), revision: "1", maxMessageBytes: 4096 });
     const method = new MethodDefinition({ typeID: 9_106, shape: "unary", unarySemantics: "transient", request: codec, response: codec,
       requestMaxBytes: 4096, minResponseLimitBytes: 0, maxResponseBytes: 4096, restartFlush: false });
@@ -858,6 +863,7 @@ describe("Node current production raw QUIC runtime", () => {
     const handledStream = new Promise<Uint8Array>((resolve, reject) => { resolveStream = resolve; rejectStream = reject; });
     void handledStream.catch(() => undefined);
     let expectedClientIdentity: string | undefined;
+    // Sign the actual IPv4 listener endpoint and verify its original TLS IP SAN.
     const server = await createCurrentPeerServer(environment => createHandlerPlan(environment, {
       applicationBytes: 16384n,
       services: { ...services, profile: "services", unaryHandlers: [{ namespace: definition.namespace, method, contract,
@@ -874,7 +880,7 @@ describe("Node current production raw QUIC runtime", () => {
             if (!finished.send_drained) throw new Error("raw QUIC handler FIN did not drain");
           } catch (error) { rejectStream(error); throw error; }
         } }],
-    }), "https://app.example", { applicationProfile: "services", carrier: "raw-quic", onAuthenticated: context => {
+    }), "https://app.example", { applicationProfile: "services", carrier: "raw-quic", serverName: "127.0.0.1", onAuthenticated: context => {
       expect(Object.keys(context.invocation)).toEqual([]);
       expect(Object.isFrozen(context.invocation)).toBe(true);
       expect(context.authentication.peerIdentityDigest).toHaveLength(64);
@@ -938,14 +944,23 @@ describe("Node current production raw QUIC runtime", () => {
         return { result: () => result, cancel: () => connection.cancel() };
       },
     });
+    const failureObservation = observeOriginalConnectionFailures(started);
+    failureObservation.stage("server ready");
     try {
+      failureObservation.stage("fixture begin");
       fixture = await createCurrentPeerClient(server.artifactJSON, { trustPEM: server.trustPEM });
+      failureObservation.stage("fixture ready");
       clientPlan = createHandlerPlan(fixture.environment, { applicationBytes: 16384n, services: { ...services, profile: "services" }, streams: [] });
+      failureObservation.stage("handler plan ready");
       const owner = configureCurrentPeerRawQUIC(fixture, server.trustPEM, clientPlan);
+      failureObservation.stage("connector ready");
       const accepting = server.acceptor.accept();
       void accepting.catch(() => undefined);
-      try { client = await connect(fixture.environment, fixture.registerSource(owner), peerRequirements); }
-      catch (error) { throw new Error(`raw QUIC connect failed: ${inspect(error, { depth: 4 })}`, { cause: error }); }
+      const source = fixture.registerSource(owner);
+      failureObservation.stage("source registered");
+      try { client = await connect(fixture.environment, source, peerRequirements); }
+      catch (error) { throw new Error(`raw QUIC connect failed: ${failureObservation.describe(error)}`, { cause: error }); }
+      failureObservation.stage("connected");
       accepted = await accepting;
       expect(fixture.spentCount()).toBe(1);
       const serving = accepted.serve();
@@ -1013,6 +1028,7 @@ describe("Node current production raw QUIC runtime", () => {
       expect((await client.waitCleanup()).status).toBe("complete");
       expect(fixture.spentCount()).toBe(1);
     } finally {
+      failureObservation.close();
       releaseFIN(); releaseControl();
       nativeObservation.mockRestore();
       releaseService?.();
@@ -1026,6 +1042,22 @@ describe("Node current production raw QUIC runtime", () => {
     }
   }, 20_000);
 });
+
+function observeOriginalConnectionFailures(started = performance.now()) {
+  const failures: string[] = [], stages: string[] = [], originalFailure = DiagnosticActivity.prototype.failure;
+  const elapsed = () => Math.round(performance.now() - started);
+  // Copy only failure text before the public connection boundary redacts it.
+  // The original observer still runs and no provider or exception is retained.
+  const observation = vi.spyOn(DiagnosticActivity.prototype, "failure").mockImplementation(function (this: DiagnosticActivity, error, connection) {
+    if (connection === true && failures.length < 8) failures.push(`${elapsed()}ms: ${inspect(error, { depth: 4 })}`);
+    originalFailure.call(this, error, connection);
+  });
+  return {
+    stage: (name: string) => { if (stages.length < 12) stages.push(`${elapsed()}ms: ${name}`); },
+    describe: (error: unknown) => `${inspect(error, { depth: 4 })}\nConnection stages:\n${stages.join("\n")}\nOriginal connection failures:\n${failures.join("\n")}`,
+    close: () => observation.mockRestore(),
+  };
+}
 
 function wrapNativeOperation<T>(operation: NativeOperation<T>, transform: (value: T) => T): NativeOperation<T> {
   return { result: () => operation.result().then(transform), cancel: () => operation.cancel() };
