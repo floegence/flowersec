@@ -285,7 +285,7 @@ func currentCall(ctx context.Context, service *fs.ServiceClient, method uint32, 
 		err = errors.Join(err, fmt.Errorf("clean up current RPC: %w", cleanupErr))
 	}
 	if err != nil {
-		return fmt.Errorf("complete current RPC: %w", err)
+		return fmt.Errorf("complete current RPC method %d (%s): %w", method, value, err)
 	}
 	payload := result.Payload
 	if len(payload) == 0 {

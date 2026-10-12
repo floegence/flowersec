@@ -507,7 +507,7 @@ func runCurrentTunnelEndpointB(ctx context.Context, carrier string, deploymentPa
 		datagramCarrier = "websocket"
 	}
 	if err = exerciseCurrentServer(ctx, session, datagramCarrier, state, reporter); err != nil {
-		return err
+		return fmt.Errorf("original server workflow after %v: %w", state.ledger.snapshot(), err)
 	}
 	if state.active.Load() != 0 || server.Client.Runtime.Authorized[1].Load() != 1 || server.Client.Runtime.Released[1].Load() != 1 {
 		return errors.New("original accepted server retained its admission or callbacks")
@@ -603,7 +603,7 @@ func runCurrentTunnelEndpointA(ctx context.Context, carrier string) (err error) 
 		datagramCarrier = "websocket"
 	}
 	if err = exerciseCurrentClient(ctx, session, datagramCarrier, state, reporter); err != nil {
-		return err
+		return fmt.Errorf("original client workflow after %v: %w", state.ledger.snapshot(), err)
 	}
 	if state.active.Load() != 0 || client.Runtime.SourceAcquisitions.Load() != 1 || client.Runtime.Authorized[0].Load() != 1 || client.Runtime.Released[0].Load() != 1 {
 		return errors.New("original client retained its admitted source, callbacks or lease")
