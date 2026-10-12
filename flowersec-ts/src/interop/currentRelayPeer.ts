@@ -55,6 +55,11 @@ function quantity(value: string): bigint {
 export interface CurrentRelayPeerOptions {
   readonly carrier: "websocket" | "raw-quic"; readonly serverCarrier?: "websocket" | "raw-quic";
   readonly origin: string; readonly certificatePEM: string; readonly privateKeyPEM: string; readonly trustPEM: string;
+  /** Original publication window for the independently installed registered
+   * pool authority. Native raw QUIC cold starts may spend several seconds in
+   * the first provider/Noise construction before HOP_AUTH; callers must keep
+   * this finite window within the authority's supported bound. */
+  readonly publicationMS?: bigint;
   /** Independent TLS installation when the server logical leg listens here. */
   readonly serverListenerTLS?: Readonly<{ certificatePEM: string; privateKeyPEM: string }>;
   /** A trusted local deployment can prepare B in this same Environment before
@@ -207,7 +212,7 @@ async function installCurrentRelayPeer(deployment: CurrentRelayPeerDeployment, o
       await options.onBeforeServerPrepare?.(deployment.registration_json);
       const serverOptions = await options.prepareServer(Object.freeze({ environment, parentWinnerStore: store, material: original, policy }));
       if (options.serverAllow === undefined) throw new Error("original server Allow installation required");
-      poolAuthority = await createRegisteredPoolTunnelAuthority({ issuer: issuerOptions, material: original, server: serverOptions, publicationMS: 10000n, serverAllow: options.serverAllow,
+      poolAuthority = await createRegisteredPoolTunnelAuthority({ issuer: issuerOptions, material: original, server: serverOptions, publicationMS: options.publicationMS ?? 10000n, serverAllow: options.serverAllow,
         ...(options.deferPoolPreparation === true ? { deferPreparation: true } : {}) });
       const issued = await poolAuthority.issue();
       // The authority returns independent copies. Transfer every copy to the

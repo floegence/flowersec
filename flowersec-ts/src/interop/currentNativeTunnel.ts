@@ -76,6 +76,11 @@ export async function createCurrentNativeTunnel(kind: string, handle: (stream: S
     relay = await createCurrentRelayPeer(installation.deployment, { carrier, serverCarrier: "raw-quic",
       origin: installation.origin, trustPEM: installation.trustPEM, certificatePEM: installation.certificatePEM,
       privateKeyPEM: installation.privateKeyPEM, serverListenerTLS: installation.serverListenerTLS, cleanupPreparedServer,
+      // The native raw QUIC fixture is deliberately cold: the first provider
+      // and Noise construction happens after the original registered B has
+      // issued its Grant. Keep the original publication deadline finite while
+      // allowing that measured cold-start path to reach HOP_AUTH on hosted CI.
+      publicationMS: 30000n,
       serverAllow: { ...installedAllow, clientCertificateDER: allowPin, workMS: BigInt(installedAllow.workMS) },
       async onBeforeServerPrepare(original) {
         let ready!: () => void, failed!: (error: unknown) => void;
