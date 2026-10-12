@@ -298,6 +298,7 @@ func TestProductDirectWebTransportUpgradeFailureReportsDiagnostic(t *testing.T) 
 }
 func TestProductDirectWebTransportAdmissionFailureReportsDiagnostic(t *testing.T) {
 	requireTransportIntegration(t)
+	started := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	endpoint, err := OpenProductDirectEndpoint(ctx, carrier.KindWebTransport)
@@ -305,6 +306,7 @@ func TestProductDirectWebTransportAdmissionFailureReportsDiagnostic(t *testing.T
 		t.Fatal(err)
 	}
 	defer endpoint.Close()
+	endpointReady := time.Since(started)
 	diagnostic := make(chan error, 1)
 	endpoint.SetWebTransportAdmissionDiagnostic(func(err error) {
 		select {
@@ -313,9 +315,10 @@ func TestProductDirectWebTransportAdmissionFailureReportsDiagnostic(t *testing.T
 		}
 	})
 	dialer := productTestRawWebTransport(t, endpoint)
+	dialStarted := time.Since(started)
 	connection, err := dialer.Dial(ctx, endpoint.CandidateURL(), endpoint.allowedOrigin)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("original native dial: %v (endpoint ready after %s, dial started after %s, dial duration %s, context cause: %v)", err, endpointReady, dialStarted, time.Since(started)-dialStarted, context.Cause(ctx))
 	}
 	defer connection.Close()
 	stream, err := nativewt.OpenAdmissionStream(ctx, connection)
