@@ -387,6 +387,8 @@ describe("Node current production raw QUIC runtime", () => {
     let poolServerAllow: ReturnType<typeof installCurrentPoolServerAllow> | undefined;
     const signal = AbortSignal.timeout(15000);
     try {
+      tunnel.relay.start();
+      failureObservation.stage("forwarding started");
       failureObservation.stage("client fixture begin");
       fixture = await createCurrentPeerClient(tunnel.relay.endpointAArtifactJSON, { trustPEM: tunnel.trustPEM });
       failureObservation.stage("client fixture ready");
@@ -396,8 +398,6 @@ describe("Node current production raw QUIC runtime", () => {
       const acceptor = tunnel.acceptor;
       if (acceptor === null || typeof acceptor !== "object" || !("accept" in acceptor) || typeof acceptor.accept !== "function") throw new Error("original tunnel acceptor unavailable");
       const accepting = acceptor.accept({ signal }) as Promise<AcceptedSession>; void accepting.catch(() => undefined);
-      tunnel.relay.start();
-      failureObservation.stage("forwarding started");
       try { client = await connect(fixture.environment, fixture.registerSource(connector), peerRequirements, { signal }); }
       catch (error) { throw new Error(`raw QUIC tunnel connect failed: ${failureObservation.describe(error)}`, { cause: error }); }
       accepted = await accepting;
