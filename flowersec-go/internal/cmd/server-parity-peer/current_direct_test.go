@@ -66,7 +66,7 @@ func TestCurrentParityClosesAfterApplicationTraffic(t *testing.T) {
 				results <- err
 			}()
 			go func() {
-				err := exerciseCurrentServer(ctx, accepted, carrier, serverState, serverReporter)
+				err := exerciseCurrentServer(ctx, accepted, carrier, carrier, serverState, serverReporter)
 				if err != nil {
 					err = fmt.Errorf("server: %w", err)
 				}

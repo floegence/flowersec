@@ -376,7 +376,7 @@ func runCurrentDirectServer(ctx context.Context, carrier string, sdkExample bool
 	if sdkExample {
 		err = exerciseCurrentExampleServer(ctx, session, state, reporter)
 	} else {
-		err = exerciseCurrentServer(ctx, session, carrier, state, reporter)
+		err = exerciseCurrentServer(ctx, session, carrier, carrier, state, reporter)
 	}
 	if err != nil {
 		return fmt.Errorf("server workflow after %v: %w", state.ledger.snapshot(), err)
@@ -494,7 +494,7 @@ func exerciseCurrentExampleServer(ctx context.Context, session *fs.Session, stat
 	return session.WaitCleanup(ctx)
 }
 
-func exerciseCurrentServer(ctx context.Context, session *fs.Session, carrier string, state *currentParityState, reporter *interopharness.Reporter) error {
+func exerciseCurrentServer(ctx context.Context, session *fs.Session, carrier, datagramCarrier string, state *currentParityState, reporter *interopharness.Reporter) error {
 	service, err := state.bind(ctx, 1, session, reporter)
 	if err != nil {
 		return err
@@ -520,10 +520,10 @@ func exerciseCurrentServer(ctx context.Context, session *fs.Session, carrier str
 	if err = waitSignal(ctx, state.datagramReady, "client datagram barrier"); err != nil {
 		return err
 	}
-	if err = exchangeCurrentDatagram(ctx, session, carrier, false); err != nil {
+	if err = exchangeCurrentDatagram(ctx, session, datagramCarrier, false); err != nil {
 		return err
 	}
-	if carrier != "websocket" {
+	if datagramCarrier != "websocket" {
 		state.ledger.record("datagram")
 	}
 	if err = waitSignal(ctx, state.completed, "verified completion operations"); err != nil {
@@ -535,11 +535,14 @@ func exerciseCurrentServer(ctx context.Context, session *fs.Session, carrier str
 	// All application proofs above must complete before observing teardown.
 	// Native connection closure can overtake the final encrypted CLOSE record;
 	// a passive peer then reports the opaque carrier failure, not a graceful
-	// communication receipt. The client's original Drain proves its own work.
+	// communication receipt. Native teardown can also cancel the passive owner.
+	// Each runner independently requires the client's original Drain and cleanup
+	// to succeed; the server must still finish its own physical cleanup below.
 	if err = session.WaitTermination(ctx); err != nil {
 		var failure *fs.SessionError
 		if ctx.Err() != nil || !errors.As(err, &failure) ||
-			(failure.Code() != fs.SessionClosed && failure.Code() != fs.SessionOperationFailed) {
+			(failure.Code() != fs.SessionClosed && failure.Code() != fs.SessionOperationFailed &&
+				!(failure.Code() == fs.SessionCanceled && (carrier == "raw-quic" || carrier == "webtransport"))) {
 			return fmt.Errorf("server termination: %w", err)
 		}
 	}

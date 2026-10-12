@@ -506,7 +506,7 @@ func runCurrentTunnelEndpointB(ctx context.Context, carrier string, deploymentPa
 	if relay.Carrier == "websocket" || relay.ServerCarrier == "websocket" {
 		datagramCarrier = "websocket"
 	}
-	if err = exerciseCurrentServer(ctx, session, datagramCarrier, state, reporter); err != nil {
+	if err = exerciseCurrentServer(ctx, session, carrier, datagramCarrier, state, reporter); err != nil {
 		return fmt.Errorf("original server workflow after %v: %w", state.ledger.snapshot(), err)
 	}
 	if state.active.Load() != 0 || server.Client.Runtime.Authorized[1].Load() != 1 || server.Client.Runtime.Released[1].Load() != 1 {
