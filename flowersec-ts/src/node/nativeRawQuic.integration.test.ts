@@ -403,7 +403,11 @@ describe("Node current production raw QUIC runtime", () => {
     failureObservation.stage("tunnel fixture ready");
     let fixture: CurrentPeerClient | undefined, client: Session | undefined, accepted: AcceptedSession | undefined, outgoing: Stream | undefined;
     let poolServerAllow: ReturnType<typeof installCurrentPoolServerAllow> | undefined;
-    const signal = AbortSignal.timeout(15000);
+    // The independent native fixture may spend most of the original
+    // publication window constructing its first provider and Noise state on a
+    // hosted runner. Keep this test signal aligned with that 30 s fixture
+    // window so cancellation does not preempt a valid cold-start handshake.
+    const signal = AbortSignal.timeout(30000);
     try {
       tunnel.relay.start();
       failureObservation.stage("forwarding started");
@@ -435,7 +439,7 @@ describe("Node current production raw QUIC runtime", () => {
       failureObservation.close();
       await outgoing?.close(); await client?.close(); await accepted?.close(); await poolServerAllow?.close(); await tunnel.close();
     }
-  }, 30000);
+  }, 60000);
 
   test("retires native tunnel mappings across successive sibling streams", async () => {
     const handled: Uint8Array[] = [];

@@ -613,24 +613,29 @@ fn bootstrap(url: &str, root_der: &[u8], body: &[u8]) -> Result<Vec<u8>> {
     let outcome: Result<Vec<u8>> = (|| {
         file.write_all(root.as_bytes())?;
         let mut command = Command::new("curl");
+        command.args([
+            "--silent",
+            "--show-error",
+            "--fail",
+            "--max-time",
+            "10",
+            "--max-filesize",
+            "65536",
+            "--noproxy",
+            "*",
+            "--proto",
+            "=http,https",
+        ]);
+        // The system curl shipped with macOS uses SecureTransport and can
+        // reject the otherwise valid --tlsv1.3 minimum-version option as an
+        // unavailable build feature. The installed bootstrap endpoint only
+        // accepts TLS 1.3, so retaining the maximum here preserves the
+        // negotiated protocol while allowing that platform's curl adapter to
+        // select its supported minimum.
+        #[cfg(not(target_os = "macos"))]
+        command.arg("--tlsv1.3");
         command
-            .args([
-                "--silent",
-                "--show-error",
-                "--fail",
-                "--max-time",
-                "10",
-                "--max-filesize",
-                "65536",
-                "--noproxy",
-                "*",
-                "--proto",
-                "=http,https",
-                "--tlsv1.3",
-                "--tls-max",
-                "1.3",
-                "--cacert",
-            ])
+            .args(["--tls-max", "1.3", "--cacert"])
             .arg(&root_path)
             .args([
                 "--header",
