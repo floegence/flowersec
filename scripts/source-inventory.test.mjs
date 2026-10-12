@@ -545,6 +545,18 @@ test("owned source inventory outputs reject omission, stale content, and extras"
   }
   assert.doesNotThrow(() => assertOwnedOutputClosure(root, artifacts));
 
+  const scannerPolicy = path.join(root, "sbom/osv-scanner.toml");
+  fs.writeFileSync(scannerPolicy, "[[IgnoredVulns]]\nid = \"GO-2026-5932\"\n");
+  assert.doesNotThrow(() => assertOwnedOutputClosure(root, artifacts));
+  fs.rmSync(scannerPolicy);
+  fs.symlinkSync("source.spdx.json", scannerPolicy);
+  assert.throws(() => assertOwnedOutputClosure(root, artifacts), /regular file/i);
+  fs.rmSync(scannerPolicy);
+  const misplacedPolicy = path.join(root, "sbom/swift/osv-scanner.toml");
+  fs.writeFileSync(misplacedPolicy, "[[IgnoredVulns]]\n");
+  assert.throws(() => assertOwnedOutputClosure(root, artifacts), /unexpected/i);
+  fs.rmSync(misplacedPolicy);
+
   fs.rmSync(path.join(root, "flowersec-go/sbom/spdx.json"));
   assert.throws(() => assertOwnedOutputClosure(root, artifacts), /missing/i);
   fs.writeFileSync(path.join(root, "flowersec-go/sbom/spdx.json"), artifacts.get("flowersec-go/sbom/spdx.json"));

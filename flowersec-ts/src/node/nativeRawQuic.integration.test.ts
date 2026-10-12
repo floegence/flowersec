@@ -38,6 +38,24 @@ import { NodeWSSCarrier } from "./wssV4.js";
 import type { RelayHopByteMeter, RelayNativePairPreparation } from "./relayNativePair.js";
 import { SQLiteWorkerDatabase } from "./sqliteWorkerV4.js";
 import { ServeIngress } from "../v4/runtime/serveGroup.js";
+import type { NoiseHandshake } from "../v4/runtime/noiseHandshake.js";
+
+const noiseTestObservation = vi.hoisted(() => ({ progress: undefined as ((fact: string) => void) | undefined }));
+// Observe original construction, including the first WASM initialization,
+// without prewarming or replacing any cryptographic operation.
+vi.mock("../v4/runtime/noiseHandshake.js", async importOriginal => {
+  type OriginalNoise = typeof NoiseHandshake;
+  const original = await importOriginal<{ NoiseHandshake: OriginalNoise }>();
+  class ObservedNoise extends original.NoiseHandshake {
+    constructor(...arguments_: ConstructorParameters<OriginalNoise>) {
+      const role = arguments_[0].role;
+      noiseTestObservation.progress?.(`Noise ${role} construction begin`);
+      super(...arguments_);
+      noiseTestObservation.progress?.(`Noise ${role} construction complete`);
+    }
+  }
+  return { ...original, NoiseHandshake: ObservedNoise };
+});
 
 type RelayBufferWrite = Readonly<{ position: number; side: 0 | 1; scope: bigint; sequence: bigint; frameType: number; buffer: Uint8Array }>;
 type RelayMeterSettlement = Readonly<{ meter: number; requested: number; actual: number | undefined; charged: number }>;
@@ -1049,7 +1067,7 @@ describe("Node current production raw QUIC runtime", () => {
 
 function observeOriginalConnectionFailures(started = performance.now(), admission = false) {
   const failures: string[] = [], stages: string[] = [], originalFailure = DiagnosticActivity.prototype.failure;
-  const owners: string[] = [];
+  const owners: string[] = [], progress: string[] = [];
   const elapsed = () => Math.round(performance.now() - started);
   // Copy only failure text before the public connection boundary redacts it.
   // The original observer still runs and no provider or exception is retained.
@@ -1058,10 +1076,29 @@ function observeOriginalConnectionFailures(started = performance.now(), admissio
     originalFailure.call(this, error, connection);
   });
   const closeAdmission = admission ? observeOriginalAdmissionSources(fact => { if (owners.length < 12) owners.push(`${elapsed()}ms: ${fact}`); }) : undefined;
+  // Retain only finite phase/frame names. Native bytes and credentials never
+  // enter the failure trace, and successful connections print nothing.
+  const recordProgress = (fact: string) => { if (progress.length < 96) progress.push(`${elapsed()}ms: ${fact}`); };
+  if (admission) noiseTestObservation.progress = recordProgress;
+  const originalPhase = DiagnosticActivity.prototype.phase;
+  const phases = admission ? vi.spyOn(DiagnosticActivity.prototype, "phase").mockImplementation(function (this: DiagnosticActivity, phase) {
+    recordProgress(`original phase ${phase}`);
+    originalPhase.call(this, phase);
+  }) : undefined;
+  const nativeSessions = new WeakMap<NativeRawSession, number>();
+  const frameNames = new Map(Object.entries(wire.frame_types).map(([name, value]) => [value, name]));
+  let nextSession = 0;
+  const originalLoad = currentNativeTransport.loadCurrentNativeTransport;
+  const native = admission ? vi.spyOn(currentNativeTransport, "loadCurrentNativeTransport").mockImplementation(() => observeNativeRawStreams(originalLoad(), (_stream, session, action, frameType, phase) => {
+    if (frameType === undefined || progress.length >= 96) return;
+    let identity = nativeSessions.get(session);
+    if (identity === undefined) { identity = ++nextSession; nativeSessions.set(session, identity); }
+    recordProgress(`native ${identity} ${action} ${phase} ${frameNames.get(frameType) ?? frameType}`);
+  })) : undefined;
   return {
     stage: (name: string) => { if (stages.length < 12) stages.push(`${elapsed()}ms: ${name}`); },
-    describe: (error: unknown) => `${inspect(error, { depth: 4 })}\nConnection stages:\n${stages.join("\n")}\nOriginal admission owners:\n${owners.join("\n")}\nOriginal connection failures:\n${failures.join("\n")}`,
-    close: () => { closeAdmission?.(); observation.mockRestore(); },
+    describe: (error: unknown) => `${inspect(error, { depth: 4 })}\nConnection stages:\n${stages.join("\n")}\nOriginal admission owners:\n${owners.join("\n")}\nOriginal admission progress:\n${progress.join("\n")}\nOriginal connection failures:\n${failures.join("\n")}`,
+    close: () => { if (admission) noiseTestObservation.progress = undefined; native?.mockRestore(); phases?.mockRestore(); closeAdmission?.(); observation.mockRestore(); },
   };
 }
 

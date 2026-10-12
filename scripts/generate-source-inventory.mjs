@@ -2013,7 +2013,14 @@ export function assertOwnedOutputClosure(repoRoot, artifacts) {
       ...walkFiles(path.join(repoRoot, sbomRoot)).map((relative) => `${sbomRoot}/${relative}`),
     ];
   });
-  const unexpected = owned.filter((relative) => !expected.has(relative));
+  const unexpected = owned.filter((relative) => {
+    // OSV reads policy beside the aggregate SBOM; it is maintained, not generated.
+    if (relative === "sbom/osv-scanner.toml") {
+      readRegularFile(path.join(repoRoot, relative), "OSV policy must be a regular file");
+      return false;
+    }
+    return !expected.has(relative);
+  });
   if (unexpected.length > 0) {
     throw new Error(`unexpected owned source inventory output: ${unexpected.sort().join(", ")}`);
   }
