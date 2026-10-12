@@ -64,6 +64,9 @@ export interface CurrentRelayPeerOptions {
    * driver so it can start B before awaiting original publication. */
   readonly liveControl?: Omit<RegisteredLiveTunnelControlAuthorityOptions, "live" | "relayRuntime"> & Readonly<{ live: Omit<RegisteredLiveTunnelControlAuthorityOptions["live"], "issuer" | "material"> }>;
   readonly onControlPrepared?: (address: Readonly<{ host: string; port: number }>) => void;
+  /** Complete unrelated consumer setup before B begins its finite original
+   * physical preparation. This hook receives registration, never a Grant. */
+  readonly onBeforeServerPrepare?: (registration: string) => Promise<void>;
   readonly prepareServer?: (installation: Readonly<{ environment: TransportEnvironment; parentWinnerStore: SQLiteAdmissionStore; material: GrantIssuanceInput; policy: V4CredentialPolicy }>) => Promise<RegisteredPoolTunnelAuthorityOptions["server"]>;
   readonly serverAllow?: RegisteredPoolTunnelAuthorityOptions["serverAllow"];
   /** Joins the original local B store owners after its Acceptor has closed. */
@@ -195,6 +198,7 @@ async function installCurrentRelayPeer(deployment: CurrentRelayPeerDeployment, o
     } else {
       const policy: V4CredentialPolicy = { tenant, audience, clientSubject, serverSubject, authorities: namespaces.map(namespace => namespace.authority), cryptoProfiles: [registration.profile],
         tunnel: { role: 1, audience: deployment.relay_audience, service: deployment.service, relaySubject: deployment.relay_subject } };
+      await options.onBeforeServerPrepare?.(deployment.registration_json);
       const serverOptions = await options.prepareServer(Object.freeze({ environment, parentWinnerStore: store, material: original, policy }));
       if (options.serverAllow === undefined) throw new Error("original server Allow installation required");
       poolAuthority = await createRegisteredPoolTunnelAuthority({ issuer: issuerOptions, material: original, server: serverOptions, publicationMS: 10000n, serverAllow: options.serverAllow });

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/cryptov4"
@@ -140,54 +142,73 @@ func TestWriteOperationPreparedStagingRetiresWithoutStartAndReusesFullCapacity(t
 }
 
 func TestWriteOperationFullSlotsRejectBeforeCopyingInput(t *testing.T) {
-	f, q, _, handle, reservation := ownedFixture(t, 64)
-	owner := ownFixtureStream(t, f, handle, reservation)
-	runWriteService(t, f)
-	options := WriteOptions{TimeoutMS: 3000, HardDeadline: streamTestDeadline(t, f.local.engine)}
-	var operations [2]*WriteOperation
-	for i := range operations {
-		op, err := owner.PrepareWrite([]byte("held"), options)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(op.Cancel)
-		operations[i] = op
-	}
-	input := bytes.Repeat([]byte{'z'}, int(q.MaxWriteOperationBytes()))
-	before := f.root.Snapshot().Charged
-	// Park the real coordinator so both refused public calls see the same held
-	// owners. The original nonzero-drift clock authorization uses math/big;
-	// compare its nil-input cost with full input instead of requiring that
-	// security gate to allocate nothing. Premature staging adds a full-input
-	// allocation while the nil-input refusal needs no byte backing.
-	f.service.mu.Lock()
-	defer f.service.mu.Unlock()
-	gateAllocations := testing.AllocsPerRun(5, func() {
-		if op, err := owner.PrepareWrite(nil, options); op != nil || !errors.Is(err, cryptov4.ErrCapacity) {
-			t.Fatal("full original slots admitted another prepared owner", err)
-		}
-	})
-	allocations := testing.AllocsPerRun(5, func() {
-		if op, err := owner.PrepareWrite(input, options); op != nil || !errors.Is(err, cryptov4.ErrCapacity) {
-			t.Fatal("full original slots admitted another immutable input", err)
-		}
-	})
-	if allocations != gateAllocations || f.root.Snapshot().Charged != before {
-		t.Fatal("slot refusal added input allocation or changed the prepaid reservation", gateAllocations, allocations)
-	}
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.waiters != len(operations) || q.first != -1 {
-		t.Fatal("refused PrepareWrite changed the original prepared owners")
-	}
-	for _, op := range operations {
-		r := op.requestLocked(q)
-		if r == nil || !bytes.Equal(r.input, []byte("held")) {
-			t.Fatal("refused input replaced an existing owner's immutable bytes")
-		}
-	}
-	if !bytes.Equal(input, bytes.Repeat([]byte{'z'}, 64)) {
-		t.Fatal("refused PrepareWrite changed caller input")
+	for _, tc := range []struct {
+		name string
+		tick uint64
+	}{
+		{name: "at_quantization_bound", tick: 2},
+		{name: "past_quantization_bound", tick: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				var tick atomic.Uint64
+				clock := newTestRekeyClock(t, RekeyClockRate{Numerator: 1, Denominator: 10000, QuantizationMS: 2}, func() (RekeyClockSample, error) {
+					return RekeyClockSample{Milliseconds: tick.Load(), Incarnation: [16]byte{1}}, nil
+				})
+				tick.Store(tc.tick)
+				f, q, _, handle, reservation := ownedFixtureWithClock(t, 64, clock)
+				owner := ownFixtureStream(t, f, handle, reservation)
+				runWriteService(t, f)
+				options := WriteOptions{TimeoutMS: 3000, HardDeadline: streamTestDeadline(t, f.local.engine)}
+				var operations [2]*WriteOperation
+				for i := range operations {
+					op, err := owner.PrepareWrite([]byte("held"), options)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(op.Cancel)
+					operations[i] = op
+				}
+				input := bytes.Repeat([]byte{'z'}, int(q.MaxWriteOperationBytes()))
+				before := f.root.Snapshot().Charged
+				// Join real coordinator and provider startup, including timer setup.
+				// With no Start, all workers then remain blocked on original signals;
+				// refused calls neither publish input nor wake the coordinator.
+				synctest.Wait()
+				// Keep the original nonzero-drift authorization at one tick for both calls.
+				// math/big allocates differently across the quantization boundary; compare
+				// nil and full input at each side without borrowing a later clock sample.
+				// Premature staging still adds a full-input allocation to the strict match.
+				gateAllocations := testing.AllocsPerRun(5, func() {
+					if op, err := owner.PrepareWrite(nil, options); op != nil || !errors.Is(err, cryptov4.ErrCapacity) {
+						t.Fatal("full original slots admitted another prepared owner", err)
+					}
+				})
+				allocations := testing.AllocsPerRun(5, func() {
+					if op, err := owner.PrepareWrite(input, options); op != nil || !errors.Is(err, cryptov4.ErrCapacity) {
+						t.Fatal("full original slots admitted another immutable input", err)
+					}
+				})
+				t.Logf("fixed tick %d: nil-input allocations %g, full-input allocations %g", tc.tick, gateAllocations, allocations)
+				if allocations != gateAllocations || f.root.Snapshot().Charged != before {
+					t.Fatal("slot refusal added input allocation or changed the prepaid reservation", gateAllocations, allocations)
+				}
+				q.mu.Lock()
+				defer q.mu.Unlock()
+				if q.waiters != len(operations) || q.first != -1 {
+					t.Fatal("refused PrepareWrite changed the original prepared owners")
+				}
+				for _, op := range operations {
+					r := op.requestLocked(q)
+					if r == nil || !bytes.Equal(r.input, []byte("held")) {
+						t.Fatal("refused input replaced an existing owner's immutable bytes")
+					}
+				}
+				if !bytes.Equal(input, bytes.Repeat([]byte{'z'}, 64)) {
+					t.Fatal("refused PrepareWrite changed caller input")
+				}
+			})
+		})
 	}
 }
 

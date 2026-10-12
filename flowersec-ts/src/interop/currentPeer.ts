@@ -264,6 +264,18 @@ export async function createCurrentPeerClient(raw: string, options: Readonly<{ t
   if (!("poolStore" in owner)) { await owner.close(); throw new Error("invalid original pool owner"); }
   return owner;
 }
+/** Prepare A's engineering resources before B starts its original carrier
+ * budget. Only the same authority's subsequent issued material can finish this
+ * owner; no source or connector is returned while its Grant is unavailable. */
+export async function prepareCurrentPoolTunnelClient(raw: string,
+  registration: Readonly<{ relayCertificate: string; relayAudience: string; relayService: string; relaySubject: string }>,
+  publishedMaterial: Promise<string>, onPrepared: () => void, options: Readonly<{ trustPEM?: string }> = {}): Promise<CurrentPeerClient> {
+  const material = readCurrentPeerMaterial(raw);
+  if (material.source !== "preauthorized_pool" || material.role !== 0 || material.tunnels.length !== 0) throw new Error("pool A preparation requires its original unissued registration");
+  const owner = await createPeerClient(material, { ...options, registeredClient: { ...registration, publishedMaterial, onPrepared } });
+  if (!("poolStore" in owner)) { await owner.close(); throw new Error("invalid original pool owner"); }
+  return owner;
+}
 /** Each acquisition transfers the next independently issued direct pool record.
  * The original Environment still verifies it and the built-in store still owns
  * consume. Exhaustion never reuses a spent record or fabricates fresh material. */
@@ -316,7 +328,8 @@ export async function createCurrentRegisteredTunnelPeerEndpoint(raw: string, ins
   const owner = await createPeerClient(material, { ...options, registeredServer: installation });
   if (owner.material.source !== registered.source) { await owner.close(); throw new Error("original registered endpoint is unavailable"); } return owner;
 }
-async function createPeerClient(material: CurrentPeerMaterial, options: Readonly<{ trustPEM?: string; liveHTTPS?: NodeLiveHTTPSOptions; registeredLive?: CurrentRegisteredLiveClientInstallation; registeredServer?: CurrentRegisteredTunnelServerInstallation }>): Promise<CurrentPeerClient | CurrentLivePeerClient | CurrentRegisteredLivePeerEndpoint> {
+async function createPeerClient(material: CurrentPeerMaterial, options: Readonly<{ trustPEM?: string; liveHTTPS?: NodeLiveHTTPSOptions; registeredLive?: CurrentRegisteredLiveClientInstallation; registeredServer?: CurrentRegisteredTunnelServerInstallation;
+  registeredClient?: Readonly<{ relayCertificate: string; relayAudience: string; relayService: string; relaySubject: string; publishedMaterial: Promise<string>; onPrepared: () => void }> }>): Promise<CurrentPeerClient | CurrentLivePeerClient | CurrentRegisteredLivePeerEndpoint> {
   if (material.role !== 0 && material.role !== 1) throw new Error("engineering endpoint requires an original role");
   const artifactBytes = peerBytes(material.artifact, 65536), activationBytes = material.source === "preauthorized_pool" ? peerBytes(material.activation, 65536) : new Uint8Array();
   const clientBytes = peerBytes(material.client_certificate, 16384), serverBytes = peerBytes(material.server_certificate, 16384), routeBytes = peerBytes(material.route, 16384);
@@ -338,14 +351,16 @@ async function createPeerClient(material: CurrentPeerMaterial, options: Readonly
     if (indices.kind !== "array" || !indices.value.some(value => value.kind === "uint" && value.value === BigInt(candidateIndex))) throw new Error("engineering route is outside its original signed candidate set");
   }
   const selectedTunnels = material.tunnels.filter(tunnel => tunnel.candidate_index === candidateIndex && tunnel.role === material.role);
-  const requiresPendingOrIssuedTunnel = options.registeredServer === undefined || material.source === "live_authority";
+  const requiresPendingOrIssuedTunnel = options.registeredServer === undefined && options.registeredClient === undefined || material.source === "live_authority";
   if (selectedTunnels.length !== (pathKind === 1n && requiresPendingOrIssuedTunnel ? 1 : 0)) throw new Error("engineering tunnel material does not match the original candidate");
-  const tunnel = selectedTunnels[0], tunnelGrant = tunnel === undefined || material.source === "live_authority" ? new Uint8Array() : peerBytes(tunnel.grant!, 65536), relayCertificate = options.registeredServer !== undefined ? peerBytes(options.registeredServer.relayCertificate, 8192) : tunnel === undefined ? new Uint8Array() : peerBytes(tunnel.relay_certificate, 16384);
-  const grant = tunnelGrant.length === 0 ? undefined : decode(tunnelGrant), relay = tunnel === undefined ? undefined : decode(relayCertificate);
+  const tunnel = selectedTunnels[0], registered = options.registeredServer ?? options.registeredClient;
+  let tunnelGrant = tunnel === undefined || material.source === "live_authority" ? new Uint8Array() : peerBytes(tunnel.grant!, 65536);
+  const relayCertificate = registered !== undefined ? peerBytes(registered.relayCertificate, 8192) : tunnel === undefined ? new Uint8Array() : peerBytes(tunnel.relay_certificate, 16384);
+  const grant = tunnelGrant.length === 0 ? undefined : decode(tunnelGrant), relay = tunnel === undefined && options.registeredClient === undefined ? undefined : decode(relayCertificate);
   const pending = tunnel?.live_grant;
   if (options.registeredServer !== undefined && material.source === "live_authority" && (pending === undefined || pending.audience !== options.registeredServer.relayAudience || pending.service !== options.registeredServer.relayService || tunnel!.relay_certificate !== options.registeredServer.relayCertificate)) throw new Error("registered live B scope differs from its independent relay installation");
   const liveGrant = pending === undefined ? undefined : Object.freeze({ authority: pending.authority, issuerKeyID: peerBytes(pending.issuer_key_id, 16, 16), revocationPolicyID: pending.revocation_policy_id, revocationPolicyRevision: BigInt(pending.revocation_policy_revision), maxNotAfterMS: BigInt(pending.max_not_after_ms) });
-  const tunnelPolicy: V4CredentialPolicy["tunnel"] = options.registeredServer !== undefined ? Object.freeze({ role: 1, audience: options.registeredServer.relayAudience, service: options.registeredServer.relayService, relaySubject: options.registeredServer.relaySubject, ...(liveGrant === undefined ? {} : { liveGrant }) }) : relay === undefined ? undefined : grant !== undefined ? Object.freeze({ role: material.role, audience: text(peerField(grant, "Grant", "audience")), service: text(peerField(grant, "Grant", "service")), relaySubject: text(peerField(relay, "IdentityCertificate", "subject_id")) }) : pending === undefined ? undefined : Object.freeze({ role: material.role, audience: pending.audience, service: pending.service, relaySubject: text(peerField(relay, "IdentityCertificate", "subject_id")),
+  const tunnelPolicy: V4CredentialPolicy["tunnel"] = registered !== undefined ? Object.freeze({ role: material.role, audience: registered.relayAudience, service: registered.relayService, relaySubject: registered.relaySubject, ...(liveGrant === undefined ? {} : { liveGrant }) }) : relay === undefined ? undefined : grant !== undefined ? Object.freeze({ role: material.role, audience: text(peerField(grant, "Grant", "audience")), service: text(peerField(grant, "Grant", "service")), relaySubject: text(peerField(relay, "IdentityCertificate", "subject_id")) }) : pending === undefined ? undefined : Object.freeze({ role: material.role, audience: pending.audience, service: pending.service, relaySubject: text(peerField(relay, "IdentityCertificate", "subject_id")),
     liveGrant: liveGrant! });
   const leg = peerField(route, "Route", pathKind === 0n ? "direct_leg" : material.role === 0 ? "client_leg" : "server_leg"), access = uint(peerField(leg, "Leg", "access_class"));
   const carrier = uint(peerField(leg, "Leg", "carrier"));
@@ -423,6 +438,23 @@ async function createPeerClient(material: CurrentPeerMaterial, options: Readonly
     const noiseKey = material.profile === profileX
       ? createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b656e04220420", "hex"), dhSeed]), format: "der", type: "pkcs8" })
       : createPrivateKey({ key: Buffer.concat([Buffer.from("30310201010420", "hex"), dhSeed, Buffer.from("a00a06082a8648ce3d030107", "hex")]), format: "der", type: "sec1" });
+    if (options.registeredClient !== undefined) {
+      if (pathKind !== 1n || material.source !== "preauthorized_pool" || material.role !== 0 || text(peerField(relay!, "IdentityCertificate", "subject_id")) !== options.registeredClient.relaySubject) throw new Error("pool A preparation differs from its original relay installation");
+      options.registeredClient.onPrepared();
+      const published = readCurrentPeerMaterial(await options.registeredClient.publishedMaterial);
+      if (published.source !== "preauthorized_pool" || JSON.stringify({ ...published, tunnels: [] }) !== JSON.stringify({ ...material, tunnels: [] }) || published.tunnels.length !== 2) throw new Error("pool A publication changed its original registration");
+      for (const role of [0, 1] as const) {
+        const original = published.tunnels.filter(value => value.role === role && value.candidate_index === candidateIndex);
+        if (original.length !== 1 || original[0]!.relay_certificate !== options.registeredClient.relayCertificate) throw new Error("pool A publication changed its original counterpart");
+        const issued = peerBytes(original[0]!.grant!, 65536);
+        try {
+          const grant = decode(issued);
+          if (uint(peerField(peerField(grant, "Grant", "namespace"), "GrantNamespace", "role_mask")) !== (4n | 1n << BigInt(role)) || text(peerField(grant, "Grant", "audience")) !== options.registeredClient.relayAudience || text(peerField(grant, "Grant", "service")) !== options.registeredClient.relayService) throw new Error("pool A publication changed its original Grant scope");
+          if (role === 0) tunnelGrant = new Uint8Array(issued);
+        } finally { issued.fill(0); }
+      }
+      material = published;
+    }
     const configuredStore = poolStore, configuredBacking = backing;
     let closing: Promise<void> | undefined;
     const configured = { environment, root, identityKey, noiseKey,

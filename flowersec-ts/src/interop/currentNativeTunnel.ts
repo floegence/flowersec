@@ -10,7 +10,7 @@ import {
 import { credentialDigest } from "../v4/runtime/credentialSupport.js";
 import { Reference, type Value } from "../v4/testSupport/cbor.js";
 import { createCurrentRelayPeer, type CurrentRelayPeerDeployment } from "./currentRelayPeer.js";
-import { peerBytes, peerField, peerLimits, peerRawQUICCapacity, peerServices, readCurrentPeerMaterial, type CurrentPoolClientInstallation } from "./currentPeer.js";
+import { peerBytes, peerField, peerLimits, peerRawQUICCapacity, peerServices, prepareCurrentPoolTunnelClient, readCurrentPeerMaterial, type CurrentPoolClientInstallation, type CurrentPeerClient } from "./currentPeer.js";
 import type { NodePoolServerAllowReceiverOptions } from "../node/poolServerAllow.js";
 
 interface CurrentNativeTunnelInstallation {
@@ -55,6 +55,11 @@ export async function createCurrentNativeTunnel(kind: string, handle: (stream: S
   const dialer = uint(peerField(serverLeg, "Leg", "dialer_role")), listener = uint(peerField(serverLeg, "Leg", "listener_role"));
   if (!(dialer === 1n && listener === 2n || dialer === 2n && listener === 1n)) throw new Error("original native tunnel B physical roles are invalid");
   let directory: string | undefined, backing: SQLitePoolBacking | undefined, store: SQLiteAdmissionStore | undefined, plan: HandlerPlan | undefined;
+  let client: CurrentPeerClient | undefined, clientPreparation: Promise<CurrentPeerClient> | undefined;
+  let relay: Awaited<ReturnType<typeof createCurrentRelayPeer>> | undefined;
+  let publishClient!: (material: string) => void, rejectClient!: (error: unknown) => void;
+  const clientPublication = new Promise<string>((resolve, reject) => { publishClient = resolve; rejectClient = reject; });
+  void clientPublication.catch(() => undefined);
   const owned: Uint8Array[] = [routeBytes];
   let cleaned = false;
   const cleanupPreparedServer = async () => {
@@ -68,10 +73,19 @@ export async function createCurrentNativeTunnel(kind: string, handle: (stream: S
     const installedAllow = installation.server_allow;
     if (installedAllow === undefined || !/^[1-9][0-9]{0,3}$/u.test(installedAllow.workMS) || BigInt(installedAllow.workMS) > 2000n) throw new Error("original native B requires its independent server Allow installation");
     const allowPin = peerBytes(installedAllow.clientCertificateDER, 65536); owned.push(allowPin);
-    const relay = await createCurrentRelayPeer(installation.deployment, { carrier, serverCarrier: "raw-quic",
+    relay = await createCurrentRelayPeer(installation.deployment, { carrier, serverCarrier: "raw-quic",
       origin: installation.origin, trustPEM: installation.trustPEM, certificatePEM: installation.certificatePEM,
       privateKeyPEM: installation.privateKeyPEM, serverListenerTLS: installation.serverListenerTLS, cleanupPreparedServer,
       serverAllow: { ...installedAllow, clientCertificateDER: allowPin, workMS: BigInt(installedAllow.workMS) },
+      async onBeforeServerPrepare(original) {
+        let ready!: () => void, failed!: (error: unknown) => void;
+        const readiness = new Promise<void>((resolve, reject) => { ready = resolve; failed = reject; });
+        clientPreparation = prepareCurrentPoolTunnelClient(original, { relayCertificate: installation.deployment.relay_certificate,
+          relayAudience: installation.deployment.relay_audience, relayService: installation.deployment.service, relaySubject: installation.deployment.relay_subject },
+        clientPublication, ready, { trustPEM: installation.trustPEM });
+        void clientPreparation.catch(failed);
+        await readiness;
+      },
       async prepareServer({ environment, parentWinnerStore, material, policy }) {
         const parent = decode(material.artifact), issuer = peerField(parent, "Artifact", "issuer_key_id");
         if (issuer.kind !== "bytes" || issuer.value.length !== 16) throw new Error("original native tunnel issuer is invalid");
@@ -108,6 +122,9 @@ export async function createCurrentNativeTunnel(kind: string, handle: (stream: S
           maxPendingSessions: 1, maxPendingAccepts: 1, cleanupMS: 10000n, authorizeRequest: () => ({ allowed: true }), resolveHandlers: () => handlers,
           authorizeApplication: (_context, supplied) => ({ decision: "authorized", handlers: supplied, lease: { close: () => undefined, waitCleanup: async () => complete } }), release: () => complete };
       } });
+    publishClient(relay.endpointAArtifactJSON);
+    client = await clientPreparation;
+    if (client === undefined) { await relay.close(); throw new Error("original native tunnel A owner is unavailable"); }
     const acceptor = "serverAcceptor" in relay ? relay.serverAcceptor : undefined;
     if (acceptor === undefined) { await relay.close(); throw new Error("original registered native B Acceptor is unavailable"); }
     const binding = "serverAllow" in relay ? relay.serverAllow : undefined;
@@ -117,10 +134,20 @@ export async function createCurrentNativeTunnel(kind: string, handle: (stream: S
     }
     const serverAllow = Object.freeze({ endpoint: binding.endpoint, recipient: binding.recipient, incarnation: binding.incarnation });
     let closed: Promise<void> | undefined;
-    return { relay, acceptor, trustPEM: installation.trustPEM, origin: installation.origin,
+    const originalRelay = relay, originalClient = client;
+    return { relay, client, acceptor, trustPEM: installation.trustPEM, origin: installation.origin,
       listenerTLS: installation.clientListenerTLS,
       poolClientInstallation: installation.pool_client_deployment,
       serverAllow,
-      close: () => closed ??= (async () => { await relay.close(); for (const value of owned) value.fill(0); })() };
-  } catch (error) { await cleanupPreparedServer(); for (const value of owned) value.fill(0); throw error; }
+      close: () => closed ??= (async () => {
+        const results = await Promise.allSettled([originalClient.close(), originalRelay.close()]);
+        results.push(...await Promise.allSettled([cleanupPreparedServer()]));
+        for (const value of owned) value.fill(0);
+        const failed = results.find(value => value.status === "rejected"); if (failed?.status === "rejected") throw failed.reason;
+      })() };
+  } catch (error) {
+    rejectClient(error);
+    await Promise.allSettled([clientPreparation?.then(owner => owner.close(), () => undefined), relay?.close()]);
+    await Promise.allSettled([cleanupPreparedServer()]); for (const value of owned) value.fill(0); throw error;
+  }
 }

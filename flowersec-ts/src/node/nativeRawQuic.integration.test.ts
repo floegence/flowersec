@@ -390,7 +390,7 @@ describe("Node current production raw QUIC runtime", () => {
       tunnel.relay.start();
       failureObservation.stage("forwarding started");
       failureObservation.stage("client fixture begin");
-      fixture = await createCurrentPeerClient(tunnel.relay.endpointAArtifactJSON, { trustPEM: tunnel.trustPEM });
+      fixture = tunnel.client;
       failureObservation.stage("client fixture ready");
       poolServerAllow = installCurrentPoolServerAllow(fixture, tunnel.poolClientInstallation, tunnel.serverAllow);
       failureObservation.stage("server Allow installed");
@@ -415,7 +415,7 @@ describe("Node current production raw QUIC runtime", () => {
       expect(tunnel.relay.runtime.status().activePairs).toBe(0);
     } finally {
       failureObservation.close();
-      await outgoing?.close(); await client?.close(); await accepted?.close(); await poolServerAllow?.close(); await fixture?.close(); await tunnel.close();
+      await outgoing?.close(); await client?.close(); await accepted?.close(); await poolServerAllow?.close(); await tunnel.close();
     }
   }, 30000);
 
@@ -441,7 +441,7 @@ describe("Node current production raw QUIC runtime", () => {
     let poolServerAllow: ReturnType<typeof installCurrentPoolServerAllow> | undefined;
     const signal = AbortSignal.timeout(15000);
     try {
-      fixture = await createCurrentPeerClient(tunnel.relay.endpointAArtifactJSON, { trustPEM: tunnel.trustPEM });
+      fixture = tunnel.client;
       poolServerAllow = installCurrentPoolServerAllow(fixture, tunnel.poolClientInstallation, tunnel.serverAllow);
       const connector = configureCurrentPeerRawQUIC(fixture, tunnel.trustPEM, undefined, tunnel.listenerTLS, poolServerAllow);
       const acceptor = tunnel.acceptor;
@@ -482,7 +482,6 @@ describe("Node current production raw QUIC runtime", () => {
       await client?.close().catch(() => undefined);
       await accepted?.close().catch(() => undefined);
       await poolServerAllow?.close();
-      await fixture?.close();
       await tunnel.close();
     }
   }, 30000);
@@ -515,7 +514,7 @@ describe("Node current production raw QUIC runtime", () => {
     let poolServerAllow: ReturnType<typeof installCurrentPoolServerAllow> | undefined;
     const signal = AbortSignal.timeout(15000);
     try {
-      fixture = await createCurrentPeerClient(tunnel.relay.endpointAArtifactJSON, { trustPEM: tunnel.trustPEM });
+      fixture = tunnel.client;
       poolServerAllow = installCurrentPoolServerAllow(fixture, tunnel.poolClientInstallation, tunnel.serverAllow);
       const connector = configureCurrentPeerWSS(fixture, tunnel.origin, tunnel.trustPEM, undefined, tunnel.listenerTLS, poolServerAllow);
       const acceptor = tunnel.acceptor;
@@ -560,7 +559,6 @@ describe("Node current production raw QUIC runtime", () => {
       await client?.close().catch(() => undefined);
       await accepted?.close().catch(() => undefined);
       await poolServerAllow?.close();
-      await fixture?.close();
       await tunnel.close();
     }
   }, 30000);
@@ -642,7 +640,7 @@ describe("Node current production raw QUIC runtime", () => {
     let sibling: Stream | undefined;
     const signal = AbortSignal.timeout(15000);
     try {
-      fixture = await createCurrentPeerClient(tunnel.relay.endpointAArtifactJSON, { trustPEM: tunnel.trustPEM });
+      fixture = tunnel.client;
       poolServerAllow = installCurrentPoolServerAllow(fixture, tunnel.poolClientInstallation, tunnel.serverAllow);
       const connector = configureCurrentPeerWSS(fixture, tunnel.origin, tunnel.trustPEM, undefined, tunnel.listenerTLS, poolServerAllow);
       const acceptor = tunnel.acceptor;
@@ -752,7 +750,6 @@ describe("Node current production raw QUIC runtime", () => {
       await client?.close().catch(() => undefined);
       await accepted?.close().catch(() => undefined);
       await poolServerAllow?.close();
-      await fixture?.close();
       await tunnel.close();
       wssObservation.mockRestore();
       nativeObservation.mockRestore();
@@ -809,7 +806,7 @@ describe("Node current production raw QUIC runtime", () => {
     let poolServerAllow: ReturnType<typeof installCurrentPoolServerAllow> | undefined;
     let first: Stream | undefined;
     try {
-      fixture = await createCurrentPeerClient(tunnel.relay.endpointAArtifactJSON, { trustPEM: tunnel.trustPEM });
+      fixture = tunnel.client;
       poolServerAllow = installCurrentPoolServerAllow(fixture, tunnel.poolClientInstallation, tunnel.serverAllow);
       const connector = configureCurrentPeerWSS(fixture, tunnel.origin, tunnel.trustPEM, undefined, tunnel.listenerTLS, poolServerAllow);
       const acceptor = tunnel.acceptor;
@@ -847,7 +844,6 @@ describe("Node current production raw QUIC runtime", () => {
       await client?.close().catch(() => undefined);
       await accepted?.close().catch(() => undefined);
       await poolServerAllow?.close();
-      await fixture?.close();
       await tunnel.close();
       wssObservation.mockRestore();
     }

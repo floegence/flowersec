@@ -4057,10 +4057,22 @@ describe("original v4 reliable Session assembly", () => {
                 let gcEntered!: () => void, gcRelease!: () => void;
                 const gcStarted = new Promise<void>(resolve => { gcEntered = resolve; });
                 const gcTail = new Promise<void>(resolve => { gcRelease = resolve; });
+                let commitEntered!: () => void, commitRelease!: () => void, gcCommitted!: () => void;
+                const commitStarted = new Promise<void>(resolve => { commitEntered = resolve; });
+                const commitTail = new Promise<void>(resolve => { commitRelease = resolve; });
+                const committed = new Promise<void>(resolve => { gcCommitted = resolve; });
+                let gcDatabase: SQLiteWorkerDatabase | undefined;
                 const run = SQLiteWorkerDatabase.prototype.run;
                 const gc = vi.spyOn(SQLiteWorkerDatabase.prototype, "run").mockImplementation(async function (this: SQLiteWorkerDatabase, sql, ...args) {
-                  if (sql === "UPDATE executions SET payload=NULL WHERE key=?") { gcEntered(); await gcTail; }
+                  if (sql === "UPDATE executions SET payload=NULL WHERE key=?") { gcDatabase = this; gcEntered(); await gcTail; }
                   await run.call(this, sql, ...args);
+                });
+                const exec = SQLiteWorkerDatabase.prototype.exec;
+                const commit = vi.spyOn(SQLiteWorkerDatabase.prototype, "exec").mockImplementation(async function (this: SQLiteWorkerDatabase, sql) {
+                  if (this === gcDatabase && sql === "COMMIT") {
+                    commitEntered(); await commitTail;
+                    await exec.call(this, sql); gcCommitted();
+                  } else await exec.call(this, sql);
                 });
                 try {
                   const fresh = await service.prepareOperation(issuer, issueRequest, { deadlineAtMS: 40000n, admissionNotAfterMS: 7000n });
@@ -4070,7 +4082,14 @@ describe("original v4 reliable Session assembly", () => {
                   } finally { fresh.close(); }
                   await transportEvent(gcStarted);
                   expect(await c.queryOperation(issue.reference())).toEqual({ status: "unavailable" });
-                } finally { gcRelease(); gc.mockRestore(); }
+                  gcRelease();
+                  await transportEvent(commitStarted);
+                  // Releasing the write is not a transaction receipt. History
+                  // remains unavailable until this exact GC COMMIT exits.
+                  expect(await c.queryOperation(issue.reference())).toEqual({ status: "unavailable" });
+                  commitRelease();
+                  await transportEvent(committed);
+                } finally { gcRelease(); commitRelease(); gc.mockRestore(); commit.mockRestore(); }
                 await expect.poll(() => c!.queryOperation(issue.reference()), { timeout: 2000, interval: 5 })
                   .toMatchObject({ status: "ok", observation: { state: "completed", workActive: false, resultAvailable: true } });
                 expect(issues).toBe(2);
