@@ -463,7 +463,11 @@ final class TransportOriginalLiveServerTests: XCTestCase {
       fixture.source.close()
       let sourceCleanup = try await fixture.source.waitCleanup()
       XCTAssertTrue(sourceCleanup.complete)
-      XCTAssertThrowsError(try fixture.reopenSource().registerOriginal(original.serverMaterial)) { error in
+      // Acquire transfers ledger cleanup out of Source. Its completion does
+      // not prove the independent SQLite owner has released the original lock.
+      try await fixture.waitAdmissionLockRelease()
+      let reopened = try fixture.reopenSource()
+      XCTAssertThrowsError(try reopened.registerOriginal(original.serverMaterial)) { error in
         XCTAssertEqual(error as? V4PoolFailure, .conflict)
       }
       XCTAssertEqual(try v4CommittedRowCount(path: fixture.admissionPath, table: "admissions"), 1,
@@ -1270,6 +1274,20 @@ private final class V4OriginalServerFixture: @unchecked Sendable {
         throw error
       }
     }
+  }
+
+  func waitAdmissionLockRelease() async throws {
+    let lock = Darwin.open(admissionPath + ".lock", O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+    guard lock >= 0 else { throw V4PoolFailure.storage }
+    defer { Darwin.close(lock) }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while flock(lock, LOCK_EX | LOCK_NB) != 0 {
+      let failure = errno
+      guard failure == EWOULDBLOCK || failure == EAGAIN else { throw V4PoolFailure.storage }
+      guard ContinuousClock.now < deadline else { throw ServiceFailure.deadlineExceeded }
+      try await Task.sleep(for: .milliseconds(1))
+    }
+    guard flock(lock, LOCK_UN) == 0 else { throw V4PoolFailure.storage }
   }
 
   func reopenSource() throws -> TransportLiveServerSource {
