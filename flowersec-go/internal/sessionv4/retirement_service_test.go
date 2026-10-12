@@ -335,8 +335,21 @@ func TestSessionRuntimeAutomaticallyRetiresRejectedOpen(t *testing.T) {
 	local, peer := rejectTestOpen(t, client, server)
 	// Preserve the original writer identities while joining the test's two
 	// real streams after the already completed OPEN outcome exchange.
-	client.maintenance.writer = sw
-	server.maintenance.writer = cw
+	// Deliver both records, but retain their provider callbacks until the
+	// test observes stable proofs and reports the rejected carriers closed.
+	publicationDone := make(chan struct{})
+	releasePublication := sync.OnceFunc(func() { close(publicationDone) })
+	defer releasePublication()
+	client.maintenance.writer = idleWriterFunc(func(b []byte) (int, error) {
+		n, err := sw.Write(b)
+		<-publicationDone
+		return n, err
+	})
+	server.maintenance.writer = idleWriterFunc(func(b []byte) (int, error) {
+		n, err := cw.Write(b)
+		<-publicationDone
+		return n, err
+	})
 	c, s := cf.startOwner(t), sf.startOwner(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -376,8 +389,26 @@ func TestSessionRuntimeAutomaticallyRetiresRejectedOpen(t *testing.T) {
 	if err := server.admission.CarrierClosed(peer); err != nil {
 		t.Fatal(err)
 	}
-	if client.admission.Usage().PositiveProofs != 0 || server.admission.Usage().RejectionProofs != 0 {
-		t.Fatal("original cleanup did not release retired proofs")
+	if client.admission.Usage().PositiveProofs != 1 || server.admission.Usage().RejectionProofs != 1 {
+		t.Fatal("carrier cleanup erased live retirement publication references")
+	}
+	releasePublication()
+	// A received ACK does not join its sender's publication tail. Keep the
+	// runtimes live until both original tails return and collect their proofs.
+	for {
+		cu, su := client.admission.Usage(), server.admission.Usage()
+		if cu.PositiveProofs == 0 && su.RejectionProofs == 0 {
+			break
+		}
+		select {
+		case err := <-cd:
+			t.Fatal("client stopped before retirement cleanup", err)
+		case err := <-sd:
+			t.Fatal("server stopped before retirement cleanup", err)
+		case <-timer.C:
+			t.Fatal("original cleanup did not release retired proofs", cu, su)
+		case <-tick.C:
+		}
 	}
 	cancel()
 	waitRuntime(t, cd)
