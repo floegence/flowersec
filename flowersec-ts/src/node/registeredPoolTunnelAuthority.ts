@@ -92,10 +92,12 @@ export class RegisteredPoolTunnelAuthority {
     } catch (error) { issuer?.close(); for (const bytes of Object.values(material ?? {})) if (bytes instanceof Uint8Array) bytes.fill(0); this.#dependency.release(); throw error; }
   }
   #check(): void { requireCredential(!this.#closed, "credential_closed"); this.#dependency.check(); }
-  /** The physical listener and fixed server transfer backing exist before
-   * entering the original Grant issuance transaction. */
+  /** The physical listener and fixed server transfer backing normally exist
+   * before the original Grant issuance transaction. Deferred callers may
+   * issue first, after their route activation hook, then start this one-shot
+   * physical preparation explicitly. */
   async prepare(token: symbol): Promise<void> {
-    this.#check(); requireCredential(token === capability && !this.#started); this.#started = true; this.#busy = true;
+    this.#check(); requireCredential(token === capability && !this.#started && !this.#busy); this.#started = true; this.#busy = true;
     let work: CredentialWork | undefined, reference: ResourceReference | undefined;
     try {
       reference = this.#runtime.reserveConnectionWork("registered_pool_server_route", credentialWorkCharge(131072, this.#runtime.resources.runtimeBytes));

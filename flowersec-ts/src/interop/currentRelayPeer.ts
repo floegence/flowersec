@@ -68,7 +68,8 @@ export interface CurrentRelayPeerOptions {
    * physical preparation. This hook receives registration, never a Grant. */
   readonly onBeforeServerPrepare?: (registration: string) => Promise<void>;
   /** Keep Grant issuance ahead of B's physical preparation for deployments
-   * whose route is intentionally activated between those two phases. */
+   * whose route is intentionally activated between those two phases. When
+   * enabled, `onBeforePoolPreparation` is required to activate that route. */
   readonly deferPoolPreparation?: boolean;
   readonly onBeforePoolPreparation?: (activateRoute: () => void) => void | Promise<void>;
   readonly prepareServer?: (installation: Readonly<{ environment: TransportEnvironment; parentWinnerStore: SQLiteAdmissionStore; material: GrantIssuanceInput; policy: V4CredentialPolicy }>) => Promise<RegisteredPoolTunnelAuthorityOptions["server"]>;
@@ -83,6 +84,7 @@ export async function createCurrentRelayPeer(deployment: CurrentRelayPeerDeploym
 }
 async function installCurrentRelayPeer(deployment: CurrentRelayPeerDeployment, options: CurrentRelayPeerOptions, owned: Uint8Array[]) {
   if (deployment.wire_revision !== 4 || !Array.isArray(deployment.signing) || deployment.signing.length !== 2) throw new Error("invalid current relay installation");
+  if (options.deferPoolPreparation === true && typeof options.onBeforePoolPreparation !== "function") throw new Error("deferred pool preparation requires route activation hook");
   const registration = readCurrentPeerMaterial(deployment.registration_json);
   if (registration.role !== 0 || registration.tunnels.length !== 0) throw new Error("current relay requires its trusted original parent registration");
   const acquire = (value: string, maximum: number, exact?: number): Uint8Array => { const bytes = peerBytes(value, maximum, exact); owned.push(bytes); return bytes; };
@@ -191,7 +193,7 @@ async function installCurrentRelayPeer(deployment: CurrentRelayPeerDeployment, o
       return Object.freeze({ environment, runtime, endpointURL, start, endpointAArtifactJSON: JSON.stringify(material(0)), endpointBArtifactJSON: JSON.stringify(material(1)), close });
     }
     if (options.liveControl !== undefined) throw new Error("pool registration cannot use live control");
-    let grants: Readonly<{ clientGrant: Uint8Array; serverGrant: Uint8Array }>;
+    let grants: Readonly<{ clientGrant: Uint8Array; serverGrant: Uint8Array }>, grantsOwned = false;
     if (options.serverControl !== undefined) {
       if (options.prepareServer !== undefined) throw new Error("one_original_server_registration_required");
       controlAuthority = await createRegisteredTunnelControlAuthority({ ...options.serverControl, issuer: issuerOptions, material: original });
@@ -208,6 +210,10 @@ async function installCurrentRelayPeer(deployment: CurrentRelayPeerDeployment, o
       poolAuthority = await createRegisteredPoolTunnelAuthority({ issuer: issuerOptions, material: original, server: serverOptions, publicationMS: 10000n, serverAllow: options.serverAllow,
         ...(options.deferPoolPreparation === true ? { deferPreparation: true } : {}) });
       const issued = await poolAuthority.issue();
+      // The authority returns independent copies. Transfer every copy to the
+      // relay owner before any deferred hook or preparation can reject.
+      owned.push(issued.clientGrant, issued.serverGrant, issued.artifact, issued.activation, issued.clientCertificate, issued.serverCertificate, issued.relayCertificate);
+      grantsOwned = true;
       if (options.deferPoolPreparation === true) {
         await options.onBeforePoolPreparation?.(() => runtime!.activateRoute());
         await poolAuthority.startPreparation();
@@ -215,7 +221,7 @@ async function installCurrentRelayPeer(deployment: CurrentRelayPeerDeployment, o
       grants = { clientGrant: issued.clientGrant, serverGrant: issued.serverGrant };
       for (const bytes of [issued.artifact, issued.activation, issued.clientCertificate, issued.serverCertificate, issued.relayCertificate]) bytes.fill(0);
     }
-    owned.push(grants.clientGrant, grants.serverGrant);
+    if (!grantsOwned) owned.push(grants.clientGrant, grants.serverGrant);
     const relayNamespace = registration.namespaces.findIndex(entry => entry.authority === textField(peerField(decode(relayCertificate), "IdentityCertificate", "revocation_authority_id")));
     if (relayNamespace < 0) throw new Error("original relay namespace is missing");
     const originalTunnels = ([0, 1] as const).map(role => ({ candidate_index: candidateIndex, role,
