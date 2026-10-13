@@ -877,8 +877,8 @@ func TestProductDirectBrowserArtifactsAreFreshAndCancelable(t *testing.T) {
 
 func TestProductDirectWorkloadsUsePersistentEndpoint(t *testing.T) {
 	requireTransportIntegration(t)
-	// Its ephemeral endpoints and stores are private to this workload.
-	t.Parallel()
+	// Keep this timed workload separate from unrelated package workloads.
+	// Its connection and RPC workers retain their original eight-way concurrency.
 	for _, kind := range []carrier.Kind{carrier.KindWebSocket, carrier.KindRawQUIC, carrier.KindWebTransport} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
