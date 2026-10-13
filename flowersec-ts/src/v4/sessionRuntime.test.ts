@@ -3089,6 +3089,11 @@ describe("original v4 reliable Session assembly", () => {
   // each application operation keeps its independently configured deadline.
   it("connects observation NOTIFY preparation, complete submission, serial handlers and Close", async () => {
     const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
+    // Advance protocol time with actual submissions, independently of host
+    // encryption speed. This case checks ordering; expiry has dedicated cases.
+    let tick = 0n;
+    const clockMS = () => tick;
+    a.beforeNativeSubmit = b.beforeNativeSubmit = () => { tick += 1n; };
     const profile = "fs4-kkpsk0-x25519-chachapoly-ed25519-sha256-1";
     const request = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 40000 });
     const method = new V4MethodDefinition({
@@ -3103,7 +3108,7 @@ describe("original v4 reliable Session assembly", () => {
     const last = new Promise<void>(resolve => { delivered = resolve; }), values: string[] = [];
     // This connectivity path sends over 250 authenticated DATA frames through
     // the deliberately tiny 128-byte fixture; use its explicit write budget.
-    const client = endpoint("client", a, profile, "live_authority", 3000n, () => common, { writeDeadlineMS: 3000n });
+    const client = endpoint("client", a, profile, "live_authority", 3000n, () => common, { writeDeadlineMS: 3000n, clockMS });
     const server = endpoint("server", b, profile, "live_authority", 3000n, environment => {
       const resources = environment.resources;
       const refs = resources.root.reserveBatch([serviceContractCharge(1024n), serviceContractDecoderCharge(1024n)].map((charge, index) => ({
@@ -3126,7 +3131,7 @@ describe("original v4 reliable Session assembly", () => {
           }
         }]
       };
-    });
+    }, { clockMS });
     let c: V4Session | undefined, s: V4Session | undefined;
     try {
       const established = await Promise.all([client.establish(), server.establish()]); c = new V4Session(established[0]); s = new V4Session(established[1]);
@@ -3154,6 +3159,7 @@ describe("original v4 reliable Session assembly", () => {
       expect(finalOperation.start().status).toBe("admitted"); expect(await finalOperation.waitSubmission()).toMatchObject({ submission: "submitted" }); finalOperation.close();
       await expect.poll(() => values.length, { timeout: 1500 }).toBe(3); await last; expect(values).toEqual(["first" + "x".repeat(33000), "second", "last"]); expect(maximumRunning).toBe(1);
       expect((await c.probeLiveness()).elapsedMS).toBeGreaterThanOrEqual(0n);
+      expect(tick).toBeGreaterThan(250n);
     } finally { release(); source?.close(); await Promise.all([c?.close(), s?.close()]); contract?.release(); await Promise.all([client.close(), server.close()]); }
   }, 15000);
   it("fans out local observation subscriptions with isolated decoding, latest pending and real closure", async () => {

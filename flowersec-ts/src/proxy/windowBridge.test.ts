@@ -62,7 +62,8 @@ describe("proxy controller/app window bridge", () => {
         let length = 0;
         while (length < payload.length) { const chunk = await receiver.read(); expect(chunk).not.toBeNull(); expect(chunk!.length).toBeLessThanOrEqual(1024 * 1024); received.push(chunk!); length += chunk!.length; }
       })()]);
-      expect(Buffer.concat(received)).toEqual(Buffer.from(payload));
+      // Compare every byte without enumerating millions of Buffer properties.
+      expect(Buffer.concat(received).equals(Buffer.from(payload))).toBe(true);
     } finally { await sender.close(); await receiver.close(); }
   });
   it("removes the abort waiter after an ACK wins the race", async () => {
