@@ -431,7 +431,9 @@ describe("Node v4 original WSS pool connection", () => {
     };
   }
   it("commits the actual native fallback candidate acquired through the production connector", async () => {
-    const timeOrigin = BigInt(Date.now()) - 1000n, env = environment(timeOrigin, true), calls: string[] = [];
+    // Mocked native operations complete immediately. Keep their protocol clock
+    // independent of credential signing and SQLite worker startup time.
+    const timeOrigin = BigInt(Date.now()) - 1000n, env = environment(timeOrigin, true, 1, () => 0n), calls: string[] = [];
     const namespace = env.owner.namespace({ tenant: "tenant", authority: "authority", rootKeyID: fill(1, 16), rootPublicKey: ed25519.getPublicKey(fill(7)),
       maxTrustLifetimeMS: 120000n, bootstrapMS: 10000n, stateBytes: 8192, stateNodes: 16384 });
     const leg = (index: number, carrier: 0 | 2): Value => map({ 0: u(0), 1: bytes(fill(21 + index, 16)), 2: u(1), 3: u(0), 4: u(1), 5: u(carrier),
@@ -495,8 +497,9 @@ describe("Node v4 original WSS pool connection", () => {
       {
         // The prepared native peer ends Admission after HELLO. TxA must already
         // contain the actual selected route even though READY is never reached.
-        await expect(env.owner.connect(source, request)).rejects.toThrow();
-        expect(calls).toEqual(["raw-quic", "webtransport"]); expect(writes).toBeGreaterThan(0); expect(nativeClosed).toBe(true);
+        const failure: unknown = await env.owner.connect(source, request).catch(error => error);
+        expect(failure).toBeInstanceOf(Error);
+        expect(calls, String(failure)).toEqual(["raw-quic", "webtransport"]); expect(writes).toBeGreaterThan(0); expect(nativeClosed).toBe(true);
         expect(budgetCreated).toBe(1); expect(budgetClosed).toBe(1); expect(budgetLimits).toHaveLength(3);
         await sessionEnded;
         store?.close(); await store?.waitCleanup();
