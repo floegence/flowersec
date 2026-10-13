@@ -173,9 +173,7 @@ end
 begin
 toolchains = JSON.parse(File.read("toolchains.json"))
 node_version = toolchains.fetch("node").fetch("version")
-node_minimum = toolchains.fetch("node").fetch("minimum")
 rust_version = toolchains.fetch("rust").fetch("version")
-rust_msrv = toolchains.fetch("rust").fetch("msrv")
 xcode_directory = "/Applications/Xcode_#{toolchains.fetch("swift").fetch("xcode")}.app/Contents/Developer"
 
 dependabot = load_workflow(".github/dependabot.yml")
@@ -316,7 +314,7 @@ scorecard_jobs = require_hash(scorecard_workflow["jobs"], "the Scorecard workflo
 container_security_jobs = require_hash(container_security_workflow["jobs"], "the container security workflow jobs")
 require_exact_keys(release_jobs, ["prepare", "rust-publish", "native-prebuilt", "release", "npm-recovery"], "the unified release workflow jobs")
 require_exact_keys(rust_jobs, ["publish"], "the Rust recovery workflow jobs")
-require_exact_keys(ci_jobs, ["repository", "precommit", "node-minimum", "rust-msrv", "rust-stable", "rust-lint", "rust-windows", "dependency-review"], "the hosted CI workflow jobs")
+require_exact_keys(ci_jobs, ["repository", "dependency-review"], "the hosted CI workflow jobs")
 require_exact_keys(codeql_jobs, ["plan", "analyze", "analyze-swift"], "the CodeQL workflow jobs")
 require_exact_keys(scorecard_jobs, ["analysis"], "the Scorecard workflow jobs")
 require_exact_keys(container_security_jobs, ["trivy"], "the container security workflow jobs")
@@ -328,12 +326,6 @@ native_prebuilt_job = require_job(release_workflow, "native-prebuilt", "the unif
 npm_recovery_job = require_job(release_workflow, "npm-recovery", "the unified release workflow")
 rust_publish_job = require_job(rust_workflow, "publish", "the Rust recovery workflow")
 repository_job = require_job(ci_workflow, "repository", "the hosted CI workflow")
-precommit_job = require_job(ci_workflow, "precommit", "the hosted CI workflow")
-node_minimum_job = require_job(ci_workflow, "node-minimum", "the hosted CI workflow")
-rust_stable_job = require_job(ci_workflow, "rust-stable", "the hosted CI workflow")
-rust_lint_job = require_job(ci_workflow, "rust-lint", "the hosted CI workflow")
-rust_windows_job = require_job(ci_workflow, "rust-windows", "the hosted CI workflow")
-rust_msrv_job = require_job(ci_workflow, "rust-msrv", "the hosted CI workflow")
 dependency_review_job = require_job(ci_workflow, "dependency-review", "the hosted CI workflow")
 codeql_job = require_job(codeql_workflow, "analyze", "the CodeQL workflow")
 codeql_swift_job = require_job(codeql_workflow, "analyze-swift", "the CodeQL workflow")
@@ -347,62 +339,9 @@ require_exact_keys(rust_reuse_job, ["needs", "if", "permissions", "uses", "with"
 require_exact_keys(native_prebuilt_job, ["needs", "if", "strategy", "runs-on", "timeout-minutes", "permissions", "steps"], "the unified release workflow native-prebuilt job")
 require_exact_keys(npm_recovery_job, ["needs", "if", "runs-on", "timeout-minutes", "permissions", "steps"], "the unified release workflow npm recovery job")
 require_exact_keys(rust_publish_job, ["runs-on", "timeout-minutes", "permissions", "steps"], "the Rust recovery workflow publish job")
-require_exact_keys(repository_job, ["runs-on", "steps"], "the hosted CI repository job")
-require_exact_keys(precommit_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI precommit job")
-require_exact_keys(node_minimum_job, ["name", "runs-on", "timeout-minutes", "steps"], "the hosted CI Node minimum job")
-require_exact_keys(rust_stable_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust stable job")
-require_exact_keys(rust_lint_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust lint job")
-require_exact_keys(rust_windows_job, ["name", "runs-on", "timeout-minutes", "strategy", "env", "steps"], "the hosted CI Rust Windows job")
-require_exact_value(rust_windows_job["strategy"], {
-  "fail-fast" => false,
-  "matrix" => { "suite" => ["runtime", "contracts", "public-api"] },
-}, "the complete bounded Windows test roles")
-require_exact_value(rust_stable_job["env"], {
-  "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
-  "CARGO_PROFILE_DEV_DEBUG" => "0",
-  "CARGO_PROFILE_TEST_DEBUG" => "0",
-  "RUST_TEST_THREADS" => "2",
-}, "the hosted CI Rust stable build profile")
-require_exact_value(rust_lint_job["env"], {
-  "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
-  "CARGO_PROFILE_DEV_DEBUG" => "0",
-  "CARGO_PROFILE_TEST_DEBUG" => "0",
-}, "the hosted CI Rust lint build profile")
-require_exact_value(rust_windows_job["env"], {
-  "CARGO_TARGET_DIR" => "${{ github.workspace }}/.flowersec/rust-ci-target",
-  "CARGO_PROFILE_DEV_DEBUG" => "0",
-  "CARGO_PROFILE_TEST_DEBUG" => "0",
-  "RUST_TEST_THREADS" => "2",
-}, "the hosted CI Rust Windows build profile")
-require_exact_keys(rust_msrv_job, ["name", "runs-on", "timeout-minutes", "env", "steps"], "the hosted CI Rust MSRV job")
-require_exact_value(rust_msrv_job["env"], { "RUSTUP_TOOLCHAIN" => rust_msrv }, "the hosted CI Rust MSRV selection")
+require_exact_keys(repository_job, ["runs-on", "timeout-minutes", "steps"], "the hosted CI repository job")
+require_exact_value(repository_job["timeout-minutes"], 5, "the hosted CI repository timeout")
 require_exact_keys(dependency_review_job, ["name", "if", "runs-on", "timeout-minutes", "steps"], "the hosted CI dependency review job")
-require_exact_value(precommit_job["name"], "Precommit quality gate", "the hosted CI precommit job name")
-require_exact_value(precommit_job["runs-on"], "macos-26", "the hosted CI precommit runner")
-require_exact_value(precommit_job["timeout-minutes"], 60, "the hosted CI precommit timeout")
-require_exact_value(precommit_job["env"], {
-  "DEVELOPER_DIR" => xcode_directory,
-  "GOMAXPROCS" => "2",
-  "CARGO_BUILD_JOBS" => "2",
-  "RUST_TEST_THREADS" => "2",
-  "CARGO_PROFILE_DEV_DEBUG" => "0",
-  "CARGO_PROFILE_TEST_DEBUG" => "0",
-}, "the hosted CI precommit runtime and build resources")
-require_exact_value(node_minimum_job["name"], "Node #{node_minimum.split('.').first} minimum compatibility", "the hosted CI Node minimum job name")
-require_exact_value(node_minimum_job["runs-on"], "ubuntu-latest", "the hosted CI Node minimum runner")
-require_exact_value(node_minimum_job["timeout-minutes"], 10, "the hosted CI Node minimum timeout")
-require_exact_value(rust_stable_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} stable", "the hosted CI Rust stable job name")
-require_exact_value(rust_stable_job["runs-on"], "ubuntu-latest", "the hosted CI Rust stable runner")
-require_exact_value(rust_stable_job["timeout-minutes"], 30, "the hosted CI Rust stable timeout")
-require_exact_value(rust_lint_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} lint", "the hosted CI Rust lint job name")
-require_exact_value(rust_lint_job["runs-on"], "ubuntu-latest", "the hosted CI Rust lint runner")
-require_exact_value(rust_lint_job["timeout-minutes"], 30, "the hosted CI Rust lint timeout")
-require_exact_value(rust_windows_job["name"], "Rust #{rust_version.split('.').first(2).join('.')} Windows (${{ matrix.suite }})", "the hosted CI Rust Windows job name")
-require_exact_value(rust_windows_job["runs-on"], "windows-latest", "the hosted CI Rust Windows runner")
-require_exact_value(rust_windows_job["timeout-minutes"], 30, "the hosted CI Rust Windows timeout")
-require_exact_value(rust_msrv_job["name"], "Rust #{rust_msrv} MSRV", "the hosted CI Rust MSRV job name")
-require_exact_value(rust_msrv_job["runs-on"], "ubuntu-latest", "the hosted CI Rust MSRV runner")
-require_exact_value(rust_msrv_job["timeout-minutes"], 30, "the hosted CI Rust MSRV timeout")
 require_exact_value(dependency_review_job["name"], "Dependency review", "the hosted CI dependency review job name")
 require_exact_value(dependency_review_job["runs-on"], "ubuntu-latest", "the hosted CI dependency review runner")
 require_exact_value(dependency_review_job["timeout-minutes"], 5, "the hosted CI dependency review timeout")
@@ -514,12 +453,6 @@ require_exact_value(npm_recovery_job["permissions"], {
   [prepare_job, "the unified release workflow prepare job"],
   [rust_publish_job, "the Rust recovery workflow publish job"],
   [repository_job, "the hosted CI repository job"],
-  [precommit_job, "the hosted CI precommit job"],
-  [node_minimum_job, "the hosted CI Node minimum job"],
-  [rust_stable_job, "the hosted CI Rust stable job"],
-  [rust_lint_job, "the hosted CI Rust lint job"],
-  [rust_windows_job, "the hosted CI Rust Windows job"],
-  [rust_msrv_job, "the hosted CI Rust MSRV job"],
   [codeql_plan_job, "the CodeQL plan job"],
   [scorecard_job, "the Scorecard analysis job"],
   [container_security_job, "the container security job"],
@@ -543,12 +476,6 @@ rust_steps = require_steps(rust_publish_job, "the Rust recovery workflow publish
 native_prebuilt_steps = require_steps(native_prebuilt_job, "the unified release workflow native-prebuilt job")
 npm_recovery_steps = require_steps(npm_recovery_job, "the unified release workflow npm recovery job")
 ci_steps = require_steps(repository_job, "the hosted CI repository job")
-precommit_steps = require_steps(precommit_job, "the hosted CI precommit job")
-node_minimum_steps = require_steps(node_minimum_job, "the hosted CI Node minimum job")
-rust_stable_steps = require_steps(rust_stable_job, "the hosted CI Rust stable job")
-rust_lint_steps = require_steps(rust_lint_job, "the hosted CI Rust lint job")
-rust_windows_steps = require_steps(rust_windows_job, "the hosted CI Rust Windows job")
-rust_msrv_steps = require_steps(rust_msrv_job, "the hosted CI Rust MSRV job")
 dependency_review_steps = require_steps(dependency_review_job, "the hosted CI dependency review job")
 codeql_steps = require_steps(codeql_job, "the CodeQL analyze job")
 codeql_swift_steps = require_steps(codeql_swift_job, "the CodeQL Swift analyze job")
@@ -602,137 +529,9 @@ validate_step_contracts(ci_steps, [
     "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
     "with" => { "node-version" => node_version },
   } },
+  { name: "Check toolchain declarations", keys: ["name", "run"], values: { "run" => "node scripts/check-toolchain-policy.mjs\nnode scripts/check-go-toolchain-policy.mjs\n" } },
   { name: "Check release workflow policy", keys: ["name", "run"], run_sha256: "ca5a81f1c6229ace59783918c84158923cedda3a99d4135a5e95fd812242a47d" },
 ], "the hosted CI repository job")
-validate_step_contracts(precommit_steps, [
-  { name: nil, keys: ["uses", "with"], values: checkout },
-  { name: "Setup Go", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
-    "with" => {
-      "go-version-file" => "flowersec-go/go.mod",
-      "cache" => true,
-      "cache-dependency-path" => "flowersec-go/go.sum\ntools/releasenotes/go.sum\ntools/stabilitycheck/go.sum\n",
-    },
-  } },
-  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-    "with" => { "node-version" => node_version, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
-  } },
-  { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
-    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => rust_version, "components" => "rustfmt,clippy" },
-  } },
-  { name: "Validate runtime toolchains", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime go node rust swift" } },
-  { name: "Build native addon before concurrent test lanes", keys: ["name", "run"], values: { "run" => "cargo build --manifest-path flowersec-node-native/Cargo.toml --locked" } },
-  { name: "Run precommit quality gate", keys: ["name", "run"], values: { "run" => "make precommit" } },
-], "the hosted CI precommit job")
-validate_step_contracts(node_minimum_steps, [
-  { name: nil, keys: ["uses", "with"], values: checkout },
-  { name: "Setup minimum Node", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-    "with" => { "node-version" => node_minimum, "cache" => "npm", "cache-dependency-path" => "flowersec-ts/package-lock.json" },
-  } },
-  { name: "Validate minimum runtime", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node-minimum" } },
-  { name: "Setup Go for native interoperability tests", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
-    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache-dependency-path" => "flowersec-go/go.sum" },
-  } },
-  { name: "Setup Rust for native interoperability tests", keys: ["name", "uses", "with"], values: {
-    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => rust_version },
-  } },
-  { name: "Build native addon before compatibility tests", keys: ["name", "run"], values: { "run" => "cargo build --manifest-path flowersec-node-native/Cargo.toml --locked" } },
-  { name: "Run TypeScript language lane", keys: ["name", "run"], values: { "run" => "make ts-ci ts-build ts-test-short" } },
-], "the hosted CI Node minimum job")
-validate_step_contracts(rust_msrv_steps, [
-  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
-  { name: "Setup Node", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
-    "with" => { "node-version" => node_version },
-  } },
-  { name: "Setup Rust MSRV", keys: ["name", "uses", "with"], values: {
-    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => rust_msrv },
-  } },
-  { name: "Validate MSRV runtime", keys: ["name", "run"], values: { "run" => "node scripts/toolchains.mjs --check-runtime node rust-msrv" } },
-  { name: "Check supported Rust crates at MSRV", keys: ["name", "run"], values: {
-    "run" => ["flowersec-rust", "flowersec-native-transport", "flowersec-node-native", "examples/rust"].map { |crate|
-      "rustup run #{rust_msrv} cargo check --manifest-path #{crate}/Cargo.toml --locked --all-targets --all-features\n"
-    }.join,
-  } },
-], "the hosted CI Rust MSRV job")
-validate_step_contracts(rust_stable_steps, [
-  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
-  { name: "Setup Go for protocol interoperability tests", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
-    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache-dependency-path" => "flowersec-go/go.sum" },
-  } },
-  { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
-    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => rust_version, "components" => "rustfmt,clippy" },
-  } },
-  { name: "Test Rust SDK", keys: ["name", "run"], values: {
-    "run" => "cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\n",
-  } },
-  { name: "Test shared native transport", keys: ["name", "run"], values: {
-    "run" => "cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features",
-  } },
-], "the hosted CI Rust stable job")
-validate_step_contracts(rust_lint_steps, [
-  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
-  { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
-    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => rust_version, "components" => "clippy" },
-  } },
-  { name: "Lint Rust SDK", keys: ["name", "run"], values: {
-    "run" => "cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
-  } },
-], "the hosted CI Rust lint job")
-windows_test_roles = <<~'POWERSHELL'
-  switch ($env:FLOWERSEC_WINDOWS_SUITE) {
-    "runtime" {
-      cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --lib --examples
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --doc
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    }
-    "contracts" {
-      $metadata = cargo metadata --manifest-path flowersec-rust/Cargo.toml --locked --no-deps --format-version 1
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      $packages = @(($metadata | ConvertFrom-Json).packages | Where-Object { $_.name -eq "flowersec" })
-      if ($packages.Count -ne 1) { throw "Expected exactly one Flowersec SDK package" }
-      $tests = @($packages[0].targets | Where-Object { $_.kind -contains "test" })
-      $api = @($tests | Where-Object { $_.name -eq "public_api_design" })
-      $contracts = @($tests | Where-Object { $_.name -ne "public_api_design" } | Sort-Object name)
-      if ($api.Count -ne 1 -or $contracts.Count -eq 0) { throw "Incomplete Windows integration test partition" }
-      $cargoArguments = @("test", "--manifest-path", "flowersec-rust/Cargo.toml", "--locked", "--all-features")
-      foreach ($target in $contracts) { $cargoArguments += @("--test", $target.name) }
-      cargo @cargoArguments
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    }
-    "public-api" {
-      cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --test public_api_design
-      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    }
-    default { throw "Unknown Windows test role" }
-  }
-POWERSHELL
-validate_step_contracts(rust_windows_steps, [
-  { name: nil, keys: ["uses"], values: { "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" } },
-  { name: "Setup Go for protocol interoperability tests", keys: ["name", "uses", "with"], values: {
-    "uses" => "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
-    "with" => { "go-version-file" => "flowersec-go/go.mod", "cache-dependency-path" => "flowersec-go/go.sum" },
-  } },
-  { name: "Setup Rust", keys: ["name", "uses", "with"], values: {
-    "uses" => "dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4",
-    "with" => { "toolchain" => rust_version },
-  } },
-  { name: "Run complete Windows test role", keys: ["name", "shell", "env", "run"], values: {
-    "shell" => "pwsh", "env" => { "FLOWERSEC_WINDOWS_SUITE" => "${{ matrix.suite }}" }, "run" => windows_test_roles,
-  } },
-], "the hosted CI Rust Windows job")
 validate_step_contracts(dependency_review_steps, [
   { name: nil, keys: ["uses", "with"], values: {
     "uses" => "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",

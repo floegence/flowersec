@@ -83,6 +83,8 @@ test("protected recipes and definitions cannot be replaced", () => {
     canonical.replace("browser-smoke:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-smoke", "browser-smoke:\n\t@true"),
     canonical.replace("coverage-race:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite coverage-race", "coverage-race:\n\t@true"),
     canonical.replace("browser-compat:\n\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite browser-compat", "browser-compat:\n\t@true"),
+    canonical.replace("\t$(MAKE) node-minimum-check", "\t@true"),
+    canonical.replace("\t$(MAKE) rust-msrv-check rust-test", "\t@true"),
     canonical.replace("\t$(MAKE) precommit-source", "\t$(MAKE) check"),
     canonical.replace("final-race-check:\n\t$(MAKE) go-test-race", "final-race-check:\n\t@true"),
     `${canonical}\nsecurity-dependency-check:\n\t@true\n`,

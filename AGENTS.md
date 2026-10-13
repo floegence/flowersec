@@ -108,7 +108,8 @@
   with it; see `docs/TOOLCHAINS.md`. Minimum-supported and compatibility
   toolchains are explicit separate roles. Do not bypass version guards, use
   floating compiler selectors, or raise SDK minimums merely to align build tools.
-- Feature commits run the fast `make precommit` gate. `scripts/push-main.sh` runs the bounded local `make test` acceptance suite once and does not repeat precommit.
+- Feature commits run the local `make precommit` gate. `scripts/push-main.sh` runs `make prepush`: Node minimum compatibility, Rust MSRV and complete SDK/native tests, followed by the bounded `make test` acceptance suite once. It does not repeat precommit.
+- GitHub push/PR CI runs only lightweight repository, workflow, toolchain-declaration and dependency checks. Compilers, native builds and SDK test suites belong to local gates. Run Rust native tests on the target operating system when changing platform-specific code.
 - `make check`, nightly, diagnostic, and performance targets are explicit engineering workflows outside the main push path. Release runs no tests.
 - Swift CodeQL runs on the daily/manual path only and never gates push or release.
 

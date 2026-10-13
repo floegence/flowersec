@@ -26,7 +26,7 @@ const protectedVariables = new Set([
 ]);
 
 const protectedTargets = [
-  "test", "test-resume", "coverage-race", "browser-smoke", "browser-compat", "precommit", "precommit-source", "precommit-ts",
+  "prepush", "node-minimum-check", "test", "test-resume", "coverage-race", "browser-smoke", "browser-compat", "precommit", "precommit-source", "precommit-ts",
   "diagnostic", "performance", "security-makefile-check", "security-dependency-check",
   "security-package-check", "release-policy-check", "release-version-check", "release-test",
   "release-check", "check", "final-network-preflight", "final-offline-contracts",
@@ -91,6 +91,8 @@ function validateSource(source) {
 function verifyGraph(source) {
   const runtime = "\tnode scripts/toolchains.mjs --check-runtime go node rust swift";
   if (!/^export GOTOOLCHAIN := local$/m.test(source)) throw new Error("Make must disable automatic Go toolchain switching");
+  exactRecipe(source, "prepush", [runtime, "\t$(MAKE) node-minimum-check", "\t$(MAKE) rust-msrv-check rust-test", "\t$(MAKE) test"]);
+  exactRecipe(source, "node-minimum-check", ["\t./scripts/test-node-minimum.sh"]);
   exactRecipe(source, "test", [runtime, "\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance"]);
   exactRecipe(source, "test-resume", [runtime, "\tgo -C flowersec-go run ./internal/cmd/flowersec-test resume --suite acceptance"]);
   exactRecipe(source, "coverage-race", ["\tgo -C flowersec-go run ./internal/cmd/flowersec-test run --suite coverage-race"]);

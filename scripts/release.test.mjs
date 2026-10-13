@@ -17,6 +17,7 @@ const mainGateGraphFiles = [
   ".githooks/pre-push",
   "scripts/check-security-makefile.mjs",
   "scripts/push-main.sh",
+  "scripts/test-node-minimum.sh",
   "scripts/release.sh",
   "scripts/run-final-lanes.mjs",
   "scripts/run-final-stage.mjs",
@@ -47,6 +48,7 @@ const releasePolicyFixtureFiles = [
   "scripts/run-precommit-wave.test.mjs",
   "scripts/release.sh",
   "scripts/push-main.sh",
+  "scripts/test-node-minimum.sh",
   "scripts/release.test.mjs",
   "scripts/verify-release-main.sh",
 ];
@@ -2370,7 +2372,7 @@ test("release gates stay wired into local checks and publication workflows", () 
   }
   assert.match(policyScript, /check-release-version-consistency\.mjs/);
   assert.match(ciWorkflow, /^\s+run: scripts\/check-release-workflow-policy\.sh$/m);
-  assert.match(ciWorkflow, /^\s+run: make precommit$/m);
+  assert.doesNotMatch(ciWorkflow, /make (?:precommit|prepush|test)|cargo (?:test|build|check|clippy)/);
   assert.match(ciWorkflow, /actions\/dependency-review-action@[0-9a-f]{40} # v5\.0\.0/);
 });
 
@@ -2390,7 +2392,7 @@ test("default and final Go gates use the maintained source and test runner", () 
   );
 });
 
-test("release stays publication-only while main push owns fast acceptance", () => {
+test("release stays publication-only while main push owns local validation", () => {
   const makefile = fs.readFileSync(path.join(sourceRoot, "Makefile"), "utf8");
   const releaseRecipe = makefile.match(/^release-check:\n((?:\t.*\n)+)/m)?.[1] ?? "";
   const releaseScript = fs.readFileSync(path.join(sourceRoot, "scripts/release.sh"), "utf8");
@@ -2410,9 +2412,9 @@ test("release stays publication-only while main push owns fast acceptance", () =
   assert.doesNotMatch(prePush, /make(?: -C \"\$repo_root\")? check/);
   assert.match(prePush, /use \.\/scripts\/push-main\.sh/);
 
-  const gate = pushScript.indexOf("make test");
+  const gate = pushScript.indexOf("make prepush");
   const push = pushScript.indexOf("git push origin");
-  assert.ok(gate >= 0 && gate < push, "fast acceptance must precede push");
+  assert.ok(gate >= 0 && gate < push, "local validation must precede push");
   assert.doesNotMatch(pushScript, /make (?:precommit|check)/);
   assert.doesNotMatch(pushScript + releaseScript, /make performance|--suite performance|performance-report/);
   assert.doesNotMatch(pushScript, /evidence|receipt/);
@@ -2492,8 +2494,8 @@ test("CodeQL policy structurally separates scheduled Swift analysis", () => {
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
 });
 
-test("workflow version expectations follow the authoritative toolchain configuration", async (t) => {
-  for (const [language, field] of [["node", "version"], ["node", "minimum"], ["rust", "version"], ["rust", "msrv"], ["swift", "xcode"]]) {
+test("workflow toolchain versions follow the authoritative configuration", async (t) => {
+  for (const [language, field] of [["node", "version"], ["rust", "version"], ["swift", "xcode"]]) {
     await t.test(`${language}.${field}`, (t) => {
       const root = createReleasePolicyFixture(t);
       const original = toolchains[language][field];
@@ -2576,82 +2578,16 @@ test("Rust recovery rejects non-canonical versions before invoking git", (t) => 
   assert.equal(fs.existsSync(gitLog), false, "invalid versions must fail before git");
 });
 
-test("Windows test roles preserve the complete bounded test partition", { concurrency: releaseMutationConcurrency }, async (t) => {
-  const mutations = [
-    ...["runtime", "contracts", "public-api"].map(role => ({
-      name: `missing ${role} role`,
-      from: "        suite: [runtime, contracts, public-api]\n",
-      to: `        suite: [${["runtime", "contracts", "public-api"].filter(value => value !== role).join(", ")}]\n`,
-    })),
-    { name: "sibling roles canceled on failure", from: "      fail-fast: false\n", to: "      fail-fast: true\n" },
-    { name: "increased per-role timeout", from: "    timeout-minutes: 30\n", to: "    timeout-minutes: 60\n" },
-    { name: "independent tests lose their resource bound", from: '      RUST_TEST_THREADS: "2"\n', to: "" },
-    {
-      name: "matrix role bypassed through a fixed environment value",
-      from: "          FLOWERSEC_WINDOWS_SUITE: ${{ matrix.suite }}\n",
-      to: "          FLOWERSEC_WINDOWS_SUITE: runtime\n",
-    },
-    {
-      name: "matrix expression interpolated into shell source",
-      from: "          switch ($env:FLOWERSEC_WINDOWS_SUITE) {\n",
-      to: '          switch ("${{ matrix.suite }}") {\n',
-    },
-    {
-      name: "documentation combined with incompatible target flags",
-      from: "--all-features --doc\n",
-      to: "--all-features --lib --examples --doc\n",
-    },
-    {
-      name: "documentation omitted",
-      from: "              cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features --doc\n",
-      to: "",
-    },
-    {
-      name: "native transport omitted",
-      from: "              cargo test --manifest-path flowersec-native-transport/Cargo.toml --locked --all-features\n",
-      to: "",
-    },
-    {
-      name: "only first discovered protocol target executed",
-      from: "foreach ($target in $contracts)",
-      to: "foreach ($target in ($contracts | Select-Object -First 1))",
-    },
-    {
-      name: "empty integration partition accepted",
-      from: '              if ($api.Count -ne 1 -or $contracts.Count -eq 0) { throw "Incomplete Windows integration test partition" }\n',
-      to: "",
-    },
-    {
-      name: "public API assertions omitted",
-      from: "--all-features --test public_api_design\n",
-      to: "--all-features --test notification_api\n",
-    },
-    {
-      name: "unknown role accepted",
-      from: '            default { throw "Unknown Windows test role" }\n',
-      to: "            default { exit 0 }\n",
-    },
-  ];
-  await Promise.all([
-    t.test("current policy passes", () => {
-      const result = runReleasePolicy(createReleasePolicyFixture(t));
-      assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
-    }),
-    ...mutations.map(mutation => t.test(`rejects ${mutation.name}`, { concurrency: true }, () => {
-      const root = createReleasePolicyFixture(t);
-      const workflowPath = path.join(root, ".github/workflows/ci.yml");
-      const source = fs.readFileSync(workflowPath, "utf8");
-      const start = source.indexOf("  rust-windows:\n");
-      const end = source.indexOf("  dependency-review:\n", start);
-      assert.ok(start !== -1 && end !== -1, "Windows job boundary must exist");
-      const windows = source.slice(start, end);
-      assert.ok(windows.includes(mutation.from), `missing Windows policy marker for ${mutation.name}`);
-      fs.writeFileSync(workflowPath, `${source.slice(0, start)}${windows.replace(mutation.from, mutation.to)}${source.slice(end)}`);
+test("hosted CI rejects heavyweight testing and compilation", { concurrency: releaseMutationConcurrency }, async (t) => {
+  await Promise.all(["make precommit", "make prepush", "make test", "cargo test --locked", "cargo build --locked"].map(command =>
+    t.test(`rejects ${command}`, () => {
+      const root = createReleasePolicyFixture(t), file = path.join(root, ".github/workflows/ci.yml");
+      const source = fs.readFileSync(file, "utf8");
+      fs.writeFileSync(file, source.replace("run: scripts/check-release-workflow-policy.sh", `run: ${command}`));
       const result = runReleasePolicy(root);
       assert.notEqual(result.status, 0, `${result.stdout}${result.stderr}`);
-      assert.match(result.stderr, /reviewed value|step sequence/);
-    })),
-  ]);
+      assert.match(result.stderr, /hosted CI/);
+    })));
 });
 
 test("release policy rejects disconnected or commented-out gates", { concurrency: releaseMutationConcurrency }, async (t) => {
@@ -2677,85 +2613,6 @@ test("release policy rejects disconnected or commented-out gates", { concurrency
       file: "codeql.yml",
       from: "          go-version-file: flowersec-go/go.mod\n",
       to: "          go-version-file: tools/releasenotes/go.mod\n",
-    },
-    {
-      name: "MSRV silently uses the repository default Rust compiler",
-      file: "ci.yml",
-      from: `      RUSTUP_TOOLCHAIN: ${toolchains.rust.msrv}\n`,
-      to: `      RUSTUP_TOOLCHAIN: ${toolchains.rust.version}\n`,
-    },
-    {
-      name: "MSRV omits the Node native crate",
-      file: "ci.yml",
-      from: `          rustup run ${toolchains.rust.msrv} cargo check --manifest-path flowersec-node-native/Cargo.toml --locked --all-targets --all-features\n`,
-      to: "",
-    },
-    {
-      name: "Rust stable omits SDK tests",
-      file: "ci.yml",
-      from: "          cargo test --manifest-path flowersec-rust/Cargo.toml --locked --all-features\n",
-      to: "",
-    },
-    {
-      name: "Rust lint omits lint and type checking",
-      file: "ci.yml",
-      from: "          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
-      to: "",
-    },
-    {
-      name: "Rust lint weakens lint target coverage",
-      file: "ci.yml",
-      from: "          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --all-targets --all-features -- -D warnings\n",
-      to: "          cargo clippy --manifest-path flowersec-rust/Cargo.toml --locked --lib --all-features -- -D warnings\n",
-    },
-    {
-      name: "Rust lint serializes behind runtime tests",
-      file: "ci.yml",
-      from: "  rust-lint:\n",
-      to: "  rust-lint:\n    needs: rust-stable\n",
-      expectedError: /job fields must be exactly/,
-    },
-    {
-      name: "Rust lint increases its bounded timeout",
-      file: "ci.yml",
-      from: `  rust-lint:\n    name: Rust ${toolchains.rust.version.split(".").slice(0, 2).join(".")} lint\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n`,
-      to: `  rust-lint:\n    name: Rust ${toolchains.rust.version.split(".").slice(0, 2).join(".")} lint\n    runs-on: ubuntu-latest\n    timeout-minutes: 60\n`,
-    },
-    {
-      name: "Rust stable build directory escapes the job workspace",
-      file: "ci.yml",
-      from: "CARGO_TARGET_DIR: ${{ github.workspace }}/.flowersec/rust-ci-target",
-      to: "CARGO_TARGET_DIR: /tmp/shared-rust-target",
-    },
-    ...["GOMAXPROCS", "CARGO_BUILD_JOBS", "RUST_TEST_THREADS"].map(name => ({
-      name: `precommit removes its ${name} resource bound`,
-      file: "ci.yml",
-      from: `      ${name}: "2"\n`,
-      to: "",
-    })),
-    {
-      name: "Rust stable removes its independent test bound",
-      file: "ci.yml",
-      from: '      CARGO_PROFILE_TEST_DEBUG: "0"\n      RUST_TEST_THREADS: "2"\n',
-      to: '      CARGO_PROFILE_TEST_DEBUG: "0"\n',
-    },
-    {
-      name: "Rust Windows build directory escapes the job workspace",
-      file: "ci.yml",
-      from: "        suite: [runtime, contracts, public-api]\n    env:\n      CARGO_TARGET_DIR: ${{ github.workspace }}/.flowersec/rust-ci-target",
-      to: "        suite: [runtime, contracts, public-api]\n    env:\n      CARGO_TARGET_DIR: C:/shared-rust-target",
-    },
-    {
-      name: "Node minimum compatibility validates the primary runtime",
-      file: "ci.yml",
-      from: "        run: node scripts/toolchains.mjs --check-runtime node-minimum\n",
-      to: "        run: node scripts/toolchains.mjs --check-runtime node\n",
-    },
-    {
-      name: "Node minimum compatibility uses the primary runtime",
-      file: "ci.yml",
-      from: `          node-version: "${toolchains.node.minimum}"\n`,
-      to: `          node-version: "${toolchains.node.version}"\n`,
     },
     ...["ci.yml", "codeql.yml", "release.yml", "rust-release.yml"].map((file) => ({
       name: `Node primary runtime is downgraded to the minimum in ${file}`,
@@ -3712,13 +3569,13 @@ test("pre-push permits push-main and rejects direct main pushes without running 
   assert.equal(fs.existsSync(marker), false, "direct push rejection must not invoke make");
 });
 
-test("main push gates the exact SHA with fast acceptance before opening the remote transport", () => {
+test("main push gates the exact SHA locally before opening the remote transport", () => {
   const script = path.join(sourceRoot, "scripts/push-main.sh");
   assert.equal(fs.existsSync(script), true, "scripts/push-main.sh is missing");
   const source = fs.readFileSync(script, "utf8");
-  const gate = source.indexOf("make test");
+  const gate = source.indexOf("make prepush");
   const push = source.indexOf("git push origin");
-  assert.notEqual(gate, -1, "main push must run fast acceptance");
+  assert.notEqual(gate, -1, "main push must run local validation");
   assert.notEqual(push, -1, "main push must use normal git push");
   assert.ok(gate < push, "the gate must finish before git opens the push transport");
   assert.match(source, /FLOWERSEC_PUSH_MAIN_SHA="\$head" git push/);
@@ -3756,7 +3613,7 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
   );
   fs.writeFileSync(
     path.join(bin, "make"),
-    "#!/bin/sh\nprintf 'make %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"\n",
+    "#!/bin/sh\nprintf 'make %s\\n' \"$*\" >> \"$FLOWERSEC_TEST_COMMAND_LOG\"\nexit \"${FLOWERSEC_TEST_MAKE_EXIT:-0}\"\n",
     { mode: 0o755 },
   );
   const result = spawnSync("bash", [path.join(sourceRoot, "scripts/push-main.sh")], {
@@ -3770,10 +3627,18 @@ test("main push passes only the checked HEAD after the gate completes", (t) => {
   });
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
   const commands = fs.readFileSync(log, "utf8").trim().split("\n");
-  const gate = commands.indexOf("make test");
+  const gate = commands.indexOf("make prepush");
   const push = commands.findIndex((command) => command.startsWith("git push origin "));
   assert.ok(gate >= 0 && push > gate, commands.join("\n"));
-  assert.equal(commands.filter((command) => command === "make test").length, 1, commands.join("\n"));
+  assert.equal(commands.filter((command) => command === "make prepush").length, 1, commands.join("\n"));
+  fs.writeFileSync(log, "");
+  const failed = spawnSync("bash", [path.join(sourceRoot, "scripts/push-main.sh")], {
+    cwd: sourceRoot, encoding: "utf8",
+    env: isolatedEnvironment({ ...process.env, FLOWERSEC_TEST_COMMAND_LOG: log,
+      FLOWERSEC_TEST_MAKE_EXIT: "42", PATH: `${bin}${path.delimiter}${process.env.PATH}` }),
+  });
+  assert.equal(failed.status, 42, `${failed.stdout}${failed.stderr}`);
+  assert.doesNotMatch(fs.readFileSync(log, "utf8"), /git push/);
 });
 
 test("browser compatibility remains explicit and separate from Chromium smoke", () => {

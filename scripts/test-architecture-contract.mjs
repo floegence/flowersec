@@ -173,7 +173,7 @@ assert.deepEqual(selectedCapacityTests.sort(), currentCapacityTests.sort(),
   "capacity contract gate must execute every current capacity test without stale selectors");
 assert.doesNotMatch(makefile, /transport-v2|reference\/presets/u);
 const pushMain = read("scripts/push-main.sh");
-assert.equal((pushMain.match(/^make test$/gm) ?? []).length, 1);
+assert.equal((pushMain.match(/^make prepush$/gm) ?? []).length, 1);
 assert.doesNotMatch(pushMain, /^make (?:precommit|check)$/m);
 assert.doesNotMatch(read("scripts/release.sh"), /\bmake\b|flowersec-test|test-host-init/u);
 

@@ -1,4 +1,4 @@
-.PHONY: test test-resume coverage-race browser-smoke browser-compat precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check native-addon-test swift-package-check swift-security-check swift-source-guard swift-public-api-check swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-public-ca-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check transport-v4-binding-check transport-v4-vectors transport-v4-schema-check
+.PHONY: prepush node-minimum-check test test-resume coverage-race browser-smoke browser-compat precommit diagnostic performance go-test go-test-short go-test-race go-vet go-vulncheck ts-ci ts-ensure-deps ts-audit ts-package-cache-preflight ts-test ts-test-short ts-browser-ensure ts-browser-e2e ts-cover-check ts-lint ts-build ts-package-check native-addon-test swift-package-check swift-security-check swift-source-guard swift-public-api-check swift-build swift-test swift-cover-check swift-check swift-final-check rust-fmt-check rust-clippy rust-test rust-test-short rust-doc rust-msrv-check rust-fetch rust-package-check rust-publish-preflight rust-package-offline-check rust-audit rust-audit-offline rust-deny rust-cover-check rust-fuzz-build rust-fuzz-check rust-semver-check rust-check rust-release-check release-check release-policy-check release-version-check release-test security-makefile-check security-dependency-check security-package-check source-inventory readme-localization-check example-source-check example-check fmt fmt-check lint lint-check install-hooks precommit precommit-source precommit-go precommit-ts precommit-swift precommit-rust check final-network-preflight final-public-ca-preflight final-go-preflight final-ts-preflight final-swift-preflight final-rust-preflight final-offline-contracts final-package-validation final-integration-lanes final-post-validation final-go-check final-race-check final-ts-check final-swift-check final-rust-check stability-source-check stability-swift-check stability-rust-check stability-check flowersec-test-contract go-cover-check-short go-cover-check nightly-check transport-v4-binding-check transport-v4-vectors transport-v4-schema-check
 
 export GOTOOLCHAIN := local
 
@@ -195,6 +195,15 @@ SWIFT_SOURCE_GUARD_PATHS := flowersec-swift/Sources Package.swift README.md flow
 SWIFT_SOURCE_GUARD_PRUNE := .build .git .swiftpm dist node_modules
 SWIFT_SOURCE_GUARD_FILE_GLOBS := -name '*.go' -o -name '*.json' -o -name '*.md' -o -name '*.mjs' -o -name '*.swift' -o -name '*.ts' -o -name '*.tsx' -o -name '*.txt' -o -name '*.yaml' -o -name '*.yml'
 
+prepush:
+	node scripts/toolchains.mjs --check-runtime go node rust swift
+	$(MAKE) node-minimum-check
+	$(MAKE) rust-msrv-check rust-test
+	$(MAKE) test
+
+node-minimum-check:
+	./scripts/test-node-minimum.sh
+
 test:
 	node scripts/toolchains.mjs --check-runtime go node rust swift
 	go -C flowersec-go run ./internal/cmd/flowersec-test run --suite acceptance
@@ -375,6 +384,7 @@ rust-msrv-check:
 	cd flowersec-rust && rustup run 1.88.0 cargo check --locked --all-targets --all-features --target-dir "$(RUST_MSRV_TARGET_DIR)"
 	rustup run 1.88.0 cargo check --manifest-path flowersec-native-transport/Cargo.toml --locked --all-targets --all-features --target-dir "$(RUST_MSRV_TARGET_DIR)"
 	rustup run 1.88.0 cargo check --manifest-path flowersec-node-native/Cargo.toml --locked --all-targets --all-features --target-dir "$(RUST_MSRV_TARGET_DIR)"
+	rustup run 1.88.0 cargo check --manifest-path examples/rust/Cargo.toml --locked --all-targets --all-features --target-dir "$(RUST_MSRV_TARGET_DIR)"
 
 rust-fetch:
 	cd flowersec-rust && cargo fetch --locked
@@ -525,7 +535,7 @@ precommit-source:
 	node scripts/run-precommit-wave.mjs dependencies $(MAKE) ts-ensure-deps
 	node scripts/run-precommit-wave.mjs static $(MAKE) flowersec-test-contract security-makefile-check
 	node scripts/run-precommit-wave.mjs static $(MAKE) security-makefile-check security-dependency-check release-policy-check readme-localization-check stability-source-check example-source-check
-	# Native admission retains its short protocol windows on hosted runners.
+	# Native admission retains its short protocol windows.
 	# Run its cold-start integration before concurrent compiler/test processes.
 	$(MAKE) native-addon-test
 	# Run timed JavaScript protocol fixtures without concurrent native compilers.

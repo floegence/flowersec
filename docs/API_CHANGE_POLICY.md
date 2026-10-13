@@ -34,7 +34,9 @@ Changing a declaration alone cannot promote an unsupported deployment.
   documentation and capability declarations.
 
 A feature commit runs `make precommit`. The complete main tip is pushed with
-`scripts/push-main.sh`, which runs `make test` once. `make check`, browser
+`scripts/push-main.sh`, which runs local compatibility and complete Rust tests,
+then `make test` once through `make prepush`. GitHub CI runs lightweight static
+and dependency checks. `make check`, browser
 compatibility, nightly, privileged diagnostics and performance are separate
 engineering workflows. Release performs publication and registry readback and
 runs no tests.

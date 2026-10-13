@@ -54,7 +54,7 @@ export function verifyToolchainPolicy(root = repositoryRoot) {
 
   const make = read("Makefile");
   if (!/^export GOTOOLCHAIN := local$/m.test(make)) throw new Error("Makefile must disable automatic Go toolchain switching");
-  for (const target of ["test", "test-resume", "precommit", "precommit-source", "check"]) {
+  for (const target of ["prepush", "test", "test-resume", "precommit", "precommit-source", "check"]) {
     const recipe = new RegExp(`^${target}:[^\\n]*\\n((?:\\t.*\\n)*)`, "m").exec(make)?.[1];
     if (!recipe?.startsWith("\tnode scripts/toolchains.mjs --check-runtime go node rust swift\n")) {
       throw new Error(`${target} must validate actual toolchain versions before execution`);
@@ -65,8 +65,8 @@ export function verifyToolchainPolicy(root = repositoryRoot) {
   }
   const msrvRecipe = /^rust-msrv-check:\n((?:\t.*\n)*)/m.exec(make)?.[1] ?? "";
   const msrvCommands = [...msrvRecipe.matchAll(/rustup run (\S+) cargo check/g)];
-  if (msrvCommands.length !== 3 || msrvCommands.some((match) => match[1] !== config.rust.msrv)
-    || !msrvRecipe.includes("flowersec-native-transport/Cargo.toml") || !msrvRecipe.includes("flowersec-node-native/Cargo.toml")) {
+  if (msrvCommands.length !== 4 || msrvCommands.some((match) => match[1] !== config.rust.msrv)
+    || !msrvRecipe.includes("flowersec-native-transport/Cargo.toml") || !msrvRecipe.includes("flowersec-node-native/Cargo.toml") || !msrvRecipe.includes("examples/rust/Cargo.toml")) {
     throw new Error("rust-msrv-check must cover all published Rust crates with the declared minimum compiler");
   }
   // Only the dedicated minimum-version lane may pin an older compiler in Make.

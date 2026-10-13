@@ -46,9 +46,14 @@ real native connections: Firefox currently rejects the connection before
 admission, while WebKit currently lacks the outgoing DATAGRAM surface. Those
 explicit unsupported contracts do not substitute for Chromium smoke.
 
-`make precommit` is the fast feature-commit gate. `make test` is the bounded,
-single-host acceptance gate used by `scripts/push-main.sh`; neither command
-requires browsers, root, or an external host. `make check` remains an explicit
+`make precommit` is the local feature-commit gate. `scripts/push-main.sh` runs
+`make prepush`: Node minimum compatibility, Rust MSRV and complete SDK/native
+tests, then the bounded single-host `make test` acceptance suite once. These
+gates require neither browsers, root, nor an external host. GitHub push/PR CI
+checks repository syntax, workflow policy, toolchain declarations and dependency
+changes without compiling SDKs or running their test suites. Native Rust tests
+run on the developer's operating system; run `make rust-test` on Windows when
+changing Windows-specific behavior. `make check` remains an explicit
 complete engineering check, while nightly, diagnostic, and performance work
 stay outside the push path. Release publishes validated source and runs no tests.
 

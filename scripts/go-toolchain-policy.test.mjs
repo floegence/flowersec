@@ -97,12 +97,6 @@ test("each maintained toolchain source rejects a stale structured value", (t) =>
       error: /runtime Dockerfile Go builder tag must be 1\.27\.2-alpine/,
     },
     {
-      relative: ".github/workflows/ci.yml",
-      from: "go-version-file: flowersec-go/go.mod",
-      to: "go-version-file: tools/releasenotes/go.mod",
-      error: /ci\.yml setup-go version file must be flowersec-go\/go\.mod/,
-    },
-    {
       relative: ".github/workflows/release.yml",
       from: "go-version-file: flowersec-go/go.mod",
       to: "go-version-file: tools/releasenotes/go.mod",
