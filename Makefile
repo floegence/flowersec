@@ -528,7 +528,9 @@ precommit-source:
 	# Native admission retains its short protocol windows on hosted runners.
 	# Run its cold-start integration before concurrent compiler/test processes.
 	$(MAKE) native-addon-test
-	node scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-ts precommit-swift
+	# Run timed JavaScript protocol fixtures without concurrent native compilers.
+	$(MAKE) precommit-ts
+	node scripts/run-precommit-wave.mjs languages $(MAKE) precommit-go precommit-swift
 	# Keep cold Rust compilation off the limited CPUs used by timed runtime tests.
 	$(MAKE) precommit-rust
 

@@ -30,15 +30,18 @@ import (
 type WebSocketServerConfig struct {
 	AcceptedRouteCapacity uint16
 	// Tunnel bindings name the logical endpoint and actual local relay role.
-	Side                       protocolv4.Direction
-	Relay                      bool
-	Deployment                 protocolv4.RelayDeploymentBinding
-	Root                       *resourcev4.Root
-	Clock                      *timev4.Clock
-	Route                      []byte
-	Certificate                tls.Certificate
-	Roots                      *x509.CertPool
-	Handler                    http.Handler
+	Side        protocolv4.Direction
+	Relay       bool
+	Deployment  protocolv4.RelayDeploymentBinding
+	Root        *resourcev4.Root
+	Clock       *timev4.Clock
+	Route       []byte
+	Certificate tls.Certificate
+	Roots       *x509.CertPool
+	Handler     http.Handler
+	// CheckOrigin optionally applies current host policy in addition to signed route policy.
+	// It must be concurrency-safe, bounded, and must not retain the request.
+	CheckOrigin                func(*http.Request) bool
 	Connections                uint16
 	HeaderBytes                uint32
 	HeaderTimeout, IdleTimeout time.Duration
@@ -339,6 +342,9 @@ func (s *WebSocketServer) serveHTTP(writer http.ResponseWriter, request *http.Re
 }
 
 func (s *WebSocketServer) checkRequest(r *http.Request) error {
+	if r != nil && s.c.CheckOrigin != nil && !s.c.CheckOrigin(r) {
+		return resourcev4.ErrConfiguration
+	}
 	if r == nil || r.Method != http.MethodGet || r.ProtoMajor != 1 || r.ProtoMinor != 1 || r.TLS == nil || r.TLS.DidResume {
 		return websocket.ErrEndpoint
 	}

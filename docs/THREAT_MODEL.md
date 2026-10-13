@@ -71,3 +71,16 @@ adapters to satisfy the published contract.
 Current allocations and qualification boundaries are recorded in
 [TRANSPORT_V4_BINDING.md](TRANSPORT_V4_BINDING.md); public ownership is described
 in [API_CONTRACT.md](API_CONTRACT.md).
+
+## Enrollment and explicit egress
+
+Invitation exchange authenticates both endpoints with an out-of-band 128-bit
+secret and a fresh Noise transcript before delivering a bounded descriptor. Its
+provisional, hostname-matching TLS leaf is not ordinary connector trust.
+Issuance, expiry, authorization, consent and atomic consumption remain application
+responsibilities; see [the enrollment profile](INVITATION_EXCHANGE_V1.md).
+
+Explicit outbound routes supply bytes beneath the original target TLS policy.
+Proxy trust is independent of target trust. Route failure, cancellation, CA or pin
+failure never falls back to direct TCP or environment proxy settings. Application
+providers must honor cancellation and keep sibling channels independent.

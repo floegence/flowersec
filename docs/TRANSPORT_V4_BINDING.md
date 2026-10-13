@@ -7,7 +7,7 @@ consumers described below. The current Rust ledger implements all eleven local
 resource dimensions with separate SDK, provider and disk backing lifetimes.
 Full provider/deployment qualification remains unfinished.
 
-This repository is preparing the Flowersec 6.0.0 / wire v4 implementation.
+This repository implements Flowersec 6.x using wire v4.
 The normative architecture is maintained outside this repository and is bound
 by the immutable SHA below. This file intentionally does not reproduce that
 design.
@@ -2017,5 +2017,5 @@ test IDs record implementation obligations; they are not passing test evidence.
 replacement and the current release coordinates. Its generator scans tracked
 and unignored source files; the inventory is checked with the architecture
 contract. `node scripts/transport-v4-inventory.mjs --require-v4` additionally
-rejects remaining source candidates or non-6.0.0 coordinates. Text scanning
+rejects remaining source candidates or non-6.x coordinates. Text scanning
 does not replace the final review of production reachability.

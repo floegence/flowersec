@@ -59,7 +59,7 @@ export function checkV4Inventory(repository = root, requireV4 = false) {
   const expected = `${JSON.stringify(inventory,null,2)}\n`;
   const file = path.join(repository,output);
   if (!fs.existsSync(file) || fs.readFileSync(file,"utf8") !== expected) throw new Error("v4 source/version inventory drift; run scripts/transport-v4-inventory.mjs --write");
-  if (requireV4 && (inventory.current_version !== "6.0.0" || inventory.v3_source_candidates.length)) throw new Error("v4 production gate blocked: package versions or v3 source candidates remain");
+  if (requireV4 && (!/^6\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.test(inventory.current_version) || inventory.v3_source_candidates.length)) throw new Error("v4 production gate blocked: package versions or v3 source candidates remain");
   return inventory;
 }
 

@@ -6,13 +6,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/sessionv4"
 )
 
-func nativeWebSocketServerTest(t *testing.T, pin bool, handler http.Handler) (*webSocketFactoryFixture, *WebSocketServer) {
+func nativeWebSocketServerTest(t *testing.T, pin bool, handler http.Handler, origins ...func(*http.Request) bool) (*webSocketFactoryFixture, *WebSocketServer) {
 	t.Helper()
 	f := webSocketFactoryTest(t, pin)
 	f.server.Close()
@@ -24,6 +25,9 @@ func nativeWebSocketServerTest(t *testing.T, pin bool, handler http.Handler) (*w
 	config := WebSocketServerConfig{Root: f.root, Clock: f.factory.c.Clock,
 		Route: f.factory.document.Bytes(), Certificate: f.server.TLS.Certificates[0], Roots: f.factory.c.Roots, Handler: handler,
 		Connections: 2, HeaderBytes: 8192, HeaderTimeout: time.Second, IdleTimeout: time.Second, RuntimeBytes: 65536, ProviderBytesPerConnection: 65536}
+	if len(origins) != 0 {
+		config.CheckOrigin = origins[0]
+	}
 	charge, err := WebSocketServerCharge(config)
 	if err != nil {
 		t.Fatal(err)
@@ -168,5 +172,22 @@ func TestWebSocketServerPolicyCannotAuthorizeAnotherHTTPServer(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "https://"+server.Address()+"/flowersec/v4/direct", nil)
 	if err := server.UpgradePolicy().CheckPolicy(request); err == nil {
 		t.Fatal("detached HTTP observations substituted for original TLS owner")
+	}
+}
+
+func TestWebSocketServerDynamicOriginPolicyPrecedesHTTPHandler(t *testing.T) {
+	var allowed atomic.Bool
+	allowed.Store(true)
+	var handled, checked atomic.Int32
+	f, _ := nativeWebSocketServerTest(t, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { handled.Add(1); w.WriteHeader(http.StatusForbidden) }),
+		func(r *http.Request) bool { checked.Add(1); return allowed.Load() && r.Header.Get("Origin") == "" })
+	_, _ = f.factory.PrepareCarrier(context.Background(), f.request)
+	if handled.Load() != 1 || checked.Load() == 0 {
+		t.Fatal("dynamic policy did not admit the original public request")
+	}
+	allowed.Store(false)
+	_, _ = f.factory.PrepareCarrier(context.Background(), f.request)
+	if handled.Load() != 1 || checked.Load() < 2 {
+		t.Fatal("changed origin policy did not fence the next request")
 	}
 }

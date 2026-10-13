@@ -18,6 +18,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/egress"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/websocket"
@@ -45,8 +46,10 @@ type WebSocketFactoryConfig struct {
 	Clock         *timev4.Clock
 	Route         []byte
 	RemoteAddress netip.AddrPort
-	Roots         *x509.CertPool
-	Origin        string
+	// EgressProxy is mandatory when configured; target TLS and signed routes remain unchanged.
+	EgressProxy *egress.HTTPSProxy
+	Roots       *x509.CertPool
+	Origin      string
 	// LocalBridgeToken enables only an exact signed numeric loopback route.
 	LocalBridgeToken string
 	Options          websocket.Options
@@ -85,6 +88,9 @@ const webSocketFactoryRouteNodes = 1024
 
 func WebSocketCarrierFactoryCharge(c WebSocketFactoryConfig) (resourcev4.Vector, error) {
 	if len(c.RelayAccounts) > resourcev4.MaxAccountsPerCharge || !c.Relay && len(c.RelayAccounts) != 0 {
+		return resourcev4.Vector{}, resourcev4.ErrConfiguration
+	}
+	if c.EgressProxy != nil && !c.EgressProxy.Valid() {
 		return resourcev4.Vector{}, resourcev4.ErrConfiguration
 	}
 	if c.Root == nil || c.Clock == nil || len(c.Route) == 0 || len(c.Route) > webSocketFactoryRouteBytes ||
@@ -164,7 +170,7 @@ func NewWebSocketCarrierFactory(c WebSocketFactoryConfig, reservation, environme
 	if factory.localLoopback {
 		numeric, parseErr := netip.ParseAddr(host)
 		origin, _ := leg.Named("Leg", "origin").Text()
-		if parseErr != nil || !numeric.IsLoopback() || numeric != c.RemoteAddress.Addr() || c.Roots != nil || c.LocalBridgeToken == "" || c.Origin != "http://"+c.RemoteAddress.String() || origin != c.Origin || c.Relay || pathKind != 0 {
+		if c.EgressProxy != nil || parseErr != nil || !numeric.IsLoopback() || numeric != c.RemoteAddress.Addr() || c.Roots != nil || c.LocalBridgeToken == "" || c.Origin != "http://"+c.RemoteAddress.String() || origin != c.Origin || c.Relay || pathKind != 0 {
 			return nil, protocolv4.CBORFailure("carrier_binding_invalid")
 		}
 	} else {
@@ -391,7 +397,7 @@ func (factory *WebSocketCarrierFactory) prepareCarrier(ctx context.Context, requ
 	}()
 	err = RunNativeDial(prepareCtx, factory.c.DialScope, func() error {
 		provider.Messages, err = websocket.Dial(prepareCtx, websocket.DialConfig{
-			URL: factory.endpoint, RemoteAddress: factory.c.RemoteAddress, Subprotocol: factory.subprotocol,
+			URL: factory.endpoint, RemoteAddress: factory.c.RemoteAddress, EgressProxy: factory.c.EgressProxy, Subprotocol: factory.subprotocol,
 			TLSConfig: tlsConfig, Header: header, PrepareBytes: request.Budget.PreauthBytes,
 			CheckPolicy: func(actual *url.URL, address netip.AddrPort, actualHeader http.Header) error {
 				if actual.String() != factory.endpoint || address != factory.c.RemoteAddress || !factory.checkHeaders(actualHeader) {

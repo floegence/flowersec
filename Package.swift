@@ -20,6 +20,14 @@ let package = Package(
   ],
   targets: [
     .target(
+      name: "CFlowersecIDNA",
+      path: "flowersec-swift/Sources/CFlowersecIDNA",
+      linkerSettings: [
+        .linkedLibrary("icucore", .when(platforms: [.macOS, .iOS])),
+        .linkedLibrary("icuuc", .when(platforms: [.linux])),
+      ]
+    ),
+    .target(
       name: "FlowersecSQLite",
       path: "flowersec-swift/Sources/FlowersecSQLite",
       publicHeadersPath: "include",
@@ -28,6 +36,7 @@ let package = Package(
     .target(
       name: "Flowersec",
       dependencies: [
+        "CFlowersecIDNA",
         .target(name: "FlowersecSQLite", condition: .when(platforms: [.macOS, .iOS])),
         .product(name: "Clibsodium", package: "swift-sodium"),
         .product(name: "Crypto", package: "swift-crypto"),

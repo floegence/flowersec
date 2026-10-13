@@ -1,3 +1,6 @@
+import { connect as connectTCP } from "node:net";
+import { PassThrough } from "node:stream";
+import type { NodeConnectionPath } from "./connectionPath.js";
 import { MethodDefinition as V4MethodDefinition, ServiceDefinition as V4ServiceDefinition, utf8MessageCodec as v4UTF8MessageCodec, createNodeWSSListener, createHandlerPlan, type ServeHandle, type Session as V4Session, type ServeCallbacks, type HandlerPlan, type TransportEnvironment as V4TransportEnvironment, type RawStreamHandler as V4RawStreamHandler, type StreamOpenAuthorizer as V4StreamOpenAuthorizer } from "./index.js";
 import { DatabaseSync } from "node:sqlite";
 import { SQLiteWorkerDatabase, SQLiteWorkerError } from "./sqliteWorkerV4.js";
@@ -227,7 +230,7 @@ describe("Node v4 original WSS pool connection", () => {
   afterAll(() => rmSync(directory, { recursive: true, force: true }));
   let serial = 0;
   async function setup(profile: NoiseProfile, mode: "ca" | "pin", behavior: "ready" | "reject" | "bad_echo" | "pause" | "bad_exporter" | "downgrade" | "production" | "production_cancel_sign" | "production_bad_endpoint" | "production_pressure" | "production_public" = "ready", origin = "https://app.example.com", badPin = false,
-    bindingMode: "direct_exporter" | "authenticated_context" = "authenticated_context", publicCallbacks: Partial<ServeCallbacks<HandlerPlan>> = {}, publicSignal?: AbortSignal, rpc = false, hooks: { startup?: (environment: V4TransportEnvironment) => void; stream?: V4RawStreamHandler; authorize?: V4StreamOpenAuthorizer; clockMS?: () => bigint } = {}) {
+    bindingMode: "direct_exporter" | "authenticated_context" = "authenticated_context", publicCallbacks: Partial<ServeCallbacks<HandlerPlan>> = {}, publicSignal?: AbortSignal, rpc = false, hooks: { startup?: (environment: V4TransportEnvironment) => void; stream?: V4RawStreamHandler; authorize?: V4StreamOpenAuthorizer; clockMS?: () => bigint; connectionPath?: NodeConnectionPath } = {}) {
     let startupFailure: unknown;
     const limits = rpc ? { ...transportLimits, maxStreams: 18, receiveQueueBytes: 16384, maxWriteBytes: 16384, maxGeneralOutstanding: 4 } : transportLimits;
     const codec = v4UTF8MessageCodec({ schemaDigest: fill(31), revision: "text-v1", maxMessageBytes: 128 });
@@ -259,7 +262,7 @@ describe("Node v4 original WSS pool connection", () => {
     const store = await openV4SQLitePoolStore(backing, { create: true, identity: { authority: "spend", storeID: fill(9), generation: 1n }, continuity: { check: () => undefined }, bindings: [{ tenant: "tenant", issuer: fill(5, 16) }] });
     const client = configureV4NodeWSS(a.publicOwner, {
       identityKey: createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), fill(14)]), format: "der", type: "pkcs8" }),
-      noiseKey: noiseKey(profile), poolStore: store, carrier: { remoteAddress: "127.0.0.1", origin, ca: [certificate], queueMessages: 8, runtimeBytes: 1024n, nativeBytes: 1048576n, prepareBytes: 262144 }, limits, bindingMode, ...(rpc ? { services } : {})
+      noiseKey: noiseKey(profile), poolStore: store, carrier: { remoteAddress: "127.0.0.1", ...(hooks.connectionPath === undefined ? {} : { connectionPath: hooks.connectionPath }), origin, ca: [certificate], queueMessages: 8, runtimeBytes: 1024n, nativeBytes: 1048576n, prepareBytes: 262144 }, limits, bindingMode, ...(rpc ? { services } : {})
     });
     const serverStores: SQLiteAdmissionStore[] = [], serverBackings: ReturnType<typeof createV4SQLitePoolBacking>[] = [], serverPaths: string[] = [];
     let serverStore: SQLiteAdmissionStore | undefined;
@@ -945,6 +948,17 @@ describe("Node v4 original WSS pool connection", () => {
     } finally { await f.close(); }
   }, 15000);
 
+  it.each(["ca", "pin"] as const)("keeps target %s verification and READY above an explicit connection path", async mode => {
+    let routes = 0;
+    const f = await setup(profileX, mode, "ready", "https://app.example.com", false, "authenticated_context", {}, undefined, false, {
+      connectionPath: { connect: async target => { routes++; expect(target.hostname).toBe("127.0.0.1"); return connectTCP({ host: target.hostname, port: target.port, signal: target.signal }); } }
+    });
+    try {
+      const session = await connect(f.a.publicOwner, f.source), peer = await f.accepted;
+      expect(routes).toBe(1); expect(session.info().guarantees.local_consumer_tls13_verification).toBe("consumer_enforced");
+      await Promise.all([session.close(), peer.close()]); expect(f.failure()).toBeUndefined();
+    } finally { await f.close(); }
+  }, 15000);
   for (const profile of [profileX, profileP] as const) for (const mode of ["ca", "pin"] as const) it(`connects through durable consume, HELLO and dual READY: ${profile}, ${mode}`, async () => {
     const f = await setup(profile, mode);
     try {
@@ -1141,6 +1155,37 @@ describe("Node v4 original WSS pool connection", () => {
       await f.helloObserved; abort.abort(); await failed; expect(f.counts().helloCount).toBe(1);
       await expect(connect(f.a.publicOwner, f.source, request)).rejects.toMatchObject({ name: "ConnectionError", code: "controller_failed", connection: { networkReady: "not_started" } });
     } finally { await f.close(); }
+  });
+  it.each(["deadline", "close"])("cancels an explicit live route on %s and retains its original callback", async cause => {
+    const env = environment(BigInt(Date.now()) - 1000n);
+    let releaseRoute!: (stream: PassThrough) => void, routeSignal: AbortSignal | undefined, finished = false, routeReleased = false;
+    const live = createV4NodeLiveHTTPS(env.publicOwner, {
+      baseURL: "https://localhost:8443", remoteAddress: "127.0.0.1", authority: "spend", tenant: "tenant", audience: "service",
+      ca: [certificate], clientCertificate: certificate, clientPrivateKey: key, maxConcurrentRequests: 1, timeoutMS: 50n,
+      headerBytes: 8192, handshakeBytes: 65536, runtimeBytes: 1024n, providerBytes: 4n << 20n,
+      connectionPath: { connect: target => { routeSignal = target.signal; return new Promise<PassThrough>(resolve => { releaseRoute = resolve; }); } }
+    });
+    const baseline = env.root.snapshot().reservations, signal = new AbortController();
+    const pending = live.requestAuthorization({
+      authority: "spend", tenant: "tenant", audience: "service", cryptoProfile: profileX,
+      issuer: fill(1, 16), lease: fill(2, 16), attempt: fill(3, 16), artifact: fill(4), clientIdentity: fill(5), serverIdentity: fill(6),
+      candidateIndex: 0, candidateID: fill(7, 16), routeDigest: fill(8), activationNotAfterMS: BigInt(Date.now()) + 10000n, attemptNo: 1
+    }, new Uint8Array(4096), { signal: signal.signal, check: () => undefined }).catch(error => error).finally(() => { finished = true; });
+    try {
+      await expect.poll(() => routeSignal !== undefined).toBe(true);
+      if (cause === "close") await env.publicOwner.close();
+      await expect.poll(() => routeSignal!.aborted).toBe(true);
+      expect(finished).toBe(false);
+      expect(env.root.snapshot().reservations).toBeGreaterThan(baseline);
+      if (cause === "close") expect(env.publicOwner.cleanupStatus().status).toBe("cleanup_incomplete");
+      const late = new PassThrough(); routeReleased = true; releaseRoute(late);
+      expect((await pending as Error).message).toBe(cause === "close" ? "canceled" : "live_authorization_failed");
+      expect(late.closed).toBe(true);
+    } finally {
+      signal.abort(); if (!routeReleased) releaseRoute?.(new PassThrough()); await pending; await env.publicOwner.close();
+      expect((await env.publicOwner.waitCleanup()).status).toBe("complete"); expect(env.root.snapshot().reservations).toBe(0);
+      env.root.close();
+    }
   });
   it("keeps two live Connect and mutual HTTPS request owners until their original socket tails close", async () => {
     execFileSync("openssl", ["req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",

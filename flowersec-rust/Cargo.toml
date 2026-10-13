@@ -1,6 +1,6 @@
 [package]
 name = "flowersec"
-version = "6.0.0"
+version = "6.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Native Rust SDK for Flowersec secure direct and tunneled sessions"
@@ -21,7 +21,7 @@ bytes = "1"
 cookie = { version = "=0.18.2", default-features = false }
 curve25519-dalek = "=5.0.0"
 futures-util = { version = "0.3", features = ["io", "sink", "std"] }
-flowersec-native-transport = { version = "=6.0.0", path = "../flowersec-native-transport" }
+flowersec-native-transport = { version = "=6.1.0", path = "../flowersec-native-transport" }
 hkdf = "0.13"
 hmac = "0.13"
 http = "1"
@@ -56,7 +56,7 @@ time = { version = "0.3", features = ["parsing", "formatting"] }
 
 [dev-dependencies]
 hyper = { version = "1", default-features = false, features = ["server", "http1"] }
-flowersec-native-transport = { version = "=6.0.0", path = "../flowersec-native-transport", features = ["__flowersec_internal_test_support"] }
+flowersec-native-transport = { version = "=6.1.0", path = "../flowersec-native-transport", features = ["__flowersec_internal_test_support"] }
 proptest = "1"
 regex-lite = "0.1"
 tokio = { version = "1", features = ["test-util"] }

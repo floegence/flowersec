@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/egress"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/tlspolicy"
 	carrierws "github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/websocket"
@@ -366,4 +368,52 @@ func sessionTestClock(t *testing.T) *timev4.Clock {
 	}
 	t.Cleanup(clock.Close)
 	return clock
+}
+
+func TestWebSocketFactoryExplicitHTTPSProxyPreservesSignedTargetTLS(t *testing.T) {
+	f := webSocketFactoryTest(t, false)
+	var routes atomic.Int32
+	proxy := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		routes.Add(1)
+		if r.Method != http.MethodConnect || r.Host != f.factory.c.RemoteAddress.String() {
+			t.Error("changed signed numeric target")
+			http.Error(w, "rejected", 400)
+			return
+		}
+		upstream, err := net.Dial("tcp", r.Host)
+		if err != nil {
+			http.Error(w, "failed", 502)
+			return
+		}
+		defer upstream.Close()
+		downstream, buffered, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer downstream.Close()
+		_, _ = buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+		_ = buffered.Flush()
+		done := make(chan struct{})
+		go func() { _, _ = io.Copy(upstream, buffered); _ = upstream.Close(); close(done) }()
+		_, _ = io.Copy(downstream, upstream)
+		_ = downstream.Close()
+		<-done
+	}))
+	proxy.TLS = &tls.Config{MinVersion: tls.VersionTLS13}
+	proxy.StartTLS()
+	defer proxy.Close()
+	trust := proxy.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	route, err := egress.NewHTTPSProxy(egress.HTTPSProxyOptions{URLs: []string{"https://127.0.0.1:1", proxy.URL}, TLSConfig: trust, ConnectTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.factory.c.EgressProxy = route
+	prepared, err := f.factory.PrepareCarrier(context.Background(), f.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupPreparedTest(t, prepared)
+	if routes.Load() != 1 || f.arrived.Load() != 1 || prepared.Check() != nil {
+		t.Fatal("explicit route did not retain target verification")
+	}
 }

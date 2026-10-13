@@ -1753,7 +1753,7 @@ describe("original v4 reliable Session assembly", () => {
     const calls: string[] = [], origin = performance.now();
     for (let i = 0; i < 4; i++) {
       const a = new MemoryTransport("client", "message"), b = new MemoryTransport("server", "message"); a.peer = b; b.peer = a;
-      const options = { sessions: 3, connectionSeed: 90 + i, clockOriginMS: origin };
+      const options = { sessions: 3, connectionSeed: 90 + i, clockMS: () => 0n };
       const client = endpoint("client", a, profile, "live_authority", 3000n, () => common,
         { ...options, ...(pairs.length === 0 ? {} : { environment: pairs[0]!.client.environment }) });
       await client.discardPrepared();

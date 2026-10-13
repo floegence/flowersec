@@ -114,6 +114,8 @@
     public let trustedTime: @Sendable () throws -> TransportTrustedTime
     public var timePolicy = TransportTimePolicy()
     public var trustRootsPEM: [Data] = []
+    public var tlsChannelProvider: TLSChannelProvider? = nil
+    public var httpDirectChannelProvider: HTTPDirectChannelProvider? = nil
     /// Canonical Origin sent by native WebSocket dialers, subject to the signed route policy.
     public var webSocketOrigin: String? = nil
     public var listenerTLS: NativeListenerTLSConfiguration? = nil
@@ -182,6 +184,8 @@
     private var credentials: V4CredentialConfiguration?
     private let endpoints: [TransportEndpoint]
     private let roots: [Data]
+    private let tlsChannelProvider: TLSChannelProvider?
+    private let httpDirectChannelProvider: HTTPDirectChannelProvider?
     private var listenerTLS: NativeListenerTLSConfiguration?
     private var backing: V4PoolStoreBacking?
     private var store: V4SQLitePoolStore?
@@ -195,13 +199,15 @@
       credentials: V4CredentialConfiguration, endpoints: [TransportEndpoint], roots: [Data],
       backing: V4PoolStoreBacking?, store: V4SQLitePoolStore?, provider: V4CryptoReservation,
       source: V4ContinuousTimeSource? = nil,
-      trustedTime: (@Sendable () throws -> TransportTrustedTime)? = nil, listenerTLS: NativeListenerTLSConfiguration? = nil
+      trustedTime: (@Sendable () throws -> TransportTrustedTime)? = nil, listenerTLS: NativeListenerTLSConfiguration? = nil, tlsChannelProvider: TLSChannelProvider? = nil, httpDirectChannelProvider: HTTPDirectChannelProvider? = nil
     ) {
       self.foundation = foundation
       self.namespaces = namespaces
       self.credentials = credentials
       self.endpoints = endpoints
       self.roots = roots
+      self.tlsChannelProvider = tlsChannelProvider
+      self.httpDirectChannelProvider = httpDirectChannelProvider
       self.listenerTLS = listenerTLS
       self.backing = backing
       self.store = store
@@ -228,6 +234,7 @@
     }
     static func create(_ config: TransportClientConfiguration) async throws -> V4ClientEnvironment
     {
+      guard config.tlsChannelProvider == nil || config.httpDirectChannelProvider == nil else { throw TransportConnectError.unsupported }
       guard (1...8).contains(config.namespaces.count), (1...16).contains(config.endpoints.count),
         config.maximumRuntimeBytes >= 64 << 20, config.maximumRuntimeBytes <= 8 << 30,
         config.providerRuntimeBytes >= 1 << 20,
@@ -307,7 +314,7 @@
             cryptoProfiles: V4CryptoProfile.allCases.map(\.rawValue), webSocketOrigin: config.webSocketOrigin), endpoints: config.endpoints,
           roots: config.trustRootsPEM, backing: backing, store: store, provider: provider,
           source: source,
-          trustedTime: config.trustedTime, listenerTLS: config.listenerTLS)
+          trustedTime: config.trustedTime, listenerTLS: config.listenerTLS, tlsChannelProvider: config.tlsChannelProvider, httpDirectChannelProvider: config.httpDirectChannelProvider)
       } catch {
         foundation.beginClose()
         throw error
@@ -675,6 +682,8 @@
         if serve != nil, original.plan.role != .server { throw ServeError(.configurationCapacity) }
         try serve?.startDeadline()
         let route = original.plan.route
+        if httpDirectChannelProvider != nil && (!route.isDialer || route.requiresTLS) { throw TransportConnectError.unsupported }
+        if tlsChannelProvider != nil && (!route.isDialer || !route.requiresTLS) { throw TransportConnectError.unsupported }
         if !route.isDialer && route.requiresTLS && listenerTLS == nil {
           throw TransportConnectError.unsupported
         }
@@ -689,7 +698,7 @@
         }
         return try await V4DirectEstablishment.connect(
           material: original, address: matches[0].numericAddress,
-          roots: roots, listenerTLS: listenerTLS, store: store, requirements: requirements,
+          roots: roots, listenerTLS: listenerTLS, tlsChannelProvider: tlsChannelProvider, httpDirectChannelProvider: httpDirectChannelProvider, store: store, requirements: requirements,
           notificationPlan: notificationPlan, handoff: handoff, serve: serve, claimed: true)
       } catch let failure as V4ConnectFailureProjection {
         // Establishment owns cleanup after a successful claim. In particular,

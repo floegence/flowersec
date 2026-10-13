@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { SessionError, type OperationOptions } from "../public/contract.js";
 import type { ProxyFetchRequest, ProxyRuntime } from "./types.js";
-import type { ProxyStream } from "./stream.js";
+import { writeAll, type ProxyStream } from "./stream.js";
 import {
   MessagePortByteStream,
   registerProxyAppWindow,
@@ -53,6 +53,18 @@ class DuplexStream implements ProxyStream {
 }
 
 describe("proxy controller/app window bridge", () => {
+  it("preserves a large application buffer across bounded acknowledged chunks", async () => {
+    const channel = new MessageChannel(), sender = new MessagePortByteStream(channel.port1), receiver = new MessagePortByteStream(channel.port2);
+    const payload = new Uint8Array(4 * 1024 * 1024 + 17).map((_, index) => index % 251);
+    const received: Uint8Array[] = [];
+    try {
+      await Promise.all([writeAll(sender, payload), (async () => {
+        let length = 0;
+        while (length < payload.length) { const chunk = await receiver.read(); expect(chunk).not.toBeNull(); expect(chunk!.length).toBeLessThanOrEqual(1024 * 1024); received.push(chunk!); length += chunk!.length; }
+      })()]);
+      expect(Buffer.concat(received)).toEqual(Buffer.from(payload));
+    } finally { await sender.close(); await receiver.close(); }
+  });
   it("removes the abort waiter after an ACK wins the race", async () => {
     const channel = new MessageChannel();
     const stream = new MessagePortByteStream(channel.port1);

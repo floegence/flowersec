@@ -529,13 +529,15 @@ func TestResumeOriginalOperationBindsTargetAndReturnsSingleResult(t *testing.T) 
 				t.Fatal("encoded result consumed twice", err)
 			}
 			op.Close()
-			var after [12]byte
-			if err := readResumeBytes(ctx, streams[0], after[:]); err != nil || !bytes.Equal(after[:], []byte("after-resume")) {
-				t.Fatal("recovery consumed application bytes or closed target", string(after[:]), err)
-			}
+			// Close abandons observation; join the original parser/decoder before
+			// reusing the target Stream's I/O capability.
 			cores[0].plan.rpc.AdvanceCalls()
 			if err := op.WaitCleanup(ctx); err != nil {
 				t.Fatal(err)
+			}
+			var after [12]byte
+			if err := readResumeBytes(ctx, streams[0], after[:]); err != nil || !bytes.Equal(after[:], []byte("after-resume")) {
+				t.Fatal("recovery consumed application bytes or closed target", string(after[:]), err)
 			}
 			if got, err := op.Reference(); err != nil || got != ref {
 				t.Fatal("cleanup lost query reference", err)

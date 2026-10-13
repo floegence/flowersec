@@ -1,3 +1,5 @@
+import { openOwnedConnectionPath, type NodeConnectionPath } from "./connectionPath.js";
+import type { Duplex } from "node:stream";
 import type { IncomingMessage } from "node:http";
 import type { ClientSessionAdmission } from "../v4/runtime/sessionAdmission.js";
 import { createHash, constants, type X509Certificate } from "node:crypto";
@@ -22,6 +24,8 @@ import type { TimeInterval } from "../v4/runtime/timeArithmetic.js";
 export interface V4NodeWSSOptions {
   /** One numeric address, captured before preparation. No resolver or retry. */
   readonly remoteAddress: string;
+  /** Optional mandatory route below unchanged target TLS; honors cancellation. */
+  readonly connectionPath?: NodeConnectionPath;
   readonly origin?: string;
   /** Immutable trust anchors for CA mode; pin mode uses only signed leaf DER. */
   readonly ca?: readonly (string | Uint8Array)[];
@@ -104,6 +108,8 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
   readonly #done: Promise<void>;
   #resolve!: () => void;
   #socket: TLSSocket | undefined;
+  readonly #routeCancellation = new AbortController();
+  #routePending = false; #routeStream: Duplex | undefined; #routeEnded = true;
   #pendingSocket: Socket | undefined; #pendingEnded = true;
   #websocket: WebSocket | undefined;
   #socketEnded = true;
@@ -275,6 +281,16 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
         ...(policy.mode === 0n ? { ca: options.ca!.map(value => typeof value === "string" ? value : Buffer.from(value)) } : {}),
         checkServerIdentity: (_name, certificate) => checkServerIdentity(policy.host, certificate),
         highWaterMark: this.maximum, allowHalfOpen: false };
+      if (options.connectionPath !== undefined) {
+        this.#routePending = true;
+        try {
+          const route = await openOwnedConnectionPath(options.connectionPath, options.remoteAddress, policy.port, this.#routeCancellation.signal);
+          this.#routeStream = route; this.#routeEnded = route.closed;
+          route.on("error", error => stop(error));
+          route.once("close", () => { this.#routeEnded = true; void this.close(); this.#finish(); });
+          guard(); tlsOptions.socket = route;
+        } finally { this.#routePending = false; this.#finish(); }
+      }
       const socket = this.#socket = tlsConnect(tlsOptions);
       this.#socketEnded = false;
       socket.on("error", error => stop(error)); socket.once("close", () => { this.#socketEnded = true; void this.close(); this.#finish(); });
@@ -382,12 +398,12 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
     if (options?.signal?.aborted) throw new Error("canceled"); const result = this.submit(data, () => undefined); if (result === undefined) throw new Error("carrier_closed"); await result.completion; return data.length;
   }
   close(): Promise<void> {
-    if (!this.#closing) { this.#closing = true; for (const bytes of this.#queue) bytes.fill(0); this.#queue = []; this.#deliver(); this.#websocket?.terminate(); this.#socket?.destroy(); this.#pendingSocket?.destroy(); }
+    if (!this.#closing) { this.#closing = true; this.#routeCancellation.abort(); this.#routeStream?.destroy(); for (const bytes of this.#queue) bytes.fill(0); this.#queue = []; this.#deliver(); this.#websocket?.terminate(); this.#socket?.destroy(); this.#pendingSocket?.destroy(); }
     this.#finish(); return this.#done;
   }
   retainDependency(): void { this.dependency.check(); requireCredential(this.role === "client" && !this.#closing && !this.#cleaned); this.ownsDependency = true; }
   #finish(): void {
-    if (this.#cleaned || !this.#closing || !this.#pendingEnded || !this.#socketEnded || !this.#websocketEnded || this.#sending) return;
+    if (this.#cleaned || !this.#closing || this.#routePending || !this.#routeEnded || !this.#pendingEnded || !this.#socketEnded || !this.#websocketEnded || this.#sending) return;
     this.#cleaned = true; this.#validity = undefined; this.#accepted = undefined; if (this.ownsDependency) this.dependency.release(); this.#resolve();
   }
   waitTermination(): Promise<void> { return this.#done; }
@@ -395,6 +411,7 @@ export class NodeWSSCarrier implements V4AuthenticatedTransport {
 
 export function nodeWSSAdmissionCosts(maxFrame: number, options: V4NodeWSSOptions, runtimeBytes: bigint): readonly (readonly [string, ResourceVector])[] {
   requireCredential(typeof runtimeBytes === "bigint" && runtimeBytes > 0n && runtimeBytes <= 0xffffffffffffffffn, "configuration_capacity");
+  requireCredential(options.connectionPath === undefined || typeof options.connectionPath.connect === "function", "configuration_capacity");
   requireCredential(isIP(options.remoteAddress) !== 0 && Number.isSafeInteger(options.queueMessages) && options.queueMessages >= 1 && options.queueMessages <= 64 &&
     typeof options.runtimeBytes === "bigint" && options.runtimeBytes > 0n && options.runtimeBytes <= 0xffffffffffffffffn &&
     typeof options.nativeBytes === "bigint" && options.nativeBytes >= 1048576n && options.nativeBytes <= 0xffffffffffffffffn &&

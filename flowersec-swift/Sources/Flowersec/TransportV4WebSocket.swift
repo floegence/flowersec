@@ -20,9 +20,15 @@
 
     static func prepare(
       route: V4WebSocketRoute, numericAddress: String,
-      trustRootsPEM: [Data] = [], handoff: (any V4ControllerHandoffReservation)? = nil, prepaidNative: V4CryptoReservation? = nil
+      trustRootsPEM: [Data] = [], channelProvider: TLSChannelProvider? = nil, localChannelProvider: HTTPDirectChannelProvider? = nil, handoff: (any V4ControllerHandoffReservation)? = nil, prepaidNative: V4CryptoReservation? = nil
     ) async throws -> V4PreparedWebSocket {
       try route.check()
+      if let channelProvider {
+        guard route.requiresTLS, channelProvider.matches(host: route.host, port: route.port) else { throw V4WebSocketFailure.policy }
+      }
+      if let localChannelProvider {
+        guard !route.requiresTLS, channelProvider == nil, localChannelProvider.matches(host: route.host, port: route.port) else { throw V4WebSocketFailure.policy }
+      }
       guard numericAddress.utf8.count <= 64, trustRootsPEM.count <= 16,
         trustRootsPEM.reduce(0, { $0 + $1.count }) <= 262_144
       else { throw V4WebSocketFailure.policy }
@@ -66,13 +72,7 @@
       let loop = group.any()
       let state = try V4WebSocketState(route: route, charge: charge, loop: loop)
       try route.environment.registerNativeConnection(state)
-      let bootstrap = ClientBootstrap(group: group).connectTimeout(.milliseconds(FlowersecSDKDefaults.Transport.connectTimeoutMilliseconds))
-        .channelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 0)
-        .channelOption(ChannelOptions.maxMessagesPerRead, value: 1)
-        .channelOption(
-          ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 16_384)
-        )
-        .channelInitializer { channel in
+      let initialize: TLSChannelProvider.Initializer = { channel in
           do {
             try state.attach(channel)
             let request = V4WebSocketUpgrade(state: state)
@@ -145,9 +145,20 @@
             return channel.eventLoop.makeFailedFuture(error)
           }
         }
+      let bootstrap = ClientBootstrap(group: group).connectTimeout(.milliseconds(FlowersecSDKDefaults.Transport.connectTimeoutMilliseconds))
+        .channelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 0)
+        .channelOption(ChannelOptions.maxMessagesPerRead, value: 1)
+        .channelOption(ChannelOptions.recvAllocator, value: FixedSizeRecvByteBufferAllocator(capacity: 16_384))
+        .channelInitializer(initialize)
       return try await withTaskCancellationHandler {
         do {
-          _ = try await bootstrap.connect(to: endpoint).get()
+          do {
+            let tail = try state.beginConnect()
+            defer { state.finishConnect(tail) }
+            if let channelProvider { _ = try await channelProvider.openInitialized(initialize) }
+            else if let localChannelProvider { _ = try await localChannelProvider.openInitialized(initialize) }
+            else { _ = try await bootstrap.connect(to: endpoint).get() }
+          }
           try await state.ready.futureResult.get()
           try state.check()
           if Task.isCancelled { throw V4WebSocketFailure.canceled }
@@ -394,6 +405,7 @@
     private var tlsFinished = false
     private var physicalReady = false
     private var pendingWrites = 0
+    private var pendingConnects = 0
     private var applicationOutputs = 0
     private var maintenanceOutputs = 0
     private var consumptionStarted = false
@@ -428,6 +440,19 @@
         }
         guard !upgraded || channel?.isActive == true else { throw V4WebSocketFailure.connectionLost }
       }
+    }
+    func beginConnect() throws -> V4ResourceReference {
+      try lock.withLock {
+        try check()
+        let tail = try charge.executionTail()
+        pendingConnects += 1
+        return tail
+      }
+    }
+    func finishConnect(_ tail: V4ResourceReference) {
+      lock.withLock { pendingConnects -= 1 }
+      tail.release()
+      cleanupEvents.signal()
     }
     func attachListener(_ channel: any Channel) throws {
       try lock.withLock {
@@ -729,7 +754,7 @@
     }
     func cleanupStatus() -> CleanupStatus {
       lock.withLock {
-        let count = (listenerJoined ? 0 : 1) + (physicalJoined ? 0 : 1) + pendingWrites
+        let count = (listenerJoined ? 0 : 1) + (physicalJoined ? 0 : 1) + pendingWrites + pendingConnects
         return CleanupStatus(complete: failure != nil && count == 0, cleanupIncomplete: failure != nil && count != 0,
           pendingCallbacks: UInt64(count))
       }

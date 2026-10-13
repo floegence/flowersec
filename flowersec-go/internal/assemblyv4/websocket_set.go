@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"net/netip"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/egress"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/resourcev4"
@@ -17,6 +18,7 @@ type WebSocketEndpoint struct {
 	Deployment    protocolv4.RelayDeploymentBinding
 	Route         []byte
 	RemoteAddress netip.AddrPort
+	EgressProxy   *egress.HTTPSProxy
 	Roots         *x509.CertPool
 	Origin        string
 }
@@ -41,7 +43,7 @@ func (c WebSocketSetConfig) carrierConfig(endpoints *[16]CarrierEndpoint) (Carri
 		return CarrierSetConfig{}, resourcev4.ErrConfiguration
 	}
 	for i, e := range c.Endpoints {
-		endpoints[i] = CarrierEndpoint{Carrier: 1, Deployment: e.Deployment, Route: e.Route, RemoteAddress: e.RemoteAddress, Roots: e.Roots, Origin: e.Origin, WebSocket: c.Options}
+		endpoints[i] = CarrierEndpoint{Carrier: 1, Deployment: e.Deployment, Route: e.Route, RemoteAddress: e.RemoteAddress, EgressProxy: e.EgressProxy, Roots: e.Roots, Origin: e.Origin, WebSocket: c.Options}
 	}
 	return CarrierSetConfig{Root: c.Root, Owner: c.Owner, Clock: c.Clock, Role: c.Role, Relay: c.Relay, Endpoints: endpoints[:len(c.Endpoints)], ConnectionsPerRoute: c.ConnectionsPerRoute, RuntimeBytes: c.RuntimeBytes, FactoryRuntimeBytes: c.FactoryRuntimeBytes}, nil
 }

@@ -2,6 +2,7 @@
   import Crypto
   import Foundation
   import NIOCore
+  import NIOPosix
   import NIOWebSocket
   import SQLite3
   import XCTest
@@ -325,6 +326,51 @@
         source.close()
         try await fixture.environment.close()
       }
+    }
+    func testApplicationChannelsPreserveCurrentSignedSessionAndTLS() async throws {
+      for local in [false, true] {
+        for pinned in local ? [false] : [false, true] {
+          let test = try NativeSessionFixture(profile: .x25519, pinned: pinned,
+            loopbackHTTP: local, applicationChannel: true)
+          defer { test.cleanup() }
+          let material = try await test.material()
+          let session = try await test.environment.connectMaterial(material)
+          let stream = try await session.openStream(kind: "example.echo")
+          let data = Data("application-channel".utf8)
+          _ = try await stream.write(data)
+          let echoed = try await stream.read(maxBytes: data.count)
+          XCTAssertEqual(echoed, data)
+          try await stream.close()
+          try await session.close()
+          XCTAssertTrue(material.cleanupStatus().complete)
+          try await test.environment.close()
+        }
+      }
+    }
+    func testApplicationConnectCallbackRemainsChargedUntilItsActualExit() async throws {
+      let loop = MultiThreadedEventLoopGroup.singleton.any()
+      let entered = loop.makePromise(of: Void.self), release = loop.makePromise(of: Void.self)
+      let test = try NativeSessionFixture(profile: .x25519, applicationChannel: true,
+        applicationConnect: { entered.succeed(()); try await release.futureResult.get() })
+      defer { test.cleanup() }
+      let material = try await test.material()
+      let connecting = Task { try await test.environment.connectMaterial(material) }
+      try await entered.futureResult.get()
+      connecting.cancel()
+      test.fixture.base.environment.beginClose()
+      let pending = test.fixture.base.environment.cleanupStatus()
+      XCTAssertFalse(pending.complete)
+      XCTAssertGreaterThan(pending.pendingCallbacks, 0)
+      XCTAssertEqual(test.fixture.base.environment.root.snapshot().used.connections, 1,
+        "The canceled connector must retain its original native connection charge")
+      release.succeed(())
+      do { _ = try await connecting.value; XCTFail("Canceled application connect returned a Session") }
+      catch {}
+      material.close()
+      try await test.environment.close()
+      XCTAssertTrue(material.cleanupStatus().complete)
+      XCTAssertEqual(test.fixture.base.environment.root.snapshot().used.connections, 0)
+      XCTAssertFalse(test.peer.established)
     }
     func testActualSharedWSSDataIsolationKeepsHealthyStreamAndMaintenanceForBothProfiles() async throws {
       for profile in V4CryptoProfile.allCases {
@@ -3256,7 +3302,8 @@
     init(
       profile: V4CryptoProfile, mode: NativeSessionPeer.Mode = .echo, pinned: Bool = false,
       replacement: Bool = false, replacementMode: NativeSessionPeer.Mode = .echo,
-      services: Bool = false, loopbackHTTP: Bool = false, longLived: Bool = false
+      services: Bool = false, loopbackHTTP: Bool = false, longLived: Bool = false,
+      applicationChannel: Bool = false, applicationConnect: (@Sendable () async throws -> Void)? = nil
     )
       throws
     {
@@ -3387,12 +3434,23 @@
           TransportEndpoint(
             hostname: "localhost", port: replacementListener.port, numericAddress: "127.0.0.1"))
       }
+      let port = listener.port
+      let applicationOpen: TLSChannelProvider.Connect = { initialize in
+        try await applicationConnect?()
+        return try await ClientBootstrap(group: MultiThreadedEventLoopGroup.singleton)
+          .channelInitializer(initialize).connect(host: "127.0.0.1", port: port).get()
+      }
+      let tlsProvider = applicationChannel && !loopbackHTTP
+        ? try TLSChannelProvider(origin: URL(string: "https://localhost:\(port)")!, connect: applicationOpen) : nil
+      let localProvider = applicationChannel && loopbackHTTP
+        ? try HTTPDirectChannelProvider(endpoint: URL(string: "ws://127.0.0.1:\(port)/flowersec/v4/local")!, connect: applicationOpen) : nil
       host = try V4ClientEnvironment(
         foundation: fixture.base.environment, namespaces: [fixture.base.owner!],
         credentials: fixture.configuration(),
         endpoints: endpoints,
         roots: pinned ? [] : [ca], backing: backing, store: store,
-        provider: fixture.base.environment.clientProviderStorage(bytes: 1 << 20))
+        provider: fixture.base.environment.clientProviderStorage(bytes: 1 << 20),
+        tlsChannelProvider: tlsProvider, httpDirectChannelProvider: localProvider)
       environment = TransportEnvironment(owner: host)
     }
     func credential() -> TransportPoolCredential {

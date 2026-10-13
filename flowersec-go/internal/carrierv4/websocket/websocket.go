@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/egress"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/native"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/numeric"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/protocolv4"
@@ -53,6 +54,7 @@ var (
 type DialConfig struct {
 	URL, Subprotocol string
 	RemoteAddress    netip.AddrPort
+	EgressProxy      *egress.HTTPSProxy
 	Header           http.Header
 	TLSConfig        *tls.Config
 	CheckPolicy      func(*url.URL, netip.AddrPort, http.Header) error
@@ -108,8 +110,14 @@ func checkEndpoint(u *url.URL, address netip.AddrPort) error {
 
 // The original prepare call performs the one numeric connect synchronously.
 // No standard dialer cancellation callback can outlive that original owner.
-func (m *owner) dialEndpoint(ctx context.Context, address netip.AddrPort) (net.Conn, error) {
-	conn, err := connectNumeric(ctx, address, operationDeadline(ctx, m.options.HandshakeTimeout))
+func (m *owner) dialEndpoint(ctx context.Context, address netip.AddrPort, proxy *egress.HTTPSProxy) (net.Conn, error) {
+	var conn net.Conn
+	var err error
+	if proxy != nil {
+		conn, err = proxy.DialContext(ctx, "tcp", address.String())
+	} else {
+		conn, err = connectNumeric(ctx, address, operationDeadline(ctx, m.options.HandshakeTimeout))
+	}
 	if err != nil {
 		return nil, native.NetworkFailure(preferContext(ctx, err))
 	}
@@ -188,6 +196,9 @@ func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, env
 	if err != nil {
 		return nil, err
 	}
+	if cfg.EgressProxy != nil && (!cfg.EgressProxy.Valid() || u.Scheme != "wss") {
+		return nil, resourcev4.ErrConfiguration
+	}
 	if u.User != nil || u.Fragment != "" || (u.Scheme != "ws" && u.Scheme != "wss") {
 		return nil, resourcev4.ErrConfiguration
 	}
@@ -203,7 +214,7 @@ func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, env
 	dialer := ws.Dialer{ReadBufferSize: int(options.ReadBufferBytes), WriteBufferSize: int(options.WriteBufferBytes),
 		Subprotocols: []string{cfg.Subprotocol}}
 	dialer.NetDialContext = func(call context.Context, _, _ string) (net.Conn, error) {
-		conn, err := m.dialEndpoint(call, cfg.RemoteAddress)
+		conn, err := m.dialEndpoint(call, cfg.RemoteAddress, cfg.EgressProxy)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +235,7 @@ func Dial(ctx context.Context, cfg DialConfig, options Options, reservation, env
 			tlsConfig.ServerName = u.Hostname()
 		}
 		dialer.NetDialTLSContext = func(call context.Context, _, _ string) (net.Conn, error) {
-			raw, err := m.dialEndpoint(call, cfg.RemoteAddress)
+			raw, err := m.dialEndpoint(call, cfg.RemoteAddress, cfg.EgressProxy)
 			if err != nil {
 				return nil, err
 			}

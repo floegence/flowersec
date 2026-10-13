@@ -3286,3 +3286,70 @@ The following symbols are part of the current public manifest.
 | `controlplane.PoolTunnelDeploymentPolicyCharge` | manifest entry |
 | `controlplane.PoolTunnelDeploymentPolicyConfig` | manifest entry |
 | `controlplane.PoolTunnelSigningRoute` | manifest entry |
+
+## Explicit routes and enrollment
+
+`WebSocketServerConfig.CheckOrigin` applies concurrency-safe, bounded current
+host policy before the public HTTP handler and upgrade, in addition to the
+original signed Origin policy. Host-owned ingress can use
+`WebSocketIngressConfig.Upgrade.CheckPolicy` for its corresponding admission.
+
+The Go `WebSocketFactoryConfig.EgressProxy` and `WebSocketEndpoint.EgressProxy`
+route WSS through an independently authenticated HTTPS CONNECT proxy. The proxy
+may fail over only across its configured routes; signed numeric target binding,
+target TLS, admission and cleanup stay owned by the original provider. Raw QUIC,
+WebTransport and private loopback routes do not accept this option. Proxy trust
+and configuration are immutable host-owned dependencies.
+
+Node `NodeWSSOptions.connectionPath` and `NodeLiveHTTPSOptions.connectionPath`
+supply an owned byte transport beneath target TLS. Configured paths are mandatory
+and must honor cancellation. Native reservations remain live through the actual
+route callback and socket close, including late results. `createConnectionPathAgent`
+uses the same target-TLS rule for application HTTPS requests and counts pending
+routes against the native connection pool.
+
+Swift `TLSChannelProvider` binds application-owned NIO channels to one HTTPS
+origin. `TransportClientConfiguration.tlsChannelProvider` uses the current signed
+route's TLS policy on that channel, without direct fallback. Applications can
+also use `TLSChannelProvider.openChannel(trustRootsPEM:initializer:)` for CA-verified
+application HTTPS. Initializers must run before activation or byte delivery;
+channels and partial opens remain the connecting application's responsibility.
+`HTTPDirectChannelProvider` and `TransportClientConfiguration.httpDirectChannelProvider`
+supply an exact signed private loopback channel with the same initialization and
+cleanup contract. They cannot replace TLS for ordinary network routes.
+
+Go invitation APIs use a separate bounded WSS enrollment profile authenticated
+with a high-entropy code. See [the enrollment contract](INVITATION_EXCHANGE_V1.md).
+Its self-signed certificate allowance never applies to ordinary sessions.
+
+Public Go enrollment and egress symbols:
+
+- `flowersec.InvitationCode`
+- `flowersec.InvitationExchangeOptions`
+- `flowersec.InvitationExchangeHandlerOptions`
+- `flowersec.InvitationExchangeError`
+- `flowersec.ErrInvalidInvitationCode`
+- `flowersec.NewInvitationCode`
+- `flowersec.DeriveInvitationCode`
+- `flowersec.ParseInvitationCode`
+- `flowersec.ExchangeInvitation`
+- `flowersec.NewInvitationExchangeHandler`
+- `flowersec.RejectInvitationExchange`
+- `flowersec.InvitationCode.Text()`
+- `flowersec.InvitationCode.LookupID()`
+- `flowersec.InvitationCode.String()`
+- `flowersec.InvitationCode.GoString()`
+- `flowersec.InvitationCode.MarshalJSON()`
+- `flowersec.InvitationExchangeError.Error()`
+- `github.com/floegence/flowersec/flowersec-go/v6/egress`
+- `egress.HTTPSProxyOptions`
+- `egress.HTTPSProxy`
+- `egress.NewHTTPSProxy(...)`
+- `egress.ErrInvalidProxy`
+- `egress.ErrProxyConnection`
+- `egress.HTTPSProxy.DialContext(...)`
+- `egress.HTTPSProxy.HTTPTransport()`
+- `egress.HTTPSProxy.String()`
+- `egress.HTTPSProxy.GoString()`
+- `egress.HTTPSProxy.MarshalJSON()`
+- `egress.HTTPSProxy.Valid()`

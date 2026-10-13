@@ -7,6 +7,7 @@ Do not edit it manually. License decisions are reviewed by the repository source
 - filippo.io/edwards25519 v1.2.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://filippo.io/edwards25519)
 - github.com/dunglas/httpsfv v1.1.1 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/dunglas/httpsfv)
 - github.com/dustin/go-humanize v1.0.1 (Declared: MIT; selected: MIT; source: https://github.com/dustin/go-humanize)
+- github.com/flynn/noise v1.1.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/flynn/noise)
 - github.com/google/uuid v1.6.0 (Declared: BSD-3-Clause; selected: BSD-3-Clause; source: https://github.com/google/uuid)
 - github.com/gorilla/websocket v1.5.3 (Declared: BSD-2-Clause; selected: BSD-2-Clause; source: https://github.com/gorilla/websocket)
 - github.com/quic-go/qpack v0.6.0 (Declared: MIT; selected: MIT; source: https://github.com/quic-go/qpack)
@@ -149,6 +150,40 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 <http://www.opensource.org/licenses/mit-license.php>
+
+### github.com/flynn/noise v1.1.0
+
+#### LICENSE
+
+Flynn® is a trademark of Prime Directive, Inc.
+
+Copyright (c) 2015 Prime Directive, Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Prime Directive, Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### github.com/google/uuid v1.6.0
 

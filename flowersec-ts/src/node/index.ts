@@ -69,3 +69,6 @@ export type { NodeTunnelDialerOptions, TunnelEndpointDialerPreparationOptions } 
 export { prepareTunnelEndpointDialer, TunnelEndpointDialerPreparation } from "./endpointDialer.js";
 
 export type { ProxyCredentialPolicy, ProxyCookieScope, ProxyCredentialAuthentication } from "./proxyCredentials.js";
+
+export { createConnectionPathAgent } from "./connectionPath.js";
+export type { NodeConnectionPath, ConnectionPathAgentOptions } from "./connectionPath.js";

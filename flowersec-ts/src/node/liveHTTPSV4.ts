@@ -1,3 +1,5 @@
+import { openOwnedConnectionPath, type NodeConnectionPath } from "./connectionPath.js";
+import type { Duplex } from "node:stream";
 import { constants, X509Certificate } from "node:crypto";
 import { Agent, request as httpsRequest } from "node:https";
 import type { ClientRequest, IncomingMessage } from "node:http";
@@ -17,6 +19,7 @@ export interface V4NodeLiveHTTPSOptions {
   readonly baseURL: string;
   /** Host-resolved numeric address for that origin; no resolver is invoked. */
   readonly remoteAddress: string;
+  readonly connectionPath?: NodeConnectionPath;
   readonly authority: string;
   readonly tenant: string;
   readonly audience: string;
@@ -63,6 +66,8 @@ function responseSize(response: IncomingMessage, maximum: number): number {
  * verifies the signed ActivationAuthorization against its selected winner. */
 export function createV4NodeLiveHTTPS(environment: V4TransportEnvironment, options: V4NodeLiveHTTPSOptions): V4LiveAuthorizationConfig {
   const owner = originalEnvironment(environment);
+  requireControl(options.connectionPath === undefined || typeof options.connectionPath.connect === "function");
+  const connectionPath = options.connectionPath === undefined ? undefined : Object.freeze({ connect: options.connectionPath.connect.bind(options.connectionPath) });
   const input = options.baseURL;
   requireControl(typeof input === "string" && input.length > 0 && input.length <= 2048 && !/[\s%\\?#]/u.test(input));
   let url: URL;
@@ -106,13 +111,15 @@ export function createV4NodeLiveHTTPS(environment: V4TransportEnvironment, optio
     requireControl(destination instanceof Uint8Array && destination.byteLength >= 1 && destination.byteLength <= 73728, "control_response_capacity");
     requireControl(active.size < maxConcurrentRequests, "resource_exhausted");
     const resources = owner.resources, reservation = resources.root.reserve({ owner: credentialOwner(resources, "node_live_https_request"), accounts: resources.accounts, charge });
-    const controller = new AbortController(); active.add(controller);
+    const controller = new AbortController(), routeCancellation = new AbortController(); active.add(controller);
+    let route: Duplex | undefined, routeDone = Promise.resolve();
     let socket: TLSSocket | undefined, agent: Agent | undefined, http: ClientRequest | undefined, response: IncomingMessage | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined, body: Uint8Array | undefined, success = false, responseComplete = false;
     let socketDone = Promise.resolve(), requestDone = Promise.resolve(), responseDone = Promise.resolve(), writeDone = Promise.resolve();
     let failed: Error | undefined, rejectPending: ((error: Error) => void) | undefined;
     const stop = (code: string): void => {
-      failed ??= new Error(code); rejectPending?.(failed); http?.destroy(); response?.destroy(); socket?.destroy(); agent?.destroy();
+      routeCancellation.abort();
+      failed ??= new Error(code); rejectPending?.(failed); http?.destroy(); response?.destroy(); socket?.destroy(); route?.destroy(); agent?.destroy();
     };
     const abort = (): void => { controller.abort(); }, aborted = (): void => stop("canceled");
     call.signal.addEventListener("abort", abort, { once: true }); controller.signal.addEventListener("abort", aborted, { once: true });
@@ -135,6 +142,13 @@ export function createV4NodeLiveHTTPS(environment: V4TransportEnvironment, optio
       const tlsOptions: ConnectionOptions & { highWaterMark: number; allowHalfOpen: boolean } = { host: remoteAddress, port, secureContext: context, minVersion: "TLSv1.3", maxVersion: "TLSv1.3",
         servername: isIP(host) ? "" : host, rejectUnauthorized: true, ALPNProtocols: ["http/1.1"],
         checkServerIdentity: (_name, certificate) => checkServerIdentity(host, certificate), highWaterMark: 16384, allowHalfOpen: false };
+      if (connectionPath !== undefined) {
+        route = await openOwnedConnectionPath(connectionPath, remoteAddress, port, routeCancellation.signal);
+        const transport = route;
+        routeDone = new Promise(resolve => transport.once("close", resolve));
+        transport.on("error", () => stop("control_transport_failed"));
+        guard(); tlsOptions.socket = transport;
+      }
       socket = connect(tlsOptions);
       const connection = socket;
       socketDone = new Promise(resolve => connection.once("close", () => { if (!responseComplete) stop("control_closed"); resolve(); }));
@@ -200,10 +214,10 @@ export function createV4NodeLiveHTTPS(environment: V4TransportEnvironment, optio
     finally {
       if (timer !== undefined) clearTimeout(timer);
       call.signal.removeEventListener("abort", abort); controller.signal.removeEventListener("abort", aborted);
-      rejectPending = undefined; http?.destroy(); response?.destroy(); socket?.destroy(); agent?.destroy();
+      rejectPending = undefined; http?.destroy(); response?.destroy(); socket?.destroy(); route?.destroy(); agent?.destroy();
       // An aborted await is not native cleanup. Retain both byte buffers and
       // the original reservation through real write/request/socket callbacks.
-      await Promise.all([writeDone, requestDone, responseDone, socketDone]);
+      await Promise.all([writeDone, requestDone, responseDone, socketDone, routeDone]);
       body?.fill(0); if (!success) destination.fill(0);
       reservation.release(); active.delete(controller); cleanup();
     }

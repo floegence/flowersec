@@ -8634,6 +8634,108 @@
             "expr": "flowersec.WriteTerminal",
             "doc_token": "`flowersec.WriteTerminal`",
             "stability_group": "transport_v4"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.InvitationCode",
+            "doc_token": "`flowersec.InvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.InvitationExchangeOptions",
+            "doc_token": "`flowersec.InvitationExchangeOptions`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.InvitationExchangeHandlerOptions",
+            "doc_token": "`flowersec.InvitationExchangeHandlerOptions`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "type",
+            "expr": "flowersec.InvitationExchangeError",
+            "doc_token": "`flowersec.InvitationExchangeError`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "var",
+            "expr": "flowersec.ErrInvalidInvitationCode",
+            "doc_token": "`flowersec.ErrInvalidInvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewInvitationCode",
+            "doc_token": "`flowersec.NewInvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.DeriveInvitationCode",
+            "doc_token": "`flowersec.DeriveInvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.ParseInvitationCode",
+            "doc_token": "`flowersec.ParseInvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.ExchangeInvitation",
+            "doc_token": "`flowersec.ExchangeInvitation`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.NewInvitationExchangeHandler",
+            "doc_token": "`flowersec.NewInvitationExchangeHandler`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "func",
+            "expr": "flowersec.RejectInvitationExchange",
+            "doc_token": "`flowersec.RejectInvitationExchange`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.String",
+            "doc_token": "`flowersec.InvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.GoString",
+            "doc_token": "`flowersec.InvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.MarshalJSON",
+            "doc_token": "`flowersec.InvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.Text",
+            "doc_token": "`flowersec.InvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "flowersec.InvitationCode.LookupID",
+            "doc_token": "`flowersec.InvitationCode`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "(*flowersec.InvitationExchangeError).Error",
+            "doc_token": "`flowersec.InvitationExchangeError`",
+            "stability_group": "transport_v4"
           }
         ]
       },
@@ -10036,6 +10138,80 @@
             "stability_group": "transport_v4"
           }
         ]
+      },
+      {
+        "package": "github.com/floegence/flowersec/flowersec-go/v6/egress",
+        "alias": "egress",
+        "doc_package_token": "`github.com/floegence/flowersec/flowersec-go/v6/egress`",
+        "stability_group": "transport_v4",
+        "entries": [
+          {
+            "kind": "type",
+            "expr": "egress.HTTPSProxyOptions",
+            "doc_token": "`egress.HTTPSProxyOptions`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "type",
+            "expr": "egress.HTTPSProxy",
+            "doc_token": "`egress.HTTPSProxy`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "func",
+            "expr": "egress.NewHTTPSProxy",
+            "doc_token": "`egress.NewHTTPSProxy(...)`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "var",
+            "expr": "egress.ErrInvalidProxy",
+            "doc_token": "`egress.ErrInvalidProxy`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "var",
+            "expr": "egress.ErrProxyConnection",
+            "doc_token": "`egress.ErrProxyConnection`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).DialContext",
+            "doc_token": "`egress.HTTPSProxy.DialContext(...)`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).HTTPTransport",
+            "doc_token": "`egress.HTTPSProxy.HTTPTransport()`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).String",
+            "doc_token": "`egress.HTTPSProxy.String()`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).GoString",
+            "doc_token": "`egress.HTTPSProxy.GoString()`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).MarshalJSON",
+            "doc_token": "`egress.HTTPSProxy.MarshalJSON()`",
+            "stability_group": "transport_v4"
+          },
+          {
+            "kind": "method",
+            "expr": "(*egress.HTTPSProxy).Valid",
+            "doc_token": "`egress.HTTPSProxy.Valid()`",
+            "stability_group": "transport_v4"
+          }
+        ]
       }
     ],
     "forbidden_packages": [
@@ -11058,6 +11234,7 @@
           "createAcceptor",
           "createByteStreamDuplex",
           "createConnectionController",
+          "createConnectionPathAgent",
           "createGrantIssuer",
           "createHandlerPlan",
           "createLiveTunnelAuthority",
@@ -11150,6 +11327,7 @@
           "ConnectionGuarantees",
           "ConnectionMaterial",
           "ConnectionMaterialSource",
+          "ConnectionPathAgentOptions",
           "ConnectionPhase",
           "ConnectionReplaceOptions",
           "ConnectionReplaceResult",
@@ -11264,6 +11442,7 @@
           "MethodDefinitionOptions",
           "NamespaceOptions",
           "NativeTransportUnavailableError",
+          "NodeConnectionPath",
           "NodeDuplex",
           "NodeDuplexBridge",
           "NodeDuplexError",
@@ -13238,7 +13417,7 @@
       "`connect(environment:source:requirements:)`",
       "`import Flowersec`"
     ],
-    "signature_sha256": "e7a436ef2371a1cb157128561b05b16f1ac15beedc432d0055b6c4fc3d690721",
+    "signature_sha256": "84527432107420113c928364f54396d3f0a9867af695d8fa6794e6189bdea85d",
     "symbols": [
       {
         "kind": "swift.associatedtype",
@@ -13908,6 +14087,11 @@
       {
         "kind": "swift.enum",
         "name": "StreamMetadataError",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum",
+        "name": "TLSChannelError",
         "doc_token": ""
       },
       {
@@ -15642,6 +15826,21 @@
       },
       {
         "kind": "swift.enum.case",
+        "name": "TLSChannelError.invalidOrigin",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TLSChannelError.unsupported",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
+        "name": "TLSChannelError.verificationFailed",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.enum.case",
         "name": "TransportAvailabilityError.runtimeUnavailable",
         "doc_token": ""
       },
@@ -16367,6 +16566,11 @@
       },
       {
         "kind": "swift.init",
+        "name": "HTTPDirectChannelProvider.init(endpoint:connect:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
         "name": "HTTPProxyField.init(name:value:)",
         "doc_token": ""
       },
@@ -16843,6 +17047,11 @@
       {
         "kind": "swift.init",
         "name": "StreamingLimits.init(maxItemCount:maxPayloadBytes:maxDurationMS:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.init",
+        "name": "TLSChannelProvider.init(origin:connect:)",
         "doc_token": ""
       },
       {
@@ -18242,6 +18451,11 @@
       },
       {
         "kind": "swift.method",
+        "name": "TLSChannelProvider.openChannel(trustRootsPEM:initializer:)",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.method",
         "name": "TransportApplicationIdentity.close()",
         "doc_token": ""
       },
@@ -19418,6 +19632,11 @@
       {
         "kind": "swift.property",
         "name": "ExecutionObservation.workActive",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "HTTPDirectChannelProvider.description",
         "doc_token": ""
       },
       {
@@ -21532,6 +21751,16 @@
       },
       {
         "kind": "swift.property",
+        "name": "TLSChannelProvider.customMirror",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TLSChannelProvider.description",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "TransportApplicationIdentity.customMirror",
         "doc_token": ""
       },
@@ -21617,6 +21846,11 @@
       },
       {
         "kind": "swift.property",
+        "name": "TransportClientConfiguration.httpDirectChannelProvider",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
         "name": "TransportClientConfiguration.listenerTLS",
         "doc_token": ""
       },
@@ -21673,6 +21907,11 @@
       {
         "kind": "swift.property",
         "name": "TransportClientConfiguration.timePolicy",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.property",
+        "name": "TransportClientConfiguration.tlsChannelProvider",
         "doc_token": ""
       },
       {
@@ -22912,6 +23151,11 @@
       },
       {
         "kind": "swift.struct",
+        "name": "HTTPDirectChannelProvider",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
         "name": "HTTPProxyField",
         "doc_token": ""
       },
@@ -23362,6 +23606,11 @@
       },
       {
         "kind": "swift.struct",
+        "name": "TLSChannelProvider",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.struct",
         "name": "TransportAutomaticLivenessPolicy",
         "doc_token": ""
       },
@@ -23577,6 +23826,16 @@
       },
       {
         "kind": "swift.typealias",
+        "name": "HTTPDirectChannelProvider.Connect",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "HTTPDirectChannelProvider.Initializer",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
         "name": "PreparedAndSavedOperation.Status",
         "doc_token": ""
       },
@@ -23588,6 +23847,16 @@
       {
         "kind": "swift.typealias",
         "name": "StreamHandler",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "TLSChannelProvider.Connect",
+        "doc_token": ""
+      },
+      {
+        "kind": "swift.typealias",
+        "name": "TLSChannelProvider.Initializer",
         "doc_token": ""
       }
     ]

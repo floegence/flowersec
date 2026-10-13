@@ -269,7 +269,7 @@
       }
     }
     static func connect(
-      material: V4DirectPoolMaterial, address: String, roots: [Data], listenerTLS: NativeListenerTLSConfiguration? = nil,
+      material: V4DirectPoolMaterial, address: String, roots: [Data], listenerTLS: NativeListenerTLSConfiguration? = nil, tlsChannelProvider: TLSChannelProvider? = nil, httpDirectChannelProvider: HTTPDirectChannelProvider? = nil,
       store: V4SQLitePoolStore?, requirements: ConnectionRequirements,
       notificationPlan: V4ControllerNotificationPlan? = nil, handoff: (any V4ControllerHandoffReservation)? = nil,
       serve: V4ServeAdmission? = nil, claimed: Bool = false
@@ -358,7 +358,7 @@
           prepared = try registration.takePreparedCarrier()
         } else if plan.route.isDialer {
           prepared = try await V4PreparedWebSocket.prepare(route: plan.route,
-            numericAddress: address, trustRootsPEM: roots, handoff: handoff)
+            numericAddress: address, trustRootsPEM: roots, channelProvider: tlsChannelProvider, localChannelProvider: httpDirectChannelProvider, handoff: handoff)
         } else {
           prepared = try await V4PreparedWebSocket.listen(route: plan.route,
             numericAddress: address, tls: listenerTLS, handoff: handoff, onListening: {

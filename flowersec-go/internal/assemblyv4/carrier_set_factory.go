@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"sync"
 
+	"github.com/floegence/flowersec/flowersec-go/v6/egress"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/rawquic"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v6/internal/carrierv4/webtransport"
@@ -24,6 +25,7 @@ type CarrierEndpoint struct {
 	Deployment    protocolv4.RelayDeploymentBinding
 	Route         []byte
 	RemoteAddress netip.AddrPort
+	EgressProxy   *egress.HTTPSProxy
 	Roots         *x509.CertPool
 	Origin        string
 	QUIC          rawquic.OwnedOptions
@@ -52,7 +54,7 @@ func (c CarrierSetConfig) quic(index int) QUICFactoryConfig {
 func (c CarrierSetConfig) websocket(index int) WebSocketFactoryConfig {
 	e := c.Endpoints[index]
 	return WebSocketFactoryConfig{Root: c.Root, Owner: carrierSetOwner(c.Owner, index), Clock: c.Clock, Role: c.Role,
-		Relay: c.Relay, Deployment: e.Deployment, Route: e.Route, RemoteAddress: e.RemoteAddress, Roots: e.Roots,
+		Relay: c.Relay, Deployment: e.Deployment, Route: e.Route, RemoteAddress: e.RemoteAddress, EgressProxy: e.EgressProxy, Roots: e.Roots,
 		Origin: e.Origin, Options: e.WebSocket, Connections: c.ConnectionsPerRoute, RuntimeBytes: c.FactoryRuntimeBytes}
 }
 
@@ -67,7 +69,7 @@ func (c CarrierSetConfig) factoryCharge(index int) (resourcev4.Vector, error) {
 	e := c.Endpoints[index]
 	switch e.Carrier {
 	case 0:
-		if e.Origin != "" || e.WebSocket != (websocket.Options{}) || e.WebTransport != (webtransport.OwnedOptions{}) {
+		if e.EgressProxy != nil || e.Origin != "" || e.WebSocket != (websocket.Options{}) || e.WebTransport != (webtransport.OwnedOptions{}) {
 			return resourcev4.Vector{}, resourcev4.ErrConfiguration
 		}
 		return QUICCarrierFactoryCharge(c.quic(index))
@@ -77,7 +79,7 @@ func (c CarrierSetConfig) factoryCharge(index int) (resourcev4.Vector, error) {
 		}
 		return WebSocketCarrierFactoryCharge(c.websocket(index))
 	case 2:
-		if e.QUIC != (rawquic.OwnedOptions{}) || e.WebSocket != (websocket.Options{}) {
+		if e.EgressProxy != nil || e.QUIC != (rawquic.OwnedOptions{}) || e.WebSocket != (websocket.Options{}) {
 			return resourcev4.Vector{}, resourcev4.ErrConfiguration
 		}
 		return WebTransportCarrierFactoryCharge(c.webtransport(index))
