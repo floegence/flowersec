@@ -244,13 +244,16 @@ func writeProxyWebSocketFrame(writer io.Writer, operation byte, payload []byte, 
 	if len(payload) > maximum {
 		return ErrInvalidProxyServer
 	}
-	header := make([]byte, 5)
-	header[0] = operation
-	binary.BigEndian.PutUint32(header[1:], uint32(len(payload)))
-	if _, err := writer.Write(header); err != nil {
-		return err
+	// A separate header write can become its own encrypted carrier record.
+	// Keep the bounded frame together without delaying or batching messages.
+	frame := make([]byte, 5+len(payload))
+	frame[0] = operation
+	binary.BigEndian.PutUint32(frame[1:5], uint32(len(payload)))
+	copy(frame[5:], payload)
+	n, err := writer.Write(frame)
+	if err == nil && n != len(frame) {
+		return io.ErrShortWrite
 	}
-	_, err := writer.Write(payload)
 	return err
 }
 

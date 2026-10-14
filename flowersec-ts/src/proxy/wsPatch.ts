@@ -19,11 +19,13 @@ function readU16(input: Uint8Array): number {
 
 async function writeFrame(stream: ByteStream, opcode: number, payload: Uint8Array, maximum: number): Promise<void> {
   if (payload.length > maximum) throw new Error("WebSocket frame exceeds the proxy limit");
-  const header = new Uint8Array(5);
-  header[0] = opcode;
-  header.set(u32be(payload.length), 1);
-  await writeAll(stream, header);
-  await writeAll(stream, payload);
+  // Avoid turning the five-byte header into a separate encrypted record.
+  // This preserves message order and does not wait for another message.
+  const frame = new Uint8Array(5 + payload.length);
+  frame[0] = opcode;
+  frame.set(u32be(payload.length), 1);
+  frame.set(payload, 5);
+  await writeAll(stream, frame);
 }
 
 async function readFrame(reader: ProxyByteReader, maximum: number): Promise<Readonly<{ opcode: number; payload: Uint8Array }>> {
