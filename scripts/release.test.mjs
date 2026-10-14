@@ -1673,6 +1673,7 @@ test("release recovery preserves immutable assets and publishes npm from those e
   assert.match(workflow, /\.os == \[\$os\] and \.cpu == \[\$cpu\]/);
   assert.match(workflow, /\.error\.code == "E404"/);
   assert.match(workflow, /npm@11\.5\.1 publish "\$\{publish_args\[\@\]\}" "\.\/\$archive"/);
+  assert.match(workflow, /local publish_args=\(--access public --tag v5\)/);
   assert.match(workflow, /--provenance=false/);
   assert.match(workflow, /repository_url/);
   assert.match(workflow, /if \[\[ -z "\$repository_url" \]\]/);

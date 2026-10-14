@@ -899,7 +899,7 @@ validate_step_contracts(npm_recovery_steps, [
   { name: "Publish or recover npm registry packages from immutable release assets", keys: ["name", "env", "run"], values: { "env" => {
     "GH_TOKEN" => "${{ github.token }}",
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
-  } }, run_sha256: "e580af288b7bd2914b7e4c540d1b3c3cd348f076a748bc3ad6aa0f34a1bec055" },
+  } }, run_sha256: "37868ddbcd2cb7e872f8e4178a4a4352582a9584965524fb2c604a756cf92b12" },
   { name: "Verify npm registry consumers", keys: ["name", "env", "run"], values: { "env" => {
     "RELEASE_VERSION" => "${{ needs.prepare.outputs.version }}",
   } }, run_sha256: "60dfc6c71b5fcb8dec7d17777678d62aa94c0aba810e1e168861c176a9dfeb65" },

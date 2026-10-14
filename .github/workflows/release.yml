@@ -1148,7 +1148,10 @@ jobs:
             local npm_error
             local view_status
             local repository_url
-            local publish_args=(--access public)
+            # Major 5 is maintained alongside the newer 6.x line. Publish
+            # recovery packages under an explicit compatibility tag so npm
+            # never tries to move `latest` backwards from 6.x to 5.x.
+            local publish_args=(--access public --tag v5)
             local_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
             npm_error="$(mktemp)"
             set +e
