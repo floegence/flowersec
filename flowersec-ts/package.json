@@ -76,11 +76,11 @@
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
     "@types/node": "26.6.3",
-    "@types/ws": "8.18.1",
+    "@types/ws": "8.18.2",
     "brotli-dec-wasm": "2.3.2",
     "tough-cookie": "6.0.2",
     "tr46": "6.0.0",
-    "ws": "8.21.3"
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
