@@ -32,7 +32,7 @@ idna = { version = "=1.1.0", default-features = false, features = ["std", "compi
 idna_adapter = { version = "=1.2.2", features = ["compiled_data"] }
 idna_mapping = "=1.1.0"
 p256 = { version = "0.14", features = ["ecdh"] }
-psl = "=2.1.238"
+psl = "=2.1.241"
 rand = "0.10"
 ring = { version = "=0.17.14", default-features = false, features = ["alloc"] }
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "limits", "fallible_uint"] }
