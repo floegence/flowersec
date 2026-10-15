@@ -83,7 +83,7 @@
     "ws": "8.21.3"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.64.0",
     "@typescript-eslint/eslint-plugin": "8.70.1",
     "@typescript-eslint/parser": "8.70.1",
     "@typescript/native": "npm:typescript@7.0.2",
