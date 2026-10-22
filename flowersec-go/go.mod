@@ -6,7 +6,7 @@ require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/flynn/noise v1.1.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/quic-go/quic-go v0.63.0
+	github.com/quic-go/quic-go v0.64.1
 	github.com/quic-go/webtransport-go v0.13.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/net v0.60.0
