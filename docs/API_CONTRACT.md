@@ -459,3 +459,5 @@ this package grants no authority to connect to a product environment.
 
 `egress.HTTPSProxy.Valid()` reports successful construction; zero-value routes
 are rejected before connection attempts.
+
+Applications that require requests to survive arbitrary session stalls may explicitly select `sessionBound: true` in the TypeScript fetch init for an individual request and `ProxyServerOptions.SessionBoundRequests` in Go. This host policy removes HTTP establishment, elapsed-response and SSE-idle deadlines; caller cancellation, session termination, finite body/chunk limits and HTTP/event admission caps remain enforced. A peer's request metadata cannot enable the server policy. Requests are never replayed by the proxy. Both ends must opt in; the default finite policy remains unchanged. Node proxy servers retain the default finite policy.

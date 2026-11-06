@@ -17,6 +17,7 @@ import type {
   ProxyHeader,
   ProxyRuntime,
   ProxyRuntimeOptions,
+  ProxyRequestInit,
   ProxyRuntimePathPolicy,
 } from "./types.js";
 
@@ -305,10 +306,16 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
   serviceWorker?.addEventListener("controllerchange", register);
   register();
   let serviceWorkerBridge: Readonly<{ dispose(): void }> | undefined;
+  const terminate = () => {
+    admission.close();
+    for (const controller of active) controller.abort(new SessionError("closed"));
+    lifetime.abort(new SessionError("closed"));
+  };
+  void options.session.waitTermination({ signal: lifetime.signal }).then(terminate, () => { if (!disposed) terminate(); });
 
   // One transaction owns admission, framing, cancellation and response backpressure
   // for direct fetch and both browser bridges. It never reconnects a request.
-  async function execute(request: ProxyFetchRequest, signal?: AbortSignal): Promise<Response> {
+  async function execute(request: ProxyFetchRequest, signal?: AbortSignal, sessionBound = false): Promise<Response> {
     if (disposed) throw new SessionError("closed");
     const path = normalizePath(request.path);
     enforcePathPolicy("http", path, pathPolicy);
@@ -345,6 +352,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
     const cancel = () => controller.abort(new SessionError("canceled"));
     const onAbort = () => finish(controller.signal.reason ?? new SessionError("canceled"));
     const arm = (duration: number) => {
+      if (sessionBound) return;
       clearTimeout(timer);
       timer = setTimeout(() => controller.abort(new SessionError("timeout")), duration);
     };
@@ -415,17 +423,19 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
       // An abort may complete admission or openStream in the same microtask.
       release?.();
       if (controller.signal.aborted) await stream?.reset().catch(() => undefined);
+      if (controller.signal.aborted) throw controller.signal.reason;
       throw error instanceof SessionError ? error : new SessionError("operation_failed");
     }
   }
 
-  async function fetchSession(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  async function fetchSession(input: RequestInfo | URL, init?: ProxyRequestInit): Promise<Response> {
     if (disposed) throw new SessionError("closed");
     const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const prepared = await prepareProxyFetch(input, { ...init,
       signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]),
     }, externalOrigin, maxBodyBytes);
-    return execute(prepared.request, prepared.signal);
+    if (init?.sessionBound !== undefined && typeof init.sessionBound !== "boolean") throw new TypeError("sessionBound must be a boolean");
+    return execute(prepared.request, prepared.signal, init?.sessionBound === true);
   }
 
   function dispatchFetch(request: ProxyFetchRequest, port: MessagePort): void {

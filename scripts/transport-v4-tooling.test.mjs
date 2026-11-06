@@ -1139,7 +1139,7 @@ test("binding gate requires exact external artifacts and does not invent missing
   const options = {root, designPath:path.join(root,"missing-design.md"), evidencePath:path.join(root,"missing-evidence.md")};
   assert.deepEqual(verifyBinding(options).external, {design:"missing", review_evidence:"missing"});
   assert.throws(() => verifyBinding({...options, requireExternal:true}), /required design unavailable/u);
-  const designPath = path.resolve(repositoryRoot, "../flowersec-v4-transport-security-design.zh-CN.md");
+  const designPath = process.env.FLOWERSEC_V4_DESIGN_PATH ?? path.resolve(repositoryRoot, "../flowersec-v4-transport-security-design.zh-CN.md");
   if (fs.existsSync(designPath)) assert.throws(() => verifyBinding({...options, designPath, requireExternal:true}), /required review_evidence unavailable/u);
   fs.writeFileSync(options.designPath, "incorrect design\n");
   assert.throws(() => verifyBinding(options), /external design SHA changed/u);

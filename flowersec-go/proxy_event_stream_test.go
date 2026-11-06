@@ -3,6 +3,7 @@ package flowersec
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -157,4 +158,88 @@ func (s *resetEventTestStream) Read(p []byte) (int, error) {
 		err = io.ErrClosedPipe
 	}
 	return n, err
+}
+
+func TestProxySessionBoundRequestsSurviveSlowIntakeAndResponse(t *testing.T) {
+	for _, event := range []bool{false, true} {
+		t.Run(fmt.Sprint(event), func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(50 * time.Millisecond)
+				if event {
+					w.Header().Set("Content-Type", "text/event-stream")
+				}
+				_, _ = w.Write([]byte("data: accepted\n\n"))
+				w.(http.Flusher).Flush()
+				time.Sleep(50 * time.Millisecond)
+				_, _ = w.Write([]byte("data: completed\n\n"))
+			}))
+			defer upstream.Close()
+			proxy, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL,
+				SessionBoundRequests: true, DefaultHTTPRequestTimeout: 10 * time.Millisecond, MaxHTTPRequestTimeout: 10 * time.Millisecond, EventStreamIdleTimeout: 10 * time.Millisecond})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer proxy.Close()
+			handlers, _ := NewSessionHandlers(SessionHandlerOptions{})
+			if err := proxy.RegisterStreamHandlers(handlers); err != nil {
+				t.Fatal(err)
+			}
+			client := serveProxyTestStream(t, handlers, proxyHTTPStreamKind)
+			time.Sleep(30 * time.Millisecond)
+			headers := []proxyHeader{}
+			if event {
+				headers = append(headers, proxyHeader{Name: "accept", Value: "text/event-stream"})
+			}
+			if err := writeProxyJSON(client, proxyHTTPRequest{Version: proxyWireVersion, RequestID: "slow", Method: "GET", Path: "/", Headers: headers, TimeoutMS: 1}); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeProxyTerminator(client); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(75 * time.Millisecond)
+			var response proxyHTTPResponse
+			if err := readProxyJSON(client, 1<<20, &response); err != nil {
+				t.Fatal(err)
+			}
+			if !response.OK {
+				t.Fatalf("response: %+v", response)
+			}
+			time.Sleep(75 * time.Millisecond)
+			var total int64
+			for {
+				_, done, err := readProxyChunk(client, 1<<20, &total, 1<<20)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if done {
+					break
+				}
+			}
+			if total != int64(len("data: accepted\n\ndata: completed\n\n")) {
+				t.Fatal(total)
+			}
+		})
+	}
+}
+
+func TestProxySessionBoundRequestsCancelIncompleteIntake(t *testing.T) {
+	proxy, err := NewProxyServer(ProxyServerOptions{Upstream: "http://127.0.0.1:1", UpstreamOrigin: "http://127.0.0.1:1", SessionBoundRequests: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	local, remote := net.Pipe()
+	defer remote.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		proxy.serveHTTP(ctx, IncomingStream{Stream: &resetEventTestStream{proxyServerTestStream{Conn: local, kind: proxyHTTPStreamKind}}})
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("session cancellation leaked intake")
+	}
 }

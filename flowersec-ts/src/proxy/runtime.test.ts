@@ -531,3 +531,47 @@ it("supports HTTP direct pages where secure-context randomUUID is unavailable", 
   try { expect(await (await runtime.fetch("/api")).text()).toBe(""); }
   finally { runtime.dispose(); vi.unstubAllGlobals(); }
 });
+
+
+describe("session-bound HTTP lifetime", () => {
+  it("survives slow establishment, delivery and consumer backpressure until session termination", async () => {
+    vi.useFakeTimers();
+    let open!: () => void;
+    let terminate!: () => void;
+    const stream = new FetchResponseStream("text/event-stream", [Uint8Array.of(1)]);
+    const session = new FakeSession([stream]);
+    Object.defineProperty(session, "termination", { value: new Promise<void>(resolve => { terminate = resolve; }) });
+    const original = session.openStream.bind(session);
+    session.openStream = async (kind, options) => { await new Promise<void>(resolve => { open = resolve; }); return original(kind, options); };
+    const runtime = createProxyRuntime({ session, timeoutMs: 10, eventStreamIdleTimeoutMs: 20 });
+    try {
+      const pending = runtime.fetch("/events", { sessionBound: true, headers: { Accept: "text/event-stream" } });
+      await vi.advanceTimersByTimeAsync(300_000);
+      open();
+      const response = await pending;
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect(stream.resetCalled).toBe(false);
+      const reader = response.body!.getReader();
+      expect(await reader.read()).toMatchObject({ value: Uint8Array.of(1), done: false });
+      const closed = expect(reader.closed).rejects.toMatchObject({ code: "closed" });
+      terminate(); await closed;
+      expect(stream.resetCalled).toBe(true);
+    } finally { runtime.dispose(); vi.useRealTimers(); }
+  });
+  it("retains explicit cancellation and finite body limits", async () => {
+    const stream = new FetchResponseStream("application/json", [new Uint8Array(9)]);
+    const runtime = createProxyRuntime({ session: new FakeSession([stream]), maxBodyBytes: 8 });
+    try {
+      const response = await runtime.fetch("/read", { sessionBound: true });
+      await expect(response.arrayBuffer()).rejects.toMatchObject({ code: "resource_exhausted" });
+    } finally { runtime.dispose(); }
+    const stalled = new ControlledReadStream();
+    const cancelRuntime = createProxyRuntime({ session: new FakeSession([stalled]) });
+    const owner = new AbortController();
+    const pending = cancelRuntime.fetch("/read", { signal: owner.signal, sessionBound: true });
+    await vi.waitFor(() => expect(stalled.readCalls).toBeGreaterThan(0));
+    owner.abort();
+    await expect(pending).rejects.toMatchObject({ code: "canceled" });
+    cancelRuntime.dispose();
+  });
+});

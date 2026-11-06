@@ -53,6 +53,7 @@ export type {
   ProxyRuntimeHTTPScope,
   ProxyRuntimeLimits,
   ProxyRuntimeOptions,
+  ProxyRequestInit,
   ProxyRuntimePathPolicy,
   ProxyRuntimeScopeLimits,
   ProxyRuntimeScope,

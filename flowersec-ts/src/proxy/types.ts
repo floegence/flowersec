@@ -51,9 +51,12 @@ export type ProxyFetchRequest = Readonly<{
   body?: ArrayBuffer;
 }>;
 
+/** Standard fetch inputs with an explicit session-owned request lifetime. */
+export type ProxyRequestInit = RequestInit & Readonly<{ sessionBound?: boolean }>;
+
 export type ProxyRuntime = Readonly<{
   limits: ProxyRuntimeLimits;
-  fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  fetch(input: RequestInfo | URL, init?: ProxyRequestInit): Promise<Response>;
   dispatchFetch(request: ProxyFetchRequest, port: MessagePort): void;
   openWebSocketStream(
     path: string,

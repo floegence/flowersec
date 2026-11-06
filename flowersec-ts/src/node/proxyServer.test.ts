@@ -122,6 +122,13 @@ test("streams negotiated events beyond finite limits and cancels idle upstream w
   const [kind, handler] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
   const operations: Promise<void>[] = [];
   const session = {
+    async waitTermination({ signal }: { signal?: AbortSignal } = {}) {
+      await new Promise<void>((_resolve, reject) => {
+        const abort = () => reject(signal?.reason);
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+      });
+    },
     async openStream() {
       const up = new TransformStream<Uint8Array, Uint8Array>();
       const down = new TransformStream<Uint8Array, Uint8Array>();

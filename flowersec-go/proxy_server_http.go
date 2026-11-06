@@ -30,8 +30,15 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	cancelRequest := func() { cancelCause(context.Canceled) }
 	defer cancelRequest()
 	// A single timer bounds intake and finite responses, then tracks event activity.
-	timer := time.AfterFunc(server.config.maxTimeout, func() { cancelCause(context.DeadlineExceeded) })
-	defer timer.Stop()
+	var timer *time.Timer
+	if !server.config.sessionBoundRequests {
+		timer = time.AfterFunc(server.config.maxTimeout, func() { cancelCause(context.DeadlineExceeded) })
+	}
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	resetStream := sync.OnceFunc(func() { _ = stream.Reset() })
 	outerResetDone := make(chan struct{})
 	stopOuterReset := context.AfterFunc(handlerContext, func() {
@@ -65,10 +72,12 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	}
 	requestContext := handlerContext
 	remaining := time.Until(started.Add(timeout))
-	if remaining <= 0 {
-		cancelCause(context.DeadlineExceeded)
-	} else {
-		timer.Reset(remaining)
+	if timer != nil {
+		if remaining <= 0 {
+			cancelCause(context.DeadlineExceeded)
+		} else {
+			timer.Reset(remaining)
+		}
 	}
 	select {
 	case server.httpPermits <- struct{}{}:
@@ -175,7 +184,9 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 	defer response.Body.Close()
 	persistent := eventRequested && proxyEventStreamType(response.Header.Get("Content-Type"))
 	if persistent {
-		timer.Reset(server.config.eventIdleTimeout)
+		if !server.config.sessionBoundRequests {
+			timer.Reset(server.config.eventIdleTimeout)
+		}
 	} else {
 		releaseEvent()
 	}
@@ -202,7 +213,9 @@ func (server *ProxyServer) serveHTTP(ctx context.Context, incoming IncomingStrea
 		if count > 0 {
 			maximum := server.config.maxBody
 			if persistent {
-				timer.Reset(server.config.eventIdleTimeout)
+				if !server.config.sessionBoundRequests {
+					timer.Reset(server.config.eventIdleTimeout)
+				}
 				// Bound each chunk without accumulating a lifetime byte counter.
 				total = 0
 				maximum = int64(server.config.maxChunk)

@@ -29,6 +29,10 @@ var ErrInvalidProxyServer = errors.New("invalid Flowersec proxy server")
 // application. The upstream is fixed by the application and can never be
 // selected by an untrusted session peer.
 type ProxyServerOptions struct {
+	// SessionBoundRequests disables HTTP elapsed/idle deadlines for this host.
+	// Session/request cancellation and all concurrency/byte limits remain active.
+	// The peer cannot enable this policy through request metadata.
+	SessionBoundRequests        bool
 	Upstream                    string
 	UpstreamOrigin              string
 	AllowedUpstreamHosts        []string
@@ -70,25 +74,26 @@ type ProxyServer struct {
 }
 
 type proxyServerConfig struct {
-	upstream          *url.URL
-	upstreamOrigin    string
-	allowedOrigins    map[string]struct{}
-	maxJSONFrame      int
-	maxChunk          int
-	maxBody           int64
-	maxWSFrame        int
-	defaultTimeout    time.Duration
-	maxTimeout        time.Duration
-	eventIdleTimeout  time.Duration
-	maxHTTP           int
-	maxEvents         int
-	requestHeaders    map[string]struct{}
-	responseHeaders   map[string]struct{}
-	blockedResponses  map[string]struct{}
-	webSocketHeaders  map[string]struct{}
-	forbiddenCookies  map[string]struct{}
-	forbiddenPrefixes []string
-	onError           func(error)
+	sessionBoundRequests bool
+	upstream             *url.URL
+	upstreamOrigin       string
+	allowedOrigins       map[string]struct{}
+	maxJSONFrame         int
+	maxChunk             int
+	maxBody              int64
+	maxWSFrame           int
+	defaultTimeout       time.Duration
+	maxTimeout           time.Duration
+	eventIdleTimeout     time.Duration
+	maxHTTP              int
+	maxEvents            int
+	requestHeaders       map[string]struct{}
+	responseHeaders      map[string]struct{}
+	blockedResponses     map[string]struct{}
+	webSocketHeaders     map[string]struct{}
+	forbiddenCookies     map[string]struct{}
+	forbiddenPrefixes    []string
+	onError              func(error)
 }
 
 // NewProxyServer creates one bounded server-side proxy application.
@@ -318,7 +323,7 @@ func compileProxyServerOptions(options ProxyServerOptions) (proxyServerConfig, i
 	}
 	return proxyServerConfig{
 		upstream: upstream, upstreamOrigin: origin, allowedOrigins: allowedOrigins, maxJSONFrame: maxJSON, maxChunk: maxChunk,
-		maxHTTP: maxHTTP, maxEvents: maxEvents, eventIdleTimeout: eventIdleTimeout,
+		maxHTTP: maxHTTP, maxEvents: maxEvents, eventIdleTimeout: eventIdleTimeout, sessionBoundRequests: options.SessionBoundRequests,
 		maxBody: maxBody, maxWSFrame: maxWS, defaultTimeout: defaultTimeout, maxTimeout: maxTimeout,
 		requestHeaders: requestHeaders, responseHeaders: responseHeaders, blockedResponses: blockedResponses,
 		webSocketHeaders: webSocketHeaders, forbiddenCookies: forbiddenCookies, forbiddenPrefixes: forbiddenPrefixes,
