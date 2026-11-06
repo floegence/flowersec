@@ -67,6 +67,16 @@ impl TunnelAuthorizer for CompileAuthorizer {
 
 static CARGO_PROBE_LOCK: Mutex<()> = Mutex::new(());
 
+fn seed_probe_lock(directory: &Path) {
+    // The probe changes only the API consumer. Preserve the tested dependency
+    // graph, including locked versions that the registry later withdraws.
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"),
+        directory.join("Cargo.lock"),
+    )
+    .expect("seed API probe dependency lock");
+}
+
 #[async_trait::async_trait]
 impl StreamHandler for StreamWithoutDebug {
     async fn handle(
@@ -266,6 +276,7 @@ fn artifact_lease_does_not_expose_its_artifact() {
         "use flowersec::ArtifactLease;\n\nfn inspect(lease: &ArtifactLease) { let _ = lease.artifact(); }\nfn main() {}\n",
     )
     .expect("write lease API probe source");
+    seed_probe_lock(fixture.path());
 
     let output = Command::new(env!("CARGO"))
         .args(["check", "--offline", "--quiet"])
@@ -379,6 +390,7 @@ fn default_public_api_does_not_expose_fuzzing() {
         "use flowersec::fuzzing;\n\nfn main() { let _ = fuzzing::parse_protocol; }\n",
     )
     .expect("write default API probe source");
+    seed_probe_lock(fixture.path());
 
     let output = Command::new("cargo")
         .args(["check", "--offline", "--quiet"])
