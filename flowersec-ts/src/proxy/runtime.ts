@@ -1,4 +1,5 @@
 import { prepareProxyFetch } from "./fetch.js";
+import { BodyIntake } from "./bodyIntake.js";
 import { SDK_DEFAULTS } from "../defaults.js";
 import { readJsonFrame, writeJsonFrame } from "../framing/jsonframe.js";
 import { base64urlEncode } from "../utils/base64url.js";
@@ -292,6 +293,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
   const responseExtra = normalizeHeaderNames(options.extraResponseHeaders);
   const webSocketExtra = normalizeHeaderNames(options.extraWebSocketHeaders);
   const admission = new StreamAdmission(maxConcurrentHttpStreams, maxQueuedHttpRequests, maxQueuedHttpBodyBytes);
+  const intake = new BodyIntake(maxConcurrentHttpStreams, Math.max(maxBodyBytes, maxQueuedHttpBodyBytes));
   let disposed = false;
   let activeEvents = 0;
   const active = new Set<AbortController>();
@@ -433,7 +435,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
     const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const prepared = await prepareProxyFetch(input, { ...init,
       signal: AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]),
-    }, externalOrigin, maxBodyBytes);
+    }, externalOrigin, maxBodyBytes, intake);
     if (init?.sessionBound !== undefined && typeof init.sessionBound !== "boolean") throw new TypeError("sessionBound must be a boolean");
     return execute(prepared.request, prepared.signal, init?.sessionBound === true);
   }

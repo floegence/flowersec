@@ -1,4 +1,5 @@
 import { RpcClient } from "../rpc/client.js";
+import { SDK_DEFAULTS } from "../defaults.js";
 import { RpcRouter, RpcServer, type RpcServerOptions } from "../rpc/server.js";
 
 import type {
@@ -261,6 +262,9 @@ export class SessionV3 implements SessionV3Contract {
   private controlReceiveKey: RecordKeyV3 | undefined;
   private controlWriteTail: Promise<void> = Promise.resolve();
   private controlTerminalSealed = false;
+  private applicationWriteBytes = 0;
+  private applicationWrites = 0;
+
   private nextLogicalID: bigint;
   private receivedGoAway = false;
   private receivedGoAwayLastAccepted = 0n;
@@ -360,6 +364,7 @@ export class SessionV3 implements SessionV3Contract {
               ? this.receiveRoots.get(epoch)?.epochSecret
               : undefined,
           onProtocolFailure: () => this.fail(protocolError("previous protocol unreliable frame")),
+          onActivity: () => this.markAuthenticatedActivity(),
         })
       : undefined;
     this.outboundPermits = new AsyncSemaphore(config.maxInboundStreams);
@@ -367,6 +372,15 @@ export class SessionV3 implements SessionV3Contract {
     this.rpcRouter = config.rpcRouter ?? new RpcRouter();
     this.rpcServerOptions = config.rpcServerOptions;
     this.rpc = new SessionRpcPeerV3(this.createRpcClient.bind(this), this.rpcRouter);
+  }
+
+  reserveWrite(bytes: number): () => void {
+    if (this.applicationWrites >= 256 || this.applicationWriteBytes + bytes > SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes) {
+      throw new SessionV3Error("resource_exhausted", "session write budget exceeded");
+    }
+    this.applicationWrites++;
+    this.applicationWriteBytes += bytes;
+    return () => { this.applicationWrites--; this.applicationWriteBytes -= bytes; };
   }
 
   private createRpcClient(): RpcClient {
@@ -1552,7 +1566,8 @@ class EncryptedStreamV3 implements ByteStreamV3 {
   sendSequence = 0n;
   receiveSequence = 0n;
   priorACK: Readonly<{ epoch: number; sequence: bigint }> | undefined;
-  private sendTail: Promise<void> = Promise.resolve();
+  private sendQueue: Set<() => Promise<void>> | undefined;
+  private sending = false;
   private localFIN = false;
   private remoteFIN = false;
   private pumpStarted = false;
@@ -1596,7 +1611,11 @@ class EncryptedStreamV3 implements ByteStreamV3 {
   async write(payload: Uint8Array, options: OperationOptionsV3 = {}): Promise<number> {
     if (!(payload instanceof Uint8Array)) throw new TypeError("stream write requires Uint8Array");
     throwIfAborted(options.signal);
-    return await this.writeBytes(new Uint8Array(payload), options.signal, false);
+    if (this.terminalError !== undefined) throw this.terminalError;
+    const size = Math.min(payload.length, SDK_DEFAULTS.e2ee.maxOutboundBufferedBytes);
+    const release = this.session.reserveWrite(size);
+    try { return await this.writeBytes(new Uint8Array(payload.subarray(0, size)), options.signal, false); }
+    finally { release(); }
   }
 
   /** The frame encoder owns these bytes until the sequenced write completes. */
@@ -1630,7 +1649,7 @@ class EncryptedStreamV3 implements ByteStreamV3 {
         void this.session.localReset(this, normalized);
         throw normalized;
       }
-    });
+    }, signal, false);
     return payload.length;
   }
 
@@ -1873,14 +1892,30 @@ class EncryptedStreamV3 implements ByteStreamV3 {
     (this as unknown as { openHash?: Uint8Array }).openHash = value.slice();
   }
 
-  private enqueueSend(operation: () => Promise<void>, signal?: AbortSignal): Promise<void> {
-    const queued = this.sendTail.then(async () => {
-      if (this.terminalError !== undefined) throw this.terminalError;
-      await operation();
+  private enqueueSend(operation: () => Promise<void>, signal?: AbortSignal, interruptActive = true): Promise<void> {
+    if (signal?.aborted) return Promise.reject(abortReason(signal));
+    return new Promise<void>((resolve, reject) => {
+      const queue = this.sendQueue ??= new Set();
+      const abort = () => { if (queue.delete(run)) reject(abortReason(signal!)); };
+      const run = async () => {
+        signal?.removeEventListener("abort", abort);
+        try {
+          if (this.terminalError !== undefined) throw this.terminalError;
+          if (signal && interruptActive) await raceAbort(operation(), signal);
+          else await operation();
+          resolve();
+        } catch (error) { reject(error); }
+      };
+      queue.add(run);
+      signal?.addEventListener("abort", abort, { once: true });
+      if (this.sending) return;
+      this.sending = true;
+      void Promise.resolve().then(async () => {
+        for (const next of queue) { queue.delete(next); await next(); }
+        this.sending = false;
+        this.sendQueue = undefined;
+      });
     });
-    const task = signal === undefined ? queued : raceAbort(queued, signal);
-    this.sendTail = task.catch(() => undefined);
-    return task;
   }
 
   private async waitSendRekey(signal?: AbortSignal): Promise<void> {

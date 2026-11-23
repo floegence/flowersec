@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,6 +17,15 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+func TestProxyDiagnosticPreservesCategoryWithoutUpstreamURL(t *testing.T) {
+	var diagnostic error
+	server := ProxyServer{config: proxyServerConfig{onError: func(err error) { diagnostic = err }}}
+	server.report(&url.Error{Op: "Get", URL: "https://internal.example/?signature=private", Err: &net.OpError{Op: "dial", Err: io.EOF}})
+	if diagnostic == nil || diagnostic.Error() != "upstream_dial_failed" || errors.Unwrap(diagnostic) != nil {
+		t.Fatal("expected a redacted dial error")
+	}
+}
 
 func TestProxyServerHTTPRoundTripUsesSessionHandlers(t *testing.T) {
 	var wantHost string

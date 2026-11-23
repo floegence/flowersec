@@ -2179,6 +2179,8 @@ private actor TransportV3ByteStream: ByteStream {
   private var receivePriorEpoch: UInt32 = 0
   private var receivePriorSequence: UInt64 = 0
   private var receivePriorACK = false
+  private var sendMaterial: RecordMaterialV3?
+  private var receiveMaterial: RecordMaterialV3?
   private var readBuffer = Data()
   private static let receiveLimit = 4 * 1024 * 1024
   private var capacityWaiters: [CheckedContinuation<Void, Never>] = []
@@ -2302,6 +2304,8 @@ private actor TransportV3ByteStream: ByteStream {
       do {
         try Task.checkCancellation()
         try await writeRecord(.data, payload: Data(data[offset..<(offset + count)]))
+      } catch let withdrawn as RPCWriteAdmission.Withdrawn {
+        throw withdrawn
       } catch {
         await terminateLocally(.streamReset)
         throw error
@@ -2410,6 +2414,8 @@ private actor TransportV3ByteStream: ByteStream {
 
   private func recordTerminal(_ error: TransportV3SessionError) {
     guard terminal == nil else { return }
+    sendMaterial = nil
+    receiveMaterial = nil
     terminal = error
     wakeCapacityWaiters()
     let waiters = queuedWriters
@@ -2477,6 +2483,8 @@ private actor TransportV3ByteStream: ByteStream {
 
   private func releaseIfFinished() async {
     if localFIN && remoteFIN {
+      sendMaterial = nil
+      receiveMaterial = nil
       await session.streamFinished(id: id, inbound: inbound, internalRPC: internalRPC)
     }
   }
@@ -2585,6 +2593,7 @@ private actor TransportV3ByteStream: ByteStream {
     receivePriorEpoch = receiveEpoch
     receivePriorSequence = receiveSequence
     receivePriorACK = true
+    receiveMaterial = nil
     receiveEpoch = nextEpoch
     receiveSequence = 0
     receiveExhausted = false
@@ -2632,6 +2641,7 @@ private actor TransportV3ByteStream: ByteStream {
         throw TransportV3SessionError.rekeyFailed
       }
       sendEpoch = pending.epoch
+      sendMaterial = nil
       sendSequence = 0
       sendExhausted = false
       pendingSendRekey = nil
@@ -2667,15 +2677,17 @@ private actor TransportV3ByteStream: ByteStream {
   private func writeRecordLocked(_ type: InnerRecordTypeV3, payload: Data) async throws {
     guard let terminal else {
       guard !sendExhausted else { throw TransportV3SessionError.resourceExhausted }
-      let roots = try await session.root(direction: sendDirection, epoch: sendEpoch)
       let inner = try TransportV3Crypto.encodeInnerRecord(type: type, payload: payload)
-      let material = try TransportV3Crypto.deriveStreamMaterial(
-        streamRoot: roots.streamRoot,
-        h3: h3,
-        logicalStreamID: id,
-        direction: sendDirection,
-        epoch: sendEpoch
-      )
+      let material: RecordMaterialV3
+      if let sendMaterial { material = sendMaterial }
+      else {
+        let roots = try await session.root(direction: sendDirection, epoch: sendEpoch)
+        if let failure = self.terminal { throw failure }
+        material = try TransportV3Crypto.deriveStreamMaterial(streamRoot: roots.streamRoot,
+          h3: h3, logicalStreamID: id, direction: sendDirection, epoch: sendEpoch)
+        sendMaterial = material
+      }
+      if type == .data { try RPCWriteAdmission.current?.commit() }
       let header = RecordHeaderV3(
         epoch: sendEpoch,
         sequence: sendSequence,
@@ -2731,14 +2743,15 @@ private actor TransportV3ByteStream: ByteStream {
       throw TransportV3SessionError.protocolViolation
     }
     let ciphertext = try await reader.readExact(Int(header.ciphertextLength))
-    let roots = try await session.root(direction: receiveDirection, epoch: header.epoch)
-    let material = try TransportV3Crypto.deriveStreamMaterial(
-      streamRoot: roots.streamRoot,
-      h3: h3,
-      logicalStreamID: id,
-      direction: receiveDirection,
-      epoch: header.epoch
-    )
+    let material: RecordMaterialV3
+    if !priorACK, let receiveMaterial { material = receiveMaterial }
+    else {
+      let roots = try await session.root(direction: receiveDirection, epoch: header.epoch)
+      if let terminal { throw terminal }
+      material = try TransportV3Crypto.deriveStreamMaterial(streamRoot: roots.streamRoot,
+        h3: h3, logicalStreamID: id, direction: receiveDirection, epoch: header.epoch)
+      if !priorACK { receiveMaterial = material }
+    }
     let plaintext = try TransportV3Crypto.openRecord(
       suite: suite,
       key: material.recordKey,
@@ -2790,7 +2803,9 @@ struct TransportV3StreamLedger {
   private static let maximumSlots = 1_048_576
 
   private let openerRole: StreamOpenerRoleV3
-  private var states = [UInt8](repeating: 0, count: maximumSlots / 4)
+  private static let pageBytes = 256
+  private var pages: [Int: [UInt8]] = [:]
+  var allocatedPages: Int { pages.count }
   private(set) var frontier: UInt64 = 0
 
   init(openerRole: StreamOpenerRoleV3) {
@@ -2800,7 +2815,9 @@ struct TransportV3StreamLedger {
   func state(of id: UInt64) -> TransportV3LedgerState {
     guard let index = slotIndex(id) else { return .unseen }
     let shift = UInt8((index % 4) * 2)
-    return TransportV3LedgerState(rawValue: (states[index / 4] >> shift) & 0x03) ?? .unseen
+    let byte = index / 4
+    guard let page = pages[byte / Self.pageBytes] else { return .unseen }
+    return TransportV3LedgerState(rawValue: (page[byte % Self.pageBytes] >> shift) & 0x03) ?? .unseen
   }
 
   mutating func peerReset(_ id: UInt64) throws {
@@ -2884,7 +2901,9 @@ struct TransportV3StreamLedger {
     guard let index = slotIndex(id) else { return }
     let shift = UInt8((index % 4) * 2)
     let mask = UInt8(0x03 << shift)
-    states[index / 4] = (states[index / 4] & ~mask) | (state.rawValue << shift)
+    let byte = index / 4, page = byte / Self.pageBytes, offset = byte % Self.pageBytes
+    let old = pages[page]?[offset] ?? 0
+    pages[page, default: [UInt8](repeating: 0, count: Self.pageBytes)][offset] = (old & ~mask) | (state.rawValue << shift)
   }
 
   private mutating func advanceFrontier() {
@@ -3302,6 +3321,7 @@ private final class TransportV3RPCReference: RPCPeer, @unchecked Sendable {
     as responseType: Response.Type,
     timeout: Duration
   ) async throws -> Response {
+    guard typeID != 0 else { throw FlowersecError.invalidRPC("Invalid RPC method ID.") }
     guard let session = boundSession() else { throw TransportV3SessionError.closed }
     let deadline = ContinuousClock.now.advanced(by: timeout)
     let client = try await session.rpcClientForUse(deadline: deadline)
@@ -3312,6 +3332,7 @@ private final class TransportV3RPCReference: RPCPeer, @unchecked Sendable {
     _ typeID: UInt32,
     _ payload: Payload
   ) async throws {
+    guard typeID != 0 else { throw FlowersecError.invalidRPC("Invalid RPC method ID.") }
     guard let session = boundSession() else { throw TransportV3SessionError.closed }
     let client = try await session.rpcClientForUse()
     try await client.notify(typeID, payload)
@@ -3322,6 +3343,7 @@ private final class TransportV3RPCReference: RPCPeer, @unchecked Sendable {
     as payloadType: Payload.Type,
     handler: @escaping @Sendable (Result<Payload, RPCNotificationError>) async throws -> Void
   ) async throws -> any RPCNotificationSubscription {
+    guard typeID != 0 else { throw FlowersecError.invalidRPC("Invalid RPC method ID.") }
     guard let session = boundSession() else { throw TransportV3SessionError.closed }
     return try await session.subscribeNotification(typeID) { data in
       let result: Result<Payload, RPCNotificationError>

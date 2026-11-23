@@ -295,6 +295,7 @@ describe("proxy controller/app window bridge", () => {
     for (const mode of ["read_failure", "write_failure", "blocked"] as const) {
       const stream = new FailingDuplexStream(mode);
       const handles = bridgeHarness(stream);
+      await expect(handles.app.runtime.fetch("/events", { sessionBound: true })).rejects.toThrow("sessionBound");
       const opened = await handles.app.runtime.openWebSocketStream("/socket");
       if (mode === "write_failure") {
         await opened.stream.write(new Uint8Array([9]));

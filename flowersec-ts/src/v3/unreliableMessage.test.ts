@@ -37,6 +37,20 @@ const fixture = JSON.parse(readFileSync(
 const b64u = (value: Uint8Array): string => Buffer.from(value).toString("base64url");
 
 describe("transport v5 FSD5 unreliable messages", () => {
+  test("counts accepted sends and delivered messages as activity", async () => {
+    let wire = new Uint8Array(0) as Uint8Array, activity = 0;
+    const channel = createInternalUnreliableMessageChannelV3({
+      transport: { maxDatagramSize: 1024, send: async value => { wire = value; return "accepted"; }, receive: async () => wire },
+      suite: CipherSuiteV3.ChaCha20Poly1305, h3: new Uint8Array(32), sendDirection: 1, receiveDirection: 1,
+      currentSendEpoch: () => ({ epoch: 0, epochSecret: new Uint8Array(32) }), receiveEpochSecret: () => new Uint8Array(32),
+      now: () => 100, onActivity: () => { activity++; }, onProtocolFailure: () => { throw new Error("unexpected failure"); },
+    });
+    await expect(channel.send(Uint8Array.of(1), { expiresAtUnixMs: 99 })).resolves.toBe("dropped_expired");
+    expect(activity).toBe(0);
+    await expect(channel.send(Uint8Array.of(1), { expiresAtUnixMs: 101 })).resolves.toBe("accepted");
+    await expect(channel.receive()).resolves.toEqual(Uint8Array.of(1));
+    expect(activity).toBe(2);
+  });
   test("matches every shared datagram vector", () => {
     expect(fixture.schema_version).toBe(5);
     expect(new Set(fixture.vectors.map(({ suite }) => suite))).toEqual(new Set([

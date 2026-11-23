@@ -112,6 +112,8 @@ export function registerProxyRuntimeServiceWorkerBridge(
       if (--entry.handles === 0) {
         entry.releaseListener();
         bridgeOwners.delete(serviceWorker);
+        try { serviceWorker.controller?.postMessage({ type: "flowersec-proxy:release-runtime", version: 2 }); }
+        catch { /* A controller may have gone away during disposal. */ }
       }
     },
   });

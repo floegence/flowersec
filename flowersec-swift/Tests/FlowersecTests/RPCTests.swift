@@ -4,6 +4,19 @@ import XCTest
 @testable import Flowersec
 
 final class FlowersecRPCTests: XCTestCase {
+  func testOnlyUncommittedRPCHandoffsCanBeWithdrawn() throws {
+    let queued = RPCWriteAdmission(deadline: .now.advanced(by: .seconds(8)))
+    queued.withdraw()
+    XCTAssertThrowsError(try queued.commit())
+    let expired = RPCWriteAdmission(deadline: .now)
+    XCTAssertThrowsError(try expired.commit())
+    let started = RPCWriteAdmission(deadline: .now.advanced(by: .seconds(8)))
+    try started.commit()
+    started.withdraw()
+    XCTAssertNoThrow(try started.commit())
+    XCTAssertThrowsError(try RPCEnvelope(typeID: 0, requestID: 1, responseTo: 0, payload: Data(), error: nil).encoded())
+  }
+
   func testEnvelopeConsumesSharedMalformedVectors() throws {
     let root = try XCTUnwrap(
       JSONSerialization.jsonObject(

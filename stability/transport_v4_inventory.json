@@ -851,7 +851,7 @@
       "path": "flowersec-swift/Sources/Flowersec/TransportV3Session.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 5,
-      "matching_lines": 378
+      "matching_lines": 382
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/TransportV4Registry.generated.swift",
@@ -1162,8 +1162,8 @@
     {
       "path": "flowersec-ts/src/v3/session.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 5,
-      "matching_lines": 339
+      "first_matching_line": 6,
+      "matching_lines": 340
     },
     {
       "path": "flowersec-ts/src/v3/sessionConnector.ts",

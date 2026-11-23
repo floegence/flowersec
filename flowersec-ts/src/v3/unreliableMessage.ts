@@ -39,6 +39,7 @@ export type InternalUnreliableMessageChannelV3Options = Readonly<{
   currentSendEpoch(): Readonly<{ epoch: number; epochSecret: Uint8Array }>;
   receiveEpochSecret(epoch: number): Uint8Array | undefined;
   onProtocolFailure(): void;
+  onActivity?(): void;
   now?: () => number;
 }>;
 
@@ -101,10 +102,12 @@ class InternalUnreliableMessageChannelV3 implements UnreliableMessageChannelV3 {
 
     this.pendingSends++;
     try {
-      return await this.options.transport.send(sealed.wire, {
+      const result = await this.options.transport.send(sealed.wire, {
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         expiresAt,
       });
+      if (result === "accepted") this.options.onActivity?.();
+      return result;
     } catch (error) {
       if (isAbortError(error)) throw new UnreliableMessageError("canceled");
       throw new UnreliableMessageError("operation_failed");
@@ -156,6 +159,7 @@ class InternalUnreliableMessageChannelV3 implements UnreliableMessageChannelV3 {
       window.mark(decoded.sequence);
       this.replay.set(decoded.epoch, window);
       pruneReplayEpochs(this.replay, decoded.epoch);
+      this.options.onActivity?.();
       return plaintext.slice();
     }
   }

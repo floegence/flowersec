@@ -16,6 +16,7 @@ test("Chromium runs the Service Worker proxy product chain", async ({ page, cont
   test.skip(browserName !== "chromium", "requires Chromium Service Worker coverage");
   test.setTimeout(60_000);
   const script = createProxyServiceWorkerScript({
+    windowTarget: "registered_runtime",
     maxRequestBodyBytes: 4,
     passthrough: { paths: ["/", "/proxy-sw.js"], prefixes: ["/dist/", "/node_modules/"] },
     proxyPathPrefix: "/proxy/",

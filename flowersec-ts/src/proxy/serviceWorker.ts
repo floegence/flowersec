@@ -1,3 +1,5 @@
+import { BodyIntake } from "./bodyIntake.js";
+
 export type ProxyServiceWorkerPassthroughOptions = Readonly<{
   paths?: readonly string[];
   prefixes?: readonly string[];
@@ -111,7 +113,7 @@ function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWork
       excludePathPrefixes: strings("injectHTML.excludePathPrefixes", inject.excludePathPrefixes),
     }),
     forwardFetchMessageTypes: strings("forwardFetchMessageTypes", options.forwardFetchMessageTypes),
-    windowTarget: options.windowTarget ?? "registered_runtime",
+    windowTarget: options.windowTarget ?? "request_client",
     windowClientMessageType: token("windowClientMessageType", options.windowClientMessageType, "flowersec-proxy:fetch"),
     runtimeRegistrationToken: token("runtimeRegistrationToken", options.runtimeRegistrationToken),
     runtimeClientPathPrefix: token("runtimeClientPathPrefix", options.runtimeClientPathPrefix),
@@ -119,11 +121,14 @@ function normalizeOptions(options: ProxyServiceWorkerScriptOptions): ServiceWork
   });
 }
 
-function serviceWorkerMain(config: ServiceWorkerConfig): void {
+function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntake): void {
   const worker = self as any;
   let runtimeClientId = "";
+  const registrations = new Set<string>();
+  const restricted = !!(config.runtimeRegistrationToken || config.runtimeClientPathPrefix);
+  const intake = new Intake(24, Math.max(config.maxRequestBodyBytes, 64 * 1024 * 1024));
 
-  const boundedBody = async (body: ReadableStream<Uint8Array> | null, limit: number): Promise<ArrayBuffer | null> => {
+  const boundedBody = async (body: ReadableStream<Uint8Array> | null, limit: number, reserve?: (bytes: number) => boolean): Promise<ArrayBuffer | null> => {
     let buffer = new Uint8Array(0);
     let used = 0;
     if (body === null) return buffer.buffer;
@@ -138,7 +143,12 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
           return null;
         }
         if (required > buffer.length) {
-          const grown = new Uint8Array(Math.min(limit, Math.max(required, buffer.length * 2)));
+          const capacity = Math.min(limit, Math.max(required, buffer.length * 2));
+          if (reserve && !reserve(capacity - buffer.length)) {
+            void reader.cancel().catch(() => undefined);
+            return null;
+          }
+          const grown = new Uint8Array(capacity);
           grown.set(buffer);
           buffer = grown;
         }
@@ -159,10 +169,15 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
   worker.addEventListener("message", (event: any) => {
     const data = event.data as Record<string, unknown> | null;
     if (data === null || typeof data !== "object") return;
+    if (data.type === "flowersec-proxy:release-runtime" && data.version === 2) {
+      if (event.source?.id === runtimeClientId) runtimeClientId = "";
+      registrations.delete(event.source?.id);
+      return;
+    }
     if (data.type === "flowersec-proxy:register-runtime") {
       const port = event.ports[0];
       const source = event.source as any;
-      let ok = data.version === 2 && source !== null;
+      let ok = data.version === 2 && typeof source?.id === "string" && source.id !== "";
       if (config.runtimeRegistrationToken !== "") ok = ok && data.token === config.runtimeRegistrationToken;
       if (ok && config.runtimeClientPathPrefix !== "") {
         try {
@@ -171,14 +186,32 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
           ok = false;
         }
       }
-      if (ok) runtimeClientId = source!.id;
-      port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok });
-      port?.close();
+      event.waitUntil((async () => {
+        if (ok && restricted && config.windowTarget === "request_client") {
+          if (registrations.size >= 256 && !registrations.has(source.id)) {
+            await Promise.all(Array.from(registrations, async id => {
+              if (!await worker.clients.get(id)) registrations.delete(id);
+            }));
+          }
+          ok = registrations.has(source.id) || registrations.size < 256;
+          if (ok) registrations.add(source.id);
+        }
+        if (ok && config.windowTarget === "registered_runtime") {
+          const previous = runtimeClientId;
+          if (previous && previous !== source.id) {
+            ok = !(await worker.clients.get(previous)) && runtimeClientId === previous;
+          }
+          if (ok) runtimeClientId = source.id;
+        }
+        port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok });
+        port?.close();
+      })());
       return;
     }
     if (!config.forwardFetchMessageTypes.includes(String(data.type ?? ""))) return;
     event.waitUntil((async () => {
-      const target = runtimeClientId === "" ? null : await worker.clients.get(runtimeClientId);
+      if (config.windowTarget === "request_client" && restricted && !registrations.has(event.source?.id)) return;
+      const target = config.windowTarget === "request_client" ? event.source : runtimeClientId === "" ? null : await worker.clients.get(runtimeClientId);
       target?.postMessage(data, event.ports);
     })());
   });
@@ -202,20 +235,33 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
       }
 
       const source = event.clientId === "" ? null : await worker.clients.get(event.clientId);
+      const registered = runtimeClientId;
       const target = config.windowTarget === "request_client"
-        ? source
-        : runtimeClientId === "" ? null : await worker.clients.get(runtimeClientId);
-      if (target === null) {
-        if (config.windowTarget === "registered_runtime") runtimeClientId = "";
+        ? (!restricted || registrations.has(event.clientId) ? source : null)
+        : registered === "" ? null : await worker.clients.get(registered);
+      const forgetTarget = () => {
+        if (config.windowTarget === "registered_runtime" && runtimeClientId === registered) runtimeClientId = "";
+      };
+      if (target == null) {
+        forgetTarget();
         return new Response("proxy runtime unavailable", { status: 503 });
       }
 
       let body: ArrayBuffer | undefined;
       if (request.signal.aborted) return new Response("proxy request canceled", { status: 499 });
       if (request.method !== "GET" && request.method !== "HEAD") {
-        const requestBody = await boundedBody(request.body, config.maxRequestBodyBytes);
-        if (requestBody === null) return new Response("proxy request too large", { status: 413 });
-        body = requestBody;
+        const reservation = intake.begin();
+        if (!reservation) return new Response("proxy service unavailable", { status: 503 });
+        try {
+          let busy = false;
+          const requestBody = await boundedBody(request.body, config.maxRequestBodyBytes, bytes => {
+            busy = !reservation.grow(bytes);
+            return !busy;
+          });
+          if (busy) return new Response("proxy service unavailable", { status: 503 });
+          if (requestBody === null) return new Response("proxy request too large", { status: 413 });
+          body = requestBody;
+        } finally { reservation.release(); }
       }
       const channel = new MessageChannel();
       const response = await new Promise<Response>((resolve) => {
@@ -259,8 +305,8 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
         );
         const runtimeWatchdog = setInterval(() => {
           void worker.clients.get(target.id).then((current: any) => {
-            if (current !== null || finished) return;
-            if (config.windowTarget === "registered_runtime") runtimeClientId = "";
+            if (current != null || finished) return;
+            forgetTarget();
             finishError(503, "proxy runtime unavailable", true);
           }).catch(() => finishError(503, "proxy runtime unavailable", true));
         }, 250);
@@ -330,7 +376,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
             },
           }, [channel.port2, ...(body === undefined ? [] : [body])]);
         } catch {
-          if (config.windowTarget === "registered_runtime") runtimeClientId = "";
+          forgetTarget();
           finishError(503, "proxy runtime unavailable");
         }
       });
@@ -363,5 +409,5 @@ function serviceWorkerMain(config: ServiceWorkerConfig): void {
 
 export function createProxyServiceWorkerScript(options: ProxyServiceWorkerScriptOptions = {}): string {
   const config = normalizeOptions(options);
-  return `// Generated by @floegence/flowersec-core/proxy v2\n(${serviceWorkerMain.toString()})(${JSON.stringify(config)});\n`;
+  return `// Generated by @floegence/flowersec-core/proxy v2\n(${serviceWorkerMain.toString()})(${JSON.stringify(config)}, ${BodyIntake.toString()});\n`;
 }

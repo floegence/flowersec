@@ -1703,7 +1703,11 @@ final class TransportV3SessionTests: XCTestCase {
 
   func testStreamLedgerTracksAbandonedLateSetupAndTerminalStates() throws {
     var ledger = TransportV3StreamLedger(openerRole: .client)
+    XCTAssertEqual(ledger.allocatedPages, 0)
+    try ledger.validFSS5(2_097_151)
+    XCTAssertEqual(ledger.allocatedPages, 1)
     try ledger.peerReset(3)
+    XCTAssertEqual(ledger.allocatedPages, 2)
     XCTAssertEqual(ledger.state(of: 3), .abandonedNoFSS5)
     XCTAssertEqual(ledger.frontier, 0)
 
@@ -1717,6 +1721,14 @@ final class TransportV3SessionTests: XCTestCase {
     XCTAssertThrowsError(try ledger.validFSS5ForAbandoned(3))
     XCTAssertThrowsError(try ledger.validFSS5(1))
   }
+
+  #if os(macOS) || os(iOS)
+    func testDNSWildcardMatchesOnlyOneWholeLabel() {
+      for (name, expected) in [("*.example", true), ("TeSt.example", true), ("t*.example", false), ("*st.example", false), ("*", false)] {
+        XCTAssertEqual(NativeTLSPolicyAdapterV3.dnsName(Array(name.utf8), matches: Array("test.example".utf8)), expected)
+      }
+    }
+  #endif
 
   func testStreamKeyUpdateACKUsesLogicalIDTransitionEpochOrder() throws {
     let vectors: SessionWireVectors = try readSessionWireVectors()

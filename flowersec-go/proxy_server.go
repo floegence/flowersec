@@ -212,7 +212,11 @@ func (server *ProxyServer) limit(handler StreamHandler) StreamHandler {
 
 func (server *ProxyServer) report(err error) {
 	if err != nil && server != nil && server.config.onError != nil {
-		server.config.onError(err)
+		if errors.Is(err, ErrInvalidProxyServer) {
+			server.config.onError(ErrInvalidProxyServer)
+		} else {
+			server.config.onError(errors.New(classifyProxyHTTPError(err)))
+		}
 	}
 }
 

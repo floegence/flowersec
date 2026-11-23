@@ -182,7 +182,7 @@
       return false
     }
 
-    private static func dnsName(_ rawPresented: [UInt8], matches rawTarget: [UInt8]) -> Bool {
+    static func dnsName(_ rawPresented: [UInt8], matches rawTarget: [UInt8]) -> Bool {
       var presented = rawPresented
       var target = rawTarget
       if presented.last == UInt8(ascii: ".") { presented.removeLast() }
@@ -198,7 +198,7 @@
         return asciiCaseInsensitiveEqual(presented, target)
       }
       let presentedDot = presented.firstIndex(of: UInt8(ascii: "."))
-      guard presentedDot.map({ wildcardIndex < $0 }) ?? true else { return false }
+      guard wildcardIndex == 0, presentedDot == 1 else { return false }
 
       let presentedLabelEnd = presentedDot ?? presented.endIndex
       let targetDot = target.firstIndex(of: UInt8(ascii: "."))
@@ -214,13 +214,7 @@
         ?? presented[presented.endIndex...]
       let targetRemainder =
         targetDot.map { target[target.index(after: $0)...] } ?? target[target.endIndex...]
-      guard asciiCaseInsensitiveEqual(presentedRemainder, targetRemainder) else { return false }
-
-      let wildcardOffset = presented.distance(from: presented.startIndex, to: wildcardIndex)
-      let prefix = presentedLabel.prefix(wildcardOffset)
-      let suffix = presentedLabel.dropFirst(wildcardOffset + 1)
-      return asciiCaseInsensitiveEqual(prefix, targetLabel.prefix(prefix.count))
-        && asciiCaseInsensitiveEqual(suffix, targetLabel.suffix(suffix.count))
+      return asciiCaseInsensitiveEqual(presentedRemainder, targetRemainder)
     }
 
     private static func isDNSHostnameByte(_ byte: UInt8) -> Bool {

@@ -3,6 +3,27 @@ import { describe, expect, it } from "vitest";
 import { createProxyServiceWorkerScript } from "./serviceWorker.js";
 
 describe("proxy service worker generator", () => {
+  it("routes interleaved requests only to the initiating client by default", async () => {
+    const worker = generatedWorker(async id => ({ id, postMessage(_value: unknown, [port]: MessagePort[]) {
+      port!.postMessage({ type: "flowersec-proxy:response_meta", status: 204, headers: [{ name: "x-runtime", value: id }] });
+      port!.postMessage({ type: "flowersec-proxy:response_end" });
+      port!.close();
+    } }), {});
+    const owners = ["first", "second", "first"];
+    const responses = await Promise.all(owners.map(id => worker.fetch(new Request("https://app.example/api"), id)));
+    expect(responses.map(response => response.headers.get("x-runtime"))).toEqual(owners);
+  });
+
+  it("requires the live shared owner to release before another window takes over", async () => {
+    const worker = generatedWorker(async id => ({ id }), { windowTarget: "registered_runtime" });
+    await expect(worker.register("one")).resolves.toBe(true);
+    await expect(worker.register("two")).resolves.toBe(false);
+    worker.release("two");
+    await expect(worker.register("two")).resolves.toBe(false);
+    worker.release("one");
+    await expect(worker.register("two")).resolves.toBe(true);
+  });
+
   it.each([204, 205, 304])("settles status %i without a response body", async (status) => {
     const target = { id: "client", postMessage(_message: unknown, [port]: MessagePort[]) {
       port!.postMessage({ type: "flowersec-proxy:response_meta", status, headers: [] });
@@ -75,7 +96,7 @@ describe("proxy service worker generator", () => {
   it("detects runtime disappearance while waiting for metadata", async () => {
     const target = { id: "client", postMessage() {} };
     let lookups = 0;
-    const worker = generatedWorker(async () => ++lookups === 1 ? target : null, { responseMetadataTimeoutMs: 1_000 });
+    const worker = generatedWorker(async () => ++lookups === 1 ? target : undefined, { responseMetadataTimeoutMs: 1_000 });
     const response = await within(worker.fetch(new Request("https://app.example/api")), 700);
     expect(response.status).toBe(503);
     expect(lookups).toBeGreaterThanOrEqual(2);
@@ -165,24 +186,34 @@ describe("proxy service worker generator", () => {
 function generatedWorker(
   getClient: (id: string) => Promise<unknown>,
   options: Parameters<typeof createProxyServiceWorkerScript>[0],
-): Readonly<{ fetch(request: Request): Promise<Response> }> {
+): Readonly<{ fetch(request: Request, clientId?: string): Promise<Response>; register(id: string): Promise<boolean>; release(id: string): void }> {
   let fetchHandler: ((event: any) => void) | undefined;
+  let messageHandler: ((event: any) => void) | undefined;
   const worker = {
     location: new URL("https://app.example/proxy-sw.js"),
     clients: { get: getClient, claim: async () => undefined },
     skipWaiting: async () => undefined,
     addEventListener(type: string, handler: (event: any) => void) {
       if (type === "fetch") fetchHandler = handler;
+      if (type === "message") messageHandler = handler;
     },
   };
-  const install = new Function("self", createProxyServiceWorkerScript({ ...options, windowTarget: "request_client" }));
+  const install = new Function("self", createProxyServiceWorkerScript(options));
   install(worker);
   return {
-    fetch(request: Request): Promise<Response> {
+    register(id) {
+      return new Promise<boolean>((resolve, reject) => messageHandler!({
+        source: { id }, data: { type: "flowersec-proxy:register-runtime", version: 2 },
+        ports: [{ postMessage: (reply: { ok: boolean }) => resolve(reply.ok), close() {} }],
+        waitUntil: (work: Promise<void>) => work.catch(reject),
+      }));
+    },
+    release(id) { messageHandler!({ source: { id }, data: { type: "flowersec-proxy:release-runtime", version: 2 } }); },
+    fetch(request: Request, clientId = "client"): Promise<Response> {
       let response: Promise<Response> | undefined;
       fetchHandler?.({
         request,
-        clientId: "client",
+        clientId,
         respondWith(value: Promise<Response>) { response = value; },
       });
       if (response === undefined) throw new Error("service worker did not intercept fetch");

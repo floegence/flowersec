@@ -1,9 +1,10 @@
 import { enableResponseFlowControl } from "./serviceWorkerRuntime.js";
+import type { BodyIntake } from "./bodyIntake.js";
 import { SessionError } from "../public/contract.js";
 import { InvalidProxyPathError, normalizePath } from "./policy.js";
 import type { ProxyFetchRequest, ProxyRuntime } from "./types.js";
 
-export async function prepareProxyFetch(input: RequestInfo | URL, init?: RequestInit, externalOrigin?: string, maxBodyBytes = 64 * 1024 * 1024): Promise<{
+export async function prepareProxyFetch(input: RequestInfo | URL, init?: RequestInit, externalOrigin?: string, maxBodyBytes = 64 * 1024 * 1024, intake?: BodyIntake): Promise<{
   request: ProxyFetchRequest; signal: AbortSignal;
 }> {
   const raw = input instanceof Request ? input.url : String(input);
@@ -18,22 +19,37 @@ export async function prepareProxyFetch(input: RequestInfo | URL, init?: Request
   path = normalizePath(path);
   const request = new Request(input instanceof Request ? input : `https://flowersec.invalid${path}`, init);
   request.signal.throwIfAborted();
-  let body: ArrayBuffer | undefined;
-  let source = request.body as ReadableStream<Uint8Array> | null | undefined;
+  const body = await readRequestBody(request, maxBodyBytes, intake);
+  return { request: enableResponseFlowControl({ id: "", method: request.method, path,
+    headers: Array.from(request.headers, ([name, value]) => ({ name, value })),
+    ...(body === undefined ? {} : { body }),
+  }), signal: request.signal };
+}
+
+async function readRequestBody(request: Request, maxBodyBytes: number, intake?: BodyIntake): Promise<ArrayBuffer | undefined> {
+  const source = request.body as ReadableStream<Uint8Array> | null | undefined;
+  if (source === null || ["GET", "HEAD"].includes(request.method)) return undefined;
+  const reservation = intake?.begin();
+  if (intake && !reservation) throw new SessionError("resource_exhausted");
   if (source === undefined) {
     // Some current browser engines implement Body consumption without exposing
     // Request.body. Blob size is checked before copying bytes into the carrier;
     // the ordinary streaming path retains its incremental budget enforcement.
-    const blob = await request.blob();
-    request.signal.throwIfAborted();
-    if (blob.size > maxBodyBytes) throw new SessionError("resource_exhausted");
-    source = blob.size ? blob.stream() : null;
+    try {
+      if (reservation && !reservation.grow(maxBodyBytes)) throw new SessionError("resource_exhausted");
+      const blob = await request.blob();
+      request.signal.throwIfAborted();
+      if (blob.size > maxBodyBytes) throw new SessionError("resource_exhausted");
+      const body = blob.size ? await blob.arrayBuffer() : undefined;
+      request.signal.throwIfAborted();
+      return body;
+    } finally { reservation?.release(); }
   }
-  if (source !== null) {
+  try {
     const reader = source.getReader();
     const abort = () => { void reader.cancel().catch(() => undefined); };
     request.signal.addEventListener("abort", abort, { once: true });
-    const chunks: Uint8Array[] = [];
+    let bytes = new Uint8Array(0);
     let total = 0;
     try {
       for (;;) {
@@ -41,24 +57,25 @@ export async function prepareProxyFetch(input: RequestInfo | URL, init?: Request
         const next = await reader.read();
         request.signal.throwIfAborted();
         if (next.done) break;
-        total += next.value.byteLength;
-        if (total > maxBodyBytes) throw new SessionError("resource_exhausted");
-        chunks.push(next.value);
+        const required = total + next.value.byteLength;
+        if (required > maxBodyBytes) throw new SessionError("resource_exhausted");
+        if (required > bytes.length) {
+          const capacity = Math.min(maxBodyBytes, Math.max(required, bytes.length * 2));
+          if (reservation && !reservation.grow(capacity - bytes.length)) throw new SessionError("resource_exhausted");
+          const grown = new Uint8Array(capacity);
+          grown.set(bytes);
+          bytes = grown;
+        }
+        bytes.set(next.value, total);
+        total = required;
       }
-      const bytes = new Uint8Array(total);
-      let offset = 0;
-      for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-      body = bytes.buffer;
+      return total === bytes.length ? bytes.buffer : bytes.buffer.slice(0, total);
     } finally {
       request.signal.removeEventListener("abort", abort);
       await reader.cancel().catch(() => undefined);
       reader.releaseLock();
     }
-  }
-  return { request: enableResponseFlowControl({ id: "", method: request.method, path,
-    headers: Array.from(request.headers, ([name, value]) => ({ name, value })),
-    ...(body === undefined ? {} : { body }),
-  }), signal: request.signal };
+  } finally { reservation?.release(); }
 }
 
 // Window applications use the same controller-owned transaction through a

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { prepareProxyFetch } from "./fetch.js";
+import { BodyIntake } from "./bodyIntake.js";
 
 const NativeRequest = globalThis.Request;
 afterEach(() => vi.unstubAllGlobals());
@@ -17,6 +18,20 @@ function bodyWithoutStreams(): void {
 }
 
 describe("portable proxy request bodies", () => {
+  it("bounds combined uploads before admission and releases canceled reservations", async () => {
+    const intake = new BodyIntake(2, 4);
+    const abort = new AbortController();
+    let pulled!: () => void;
+    const reading = new Promise<void>(resolve => { pulled = resolve; });
+    const source = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(Uint8Array.of(1, 2, 3)); }, pull() { pulled(); } }, { highWaterMark: 0 });
+    const init = { method: "POST", body: source, duplex: "half", signal: abort.signal };
+    const first = prepareProxyFetch("/api", init, undefined, 4, intake);
+    await reading;
+    await expect(prepareProxyFetch("/api", { method: "POST", body: "12" }, undefined, 4, intake)).rejects.toMatchObject({ code: "resource_exhausted" });
+    abort.abort();
+    await expect(first).rejects.toBeDefined();
+    await expect(prepareProxyFetch("/api", { method: "POST", body: "1234" }, undefined, 4, intake)).resolves.toBeDefined();
+  });
   it("preserves POST bytes and headers when Request.body is unavailable", async () => {
     bodyWithoutStreams();
     const input = new Request("https://app.example/api", { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"value":42}' });

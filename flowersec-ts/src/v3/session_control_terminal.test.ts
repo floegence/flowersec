@@ -29,6 +29,40 @@ function config(role: "client" | "server"): SessionConfigV3 {
 }
 
 describe("tunnel close proof", () => {
+  test("an asynchronous notification subscriber can close its own session", async () => {
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);
+    const receiver = projectSessionV3(server);
+    const done = deferred<void>();
+    receiver.rpc.onNotify(1, value => value, async () => { await receiver.close(); done.resolve(); });
+    await client.rpc.notify(1, "close");
+    await testDeadline(done.promise, "subscriber shutdown");
+    await client.close();
+  });
+
+  test("reclaims queued application write budget when a waiting writer cancels", async () => {
+    const [left, right] = createMemoryCarrierPairV3({ kind: "webtransport", path: "direct", inboundBidirectionalStreamCapacity: 3 });
+    const [client, server] = await Promise.all([establishSessionV3(left, config("client")), establishSessionV3(right, config("server"))]);
+    const [stream] = await Promise.all([client.openStream("data"), server.acceptStream()]);
+    const gate = deferred<void>(), entered = deferred<void>();
+    const original = client.sendStreamRecord.bind(client);
+    vi.spyOn(client, "sendStreamRecord").mockImplementationOnce(async (...args) => {
+      entered.resolve(); await gate.promise; return original(...args);
+    });
+    try {
+      const first = stream.write(Uint8Array.of(1));
+      await entered.promise;
+      const controller = new AbortController();
+      const waiting = stream.write(new Uint8Array(4 * 1024 * 1024 - 1), { signal: controller.signal });
+      await nextTurn();
+      await expect(stream.write(Uint8Array.of(2))).rejects.toMatchObject({ code: "resource_exhausted" });
+      controller.abort();
+      await expect(testDeadline(waiting, "queued cancellation")).rejects.toBeDefined();
+      const replacement = stream.write(Uint8Array.of(3));
+      gate.resolve();
+      await expect(Promise.all([first, replacement])).resolves.toEqual([1, 1]);
+    } finally { gate.resolve(); await Promise.allSettled([client.close(), server.close()]); }
+  });
   test.each([
     ["reset before close", "stream_reset"], ["reset before control EOF", "closed"],
     ["reset before invalid control EOF", "operation_failed"], ["EOF during carrier close", "closed"],

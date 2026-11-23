@@ -49,6 +49,9 @@ func (peer *sessionRPCPeer) endSend() {
 }
 
 func (peer *sessionRPCPeer) Call(ctx context.Context, typeID uint32, request, response any) error {
+	if typeID == 0 {
+		return errors.New("invalid RPC method ID")
+	}
 	if err := peer.beginSend(ctx); err != nil {
 		return err
 	}
@@ -78,6 +81,9 @@ func (peer *sessionRPCPeer) Call(ctx context.Context, typeID uint32, request, re
 }
 
 func (peer *sessionRPCPeer) Notify(ctx context.Context, typeID uint32, request any) error {
+	if typeID == 0 {
+		return errors.New("invalid RPC method ID")
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}

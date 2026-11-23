@@ -26,11 +26,13 @@ export function sessionInventory(session: SessionV3) {
 /** @internal */
 export function projectSessionV3(session: InternalSessionV3): SessionV3 {
   const notificationOwner: NotificationSubscriptionOwner = {
+    lifetime: new AbortController(),
     subscriptions: new Set(),
     closed: false,
   };
   const clearNotificationSubscriptions = () => {
     notificationOwner.closed = true;
+    notificationOwner.lifetime.abort();
     for (const unsubscribe of [...notificationOwner.subscriptions]) unsubscribe();
   };
   const rpc = projectRpcPeerV3(session.rpc, notificationOwner);
@@ -182,7 +184,7 @@ function projectRpcPeerV3(
         }
         if (!subscribed) return;
         try {
-          await handler(decoded);
+          await raceWithSignal(Promise.resolve(handler(decoded)), notificationOwner.lifetime.signal);
         } catch {
           // Notification handlers are isolated from RPC serving.
         }
@@ -200,6 +202,7 @@ function projectRpcPeerV3(
 }
 
 type NotificationSubscriptionOwner = {
+  lifetime: AbortController;
   subscriptions: Set<() => void>;
   closed: boolean;
 };

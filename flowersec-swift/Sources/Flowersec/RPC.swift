@@ -54,6 +54,27 @@ internal final class RPCSubscription: RPCNotificationSubscription, @unchecked Se
 
 internal protocol FlowersecRPCStream: AnyObject, FlowersecByteStream {}
 
+internal final class RPCWriteAdmission: @unchecked Sendable {
+  @TaskLocal static var current: RPCWriteAdmission?
+  struct Withdrawn: Error {}
+  private let lock = NSLock()
+  private let deadline: ContinuousClock.Instant
+  private var committed = false
+  private var withdrawn = false
+
+  init(deadline: ContinuousClock.Instant) { self.deadline = deadline }
+
+  func withdraw() { lock.withLock { withdrawn = true } }
+
+  func commit() throws {
+    try lock.withLock {
+      guard !committed else { return }
+      guard !withdrawn, ContinuousClock.now < deadline else { throw Withdrawn() }
+      committed = true
+    }
+  }
+}
+
 internal protocol FlowersecByteStream: Sendable {
   func write(_ data: Data) async throws
   func readExact(_ length: Int) async throws -> Data
@@ -67,7 +88,11 @@ internal actor RPCClient {
   private final class PendingCall {
     let typeID: UInt32
     let deadline: ContinuousClock.Instant
-    init(typeID: UInt32, deadline: ContinuousClock.Instant) { self.typeID = typeID; self.deadline = deadline }
+    let admission: RPCWriteAdmission
+    init(typeID: UInt32, deadline: ContinuousClock.Instant) {
+      self.typeID = typeID; self.deadline = deadline
+      admission = RPCWriteAdmission(deadline: deadline)
+    }
     var continuation: CheckedContinuation<Data, Error>?
     var timeoutTask: Task<Void, Never>?
     var writer: Task<Void, Never>?
@@ -186,7 +211,11 @@ internal actor RPCClient {
           guard !closed, call.continuation != nil else { return }
           do {
             guard ContinuousClock.now < deadline else { throw FlowersecError.timeout(path: path, stage: .rpc) }
-            try await self.writeEnvelope(envelope, deadline: deadline)
+            try await RPCWriteAdmission.$current.withValue(call.admission) {
+              try await self.writeEnvelope(envelope, deadline: deadline)
+            }
+          } catch is RPCWriteAdmission.Withdrawn {
+            self.finishRequest(requestID, result: .failure(FlowersecError.timeout(path: path, stage: .rpc)))
           } catch {
             self.finishRequest(requestID, result: .failure(error))
           }
@@ -385,6 +414,7 @@ internal actor RPCClient {
   @discardableResult
   private func finishRequest(_ requestID: UInt64, result: Result<Data, Error>) -> Bool {
     guard let call = pending[requestID], let continuation = call.continuation else { return false }
+    call.admission.withdraw()
     call.continuation = nil
     call.timeoutTask?.cancel()
     call.timeoutTask = nil
@@ -452,6 +482,7 @@ internal struct RPCEnvelope: Equatable, Sendable {
   }
 
   internal func encoded() throws -> Data {
+    guard typeID != 0 else { throw FlowersecError.invalidRPC("Invalid RPC method ID.") }
     guard requestID <= Self.maximumPortableID, responseTo <= Self.maximumPortableID else {
       throw FlowersecError.invalidRPC("RPC envelope IDs exceed the portable JSON range.")
     }
