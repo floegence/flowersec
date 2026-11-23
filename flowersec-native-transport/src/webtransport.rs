@@ -114,6 +114,11 @@ fn transport(capacity: u32, listener: bool) -> io::Result<Arc<quinn::TransportCo
 
 pub struct Listener {
     endpoint: Endpoint,
+    pending: crate::HandshakeQueue<io::Result<(Arc<Carrier>, SocketAddr)>>,
+    config: Arc<HandshakeConfig>,
+}
+
+struct HandshakeConfig {
     policy: WebTransportListenerPolicy,
     authority: String,
     path: &'static str,
@@ -177,94 +182,112 @@ impl Listener {
         )?;
         Ok(Self {
             endpoint,
-            policy,
-            authority,
-            path,
-            capacity,
-            timeout,
+            pending: crate::HandshakeQueue::new(),
+            config: Arc::new(HandshakeConfig {
+                policy,
+                authority,
+                path,
+                capacity,
+                timeout,
+            }),
         })
     }
     pub fn local_address(&self) -> io::Result<SocketAddr> {
         self.endpoint.local_addr()
     }
     pub fn ingress_url(&self) -> String {
-        format!("https://{}{}", self.authority, self.path)
+        format!("https://{}{}", self.config.authority, self.config.path)
     }
     pub fn abort(&self) {
         self.endpoint.close(0u32.into(), b"");
     }
     pub async fn close(&self) {
         self.abort();
+        self.pending.shutdown().await;
         self.endpoint.wait_idle().await;
     }
     pub async fn accept(&self) -> io::Result<(Arc<Carrier>, SocketAddr)> {
         loop {
-            let incoming = self
-                .endpoint
-                .accept()
+            let result = self
+                .pending
+                .accept(&self.endpoint, |incoming| {
+                    self.config
+                        .clone()
+                        .handshake(incoming, self.endpoint.clone())
+                })
                 .await
                 .ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected))?;
-            let result = tokio::time::timeout(self.timeout, async {
-                let accepted_driver = TaskTracker::new();
-                let connecting = crate::raw_quic::ACCEPTED_DRIVER
-                    .sync_scope(accepted_driver.clone(), || incoming.accept())
-                    .map_err(io_error)?;
-                accepted_driver.close();
-                let conn = connecting.await.map_err(io_error)?;
-                let remote = conn.remote_address();
-                let mut guard = Pending::new(conn.clone());
-                let controls = controls(&conn, false).await?;
-                let (mut send, mut recv) = conn.accept_bi().await.map_err(io_error)?;
-                if u64::from(VarInt::from(send.id())) != 0 {
-                    return Err(invalid());
-                }
-                let headers = read_headers(&mut recv).await?;
-                let valid =
-                    |key: &str, value: &str| headers.get(key).is_some_and(|actual| actual == value);
-                if !valid(":method", "CONNECT")
-                    || !valid(":scheme", "https")
-                    || !valid(":protocol", "webtransport")
-                    || !valid(":path", self.path)
-                    || !valid(":authority", &self.authority)
-                    || !valid("sec-webtransport-http3-draft02", "1")
-                    || !headers
-                        .get("origin")
-                        .is_some_and(|origin| self.policy.origins.contains(origin))
-                    || headers.keys().any(|key| {
-                        key.starts_with(':')
-                            && !matches!(
-                                key.as_str(),
-                                ":method" | ":scheme" | ":protocol" | ":path" | ":authority"
-                            )
-                    })
-                {
-                    return Err(invalid());
-                }
-                write_headers(
-                    &mut send,
-                    &[
-                        (":status", "200"),
-                        ("sec-webtransport-http3-draft", "draft02"),
-                    ],
-                )
-                .await?;
-                let session = Carrier::new(
-                    conn,
-                    self.endpoint.clone(),
-                    Some(accepted_driver),
-                    self.capacity,
-                    controls,
-                    send,
-                    recv,
-                );
-                guard.disarm();
-                Ok::<_, io::Error>((session, remote))
-            })
-            .await;
-            if let Ok(Ok(accepted)) = result {
+            if let Ok(accepted) = result {
                 return Ok(accepted);
             }
         }
+    }
+}
+
+impl HandshakeConfig {
+    async fn handshake(
+        self: Arc<Self>,
+        incoming: quinn::Incoming,
+        endpoint: Endpoint,
+    ) -> io::Result<(Arc<Carrier>, SocketAddr)> {
+        tokio::time::timeout(self.timeout, async {
+            let accepted_driver = TaskTracker::new();
+            let connecting = crate::raw_quic::ACCEPTED_DRIVER
+                .sync_scope(accepted_driver.clone(), || incoming.accept())
+                .map_err(io_error)?;
+            accepted_driver.close();
+            let conn = connecting.await.map_err(io_error)?;
+            let remote = conn.remote_address();
+            let mut guard = Pending::new(conn.clone());
+            let controls = controls(&conn, false).await?;
+            let (mut send, mut recv) = conn.accept_bi().await.map_err(io_error)?;
+            if u64::from(VarInt::from(send.id())) != 0 {
+                return Err(invalid());
+            }
+            let headers = read_headers(&mut recv).await?;
+            let valid =
+                |key: &str, value: &str| headers.get(key).is_some_and(|actual| actual == value);
+            if !valid(":method", "CONNECT")
+                || !valid(":scheme", "https")
+                || !valid(":protocol", "webtransport")
+                || !valid(":path", self.path)
+                || !valid(":authority", &self.authority)
+                || !valid("sec-webtransport-http3-draft02", "1")
+                || !headers
+                    .get("origin")
+                    .is_some_and(|origin| self.policy.origins.contains(origin))
+                || headers.keys().any(|key| {
+                    key.starts_with(':')
+                        && !matches!(
+                            key.as_str(),
+                            ":method" | ":scheme" | ":protocol" | ":path" | ":authority"
+                        )
+                })
+            {
+                return Err(invalid());
+            }
+            write_headers(
+                &mut send,
+                &[
+                    (":status", "200"),
+                    ("sec-webtransport-http3-draft", "draft02"),
+                ],
+            )
+            .await?;
+            let session = Carrier::new(
+                conn,
+                endpoint,
+                Some(accepted_driver),
+                self.capacity,
+                controls,
+                send,
+                recv,
+            );
+            guard.disarm();
+            Ok::<_, io::Error>((session, remote))
+        })
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
     }
 }
 

@@ -361,7 +361,7 @@ impl Acceptor {
             .candidates
             .iter()
             .find(|candidate| candidate.id == frame.chosen_candidate_id)?;
-        crate::tls_v3::matches_direct_listener(
+        crate::tls_v3::matches_listener(
             candidate,
             self.local_address().ok()?,
             self.public_endpoint.as_deref(),

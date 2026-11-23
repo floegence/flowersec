@@ -587,7 +587,7 @@ struct DirectFsb3WireV3 {
 
 #[derive(Debug)]
 pub(crate) struct DecodedTunnelFsb3V3 {
-    pub(crate) chosen_ingress: String,
+    pub(crate) candidate: CanonicalCandidateV3,
     pub(crate) attach_token: String,
     pub(crate) channel_id: String,
     pub(crate) chosen_candidate_id: String,
@@ -652,7 +652,7 @@ pub(crate) fn decode_tunnel_fsb3(
     }
 
     Ok(DecodedTunnelFsb3V3 {
-        chosen_ingress: chosen.normalized_url.clone(),
+        candidate: chosen.clone(),
         attach_token: wire.attach_token,
         channel_id: wire.channel_id,
         chosen_candidate_id: wire.chosen_candidate_id,

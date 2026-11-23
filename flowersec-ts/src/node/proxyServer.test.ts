@@ -91,6 +91,34 @@ test.each(["slots", "bytes"])("applies shared HTTP %s before reading body payloa
   } finally { finishBody(null); await active; await server.close(); }
 });
 
+test("releases upload capacity while a confirmed event response is still open", async () => {
+  const origin = "http://127.0.0.1:1";
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxBufferedRequestBodyBytes: 4 });
+  const handlers = new StreamHandlers(); server.register(handlers);
+  const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  let uploadReceived!: () => void;
+  const received = new Promise<void>(resolve => { uploadReceived = resolve; });
+  let events!: ReadableStreamDefaultController<Uint8Array>;
+  let count = 0;
+  vi.stubGlobal("fetch", async (_target: URL, init: RequestInit) => {
+    expect(new Uint8Array(await new Response(init.body).arrayBuffer())).toEqual(Uint8Array.of(1, 2, 3, 4));
+    if (++count === 2) return new Response(null);
+    uploadReceived();
+    return new Response(new ReadableStream({ start(controller) { events = controller; } }), { headers: { "content-type": "text/event-stream" } });
+  });
+  const post = () => {
+    const chunks = [u32be(4), Uint8Array.of(1, 2, 3, 4), u32be(0)];
+    return proxyExchange(kind, { method: "POST", path: "/", request_id: "post", headers: [{ name: "accept", value: "text/event-stream" }] }, async () => chunks.shift() ?? null);
+  };
+  const active = handle(post().incoming, {});
+  try {
+    await received;
+    const second = post();
+    await handle(second.incoming, {});
+    expect(Buffer.concat(second.replies).toString()).toContain('"ok":true');
+  } finally { events?.close(); await active; vi.unstubAllGlobals(); await server.close(); }
+});
+
 test("filters configured cookie names and prefixes on the upstream WebSocket handshake", async () => {
   let cookie: string | undefined;
   const upstream = createServer((request, response) => { cookie = request.headers.cookie; response.writeHead(403).end(); });

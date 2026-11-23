@@ -222,6 +222,10 @@ export class ProxyServer {
     let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let httpPermit = false;
     let reservedBytes = 0;
+    const releaseUpload = () => {
+      this.#bufferedBodyBytes -= reservedBytes;
+      reservedBytes = 0;
+    };
     let eventPermit = false;
     const releaseEvent = () => { if (eventPermit) { eventPermit = false; this.#eventCount--; } };
     const abort = () => { reset ??= stream.reset().catch(() => undefined); };
@@ -268,7 +272,7 @@ export class ProxyServer {
         requestHeaders.push({ name: "x-forwarded-proto", value: origin.protocol.slice(0, -1) });
       }
       const headers = Object.fromEntries(requestHeaders.map((header) => [header.name, header.value]));
-      const body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody, (minimum, preferred) => {
+      let body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody, (minimum, preferred) => {
         const available = this.#config.maxBufferedBody - this.#bufferedBodyBytes;
         const growth = Math.min(preferred, available);
         if (growth < minimum) return 0;
@@ -284,8 +288,25 @@ export class ProxyServer {
       }, () => { timeoutController.abort(new SessionError("canceled")); });
       const requestInit: RequestInit & { duplex?: "half" } = {
         method: meta.method.trim().toUpperCase(), headers, redirect: "manual", signal,
-        ...(body.byteLength === 0 ? {} : { body, duplex: "half" }),
       };
+      if (body.byteLength > 0) {
+        headers["content-length"] = String(body.byteLength);
+        let upload: Uint8Array<ArrayBuffer> | undefined = body;
+        body = new Uint8Array(0);
+        requestInit.duplex = "half";
+        requestInit.body = new ReadableStream<Uint8Array<ArrayBuffer>>({
+          pull(controller) {
+            if (upload) {
+              controller.enqueue(upload);
+              upload = undefined;
+            } else {
+              controller.close();
+              releaseUpload();
+            }
+          },
+          cancel() { upload = undefined; releaseUpload(); },
+        }, { highWaterMark: 0 });
+      }
       let responseStarted = false;
       try {
         const response = await fetch(target, requestInit);
@@ -329,7 +350,7 @@ export class ProxyServer {
       }
     } finally {
       clearTimeout(timer);
-      this.#bufferedBodyBytes -= reservedBytes;
+      releaseUpload();
       releaseEvent();
       if (httpPermit) this.#httpCount--;
       signal.removeEventListener("abort", abort);

@@ -1,5 +1,4 @@
 #if os(macOS) || os(iOS)
-import Crypto
 import Foundation
 import NIOCore
 import NIOHTTP1
@@ -67,7 +66,7 @@ public final class DirectWebSocketListener: Sendable {
     let server = try await BoundWebSocketIngressV3.bind(kind: "direct", bindAddress: bindAddress, port: port,
       endpoint: endpoint, allowedOrigins: allowedOrigins, certificateChainPEM: certificateChainPEM,
       privateKeyPEM: privateKeyPEM, admissionTimeout: admissionTimeout, children: children) { leg in
-        let config = DirectWSSConfigV3(endpoint: leg.endpoint, leafHash: leg.leafHash, frameLimits: rpcFrameLimits,
+        let config = DirectWSSConfigV3(endpoint: leg.endpoint, leaf: leg.leaf, frameLimits: rpcFrameLimits,
           maxConcurrentRequests: maxConcurrentRPCRequests, authorize: authorize, onSession: onSession)
         try await config.serve(socket: leg.socket, origin: leg.origin, address: leg.address,
           deadline: leg.deadline, established: leg.established)
@@ -101,12 +100,24 @@ struct BoundWebSocketLegV3: Sendable {
   let address: String
   let endpoint: String
   let leaf: NIOSSLCertificate
-  let leafHash: Data
   let deadline: ContinuousClock.Instant
   let established: @Sendable () -> Void
 }
 
 enum BoundWebSocketIngressV3 {
+  static func verify(_ candidate: CanonicalCandidateV3, endpoint: String, leaf: NIOSSLCertificate, now: UInt64) throws {
+    guard candidate.carrier == "websocket", candidate.normalizedURL == endpoint else { throw ConnectError.artifactInvalid }
+    if let pins = try candidate.activePinHashes(at: now) {
+      try NativeTLSPolicyAdapterV3.verifyPinnedCertificate(leaf, activePins: pins, nowUnixSeconds: Int64(now))
+      return
+    }
+    guard let host = URL(string: endpoint)?.host, Int64(now) >= leaf.notValidBefore,
+          Int64(now) < leaf.notValidAfter else { throw ConnectError.artifactInvalid }
+    let matches = NativeTLSPolicyAdapterV3.ipAddressBytes(host).map { NativeTLSPolicyAdapterV3.certificateMatchesIPAddress(leaf, address: $0) }
+      ?? NativeTLSPolicyAdapterV3.certificateMatchesDNSHostname(leaf, hostname: host)
+    guard matches else { throw ConnectError.artifactInvalid }
+  }
+
   static func bind(kind: String, bindAddress: String, port: Int, endpoint: String?, allowedOrigins: Set<String>,
                    certificateChainPEM: Data, privateKeyPEM: Data, admissionTimeout: Duration, children: DirectChildrenV3,
                    serve: @escaping @Sendable (BoundWebSocketLegV3) async throws -> Void) async throws -> any Channel {
@@ -130,7 +141,7 @@ enum BoundWebSocketIngressV3 {
     tls.maximumTLSVersion = .tlsv13
     tls.applicationProtocols = ["http/1.1"]
     _ = try NIOSSLContext(configuration: tls)
-    let tlsConfig = tls, leafHash = Data(SHA256.hash(data: try leaf.toDERBytes()))
+    let tlsConfig = tls
     let path = kind == "direct" ? TransportV3Contract.directWebSocketPath : TransportV3Contract.tunnelWebSocketPath
     return try await ServerBootstrap(group: MultiThreadedEventLoopGroup.singleton)
       .serverChannelOption(.socketOption(.so_reuseaddr), value: 1)
@@ -145,7 +156,7 @@ enum BoundWebSocketIngressV3 {
         guard let url = URL(string: target), let host = url.host else { return channel.close() }
         return WebSocketIngressConfigV3(tls: tlsConfig, endpoint: target, path: path, tunnel: kind == "tunnel",
           authority: ProxyNIOWebSocketConnector.requestAuthority(url: url, host: host, port: url.port ?? 443),
-          origins: allowedOrigins, leaf: leaf, leafHash: leafHash, timeout: admissionTimeout, serve: serve).install(channel, children: children)
+          origins: allowedOrigins, leaf: leaf, timeout: admissionTimeout, serve: serve).install(channel, children: children)
       }
       .bind(to: SocketAddress(ipAddress: bindAddress, port: port)).get()
   }
@@ -159,7 +170,6 @@ private struct WebSocketIngressConfigV3: Sendable {
   let authority: String
   let origins: Set<String>
   let leaf: NIOSSLCertificate
-  let leafHash: Data
   let timeout: Duration
   let serve: @Sendable (BoundWebSocketLegV3) async throws -> Void
 
@@ -195,7 +205,7 @@ private struct WebSocketIngressConfigV3: Sendable {
         let worker = children.startWorker(ch) {
           guard let address = ch.remoteAddress else { return }
           try await serve(BoundWebSocketLegV3(socket: socket, channel: ch, origin: head.headers["origin"][0],
-            address: address.description, endpoint: endpoint, leaf: leaf, leafHash: leafHash,
+            address: address.description, endpoint: endpoint, leaf: leaf,
             deadline: deadline, established: { timer.cancel() }))
         }
         guard let worker else { return ch.close() }
@@ -217,8 +227,9 @@ private struct WebSocketIngressConfigV3: Sendable {
 }
 
 private struct DirectWSSConfigV3: Sendable {
+  private struct ExpiredAdmission: Error {}
   let endpoint: String
-  let leafHash: Data
+  let leaf: NIOSSLCertificate
   let frameLimits: RPCFrameLimits
   let maxConcurrentRequests: Int
   let authorize: DirectWebSocketListener.Authorize
@@ -259,23 +270,24 @@ private struct DirectWSSConfigV3: Sendable {
       func checkAuthority() throws {
         try checkDeadline(deadline)
         let now = UInt64(max(0, Date().timeIntervalSince1970))
-        guard artifact.value.path.kind == "direct", artifact.value.session.initExpireAtUnixSeconds > now,
-              let candidate = artifact.canonicalCandidates.first(where: { $0.id == request.candidateID }),
-              candidate.carrier == "websocket", candidate.normalizedURL == endpoint,
-              (try candidate.activePinHashes(at: now))?.contains(leafHash) ?? true
+        guard artifact.value.path.kind == "direct",
+              let candidate = artifact.canonicalCandidates.first(where: { $0.id == request.candidateID })
         else { throw ConnectError.artifactInvalid }
+        try BoundWebSocketIngressV3.verify(candidate, endpoint: endpoint, leaf: leaf, now: now)
+        guard artifact.value.session.initExpireAtUnixSeconds > now else { throw ExpiredAdmission() }
       }
-      try checkAuthority()
       let expected = try AdmissionCodecV3.encodeFSB5(artifact: artifact, chosenCandidateID: request.candidateID)
       guard expected.admissionBinding == admission.admissionBinding else { throw ConnectError.artifactInvalid }
+      try checkAuthority()
       config = try SessionConnectorV3.sessionConfig(artifact: artifact.value, path: .direct, role: .server,
         admissionBinding: expected.admissionBinding, handlers: grant.handlers, frameLimits: frameLimits,
         maxConcurrentRequests: maxConcurrentRequests)
       reservation = try await grant.consume()
       try checkAuthority()
     } catch {
-      let reason = Data("authorization_denied".utf8)
-      var frame = Data("FSA5".utf8) + Data([5, 1, 0, UInt8(reason.count)])
+      let expired = error is ExpiredAdmission
+      let reason = Data((expired ? "expired_artifact" : "authorization_denied").utf8)
+      var frame = Data("FSA5".utf8) + Data([5, expired ? 2 : 1, 0, UInt8(reason.count)])
       frame.append(reason)
       try? await transport.writeBinary(frame)
       await transport.close()

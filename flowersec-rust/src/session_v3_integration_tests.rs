@@ -2219,6 +2219,31 @@ async fn bidirectional_open_data_fin_and_consecutive_rekey() {
 }
 
 #[tokio::test]
+async fn rekey_after_peer_fin_preserves_response_and_session() {
+    let (client, server) = establish_pair().await;
+    let (opened, incoming) = tokio::join!(
+        client.open_stream("reply", StreamMetadata::empty()),
+        server.accept_stream()
+    );
+    let request = opened.unwrap();
+    let incoming = incoming.unwrap();
+    let response = incoming.stream();
+    request.close_write().await.unwrap();
+    assert_eq!(response.read().await.unwrap(), None);
+    assert_eq!(server.rekey().await, Err(SessionError::ResourceExhausted));
+    response.write(Bytes::from_static(b"reply")).await.unwrap();
+    response.close_write().await.unwrap();
+    assert_eq!(
+        request.read().await.unwrap(),
+        Some(Bytes::from_static(b"reply"))
+    );
+    assert_eq!(request.read().await.unwrap(), None);
+    server.rekey().await.unwrap();
+    client.probe_liveness().await.unwrap();
+    client.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn rekey_receive_buffer_applies_backpressure_and_preserves_order() {
     let (client_carrier, server_carrier) =
         memory_carrier_pair_v3_with_capacities(3, 8 * 1024 * 1024);

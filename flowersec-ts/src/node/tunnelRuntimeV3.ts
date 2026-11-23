@@ -17,7 +17,8 @@ import {
   type CarrierUnreliableDatagramsV3,
 } from "../v3/carrier.js";
 import type { OperationOptions } from "../public/contract.js";
-import { boundIngressURL } from "./listenerIngress.js";
+import { X509Certificate } from "node:crypto";
+import { boundIngressURL, matchesIngress, type BoundIngress } from "./listenerIngress.js";
 import { startNodeWebSocketListenerV3, type NodeWebSocketListenerV3 } from "./webSocketServerV3.js";
 import { createNativeRawQuicDriver } from "./nativeTransportAddon.js";
 import { startNodeRawQuicListenerV3, startNodeWebTransportListener, validateWebTransportListeners, type NodeWebTransportListenerConfig, type NodeRawQuicListenerV3 } from "./rawQuicServerV3.js";
@@ -127,7 +128,6 @@ export class TunnelRuntimeV3 {
 }
 
 type Listener = NodeWebSocketListenerV3 | NodeRawQuicListenerV3;
-type BoundIngress = Readonly<{ url: string }>;
 type AllowedDecision = Extract<TunnelAuthorizationDecisionV3, Readonly<{ decision: "allow" }>>;
 type TunnelLeg = Readonly<{
   received: ReceivedSessionAdmissionV3;
@@ -214,6 +214,7 @@ async function startTunnelRuntimeV3(state: TunnelRuntimeStateV3): Promise<void> 
       let rawQuicDriver: ReturnType<typeof createNativeRawQuicDriver> | undefined;
       try {
         for (const listener of state.options.listeners) {
+          const leaf = new X509Certificate(listener.tls.certificate);
           if (state.abort.signal.aborted) throw new Error("Flowersec tunnel runtime is closed");
           const running = listener.carrier === "websocket"
             ? await startNodeWebSocketListenerV3({
@@ -239,6 +240,7 @@ async function startTunnelRuntimeV3(state: TunnelRuntimeStateV3): Promise<void> 
           }
           state.listeners.push(running);
           state.ingress.set(running, {
+            leaf,
             url: boundIngressURL("tunnel", listener.carrier, running.address(), listener.publicURL),
           });
         }
@@ -282,7 +284,7 @@ async function processCarrier(state: TunnelRuntimeStateV3, carrier: CarrierSessi
     const authorizationRequest = runtimeAuthorizationRequestV3FromDecoded(decoded);
     const selected = decoded.request.candidates.find(candidate => candidate.id === decoded.request.chosen_candidate_id);
     if (carrier.path !== "tunnel" || decoded.request.pathKind !== "tunnel" ||
-      selected?.carrier !== carrier.kind || selected.normalized_url !== ingress.url) {
+      selected?.carrier !== carrier.kind || !matchesIngress(selected, ingress)) {
       await reject(received, "invalid_credential", false, state.admissionReasons, admission.signal);
       return;
     }

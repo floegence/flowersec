@@ -148,7 +148,7 @@ impl TunnelVerificationRecord {
 /// Opaque deployment authorization request for one observed FSB5 tunnel leg.
 #[derive(Clone)]
 pub struct RuntimeAuthorizationRequest {
-    chosen_ingress: Arc<str>,
+    candidate: Arc<crate::artifact_v3::CanonicalCandidateV3>,
     encoded: Arc<[u8]>,
     raw_fsb3: Arc<[u8]>,
     binding: [u8; 32],
@@ -1258,7 +1258,22 @@ impl TaskRuntime {
         .await??;
         let request =
             parse_authorization_request(&raw, accepted.carrier.kind(), accepted.remote_address)?;
-        if request.chosen_ingress.as_ref() != self.ingress.as_ref() {
+        let leaf = self
+            .options
+            .certificate_chain_der
+            .first()
+            .ok_or(TunnelRuntimeError::InvalidConfiguration)?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| TunnelRuntimeError::Rejected)?
+            .as_secs();
+        if !crate::tls_v3::matches_listener(
+            &request.candidate,
+            self.options.bind_address,
+            Some(&self.ingress),
+            leaf,
+            now,
+        ) {
             return Err(TunnelRuntimeError::Rejected);
         }
         let lookup = request.lookup_key().to_owned();
@@ -1877,7 +1892,7 @@ fn parse_authorization_request(
     }))
     .map_err(|_| TunnelRuntimeError::InvalidWire)?;
     Ok(RuntimeAuthorizationRequest {
-        chosen_ingress: decoded.chosen_ingress.into(),
+        candidate: Arc::new(decoded.candidate),
         encoded: encoded.into(),
         raw_fsb3: raw.into(),
         binding: Sha256::digest(
@@ -2301,10 +2316,14 @@ async fn bridge_stream_direction(
             break;
         };
         tasks.spawn(async move {
-            let _ = tokio::join!(
+            if tokio::try_join!(
                 copy_stream(inbound.clone(), outbound.clone()),
-                copy_stream(outbound, inbound),
-            );
+                copy_stream(outbound.clone(), inbound.clone()),
+            )
+            .is_err()
+            {
+                let _ = tokio::join!(inbound.reset(), outbound.reset());
+            }
         });
     }
     tasks.abort_all();
@@ -2910,6 +2929,22 @@ mod tests {
         }
     }
 
+    fn test_listener_leaf() -> &'static [u8] {
+        static LEAF: OnceLock<Vec<u8>> = OnceLock::new();
+        LEAF.get_or_init(|| {
+            let now = time::OffsetDateTime::now_utc();
+            let mut params =
+                cert_test_builder::CertificateParams::new(vec!["localhost".into()]).unwrap();
+            params.not_before = now - time::Duration::hours(1);
+            params.not_after = now + time::Duration::hours(1);
+            params
+                .self_signed(&cert_test_builder::KeyPair::generate().unwrap())
+                .unwrap()
+                .der()
+                .to_vec()
+        })
+    }
+
     fn vector_tunnel_artifact(role: u8, endpoint: &str, token: &str) -> Artifact {
         let vectors: Value = serde_json::from_str(include_str!(
             "../../testdata/transport_v5/artifact_vectors.json"
@@ -2934,6 +2969,17 @@ mod tests {
             .into(),
         );
         value["path"]["token"] = Value::String(token.into());
+        let candidate = value["path"]["candidates"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["id"] == "q-pin")
+            .unwrap();
+        let pins = candidate["tls"]["pins"].as_array_mut().unwrap();
+        pins.truncate(1);
+        pins[0]["value_b64u"] = URL_SAFE_NO_PAD
+            .encode(Sha256::digest(test_listener_leaf()))
+            .into();
         Artifact::parse(crate::artifact_v3::jcs_value(&value).unwrap()).unwrap()
     }
 
@@ -3120,6 +3166,7 @@ mod tests {
 
     #[derive(Debug, Default)]
     struct MalformedAuthorizer {
+        calls: AtomicUsize,
         releases: StdMutex<Vec<String>>,
     }
 
@@ -3130,6 +3177,7 @@ mod tests {
             request: RuntimeAuthorizationRequest,
             _cancellation: CancellationToken,
         ) -> Result<TunnelAuthorizationResponse, TunnelAuthorizationError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
             TunnelAuthorizationResponse::parse(
                 serde_json::to_vec(&json!({
                     "authority_scope": "test-issuer",
@@ -3250,7 +3298,7 @@ mod tests {
             authorizer,
             options: TunnelRuntimeOptions {
                 bind_address: "127.0.0.1:0".parse().unwrap(),
-                certificate_chain_der: Vec::new(),
+                certificate_chain_der: vec![test_listener_leaf().to_vec()],
                 private_key_der: Vec::new(),
                 allowed_origins: Vec::new(),
                 admission_reasons: Vec::new(),
@@ -3325,6 +3373,34 @@ mod tests {
         )
         .await;
         assert!(matches!(result, Err(TunnelRuntimeError::InvalidWire)));
+    }
+
+    #[tokio::test]
+    async fn tunnel_pin_mismatch_is_rejected_before_authorization() {
+        let authorizer = Arc::new(MalformedAuthorizer::default());
+        let runtime = test_runtime(authorizer.clone(), Duration::from_secs(1), 1);
+        let artifact = vector_tunnel_artifact(1, "endpoint-client", "rotated-certificate");
+        let mut rotated: Value = serde_json::from_slice(&artifact.encode()).unwrap();
+        let candidate = rotated["path"]["candidates"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|entry| entry["id"] == "q-pin")
+            .unwrap();
+        candidate["tls"]["pins"][0]["value_b64u"] = URL_SAFE_NO_PAD.encode([0x31_u8; 32]).into();
+        let rotated = Artifact::parse(crate::artifact_v3::jcs_value(&rotated).unwrap()).unwrap();
+        let accepted = accepted_with_admission(rotated.encode_fsb3("q-pin").unwrap().raw);
+        let permit = runtime
+            .state
+            .admission_permits
+            .clone()
+            .try_acquire_owned()
+            .unwrap();
+        assert_eq!(
+            runtime.admit_and_pair(accepted, permit).await,
+            Err(TunnelRuntimeError::Rejected)
+        );
+        assert_eq!(authorizer.calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

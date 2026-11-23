@@ -88,19 +88,22 @@ export function fetchProxyPort(dispatch: ProxyRuntime["dispatchFetch"], request:
     let finished = false;
     let receivedMetadata = false;
     let pending: (() => void) | undefined;
+    const metadataTimer = setTimeout(() => cancel(new SessionError("timeout")), 10_000);
     const finish = (error?: Error) => {
       if (finished) return;
       finished = true;
+      clearTimeout(metadataTimer);
       signal.removeEventListener("abort", abort);
       port.close();
       pending?.();
       if (error) { output?.error(error); reject(error); }
       else output?.close();
     };
-    const abort = () => {
-      port.postMessage({ type: "flowersec-proxy:abort" });
-      finish(new SessionError("canceled"));
+    const cancel = (error: SessionError) => {
+      try { port.postMessage({ type: "flowersec-proxy:abort" }); } finally { finish(error); }
     };
+    const abort = () => cancel(new SessionError("canceled"));
+    port.onmessageerror = () => cancel(new SessionError("operation_failed"));
     signal.addEventListener("abort", abort, { once: true });
     port.onmessage = (event) => {
       if (finished) return;
@@ -109,6 +112,7 @@ export function fetchProxyPort(dispatch: ProxyRuntime["dispatchFetch"], request:
         case "flowersec-proxy:response_meta": {
           if (receivedMetadata || !Number.isInteger(message.status) || message.status < 200 || message.status > 599 || !Array.isArray(message.headers)) { abort(); return; }
           receivedMetadata = true;
+          clearTimeout(metadataTimer);
           const noBody = request.method === "HEAD" || [204, 205, 304].includes(message.status);
           const body = noBody ? null : new ReadableStream<Uint8Array>({
             start(controller) { output = controller; },

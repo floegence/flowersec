@@ -555,6 +555,7 @@ impl fmt::Debug for RawQuicServerConfig {
 
 pub struct RawQuicListener {
     endpoint: Endpoint,
+    pending: crate::HandshakeQueue<Result<RawQuicSession, RawQuicError>>,
     profile: PathProfile,
     limits: RawQuicLimits,
     closed: AtomicBool,
@@ -606,6 +607,7 @@ impl RawQuicListener {
             endpoint,
             profile: config.profile,
             limits: config.limits,
+            pending: crate::HandshakeQueue::new(),
             closed: AtomicBool::new(false),
         })
     }
@@ -621,29 +623,33 @@ impl RawQuicListener {
         if self.closed.load(Ordering::Acquire) {
             return Err(RawQuicError::ListenerClosed);
         }
-        let incoming = tokio::select! {
+        tokio::select! {
             biased;
-            _ = cancellation.inner.cancelled() => return Err(RawQuicError::Canceled),
-            incoming = self.endpoint.accept() => incoming.ok_or(RawQuicError::ListenerClosed)?,
-        };
+            _ = cancellation.inner.cancelled() => Err(RawQuicError::Canceled),
+            result = self.pending.accept(&self.endpoint, |incoming| Self::handshake(incoming, self.endpoint.clone(), self.profile, self.limits)) => result.ok_or(RawQuicError::ListenerClosed)?,
+        }
+    }
+
+    async fn handshake(
+        incoming: quinn::Incoming,
+        endpoint: Endpoint,
+        profile: PathProfile,
+        limits: RawQuicLimits,
+    ) -> Result<RawQuicSession, RawQuicError> {
         let driver = TaskTracker::new();
         let connecting = ACCEPTED_DRIVER
             .sync_scope(driver.clone(), || incoming.accept())
             .map_err(|_| RawQuicError::Handshake)?;
         driver.close();
-        let connection = tokio::select! {
-            biased;
-            _ = cancellation.inner.cancelled() => return Err(RawQuicError::Canceled),
-            result = tokio::time::timeout(self.limits.handshake_idle_timeout, connecting) => {
-                result.map_err(|_| RawQuicError::Handshake)?
-                    .map_err(|_| RawQuicError::Handshake)?
-            }
-        };
+        let connection = tokio::time::timeout(limits.handshake_idle_timeout, connecting)
+            .await
+            .map_err(|_| RawQuicError::Handshake)?
+            .map_err(|_| RawQuicError::Handshake)?;
         RawQuicSession::from_connection(
             connection,
-            self.endpoint.clone(),
-            self.profile,
-            self.limits.max_inbound_bidirectional_streams,
+            endpoint,
+            profile,
+            limits.max_inbound_bidirectional_streams,
             Some(driver),
             None,
         )
@@ -658,6 +664,7 @@ impl RawQuicListener {
 
     pub async fn close(&self) {
         self.abort();
+        self.pending.shutdown().await;
         self.endpoint.wait_idle().await;
     }
 }

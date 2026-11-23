@@ -160,15 +160,7 @@ public final class WebSocketRelay: Sendable {
 
   fileprivate static func checkIngress(_ claim: TunnelAdmissionV3, _ leg: BoundWebSocketLegV3) throws {
     let now = UInt64(max(0, Date().timeIntervalSince1970))
-    if let pins = try claim.candidate.activePinHashes(at: now) {
-      try NativeTLSPolicyAdapterV3.verifyPinnedCertificate(leg.leaf, activePins: pins, nowUnixSeconds: Int64(now))
-    } else {
-      guard let host = URL(string: leg.endpoint)?.host, Int64(now) >= leg.leaf.notValidBefore,
-            Int64(now) < leg.leaf.notValidAfter else { throw RelayRejection.invalid }
-      let matches = NativeTLSPolicyAdapterV3.ipAddressBytes(host).map { NativeTLSPolicyAdapterV3.certificateMatchesIPAddress(leg.leaf, address: $0) }
-        ?? NativeTLSPolicyAdapterV3.certificateMatchesDNSHostname(leg.leaf, hostname: host)
-      guard matches else { throw RelayRejection.invalid }
-    }
+    try BoundWebSocketIngressV3.verify(claim.candidate, endpoint: leg.endpoint, leaf: leg.leaf, now: now)
   }
 }
 

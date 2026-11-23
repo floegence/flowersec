@@ -204,7 +204,7 @@ impl ServerCertVerifier for PinnedServerVerifierV3 {
     }
 }
 
-pub(crate) fn matches_direct_listener(
+pub(crate) fn matches_listener(
     candidate: &crate::artifact_v3::CanonicalCandidateV3,
     local: std::net::SocketAddr,
     public_endpoint: Option<&str>,
@@ -446,7 +446,7 @@ mod tests {
         };
         let now = UnixTime::now().as_secs();
         let matches = |port, endpoint| {
-            matches_direct_listener(
+            matches_listener(
                 &candidate,
                 ([127, 0, 0, 1], port).into(),
                 endpoint,

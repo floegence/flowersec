@@ -2208,6 +2208,14 @@ async fn prepare_rekey_v3(session: &Arc<SelfSession>) -> io::Result<PreparedReke
         (next, next_roots)
     };
     let streams = active_send_streams_v3(session);
+    if streams
+        .iter()
+        .any(|stream| stream.remote_fin.load(Ordering::Acquire))
+    {
+        return Err(resource_exhausted(
+            "stream acknowledgement direction has finished",
+        ));
+    }
     let mut payload = [0; 20];
     payload[..8].copy_from_slice(&transition.to_be_bytes());
     payload[8..12].copy_from_slice(&next_epoch.to_be_bytes());

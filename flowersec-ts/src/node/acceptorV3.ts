@@ -2,7 +2,8 @@ import type { OperationOptions, Session } from "../public/contract.js";
 import { projectSessionV3 } from "../v3/publicSession.js";
 import { rpcFrameLimit } from "../framing/jsonframe.js";
 import { rpcConcurrency } from "../rpc/server.js";
-import { boundIngressURL } from "./listenerIngress.js";
+import { X509Certificate } from "node:crypto";
+import { boundIngressURL, matchesIngress, type BoundIngress } from "./listenerIngress.js";
 import {
   acceptCarrierSessionV3,
   createAdmissionReasonRegistryV3,
@@ -166,7 +167,7 @@ export class AcceptorV3 {
   }
 }
 
-async function admit(state: AcceptorStateV3, carrier: CarrierSessionV3, ingress: string, providers: Set<Promise<unknown>>): Promise<AcceptedSessionV3> {
+async function admit(state: AcceptorStateV3, carrier: CarrierSessionV3, ingress: BoundIngress, providers: Set<Promise<unknown>>): Promise<AcceptedSessionV3> {
       const admission = new AbortController();
       const unlinkAdmission = linkAbort(state.abort.signal, admission);
       const deadline = setTimeout(() => {
@@ -176,7 +177,7 @@ async function admit(state: AcceptorStateV3, carrier: CarrierSessionV3, ingress:
         let handlers: FrozenSessionHandlers | undefined, authorizationKey: string | undefined;
         const authorize: AdmissionAuthorizerV3 = async (request, signal) => {
           const selected = request.request.candidates.find(entry => entry.id === request.request.chosen_candidate_id);
-          if (selected?.normalized_url !== ingress) throw new Error("authorized candidate does not match the bound listener");
+          if (!matchesIngress(selected, ingress)) throw new Error("authorized candidate does not match the bound listener");
           const authorizationRequest = runtimeAuthorizationRequestV3FromDecoded(request);
           signal?.throwIfAborted();
           const decision = await ownProvider(providers, state.authorize(
@@ -274,10 +275,11 @@ export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<Acce
     options.admissionReasons,
   );
   const listeners: ListenerV3[] = [];
-  const ingress: string[] = [];
+  const ingress: BoundIngress[] = [];
   let rawDriver: ReturnType<typeof createNativeRawQuicDriver> | undefined;
   try {
     for (const listener of options.listeners) {
+      const leaf = new X509Certificate(listener.tls.certificate);
       const running = listener.carrier === "websocket"
         ? await startNodeWebSocketListenerV3({
             ...listener,
@@ -292,7 +294,7 @@ export async function createAcceptorV3(options: AcceptorOptionsV3): Promise<Acce
             },
           );
       listeners.push(running);
-      ingress.push(boundIngressURL("direct", listener.carrier, running.address(), listener.publicURL));
+      ingress.push({ url: boundIngressURL("direct", listener.carrier, running.address(), listener.publicURL), leaf });
     }
   } catch (error) {
     await Promise.allSettled(listeners.map(async (listener) => await listener.close()));
@@ -337,7 +339,7 @@ function acceptorState(value: AcceptorV3): AcceptorStateV3 {
   return state;
 }
 
-async function listen(state: AcceptorStateV3, listener: ListenerV3, ingress: string): Promise<void> {
+async function listen(state: AcceptorStateV3, listener: ListenerV3, ingress: BoundIngress): Promise<void> {
   try {
     while (!state.closed) {
       const carrier = await listener.accept({ signal: state.abort.signal });

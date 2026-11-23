@@ -611,7 +611,7 @@
       "path": "flowersec-rust/src/artifact_v3.rs",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 27,
-      "matching_lines": 282
+      "matching_lines": 283
     },
     {
       "path": "flowersec-rust/src/connection_controller.rs",
@@ -707,7 +707,7 @@
       "path": "flowersec-rust/src/tunnel_runtime_v3.rs",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 1,
-      "matching_lines": 128
+      "matching_lines": 131
     },
     {
       "path": "flowersec-rust/src/websocket_transport.rs",
@@ -760,8 +760,8 @@
     {
       "path": "flowersec-swift/Sources/Flowersec/DirectWebSocketListener.swift",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 47,
-      "matching_lines": 33
+      "first_matching_line": 46,
+      "matching_lines": 38
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/HTTPDirectV1.swift",
@@ -863,7 +863,7 @@
       "path": "flowersec-swift/Sources/Flowersec/WebSocketRelay.swift",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 19,
-      "matching_lines": 26
+      "matching_lines": 24
     },
     {
       "path": "flowersec-swift/Sources/Flowersec/Yamux.swift",
@@ -958,8 +958,8 @@
     {
       "path": "flowersec-ts/src/node/listenerIngress.ts",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 1,
-      "matching_lines": 3
+      "first_matching_line": 3,
+      "matching_lines": 8
     },
     {
       "path": "flowersec-ts/src/node/nativeTransportAddon.ts",
