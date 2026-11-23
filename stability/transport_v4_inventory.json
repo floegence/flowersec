@@ -82,7 +82,7 @@
     {
       "path": "flowersec-go/acceptor.go",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 24,
+      "first_matching_line": 21,
       "matching_lines": 57
     },
     {
@@ -113,7 +113,7 @@
       "path": "flowersec-go/cmd/flowersec-runtime/config.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 15,
-      "matching_lines": 6
+      "matching_lines": 8
     },
     {
       "path": "flowersec-go/cmd/flowersec-runtime/direct_client.go",
@@ -131,7 +131,7 @@
       "path": "flowersec-go/cmd/flowersec-runtime/runtime.go",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 16,
-      "matching_lines": 51
+      "matching_lines": 53
     },
     {
       "path": "flowersec-go/connection_controller.go",
@@ -442,7 +442,7 @@
     {
       "path": "flowersec-go/internal/transportsecurity/tunnel_ingress.go",
       "action": "replace_before_v4_runtime",
-      "first_matching_line": 10,
+      "first_matching_line": 12,
       "matching_lines": 10
     },
     {
@@ -605,7 +605,7 @@
       "path": "flowersec-rust/src/acceptor_v3.rs",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 19,
-      "matching_lines": 48
+      "matching_lines": 54
     },
     {
       "path": "flowersec-rust/src/artifact_v3.rs",
@@ -689,7 +689,7 @@
       "path": "flowersec-rust/src/tls_v3.rs",
       "action": "replace_before_v4_runtime",
       "first_matching_line": 30,
-      "matching_lines": 49
+      "matching_lines": 54
     },
     {
       "path": "flowersec-rust/src/transport.rs",

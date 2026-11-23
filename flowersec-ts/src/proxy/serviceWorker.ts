@@ -127,6 +127,54 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
   const registrations = new Set<string>();
   const restricted = !!(config.runtimeRegistrationToken || config.runtimeClientPathPrefix);
   const intake = new Intake(24, Math.max(config.maxRequestBodyBytes, 64 * 1024 * 1024));
+  const shared = config.windowTarget === "registered_runtime";
+  const cacheName = `flowersec-proxy-owner-v2:${worker.registration?.scope ?? worker.location.href}`;
+  const ownerKey = worker.location.href;
+  const ownerCache = (): Promise<Cache> => worker.caches.open(cacheName);
+  let mutation: Promise<void> = Promise.resolve();
+  const serialize = (operation: () => Promise<void>) => {
+    const result = mutation.then(operation);
+    mutation = result.catch(() => undefined);
+    return result;
+  };
+  const storedOwner = async () => (await (await ownerCache()).match(ownerKey))?.text();
+  const eligible = (client: any) => !!client?.id && (!config.runtimeClientPathPrefix || new URL(client.url).pathname.startsWith(config.runtimeClientPathPrefix));
+  const confirmations = new Map<string, Promise<boolean>>();
+  const confirm = (client: any): Promise<boolean> => {
+    if (!eligible(client)) return Promise.resolve(false);
+    const existing = confirmations.get(client.id);
+    if (existing) return existing;
+    if (confirmations.size >= 256) return Promise.resolve(false);
+    const confirmation = new Promise<boolean>(resolve => {
+      const channel = new MessageChannel();
+      const finish = (ok: boolean) => { clearTimeout(timer); channel.port1.close(); resolve(ok); };
+      const timer = setTimeout(() => finish(false), 2_000);
+      channel.port1.onmessage = event => finish(event.data?.registered === true && (!config.runtimeRegistrationToken || event.data.token === config.runtimeRegistrationToken));
+      channel.port1.onmessageerror = () => finish(false);
+      try { client.postMessage({ type: "flowersec-proxy:confirm-registration" }, [channel.port2]); }
+      catch { finish(false); }
+    }).finally(() => confirmations.delete(client.id));
+    confirmations.set(client.id, confirmation);
+    return confirmation;
+  };
+  const resolveTarget = async (source: any) => {
+    await mutation;
+    if (!shared) {
+      if (!restricted || registrations.has(source?.id)) return source;
+      const before = mutation;
+      if (!await confirm(source) || before !== mutation || registrations.size >= 256) return null;
+      registrations.add(source.id);
+      return source;
+    }
+    const id = runtimeClientId || await storedOwner();
+    if (!id) return null;
+    const client = await worker.clients.get(id);
+    if (client && (runtimeClientId === id || await confirm(client)) && (runtimeClientId || await storedOwner()) === id) {
+      runtimeClientId = id;
+      return client;
+    }
+    return null;
+  };
 
   const boundedBody = async (body: ReadableStream<Uint8Array> | null, limit: number, reserve?: (bytes: number) => boolean): Promise<ArrayBuffer | null> => {
     let buffer = new Uint8Array(0);
@@ -170,8 +218,13 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
     const data = event.data as Record<string, unknown> | null;
     if (data === null || typeof data !== "object") return;
     if (data.type === "flowersec-proxy:release-runtime" && data.version === 2) {
-      if (event.source?.id === runtimeClientId) runtimeClientId = "";
-      registrations.delete(event.source?.id);
+      event.waitUntil(serialize(async () => {
+        if (shared && event.source?.id === (runtimeClientId || await storedOwner())) {
+          await (await ownerCache()).delete(ownerKey);
+          runtimeClientId = "";
+        }
+        registrations.delete(event.source?.id);
+      }));
       return;
     }
     if (data.type === "flowersec-proxy:register-runtime") {
@@ -186,7 +239,7 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
           ok = false;
         }
       }
-      event.waitUntil((async () => {
+      event.waitUntil(serialize(async () => {
         if (ok && restricted && config.windowTarget === "request_client") {
           if (registrations.size >= 256 && !registrations.has(source.id)) {
             await Promise.all(Array.from(registrations, async id => {
@@ -197,21 +250,23 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
           if (ok) registrations.add(source.id);
         }
         if (ok && config.windowTarget === "registered_runtime") {
-          const previous = runtimeClientId;
+          const previous = runtimeClientId || await storedOwner();
           if (previous && previous !== source.id) {
-            ok = !(await worker.clients.get(previous)) && runtimeClientId === previous;
+            ok = !(await worker.clients.get(previous));
           }
-          if (ok) runtimeClientId = source.id;
+          if (ok) {
+            await (await ownerCache()).put(ownerKey, new Response(source.id));
+            runtimeClientId = source.id;
+          }
         }
         port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok });
         port?.close();
-      })());
+      }).catch(() => { port?.postMessage({ type: "flowersec-proxy:register-runtime-ack", ok: false }); port?.close(); }));
       return;
     }
     if (!config.forwardFetchMessageTypes.includes(String(data.type ?? ""))) return;
     event.waitUntil((async () => {
-      if (config.windowTarget === "request_client" && restricted && !registrations.has(event.source?.id)) return;
-      const target = config.windowTarget === "request_client" ? event.source : runtimeClientId === "" ? null : await worker.clients.get(runtimeClientId);
+      const target = await resolveTarget(event.source);
       target?.postMessage(data, event.ports);
     })());
   });
@@ -235,15 +290,12 @@ function serviceWorkerMain(config: ServiceWorkerConfig, Intake: typeof BodyIntak
       }
 
       const source = event.clientId === "" ? null : await worker.clients.get(event.clientId);
+      const target = await resolveTarget(source);
       const registered = runtimeClientId;
-      const target = config.windowTarget === "request_client"
-        ? (!restricted || registrations.has(event.clientId) ? source : null)
-        : registered === "" ? null : await worker.clients.get(registered);
       const forgetTarget = () => {
         if (config.windowTarget === "registered_runtime" && runtimeClientId === registered) runtimeClientId = "";
       };
       if (target == null) {
-        forgetTarget();
         return new Response("proxy runtime unavailable", { status: 503 });
       }
 

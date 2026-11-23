@@ -338,8 +338,8 @@ describe("transport v5 Node TLS verifier and WebSocket production path", () => {
     }
   });
 
-  test("rejects a CA-trusted certificate that relies on CN without a SAN", async () => {
-    const server = createTLSServer({ cert: cnOnlyLeafCertificate, key: leafKey });
+  test.each(["none", "IP only"])("requires a matching DNS SAN when the SAN is %s", async (san) => {
+    const server = createTLSServer({ cert: san === "none" ? cnOnlyLeafCertificate : ipLeafCertificate, key: leafKey });
     const port = await listen(server);
     try {
       await expect(connectNodeTLSSocketV3(

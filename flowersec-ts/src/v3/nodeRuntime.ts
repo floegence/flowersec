@@ -117,31 +117,16 @@ export async function connectNodeTLSSocketV3(
     ALPNProtocols: ["http/1.1"],
     rejectUnauthorized: policy.mode === "ca",
     ...(policy.mode === "ca"
-      ? (isIPAddress(host)
-        ? { checkServerIdentity: (_servername: string, certificate: Parameters<typeof tlsCheckServerIdentity>[1]) => {
-          const subjectAltName = (certificate as { subjectaltname?: unknown }).subjectaltname;
-          if (typeof subjectAltName !== "string" || !/(?:^|,\s*)(?:DNS|IP Address):/.test(subjectAltName)) {
-            return Object.assign(new Error("certificate is missing a DNS-ID or IP-ID subjectAltName"), {
-              code: "ERR_TLS_CERT_ALTNAME_INVALID",
-            });
-          }
-          return tlsCheckServerIdentity(host, certificate);
-        } }
-        : {
-        servername: host,
+      ? {
+        ...(isIPAddress(host) ? {} : { servername: host }),
         checkServerIdentity: (_servername: string, certificate: Parameters<typeof tlsCheckServerIdentity>[1]) => {
-          // Node's historical hostname verifier may fall back to CN when the
-          // certificate has no subjectAltName. Transport v5 requires a DNS-ID
-          // or IP-ID SAN; CN alone is never an identity proof.
-          const subjectAltName = (certificate as { subjectaltname?: unknown }).subjectaltname;
-          if (typeof subjectAltName !== "string" || !/(?:^|,\s*)(?:DNS|IP Address):/.test(subjectAltName)) {
-            return Object.assign(new Error("certificate is missing a DNS-ID or IP-ID subjectAltName"), {
-              code: "ERR_TLS_CERT_ALTNAME_INVALID",
-            });
-          }
-          return tlsCheckServerIdentity(host, certificate);
+          const leaf = new X509Certificate(certificate.raw);
+          const matched = isIPAddress(host) ? leaf.checkIP(host) : leaf.checkHost(host, { subject: "never", partialWildcards: false });
+          return matched === undefined ? Object.assign(new Error("certificate subjectAltName does not match the host"), {
+            code: "ERR_TLS_CERT_ALTNAME_INVALID",
+          }) : tlsCheckServerIdentity(host, certificate);
         },
-      })
+      }
       : isIPAddress(host)
         ? { checkServerIdentity: (_servername: string, certificate: Parameters<typeof tlsCheckServerIdentity>[1]) =>
           tlsCheckServerIdentity(host, certificate) }

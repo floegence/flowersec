@@ -2546,7 +2546,7 @@ async fn receive_stream_reset_v3(session: &EncryptedSessionV3, payload: &[u8]) -
     if let Some(stream) = stream {
         let rekey_pending =
             stream.send_update.lock().await.is_some() || stream.recv_update.lock().await.is_some();
-        stream.reset_local().await?;
+        stream.start_reset(false);
         if rekey_pending {
             return Err(invalid("stream reset during rekey"));
         }
@@ -3786,10 +3786,6 @@ impl EncryptedStreamV3 {
         }
         self.reset_cleanup_done.store(true, Ordering::Release);
         self.reset_cleanup_changed.notify_waiters();
-    }
-    async fn reset_local(self: &Arc<Self>) -> io::Result<()> {
-        self.start_reset(false);
-        self.wait_reset_cleanup().await
     }
     async fn write_record(&self, kind: InnerRecordTypeV3, payload: &[u8]) -> io::Result<()> {
         let _lock = self.send_lock.lock().await;

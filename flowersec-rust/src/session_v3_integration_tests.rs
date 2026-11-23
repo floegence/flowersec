@@ -2770,6 +2770,10 @@ async fn simultaneous_peer_reset_does_not_release_capacity_before_owned_cleanup(
         .expect("send simultaneous peer reset");
 
     let mut repeated_reset = Box::pin(incoming.stream().reset());
+    tokio::time::timeout(Duration::from_secs(1), client.probe_liveness())
+        .await
+        .expect("control loop must not wait for physical cleanup")
+        .expect("probe during cleanup");
     let mut next_opening = {
         let client = client.clone();
         tokio::spawn(async move {

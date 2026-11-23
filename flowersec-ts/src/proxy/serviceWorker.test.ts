@@ -52,6 +52,22 @@ describe("proxy service worker generator", () => {
     expect(response.body).toBeNull();
   });
 
+  it.each(["registered_runtime", "request_client"] as const)("restores a live %s after worker suspension", async windowTarget => {
+    const cache = new Map<string, string>();
+    const target = { id: "owner", url: "https://app.example/boot/", postMessage(message: { type: string }, [port]: MessagePort[]) {
+      if (message.type === "flowersec-proxy:confirm-registration") port!.postMessage({ registered: true });
+      else {
+        port!.postMessage({ type: "flowersec-proxy:response_meta", status: 204 });
+        port!.postMessage({ type: "flowersec-proxy:response_end" });
+      }
+      port!.close();
+    } };
+    const start = () => generatedWorker(async id => id === target.id ? target : null, { windowTarget, runtimeClientPathPrefix: "/boot/" }, cache);
+    expect(await start().register(target.id)).toBe(true);
+    const response = await within(start().fetch(new Request("https://app.example/api"), target.id));
+    expect(response.status).toBe(204);
+  });
+
   it("stops reading an oversized streaming upload before dispatch", async () => {
     let canceled = false;
     const body = new ReadableStream<Uint8Array>({
@@ -202,10 +218,16 @@ describe("proxy service worker generator", () => {
 function generatedWorker(
   getClient: (id: string) => Promise<unknown>,
   options: Parameters<typeof createProxyServiceWorkerScript>[0],
+  cache = new Map<string, string>(),
 ): Readonly<{ fetch(request: Request, clientId?: string): Promise<Response>; register(id: string): Promise<boolean>; release(id: string): void }> {
   let fetchHandler: ((event: any) => void) | undefined;
   let messageHandler: ((event: any) => void) | undefined;
   const worker = {
+    caches: { open: async () => ({
+      match: async (key: string) => cache.has(key) ? new Response(cache.get(key)) : undefined,
+      put: async (key: string, response: Response) => { cache.set(key, await response.text()); },
+      delete: async (key: string) => cache.delete(key),
+    }) },
     location: new URL("https://app.example/proxy-sw.js"),
     clients: { get: getClient, claim: async () => undefined },
     skipWaiting: async () => undefined,
@@ -219,12 +241,12 @@ function generatedWorker(
   return {
     register(id) {
       return new Promise<boolean>((resolve, reject) => messageHandler!({
-        source: { id }, data: { type: "flowersec-proxy:register-runtime", version: 2 },
+        source: { id, url: "https://app.example/boot/" }, data: { type: "flowersec-proxy:register-runtime", version: 2 },
         ports: [{ postMessage: (reply: { ok: boolean }) => resolve(reply.ok), close() {} }],
         waitUntil: (work: Promise<void>) => work.catch(reject),
       }));
     },
-    release(id) { messageHandler!({ source: { id }, data: { type: "flowersec-proxy:release-runtime", version: 2 } }); },
+    release(id) { messageHandler!({ source: { id }, data: { type: "flowersec-proxy:release-runtime", version: 2 }, waitUntil() {} }); },
     fetch(request: Request, clientId = "client"): Promise<Response> {
       let response: Promise<Response> | undefined;
       fetchHandler?.({

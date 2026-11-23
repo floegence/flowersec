@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"net"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/floegence/flowersec/flowersec-go/v7/internal/artifactv3"
@@ -41,6 +43,37 @@ func MatchesDirectIngress(decoded *artifactv3.DecodedRequest, kind artifactv3.Ca
 		return false
 	}
 	return matchesIngress(tunnelIngress{carrier: kind, endpoint: endpoint, leaf: state.LocalCertificate[0]}, decoded, now)
+}
+
+func MatchesLocalDirectEndpoint(endpoint, configured string, local net.Addr, state *tls.ConnectionState) bool {
+	if local == nil {
+		return false
+	}
+	if configured != "" {
+		return endpoint == configured
+	}
+	host, port, err := net.SplitHostPort(local.String())
+	parsed, parseErr := url.Parse(endpoint)
+	if err != nil || parseErr != nil || parsed.Hostname() == "" {
+		return false
+	}
+	expectedPort := parsed.Port()
+	if expectedPort == "" {
+		expectedPort = "443"
+	}
+	if port != expectedPort {
+		return false
+	}
+	name := parsed.Hostname()
+	localIP := net.ParseIP(host)
+	if localIP != nil && (localIP.Equal(net.ParseIP(name)) || (name == "localhost" && localIP.IsLoopback())) {
+		return true
+	}
+	if state == nil || len(state.LocalCertificate) == 0 || !strings.EqualFold(state.ServerName, name) {
+		return false
+	}
+	leaf, err := x509.ParseCertificate(state.LocalCertificate[0])
+	return err == nil && len(leaf.DNSNames) == 1 && strings.EqualFold(leaf.DNSNames[0], name)
 }
 
 func matchesIngress(ingress tunnelIngress, decoded *artifactv3.DecodedRequest, now time.Time) bool {

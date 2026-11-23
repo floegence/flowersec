@@ -35,6 +35,8 @@ A connect failure or terminated session stops the deployment. Check the remote l
 
 ## Serve registered methods on fixed TCP upstreams
 
+Direct admission binds each invitation to the receiving listener and TLS certificate before contacting the authority. If the public URL differs from the local socket (for example, a forwarded port or a multi-name certificate), configure `listeners.direct_endpoints` with the canonical public URL keyed by `websocket`, `raw_quic`, or `webtransport` for the relevant listener.
+
 Set `role` to `direct-server` and add `direct_services` to the server's existing TLS, listener, authorization and origin configuration. In this mode **every direct application stream must match a registration**. A server that omits both fields continues to bridge raw streams to the address in the authorized record. Tunnel listeners forward encrypted traffic and do not run these methods.
 
 For example, add these top-level fields to serve a query, a notification and a report stream:

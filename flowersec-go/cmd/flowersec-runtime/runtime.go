@@ -316,7 +316,15 @@ func (runtime *runtimeServer) serveNativeDirect(
 	}
 	var authorization *directAuthorization
 	decoded, err := admissionv3.Serve(admissionContext, admissionStream, runtime.reasons, func(authorizeContext context.Context, decoded *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
-		if !chosenCarrierMatches(decoded, carrierSession.Kind()) {
+		observed, ok := carrierSession.(interface {
+			LocalAddr() net.Addr
+			TLSState() tls.ConnectionState
+		})
+		if !ok {
+			return artifactv3.AdmissionResponse{}, ErrInvalidAuthorization
+		}
+		state := observed.TLSState()
+		if !runtime.matchesDirect(decoded, artifactv3.Carrier(carrierSession.Kind()), observed.LocalAddr(), &state, "") {
 			return artifactv3.AdmissionResponse{}, ErrInvalidAuthorization
 		}
 		response, allowed, authorizeErr := authorizeDirect(authorizeContext, runtime.authorizer, decoded, runtime.reasons, runtime.config.MaxInboundStreams)
@@ -436,7 +444,7 @@ func (runtime *runtimeServer) handleWebSocket(baseContext context.Context, write
 	defer cancel()
 	var authorization *directAuthorization
 	decoded, err := websocketadmission.Serve(admissionContext, connection, runtime.reasons, func(authorizeContext context.Context, decoded *artifactv3.DecodedRequest) (artifactv3.AdmissionResponse, error) {
-		if !chosenCarrierMatches(decoded, carrier.KindWebSocket) {
+		if !runtime.matchesDirect(decoded, artifactv3.CarrierWebSocket, connection.LocalAddr(), request.TLS, request.Host) {
 			return artifactv3.AdmissionResponse{}, ErrInvalidAuthorization
 		}
 		response, allowed, authorizeErr := authorizeDirect(authorizeContext, runtime.authorizer, decoded, runtime.reasons, runtime.config.MaxInboundStreams)
@@ -578,21 +586,28 @@ func (runtime *runtimeServer) originAllowed(request *http.Request) bool {
 	return false
 }
 
-func chosenCarrierMatches(decoded *artifactv3.DecodedRequest, kind carrier.Kind) bool {
+func (runtime *runtimeServer) matchesDirect(decoded *artifactv3.DecodedRequest, kind artifactv3.Carrier, local net.Addr, state *tls.ConnectionState, authority string) bool {
 	if decoded == nil {
 		return false
 	}
-	want := artifactv3.CarrierWebSocket
-	if kind == carrier.KindRawQUIC {
-		want = artifactv3.CarrierRawQUIC
-	} else if kind == carrier.KindWebTransport {
-		want = artifactv3.CarrierWebTransport
-	} else if kind != carrier.KindWebSocket {
-		return false
+	configured := runtime.config.Listeners.DirectEndpoints[kind]
+	if configured != "" {
+		var err error
+		configured, err = artifactv3.NormalizeDirectEndpoint(kind, configured)
+		if err != nil {
+			return false
+		}
 	}
 	for _, candidate := range decoded.Request.Candidates {
-		if candidate.ID == decoded.Request.ChosenCandidateID {
-			return candidate.Carrier == want
+		if candidate.ID == decoded.Request.ChosenCandidateID && candidate.Carrier == kind {
+			if authority != "" {
+				observed, err := artifactv3.NormalizeDirectEndpoint(kind, "wss://"+authority+webSocketDirectPath)
+				if err != nil || candidate.NormalizedURL != observed {
+					return false
+				}
+			}
+			return transportsecurity.MatchesLocalDirectEndpoint(candidate.NormalizedURL, configured, local, state) &&
+				transportsecurity.MatchesDirectIngress(decoded, kind, candidate.NormalizedURL, state, time.Now())
 		}
 	}
 	return false

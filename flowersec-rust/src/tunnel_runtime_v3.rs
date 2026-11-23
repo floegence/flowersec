@@ -2290,6 +2290,7 @@ async fn bridge_stream_direction(
         let inbound = match tokio::select! {
             biased;
             _ = closed.cancelled() => break,
+            _ = tasks.join_next(), if !tasks.is_empty() => continue,
             result = source.accept_stream() => result,
         } {
             Ok(stream) => stream,

@@ -48,8 +48,9 @@ type TLSConfig struct {
 }
 
 type ListenerConfig struct {
-	WSS                string             `json:"wss"`
-	WSSTunnelIngresses []WSSTunnelIngress `json:"wss_tunnel_ingresses,omitempty"`
+	DirectEndpoints    map[artifactv3.Carrier]string `json:"direct_endpoints,omitempty"`
+	WSS                string                        `json:"wss"`
+	WSSTunnelIngresses []WSSTunnelIngress            `json:"wss_tunnel_ingresses,omitempty"`
 	// Public URLs for Tunnel admission on the ordinary listeners, by carrier.
 	TunnelEndpoints map[artifactv3.Carrier]string `json:"tunnel_endpoints,omitempty"`
 	RawQUIC         RawQUICConfig                 `json:"raw_quic"`
@@ -155,6 +156,11 @@ func (config Config) validate() error {
 	}
 	tcp := map[string]bool{config.Listeners.WSS: true}
 	public := make(map[string]bool)
+	for kind, raw := range config.Listeners.DirectEndpoints {
+		if _, err := artifactv3.NormalizeDirectEndpoint(kind, raw); err != nil {
+			return &ConfigError{Field: "listeners.direct_endpoints", Err: err}
+		}
+	}
 	for kind, raw := range config.Listeners.TunnelEndpoints {
 		endpoint, err := artifactv3.NormalizeTunnelEndpoint(kind, raw)
 		if err != nil {

@@ -2,7 +2,7 @@ import { StreamEOFError } from "./errors.js";
 
 // ByteReader buffers incoming chunks and supports exact reads.
 export class ByteReader {
-  private readonly chunks: Uint8Array[] = [];
+  private readonly chunks: (Uint8Array | undefined)[] = [];
   private chunkHead = 0;
   private headOff = 0;
   private buffered = 0;
@@ -55,6 +55,7 @@ export class ByteReader {
       this.buffered -= take;
       consumed += take;
       if (this.headOff === head.length) {
+        this.chunks[this.chunkHead] = undefined;
         this.chunkHead++;
         this.headOff = 0;
       }

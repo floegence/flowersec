@@ -174,6 +174,7 @@ struct Config {
 
 struct Inner {
     config: Config,
+    upload_bytes: Arc<AtomicUsize>,
     permits: Arc<Semaphore>,
     closed: CancellationToken,
     active: AtomicUsize,
@@ -203,6 +204,7 @@ impl ProxyServer {
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
+                upload_bytes: Arc::new(AtomicUsize::new(0)),
                 permits: Arc::new(Semaphore::new(max_concurrent)),
                 closed: CancellationToken::new(),
                 active: AtomicUsize::new(0),
@@ -668,22 +670,85 @@ async fn write_json(
     write_all(stream, Bytes::from(frame), cancellation).await
 }
 
+struct BufferedUpload {
+    bytes: Vec<u8>,
+    reserved: usize,
+    used: Arc<AtomicUsize>,
+}
+
+impl AsRef<[u8]> for BufferedUpload {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+impl Drop for BufferedUpload {
+    fn drop(&mut self) {
+        self.used.fetch_sub(self.reserved, Ordering::Relaxed);
+    }
+}
+
+impl BufferedUpload {
+    fn reserve(&mut self, wanted: usize, limit: usize) -> bool {
+        if wanted <= self.reserved {
+            return true;
+        }
+        let target = wanted.max(self.reserved.saturating_mul(2)).min(limit);
+        let extra = target - self.reserved;
+        if self
+            .used
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                used.checked_add(extra)
+                    .filter(|&total| total <= limit.max(DEFAULT_MAX_BODY))
+            })
+            .is_err()
+        {
+            return false;
+        }
+        self.reserved = target;
+        self.bytes
+            .try_reserve_exact(target - self.bytes.len())
+            .is_ok()
+    }
+}
+
 async fn read_body(
     reader: &mut ProxyReader<'_>,
-    config: &Config,
+    inner: &Inner,
     cancellation: &CancellationToken,
-) -> Result<Vec<u8>, ProxyServerError> {
-    let mut body = Vec::new();
+) -> Result<Bytes, &'static str> {
+    let config = &inner.config;
+    let mut body = BufferedUpload {
+        bytes: Vec::new(),
+        reserved: 0,
+        used: inner.upload_bytes.clone(),
+    };
     loop {
-        let mut header = reader.exact(4, cancellation).await?;
+        let mut header = reader
+            .exact(4, cancellation)
+            .await
+            .map_err(|_| "request_body_invalid")?;
         let length = header.get_u32() as usize;
         if length == 0 {
-            return Ok(body);
+            return Ok(Bytes::from_owner(body));
         }
-        if length > config.max_chunk || body.len().saturating_add(length) > config.max_body {
-            return Err(ProxyServerError::OperationFailed);
+        let wanted = body
+            .bytes
+            .len()
+            .checked_add(length)
+            .ok_or("request_body_invalid")?;
+        if length > config.max_chunk || wanted > config.max_body {
+            return Err("request_body_invalid");
         }
-        body.extend_from_slice(&reader.exact(length, cancellation).await?);
+        if !body.reserve(wanted, config.max_body) {
+            return Err("resource_exhausted");
+        }
+        body.bytes.extend_from_slice(
+            &reader
+                .exact(length, cancellation)
+                .await
+                .map_err(|_| "request_body_invalid")?,
+        );
     }
 }
 
@@ -764,10 +829,10 @@ async fn serve_http_request(
     };
     let deadline = started + timeout;
     tokio::time::timeout_at(deadline, async {
-        let body = match read_body(&mut reader, &inner.config, &cancellation).await {
+        let body = match read_body(&mut reader, inner, &cancellation).await {
             Ok(body) => body,
-            Err(_) => {
-                write_http_error(stream, request_id, "request_body_invalid", &cancellation).await;
+            Err(code) => {
+                write_http_error(stream, request_id, code, &cancellation).await;
                 return Ok(());
             }
         };
@@ -786,7 +851,7 @@ async fn serve_http_request(
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
-            .body(Full::new(Bytes::from(body)))
+            .body(Full::new(body))
             .map_err(|_| ProxyServerError::OperationFailed)?;
         let connect_host = connect_host(&target).ok_or(ProxyServerError::OperationFailed)?;
         let port = target
@@ -1636,6 +1701,25 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn buffered_upload_holds_shared_budget_until_http_releases_bytes() {
+        let used = Arc::new(AtomicUsize::new(DEFAULT_MAX_BODY - 16));
+        let mut upload = BufferedUpload {
+            bytes: Vec::new(),
+            reserved: 0,
+            used: used.clone(),
+        };
+        assert!(upload.reserve(16, DEFAULT_MAX_BODY));
+        assert!(!upload.reserve(17, DEFAULT_MAX_BODY));
+        upload.bytes.push(1);
+        let bytes = Bytes::from_owner(upload);
+        let retained = bytes.clone();
+        drop(bytes);
+        assert_eq!(used.load(Ordering::Relaxed), DEFAULT_MAX_BODY);
+        drop(retained);
+        assert_eq!(used.load(Ordering::Relaxed), DEFAULT_MAX_BODY - 16);
+    }
 
     const TEST_CERT_DER_B64: &str = "MIIBjzCCAUGgAwIBAgIUW8hQEpQsUJN9a6qqF2g6hsNpSm8wBQYDK2VwMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAeFw0yNjA3MjAxOTAxMjFaFw0zNjA3MTcxOTAxMjFaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDAqMAUGAytlcAMhAAihki/Jec+1EaC6E6PsSxjMYFAazrgkNiUIlbj/+A/0o4GkMIGhMB0GA1UdDgQWBBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAfBgNVHSMEGDAWgBQCuKxQmMQkAAy9KkfuD+WOmrrMbTAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8AAAGHEAAAAAAAAAAAAAAAAAAAAAEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8EBAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwBQYDK2VwA0EArZng3XitiH2E1pW/NTxQvEOBXJYpYE8coQmLV4yTjfI43CWHMG6lIrwk/so67oe6Z2R4iHGjUm3Tuy50Fl8hBw==";
 

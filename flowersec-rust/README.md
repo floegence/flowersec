@@ -46,6 +46,10 @@ RPC encodes a complete JSON envelope with a four-byte length prefix. Both `Conne
 
 ## Server APIs
 
+For direct listeners behind a port forward or using a multi-name certificate, `Acceptor::with_public_endpoint` binds admission to the trusted external direct URL. The presented certificate must still satisfy the invitation's TLS policy.
+
+Buffered HTTP uploads share a per-`ProxyServer` memory budget of 64 MiB or the configured `max_body_bytes`, whichever is greater. Requests that exceed the available budget receive `resource_exhausted` without contacting the upstream.
+
 Rust exposes the direct `Acceptor`, opaque `TunnelRuntime`, and carrier-neutral
 `ProxyServer`. The proxy implements the bounded HTTP and WebSocket application
 wire shared with the TypeScript browser runtime.

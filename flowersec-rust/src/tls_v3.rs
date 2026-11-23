@@ -204,6 +204,77 @@ impl ServerCertVerifier for PinnedServerVerifierV3 {
     }
 }
 
+pub(crate) fn matches_direct_listener(
+    candidate: &crate::artifact_v3::CanonicalCandidateV3,
+    local: std::net::SocketAddr,
+    public_endpoint: Option<&str>,
+    leaf: &[u8],
+    now: u64,
+) -> bool {
+    let Ok(url) = url::Url::parse(&candidate.normalized_url) else {
+        return false;
+    };
+    let Some(host) = url
+        .host_str()
+        .map(|host| host.trim_start_matches('[').trim_end_matches(']'))
+    else {
+        return false;
+    };
+    let Ok((_, certificate)) = X509Certificate::from_der(leaf) else {
+        return false;
+    };
+    if let Some(endpoint) = public_endpoint {
+        if endpoint != candidate.normalized_url {
+            return false;
+        }
+    } else {
+        if local.port() != url.port().unwrap_or(443) {
+            return false;
+        }
+        let local_host = host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| !ip.is_unspecified() && ip == local.ip())
+            || (host == "localhost" && local.ip().is_loopback());
+        if !local_host {
+            let Ok(Some(san)) = certificate.subject_alternative_name() else {
+                return false;
+            };
+            let mut names = san
+                .value
+                .general_names
+                .iter()
+                .filter_map(|entry| match entry {
+                    x509_parser::extensions::GeneralName::DNSName(name) => Some(*name),
+                    _ => None,
+                });
+            if !names
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case(host))
+                || names.next().is_some()
+            {
+                return false;
+            }
+        }
+    }
+    match candidate.active_pin_hashes(now) {
+        Ok(Some(hashes)) => verify_pin_profile(leaf, &hashes, now).is_ok(),
+        Ok(None) => {
+            let der = CertificateDer::from(leaf);
+            let Ok(parsed) = rustls::server::ParsedCertificate::try_from(&der) else {
+                return false;
+            };
+            let Ok(name) = ServerName::try_from(host) else {
+                return false;
+            };
+            i64::try_from(now).is_ok_and(|now| {
+                certificate.validity().not_before.timestamp() <= now
+                    && now < certificate.validity().not_after.timestamp()
+            }) && rustls::client::verify_server_name(&parsed, &name).is_ok()
+        }
+        Err(_) => false,
+    }
+}
+
 fn verify_pin_profile(
     certificate_der: &[u8],
     active_leaf_hashes: &[[u8; 32]],
@@ -360,6 +431,36 @@ mod tests {
     fn validity() -> (OffsetDateTime, OffsetDateTime) {
         let now = OffsetDateTime::now_utc();
         (now - Duration::minutes(1), now + Duration::hours(1))
+    }
+
+    #[test]
+    fn direct_candidate_matches_bound_endpoint_and_certificate() {
+        use crate::artifact_v3::{CanonicalCandidateV3, CarrierWireV3, TlsPolicyWireV3};
+        let leaf = self_signed_identity().leaf;
+        let candidate = CanonicalCandidateV3 {
+            carrier: CarrierWireV3::Websocket,
+            id: "wss".into(),
+            normalized_url: "wss://localhost:4430/flowersec/v5/direct".into(),
+            tls: TlsPolicyWireV3::Ca {},
+            wire_profile: String::new(),
+        };
+        let now = UnixTime::now().as_secs();
+        let matches = |port, endpoint| {
+            matches_direct_listener(
+                &candidate,
+                ([127, 0, 0, 1], port).into(),
+                endpoint,
+                &leaf,
+                now,
+            )
+        };
+        assert!(matches(4430, None));
+        assert!(!matches(4431, None));
+        assert!(matches(4431, Some(&candidate.normalized_url)));
+        assert!(!matches(
+            4430,
+            Some("wss://other.example:4430/flowersec/v5/direct")
+        ));
     }
 
     fn self_signed_identity() -> TestIdentityV3 {

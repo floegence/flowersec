@@ -24,10 +24,19 @@ export function enableResponseFlowControl(request: ProxyFetchRequest): ProxyFetc
 
 type ProxyRuntimeServiceWorkerBridgeHandle = Readonly<{ dispose(): void }>;
 
-type BridgeOwner = { runtime: ProxyRuntime; releaseListener: () => void; handles: number };
+type BridgeOwner = { runtime: ProxyRuntime; releaseListener: () => void; handles: number; registration?: { controller: ServiceWorker; token?: string } };
 const ownershipKey = Symbol.for("flowersec.proxy.serviceWorkerBridgeOwners.v2");
 const registryHost = globalThis as typeof globalThis & { [ownershipKey]?: WeakMap<ServiceWorkerContainer, BridgeOwner> };
 const bridgeOwners = registryHost[ownershipKey] ??= new WeakMap();
+
+export function registrationAcknowledgement(container: ServiceWorkerContainer, controller: ServiceWorker, token?: string): () => void {
+  const owner = bridgeOwners.get(container);
+  return () => {
+    if (owner && bridgeOwners.get(container) === owner && container.controller === controller) {
+      owner.registration = { controller, ...(token === undefined ? {} : { token }) };
+    }
+  };
+}
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -83,6 +92,15 @@ export function registerProxyRuntimeServiceWorkerBridge(
     throw new Error("dispose the current proxy service worker runtime before registering another");
   }
   const onMessage = (event: MessageEvent<unknown>): void => {
+    if (record(event.data)?.type === "flowersec-proxy:confirm-registration") {
+      const registered = bridgeOwners.get(serviceWorker)?.registration;
+      const port = event.ports?.[0];
+      if (port && registered && event.source === registered.controller && serviceWorker.controller === registered.controller) {
+        port.postMessage({ registered: true, token: registered.token });
+      } else if (port) port.postMessage({ registered: false });
+      port?.close();
+      return;
+    }
     const message = record(event.data) as RuntimeFetchMessage | undefined;
     if (message?.type !== "flowersec-proxy:fetch") return;
     const port = event.ports?.[0];

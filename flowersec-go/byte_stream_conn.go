@@ -31,6 +31,7 @@ type ByteStreamConn struct {
 	workers       sync.WaitGroup
 	closed        chan struct{}
 	reads         chan streamReadResult
+	readConsumed  chan struct{}
 	writes        chan streamWriteRequest
 	readMu        sync.Mutex
 	writeMu       sync.Mutex
@@ -69,6 +70,7 @@ func NewByteStreamConn(ctx context.Context, stream ByteStream) (*ByteStreamConn,
 	}
 	c := &ByteStreamConn{stream: stream, done: make(chan struct{}), closed: make(chan struct{}), reads: make(chan streamReadResult), writes: make(chan streamWriteRequest), writeDone: make(chan struct{}), readChanged: make(chan struct{}), writeChanged: make(chan struct{})}
 	c.workers.Add(2)
+	c.readConsumed = make(chan struct{}, 1)
 	// Hold mu until stop is installed; an already canceled context may run it immediately.
 	c.mu.Lock()
 	c.stop = context.AfterFunc(ctx, func() { _ = c.abort() })
@@ -80,8 +82,9 @@ func NewByteStreamConn(ctx context.Context, stream ByteStream) (*ByteStreamConn,
 
 func (c *ByteStreamConn) readLoop() {
 	defer c.workers.Done()
+	buffer := make([]byte, byteStreamBufferBytes)
+	draining := false
 	for {
-		buffer := make([]byte, byteStreamBufferBytes)
 		n, err := c.stream.Read(buffer)
 		if n < 0 || n > len(buffer) {
 			n, err = 0, io.ErrUnexpectedEOF
@@ -89,11 +92,20 @@ func (c *ByteStreamConn) readLoop() {
 		if n == 0 && err == nil {
 			err = io.ErrNoProgress
 		}
-		select {
-		case c.reads <- streamReadResult{buffer[:n], err}:
-		case <-c.done:
-			// A normal net.Conn close drains encrypted FIN without exposing more data
-			// to the caller. The close timer or context cancellation bounds this drain.
+		if !draining {
+			select {
+			case c.reads <- streamReadResult{buffer[:n], err}:
+				if err == nil {
+					select {
+					case <-c.readConsumed:
+					case <-c.done:
+						buffer = make([]byte, byteStreamBufferBytes)
+						draining = true
+					}
+				}
+			case <-c.done:
+				draining = true
+			}
 		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			c.reset()
@@ -149,6 +161,9 @@ func (c *ByteStreamConn) Read(p []byte) (int, error) {
 		if len(c.pending.data) > 0 {
 			n := copy(p, c.pending.data)
 			c.pending.data = c.pending.data[n:]
+			if len(c.pending.data) == 0 && c.pending.err == nil {
+				c.readConsumed <- struct{}{}
+			}
 			return n, nil
 		}
 		if c.pending.err != nil {

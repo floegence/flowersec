@@ -167,6 +167,8 @@ impl AcceptError {
 
 /// Accepts strict v3 direct sessions without exposing carrier or wire state.
 pub struct Acceptor {
+    leaf: Vec<u8>,
+    public_endpoint: Option<String>,
     rpc_frame_limit: RpcFrameLimit,
     rpc_concurrency: NonZeroU16,
     listener: AcceptorListener,
@@ -226,6 +228,11 @@ impl Acceptor {
         policy: crate::WebTransportListenerPolicy,
     ) -> Result<Self, AcceptError> {
         validate_common(options.max_inbound_streams, options.accept_timeout)?;
+        let leaf = options
+            .certificate_chain_der
+            .first()
+            .cloned()
+            .ok_or_else(|| error(AcceptErrorCode::InvalidInput))?;
         let listener = crate::webtransport_v5::Listener::new(
             socket,
             options.bind_address,
@@ -239,6 +246,7 @@ impl Acceptor {
         .map_err(|_| error(AcceptErrorCode::InvalidInput))?;
         Ok(Self::new(
             AcceptorListener::WebTransport(listener),
+            leaf,
             CarrierKind::WebTransport,
             options.max_inbound_streams,
             options.accept_timeout,
@@ -248,6 +256,11 @@ impl Acceptor {
     /// Binds a production strict-v3 raw QUIC direct listener.
     pub fn bind(options: AcceptorOptions) -> Result<Self, AcceptError> {
         validate_common(options.max_inbound_streams, options.accept_timeout)?;
+        let leaf = options
+            .certificate_chain_der
+            .first()
+            .cloned()
+            .ok_or_else(|| error(AcceptErrorCode::InvalidInput))?;
         let listener = RawQuicListenerV3::bind(
             options.bind_address,
             NativePathProfile::Direct,
@@ -259,6 +272,7 @@ impl Acceptor {
         .map_err(|_| error(AcceptErrorCode::BindFailed))?;
         Ok(Self::new(
             AcceptorListener::RawQuic(listener),
+            leaf,
             CarrierKind::RawQuic,
             options.max_inbound_streams,
             options.accept_timeout,
@@ -270,6 +284,11 @@ impl Acceptor {
         validate_common(options.max_inbound_streams, options.accept_timeout)?;
         let capacity = carrier_inbound_stream_limit_v3(options.max_inbound_streams)
             .map_err(|_| error(AcceptErrorCode::InvalidInput))?;
+        let leaf = options
+            .certificate_chain_der
+            .first()
+            .cloned()
+            .ok_or_else(|| error(AcceptErrorCode::InvalidInput))?;
         let listener = WebSocketListener::bind_direct(
             options.bind_address,
             options.certificate_chain_der,
@@ -280,6 +299,7 @@ impl Acceptor {
         .map_err(|_| error(AcceptErrorCode::BindFailed))?;
         Ok(Self::new(
             AcceptorListener::WebSocket(listener),
+            leaf,
             CarrierKind::Wss,
             options.max_inbound_streams,
             options.accept_timeout,
@@ -288,12 +308,15 @@ impl Acceptor {
 
     fn new(
         listener: AcceptorListener,
+        leaf: Vec<u8>,
         carrier: CarrierKind,
         max_inbound_streams: u16,
         accept_timeout: Duration,
     ) -> Self {
         Self {
             listener,
+            leaf,
+            public_endpoint: None,
             rpc_frame_limit: RpcFrameLimit::default(),
             rpc_concurrency: DEFAULT_RPC_CONCURRENCY,
             carrier,
@@ -313,6 +336,39 @@ impl Acceptor {
     pub fn with_rpc_frame_limit(mut self, limit: RpcFrameLimit) -> Self {
         self.rpc_frame_limit = limit;
         self
+    }
+
+    /// Sets the trusted public direct URL for a forwarded or multi-name listener.
+    pub fn with_public_endpoint(mut self, endpoint: &str) -> Result<Self, AcceptError> {
+        let carrier = match self.carrier {
+            CarrierKind::RawQuic => CarrierWireV3::RawQuic,
+            CarrierKind::Wss => CarrierWireV3::Websocket,
+            CarrierKind::WebTransport => CarrierWireV3::Webtransport,
+        };
+        self.public_endpoint = Some(
+            crate::artifact_v3::normalize_url_v3("direct", carrier, endpoint)
+                .map_err(|_| error(AcceptErrorCode::InvalidInput))?,
+        );
+        Ok(self)
+    }
+
+    fn matched_binding(&self, plan: &AcceptPlanV3, raw: &[u8]) -> Option<[u8; 32]> {
+        let frame = plan.expected_fsb3.iter().find(|frame| {
+            frame.raw.len() == raw.len() && bool::from(frame.raw.as_slice().ct_eq(raw))
+        })?;
+        let candidate = plan
+            .connection
+            .candidates
+            .iter()
+            .find(|candidate| candidate.id == frame.chosen_candidate_id)?;
+        crate::tls_v3::matches_direct_listener(
+            candidate,
+            self.local_address().ok()?,
+            self.public_endpoint.as_deref(),
+            &self.leaf,
+            unix_seconds(),
+        )
+        .then_some(frame.binding)
     }
 
     /// Limits simultaneous outgoing calls and running inbound RPC handlers per session.
@@ -432,8 +488,9 @@ impl Acceptor {
         {
             return Err(AcceptErrorCode::HandshakeFailed);
         }
-        let binding =
-            matched_binding(&plan.expected_fsb3, &raw).ok_or(AcceptErrorCode::HandshakeFailed)?;
+        let binding = self
+            .matched_binding(&plan, &raw)
+            .ok_or(AcceptErrorCode::HandshakeFailed)?;
         if unix_seconds() >= plan.connection.expires_at_unix_seconds {
             return Err(AcceptErrorCode::Expired);
         }
@@ -566,7 +623,7 @@ impl Acceptor {
             let (admission, consumed) = match admit_direct(
                 carrier.clone(),
                 lease,
-                &plan.expected_fsb3,
+                |raw| self.matched_binding(&plan, raw),
                 plan.connection.session.max_inbound_streams,
                 plan.connection.expires_at_unix_seconds,
                 deadline,
@@ -697,7 +754,7 @@ fn session_config(
 async fn admit_direct(
     carrier: Arc<dyn CarrierSessionV3>,
     lease: &ArtifactLease,
-    expected: &[EncodedFsb3],
+    match_binding: impl FnOnce(&[u8]) -> Option<[u8; 32]>,
     max_inbound_streams: u16,
     expires_at_unix_seconds: u64,
     deadline: tokio::time::Instant,
@@ -731,7 +788,7 @@ async fn admit_direct(
         carrier.abort();
         return Err(AcceptErrorCode::HandshakeFailed);
     }
-    let Some(binding) = matched_binding(expected, &raw) else {
+    let Some(binding) = match_binding(&raw) else {
         let _ = admission.reset().await;
         carrier.abort();
         return Ok(None);
@@ -809,15 +866,6 @@ async fn spend_direct(
         return Err(AcceptErrorCode::Expired);
     }
     Ok(consumed)
-}
-
-fn matched_binding(expected: &[EncodedFsb3], raw: &[u8]) -> Option<[u8; 32]> {
-    expected
-        .iter()
-        .find(|candidate| {
-            candidate.raw.len() == raw.len() && bool::from(candidate.raw.as_slice().ct_eq(raw))
-        })
-        .map(|candidate| candidate.binding)
 }
 
 async fn read_fsb3(

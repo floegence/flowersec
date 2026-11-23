@@ -10,6 +10,7 @@ import { createStreamMetadata } from "../public/streamMetadata.js";
 import { InvalidProxyPathError, normalizePath, normalizePrefixes, normalizeHeaderNames, FORBIDDEN_HEADERS } from "./policy.js";
 import { ProxyByteReader, writeAll } from "./stream.js";
 import {
+  registrationAcknowledgement,
   registerProxyRuntimeServiceWorkerBridge,
   usesServiceWorkerResponseFlowControl,
 } from "./serviceWorkerRuntime.js";
@@ -597,6 +598,7 @@ export async function ensureServiceWorkerRuntimeRegistered(
   const timeoutMs = options.timeoutMs ?? 2_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 60_000) throw new TypeError("invalid runtime registration timeout");
   const token = normalizeToken(options.runtimeRegistrationToken);
+  const acknowledge = registrationAcknowledgement(globalThis.navigator.serviceWorker, controller, token);
   const channel = new MessageChannel();
   await new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -609,6 +611,7 @@ export async function ensureServiceWorkerRuntimeRegistered(
     };
     channel.port1.onmessage = (event) => {
       if (event.data?.type !== "flowersec-proxy:register-runtime-ack") return;
+      if (event.data.ok === true) acknowledge();
       finish(event.data.ok === true ? undefined : new Error("service worker runtime registration rejected"));
     };
     channel.port1.onmessageerror = () => finish(new Error("service worker runtime registration failed"));

@@ -325,7 +325,7 @@ impl Artifact {
 pub(crate) struct EncodedFsb3 {
     pub(crate) raw: Vec<u8>,
     pub(crate) binding: [u8; 32],
-    chosen_candidate_id: String,
+    pub(crate) chosen_candidate_id: String,
 }
 
 pub(crate) fn acceptor_admissions_hash(frames: &[EncodedFsb3]) -> Result<[u8; 32], ArtifactError> {

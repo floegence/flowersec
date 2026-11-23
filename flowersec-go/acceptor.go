@@ -8,15 +8,12 @@ package flowersec
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
@@ -521,42 +518,12 @@ func (ingress directIngress) match(decoded *artifactv3.DecodedRequest, kind arti
 	if ingress.local == nil || decoded == nil || decoded.Request.PathKind != artifactv3.PathDirect {
 		return "", false
 	}
-	localHost, localPort, err := net.SplitHostPort(ingress.local.String())
-	if err != nil {
-		return "", false
-	}
 	for _, candidate := range decoded.Request.Candidates {
 		if candidate.ID != decoded.Request.ChosenCandidateID || candidate.Carrier != kind {
 			continue
 		}
-		endpoint, err := url.Parse(candidate.NormalizedURL)
-		if err != nil {
+		if !transportsecurity.MatchesLocalDirectEndpoint(candidate.NormalizedURL, ingress.configured, ingress.local, ingress.state) {
 			return "", false
-		}
-		port := endpoint.Port()
-		if port == "" {
-			port = "443"
-		}
-		if ingress.configured != "" {
-			if candidate.NormalizedURL != ingress.configured {
-				return "", false
-			}
-		} else {
-			if localPort != port {
-				return "", false
-			}
-			host := endpoint.Hostname()
-			localIP, candidateIP := net.ParseIP(localHost), net.ParseIP(host)
-			localMatch := localIP != nil && ((candidateIP != nil && localIP.Equal(candidateIP)) || (host == "localhost" && localIP.IsLoopback()))
-			if !localMatch {
-				if ingress.state == nil || len(ingress.state.LocalCertificate) == 0 || !strings.EqualFold(ingress.state.ServerName, host) {
-					return "", false
-				}
-				leaf, err := x509.ParseCertificate(ingress.state.LocalCertificate[0])
-				if err != nil || len(leaf.DNSNames) != 1 || !strings.EqualFold(leaf.DNSNames[0], host) {
-					return "", false
-				}
-			}
 		}
 		if ingress.mode != webSocketAdmissionTLS {
 			if kind != artifactv3.CarrierWebSocket || len(decoded.Request.Candidates) != 1 || candidate.TLS.Mode != artifactv3.TLSModeCA {
