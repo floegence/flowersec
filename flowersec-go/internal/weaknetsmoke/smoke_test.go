@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/floegence/flowersec/flowersec-go/v7"
 	admissionws "github.com/floegence/flowersec/flowersec-go/v7/internal/admissionv3/websocket"
 	"github.com/floegence/flowersec/flowersec-go/v7/internal/artifactv3"
 	"github.com/floegence/flowersec/flowersec-go/v7/internal/carrier"
@@ -256,7 +257,7 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 		go func() { pumpDone[1] <- reverse.Run(pumpContext) }()
 	}()
 
-	dialURL := "wss://" + front.Addr().String() + "/flowersec/v3/direct"
+	dialURL := "wss://" + front.Addr().String() + flowersec.WebSocketDirectPath
 	clientTLS, err = transportsecurity.BuildClientTLS(
 		clientTLS,
 		dialURL,
@@ -274,8 +275,8 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rawFSB3 := validWebSocketFSB3(t)
-	if _, err := admissionws.Commit(weaknetSmokeContext, clientConn, rawFSB3, nil); err != nil {
+	request := webSocketAdmissionRequest(t, dialURL)
+	if _, err := admissionws.Commit(weaknetSmokeContext, clientConn, request, nil); err != nil {
 		t.Fatal(err)
 	}
 	clientSession, err := carrierws.NewAfterAdmission(clientConn, carrierws.ClientRole, carrierws.SubprotocolDirect, carrierws.DefaultResourcePolicy())
@@ -303,7 +304,7 @@ func runWebSocketSmoke(t *testing.T) smokeCase {
 	assertByteSmokeCounters(t, serverToClientReport)
 	return smokeCase{
 		Profile: carrierws.SubprotocolDirect, Carrier: "wss",
-		Assertions: []string{"real TCP ConnPump path", "TLS 1.3 and WebSocket negotiation", "FSB3/FSA3 admission", "counter conservation", "Yamux reset isolation"},
+		Assertions: []string{"real TCP ConnPump path", "TLS 1.3 and WebSocket negotiation", "FSB5/FSA5 admission", "counter conservation", "Yamux reset isolation"},
 		Counters: []counterAssertion{
 			counterAssertionFromReport(clientToServerReport, nil, []relationExpectation{
 				{Left: "delay_units", Operator: "eq", Right: "input_units"},
@@ -582,7 +583,13 @@ func testTLS(t *testing.T) (*tls.Config, *tls.Config) {
 	return &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}}, &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: "localhost"}
 }
 
-func validWebSocketFSB3(t *testing.T) []byte {
+func TestWebSocketSmokeAdmissionRequest(t *testing.T) {
+	if _, err := artifactv3.ParseRequest(webSocketAdmissionRequest(t, "wss://localhost"+flowersec.WebSocketDirectPath)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func webSocketAdmissionRequest(t *testing.T, candidateURL string) []byte {
 	t.Helper()
 	session := artifactv3.SessionContract{
 		ChannelID: "weaknet-smoke", InitExpireAtUnixSeconds: time.Now().Add(time.Hour).Unix(), IdleTimeoutSeconds: 60,
@@ -598,16 +605,16 @@ func validWebSocketFSB3(t *testing.T) []byte {
 	}
 	session.ContractHash = hash
 	artifact := artifactv3.Artifact{
-		Version: 3, Profile: artifactv3.Profile, Session: session,
+		Version: 5, Profile: artifactv3.Profile, Session: session,
 		Path: artifactv3.ArtifactPath{
 			Kind: artifactv3.PathDirect, RendezvousGroupID: "weaknet-smoke", ListenerAudience: "local-listener", RoutingToken: "opaque",
 			Candidates: []artifactv3.Candidate{{
 				ID: "w1", Carrier: artifactv3.CarrierWebSocket,
-				URL: "wss://localhost/flowersec/v3/direct", WireProfile: rawquicv3.ALPNDirect,
+				URL: candidateURL, WireProfile: rawquicv3.ALPNDirect,
 				TLS: artifactv3.TLSPolicy{Mode: artifactv3.TLSModeCA},
 			}},
 		},
-		Scoped: []artifactv3.ScopeMetadata{}, Correlation: artifactv3.CorrelationContext{Version: 3, Tags: []artifactv3.CorrelationTag{}},
+		Scoped: []artifactv3.ScopeMetadata{}, Correlation: artifactv3.CorrelationContext{Version: 5, Tags: []artifactv3.CorrelationTag{}},
 	}
 	request, err := artifactv3.BuildRequest(artifact, "w1")
 	if err != nil {
