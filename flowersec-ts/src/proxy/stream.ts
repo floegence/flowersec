@@ -11,20 +11,24 @@ export class ProxyByteReader {
   async readExactly(length: number): Promise<Uint8Array<ArrayBuffer>> {
     if (!Number.isSafeInteger(length) || length < 0) throw new TypeError("invalid proxy read length");
     const output = new Uint8Array(length);
+    await this.readInto(output);
+    return output;
+  }
+
+  async readInto(output: Uint8Array): Promise<void> {
     let offset = 0;
-    while (offset < length) {
+    while (offset < output.length) {
       if (this.buffered === undefined) {
         const next = await this.stream.read(this.options);
         if (next === null) throw new Error("proxy stream ended unexpectedly");
         if (next.length === 0) continue;
         this.buffered = next;
       }
-      const take = Math.min(length - offset, this.buffered.length);
+      const take = Math.min(output.length - offset, this.buffered.length);
       output.set(this.buffered.subarray(0, take), offset);
       offset += take;
       this.buffered = take === this.buffered.length ? undefined : this.buffered.subarray(take);
     }
-    return output;
   }
 
   remainingStream(): ByteStream {

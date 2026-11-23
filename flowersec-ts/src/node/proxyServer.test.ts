@@ -1,4 +1,5 @@
 import type { AddressInfo } from "node:net";
+import { createServer } from "node:http";
 import type { Session } from "../public/contract.js";
 import { expect, expectTypeOf, test } from "vitest";
 
@@ -9,8 +10,81 @@ import {
   StreamHandlers,
 } from "./index.js";
 import type { StreamHandlerRegistrar } from "./proxyServer.js";
+import { resolveProxyTarget } from "./proxyTarget.js";
+import { u32be } from "../utils/bin.js";
 import { freezeStreamHandlers } from "../public/streamHandlers.js";
 import { createStreamMetadata, type ByteStream } from "../facade.js";
+
+test("resolves origin-relative targets without changing the upstream authority", () => {
+  const base = new URL("https://example.invalid:8443");
+  for (const path of ["/", "/a/../b?q=one%20two", "/a//b", "/a/./b"]) {
+    expect(resolveProxyTarget(base, path)?.href).toBe(new URL(path, base).href);
+  }
+  for (const path of ["//example.invalid", "/a/..//", "relative", "/a#fragment"]) {
+    expect(resolveProxyTarget(base, path)).toBeUndefined();
+  }
+});
+
+function proxyExchange(kind: string, meta: object, readBody: () => Promise<Uint8Array | null>) {
+  const payload = new TextEncoder().encode(JSON.stringify({ v: 1, ...meta }));
+  const frames = [u32be(payload.length), payload];
+  const replies: Uint8Array[] = [];
+  const stream: ByteStream = {
+    kind, terminalError: undefined,
+    async read() { return frames.shift() ?? await readBody(); },
+    async write(data) { replies.push(data.slice()); return data.length; },
+    async closeWrite() {}, async reset() {}, async close() {},
+  };
+  return { incoming: { kind, stream, metadata: createStreamMetadata({}) }, replies };
+}
+
+test.each(["slots", "bytes"])("applies shared HTTP %s before reading body payloads and releases reservations", async (limit) => {
+  const origin = "http://127.0.0.1:1";
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, maxConcurrentHTTPStreams: limit === "slots" ? 1 : 2, maxBufferedRequestBodyBytes: 4 });
+  const handlers = new StreamHandlers(); server.register(handlers);
+  const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.includes("http"))!;
+  const meta = { method: "POST", path: "/", request_id: "test", headers: [] };
+  let notifyStarted!: () => void;
+  const started = new Promise<void>(resolve => { notifyStarted = resolve; });
+  let finishBody!: (value: null) => void;
+  const end = new Promise<null>(resolve => { finishBody = resolve; });
+  let firstHeader = true;
+  const first = proxyExchange(kind, meta, async () => {
+    if (firstHeader) { firstHeader = false; return u32be(4); }
+    notifyStarted(); return await end;
+  });
+  const active = handle(first.incoming, {});
+  try {
+    await started;
+    let reads = 0;
+    const second = proxyExchange(kind, meta, async () => ++reads === 1 ? u32be(1) : null);
+    await handle(second.incoming, {});
+    expect(reads).toBe(limit === "slots" ? 0 : 1);
+    expect(Buffer.concat(second.replies).toString()).toContain('"resource_exhausted"');
+    finishBody(null);
+    await active;
+    let nextReads = 0;
+    const next = proxyExchange(kind, meta, async () => ++nextReads === 1 ? u32be(4) : null);
+    await handle(next.incoming, {});
+    expect(nextReads).toBe(2);
+    expect(Buffer.concat(next.replies).toString()).toContain('"request_body_invalid"');
+  } finally { finishBody(null); await active; await server.close(); }
+});
+
+test("filters configured cookie names and prefixes on the upstream WebSocket handshake", async () => {
+  let cookie: string | undefined;
+  const upstream = createServer((request, response) => { cookie = request.headers.cookie; response.writeHead(403).end(); });
+  await new Promise<void>(resolve => upstream.listen(0, "127.0.0.1", resolve));
+  const origin = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
+  const server = new ProxyServer({ upstream: origin, upstreamOrigin: origin, extraWebSocketHeaders: ["cookie"], forbiddenCookieNames: ["session"], forbiddenCookieNamePrefixes: ["private_"] });
+  try {
+    const handlers = new StreamHandlers(); server.register(handlers);
+    const [kind, handle] = [...freezeStreamHandlers(handlers).streams].find(([name]) => name.endsWith("/ws"))!;
+    const request = proxyExchange(kind, { conn_id: "test", path: "/", headers: [{ name: "Cookie", value: "session=no; Private_key=no; visible=yes" }] }, async () => null);
+    await handle(request.incoming, {});
+    expect(cookie).toBe("visible=yes");
+  } finally { await server.close(); await new Promise<void>(resolve => upstream.close(() => resolve())); }
+});
 
 test.each(["metadata", "GET", "POST"])("bounds incomplete proxy %s intake", async (stage) => {
   const server = new ProxyServer({

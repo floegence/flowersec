@@ -78,6 +78,26 @@ async function collectPort(port: MessagePort, terminal: string): Promise<Record<
 }
 
 describe("Session proxy runtime", () => {
+  it("resets an unfinished upload when the server declines admission", async () => {
+    let unblockUpload!: (error: Error) => void;
+    class PendingUpload extends FakeStream {
+      override async write(data: Uint8Array): Promise<number> {
+        if (this.writes.length === 0) return super.write(data);
+        return new Promise<number>((_resolve, reject) => { unblockUpload = reject; });
+      }
+      override async reset() { await super.reset(); unblockUpload(new Error("reset")); }
+    }
+    const stream = new PendingUpload([jsonFrame({ v: 1, request_id: "busy", ok: false, error: { code: "resource_exhausted" } })], 4096);
+    const runtime = createProxyRuntime({ session: new FakeSession([stream]) });
+    const channel = new MessageChannel();
+    try {
+      const result = collectPort(channel.port2, "flowersec-proxy:response_end");
+      runtime.dispatchFetch({ id: "busy", method: "POST", path: "/", headers: [], body: Uint8Array.of(1).buffer }, channel.port1);
+      expect(await result).toContainEqual(expect.objectContaining({ code: "resource_exhausted" }));
+      expect(stream.resetCalled).toBe(true);
+    } finally { channel.port1.close(); channel.port2.close(); runtime.dispose(); }
+  });
+
   it("forwards declared HTTP headers without expanding WebSocket access", async () => {
     const stream = new FakeStream([concat([
       jsonFrame({ v: 1, request_id: "platform", ok: true, status: 200, headers: [] }), u32be(0),

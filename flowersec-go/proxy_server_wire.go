@@ -99,10 +99,14 @@ func proxyHeaderAllowed(name string, base, extra map[string]struct{}) bool {
 }
 
 func proxyRequestHeaders(input []proxyHeader, config proxyServerConfig) http.Header {
+	return proxyUpstreamHeaders(input, proxyBaseRequestHeaders, config.requestHeaders, config)
+}
+
+func proxyUpstreamHeaders(input []proxyHeader, base, extra map[string]struct{}, config proxyServerConfig) http.Header {
 	result := make(http.Header)
 	for _, header := range input {
 		name := strings.ToLower(strings.TrimSpace(header.Name))
-		if !proxyHeaderAllowed(name, proxyBaseRequestHeaders, config.requestHeaders) || strings.ContainsAny(header.Value, "\r\n") {
+		if !proxyHeaderAllowed(name, base, extra) || strings.ContainsAny(header.Value, "\r\n") {
 			continue
 		}
 		value := header.Value
@@ -138,14 +142,7 @@ func proxyResponseHeaders(input http.Header, config proxyServerConfig) []proxyHe
 
 func proxyWebSocketHeaders(input []proxyHeader, config proxyServerConfig) http.Header {
 	base := map[string]struct{}{"sec-websocket-protocol": {}}
-	result := make(http.Header)
-	for _, header := range input {
-		name := strings.ToLower(strings.TrimSpace(header.Name))
-		if proxyHeaderAllowed(name, base, config.webSocketHeaders) && !strings.ContainsAny(header.Value, "\r\n") {
-			result.Add(name, header.Value)
-		}
-	}
-	return result
+	return proxyUpstreamHeaders(input, base, config.webSocketHeaders, config)
 }
 
 func filterProxyCookies(value string, config proxyServerConfig) string {

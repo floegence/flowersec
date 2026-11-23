@@ -380,12 +380,15 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
         ...(requestOrigin === undefined ? {} : { external_origin: requestOrigin }),
         ...(timeoutMs === 0 ? {} : { timeout_ms: timeoutMs }),
       });
-      await writeChunks(stream, body, maxChunkBytes, maxBodyBytes, controller.signal);
-      const response = await readJsonFrame(reader, maxJsonFrameBytes) as ResponseMeta;
-      if (response.v !== PROXY_WIRE_VERSION || response.request_id !== requestID) throw new Error("invalid proxy response");
-      if (response.ok !== true) {
-        throw new SessionError(response.error?.code === "resource_exhausted" ? "resource_exhausted" : "operation_failed");
-      }
+      const [response] = await Promise.all([
+        readJsonFrame(reader, maxJsonFrameBytes).then((value) => {
+          const meta = value as ResponseMeta;
+          if (meta.v !== PROXY_WIRE_VERSION || meta.request_id !== requestID) throw new Error("invalid proxy response");
+          if (meta.ok !== true) throw new SessionError(meta.error?.code === "resource_exhausted" ? "resource_exhausted" : "operation_failed");
+          return meta;
+        }),
+        writeChunks(stream, body, maxChunkBytes, maxBodyBytes, controller.signal),
+      ]);
       if (!Number.isInteger(response.status)) throw new Error("invalid proxy response");
       const headersOut = filterHeaders(response.headers ?? [], BASE_RESPONSE_HEADERS, responseExtra);
       const persistent = eventRequested && headersOut.some(({ name, value }) => name === "content-type" && isEventStream(value));

@@ -4,6 +4,7 @@ import type { ByteStream } from "../public/contract.js";
 import { SessionError } from "../public/contract.js";
 import { writeJsonFrame } from "../framing/jsonframe.js";
 import { ProxyByteReader, writeAll, writeProxyWebSocketFrame } from "../proxy/stream.js";
+import { resolveProxyTarget } from "./proxyTarget.js";
 import {
   StreamHandlers,
   registerStreamHandlersAtomically,
@@ -42,6 +43,7 @@ export type ProxyServerOptions = Readonly<{
   maxJsonFrameBytes?: number;
   maxChunkBytes?: number;
   maxBodyBytes?: number;
+  maxBufferedRequestBodyBytes?: number;
   maxWebSocketFrameBytes?: number;
   defaultHTTPRequestTimeoutMs?: number;
   maxHTTPRequestTimeoutMs?: number;
@@ -78,6 +80,7 @@ type Config = Readonly<{
   maxJSON: number;
   maxChunk: number;
   maxBody: number;
+  maxBufferedBody: number;
   maxWS: number;
   defaultTimeout: number;
   maxTimeout: number;
@@ -105,6 +108,7 @@ export class ProxyServer {
   #resolveCompletion!: () => void;
   #closed = false;
   #httpCount = 0;
+  #bufferedBodyBytes = 0;
   #eventCount = 0;
 
   constructor(options: ProxyServerOptions) {
@@ -217,6 +221,7 @@ export class ProxyServer {
     let peerWatch: Promise<void> | undefined;
     let responseReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let httpPermit = false;
+    let reservedBytes = 0;
     let eventPermit = false;
     const releaseEvent = () => { if (eventPermit) { eventPermit = false; this.#eventCount--; } };
     const abort = () => { reset ??= stream.reset().catch(() => undefined); };
@@ -228,8 +233,8 @@ export class ProxyServer {
       try { meta = decodeHTTPMeta(await readFrame(reader, this.#config.maxJSON)); }
       catch { await writeHTTPError(stream, "unknown", "invalid_request_meta"); return; }
       const requestID = meta.request_id.trim();
-      const path = normalizePath(meta.path);
-      if (meta.v !== WIRE_VERSION || requestID === "" || meta.method.trim() === "" || path === undefined) {
+      const target = resolveProxyTarget(this.#config.upstream, meta.path);
+      if (meta.v !== WIRE_VERSION || requestID === "" || meta.method.trim() === "" || target === undefined) {
         await writeHTTPError(stream, requestID, "invalid_request_meta"); return;
       }
       const timeout = normalizeTimeout(meta.timeout_ms, this.#config.defaultTimeout, this.#config.maxTimeout);
@@ -238,13 +243,6 @@ export class ProxyServer {
       const remaining = timeout - (performance.now() - started);
       if (remaining <= 0) timeoutController.abort();
       else timer = setTimeout(() => timeoutController.abort(), remaining);
-      const body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody);
-      if (body === undefined) { await writeHTTPError(stream, requestID, "request_body_invalid"); return; }
-      // A peer reset cancels the upstream even when it has no next event to write.
-      // A FIN only closes request writes and is valid during response streaming.
-      peerWatch = stream.read({ signal }).then((chunk) => {
-        if (chunk !== null) timeoutController.abort(new SessionError("canceled"));
-      }, () => { timeoutController.abort(new SessionError("canceled")); });
       if (this.#httpCount >= this.#config.maxHTTP) {
         await writeHTTPError(stream, requestID, "resource_exhausted"); return;
       }
@@ -260,7 +258,7 @@ export class ProxyServer {
       }
       const externalOrigin = validateOrigin(meta.external_origin, this.#config.allowedOrigins);
       if (meta.external_origin !== undefined && externalOrigin === undefined) { await writeHTTPError(stream, requestID, "invalid_request_meta"); return; }
-      const requestHeaders = filterRequestHeaders(meta.headers, this.#config);
+      const requestHeaders = filterUpstreamHeaders(meta.headers, REQUEST_HEADERS, this.#config.requestHeaders, this.#config);
       if (externalOrigin !== undefined) {
         const explicitOrigin = requestHeaders.find((header) => header.name === "origin")?.value;
         if (explicitOrigin !== undefined && explicitOrigin !== externalOrigin) {
@@ -270,10 +268,23 @@ export class ProxyServer {
         requestHeaders.push({ name: "x-forwarded-proto", value: origin.protocol.slice(0, -1) });
       }
       const headers = Object.fromEntries(requestHeaders.map((header) => [header.name, header.value]));
-      const target = new URL(path, this.#config.upstream);
+      const body = await readBody(reader, this.#config.maxChunk, this.#config.maxBody, (minimum, preferred) => {
+        const available = this.#config.maxBufferedBody - this.#bufferedBodyBytes;
+        const growth = Math.min(preferred, available);
+        if (growth < minimum) return 0;
+        reservedBytes += growth;
+        this.#bufferedBodyBytes += growth;
+        return growth;
+      });
+      if (typeof body === "string") { await writeHTTPError(stream, requestID, body); return; }
+      // A peer reset cancels the upstream even when it has no next event to write.
+      // A FIN only closes request writes and is valid during response streaming.
+      peerWatch = stream.read({ signal }).then((chunk) => {
+        if (chunk !== null) timeoutController.abort(new SessionError("canceled"));
+      }, () => { timeoutController.abort(new SessionError("canceled")); });
       const requestInit: RequestInit & { duplex?: "half" } = {
         method: meta.method.trim().toUpperCase(), headers, redirect: "manual", signal,
-        ...(body.byteLength === 0 ? {} : { body: body.slice().buffer as ArrayBuffer, duplex: "half" }),
+        ...(body.byteLength === 0 ? {} : { body, duplex: "half" }),
       };
       try {
         const response = await fetch(target, requestInit);
@@ -316,6 +327,7 @@ export class ProxyServer {
       }
     } finally {
       clearTimeout(timer);
+      this.#bufferedBodyBytes -= reservedBytes;
       releaseEvent();
       if (httpPermit) this.#httpCount--;
       linked.dispose();
@@ -333,15 +345,14 @@ export class ProxyServer {
     let open: WSOpen;
     try { open = decodeWSOpen(await readFrame(reader, this.#config.maxJSON)); }
     catch { await writeWSError(stream, "unknown", "invalid_ws_open_meta"); return; }
-    const path = normalizePath(open.path);
-    if (open.v !== WIRE_VERSION || open.conn_id.trim() === "" || path === undefined) { await writeWSError(stream, open.conn_id, "invalid_ws_open_meta"); return; }
-    const upstreamURL = new URL(path, this.#config.upstream);
+    const upstreamURL = resolveProxyTarget(this.#config.upstream, open.path);
+    if (open.v !== WIRE_VERSION || open.conn_id.trim() === "" || upstreamURL === undefined) { await writeWSError(stream, open.conn_id, "invalid_ws_open_meta"); return; }
     upstreamURL.protocol = upstreamURL.protocol === "https:" ? "wss:" : "ws:";
     const require = createRequire(import.meta.url);
     const wsModule = require("ws") as any;
     const WebSocketCtor = wsModule?.WebSocket ?? wsModule;
     const protocols = open.headers.find((header) => header.name.toLowerCase() === "sec-websocket-protocol")?.value;
-    const headers = filterHeaders(open.headers, new Set(["sec-websocket-protocol"]), this.#config.websocketHeaders)
+    const headers = filterUpstreamHeaders(open.headers, new Set(["sec-websocket-protocol"]), this.#config.websocketHeaders, this.#config)
       .filter((header) => header.name !== "origin");
     const socket = new WebSocketCtor(upstreamURL.toString(), protocols === undefined ? undefined : protocols.split(",").map((item: string) => item.trim()), {
       headers: {
@@ -386,10 +397,11 @@ function compileConfig(options: ProxyServerOptions): Config {
   const maxJSON = positive(options.maxJsonFrameBytes, DEFAULT_MAX_JSON);
   const maxChunk = positive(options.maxChunkBytes, DEFAULT_MAX_CHUNK);
   const maxBody = positive(options.maxBodyBytes, DEFAULT_MAX_BODY);
+  const maxBufferedBody = positive(options.maxBufferedRequestBodyBytes, Math.max(DEFAULT_MAX_BODY, maxBody));
   const maxWS = positive(options.maxWebSocketFrameBytes, DEFAULT_MAX_WS);
   const defaultTimeout = positive(options.defaultHTTPRequestTimeoutMs, DEFAULT_TIMEOUT);
   const maxTimeout = positive(options.maxHTTPRequestTimeoutMs, MAX_TIMEOUT);
-  if ([maxConcurrent, maxHTTP, maxEvents, eventIdleTimeout, maxJSON, maxChunk, maxBody, maxWS, defaultTimeout, maxTimeout].some((value) => !Number.isSafeInteger(value) || value < 1) || defaultTimeout > maxTimeout) throw new ProxyServerError("invalid_options");
+  if ([maxConcurrent, maxHTTP, maxEvents, eventIdleTimeout, maxJSON, maxChunk, maxBody, maxBufferedBody, maxWS, defaultTimeout, maxTimeout].some((value) => !Number.isSafeInteger(value) || value < 1) || defaultTimeout > maxTimeout) throw new ProxyServerError("invalid_options");
   const normalizeHeaders = (values: readonly string[] | undefined) => new Set((values ?? []).map((name) => {
     const lower = name.trim().toLowerCase();
     if (!HEADER_NAME.test(lower) || FORBIDDEN_HEADERS.has(lower)) throw new ProxyServerError("invalid_options");
@@ -410,13 +422,13 @@ function compileConfig(options: ProxyServerOptions): Config {
     websocketHeaders: normalizeHeaders(options.extraWebSocketHeaders),
     forbiddenCookies: new Set(normalizeCookieValues(options.forbiddenCookieNames)),
     forbiddenCookiePrefixes: normalizeCookieValues(options.forbiddenCookieNamePrefixes),
-    maxConcurrent, maxHTTP, maxEvents, eventIdleTimeout, maxJSON, maxChunk, maxBody, maxWS, defaultTimeout, maxTimeout,
+    maxConcurrent, maxHTTP, maxEvents, eventIdleTimeout, maxJSON, maxChunk, maxBody, maxBufferedBody, maxWS, defaultTimeout, maxTimeout,
     ...(options.onError === undefined ? {} : { report: options.onError }),
   };
 }
 
-function filterRequestHeaders(input: readonly Header[], config: Config): Header[] {
-  const headers = filterHeaders(input, REQUEST_HEADERS, config.requestHeaders);
+function filterUpstreamHeaders(input: readonly Header[], base: ReadonlySet<string>, extra: ReadonlySet<string>, config: Config): Header[] {
+  const headers = filterHeaders(input, base, extra);
   return headers.flatMap((header) => {
     if (header.name !== "cookie") return [header];
     const value = header.value.split(";").flatMap((part) => {
@@ -473,19 +485,28 @@ async function writeChunk(stream: ByteStream, chunk: Uint8Array, signal?: AbortS
   new DataView(bytes.buffer).setUint32(0, chunk.length, false); bytes.set(chunk, 4);
   await writeAll(stream, bytes, signal === undefined ? {} : { signal });
 }
-async function readBody(reader: ProxyByteReader, maxChunk: number, maxBody: number): Promise<Uint8Array | undefined> {
-  const chunks: Uint8Array[] = []; let total = 0;
+async function readBody(reader: ProxyByteReader, maxChunk: number, maxBody: number, reserve: (minimum: number, preferred: number) => number): Promise<Uint8Array<ArrayBuffer> | "request_body_invalid" | "resource_exhausted"> {
+  let buffer = new Uint8Array(0);
+  let total = 0;
   try {
     while (true) {
       const header = await reader.readExactly(4); const length = new DataView(header.buffer, header.byteOffset, 4).getUint32(0, false);
-      if (length === 0) return concat(chunks);
-      if (length > maxChunk || total + length > maxBody) return undefined;
-      const chunk = await reader.readExactly(length); chunks.push(chunk); total += length;
+      if (length === 0) return buffer.subarray(0, total);
+      if (length > maxChunk || length > maxBody - total) return "request_body_invalid";
+      const end = total + length;
+      if (end > buffer.length) {
+        const required = end - buffer.length;
+        const growth = reserve(required, Math.min(maxBody - buffer.length, Math.max(required, buffer.length)));
+        if (growth === 0) return "resource_exhausted";
+        const next = new Uint8Array(buffer.length + growth);
+        next.set(buffer);
+        buffer = next;
+      }
+      await reader.readInto(buffer.subarray(total, end));
+      total = end;
     }
-  } catch { return undefined; }
+  } catch { return "request_body_invalid"; }
 }
-function concat(chunks: readonly Uint8Array[]): Uint8Array { const out = new Uint8Array(chunks.reduce((sum, item) => sum + item.length, 0)); let offset = 0; for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.length; } return out; }
-function normalizePath(value: string): string | undefined { if (value.trim() !== value || !value.startsWith("/") || value.startsWith("//") || value.includes("://") || /[\u0000-\u0020\u007f]/u.test(value)) return undefined; try { const parsed = new URL(value, "http://flowersec.invalid"); return parsed.origin === "http://flowersec.invalid" && !parsed.hash ? `${parsed.pathname}${parsed.search}` : undefined; } catch { return undefined; } }
 function normalizeTimeout(value: number | undefined, fallback: number, maximum: number): number | undefined { if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) return undefined; return Math.min(value === undefined || value === 0 ? fallback : value, maximum); }
 function validateOrigin(value: string | undefined, allowed: ReadonlySet<string>): string | undefined { if (value === undefined || value === "") return undefined; try { const origin = new URL(value); return origin.pathname === "/" && !origin.search && !origin.hash && origin.origin === value && allowed.has(origin.origin) ? origin.origin : undefined; } catch { return undefined; } }
 function linkSignals(parent: AbortSignal, timeout: AbortSignal): { signal: AbortSignal; dispose(): void } { const controller = new AbortController(); const abort = (event: Event) => controller.abort((event.target as AbortSignal).reason); parent.addEventListener("abort", abort, { once: true }); timeout.addEventListener("abort", abort, { once: true }); if (parent.aborted) controller.abort(parent.reason); else if (timeout.aborted) controller.abort(timeout.reason); return { signal: controller.signal, dispose: () => { parent.removeEventListener("abort", abort); timeout.removeEventListener("abort", abort); } }; }

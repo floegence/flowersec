@@ -1525,11 +1525,7 @@ fn filter_request_headers(headers: &[Header], config: &Config) -> Vec<HeaderOutp
         &config.request_headers,
         &HashSet::new(),
     );
-    for header in &mut result {
-        if header.name == "cookie" {
-            header.value = filter_cookies(&header.value, config);
-        }
-    }
+    apply_cookie_policy(&mut result, config);
     result.retain(|header| !header.value.is_empty());
     result.retain(|header| header.name != "x-forwarded-proto");
     result
@@ -1556,12 +1552,24 @@ fn filter_response_headers(headers: &HeaderMap, config: &Config) -> Vec<HeaderOu
 }
 
 fn filter_websocket_headers(headers: &[Header], config: &Config) -> Vec<HeaderOutput> {
-    filter_headers(
+    let mut result = filter_headers(
         headers,
         &["sec-websocket-protocol"],
         &config.websocket_headers,
         &HashSet::new(),
-    )
+    );
+    apply_cookie_policy(&mut result, config);
+    result
+}
+
+fn apply_cookie_policy(headers: &mut Vec<HeaderOutput>, config: &Config) {
+    headers.retain_mut(|header| {
+        if header.name != "cookie" {
+            return true;
+        }
+        header.value = filter_cookies(&header.value, config);
+        !header.value.is_empty()
+    });
 }
 
 fn filter_headers(
@@ -1733,7 +1741,7 @@ mod tests {
             extra_request_headers: vec!["cookie".into(), "x-request-id".into()],
             extra_response_headers: vec!["x-visible".into()],
             blocked_response_headers: vec!["location".into()],
-            extra_websocket_headers: vec!["x-request-id".into()],
+            extra_websocket_headers: vec!["x-request-id".into(), "cookie".into()],
             forbidden_cookie_names: vec!["session".into()],
             forbidden_cookie_name_prefixes: vec!["private_".into()],
             on_error: None,
@@ -1912,6 +1920,10 @@ mod tests {
                     );
                     assert!(request.headers().get("authorization").is_none());
                     assert_eq!(
+                        request.headers().get("cookie").expect("cookie"),
+                        "public=ok"
+                    );
+                    assert_eq!(
                         request
                             .headers()
                             .get("sec-websocket-protocol")
@@ -1958,6 +1970,7 @@ mod tests {
                 "path": "/public/../api//items?q=%7euser",
                 "headers": [
                     {"name":"sec-websocket-protocol", "value":"chat"},
+                    {"name":"cookie", "value":"session=no; private_key=no; public=ok"},
                     {"name":"x-request-id", "value":"visible"},
                     {"name":"authorization", "value":"Bearer secret"}
                 ]

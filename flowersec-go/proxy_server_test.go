@@ -147,6 +147,9 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 		if request.URL.RequestURI() != "/api/socket?q=~user" {
 			t.Errorf("upstream WebSocket path = %q", request.URL.RequestURI())
 		}
+		if got := request.Header.Values("Cookie"); len(got) != 1 || got[0] != "visible=yes" {
+			t.Errorf("unexpected upstream WebSocket cookies: %v", got)
+		}
 		connection, err := upgrader.Upgrade(writer, request, nil)
 		if err != nil {
 			return
@@ -167,7 +170,11 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	proxy, err := NewProxyServer(ProxyServerOptions{Upstream: upstream.URL, UpstreamOrigin: upstream.URL})
+	proxy, err := NewProxyServer(ProxyServerOptions{
+		Upstream: upstream.URL, UpstreamOrigin: upstream.URL,
+		ExtraWebSocketHeaders: []string{"cookie"}, ForbiddenCookieNames: []string{"private"},
+		ForbiddenCookieNamePrefixes: []string{"reserved_"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +186,7 @@ func TestProxyServerWebSocketRoundTripUsesFlowersecWire(t *testing.T) {
 	client := serveProxyTestStream(t, handlers, proxyWSStreamKind)
 	if err := writeProxyJSON(client, proxyWebSocketOpen{
 		Version: proxyWireVersion, ConnID: "socket-1", Path: "/public/../api//socket?q=%7euser",
+		Headers: []proxyHeader{{Name: "Cookie", Value: "private=no; visible=yes"}, {Name: "Cookie", Value: "Reserved_key=no"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
